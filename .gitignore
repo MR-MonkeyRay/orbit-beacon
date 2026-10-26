@@ -1,0 +1,17 @@
+/.omx/
+/dist/
+/data/
+/bin/
+/coverage.out
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+/node_modules/
+/web/node_modules/
+/web/.svelte-kit/
+.env
+*.key
+# The minimal embedded UI distribution is intentionally tracked.
