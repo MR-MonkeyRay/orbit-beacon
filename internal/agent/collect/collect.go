@@ -62,11 +62,12 @@ type Collector struct {
 	networkAt     time.Time
 	autoInterface string
 	rates         NetworkDifferencer
+	sourceAt      map[string]time.Time
 }
 
 func New(options Options) (*Collector, error) {
 	now := time.Now()
-	c := &Collector{started: now, epoch: strconv.FormatInt(now.UnixNano(), 36), diskUsage: disk.UsageWithContext}
+	c := &Collector{started: now, epoch: strconv.FormatInt(now.UnixNano(), 36), diskUsage: disk.UsageWithContext, sourceAt: make(map[string]time.Time, 21)}
 	if err := c.SetConfig(options.Config); err != nil {
 		return nil, err
 	}
@@ -140,6 +141,11 @@ func (c *Collector) Collect(parent context.Context) (v1.Metrics, error) {
 	defer cancel()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.sourceAt == nil {
+		c.sourceAt = make(map[string]time.Time, 21)
+	} else {
+		clear(c.sourceAt)
+	}
 	m := v1.Metrics{
 		Disks:        make([]v1.DiskMetrics, 0, 8),
 		Networks:     make([]v1.NetworkMetrics, 0, 8),
@@ -152,15 +158,42 @@ func (c *Collector) Collect(parent context.Context) (v1.Metrics, error) {
 	c.collectUptime(ctx, &m)
 	c.collectNetworks(ctx, &m)
 	c.collectDisks(ctx, &m)
+	c.finalizeSnapshot(&m, time.Now())
 	return m, ctx.Err()
+}
+
+func (c *Collector) finalizeSnapshot(m *v1.Metrics, snapshotAt time.Time) {
+	for key, source := range m.Sources {
+		if observedAt, ok := c.sourceAt[key]; ok {
+			source.AgeMS = max(int64(0), snapshotAt.Sub(observedAt).Milliseconds())
+			m.Sources[key] = source
+		}
+	}
+	for index, disk := range m.Disks {
+		key := "disk:" + disk.Path
+		source := m.Sources[key]
+		if !source.Fresh() {
+			m.MetricStatus[key] = "stale"
+			m.Disks[index].TotalBytes, m.Disks[index].UsedBytes = nil, nil
+		}
+	}
+	for index, network := range m.Networks {
+		key := "network:" + network.Name
+		source := m.Sources[key]
+		if !source.Fresh() {
+			m.MetricStatus[key] = "stale"
+			m.Networks[index].RxBytesPerSec, m.Networks[index].TxBytesPerSec = nil, nil
+		}
+	}
 }
 
 func (c *Collector) source(key string, at time.Time, interval time.Duration) v1.SourceMetadata {
 	c.sequence++
 	kind, _, _ := strings.Cut(key, ":")
+	c.sourceAt[key] = at
 	source := v1.SourceMetadata{
 		SampleID:         kind + "-" + c.epoch + "-" + strconv.FormatUint(c.sequence, 36),
-		AgeMS:            max(int64(0), time.Since(at).Milliseconds()),
+		AgeMS:            0,
 		SourceIntervalMS: interval.Milliseconds(),
 	}
 	if kind == "network" {
@@ -382,12 +415,8 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 			continue
 		}
 		observation := sample.observation
-		observation.Source.AgeMS = max(int64(0), time.Since(sample.at).Milliseconds())
-		if !observation.Source.Fresh() {
-			observation.Status = "stale"
-			observation.Network.RxBytesPerSec, observation.Network.TxBytesPerSec = nil, nil
-		}
 		key := "network:" + name
+		c.sourceAt[key] = sample.at
 		m.Networks = append(m.Networks, observation.Network)
 		m.MetricStatus[key], m.Sources[key] = observation.Status, observation.Source
 	}

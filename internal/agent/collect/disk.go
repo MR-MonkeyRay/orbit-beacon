@@ -107,11 +107,7 @@ func (c *Collector) collectDisks(ctx context.Context, m *v1.Metrics) {
 	}
 	for _, path := range paths {
 		sample := c.disks[path]
-		sample.source.AgeMS = max(int64(0), time.Since(sample.at).Milliseconds())
-		if !sample.source.Fresh() {
-			sample.status = "stale"
-			sample.metric.TotalBytes, sample.metric.UsedBytes = nil, nil
-		}
+		c.sourceAt["disk:"+path] = sample.at
 		m.Disks = append(m.Disks, sample.metric)
 		m.MetricStatus["disk:"+path], m.Sources["disk:"+path] = sample.status, sample.source
 	}
