@@ -122,7 +122,7 @@ func (s *ConfigStore) ConfigError() *v1.ConfigError {
 
 func (s *ConfigStore) Apply(ctx context.Context, next v1.DesiredConfig) error {
 	fail := func(err error) error {
-		s.failure = &v1.ConfigError{Revision: next.Revision, Code: "invalid_config"}
+		s.failure = &v1.ConfigError{Revision: max(0, next.Revision), Code: "invalid_config"}
 		var validation *v1.ValidationError
 		if errors.As(err, &validation) {
 			s.failure.Fields = validation.Fields

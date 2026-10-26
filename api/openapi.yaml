@@ -1007,7 +1007,7 @@ components:
           type: object
           required: [revision, code]
           properties:
-            revision: {type: integer}
+            revision: {type: integer, minimum: 0, description: Rejected revision; zero represents an invalid revision that cannot be reported as a nonnegative identifier.}
             code: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 64}
             fields: {type: object, additionalProperties: {type: string}}
     ReportResponse:
