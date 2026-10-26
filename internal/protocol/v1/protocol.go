@@ -77,18 +77,8 @@ type EnrollmentRequest struct {
 }
 
 func (r EnrollmentRequest) Validate() error {
-	if r.ProtocolVersion != ProtocolVersion {
-		return ErrProtocolUnsupported
-	}
-	if strings.TrimSpace(r.InstallationID) == "" || len(r.InstallationID) > 255 {
-		return errors.New("invalid installation identity")
-	}
-	decoded, err := base64.RawURLEncoding.DecodeString(r.NodeToken)
-	if err != nil || len(decoded) != 32 {
-		decoded, err = hex.DecodeString(r.NodeToken)
-	}
-	if err != nil || len(decoded) != 32 {
-		return errors.New("node credential must contain 256 bits")
+	if err := validateEnrollmentCredential(r.ProtocolVersion, r.InstallationID, r.NodeToken); err != nil {
+		return err
 	}
 	if r.PreviousNodeToken != "" && (len(r.PreviousNodeToken) < 32 || len(r.PreviousNodeToken) > 256) {
 		return errors.New("invalid previous node credential")
@@ -99,6 +89,39 @@ func (r EnrollmentRequest) Validate() error {
 func (s System) Validate() error {
 	if len(s.Hostname) > 255 || len(s.OS) > 64 || len(s.Arch) > 64 {
 		return errors.New("system identity exceeds field limits")
+	}
+	return nil
+}
+
+type EnrollmentCheckRequest struct {
+	ProtocolVersion int    `json:"protocol_version"`
+	InstallationID  string `json:"installation_id"`
+	NodeToken       string `json:"node_token"`
+}
+
+func (r EnrollmentCheckRequest) Validate() error {
+	return validateEnrollmentCredential(r.ProtocolVersion, r.InstallationID, r.NodeToken)
+}
+
+type EnrollmentCheckResponse struct {
+	Claimed    bool      `json:"claimed"`
+	NodeID     string    `json:"node_id,omitempty"`
+	ServerTime time.Time `json:"server_time"`
+}
+
+func validateEnrollmentCredential(version int, installation, token string) error {
+	if version != ProtocolVersion {
+		return ErrProtocolUnsupported
+	}
+	if strings.TrimSpace(installation) == "" || len(installation) > 255 {
+		return errors.New("invalid installation identity")
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(decoded) != 32 {
+		decoded, err = hex.DecodeString(token)
+	}
+	if err != nil || len(decoded) != 32 {
+		return errors.New("node credential must contain 256 bits")
 	}
 	return nil
 }

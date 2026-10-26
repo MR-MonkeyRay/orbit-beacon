@@ -41,7 +41,7 @@ func Open(path string, options Options) (*Store, error) {
 	store := &Store{path: path, random: random}
 	current, err := load(path)
 	if err == nil {
-		store.current = current
+		store.current = current.Identity
 		return store, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
@@ -55,7 +55,7 @@ func Open(path string, options Options) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	current = Identity{InstallationID: installation, NodeToken: token}
+	current = diskIdentity{Identity: Identity{InstallationID: installation, NodeToken: token}}
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return nil, err
@@ -72,7 +72,7 @@ func Open(path string, options Options) (*Store, error) {
 			return nil, err
 		}
 	}
-	store.current = current
+	store.current = current.Identity
 	return store, nil
 }
 
@@ -96,8 +96,8 @@ func (s *Store) Reload() (Identity, error) {
 	if err != nil {
 		return Identity{}, err
 	}
-	s.current = current
-	return current, nil
+	s.current = current.Identity
+	return current.Identity, nil
 }
 
 // BeginRun publishes the next generation only after the replacement is durable.
@@ -125,39 +125,8 @@ func (s *Store) BeginRun() (Identity, error) {
 	if err := persist(s.path, current, false); err != nil {
 		return Identity{}, err
 	}
-	s.current = current
-	return current, nil
-}
-
-// StageRotation keeps the active credential until the server confirms its replacement.
-func (s *Store) StageRotation() (Identity, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	unlock, err := lockGeneration(s.path)
-	if err != nil {
-		return Identity{}, err
-	}
-	defer unlock()
-	current, err := load(s.path)
-	if err != nil {
-		return Identity{}, err
-	}
-	if current.PendingNodeToken != "" {
-		s.current = current
-		return current, nil
-	}
-	current.PendingNodeToken, err = randomID(s.random, 32)
-	if err != nil {
-		return Identity{}, err
-	}
-	if current.PendingNodeToken == current.NodeToken {
-		return Identity{}, errors.New("identity entropy repeated active credential")
-	}
-	if err := persist(s.path, current, false); err != nil {
-		return Identity{}, err
-	}
-	s.current = current
-	return current, nil
+	s.current = current.Identity
+	return current.Identity, nil
 }
 
 // ConfirmEnrollment promotes only the exact durable credential acknowledged by the server.
@@ -181,10 +150,11 @@ func (s *Store) ConfirmEnrollment(token, nodeID string) error {
 		current.PendingNodeToken = ""
 	}
 	current.NodeID = nodeID
+	pruneEnrollmentAttempts(&current)
 	if err := persist(s.path, current, false); err != nil {
 		return err
 	}
-	s.current = current
+	s.current = current.Identity
 	return nil
 }
 
@@ -231,53 +201,59 @@ func checkDirectory(path string) error {
 	return nil
 }
 
-func load(path string) (Identity, error) {
+func load(path string) (diskIdentity, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return Identity{}, err
+		return diskIdentity{}, err
 	}
 	if !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
-		return Identity{}, errors.New("identity must be a regular 0600 file, not a symlink")
+		return diskIdentity{}, errors.New("identity must be a regular 0600 file, not a symlink")
 	}
 	if err := checkDirectory(filepath.Dir(path)); err != nil {
-		return Identity{}, err
+		return diskIdentity{}, err
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return Identity{}, err
+		return diskIdentity{}, err
 	}
 	defer file.Close()
 	opened, err := file.Stat()
 	if err != nil || !os.SameFile(info, opened) {
-		return Identity{}, errors.New("identity changed while opening")
+		return diskIdentity{}, errors.New("identity changed while opening")
 	}
 	decoder := json.NewDecoder(io.LimitReader(file, 65537))
 	decoder.DisallowUnknownFields()
-	var value Identity
+	var value diskIdentity
 	if err := decoder.Decode(&value); err != nil {
-		return Identity{}, errors.New("invalid identity file")
+		return diskIdentity{}, errors.New("invalid identity file")
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		return Identity{}, errors.New("invalid identity trailing data")
+		return diskIdentity{}, errors.New("invalid identity trailing data")
 	}
 	token, err := base64.RawURLEncoding.DecodeString(value.NodeToken)
 	if err != nil || len(token) != 32 || value.InstallationID == "" || (value.RunGeneration > 0 && value.SessionID == "") {
-		return Identity{}, errors.New("invalid identity fields")
+		return diskIdentity{}, errors.New("invalid identity fields")
 	}
 	if value.PendingNodeToken != "" {
 		pending, err := base64.RawURLEncoding.DecodeString(value.PendingNodeToken)
 		if err != nil || len(pending) != 32 || value.PendingNodeToken == value.NodeToken {
-			return Identity{}, errors.New("invalid pending identity credential")
+			return diskIdentity{}, errors.New("invalid pending identity credential")
 		}
+	}
+	if err := validateEnrollmentAttempts(value); err != nil {
+		return diskIdentity{}, err
 	}
 	return value, nil
 }
 
-func persist(path string, value Identity, create bool) error {
+func persist(path string, value diskIdentity, create bool) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return err
+	}
+	if len(data) > 64*1024 {
+		return errors.New("identity state exceeds 64 KiB")
 	}
 	file, err := os.CreateTemp(filepath.Dir(path), ".identity-*")
 	if err != nil {

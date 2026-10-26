@@ -33,7 +33,7 @@ func routeMethods(p string) []string {
 		return patchMethods
 	case "/api/v1/users", "/api/v1/groups", "/api/v1/nodes":
 		return createMethods
-	case "/api/v1/nodes/batch", "/api/agent/v1/enroll", "/api/agent/v1/report", "/api/agent/v1/recover":
+	case "/api/v1/nodes/batch", "/api/agent/v1/enroll", "/api/agent/v1/enroll/check", "/api/agent/v1/report", "/api/agent/v1/recover":
 		return postMethods
 	case "/api/v1/enrollments":
 		return createMethods

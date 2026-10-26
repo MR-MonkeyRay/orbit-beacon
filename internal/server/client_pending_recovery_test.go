@@ -146,7 +146,7 @@ func TestTicketlessEnrollmentWithoutRecoverableCredentialRequiresTicket(t *testi
 				if _, err := state.BeginRun(); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := state.StageRotation(); err != nil {
+				if _, _, err := state.StageEnrollment([32]byte{1}, true); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -26,6 +26,10 @@ func TestRotationStagingFailureDoesNotSendRequestOrReplaceActiveToken(t *testing
 	var requests atomic.Int64
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
+		if r.URL.Path == "/api/agent/v1/enroll/check" {
+			_, _ = w.Write([]byte(`{"claimed":false,"server_time":"2026-10-26T12:00:00Z"}`))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"node_id":"same-node","server_time":"2026-10-26T12:00:00Z"}`))
 	}))

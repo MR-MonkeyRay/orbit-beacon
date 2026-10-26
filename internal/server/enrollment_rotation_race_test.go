@@ -43,7 +43,7 @@ func TestLateConcurrentRotationCannotRollBackNewCredential(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	releaseLate := sync.OnceFunc(func() { close(release) })
 	https := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") == "Bearer "+late.Token {
+		if r.URL.Path == "/api/agent/v1/enroll" && r.Header.Get("Authorization") == "Bearer "+late.Token {
 			close(entered)
 			select {
 			case <-release:

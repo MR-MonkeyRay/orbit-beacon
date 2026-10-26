@@ -32,7 +32,7 @@ func TestReportRecoveryPromotionPreservesConcurrentDurableRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, err := other.StageRotation()
+	pending, _, err := other.StageEnrollment([32]byte{1}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestReportDoesNotRetryWithoutDistinctCredentialOrWithoutUnauthorized(t *tes
 				t.Fatal(err)
 			}
 			if tt.pending {
-				if _, err := state.StageRotation(); err != nil {
+				if _, _, err := state.StageEnrollment([32]byte{1}, true); err != nil {
 					t.Fatal(err)
 				}
 			}

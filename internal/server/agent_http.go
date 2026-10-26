@@ -21,9 +21,22 @@ func bearer(r *http.Request) string {
 
 func (h *handler) agentRoute(w http.ResponseWriter, r *http.Request, requestID string) {
 	token := bearer(r)
-	if r.URL.Path == "/api/agent/v1/enroll" {
+	if r.URL.Path == "/api/agent/v1/enroll" || r.URL.Path == "/api/agent/v1/enroll/check" {
 		if err := h.enrollments.AdmitToken(r.Context(), token, r.RemoteAddr); err != nil {
 			h.agentError(w, err, requestID)
+			return
+		}
+		if r.URL.Path == "/api/agent/v1/enroll/check" {
+			var input v1.EnrollmentCheckRequest
+			if !decode(w, r, &input, requestID) {
+				return
+			}
+			result, err := h.enrollments.CheckClaim(r.Context(), token, input)
+			if err != nil {
+				h.agentError(w, err, requestID)
+				return
+			}
+			writeJSON(w, http.StatusOK, result)
 			return
 		}
 		var input v1.EnrollmentRequest

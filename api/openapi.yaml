@@ -607,6 +607,42 @@ paths:
                   node_id: {type: string, format: uuid}
                   server_time: {type: string, format: date-time}
         default: {$ref: '#/components/responses/Error'}
+  /api/agent/v1/enroll/check:
+    post:
+      operationId: checkAgentEnrollmentClaim
+      security: [{enrollmentBearer: []}]
+      description: Read-only receipt inspection for a missing local ticket association. Uses the same pre-body ticket admission as enrollment. One SQLite read snapshot verifies revocation, natural expiry/quota for an unclaimed ticket, and the inclusive 24-hour retry window plus exact active credential for a claimed receipt. Does not create nodes, consume tickets, rotate credentials, reset fences, refresh liveness or emit success audits. A fresh ticket returns claimed:false without a node_id; an exact active receipt returns claimed:true with its node_id. Wrong/deleted/superseded receipts conflict. Maximum body size is 64 KiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [protocol_version, installation_id, node_token]
+              properties:
+                protocol_version: {const: 1}
+                installation_id: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
+                node_token: {type: string, minLength: 43, maxLength: 43, writeOnly: true}
+      responses:
+        '200':
+          description: Receipt state; the session/node credential is never returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [claimed, server_time]
+                properties:
+                  claimed: {type: boolean}
+                  node_id: {type: string, format: uuid}
+                  server_time: {type: string, format: date-time}
+                oneOf:
+                  - properties: {claimed: {const: true}}
+                    required: [node_id]
+                  - properties: {claimed: {const: false}}
+                    not: {required: [node_id]}
+        default: {$ref: '#/components/responses/Error'}
   /api/agent/v1/recover:
     post:
       operationId: recoverAgentEnrollment

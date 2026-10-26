@@ -88,6 +88,7 @@ func TestUnsupportedMethodsPrecedeAuthenticationAuthorizationAndCSRF(t *testing.
 		{"/api/v1/nodes/" + id, []string{http.MethodGet, http.MethodPatch, http.MethodDelete}},
 		{"/api/v1/nodes/" + id + "/config", []string{http.MethodGet, http.MethodPatch}},
 		{"/api/v1/nodes/batch", []string{http.MethodPost}},
+		{"/api/agent/v1/enroll/check", []string{http.MethodPost}},
 		{"/api/v1/enrollments", []string{http.MethodPost}},
 	} {
 		t.Run(route.path, func(t *testing.T) {

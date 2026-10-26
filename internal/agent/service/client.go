@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -131,20 +132,55 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 			return v1.EnrollmentResponse{}, errors.New("enrollment ticket is required; saved node credentials were not accepted")
 		}
 	}
-	if state.NodeID != "" || state.PendingNodeToken != "" {
-		state, err = c.identity.StageRotation()
+	ticket := sha256.Sum256([]byte(token))
+	state, operation, exists, err := c.identity.LookupEnrollment(ticket)
+	if err != nil {
+		return v1.EnrollmentResponse{}, err
+	}
+	if !exists {
+		// Older identities may have promoted a committed candidate via reporting
+		// before this ticket's response arrived. Inspect its receipt without
+		// consuming a fresh ticket or staging another candidate.
+		credential := state.NodeToken
+		if state.PendingNodeToken != "" {
+			credential = state.PendingNodeToken
+		}
+		var checked v1.EnrollmentCheckResponse
+		check := v1.EnrollmentCheckRequest{ProtocolVersion: 1, InstallationID: state.InstallationID, NodeToken: credential}
+		err := c.post(ctx, "/api/agent/v1/enroll/check", token, check, &checked)
+		var conflict *HTTPError
+		if credential != state.NodeToken && errors.As(err, &conflict) && conflict.StatusCode == http.StatusConflict {
+			// A different uncommitted pending candidate must not hide an active
+			// receipt in a legacy file. Both reads are side-effect-free.
+			credential = state.NodeToken
+			check.NodeToken = credential
+			checked = v1.EnrollmentCheckResponse{}
+			err = c.post(ctx, "/api/agent/v1/enroll/check", token, check, &checked)
+		}
+		if err != nil {
+			return v1.EnrollmentResponse{}, err
+		}
+		if checked.ServerTime.IsZero() || (checked.Claimed && checked.NodeID == "") || (!checked.Claimed && checked.NodeID != "") {
+			return v1.EnrollmentResponse{}, errors.New("invalid enrollment receipt response")
+		}
+		if checked.Claimed {
+			if state.NodeID != "" && state.NodeID != checked.NodeID {
+				return v1.EnrollmentResponse{}, errors.New("enrollment receipt does not match durable node")
+			}
+			if _, _, err := c.identity.RememberEnrollment(ticket, credential); err != nil {
+				return v1.EnrollmentResponse{}, err
+			}
+			if err := c.identity.ConfirmEnrollment(credential, checked.NodeID); err != nil {
+				return v1.EnrollmentResponse{}, err
+			}
+			return v1.EnrollmentResponse{NodeID: checked.NodeID, ServerTime: checked.ServerTime}, nil
+		}
+		state, operation, err = c.identity.StageEnrollment(ticket, state.NodeID != "")
 		if err != nil {
 			return v1.EnrollmentResponse{}, err
 		}
 	}
-	credential := state.NodeToken
-	if state.PendingNodeToken != "" {
-		credential = state.PendingNodeToken
-	}
-	request := v1.EnrollmentRequest{ProtocolVersion: 1, InstallationID: state.InstallationID, NodeToken: credential, System: c.system}
-	if state.PendingNodeToken != "" {
-		request.PreviousNodeToken = state.NodeToken
-	}
+	request := v1.EnrollmentRequest{ProtocolVersion: 1, InstallationID: state.InstallationID, NodeToken: operation.NodeToken, PreviousNodeToken: operation.PreviousNodeToken, System: c.system}
 	var response v1.EnrollmentResponse
 	if err := c.post(ctx, "/api/agent/v1/enroll", token, request, &response); err != nil {
 		return v1.EnrollmentResponse{}, err
@@ -152,7 +188,7 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 	if response.NodeID == "" {
 		return v1.EnrollmentResponse{}, errors.New("invalid enrollment response")
 	}
-	if err := c.identity.ConfirmEnrollment(credential, response.NodeID); err != nil {
+	if err := c.identity.ConfirmEnrollment(operation.NodeToken, response.NodeID); err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
 	return response, nil
