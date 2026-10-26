@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/agent/service"
+	"orbitbeacon/internal/buildinfo"
 	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
@@ -65,13 +66,10 @@ func run(args []string) error {
 	}
 	if args[0] == "version" {
 		if asJSON {
-			return json.NewEncoder(os.Stdout).Encode(struct {
-				Version string `json:"version"`
-				OS      string `json:"os"`
-				Arch    string `json:"arch"`
-			}{Version: "development", OS: runtime.GOOS, Arch: runtime.GOARCH})
+			return json.NewEncoder(os.Stdout).Encode(buildinfo.Current())
 		}
-		fmt.Fprintf(os.Stdout, "OrbitBeacon agent development (%s/%s)\n", runtime.GOOS, runtime.GOARCH)
+		info := buildinfo.Current()
+		fmt.Fprintf(os.Stdout, "OrbitBeacon agent %s (%s/%s, commit %s, built %s, %s)\n", info.Version, info.OS, info.Arch, info.Commit, info.BuildDate, info.GoVersion)
 		return nil
 	}
 	if args[0] == "update" && targetVersion == "" {

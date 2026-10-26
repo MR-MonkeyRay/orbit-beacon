@@ -13,6 +13,16 @@ mkdir -m 700 data
 bin/orbitbeacon-server bootstrap --data-dir ./data --username admin
 ```
 
+Release builds inject `version`, `commit` and `build_date` into both binaries with linker flags:
+
+```sh
+LDFLAGS="-X orbitbeacon/internal/buildinfo.Version=${VERSION} -X orbitbeacon/internal/buildinfo.Commit=${COMMIT} -X orbitbeacon/internal/buildinfo.BuildDate=${BUILD_DATE}"
+GOTOOLCHAIN=go1.27.3 go build -trimpath -ldflags "$LDFLAGS" -o bin/orbitbeacon-server ./cmd/orbitbeacon-server
+GOTOOLCHAIN=go1.27.3 go build -trimpath -ldflags "$LDFLAGS" -o bin/orbitbeacon-agent ./cmd/orbitbeacon-agent
+```
+
+`orbitbeacon-server version --json` and `orbitbeacon-agent version --json` expose the same injected values plus the Go toolchain and target OS/architecture. Uninjected development binaries report explicit `development`/`unknown` values instead of pretending to be a release.
+
 Bootstrap prompts for a password (hidden on a terminal). For automation, pass the password as one line on standard input, never a command-line flag. If `--username` is omitted, the first input line is the username. Passwords must be 8–1024 bytes. Bootstrap refuses to replace any existing administrator; there is no HTTP bootstrap endpoint.
 
 Create a local `server.json`:
@@ -109,6 +119,7 @@ orbitbeacon-server serve --config FILE [--data-dir DIR] [--listen-addr ADDR] [--
 orbitbeacon-server bootstrap --data-dir DIR [--username USER]
 orbitbeacon-server backup --config FILE --output FILE
 orbitbeacon-server restore --data-dir DIR --input FILE
+orbitbeacon-server version [--json]
 
 orbitbeacon-agent version [--json]
 orbitbeacon-agent run --config FILE --install-policy FILE

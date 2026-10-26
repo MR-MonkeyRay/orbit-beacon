@@ -36,6 +36,7 @@ var allowedInternalImports = map[string]map[string]bool{
 	"orbitbeacon/internal/identity":    {},
 	"orbitbeacon/internal/protocol/v1": {},
 	"orbitbeacon/internal/timekey":     {},
+	"orbitbeacon/internal/buildinfo":   {},
 	"orbitbeacon/internal/server": {
 		"orbitbeacon/internal/config":            true,
 		"orbitbeacon/internal/identity":          true,

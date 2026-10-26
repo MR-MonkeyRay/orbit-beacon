@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 	"golang.org/x/term"
 
+	"orbitbeacon/internal/buildinfo"
 	"orbitbeacon/internal/config"
 	"orbitbeacon/internal/server"
 	"orbitbeacon/internal/server/auth"
@@ -34,16 +36,19 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("expected subcommand: serve, bootstrap, backup, restore")
+		return errors.New("expected subcommand: serve, bootstrap, backup, restore or version")
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stdout, "Usage: orbitbeacon-server {serve|bootstrap|backup|restore} --help")
+		fmt.Fprintln(os.Stdout, "Usage: orbitbeacon-server {serve|bootstrap|backup|restore|version} --help")
 		return nil
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	var configPath, dataDir, output, input, username string
-	fs.StringVar(&configPath, "config", "", "JSON configuration file")
-	fs.StringVar(&dataDir, "data-dir", "", "persistent local data directory")
+	var asJSON bool
+	if args[0] != "version" {
+		fs.StringVar(&configPath, "config", "", "JSON configuration file")
+		fs.StringVar(&dataDir, "data-dir", "", "persistent local data directory")
+	}
 	switch args[0] {
 	case "serve":
 		fs.String("listen-addr", "", "HTTP listen address (default 127.0.0.1:8080)")
@@ -58,8 +63,10 @@ func run(args []string) error {
 		fs.StringVar(&output, "output", "", "destination backup archive")
 	case "restore":
 		fs.StringVar(&input, "input", "", "source backup archive")
+	case "version":
+		fs.BoolVar(&asJSON, "json", false, "print machine-readable build information")
 	default:
-		return fmt.Errorf("unknown subcommand %q; expected serve, bootstrap, backup or restore", args[0])
+		return fmt.Errorf("unknown subcommand %q; expected serve, bootstrap, backup, restore or version", args[0])
 	}
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -69,6 +76,14 @@ func run(args []string) error {
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected positional argument %q", fs.Arg(0))
+	}
+	if args[0] == "version" {
+		info := buildinfo.Current()
+		if asJSON {
+			return json.NewEncoder(os.Stdout).Encode(info)
+		}
+		fmt.Fprintf(os.Stdout, "OrbitBeacon server %s (%s/%s, commit %s, built %s, %s)\n", info.Version, info.OS, info.Arch, info.Commit, info.BuildDate, info.GoVersion)
+		return nil
 	}
 	if args[0] == "backup" {
 		if output == "" {
