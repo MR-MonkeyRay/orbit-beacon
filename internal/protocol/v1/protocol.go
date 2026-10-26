@@ -350,8 +350,11 @@ func (r Report) Validate() error {
 	if r.ProtocolVersion != ProtocolVersion {
 		return ErrProtocolUnsupported
 	}
-	if r.RunGeneration == 0 || r.Seq == 0 || strings.TrimSpace(r.SessionID) == "" || len(r.SessionID) > 255 || r.SampledAt.IsZero() || r.ConfigRevision < 0 {
+	if r.RunGeneration == 0 || r.Seq == 0 || strings.TrimSpace(r.SessionID) == "" || len(r.SessionID) > 255 || r.SampledAt.IsZero() || r.ConfigRevision < 1 {
 		return errors.New("invalid report identity, time or revision")
+	}
+	if len(r.ProbeResults) != 0 {
+		return errors.New("probe results are not supported by this protocol slice")
 	}
 	if r.System != nil {
 		if err := r.System.Validate(); err != nil {

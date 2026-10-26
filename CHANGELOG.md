@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reject missing/nonpositive report configuration revisions and unimplemented nonempty probe results before updating node ownership, liveness, acknowledgements or latest state.
 - Reject empty and explicit-null desired configuration patches, retain strict unknown-field decoding, and keep unchanged configuration retries revision/audit-idempotent.
 - Admit login work before database/hash computation with bounded direct-peer and peer/username token buckets; bound password-work waiters and queue duration, preserve independent peers/accounts, and return retryable overload without a global failed-password lockout.
 - Enforce a secure, stable, nonblocking data-directory lifecycle lock before server/bootstrap storage access; reject concurrent owners and release ownership on close or process termination.
