@@ -221,7 +221,7 @@ func validStatus(status string) bool {
 }
 
 func (m Metrics) Validate() error {
-	if len(m.MetricStatus) != 9+len(m.Disks)+len(m.Networks) || len(m.Sources) != 5+len(m.Disks)+len(m.Networks) {
+	if len(m.MetricStatus) != len(metricStatusFields)+len(m.Disks)+len(m.Networks) || len(m.Sources) != len(sourceFamilies)+len(m.Disks)+len(m.Networks) {
 		return errors.New("metric statuses and sources must match the reported fields and series exactly")
 	}
 	checkSource := func(key string) error {
@@ -237,7 +237,7 @@ func (m Metrics) Validate() error {
 		}
 		return nil
 	}
-	for _, key := range [...]string{"cpu", "load", "memory", "swap", "uptime"} {
+	for _, key := range sourceFamilies {
 		if err := checkSource(key); err != nil {
 			return err
 		}
@@ -261,8 +261,8 @@ func (m Metrics) Validate() error {
 		return nil
 	}
 	for field, value := range map[string]*float64{
-		"cpu_percent": m.CPUPercent, "load1": m.Load1, "load5": m.Load5,
-		"load15": m.Load15, "uptime_seconds": m.UptimeSeconds,
+		MetricCPUPercent: m.CPUPercent, MetricLoad1: m.Load1, MetricLoad5: m.Load5,
+		MetricLoad15: m.Load15, MetricUptimeSeconds: m.UptimeSeconds,
 	} {
 		if err := checkFloat(field, value); err != nil {
 			return err
@@ -272,8 +272,8 @@ func (m Metrics) Validate() error {
 		return errors.New("cpu percentage exceeds 100")
 	}
 	for field, value := range map[string]*uint64{
-		"memory_total_bytes": m.MemoryTotalBytes, "memory_available_bytes": m.MemoryAvailableBytes,
-		"swap_total_bytes": m.SwapTotalBytes, "swap_used_bytes": m.SwapUsedBytes,
+		MetricMemoryTotalBytes: m.MemoryTotalBytes, MetricMemoryAvailableBytes: m.MemoryAvailableBytes,
+		MetricSwapTotalBytes: m.SwapTotalBytes, MetricSwapUsedBytes: m.SwapUsedBytes,
 	} {
 		if err := checkMissing(field, value == nil); err != nil {
 			return err
@@ -294,10 +294,10 @@ func (m Metrics) Validate() error {
 			return errors.New("invalid or duplicate disk path")
 		}
 		disks[disk.Path] = true
-		if err := checkSource("disk:" + disk.Path); err != nil {
+		if err := checkSource(DiskMetricKey(disk.Path)); err != nil {
 			return err
 		}
-		if err := checkMissing("disk:"+disk.Path, disk.TotalBytes == nil || disk.UsedBytes == nil); err != nil {
+		if err := checkMissing(DiskMetricKey(disk.Path), disk.TotalBytes == nil || disk.UsedBytes == nil); err != nil {
 			return err
 		}
 		if disk.TotalBytes != nil && disk.UsedBytes != nil && *disk.UsedBytes > *disk.TotalBytes {
@@ -313,11 +313,11 @@ func (m Metrics) Validate() error {
 			return errors.New("invalid or duplicate interface")
 		}
 		networks[network.Name] = true
-		if err := checkSource("network:" + network.Name); err != nil {
+		if err := checkSource(NetworkMetricKey(network.Name)); err != nil {
 			return err
 		}
 		for _, value := range []*float64{network.RxBytesPerSec, network.TxBytesPerSec} {
-			if err := checkFloat("network:"+network.Name, value); err != nil {
+			if err := checkFloat(NetworkMetricKey(network.Name), value); err != nil {
 				return err
 			}
 		}

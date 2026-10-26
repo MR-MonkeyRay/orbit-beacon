@@ -148,8 +148,8 @@ func (c *Collector) Collect(parent context.Context) (v1.Metrics, error) {
 	m := v1.Metrics{
 		Disks:        make([]v1.DiskMetrics, 0, 8),
 		Networks:     make([]v1.NetworkMetrics, 0, 8),
-		MetricStatus: make(map[string]string, 26),
-		Sources:      make(map[string]v1.SourceMetadata, 21),
+		MetricStatus: make(map[string]string, len(v1.MetricStatusFields())+16),
+		Sources:      make(map[string]v1.SourceMetadata, len(v1.SourceFamilies())+16),
 	}
 	c.collectCPU(ctx, &m)
 	c.collectLoad(ctx, &m)
@@ -169,7 +169,7 @@ func (c *Collector) finalizeSnapshot(m *v1.Metrics, snapshotAt time.Time) {
 		}
 	}
 	for index, disk := range m.Disks {
-		key := "disk:" + disk.Path
+		key := v1.DiskMetricKey(disk.Path)
 		source := m.Sources[key]
 		if !source.Fresh() {
 			m.MetricStatus[key] = "stale"
@@ -177,7 +177,7 @@ func (c *Collector) finalizeSnapshot(m *v1.Metrics, snapshotAt time.Time) {
 		}
 	}
 	for index, network := range m.Networks {
-		key := "network:" + network.Name
+		key := v1.NetworkMetricKey(network.Name)
 		source := m.Sources[key]
 		if !source.Fresh() {
 			m.MetricStatus[key] = "stale"
@@ -238,13 +238,13 @@ func (c *Collector) collectCPU(ctx context.Context, m *v1.Metrics) {
 	var times []cpu.TimesStat
 	err := checked(ctx, func() (err error) { times, err = cpu.TimesWithContext(ctx, false); return err })
 	at := time.Now()
-	source := c.source("cpu", at, c.baseInterval())
+	source := c.source(v1.SourceCPU, at, c.baseInterval())
 	window := int64(0)
 	source.MeasurementWindowMS = &window
-	m.MetricStatus["cpu_percent"] = "stale"
+	m.MetricStatus[v1.MetricCPUPercent] = "stale"
 	if err != nil || len(times) != 1 {
 		c.cpuReady = false
-		m.MetricStatus["cpu_percent"] = failureStatus(err)
+		m.MetricStatus[v1.MetricCPUPercent] = failureStatus(err)
 	} else {
 		current := times[0]
 		if c.cpuReady {
@@ -256,13 +256,13 @@ func (c *Collector) collectCPU(ctx context.Context, m *v1.Metrics) {
 				percent := 100 * (busyDelta / totalDelta)
 				if !math.IsNaN(percent) && !math.IsInf(percent, 0) {
 					m.CPUPercent = &percent
-					m.MetricStatus["cpu_percent"] = "ok"
+					m.MetricStatus[v1.MetricCPUPercent] = "ok"
 				}
 			}
 		}
 		c.cpuPrevious, c.cpuAt, c.cpuReady = current, at, true
 	}
-	m.Sources["cpu"] = source
+	m.Sources[v1.SourceCPU] = source
 }
 
 func cpuTimes(t cpu.TimesStat) (total, busy float64) {
@@ -305,10 +305,10 @@ func (c *Collector) collectLoad(ctx context.Context, m *v1.Metrics) {
 	} else {
 		m.Load1, m.Load5, m.Load15 = &value.one, &value.five, &value.fifteen
 	}
-	for _, key := range []string{"load1", "load5", "load15"} {
+	for _, key := range []string{v1.MetricLoad1, v1.MetricLoad5, v1.MetricLoad15} {
 		m.MetricStatus[key] = status
 	}
-	m.Sources["load"] = c.source("load", time.Now(), c.baseInterval())
+	m.Sources[v1.SourceLoad] = c.source(v1.SourceLoad, time.Now(), c.baseInterval())
 }
 
 func (c *Collector) collectMemory(ctx context.Context, m *v1.Metrics) {
@@ -320,8 +320,8 @@ func (c *Collector) collectMemory(ctx context.Context, m *v1.Metrics) {
 	} else {
 		m.MemoryTotalBytes, m.MemoryAvailableBytes = &memory.Total, &memory.Available
 	}
-	m.MetricStatus["memory_total_bytes"], m.MetricStatus["memory_available_bytes"] = status, status
-	m.Sources["memory"] = c.source("memory", time.Now(), c.baseInterval())
+	m.MetricStatus[v1.MetricMemoryTotalBytes], m.MetricStatus[v1.MetricMemoryAvailableBytes] = status, status
+	m.Sources[v1.SourceMemory] = c.source(v1.SourceMemory, time.Now(), c.baseInterval())
 	var swap *mem.SwapMemoryStat
 	err = checked(ctx, func() (err error) { swap, err = mem.SwapMemoryWithContext(ctx); return err })
 	status = "ok"
@@ -330,8 +330,8 @@ func (c *Collector) collectMemory(ctx context.Context, m *v1.Metrics) {
 	} else {
 		m.SwapTotalBytes, m.SwapUsedBytes = &swap.Total, &swap.Used
 	}
-	m.MetricStatus["swap_total_bytes"], m.MetricStatus["swap_used_bytes"] = status, status
-	m.Sources["swap"] = c.source("swap", time.Now(), c.baseInterval())
+	m.MetricStatus[v1.MetricSwapTotalBytes], m.MetricStatus[v1.MetricSwapUsedBytes] = status, status
+	m.Sources[v1.SourceSwap] = c.source(v1.SourceSwap, time.Now(), c.baseInterval())
 }
 
 func (c *Collector) collectUptime(ctx context.Context, m *v1.Metrics) {
@@ -340,13 +340,13 @@ func (c *Collector) collectUptime(ctx context.Context, m *v1.Metrics) {
 		uptime, err = uptimeValue(ctx)
 		return err
 	})
-	m.MetricStatus["uptime_seconds"] = "ok"
+	m.MetricStatus[v1.MetricUptimeSeconds] = "ok"
 	if err != nil {
-		m.MetricStatus["uptime_seconds"] = failureStatus(err)
+		m.MetricStatus[v1.MetricUptimeSeconds] = failureStatus(err)
 	} else {
 		m.UptimeSeconds = &uptime
 	}
-	m.Sources["uptime"] = c.source("uptime", time.Now(), c.baseInterval())
+	m.Sources[v1.SourceUptime] = c.source(v1.SourceUptime, time.Now(), c.baseInterval())
 }
 
 func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
@@ -358,8 +358,9 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 			c.autoInterface = ""
 			c.networks = nil
 			m.Networks = append(m.Networks, v1.NetworkMetrics{Name: "default"})
-			m.MetricStatus["network:default"] = failureStatus(err)
-			m.Sources["network:default"] = c.source("network:default", time.Now(), c.networkInterval())
+			networkKey := v1.NetworkMetricKey("default")
+			m.MetricStatus[networkKey] = failureStatus(err)
+			m.Sources[networkKey] = c.source(networkKey, time.Now(), c.networkInterval())
 			return
 		}
 		if c.autoInterface != name {
@@ -379,7 +380,8 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 		c.networkAt = at
 		c.networks = make(map[string]networkSample, len(names))
 		for _, name := range names {
-			observation := NetworkObservation{Network: v1.NetworkMetrics{Name: name}, Status: "unsupported", Source: c.source("network:"+name, at, c.networkInterval())}
+			networkKey := v1.NetworkMetricKey(name)
+			observation := NetworkObservation{Network: v1.NetworkMetrics{Name: name}, Status: "unsupported", Source: c.source(networkKey, at, c.networkInterval())}
 			if err != nil {
 				observation.Status = failureStatus(err)
 				c.rates.forget(name)
@@ -405,12 +407,13 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 			// A changed automatic route needs its own baseline, never the old
 			// interface's cached rate.
 			m.Networks = append(m.Networks, v1.NetworkMetrics{Name: name})
-			m.MetricStatus["network:"+name] = "stale"
-			m.Sources["network:"+name] = c.source("network:"+name, time.Now(), c.networkInterval())
+			networkKey := v1.NetworkMetricKey(name)
+			m.MetricStatus[networkKey] = "stale"
+			m.Sources[networkKey] = c.source(networkKey, time.Now(), c.networkInterval())
 			continue
 		}
 		observation := sample.observation
-		key := "network:" + name
+		key := v1.NetworkMetricKey(name)
 		c.sourceAt[key] = sample.at
 		m.Networks = append(m.Networks, observation.Network)
 		m.MetricStatus[key], m.Sources[key] = observation.Status, observation.Source

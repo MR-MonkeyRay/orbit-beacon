@@ -94,9 +94,9 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 			}
 			if collectErr != nil {
 				if metrics.MetricStatus == nil {
-					metrics.MetricStatus = make(map[string]string, 9)
+					metrics.MetricStatus = make(map[string]string, len(v1.MetricStatusFields()))
 				}
-				for _, field := range []string{"cpu_percent", "load1", "load5", "load15", "memory_total_bytes", "memory_available_bytes", "swap_total_bytes", "swap_used_bytes", "uptime_seconds"} {
+				for _, field := range v1.MetricStatusFields() {
 					if metrics.MetricStatus[field] == "" {
 						metrics.MetricStatus[field] = "error"
 					}

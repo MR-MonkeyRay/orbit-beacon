@@ -94,6 +94,8 @@ All persisted wall-clock timestamps use UTC RFC3339 with fixed 9-digit nanosecon
 
 The agent's network rate baselines use eight fixed slots, matching the protocol's maximum network series; interface replacement evicts the oldest slot instead of growing a map or retaining stale interface state.
 
+The metric wire contract is defined once in `internal/protocol/v1`: scalar status fields, five base source families, and `disk:<path>`/`network:<name>` series-key constructors are reused by validation, collection and scheduler error completion.
+
 SQLite `BUSY`/`LOCKED` contention, including extended result codes, returns `503 storage_busy` with `Retry-After: 1`; the failed transaction is not acknowledged as a success. Node batches retain per-node results and use `error_code:"storage_busy"` for retryable members. Constraint, corruption, I/O and disk-full errors are not reclassified as contention merely because of their text.
 
 `modernc.org/sqlite` is pinned to **v1.61.0**, not the plan's v1.61.1: v1.61.1 was unavailable when the dependency was resolved. The available v1.61.0 requires Go 1.26 and is compatible with the required Go 1.27.3 toolchain.
