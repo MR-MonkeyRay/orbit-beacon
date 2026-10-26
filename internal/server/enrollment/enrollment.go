@@ -280,9 +280,10 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 	// never creates another asset and remains valid through the inclusive 24h edge.
 	var claimNodeID, claimed string
 	var claimHash []byte
-	err = tx.QueryRowContext(ctx, `SELECT node_id, token_hash, claimed_at FROM enrollment_claims WHERE enrollment_id = ? AND installation_id = ?`, ticket.ID, req.InstallationID).Scan(&claimNodeID, &claimHash, &claimed)
+	var nodeExists bool
+	err = tx.QueryRowContext(ctx, `SELECT node_id, token_hash, claimed_at, EXISTS(SELECT 1 FROM nodes WHERE id = enrollment_claims.node_id) FROM enrollment_claims WHERE enrollment_id = ? AND installation_id = ?`, ticket.ID, req.InstallationID).Scan(&claimNodeID, &claimHash, &claimed, &nodeExists)
 	if err == nil {
-		if subtle.ConstantTimeCompare(claimHash, nodeHash[:]) != 1 {
+		if !nodeExists || subtle.ConstantTimeCompare(claimHash, nodeHash[:]) != 1 {
 			return v1.EnrollmentResponse{}, ErrConflict
 		}
 		claimedAt, err := time.Parse(time.RFC3339Nano, claimed)

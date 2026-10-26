@@ -65,7 +65,7 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
-	if err := Migrate(ctx, db, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}}); err != nil {
+	if err := Migrate(ctx, db, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}}); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -166,4 +166,16 @@ ALTER TABLE nodes ADD COLUMN run_generation TEXT NOT NULL DEFAULT '0';
 ALTER TABLE nodes ADD COLUMN report_session_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE nodes ADD COLUMN config_error TEXT NOT NULL DEFAULT '';
 CREATE UNIQUE INDEX nodes_installation_identity ON nodes(installation_id) WHERE installation_id IS NOT NULL;
+`
+
+// Receipts outlive asset deletion so an exact batch retry cannot recreate it.
+const enrollmentTombstoneSchema = `
+CREATE TABLE enrollment_claims_retained (
+ enrollment_id TEXT NOT NULL REFERENCES enrollment_tokens(id) ON DELETE CASCADE,
+ installation_id TEXT NOT NULL, node_id TEXT NOT NULL,
+ token_hash BLOB NOT NULL, claimed_at TEXT NOT NULL, PRIMARY KEY(enrollment_id,installation_id)
+);
+INSERT INTO enrollment_claims_retained SELECT enrollment_id, installation_id, node_id, token_hash, claimed_at FROM enrollment_claims;
+DROP TABLE enrollment_claims;
+ALTER TABLE enrollment_claims_retained RENAME TO enrollment_claims;
 `

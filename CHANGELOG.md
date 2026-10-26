@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Preserve batch enrollment receipts across asset deletion and reject deleted-asset retries without reactivating credentials or consuming quota; migrate existing receipts transactionally.
 - Finish step-2 review repairs: reject renameable/untrusted storage ancestry before SQLite creation, scope report fencing to rotated credentials, persist missing node bindings after direct successful reports, serialize configuration revisions across agent processes, and terminate superseded reporting processes.
 - Include underscore-prefixed embedded UI assets so the real login script is served; correct stale capability notices without introducing the later monitoring UI.
 - Verify local-CA HTTPS bootstrap/enroll/doctor/run, configuration acknowledgement, ticketless recovery, live credential rotation, superseded-process exit and root runtime rejection with real binaries; exercise login, pending-node creation and configuration in the existing Docker Chromium at desktop/mobile widths. Full Go tests, vet and server/agent race checks pass. These checks do not certify host-container scope, default UID 1000, or the platform/resource matrix.

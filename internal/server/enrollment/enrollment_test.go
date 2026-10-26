@@ -301,3 +301,40 @@ func TestBatchCapacityIsTransactionalAndDisabledNodesCount(t *testing.T) {
 		t.Fatalf("not atomic: accepted=%d full=%d nodes=%d uses=%d claims=%d", accepted, full, count, uses, claims)
 	}
 }
+
+func TestDeletedBatchClaimCannotRecreateNode(t *testing.T) {
+	s, n, db, _ := setup(t, 3)
+	ctx := context.Background()
+	if _, err := db.Exec("INSERT INTO groups(id,name) VALUES('g','g')"); err != nil {
+		t.Fatal(err)
+	}
+	ticket, err := s.CreateBatch(ctx, "g")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := claim("deleted-installation", 1)
+	first, err := s.Enroll(ctx, ticket.Token, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Delete(ctx, first.NodeID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Enroll(ctx, ticket.Token, request); !errors.Is(err, enrollment.ErrConflict) {
+		t.Fatalf("deleted claim retry = %v, want identity conflict", err)
+	}
+	if _, err := n.AuthenticateToken(ctx, request.NodeToken); !errors.Is(err, nodes.ErrUnauthenticated) {
+		t.Fatalf("deleted credential = %v, want unauthenticated", err)
+	}
+	read, err := s.Get(ctx, ticket.ID)
+	if err != nil || read.Uses != 1 {
+		t.Fatalf("deleted retry consumed quota: %+v %v", read, err)
+	}
+	if _, err := s.Enroll(ctx, ticket.Token, claim("other-installation", 2)); err != nil {
+		t.Fatalf("other installation blocked: %v", err)
+	}
+	var count int
+	if err := db.QueryRow("SELECT count(*) FROM nodes").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("nodes=%d err=%v, want only the other installation", count, err)
+	}
+}
