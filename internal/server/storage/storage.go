@@ -64,7 +64,7 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
-	if err := Migrate(ctx, db, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}, {Version: 5, Apply: repairReportSelections}}); err != nil {
+	if err := Migrate(ctx, db, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}, {Version: 5, Apply: repairReportSelections}, {Version: 6, SQL: recoverableCSRFSchema}}); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -185,3 +185,5 @@ INSERT INTO enrollment_claims_retained SELECT enrollment_id, installation_id, no
 DROP TABLE enrollment_claims;
 ALTER TABLE enrollment_claims_retained RENAME TO enrollment_claims;
 `
+
+const recoverableCSRFSchema = `ALTER TABLE sessions DROP COLUMN csrf_hash;`

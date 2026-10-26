@@ -56,13 +56,7 @@ paths:
           description: Session established; Set-Cookie is __Host-orbitbeacon_session with Secure, HttpOnly, SameSite=Lax, Path=/ and a 12-hour expiry.
           content:
             application/json:
-              schema:
-                type: object
-                required: [csrf_token, expires_at, user]
-                properties:
-                  csrf_token: {type: string}
-                  expires_at: {type: string, format: date-time}
-                  user: {$ref: '#/components/schemas/User'}
+              schema: {$ref: '#/components/schemas/BrowserSession'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -78,13 +72,13 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /api/v1/me:
     get:
-      operationId: currentUser
+      operationId: currentSession
       responses:
         '200':
-          description: Current user, with no credential fields.
+          description: Current authenticated session and stable CSRF token, recoverable in a new tab without rotating another tab's token. No session bearer credential is exposed.
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/User'}
+              schema: {$ref: '#/components/schemas/BrowserSession'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/me/password:
     patch:
@@ -672,7 +666,7 @@ components:
       in: header
       required: true
       schema: {type: string}
-      description: Token returned by this session's login.
+      description: Stable token returned by this session's login or GET /api/v1/me.
     NodeID:
       name: id
       in: path
@@ -732,6 +726,17 @@ components:
         fields:
           type: object
           additionalProperties: {type: string}
+    BrowserSession:
+      type: object
+      additionalProperties: false
+      required: [csrf_token, expires_at, user]
+      properties:
+        csrf_token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: Session-bound CSRF proof; not a session authentication credential.
+        expires_at: {type: string, format: date-time}
+        user: {$ref: '#/components/schemas/User'}
     User:
       type: object
       additionalProperties: false

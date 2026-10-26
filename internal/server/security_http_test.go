@@ -160,8 +160,8 @@ func TestAuthenticatedIndexAccessReclaimsExpiredSessions(t *testing.T) {
 	f := newHTTP(t, 2)
 	cookie, _ := login(t, f, "admin")
 	for i := range 2 {
-		if _, err := f.db.Exec(`INSERT INTO sessions(token_hash,user_id,csrf_hash,expires_at)
-			SELECT ?,id,?,0 FROM users WHERE username = 'admin'`, []byte{byte(i + 1)}, []byte{byte(i + 1)}); err != nil {
+		if _, err := f.db.Exec(`INSERT INTO sessions(token_hash,user_id,expires_at)
+			SELECT ?,id,0 FROM users WHERE username = 'admin'`, []byte{byte(i + 1)}); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -307,12 +307,12 @@ func TestSuccessfulLoginReclaimsExpiredSessionsAndPreservesActiveSessions(t *tes
 		if i%2 == 0 {
 			owner = viewer.ID
 		}
-		if _, err := db.ExecContext(ctx, "INSERT INTO sessions(token_hash,user_id,csrf_hash,expires_at) VALUES (?,?,?,?)", digest[:], owner, digest[:], now.Add(-time.Hour).UnixNano()); err != nil {
+		if _, err := db.ExecContext(ctx, "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES (?,?,?)", digest[:], owner, now.Add(-time.Hour).UnixNano()); err != nil {
 			t.Fatal(err)
 		}
 	}
 	boundary := sha256.Sum256([]byte("expires-exactly-now"))
-	if _, err := db.ExecContext(ctx, "INSERT INTO sessions(token_hash,user_id,csrf_hash,expires_at) VALUES (?,?,?,?)", boundary[:], admin.ID, boundary[:], now.UnixNano()); err != nil {
+	if _, err := db.ExecContext(ctx, "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES (?,?,?)", boundary[:], admin.ID, now.UnixNano()); err != nil {
 		t.Fatal(err)
 	}
 	// Repeated successful logins must drain even a backlog larger than one batch.

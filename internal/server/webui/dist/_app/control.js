@@ -2,7 +2,7 @@
 
 const content = document.getElementById('content');
 const message = document.getElementById('message');
-let csrf = sessionStorage.getItem('orbitbeacon.csrf') || '';
+let csrf = '';
 
 async function api(path, options = {}) {
   const headers = {'Content-Type': 'application/json', ...options.headers};
@@ -77,7 +77,6 @@ function mutation(form, title, action) {
 
 function relogin() {
   csrf = '';
-  sessionStorage.removeItem('orbitbeacon.csrf');
   location.assign('/login');
 }
 
@@ -255,15 +254,16 @@ async function render() {
       const button = form.querySelector('button');
       button.disabled = true;
       try {
-        const result = await api('/session', {method: 'POST', body: JSON.stringify({username: form.username.value, password: form.password.value})});
+        await api('/session', {method: 'POST', body: JSON.stringify({username: form.username.value, password: form.password.value})});
         form.password.value = '';
-        sessionStorage.setItem('orbitbeacon.csrf', result.csrf_token);
         location.assign('/overview');
       } catch (error) { showError(error); } finally { form.password.value = ''; button.disabled = false; }
     });
     return;
   }
-  const user = await api('/me');
+  const session = await api('/me');
+  csrf = session.csrf_token;
+  const user = session.user;
   const section = document.createElement('section');
   content.replaceChildren(section);
   section.append(text('p', `Signed in as ${user.username} (${user.role})`));
@@ -275,7 +275,6 @@ async function render() {
     } catch (error) { showError(error); }
   });
   section.append(logout);
-  if (!csrf) section.append(text('p', 'Sign in again in this tab to enable changes.'));
   if (location.pathname === '/nodes' || location.pathname === '/overview') {
     const result = await api('/nodes?limit=100');
     const panel = document.createElement('section');

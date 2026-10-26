@@ -217,6 +217,15 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 		fail(w, http.StatusUnauthorized, "unauthenticated", "A valid session is required", requestID)
 		return
 	}
+	if p == "/api/v1/me" {
+		session, err := h.auth.CurrentSession(r.Context(), c.Value)
+		if err != nil {
+			h.serviceError(w, err, requestID)
+			return
+		}
+		writeJSON(w, http.StatusOK, session)
+		return
+	}
 	user, err := h.auth.Authenticate(r.Context(), c.Value)
 	if err != nil {
 		h.serviceError(w, err, requestID)
@@ -257,8 +266,6 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 		}
 		http.SetCookie(w, cookie("", time.Unix(1, 0), -1))
 		w.WriteHeader(http.StatusNoContent)
-	case "/api/v1/me":
-		writeJSON(w, http.StatusOK, user)
 	case "/api/v1/nodes":
 		if r.Method == http.MethodGet {
 			limit, offset, err := pagination(r)

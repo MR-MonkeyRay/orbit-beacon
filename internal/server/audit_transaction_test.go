@@ -117,7 +117,7 @@ func TestAdministrativeMutationsAndAuditInsertCommitOrRollbackTogether(t *testin
 					if _, err := f.db.Exec("UPDATE nodes SET token_hash=? WHERE id=?", digest[:], nodeID); err != nil {
 						t.Fatal(err)
 					}
-					if _, err := f.db.Exec("INSERT INTO sessions(token_hash,user_id,csrf_hash,expires_at) VALUES (?,?,?,?)", digest[:], userID, digest[:], now.Add(time.Hour).UnixNano()); err != nil {
+					if _, err := f.db.Exec("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES (?,?,?)", digest[:], userID, now.Add(time.Hour).UnixNano()); err != nil {
 						t.Fatal(err)
 					}
 					if auditFails {

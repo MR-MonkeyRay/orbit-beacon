@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -38,6 +39,8 @@ const (
 	ErrUsernameConflict serviceError = "username already exists"
 	SessionLifetime                  = 12 * time.Hour
 )
+
+var csrfEncoding = base64.RawURLEncoding.Strict()
 
 type User struct {
 	ID        string    `json:"id"`
@@ -271,13 +274,9 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 	if err != nil {
 		return Session{}, err
 	}
-	csrf, err := s.token()
-	if err != nil {
-		return Session{}, err
-	}
 	now := s.now().UTC()
-	session := Session{Token: token, CSRFToken: csrf, ExpiresAt: now.Add(SessionLifetime), User: user}
-	digest, csrfDigest := sha256.Sum256([]byte(token)), sha256.Sum256([]byte(csrf))
+	session := Session{Token: token, CSRFToken: sessionCSRF(token), ExpiresAt: now.Add(SessionLifetime), User: user}
+	digest := sha256.Sum256([]byte(token))
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Session{}, err
@@ -285,7 +284,7 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 	defer tx.Rollback()
 	// A password or role change from another service must not race stale
 	// verified credentials into a new session after revocation has committed.
-	result, err := tx.ExecContext(ctx, "INSERT INTO sessions(token_hash, user_id, csrf_hash, expires_at) SELECT ?, id, ?, ? FROM users WHERE id = ? AND password_hash = ? AND role = ?", digest[:], csrfDigest[:], session.ExpiresAt.UnixNano(), user.ID, hash, user.Role)
+	result, err := tx.ExecContext(ctx, "INSERT INTO sessions(token_hash, user_id, expires_at) SELECT ?, id, ? FROM users WHERE id = ? AND password_hash = ? AND role = ?", digest[:], session.ExpiresAt.UnixNano(), user.ID, hash, user.Role)
 	if err != nil {
 		return Session{}, err
 	}
@@ -315,8 +314,23 @@ func (s *Service) token() (string, error) {
 }
 
 func (s *Service) Authenticate(ctx context.Context, token string) (User, error) {
+	user, _, err := s.lookupSession(ctx, token)
+	return user, err
+}
+
+// CurrentSession recovers a stable session-bound CSRF token without exposing the
+// HttpOnly credential or rotating another tab's token.
+func (s *Service) CurrentSession(ctx context.Context, token string) (Session, error) {
+	user, expiry, err := s.lookupSession(ctx, token)
+	if err != nil {
+		return Session{}, err
+	}
+	return Session{User: user, ExpiresAt: time.Unix(0, expiry).UTC(), CSRFToken: sessionCSRF(token)}, nil
+}
+
+func (s *Service) lookupSession(ctx context.Context, token string) (User, int64, error) {
 	if len(token) != 43 {
-		return User{}, ErrUnauthenticated
+		return User{}, 0, ErrUnauthenticated
 	}
 	digest := sha256.Sum256([]byte(token))
 	var user User
@@ -325,16 +339,16 @@ func (s *Service) Authenticate(ctx context.Context, token string) (User, error) 
 	err := s.db.QueryRowContext(ctx, `SELECT u.id, u.username, u.role, u.created_at, s.expires_at
  FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`, digest[:]).Scan(&user.ID, &user.Username, &user.Role, &created, &expiry)
 	if errors.Is(err, sql.ErrNoRows) {
-		return User{}, ErrUnauthenticated
+		return User{}, 0, ErrUnauthenticated
 	}
 	if err != nil {
-		return User{}, err
+		return User{}, 0, err
 	}
 	if s.now().UnixNano() >= expiry {
-		return User{}, ErrUnauthenticated
+		return User{}, 0, ErrUnauthenticated
 	}
 	user.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
-	return user, err
+	return user, expiry, err
 }
 
 // CleanupExpiredSessions removes at most one bounded batch. Callers should use
@@ -346,20 +360,37 @@ func (s *Service) CleanupExpiredSessions(ctx context.Context) error {
 }
 
 func (s *Service) VerifyCSRF(ctx context.Context, token, csrf string) (bool, error) {
-	if len(csrf) != 43 {
+	if len(token) != 43 || len(csrf) != 43 {
+		return false, nil
+	}
+	var actual [32]byte
+	if n, err := csrfEncoding.Decode(actual[:], []byte(csrf)); err != nil || n != len(actual) {
 		return false, nil
 	}
 	digest := sha256.Sum256([]byte(token))
-	var expected []byte
-	err := s.db.QueryRowContext(ctx, "SELECT csrf_hash FROM sessions WHERE token_hash = ? AND expires_at > ?", digest[:], s.now().UnixNano()).Scan(&expected)
+	var present int
+	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM sessions WHERE token_hash = ? AND expires_at > ?", digest[:], s.now().UnixNano()).Scan(&present)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	actual := sha256.Sum256([]byte(csrf))
-	return subtle.ConstantTimeCompare(actual[:], expected) == 1, nil
+	expected := csrfDigest(token)
+	return subtle.ConstantTimeCompare(actual[:], expected[:]) == 1, nil
+}
+
+func csrfDigest(token string) [32]byte {
+	mac := hmac.New(sha256.New, []byte(token))
+	_, _ = mac.Write([]byte("orbitbeacon/browser-csrf/v1"))
+	var digest [32]byte
+	_ = mac.Sum(digest[:0])
+	return digest
+}
+
+func sessionCSRF(token string) string {
+	digest := csrfDigest(token)
+	return base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
 func (s *Service) Logout(ctx context.Context, token string) error {
