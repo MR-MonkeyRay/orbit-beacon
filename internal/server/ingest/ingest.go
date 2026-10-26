@@ -28,6 +28,9 @@ type Options struct {
 }
 
 type nodeState struct {
+	mu         sync.Mutex
+	refs       int
+	touch      uint64
 	credential [sha256.Size]byte
 	generation uint64
 	session    string
@@ -41,7 +44,14 @@ type Service struct {
 	db     *sql.DB
 	now    func() time.Time
 	mu     sync.Mutex
+	rateMu sync.Mutex
+	epoch  uint64
 	states map[string]*nodeState
+}
+
+type stateCandidate struct {
+	state *nodeState
+	touch uint64
 }
 
 func NewService(db *sql.DB, opts Options) *Service {
@@ -55,6 +65,7 @@ type Admission struct {
 	service    *Service
 	nodeID     string
 	credential [sha256.Size]byte
+	usedMu     sync.Mutex
 	used       bool
 }
 
@@ -71,21 +82,34 @@ func (s *Service) AdmitToken(ctx context.Context, token string) (*Admission, err
 		return nil, err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.charge(ctx, nodeID, s.db); err != nil {
+	_, exists := s.states[nodeID]
+	s.mu.Unlock()
+	if !exists {
+		if err := s.prune(ctx, s.db); err != nil {
+			return nil, err
+		}
+	}
+	state := s.acquireState(nodeID)
+	defer s.releaseState(state)
+	s.rateMu.Lock()
+	defer s.rateMu.Unlock()
+	if err := s.charge(state); err != nil {
 		return nil, err
 	}
 	return &Admission{service: s, nodeID: nodeID, credential: digest}, nil
 }
 
 func (s *Service) AcceptAdmitted(ctx context.Context, admission *Admission, report v1.Report) (v1.ReportResponse, error) {
-	s.mu.Lock()
-	if admission == nil || admission.service != s || admission.used {
-		s.mu.Unlock()
+	if admission == nil || admission.service != s {
+		return v1.ReportResponse{}, nodes.ErrUnauthenticated
+	}
+	admission.usedMu.Lock()
+	if admission.used {
+		admission.usedMu.Unlock()
 		return v1.ReportResponse{}, nodes.ErrUnauthenticated
 	}
 	admission.used = true
-	s.mu.Unlock()
+	admission.usedMu.Unlock()
 	return s.accept(ctx, admission.nodeID, admission.credential[:], report, false)
 }
 
@@ -97,15 +121,45 @@ func (s *Service) AcceptToken(ctx context.Context, token string, report v1.Repor
 	return s.AcceptAdmitted(ctx, admission, report)
 }
 
-func (s *Service) charge(ctx context.Context, nodeID string, query rowQueryer) error {
-	now := s.now().UTC()
+func (s *Service) acquireState(nodeID string) *nodeState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	state := s.states[nodeID]
 	if state == nil {
-		if err := s.prune(ctx, query); err != nil {
-			return err
-		}
-		state = &nodeState{tokens: 3, refilled: now}
+		state = &nodeState{}
 		s.states[nodeID] = state
+	}
+	s.epoch++
+	state.touch = s.epoch
+	state.refs++
+	return state
+}
+
+func (s *Service) acquireExistingState(nodeID string) *nodeState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state := s.states[nodeID]
+	if state == nil {
+		return nil
+	}
+	s.epoch++
+	state.touch = s.epoch
+	state.refs++
+	return state
+}
+
+func (s *Service) releaseState(state *nodeState) {
+	s.mu.Lock()
+	state.refs--
+	s.mu.Unlock()
+}
+
+// charge must be called with rateMu held.
+func (s *Service) charge(state *nodeState) error {
+	now := s.now().UTC()
+	if state.refilled.IsZero() {
+		state.tokens = 3
+		state.refilled = now
 	}
 	elapsed := now.Sub(state.refilled).Seconds()
 	if elapsed > 0 {
@@ -132,8 +186,30 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	if err := report.Validate(); err != nil {
 		return v1.ReportResponse{}, fmt.Errorf("%w: %v", ErrInvalidReport, err)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	body, err := json.Marshal(report)
+	if err != nil {
+		return v1.ReportResponse{}, fmt.Errorf("%w: %v", ErrInvalidReport, err)
+	}
+	configError := ""
+	if report.ConfigError != nil {
+		encoded, err := json.Marshal(report.ConfigError)
+		if err != nil {
+			return v1.ReportResponse{}, err
+		}
+		configError = string(encoded)
+	}
+	var system any
+	if report.System != nil {
+		encoded, err := json.Marshal(report.System)
+		if err != nil {
+			return v1.ReportResponse{}, err
+		}
+		system = string(encoded)
+	}
+	state := s.acquireState(nodeID)
+	defer s.releaseState(state)
+	state.mu.Lock()
+	defer state.mu.Unlock()
 	now := s.now().UTC()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -160,11 +236,13 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 		return v1.ReportResponse{}, ErrIdentityConflict
 	}
 	if charge {
-		if err := s.charge(ctx, nodeID, tx); err != nil {
+		s.rateMu.Lock()
+		err := s.charge(state)
+		s.rateMu.Unlock()
+		if err != nil {
 			return v1.ReportResponse{}, err
 		}
 	}
-	state := s.states[nodeID]
 	response := v1.ReportResponse{NodeID: nodeID, AcceptedSeq: report.Seq, ServerTime: now}
 	desired, err := readConfig(ctx, tx, nodeID)
 	if err != nil {
@@ -177,26 +255,6 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	if sameCredential && state.generation == report.RunGeneration && state.session == report.SessionID && report.Seq <= state.seq {
 		response.AcceptedSeq = state.seq
 		return response, nil
-	}
-	body, err := json.Marshal(report)
-	if err != nil {
-		return v1.ReportResponse{}, fmt.Errorf("%w: %v", ErrInvalidReport, err)
-	}
-	configError := ""
-	if report.ConfigError != nil {
-		encoded, err := json.Marshal(report.ConfigError)
-		if err != nil {
-			return v1.ReportResponse{}, err
-		}
-		configError = string(encoded)
-	}
-	var system any
-	if report.System != nil {
-		encoded, err := json.Marshal(report.System)
-		if err != nil {
-			return v1.ReportResponse{}, err
-		}
-		system = string(encoded)
 	}
 	// Rejection cannot erase a prior successful configuration acknowledgement.
 	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET run_generation = ?, report_session_id = ?, last_seen = ?, system = COALESCE(?, system), applied_revision = CASE WHEN ? = '' AND ? <= desired_revision THEN max(applied_revision, ?) ELSE applied_revision END, config_error = ? WHERE id = ?`, strconv.FormatUint(report.RunGeneration, 10), report.SessionID, now.Format(time.RFC3339Nano), system, configError, report.ConfigRevision, report.ConfigRevision, configError, nodeID); err != nil {
@@ -218,6 +276,7 @@ type rowQueryer interface {
 }
 
 func (s *Service) prune(ctx context.Context, query rowQueryer) error {
+	candidates := s.stateCandidates()
 	rows, err := query.QueryContext(ctx, "SELECT id FROM nodes")
 	if err != nil {
 		return err
@@ -234,12 +293,32 @@ func (s *Service) prune(ctx context.Context, query rowQueryer) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	for id := range s.states {
-		if !live[id] {
-			delete(s.states, id)
+	s.pruneStates(live, candidates)
+	return nil
+}
+
+func (s *Service) stateCandidates() map[string]stateCandidate {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	candidates := make(map[string]stateCandidate)
+	for id, state := range s.states {
+		if state.refs == 0 {
+			candidates[id] = stateCandidate{state: state, touch: state.touch}
 		}
 	}
-	return nil
+	return candidates
+}
+
+func (s *Service) pruneStates(live map[string]bool, candidates map[string]stateCandidate) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, candidate := range candidates {
+		state := s.states[id]
+		if live[id] || state != candidate.state || state.refs != 0 || state.touch != candidate.touch {
+			continue
+		}
+		delete(s.states, id)
+	}
 }
 
 func readConfig(ctx context.Context, tx *sql.Tx, nodeID string) (v1.DesiredConfig, error) {
@@ -264,14 +343,19 @@ func (s *Service) Latest(ctx context.Context, nodeID string) (v1.Report, error) 
 	if err := ctx.Err(); err != nil {
 		return v1.Report{}, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state := s.states[nodeID]
-	if state == nil || state.latest == nil {
+	state := s.acquireExistingState(nodeID)
+	if state == nil {
+		return v1.Report{}, nodes.ErrNotFound
+	}
+	state.mu.Lock()
+	body := append([]byte(nil), state.latest...)
+	state.mu.Unlock()
+	s.releaseState(state)
+	if body == nil {
 		return v1.Report{}, nodes.ErrNotFound
 	}
 	var report v1.Report
-	if err := json.Unmarshal(state.latest, &report); err != nil {
+	if err := json.Unmarshal(body, &report); err != nil {
 		return v1.Report{}, err
 	}
 	return report, nil
