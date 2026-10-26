@@ -14,6 +14,7 @@
 - Add migration 8 enrollment expiry ordering and child foreign-key indexes for token node/group references, claims by node, groups and update-job node cleanup.
 - Add hourly, context-cancelable retention maintenance in bounded batches: 90-day audit cleanup and expired enrollment ticket/receipt cleanup after the 24-hour exact-retry grace period.
 - Normalize persisted wall-clock timestamps to one UTC RFC3339 representation with fixed 9-digit nanosecond precision through migration 9 and a shared encoder/parser, preserving chronological SQLite ordering across legacy offset values.
+- Replace network-rate baseline map churn with an eight-slot bounded index and oldest-interface eviction, retaining warm-up/reset semantics when interfaces change.
 - Coordinate initial identity reads and creation with the existing cancellable sidecar lock, preventing false inode-change failures during legitimate atomic updates; propagate caller contexts through every Open call and retain stable lock files after unsuccessful creation.
 - Reconfirm directory persistence when reopening identity/configuration files and retrying identical operations after rename succeeded but directory sync failed; prevent premature candidate use or configuration ACK, retain cached state on failure, and reuse the exact visible replacement after recovery.
 - Keep configuration-rejection diagnostics protocol-valid for negative remote revisions, preserving the prior applied configuration and the reporting channel needed to receive and acknowledge a later repair.

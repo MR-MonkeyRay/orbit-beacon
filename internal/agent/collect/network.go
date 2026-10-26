@@ -24,6 +24,7 @@ type NetworkObservation struct {
 }
 
 type networkBaseline struct {
+	name    string
 	counter NetworkCounter
 	at      time.Duration
 }
@@ -31,11 +32,27 @@ type networkBaseline struct {
 var differentialSequence atomic.Uint64
 var differentialEpoch = strconv.FormatInt(time.Now().UnixNano(), 36)
 
+const maxNetworkBaselines = 8
+
 // NetworkDifferencer computes nonblocking, per-interface rates. Its zero value
-// is ready to use. Like Collector, it is called by the single sampling loop.
+// is ready to use. Fixed slots match the protocol's maximum of eight network
+// series and avoid map allocation/churn when interface selections change.
 type NetworkDifferencer struct {
-	previous map[string]networkBaseline
+	previous [maxNetworkBaselines]networkBaseline
+	count    int
 	interval time.Duration
+}
+
+func (d *NetworkDifferencer) forget(name string) {
+	for i := 0; i < d.count; i++ {
+		if d.previous[i].name != name {
+			continue
+		}
+		d.count--
+		d.previous[i] = d.previous[d.count]
+		d.previous[d.count] = networkBaseline{}
+		return
+	}
 }
 
 // Observe uses elapsed monotonic time, never wall time. Counter resets and
@@ -55,21 +72,29 @@ func (d *NetworkDifferencer) Observe(name string, counter NetworkCounter, at tim
 		},
 		Status: "stale",
 	}
-	if d.previous == nil {
-		d.previous = make(map[string]networkBaseline, 8)
+	index := -1
+	for i := 0; i < d.count; i++ {
+		if d.previous[i].name == name {
+			index = i
+			break
+		}
 	}
-	previous, exists := d.previous[name]
-	if !exists && len(d.previous) >= 8 {
-		var oldest string
-		var oldestAt time.Duration
-		for key, baseline := range d.previous {
-			if oldest == "" || baseline.at < oldestAt {
-				oldest, oldestAt = key, baseline.at
+	exists := index >= 0
+	if !exists {
+		if d.count < len(d.previous) {
+			index = d.count
+			d.count++
+		} else {
+			index = 0
+			for i := 1; i < d.count; i++ {
+				if d.previous[i].at < d.previous[index].at {
+					index = i
+				}
 			}
 		}
-		delete(d.previous, oldest)
 	}
-	d.previous[name] = networkBaseline{counter: counter, at: at}
+	previous := d.previous[index]
+	d.previous[index] = networkBaseline{name: name, counter: counter, at: at}
 	elapsed := at - previous.at
 	if !exists || elapsed <= 0 || counter.RxBytes < previous.counter.RxBytes || counter.TxBytes < previous.counter.TxBytes {
 		return result

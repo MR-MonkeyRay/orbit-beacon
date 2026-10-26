@@ -354,7 +354,7 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 	if len(names) == 0 {
 		name, err := defaultInterface(ctx)
 		if err != nil {
-			delete(c.rates.previous, c.autoInterface)
+			c.rates.forget(c.autoInterface)
 			c.autoInterface = ""
 			c.networks = nil
 			m.Networks = append(m.Networks, v1.NetworkMetrics{Name: "default"})
@@ -363,7 +363,7 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 			return
 		}
 		if c.autoInterface != name {
-			delete(c.rates.previous, c.autoInterface)
+			c.rates.forget(c.autoInterface)
 			c.autoInterface = name
 			c.networks = nil
 		}
@@ -382,7 +382,7 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 			observation := NetworkObservation{Network: v1.NetworkMetrics{Name: name}, Status: "unsupported", Source: c.source("network:"+name, at, c.networkInterval())}
 			if err != nil {
 				observation.Status = failureStatus(err)
-				delete(c.rates.previous, name)
+				c.rates.forget(name)
 			} else {
 				found := false
 				for _, counter := range counters {
@@ -393,7 +393,7 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 					}
 				}
 				if !found {
-					delete(c.rates.previous, name)
+					c.rates.forget(name)
 				}
 			}
 			c.networks[name] = networkSample{observation: observation, at: at}
