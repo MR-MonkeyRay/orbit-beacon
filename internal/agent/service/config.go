@@ -16,11 +16,12 @@ import (
 )
 
 type ConfigStore struct {
-	mu            sync.RWMutex
-	path          string
-	current       v1.DesiredConfig
-	failure       *v1.ConfigError
-	syncDirectory func(string) error
+	mu                sync.RWMutex
+	path              string
+	current           v1.DesiredConfig
+	failure           *v1.ConfigError
+	syncDirectory     func(string) error
+	parentDirectories []string
 }
 
 func OpenConfigStore(ctx context.Context, path string, initial v1.DesiredConfig) (*ConfigStore, error) {
@@ -31,6 +32,11 @@ func openConfigStore(ctx context.Context, path string, initial v1.DesiredConfig,
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	parentDirectories := newDirectoryParents(filepath.Dir(path))
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}
@@ -39,7 +45,7 @@ func openConfigStore(ctx context.Context, path string, initial v1.DesiredConfig,
 		return nil, err
 	}
 	defer unlock()
-	store := &ConfigStore{path: path, syncDirectory: syncDirectory}
+	store := &ConfigStore{path: path, syncDirectory: syncDirectory, parentDirectories: parentDirectories}
 	current, err := loadConfig(path)
 	existing := !errors.Is(err, os.ErrNotExist)
 	var failure *v1.ConfigError
@@ -75,9 +81,33 @@ func openConfigStore(ctx context.Context, path string, initial v1.DesiredConfig,
 			return nil, err
 		}
 	}
+	if err := store.syncParentDirectories(); err != nil {
+		return nil, err
+	}
 	store.current = cloneConfig(current)
 	store.failure = failure
 	return store, nil
+}
+
+func (s *ConfigStore) syncParentDirectories() error {
+	for _, directory := range s.parentDirectories {
+		if err := s.syncDirectory(directory); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func newDirectoryParents(path string) []string {
+	parents := make([]string, 0, 8)
+	for directory := filepath.Dir(filepath.Clean(path)); ; directory = filepath.Dir(directory) {
+		parents = append(parents, directory)
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			break
+		}
+	}
+	return parents
 }
 
 func loadConfig(path string) (v1.DesiredConfig, error) {

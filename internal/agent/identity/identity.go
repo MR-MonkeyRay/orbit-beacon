@@ -26,14 +26,18 @@ type Identity struct {
 	SessionID        string `json:"session_id,omitempty"`
 }
 
-type Options struct{ Random io.Reader }
+type Options struct {
+	Random        io.Reader
+	syncDirectory func(string) error
+}
 
 type Store struct {
-	mu            sync.Mutex
-	path          string
-	random        io.Reader
-	current       Identity
-	syncDirectory func(string) error
+	mu                sync.Mutex
+	path              string
+	random            io.Reader
+	current           Identity
+	syncDirectory     func(string) error
+	parentDirectories []string
 }
 
 // Open coordinates inspection and first creation with atomic identity updates.
@@ -42,7 +46,12 @@ func Open(ctx context.Context, path string, options Options) (*Store, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
 	directory := filepath.Dir(path)
+	parentDirectories := newDirectoryParents(directory)
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return nil, err
 	}
@@ -61,10 +70,17 @@ func Open(ctx context.Context, path string, options Options) (*Store, error) {
 	if random == nil {
 		random = rand.Reader
 	}
-	store := &Store{path: path, random: random, syncDirectory: syncIdentityDirectory}
+	syncDirectory := options.syncDirectory
+	if syncDirectory == nil {
+		syncDirectory = syncIdentityDirectory
+	}
+	store := &Store{path: path, random: random, syncDirectory: syncDirectory, parentDirectories: parentDirectories}
 	current, err := load(path)
 	if err == nil {
 		if err := store.syncDirectory(filepath.Dir(path)); err != nil {
+			return nil, err
+		}
+		if err := store.syncParentDirectories(); err != nil {
 			return nil, err
 		}
 		store.current = current.Identity
@@ -97,8 +113,32 @@ func Open(ctx context.Context, path string, options Options) (*Store, error) {
 			return nil, err
 		}
 	}
+	if err := store.syncParentDirectories(); err != nil {
+		return nil, err
+	}
 	store.current = current.Identity
 	return store, nil
+}
+
+func (s *Store) syncParentDirectories() error {
+	for _, directory := range s.parentDirectories {
+		if err := s.syncDirectory(directory); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func newDirectoryParents(path string) []string {
+	parents := make([]string, 0, 8)
+	for directory := filepath.Dir(filepath.Clean(path)); ; directory = filepath.Dir(directory) {
+		parents = append(parents, directory)
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			break
+		}
+	}
+	return parents
 }
 
 func (s *Store) Current() Identity {
