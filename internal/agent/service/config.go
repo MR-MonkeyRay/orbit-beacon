@@ -16,13 +16,18 @@ import (
 )
 
 type ConfigStore struct {
-	mu      sync.RWMutex
-	path    string
-	current v1.DesiredConfig
-	failure *v1.ConfigError
+	mu            sync.RWMutex
+	path          string
+	current       v1.DesiredConfig
+	failure       *v1.ConfigError
+	syncDirectory func(string) error
 }
 
 func OpenConfigStore(ctx context.Context, path string, initial v1.DesiredConfig) (*ConfigStore, error) {
+	return openConfigStore(ctx, path, initial, syncConfigDirectory)
+}
+
+func openConfigStore(ctx context.Context, path string, initial v1.DesiredConfig, syncDirectory func(string) error) (*ConfigStore, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -34,7 +39,9 @@ func OpenConfigStore(ctx context.Context, path string, initial v1.DesiredConfig)
 		return nil, err
 	}
 	defer unlock()
+	store := &ConfigStore{path: path, syncDirectory: syncDirectory}
 	current, err := loadConfig(path)
+	existing := !errors.Is(err, os.ErrNotExist)
 	var failure *v1.ConfigError
 	if errors.Is(err, os.ErrNotExist) {
 		if err := initial.Validate(); err != nil {
@@ -43,7 +50,7 @@ func OpenConfigStore(ctx context.Context, path string, initial v1.DesiredConfig)
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if err := saveConfig(path, initial); err != nil {
+		if err := store.saveConfig(initial); err != nil {
 			return nil, err
 		}
 		current = initial
@@ -60,7 +67,17 @@ func OpenConfigStore(ctx context.Context, path string, initial v1.DesiredConfig)
 	} else if err != nil {
 		return nil, err
 	}
-	return &ConfigStore{path: path, current: cloneConfig(current), failure: failure}, nil
+	if existing {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := store.syncDirectory(filepath.Dir(path)); err != nil {
+			return nil, err
+		}
+	}
+	store.current = cloneConfig(current)
+	store.failure = failure
+	return store, nil
 }
 
 func loadConfig(path string) (v1.DesiredConfig, error) {
@@ -157,6 +174,7 @@ func (s *ConfigStore) Apply(ctx context.Context, next v1.DesiredConfig) error {
 		return fail(err)
 	}
 	current, err := loadConfig(s.path)
+	matchesSaved := err == nil
 	if errors.Is(err, os.ErrNotExist) {
 		current = s.current
 	} else if err != nil && !errors.Is(err, v1.ErrReportBudget) {
@@ -164,6 +182,7 @@ func (s *ConfigStore) Apply(ctx context.Context, next v1.DesiredConfig) error {
 	}
 	if s.current.Revision > current.Revision {
 		current = s.current
+		matchesSaved = false
 	}
 	if next.Revision < current.Revision {
 		return fail(errors.New("desired config revision decreased"))
@@ -172,6 +191,16 @@ func (s *ConfigStore) Apply(ctx context.Context, next v1.DesiredConfig) error {
 		if !reflect.DeepEqual(next, current) {
 			return fail(errors.New("conflicting desired config revision"))
 		}
+		if err := ctx.Err(); err != nil {
+			return fail(err)
+		}
+		if !matchesSaved {
+			if err := s.saveConfig(next); err != nil {
+				return fail(err)
+			}
+		} else if err := s.syncDirectory(filepath.Dir(s.path)); err != nil {
+			return fail(err)
+		}
 		s.current = cloneConfig(current)
 		s.failure = nil
 		return nil
@@ -179,7 +208,7 @@ func (s *ConfigStore) Apply(ctx context.Context, next v1.DesiredConfig) error {
 	if err := ctx.Err(); err != nil {
 		return fail(err)
 	}
-	if err := saveConfig(s.path, next); err != nil {
+	if err := s.saveConfig(next); err != nil {
 		return fail(err)
 	}
 	s.current = cloneConfig(next)
@@ -200,7 +229,8 @@ func cloneConfig(value v1.DesiredConfig) v1.DesiredConfig {
 	return value
 }
 
-func saveConfig(path string, value v1.DesiredConfig) error {
+func (s *ConfigStore) saveConfig(value v1.DesiredConfig) error {
+	path := s.path
 	data, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -234,10 +264,14 @@ func saveConfig(path string, value v1.DesiredConfig) error {
 	if err := os.Rename(file.Name(), path); err != nil {
 		return err
 	}
+	return s.syncDirectory(filepath.Dir(path))
+}
+
+func syncConfigDirectory(path string) error {
 	if runtime.GOOS == "windows" {
 		return nil
 	}
-	dir, err := os.Open(filepath.Dir(path))
+	dir, err := os.Open(path)
 	if err != nil {
 		return err
 	}

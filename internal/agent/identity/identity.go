@@ -29,10 +29,11 @@ type Identity struct {
 type Options struct{ Random io.Reader }
 
 type Store struct {
-	mu      sync.Mutex
-	path    string
-	random  io.Reader
-	current Identity
+	mu            sync.Mutex
+	path          string
+	random        io.Reader
+	current       Identity
+	syncDirectory func(string) error
 }
 
 // Open creates an identity only when no identity exists. Inspection never begins a run.
@@ -41,9 +42,12 @@ func Open(path string, options Options) (*Store, error) {
 	if random == nil {
 		random = rand.Reader
 	}
-	store := &Store{path: path, random: random}
+	store := &Store{path: path, random: random, syncDirectory: syncIdentityDirectory}
 	current, err := load(path)
 	if err == nil {
+		if err := store.syncDirectory(filepath.Dir(path)); err != nil {
+			return nil, err
+		}
 		store.current = current.Identity
 		return store, nil
 	}
@@ -66,12 +70,15 @@ func Open(path string, options Options) (*Store, error) {
 	if err := prepareNewDirectory(directory); err != nil {
 		return nil, err
 	}
-	if err := persist(path, current, true); err != nil {
+	if err := store.persist(current, true); err != nil {
 		if !errors.Is(err, os.ErrExist) {
 			return nil, err
 		}
 		current, err = load(path)
 		if err != nil {
+			return nil, err
+		}
+		if err := store.syncDirectory(filepath.Dir(path)); err != nil {
 			return nil, err
 		}
 	}
@@ -100,6 +107,9 @@ func (s *Store) Reload(ctx context.Context) (Identity, error) {
 	}
 	current, err := load(s.path)
 	if err != nil {
+		return Identity{}, err
+	}
+	if err := s.syncDirectory(filepath.Dir(s.path)); err != nil {
 		return Identity{}, err
 	}
 	s.current = current.Identity
@@ -131,7 +141,7 @@ func (s *Store) BeginRun(ctx context.Context) (Identity, error) {
 	}
 	current.RunGeneration++
 	current.SessionID = session
-	if err := persist(s.path, current, false); err != nil {
+	if err := s.persist(current, false); err != nil {
 		return Identity{}, err
 	}
 	s.current = current.Identity
@@ -157,13 +167,20 @@ func (s *Store) ConfirmEnrollment(ctx context.Context, token, nodeID string) err
 	if nodeID == "" || (current.NodeID != "" && current.NodeID != nodeID) || (token != current.NodeToken && token != current.PendingNodeToken) {
 		return errors.New("enrollment confirmation does not match durable identity")
 	}
+	if token == current.NodeToken && current.NodeID == nodeID {
+		if err := s.syncDirectory(filepath.Dir(s.path)); err != nil {
+			return err
+		}
+		s.current = current.Identity
+		return nil
+	}
 	if token == current.PendingNodeToken {
 		current.NodeToken = token
 		current.PendingNodeToken = ""
 	}
 	current.NodeID = nodeID
 	pruneEnrollmentAttempts(&current)
-	if err := persist(s.path, current, false); err != nil {
+	if err := s.persist(current, false); err != nil {
 		return err
 	}
 	s.current = current.Identity
@@ -259,7 +276,7 @@ func load(path string) (diskIdentity, error) {
 	return value, nil
 }
 
-func persist(path string, value diskIdentity, create bool) error {
+func (s *Store) persist(value diskIdentity, create bool) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -267,7 +284,7 @@ func persist(path string, value diskIdentity, create bool) error {
 	if len(data) > 64*1024 {
 		return errors.New("identity state exceeds 64 KiB")
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".identity-*")
+	file, err := os.CreateTemp(filepath.Dir(s.path), ".identity-*")
 	if err != nil {
 		return err
 	}
@@ -288,19 +305,23 @@ func persist(path string, value diskIdentity, create bool) error {
 	}
 	if create {
 		// Link is an atomic no-replace publication, unlike Rename on POSIX.
-		if err := os.Link(name, path); err != nil {
+		if err := os.Link(name, s.path); err != nil {
 			return err
 		}
 		if err := os.Remove(name); err != nil {
 			return err
 		}
-	} else if err := os.Rename(name, path); err != nil {
+	} else if err := os.Rename(name, s.path); err != nil {
 		return err
 	}
+	return s.syncDirectory(filepath.Dir(s.path))
+}
+
+func syncIdentityDirectory(path string) error {
 	if runtime.GOOS == "windows" {
 		return nil
 	}
-	dir, err := os.Open(filepath.Dir(path))
+	dir, err := os.Open(path)
 	if err != nil {
 		return err
 	}

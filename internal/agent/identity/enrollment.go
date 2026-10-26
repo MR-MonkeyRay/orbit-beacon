@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"path/filepath"
 
 	"orbitbeacon/internal/agent/filelock"
 )
@@ -37,6 +38,9 @@ func (s *Store) LookupEnrollment(ctx context.Context, ticket [32]byte) (Identity
 	}
 	current, err := load(s.path)
 	if err != nil {
+		return Identity{}, Enrollment{}, false, err
+	}
+	if err := s.syncDirectory(filepath.Dir(s.path)); err != nil {
 		return Identity{}, Enrollment{}, false, err
 	}
 	operation, exists := current.EnrollmentAttempts[hex.EncodeToString(ticket[:])]
@@ -79,6 +83,9 @@ func (s *Store) prepareEnrollment(ctx context.Context, ticket [32]byte, rotate b
 		if accepted != "" && operation.NodeToken != accepted {
 			return Identity{}, Enrollment{}, errors.New("confirmed enrollment differs from its durable operation")
 		}
+		if err := s.syncDirectory(filepath.Dir(s.path)); err != nil {
+			return Identity{}, Enrollment{}, err
+		}
 		s.current = current.Identity
 		return current.Identity, operation, nil
 	}
@@ -118,7 +125,7 @@ func (s *Store) prepareEnrollment(ctx context.Context, ticket [32]byte, rotate b
 		current.EnrollmentAttempts = make(map[string]Enrollment)
 	}
 	current.EnrollmentAttempts[hash] = operation
-	if err := persist(s.path, current, false); err != nil {
+	if err := s.persist(current, false); err != nil {
 		return Identity{}, Enrollment{}, err
 	}
 	s.current = current.Identity

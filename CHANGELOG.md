@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reconfirm directory persistence when reopening identity/configuration files and retrying identical operations after rename succeeded but directory sync failed; prevent premature candidate use or configuration ACK, retain cached state on failure, and reuse the exact visible replacement after recovery.
 - Keep configuration-rejection diagnostics protocol-valid for negative remote revisions, preserving the prior applied configuration and the reporting channel needed to receive and acknowledge a later repair.
 - Detect CPU component counter regressions before publishing a percentage, report null/stale instead of clamping impossible rates, and recover from the new baseline on the next continuous window.
 - Require an absolute Agent state directory before runtime initialization, preventing shell/service working-directory changes from creating independent identities; document preserving the existing enrolled state when migrating relative policies.
