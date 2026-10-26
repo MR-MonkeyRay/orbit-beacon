@@ -17,6 +17,7 @@
 - Replace network-rate baseline map churn with an eight-slot bounded index and oldest-interface eviction, retaining warm-up/reset semantics when interfaces change.
 - Centralize metric status fields, source families and dynamic disk/network series-key constructors in the protocol package, so collectors, validators and scheduler fallback paths share one wire contract.
 - Add a read-only Ubuntu 24.04 CI gate pinned to Go 1.27.3 with uncached tests, server/agent race tests, formatting, module verification, vet and Go 1.27-compatible govulncheck v1.7.0.
+- Add an OpenAPI behavior gate using YAML AST parsing, exact path/method routing comparison and isolated real-handler fixtures that fail documented 404/405 drift.
 - Coordinate initial identity reads and creation with the existing cancellable sidecar lock, preventing false inode-change failures during legitimate atomic updates; propagate caller contexts through every Open call and retain stable lock files after unsuccessful creation.
 - Reconfirm directory persistence when reopening identity/configuration files and retrying identical operations after rename succeeded but directory sync failed; prevent premature candidate use or configuration ACK, retain cached state on failure, and reuse the exact visible replacement after recovery.
 - Keep configuration-rejection diagnostics protocol-valid for negative remote revisions, preserving the prior applied configuration and the reporting channel needed to receive and acknowledge a later repair.

@@ -213,6 +213,8 @@ GOTOOLCHAIN=go1.27.3 "$GOBIN/govulncheck" ./...
 rm -rf "$GOBIN"
 ```
 
+`internal/server/openapi_contract_test.go` parses the OpenAPI `paths` mapping with a YAML AST, checks every concrete `{id}` route against `routeMethods`, and runs each declared method in an isolated real handler fixture. A documented operation that drifts to 404/405 fails; existing authentication, validation and status-code tests cover the semantics after route admission.
+
 ## License
 
 The existing [`LICENSE`](LICENSE) is preserved: **GNU General Public License, version 3 (GPL-3.0)**. The plan's Apache/empty-repository assumption does not apply to this repository.
