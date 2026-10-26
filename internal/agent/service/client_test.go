@@ -32,7 +32,7 @@ func TestEnrollmentPersistsIdentityBeforeRequestAndReusesItAfterLostResponse(t *
 	var requests []v1.EnrollmentRequest
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/agent/v1/enroll/check" {
-			_, _ = w.Write([]byte(`{"claimed":false,"server_time":"2026-10-26T12:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"claimed":false,"credential_state":"unbound","server_time":"2026-10-26T12:00:00Z"}`))
 			return
 		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/agent/v1/enroll" || r.URL.RawQuery != "" {

@@ -77,7 +77,10 @@ type EnrollmentRequest struct {
 }
 
 func (r EnrollmentRequest) Validate() error {
-	if err := validateEnrollmentCredential(r.ProtocolVersion, r.InstallationID, r.NodeToken); err != nil {
+	if r.ProtocolVersion != ProtocolVersion {
+		return ErrProtocolUnsupported
+	}
+	if err := validateEnrollmentCredential(r.InstallationID, r.NodeToken); err != nil {
 		return err
 	}
 	if r.PreviousNodeToken != "" && (len(r.PreviousNodeToken) < 32 || len(r.PreviousNodeToken) > 256) {
@@ -93,6 +96,10 @@ func (s System) Validate() error {
 	return nil
 }
 
+// EnrollmentCheckVersion is independent from the enrollment/report wire version:
+// v2 distinguishes an active credential from an unbound initial identity.
+const EnrollmentCheckVersion = 2
+
 type EnrollmentCheckRequest struct {
 	ProtocolVersion int    `json:"protocol_version"`
 	InstallationID  string `json:"installation_id"`
@@ -100,19 +107,20 @@ type EnrollmentCheckRequest struct {
 }
 
 func (r EnrollmentCheckRequest) Validate() error {
-	return validateEnrollmentCredential(r.ProtocolVersion, r.InstallationID, r.NodeToken)
+	if r.ProtocolVersion != EnrollmentCheckVersion {
+		return ErrProtocolUnsupported
+	}
+	return validateEnrollmentCredential(r.InstallationID, r.NodeToken)
 }
 
 type EnrollmentCheckResponse struct {
-	Claimed    bool      `json:"claimed"`
-	NodeID     string    `json:"node_id,omitempty"`
-	ServerTime time.Time `json:"server_time"`
+	Claimed         bool      `json:"claimed"`
+	CredentialState string    `json:"credential_state"`
+	NodeID          string    `json:"node_id,omitempty"`
+	ServerTime      time.Time `json:"server_time"`
 }
 
-func validateEnrollmentCredential(version int, installation, token string) error {
-	if version != ProtocolVersion {
-		return ErrProtocolUnsupported
-	}
+func validateEnrollmentCredential(installation, token string) error {
 	if strings.TrimSpace(installation) == "" || len(installation) > 255 {
 		return errors.New("invalid installation identity")
 	}

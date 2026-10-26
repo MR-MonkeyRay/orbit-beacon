@@ -621,7 +621,7 @@ paths:
               additionalProperties: false
               required: [protocol_version, installation_id, node_token]
               properties:
-                protocol_version: {const: 1}
+                protocol_version: {const: 2, description: Receipt inspection version; enrollment and reports remain version 1. Version 1 checks are rejected with 426 before any claim.}
                 installation_id: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
                 node_token: {type: string, minLength: 43, maxLength: 43, writeOnly: true}
       responses:
@@ -632,13 +632,17 @@ paths:
               schema:
                 type: object
                 additionalProperties: false
-                required: [claimed, server_time]
+                required: [claimed, credential_state, server_time]
                 properties:
                   claimed: {type: boolean}
+                  credential_state:
+                    type: string
+                    enum: [active, unbound]
+                    description: Exact credential/installation binding in the same read snapshot. Missing/unknown states are rejected by clients before staging.
                   node_id: {type: string, format: uuid}
                   server_time: {type: string, format: date-time}
                 oneOf:
-                  - properties: {claimed: {const: true}}
+                  - properties: {claimed: {const: true}, credential_state: {const: active}}
                     required: [node_id]
                   - properties: {claimed: {const: false}}
                     not: {required: [node_id]}

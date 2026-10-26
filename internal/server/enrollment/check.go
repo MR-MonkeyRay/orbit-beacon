@@ -24,16 +24,18 @@ func (s *Service) CheckClaim(ctx context.Context, token string, req v1.Enrollmen
 		return v1.EnrollmentCheckResponse{}, ErrUnauthenticated
 	}
 	digest := sha256.Sum256([]byte(token))
+	actual := sha256.Sum256([]byte(req.NodeToken))
 	var expires string
-	var revoked, active bool
+	var revoked, active, credentialActive bool
 	var uses, maxUses int
 	var nodeID, claimed sql.NullString
 	var candidate []byte
 	err := s.db.QueryRowContext(ctx, `SELECT t.expires_at, t.revoked_at IS NOT NULL, t.uses, t.max_uses,
  c.node_id, c.token_hash, c.claimed_at,
- EXISTS(SELECT 1 FROM nodes n WHERE n.id=c.node_id AND n.token_hash=c.token_hash)
+ EXISTS(SELECT 1 FROM nodes n WHERE n.id=c.node_id AND n.token_hash=c.token_hash),
+ EXISTS(SELECT 1 FROM nodes n WHERE n.installation_id=? AND n.token_hash=?)
  FROM enrollment_tokens t LEFT JOIN enrollment_claims c ON c.enrollment_id=t.id AND c.installation_id=?
- WHERE t.token_hash=?`, req.InstallationID, digest[:]).Scan(&expires, &revoked, &uses, &maxUses, &nodeID, &candidate, &claimed, &active)
+ WHERE t.token_hash=?`, req.InstallationID, actual[:], req.InstallationID, digest[:]).Scan(&expires, &revoked, &uses, &maxUses, &nodeID, &candidate, &claimed, &active, &credentialActive)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v1.EnrollmentCheckResponse{}, ErrUnauthenticated
 	}
@@ -55,9 +57,12 @@ func (s *Service) CheckClaim(ctx context.Context, token string, req v1.Enrollmen
 		if !now.Before(expiresAt) {
 			return v1.EnrollmentCheckResponse{}, ErrExpired
 		}
-		return v1.EnrollmentCheckResponse{Claimed: false, ServerTime: now}, nil
+		state := "unbound"
+		if credentialActive {
+			state = "active"
+		}
+		return v1.EnrollmentCheckResponse{Claimed: false, CredentialState: state, ServerTime: now}, nil
 	}
-	actual := sha256.Sum256([]byte(req.NodeToken))
 	if !active || subtle.ConstantTimeCompare(candidate, actual[:]) != 1 {
 		return v1.EnrollmentCheckResponse{}, ErrConflict
 	}
@@ -68,5 +73,5 @@ func (s *Service) CheckClaim(ctx context.Context, token string, req v1.Enrollmen
 	if now.After(claimedAt.Add(24 * time.Hour)) {
 		return v1.EnrollmentCheckResponse{}, ErrExpired
 	}
-	return v1.EnrollmentCheckResponse{Claimed: true, NodeID: nodeID.String, ServerTime: now}, nil
+	return v1.EnrollmentCheckResponse{Claimed: true, CredentialState: "active", NodeID: nodeID.String, ServerTime: now}, nil
 }

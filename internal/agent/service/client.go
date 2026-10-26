@@ -118,8 +118,10 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 	if err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
-	validTicket := token != "" && !strings.ContainsAny(token, "\r\n")
-	if !validTicket || (state.RunGeneration > 0 && state.NodeID == "" && state.PendingNodeToken == "") {
+	if strings.ContainsAny(token, "\r\n") {
+		return v1.EnrollmentResponse{}, errors.New("invalid explicit enrollment ticket")
+	}
+	if token == "" {
 		response, err := c.recoverEnrollment(ctx, state)
 		if err == nil {
 			return response, nil
@@ -128,9 +130,7 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 		if !errors.As(err, &rejected) || rejected.StatusCode != http.StatusUnauthorized {
 			return v1.EnrollmentResponse{}, err
 		}
-		if !validTicket {
-			return v1.EnrollmentResponse{}, errors.New("enrollment ticket is required; saved node credentials were not accepted")
-		}
+		return v1.EnrollmentResponse{}, errors.New("enrollment ticket is required; saved node credentials were not accepted")
 	}
 	ticket := sha256.Sum256([]byte(token))
 	state, operation, exists, err := c.identity.LookupEnrollment(ticket)
@@ -146,7 +146,7 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 			credential = state.PendingNodeToken
 		}
 		var checked v1.EnrollmentCheckResponse
-		check := v1.EnrollmentCheckRequest{ProtocolVersion: 1, InstallationID: state.InstallationID, NodeToken: credential}
+		check := v1.EnrollmentCheckRequest{ProtocolVersion: v1.EnrollmentCheckVersion, InstallationID: state.InstallationID, NodeToken: credential}
 		err := c.post(ctx, "/api/agent/v1/enroll/check", token, check, &checked)
 		var conflict *HTTPError
 		if credential != state.NodeToken && errors.As(err, &conflict) && conflict.StatusCode == http.StatusConflict {
@@ -160,7 +160,7 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 		if err != nil {
 			return v1.EnrollmentResponse{}, err
 		}
-		if checked.ServerTime.IsZero() || (checked.Claimed && checked.NodeID == "") || (!checked.Claimed && checked.NodeID != "") {
+		if checked.ServerTime.IsZero() || (checked.CredentialState != "active" && checked.CredentialState != "unbound") || (checked.Claimed && (checked.NodeID == "" || checked.CredentialState != "active")) || (!checked.Claimed && checked.NodeID != "") {
 			return v1.EnrollmentResponse{}, errors.New("invalid enrollment receipt response")
 		}
 		if checked.Claimed {
@@ -175,7 +175,7 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 			}
 			return v1.EnrollmentResponse{NodeID: checked.NodeID, ServerTime: checked.ServerTime}, nil
 		}
-		state, operation, err = c.identity.StageEnrollment(ticket, state.NodeID != "")
+		state, operation, err = c.identity.StageEnrollment(ticket, state.NodeID != "" || checked.CredentialState == "active")
 		if err != nil {
 			return v1.EnrollmentResponse{}, err
 		}
