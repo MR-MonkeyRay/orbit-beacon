@@ -159,6 +159,8 @@ Disk usage runs in at most one in-flight slow worker per collector because the o
 
 One collection loop continues during network outages; a capacity-one notification and latest snapshot feed one report worker with at most one request in flight. There is no offline history queue. Failures use exponential backoff through 60 seconds with 20% jitter; 429/503 Retry-After is clamped to 1–300 seconds and 401 waits 60 seconds. Linux collection does not execute shell commands. Darwin's gopsutil network path may execute system netstat/ifconfig; it is sampled separately at 30-second intervals with fixed system-only PATH and original source timestamps.
 
+`Retry-After` delta-seconds are parsed without allowing integer overflow to escape the 1–300 second bound: a syntactically decimal value too large for the host integer type saturates at 300 seconds. Malformed values use ordinary jittered backoff; valid HTTP dates are clamped to the same range.
+
 An HTTP `409 identity_conflict` is terminal: the superseded process stops collection/reporting and exits with the ownership error. Other conflicts and network failures retain retry behavior.
 
 For a local HTTPS deployment, issue a certificate with a SAN for `localhost`, configure the server's TLS certificate/key and `public_url:"https://localhost:8443"`, and trust its issuing CA through the agent policy's `ca_file`. Create a pending node and a ticket through an administrator session; save the returned token into a private 0600 file. Run the agent as the dedicated **non-root** UID/GID fixed in its policy:

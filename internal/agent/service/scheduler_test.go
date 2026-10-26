@@ -55,7 +55,7 @@ func TestBackoffSequenceJitterRetryAfterAndCredentials(t *testing.T) {
 			header string
 			want   time.Duration
 		}{
-			{"0", time.Second}, {"-5", time.Second}, {"17", 17 * time.Second}, {"9999999", 300 * time.Second},
+			{"0", time.Second}, {"-5", time.Second}, {"17", 17 * time.Second}, {"9999999", 300 * time.Second}, {"99999999999999999999999999999999999999999999999999", 300 * time.Second}, {"12x", time.Second},
 			{now.Add(90 * time.Second).Format(http.TimeFormat), 90 * time.Second},
 			{now.Add(-time.Minute).Format(http.TimeFormat), time.Second},
 			{now.Add(time.Hour).Format(http.TimeFormat), 300 * time.Second},

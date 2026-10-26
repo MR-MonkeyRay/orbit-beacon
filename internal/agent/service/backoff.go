@@ -32,7 +32,8 @@ func (b *Backoff) Next(status int, retryAfter string, now time.Time) time.Durati
 		b.attempt++
 	}
 	if (status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable) && retryAfter != "" {
-		value, err := strconv.ParseInt(strings.TrimSpace(retryAfter), 10, 64)
+		valueText := strings.TrimSpace(retryAfter)
+		value, err := strconv.ParseInt(valueText, 10, 64)
 		if err == nil {
 			if value < 1 {
 				return time.Second
@@ -42,7 +43,10 @@ func (b *Backoff) Next(status int, retryAfter string, now time.Time) time.Durati
 			}
 			return time.Duration(value) * time.Second
 		}
-		if date, err := http.ParseTime(retryAfter); err == nil {
+		if isDecimal(valueText) {
+			return 300 * time.Second
+		}
+		if date, err := http.ParseTime(valueText); err == nil {
 			delay := date.Sub(now)
 			if delay < time.Second {
 				return time.Second
@@ -61,4 +65,16 @@ func (b *Backoff) Next(status int, retryAfter string, now time.Time) time.Durati
 		random = 1
 	}
 	return time.Duration(float64(time.Duration(seconds)*time.Second) * (0.8 + 0.4*random))
+}
+
+func isDecimal(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
