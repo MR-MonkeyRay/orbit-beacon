@@ -188,7 +188,7 @@ func TestProductionClientDoesNotUseRuntimeOwnedOrWritableTrust(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cfg, err := OpenConfigStore(filepath.Join(t.TempDir(), "desired.json"), v1.DesiredConfig{Revision: 1, ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{}, Interfaces: []string{}, ProbeTargets: []string{}, BillingDay: 1, QuotaBytes: "0"})
+			cfg, err := OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), v1.DesiredConfig{Revision: 1, ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{}, Interfaces: []string{}, ProbeTargets: []string{}, BillingDay: 1, QuotaBytes: "0"})
 			if err != nil {
 				t.Fatal(err)
 			}

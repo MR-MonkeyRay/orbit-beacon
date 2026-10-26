@@ -32,7 +32,7 @@ func TestExplicitTicketIsNeverReplacedByCredentialRecovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			if beganRun {
-				if _, err := state.BeginRun(); err != nil {
+				if _, err := state.BeginRun(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 			}

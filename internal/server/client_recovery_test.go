@@ -18,7 +18,7 @@ func TestLostEnrollmentResponseRecoversByNodeCredentialWithoutTicket(t *testing.
 			ctx := context.Background()
 			f := newAgentHTTP(t, 1)
 			state, cfg, path := clientState(t)
-			run, err := state.BeginRun()
+			run, err := state.BeginRun(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}

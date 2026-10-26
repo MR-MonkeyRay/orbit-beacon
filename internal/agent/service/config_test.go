@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -22,7 +23,7 @@ func desired(revision int64, interval int) v1.DesiredConfig {
 
 func TestDesiredConfigValidatesPersistsThenAppliesAtomically(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "desired.json")
-	store, err := service.OpenConfigStore(path, desired(1, 10))
+	store, err := service.OpenConfigStore(context.Background(), path, desired(1, 10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +37,7 @@ func TestDesiredConfigValidatesPersistsThenAppliesAtomically(t *testing.T) {
 	}
 	defer oldFile.Close()
 	newConfig := desired(2, 30)
-	if err := store.Apply(newConfig); err != nil {
+	if err := store.Apply(context.Background(), newConfig); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(store.Current(), newConfig) {
@@ -54,7 +55,7 @@ func TestDesiredConfigValidatesPersistsThenAppliesAtomically(t *testing.T) {
 	if err != nil || !bytes.Equal(oldContents, oldBytes) {
 		t.Fatal("config overwritten in place instead of atomic replacement")
 	}
-	reopened, err := service.OpenConfigStore(path, desired(1, 10))
+	reopened, err := service.OpenConfigStore(context.Background(), path, desired(1, 10))
 	if err != nil || !reflect.DeepEqual(reopened.Current(), newConfig) {
 		t.Fatalf("saved config not loaded: %v", err)
 	}
@@ -104,7 +105,7 @@ func TestRejectedConfigKeepsPriorDiskAndRuntimeRevision(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "desired.json")
 			prior := desired(2, 30)
-			store, err := service.OpenConfigStore(path, prior)
+			store, err := service.OpenConfigStore(context.Background(), path, prior)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -114,7 +115,7 @@ func TestRejectedConfigKeepsPriorDiskAndRuntimeRevision(t *testing.T) {
 			}
 			invalid := desired(3, 10)
 			tt.mutate(&invalid)
-			if err := store.Apply(invalid); err == nil {
+			if err := store.Apply(context.Background(), invalid); err == nil {
 				t.Fatal("invalid desired config accepted")
 			}
 			after, err := os.ReadFile(path)
@@ -133,7 +134,7 @@ func TestConfigPersistenceFailureDoesNotApplyInMemory(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "desired.json")
 	prior := desired(1, 10)
-	store, err := service.OpenConfigStore(path, prior)
+	store, err := service.OpenConfigStore(context.Background(), path, prior)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +145,7 @@ func TestConfigPersistenceFailureDoesNotApplyInMemory(t *testing.T) {
 	if err := os.Mkdir(path, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Apply(desired(2, 30)); err == nil {
+	if err := store.Apply(context.Background(), desired(2, 30)); err == nil {
 		t.Fatal("failed durable write treated as applied")
 	}
 	if !reflect.DeepEqual(store.Current(), prior) {
@@ -157,16 +158,16 @@ func TestConfigPersistenceFailureDoesNotApplyInMemory(t *testing.T) {
 
 func TestDesiredConfigExactRevisionRetryIsIdempotentAndClearsEarlierError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "desired.json")
-	store, err := service.OpenConfigStore(path, desired(1, 10))
+	store, err := service.OpenConfigStore(context.Background(), path, desired(1, 10))
 	if err != nil {
 		t.Fatal(err)
 	}
 	invalid := desired(2, 1)
-	if err := store.Apply(invalid); err == nil {
+	if err := store.Apply(context.Background(), invalid); err == nil {
 		t.Fatal("invalid config accepted")
 	}
 	valid := desired(3, 30)
-	if err := store.Apply(valid); err != nil {
+	if err := store.Apply(context.Background(), valid); err != nil {
 		t.Fatal(err)
 	}
 	if store.ConfigError() != nil {
@@ -176,7 +177,7 @@ func TestDesiredConfigExactRevisionRetryIsIdempotentAndClearsEarlierError(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Apply(valid); err != nil {
+	if err := store.Apply(context.Background(), valid); err != nil {
 		t.Fatalf("exact repeated config rejected: %v", err)
 	}
 	after, err := os.ReadFile(path)
@@ -199,7 +200,7 @@ func TestEveryPersistedDesiredConfigIsCollectorCompatible(t *testing.T) {
 		{"control interface", func(c *v1.DesiredConfig) { c.Interfaces = []string{"eth0\n"} }, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			store, err := service.OpenConfigStore(filepath.Join(t.TempDir(), "desired.json"), desired(1, 10))
+			store, err := service.OpenConfigStore(context.Background(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 10))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -209,7 +210,7 @@ func TestEveryPersistedDesiredConfigIsCollectorCompatible(t *testing.T) {
 			}
 			next := desired(2, 30)
 			tt.mutate(&next)
-			if err := store.Apply(next); err != nil {
+			if err := store.Apply(context.Background(), next); err != nil {
 				if !tt.allowRejection {
 					t.Fatalf("valid collector config rejected: %v", err)
 				}
@@ -236,7 +237,7 @@ func TestLegacyOversizedConfigRetainsDiskStateUntilRemoteRepair(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	store, err := service.OpenConfigStore(path, desired(1, 10))
+	store, err := service.OpenConfigStore(context.Background(), path, desired(1, 10))
 	if err != nil {
 		t.Fatalf("legacy selection prevents remote repair: %v", err)
 	}
@@ -255,10 +256,10 @@ func TestLegacyOversizedConfigRetainsDiskStateUntilRemoteRepair(t *testing.T) {
 		t.Fatalf("legacy rejection was silently acknowledged: %+v", failure)
 	}
 	repair := desired(8, 5)
-	if err := store.Apply(repair); err != nil {
+	if err := store.Apply(context.Background(), repair); err != nil {
 		t.Fatalf("higher-revision remote repair rejected: %v", err)
 	}
-	reopened, err := service.OpenConfigStore(path, desired(1, 10))
+	reopened, err := service.OpenConfigStore(context.Background(), path, desired(1, 10))
 	if err != nil || !reflect.DeepEqual(reopened.Current(), repair) || reopened.ConfigError() != nil {
 		t.Fatalf("remote repair not durable: %v", err)
 	}
@@ -267,7 +268,7 @@ func TestLegacyOversizedConfigRetainsDiskStateUntilRemoteRepair(t *testing.T) {
 func TestBudgetRecoveryDoesNotAcceptOtherCorruptSavedFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "desired.json")
 	prior := desired(1, 10)
-	store, err := service.OpenConfigStore(path, prior)
+	store, err := service.OpenConfigStore(context.Background(), path, prior)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +283,7 @@ func TestBudgetRecoveryDoesNotAcceptOtherCorruptSavedFields(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Apply(desired(3, 5)); err == nil {
+	if err := store.Apply(context.Background(), desired(3, 5)); err == nil {
 		t.Fatal("other corruption was incorrectly treated as a legacy budget error")
 	}
 	after, err := os.ReadFile(path)

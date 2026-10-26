@@ -23,7 +23,7 @@ func TestNormalReportRecoversDurableRotationAfterUnauthorized(t *testing.T) {
 			ctx := context.Background()
 			f := newAgentHTTP(t, 1)
 			state, cfg, path := clientState(t)
-			run, err := state.BeginRun()
+			run, err := state.BeginRun(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -143,7 +143,7 @@ func TestNormalReportRecoversDurableRotationAfterUnauthorized(t *testing.T) {
 				t.Fatalf("rotation did not commit: %v", err)
 			}
 			if outcome == "already promoted" {
-				if err := state.ConfirmEnrollment(staged.PendingNodeToken, node.ID); err != nil {
+				if err := state.ConfirmEnrollment(t.Context(), staged.PendingNodeToken, node.ID); err != nil {
 					t.Fatal(err)
 				}
 			}

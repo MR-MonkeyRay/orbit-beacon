@@ -106,13 +106,16 @@ func run(args []string) error {
 	if err := os.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"); err != nil {
 		return err
 	}
-	agent, err := service.OpenRuntime(cfg)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	agent, err := service.OpenRuntime(ctx, cfg)
 	if err != nil {
+		if args[0] == "run" && errors.Is(err, context.Canceled) {
+			return nil
+		}
 		return err
 	}
 	defer agent.Close()
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
 	switch args[0] {
 	case "run":
 		err := agent.Run(ctx)

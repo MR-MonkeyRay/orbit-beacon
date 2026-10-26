@@ -23,7 +23,7 @@ func TestSchedulerDeadlineStillReportsCompleteConfiguredMetrics(t *testing.T) {
 		config := desired(1, 10)
 		config.Interfaces = []string{"deadline0", "deadline1"}
 		config.DiskPaths = []string{t.TempDir(), t.TempDir()}
-		cfg, err := service.OpenConfigStore(filepath.Join(t.TempDir(), "desired.json"), config)
+		cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), config)
 		if err != nil {
 			t.Fatal(err)
 		}

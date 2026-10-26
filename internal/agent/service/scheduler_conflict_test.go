@@ -28,7 +28,7 @@ func TestSchedulerIdentityConflictStopsRun(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				cfg, err := service.OpenConfigStore(filepath.Join(t.TempDir(), "desired.json"), desired(1, 5))
+				cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 5))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -120,7 +120,7 @@ func TestSchedulerOtherReportFailuresRemainRetryable(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				cfg, err := service.OpenConfigStore(filepath.Join(t.TempDir(), "desired.json"), desired(1, 5))
+				cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 5))
 				if err != nil {
 					t.Fatal(err)
 				}

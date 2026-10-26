@@ -1,9 +1,12 @@
 package identity
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+
+	"orbitbeacon/internal/agent/filelock"
 )
 
 const maxTicketAliases = 64
@@ -21,14 +24,17 @@ type diskIdentity struct {
 }
 
 // LookupEnrollment reads an existing operation without allocating a candidate.
-func (s *Store) LookupEnrollment(ticket [32]byte) (Identity, Enrollment, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	unlock, err := lockGeneration(s.path)
+func (s *Store) LookupEnrollment(ctx context.Context, ticket [32]byte) (Identity, Enrollment, bool, error) {
+	unlock, err := filelock.Acquire(ctx, s.path+".lock")
 	if err != nil {
 		return Identity{}, Enrollment{}, false, err
 	}
 	defer unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Identity{}, Enrollment{}, false, err
+	}
 	current, err := load(s.path)
 	if err != nil {
 		return Identity{}, Enrollment{}, false, err
@@ -40,27 +46,30 @@ func (s *Store) LookupEnrollment(ticket [32]byte) (Identity, Enrollment, bool, e
 
 // StageEnrollment durably binds a ticket to its candidate before any claim.
 // Rotation may be requested before a response has supplied the node binding.
-func (s *Store) StageEnrollment(ticket [32]byte, rotate bool) (Identity, Enrollment, error) {
-	return s.prepareEnrollment(ticket, rotate, "")
+func (s *Store) StageEnrollment(ctx context.Context, ticket [32]byte, rotate bool) (Identity, Enrollment, error) {
+	return s.prepareEnrollment(ctx, ticket, rotate, "")
 }
 
 // RememberEnrollment repairs a missing association only for a credential still
 // present in durable identity, after a read-only server receipt confirmation.
-func (s *Store) RememberEnrollment(ticket [32]byte, accepted string) (Identity, Enrollment, error) {
+func (s *Store) RememberEnrollment(ctx context.Context, ticket [32]byte, accepted string) (Identity, Enrollment, error) {
 	if accepted == "" {
 		return Identity{}, Enrollment{}, errors.New("confirmed enrollment credential is missing")
 	}
-	return s.prepareEnrollment(ticket, false, accepted)
+	return s.prepareEnrollment(ctx, ticket, false, accepted)
 }
 
-func (s *Store) prepareEnrollment(ticket [32]byte, rotate bool, accepted string) (Identity, Enrollment, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	unlock, err := lockGeneration(s.path)
+func (s *Store) prepareEnrollment(ctx context.Context, ticket [32]byte, rotate bool, accepted string) (Identity, Enrollment, error) {
+	unlock, err := filelock.Acquire(ctx, s.path+".lock")
 	if err != nil {
 		return Identity{}, Enrollment{}, err
 	}
 	defer unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Identity{}, Enrollment{}, err
+	}
 	current, err := load(s.path)
 	if err != nil {
 		return Identity{}, Enrollment{}, err

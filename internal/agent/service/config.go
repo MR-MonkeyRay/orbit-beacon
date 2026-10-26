@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"sync"
 
+	"orbitbeacon/internal/agent/filelock"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -20,8 +22,14 @@ type ConfigStore struct {
 	failure *v1.ConfigError
 }
 
-func OpenConfigStore(path string, initial v1.DesiredConfig) (*ConfigStore, error) {
-	unlock, err := lockConfig(path)
+func OpenConfigStore(ctx context.Context, path string, initial v1.DesiredConfig) (*ConfigStore, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, err
+	}
+	unlock, err := filelock.Acquire(ctx, path+".lock")
 	if err != nil {
 		return nil, err
 	}
@@ -30,6 +38,9 @@ func OpenConfigStore(path string, initial v1.DesiredConfig) (*ConfigStore, error
 	var failure *v1.ConfigError
 	if errors.Is(err, os.ErrNotExist) {
 		if err := initial.Validate(); err != nil {
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		if err := saveConfig(path, initial); err != nil {
@@ -109,9 +120,7 @@ func (s *ConfigStore) ConfigError() *v1.ConfigError {
 	return &failure
 }
 
-func (s *ConfigStore) Apply(next v1.DesiredConfig) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *ConfigStore) Apply(ctx context.Context, next v1.DesiredConfig) error {
 	fail := func(err error) error {
 		s.failure = &v1.ConfigError{Revision: next.Revision, Code: "invalid_config"}
 		var validation *v1.ValidationError
@@ -121,13 +130,32 @@ func (s *ConfigStore) Apply(next v1.DesiredConfig) error {
 		return err
 	}
 	if err := next.Validate(); err != nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		return fail(err)
 	}
-	unlock, err := lockConfig(s.path)
+	if err := ctx.Err(); err != nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return fail(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return fail(err)
+	}
+	unlock, err := filelock.Acquire(ctx, s.path+".lock")
 	if err != nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		return fail(err)
 	}
 	defer unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
 	current, err := loadConfig(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		current = s.current
@@ -147,6 +175,9 @@ func (s *ConfigStore) Apply(next v1.DesiredConfig) error {
 		s.current = cloneConfig(current)
 		s.failure = nil
 		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
 	}
 	if err := saveConfig(s.path, next); err != nil {
 		return fail(err)

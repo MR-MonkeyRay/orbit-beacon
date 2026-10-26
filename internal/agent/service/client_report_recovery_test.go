@@ -21,22 +21,22 @@ func TestReportRecoveryPromotionPreservesConcurrentDurableRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := state.BeginRun()
+	run, err := state.BeginRun(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := state.ConfirmEnrollment(run.NodeToken, "same-node"); err != nil {
+	if err := state.ConfirmEnrollment(t.Context(), run.NodeToken, "same-node"); err != nil {
 		t.Fatal(err)
 	}
 	other, err := identity.Open(path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, _, err := other.StageEnrollment([32]byte{1}, true)
+	pending, _, err := other.StageEnrollment(t.Context(), [32]byte{1}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := service.OpenConfigStore(filepath.Join(t.TempDir(), "desired.json"), desired(1, 10))
+	cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestReportRecoveryPromotionPreservesConcurrentDurableRun(t *testing.T) {
 		// A separate process updates the durable generation after credential reload
 		// but before the successful response permits pending promotion.
 		var err error
-		concurrentRun, err = other.BeginRun()
+		concurrentRun, err = other.BeginRun(t.Context())
 		if err != nil {
 			t.Error(err)
 			w.WriteHeader(500)
@@ -111,12 +111,12 @@ func TestReportDoesNotRetryWithoutDistinctCredentialOrWithoutUnauthorized(t *tes
 				t.Fatal(err)
 			}
 			if tt.pending {
-				if _, _, err := state.StageEnrollment([32]byte{1}, true); err != nil {
+				if _, _, err := state.StageEnrollment(t.Context(), [32]byte{1}, true); err != nil {
 					t.Fatal(err)
 				}
 			}
 			before := state.Current()
-			cfg, err := service.OpenConfigStore(filepath.Join(t.TempDir(), "desired.json"), desired(1, 10))
+			cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 10))
 			if err != nil {
 				t.Fatal(err)
 			}

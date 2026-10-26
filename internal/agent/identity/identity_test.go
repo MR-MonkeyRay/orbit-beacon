@@ -2,6 +2,7 @@ package identity_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -43,7 +44,7 @@ func TestIdentityCreatedOnceBeforeUseAndRunGenerationPersisted(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer old.Close()
-	first, err := store.BeginRun()
+	first, err := store.BeginRun(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +61,7 @@ func TestIdentityCreatedOnceBeforeUseAndRunGenerationPersisted(t *testing.T) {
 			t.Fatal("inspection incremented generation")
 		}
 	}
-	second, err := reopened.BeginRun()
+	second, err := reopened.BeginRun(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

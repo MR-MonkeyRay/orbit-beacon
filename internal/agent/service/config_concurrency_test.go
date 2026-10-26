@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,23 +23,23 @@ func TestConfigStoreStaleApplyCannotRegressDurableRevision(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "desired.json")
-			writer, err := service.OpenConfigStore(path, desired(1, 10))
+			writer, err := service.OpenConfigStore(context.Background(), path, desired(1, 10))
 			if err != nil {
 				t.Fatal(err)
 			}
-			stale, err := service.OpenConfigStore(path, desired(1, 10))
+			stale, err := service.OpenConfigStore(context.Background(), path, desired(1, 10))
 			if err != nil {
 				t.Fatal(err)
 			}
 			latest := desired(3, 30)
-			if err := writer.Apply(latest); err != nil {
+			if err := writer.Apply(context.Background(), latest); err != nil {
 				t.Fatal(err)
 			}
 			before, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := stale.Apply(tt.next); err == nil {
+			if err := stale.Apply(context.Background(), tt.next); err == nil {
 				t.Error("stale store accepted a revision rejected by durable state")
 			}
 			after, err := os.ReadFile(path)
@@ -67,23 +68,23 @@ func TestConfigStoreStaleApplyCannotRegressDurableRevision(t *testing.T) {
 
 func TestConfigStoreStaleExactRetryLoadsDurableConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "desired.json")
-	writer, err := service.OpenConfigStore(path, desired(1, 10))
+	writer, err := service.OpenConfigStore(context.Background(), path, desired(1, 10))
 	if err != nil {
 		t.Fatal(err)
 	}
-	stale, err := service.OpenConfigStore(path, desired(1, 10))
+	stale, err := service.OpenConfigStore(context.Background(), path, desired(1, 10))
 	if err != nil {
 		t.Fatal(err)
 	}
 	latest := desired(3, 30)
-	if err := writer.Apply(latest); err != nil {
+	if err := writer.Apply(context.Background(), latest); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stale.Apply(latest); err != nil {
+	if err := stale.Apply(context.Background(), latest); err != nil {
 		t.Fatalf("identical durable revision rejected: %v", err)
 	}
 	after, err := os.Stat(path)
@@ -103,7 +104,7 @@ func TestConfigStoreRevisionSubprocess(t *testing.T) {
 	if path == "" {
 		t.Skip("subprocess helper")
 	}
-	store, err := service.OpenConfigStore(path, desired(1, 10))
+	store, err := service.OpenConfigStore(context.Background(), path, desired(1, 10))
 	if err != nil {
 		t.Fatal(err)
 	}

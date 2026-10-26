@@ -28,7 +28,7 @@ func TestDirectReportConfirmsLostEnrollmentBindingBeforeRotation(t *testing.T) {
 	if _, err := f.enrollments.Enroll(ctx, ticket.Token, v1.EnrollmentRequest{ProtocolVersion: 1, InstallationID: before.InstallationID, NodeToken: before.NodeToken}); err != nil {
 		t.Fatal(err)
 	}
-	run, err := state.BeginRun()
+	run, err := state.BeginRun(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

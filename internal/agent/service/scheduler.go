@@ -56,7 +56,7 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	state, err := s.options.Identity.BeginRun()
+	state, err := s.options.Identity.BeginRun(ctx)
 	if err != nil {
 		return err
 	}

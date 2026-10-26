@@ -26,7 +26,7 @@ func TestLostRotationResponseRecoversPendingCredentialWithoutTicketOrNewGenerati
 			f := newAgentHTTP(t, 1)
 			state, cfg, path := clientState(t)
 			if started {
-				if _, err := state.BeginRun(); err != nil {
+				if _, err := state.BeginRun(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -143,10 +143,10 @@ func TestTicketlessEnrollmentWithoutRecoverableCredentialRequiresTicket(t *testi
 			f := newAgentHTTP(t, 1)
 			state, cfg, _ := clientState(t)
 			if started {
-				if _, err := state.BeginRun(); err != nil {
+				if _, err := state.BeginRun(t.Context()); err != nil {
 					t.Fatal(err)
 				}
-				if _, _, err := state.StageEnrollment([32]byte{1}, true); err != nil {
+				if _, _, err := state.StageEnrollment(t.Context(), [32]byte{1}, true); err != nil {
 					t.Fatal(err)
 				}
 			}

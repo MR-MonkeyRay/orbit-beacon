@@ -71,7 +71,7 @@ func TestEveryPersistedCanonicalQuotaIsAcceptedByAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	storePath := filepath.Join(t.TempDir(), "desired.json")
-	store, err := service.OpenConfigStore(storePath, config)
+	store, err := service.OpenConfigStore(t.Context(), storePath, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,10 +92,10 @@ func TestEveryPersistedCanonicalQuotaIsAcceptedByAgent(t *testing.T) {
 			if desired.QuotaBytes != quota {
 				t.Fatalf("persisted quota lost exact decimal representation: got %q want %q", desired.QuotaBytes, quota)
 			}
-			if err := store.Apply(desired); err != nil {
+			if err := store.Apply(t.Context(), desired); err != nil {
 				t.Fatalf("server-persisted quota cannot be applied by agent: %v", err)
 			}
-			reopened, err := service.OpenConfigStore(storePath, config)
+			reopened, err := service.OpenConfigStore(t.Context(), storePath, config)
 			if err != nil {
 				t.Fatal(err)
 			}

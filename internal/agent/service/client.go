@@ -114,7 +114,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 func (c *Client) Close() { c.http.CloseIdleConnections() }
 
 func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentResponse, error) {
-	state, err := c.identity.Reload()
+	state, err := c.identity.Reload(ctx)
 	if err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
@@ -133,7 +133,7 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 		return v1.EnrollmentResponse{}, errors.New("enrollment ticket is required; saved node credentials were not accepted")
 	}
 	ticket := sha256.Sum256([]byte(token))
-	state, operation, exists, err := c.identity.LookupEnrollment(ticket)
+	state, operation, exists, err := c.identity.LookupEnrollment(ctx, ticket)
 	if err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
@@ -167,15 +167,15 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 			if state.NodeID != "" && state.NodeID != checked.NodeID {
 				return v1.EnrollmentResponse{}, errors.New("enrollment receipt does not match durable node")
 			}
-			if _, _, err := c.identity.RememberEnrollment(ticket, credential); err != nil {
+			if _, _, err := c.identity.RememberEnrollment(ctx, ticket, credential); err != nil {
 				return v1.EnrollmentResponse{}, err
 			}
-			if err := c.identity.ConfirmEnrollment(credential, checked.NodeID); err != nil {
+			if err := c.identity.ConfirmEnrollment(ctx, credential, checked.NodeID); err != nil {
 				return v1.EnrollmentResponse{}, err
 			}
 			return v1.EnrollmentResponse{NodeID: checked.NodeID, ServerTime: checked.ServerTime}, nil
 		}
-		state, operation, err = c.identity.StageEnrollment(ticket, state.NodeID != "" || checked.CredentialState == "active")
+		state, operation, err = c.identity.StageEnrollment(ctx, ticket, state.NodeID != "" || checked.CredentialState == "active")
 		if err != nil {
 			return v1.EnrollmentResponse{}, err
 		}
@@ -188,7 +188,7 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 	if response.NodeID == "" {
 		return v1.EnrollmentResponse{}, errors.New("invalid enrollment response")
 	}
-	if err := c.identity.ConfirmEnrollment(operation.NodeToken, response.NodeID); err != nil {
+	if err := c.identity.ConfirmEnrollment(ctx, operation.NodeToken, response.NodeID); err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
 	return response, nil
@@ -213,7 +213,7 @@ func (c *Client) recoverEnrollment(ctx context.Context, state identity.Identity)
 	if response.NodeID == "" || (state.NodeID != "" && response.NodeID != state.NodeID) {
 		return v1.EnrollmentResponse{}, errors.New("invalid enrollment recovery response")
 	}
-	if err := c.identity.ConfirmEnrollment(credential, response.NodeID); err != nil {
+	if err := c.identity.ConfirmEnrollment(ctx, credential, response.NodeID); err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
 	return response, nil
@@ -231,7 +231,7 @@ func (c *Client) Report(ctx context.Context, report v1.Report) (v1.ReportRespons
 	err := c.post(ctx, "/api/agent/v1/report", credential, report, &response)
 	var rejected *HTTPError
 	if err != nil && errors.As(err, &rejected) && rejected.StatusCode == http.StatusUnauthorized {
-		current, reloadErr := c.identity.Reload()
+		current, reloadErr := c.identity.Reload(ctx)
 		if reloadErr != nil {
 			return v1.ReportResponse{}, reloadErr
 		}
@@ -252,14 +252,14 @@ func (c *Client) Report(ctx context.Context, report v1.Report) (v1.ReportRespons
 	if state.NodeID == "" || credential != state.NodeToken || response.NodeID != state.NodeID {
 		// Avoid steady-state writes; bind first-report recovery and validate any
 		// changed credential/node pair against the latest durable identity.
-		if err := c.identity.ConfirmEnrollment(credential, response.NodeID); err != nil {
+		if err := c.identity.ConfirmEnrollment(ctx, credential, response.NodeID); err != nil {
 			return v1.ReportResponse{}, err
 		}
 	}
 	if response.DesiredConfig != nil {
 		// The server accepted the sample. A rejected setting is reported on the next
 		// sample, without converting acceptance into a network retry.
-		_ = c.config.Apply(*response.DesiredConfig)
+		_ = c.config.Apply(ctx, *response.DesiredConfig)
 	}
 	return response, nil
 }

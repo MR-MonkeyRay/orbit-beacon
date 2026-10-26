@@ -39,7 +39,7 @@ func TestOriginalTicketRetryAfterReportPromotionKeepsExactCredential(t *testing.
 			if _, err := client.Enroll(ctx, initial.Token); err != nil {
 				t.Fatal(err)
 			}
-			run, err := state.BeginRun()
+			run, err := state.BeginRun(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -60,7 +60,7 @@ func TestOriginalTicketRetryAfterReportPromotionKeepsExactCredential(t *testing.
 				t.Fatal("report did not promote the committed candidate")
 			}
 			if name == "legacy active receipt with unrelated pending" {
-				promoted, _, err = state.StageEnrollment([32]byte{99}, true)
+				promoted, _, err = state.StageEnrollment(t.Context(), [32]byte{99}, true)
 				if err != nil {
 					t.Fatal(err)
 				}

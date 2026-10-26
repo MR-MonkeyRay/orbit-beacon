@@ -42,7 +42,7 @@ func clientState(t *testing.T) (*identity.Store, *service.ConfigStore, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := service.OpenConfigStore(filepath.Join(t.TempDir(), "desired.json"), v1.DesiredConfig{Revision: 1, ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{}, Interfaces: []string{}, ProbeTargets: []string{}, BillingDay: 1, QuotaBytes: "0"})
+	cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), v1.DesiredConfig{Revision: 1, ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{}, Interfaces: []string{}, ProbeTargets: []string{}, BillingDay: 1, QuotaBytes: "0"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +13,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+
+	"orbitbeacon/internal/agent/filelock"
 )
 
 type Identity struct {
@@ -84,14 +87,17 @@ func (s *Store) Current() Identity {
 
 // Reload refreshes the in-memory identity under the same cross-process lock used
 // for durable updates. It never creates or changes credentials.
-func (s *Store) Reload() (Identity, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	unlock, err := lockGeneration(s.path)
+func (s *Store) Reload(ctx context.Context) (Identity, error) {
+	unlock, err := filelock.Acquire(ctx, s.path+".lock")
 	if err != nil {
 		return Identity{}, err
 	}
 	defer unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Identity{}, err
+	}
 	current, err := load(s.path)
 	if err != nil {
 		return Identity{}, err
@@ -101,14 +107,17 @@ func (s *Store) Reload() (Identity, error) {
 }
 
 // BeginRun publishes the next generation only after the replacement is durable.
-func (s *Store) BeginRun() (Identity, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	unlock, err := lockGeneration(s.path)
+func (s *Store) BeginRun(ctx context.Context) (Identity, error) {
+	unlock, err := filelock.Acquire(ctx, s.path+".lock")
 	if err != nil {
 		return Identity{}, err
 	}
 	defer unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Identity{}, err
+	}
 	current, err := load(s.path)
 	if err != nil {
 		return Identity{}, err
@@ -130,14 +139,17 @@ func (s *Store) BeginRun() (Identity, error) {
 }
 
 // ConfirmEnrollment promotes only the exact durable credential acknowledged by the server.
-func (s *Store) ConfirmEnrollment(token, nodeID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	unlock, err := lockGeneration(s.path)
+func (s *Store) ConfirmEnrollment(ctx context.Context, token, nodeID string) error {
+	unlock, err := filelock.Acquire(ctx, s.path+".lock")
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	current, err := load(s.path)
 	if err != nil {
 		return err

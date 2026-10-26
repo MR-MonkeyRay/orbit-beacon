@@ -23,7 +23,7 @@ func TestEnrollmentPersistsIdentityBeforeRequestAndReusesItAfterLostResponse(t *
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(t.TempDir(), "desired.json")
-	cfg, err := service.OpenConfigStore(configPath, desired(1, 10))
+	cfg, err := service.OpenConfigStore(t.Context(), configPath, desired(1, 10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,11 +121,11 @@ func TestReportRecoveryUsesNodeTokenAndAcknowledgesOnlyAppliedConfig(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := state.BeginRun()
+	run, err := state.BeginRun(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := service.OpenConfigStore(filepath.Join(t.TempDir(), "desired.json"), desired(1, 10))
+	cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 10))
 	if err != nil {
 		t.Fatal(err)
 	}

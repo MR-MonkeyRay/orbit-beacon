@@ -28,12 +28,12 @@ type Runtime struct {
 	collectorRevision int64
 }
 
-func OpenRuntime(cfg config.Agent) (*Runtime, error) {
+func OpenRuntime(ctx context.Context, cfg config.Agent) (*Runtime, error) {
 	state, err := identity.Open(filepath.Join(cfg.StateDir, "identity.json"), identity.Options{})
 	if err != nil {
 		return nil, err
 	}
-	settings, err := OpenConfigStore(filepath.Join(cfg.StateDir, "desired.json"), v1.DesiredConfig{
+	settings, err := OpenConfigStore(ctx, filepath.Join(cfg.StateDir, "desired.json"), v1.DesiredConfig{
 		Revision: 1, ReportIntervalSeconds: 10, DiskIntervalSeconds: 60,
 		DiskPaths: []string{}, Interfaces: []string{}, ProbeTargets: []string{}, BillingDay: 1, QuotaBytes: "0",
 	})
@@ -45,9 +45,9 @@ func OpenRuntime(cfg config.Agent) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	systemCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	system, err := collect.System(ctx)
+	system, err := collect.System(systemCtx)
 	if err != nil {
 		return nil, err
 	}
