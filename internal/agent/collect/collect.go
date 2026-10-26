@@ -219,8 +219,9 @@ func (c *Collector) collectCPU(ctx context.Context, m *v1.Metrics) {
 			window = at.Sub(c.cpuAt).Milliseconds()
 			total, busy := cpuTimes(current)
 			previousTotal, previousBusy := cpuTimes(c.cpuPrevious)
-			if window > 0 && total > previousTotal && busy >= previousBusy {
-				percent := math.Max(0, math.Min(100, 100*(busy-previousBusy)/(total-previousTotal)))
+			totalDelta, busyDelta := total-previousTotal, busy-previousBusy
+			if window > 0 && cpuCountersContinuous(c.cpuPrevious, current) && totalDelta > 0 && busyDelta >= 0 && busyDelta <= totalDelta {
+				percent := 100 * (busyDelta / totalDelta)
 				if !math.IsNaN(percent) && !math.IsInf(percent, 0) {
 					m.CPUPercent = &percent
 					m.MetricStatus["cpu_percent"] = "ok"
@@ -239,6 +240,21 @@ func cpuTimes(t cpu.TimesStat) (total, busy float64) {
 		total += t.Guest + t.GuestNice
 	}
 	return total, total - t.Idle - t.Iowait
+}
+
+func cpuCountersContinuous(previous, current cpu.TimesStat) bool {
+	for _, counter := range [...][2]float64{
+		{previous.User, current.User}, {previous.System, current.System},
+		{previous.Idle, current.Idle}, {previous.Nice, current.Nice},
+		{previous.Iowait, current.Iowait}, {previous.Irq, current.Irq},
+		{previous.Softirq, current.Softirq}, {previous.Steal, current.Steal},
+		{previous.Guest, current.Guest}, {previous.GuestNice, current.GuestNice},
+	} {
+		if counter[0] < 0 || counter[1] < counter[0] || math.IsNaN(counter[0]) || math.IsNaN(counter[1]) || math.IsInf(counter[0], 0) || math.IsInf(counter[1], 0) {
+			return false
+		}
+	}
+	return true
 }
 
 type loadValues struct {

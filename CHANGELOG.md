@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Detect CPU component counter regressions before publishing a percentage, report null/stale instead of clamping impossible rates, and recover from the new baseline on the next continuous window.
 - Require an absolute Agent state directory before runtime initialization, preventing shell/service working-directory changes from creating independent identities; document preserving the existing enrolled state when migrating relative policies.
 - Make Agent identity/configuration sidecar waits context-cancelable and bounded to two seconds per acquisition without background waiters; keep cached snapshots readable during contention, propagate contexts through all callers, and handle SIGTERM before runtime initialization.
 - Separate explicit ticket operations from ticketless identity recovery; reject invalid supplied tickets without consuming their files, and detect an already-active credential in receipt inspection so missing local node bindings still allow a fresh requested rotation.
