@@ -38,7 +38,7 @@ func (d *enrollmentResponseDropper) RoundTrip(r *http.Request) (*http.Response, 
 func clientState(t *testing.T) (*identity.Store, *service.ConfigStore, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "identity.json")
-	state, err := identity.Open(path, identity.Options{})
+	state, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestClientRotationStagesFreshCredentialBeforeRequestAndPromotesAfterExactRe
 	if state.Current().NodeToken != oldToken {
 		t.Fatal("unacknowledged rotation replaced active token")
 	}
-	reopened, err := identity.Open(path, identity.Options{})
+	reopened, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestClientRotationStagesFreshCredentialBeforeRequestAndPromotesAfterExactRe
 	if reopened.Current().NodeToken != candidate || candidate == oldToken {
 		t.Fatal("acknowledged fresh credential not promoted")
 	}
-	durable, err := identity.Open(path, identity.Options{})
+	durable, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil || durable.Current().NodeToken != candidate {
 		t.Fatalf("promotion not durable: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestClientFailedOrRevokedRotationKeepsOldActiveCredential(t *testing.T) {
 			if _, err := client.Enroll(ctx, rotation.Token); err == nil {
 				t.Fatal("failed rotation succeeded")
 			}
-			reopened, err := identity.Open(path, identity.Options{})
+			reopened, err := identity.Open(t.Context(), path, identity.Options{})
 			if err != nil || state.Current().NodeToken != old || reopened.Current().NodeToken != old {
 				t.Fatalf("failed rotation destroyed active credential: %v", err)
 			}

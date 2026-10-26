@@ -63,7 +63,7 @@ func TestIdentityLockWaitCancellationKeepsCurrentReadableAndStateUnchanged(t *te
 	for _, operation := range operations {
 		t.Run(operation.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "identity.json")
-			store, err := identity.Open(path, identity.Options{})
+			store, err := identity.Open(t.Context(), path, identity.Options{})
 			if err != nil {
 				t.Fatal(err)
 			}

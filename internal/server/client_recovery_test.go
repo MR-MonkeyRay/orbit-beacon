@@ -69,7 +69,7 @@ func TestLostEnrollmentResponseRecoversByNodeCredentialWithoutTicket(t *testing.
 					t.Fatal(err)
 				}
 			}
-			reopened, err := identity.Open(path, identity.Options{})
+			reopened, err := identity.Open(t.Context(), path, identity.Options{})
 			if err != nil {
 				t.Fatal(err)
 			}

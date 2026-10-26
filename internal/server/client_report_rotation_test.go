@@ -59,7 +59,7 @@ func TestNormalReportRecoversDurableRotationAfterUnauthorized(t *testing.T) {
 					reports = append(reports, report)
 					mu.Unlock()
 					if r.Header.Get("Authorization") == "Bearer "+pending {
-						durable, err := identity.Open(path, identity.Options{})
+						durable, err := identity.Open(t.Context(), path, identity.Options{})
 						if err != nil {
 							t.Error(err)
 							w.WriteHeader(500)
@@ -114,7 +114,7 @@ func TestNormalReportRecoversDurableRotationAfterUnauthorized(t *testing.T) {
 				t.Fatal(err)
 			}
 			// Independent stores model a running process whose in-memory identity is stale.
-			stale, err := identity.Open(path, identity.Options{})
+			stale, err := identity.Open(t.Context(), path, identity.Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -173,7 +173,7 @@ func TestNormalReportRecoversDurableRotationAfterUnauthorized(t *testing.T) {
 			if len(gotReports) == 2 && !reflect.DeepEqual(gotReports[0], gotReports[1]) {
 				t.Error("credential retry changed the report payload, ownership, or sequence")
 			}
-			durable, err := identity.Open(path, identity.Options{})
+			durable, err := identity.Open(t.Context(), path, identity.Options{})
 			if err != nil {
 				t.Fatal(err)
 			}

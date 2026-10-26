@@ -29,7 +29,7 @@ type Runtime struct {
 }
 
 func OpenRuntime(ctx context.Context, cfg config.Agent) (*Runtime, error) {
-	state, err := identity.Open(filepath.Join(cfg.StateDir, "identity.json"), identity.Options{})
+	state, err := identity.Open(ctx, filepath.Join(cfg.StateDir, "identity.json"), identity.Options{})
 	if err != nil {
 		return nil, err
 	}

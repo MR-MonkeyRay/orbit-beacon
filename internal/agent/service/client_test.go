@@ -18,7 +18,7 @@ import (
 
 func TestEnrollmentPersistsIdentityBeforeRequestAndReusesItAfterLostResponse(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "identity.json")
-	state, err := identity.Open(path, identity.Options{})
+	state, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestEnrollmentPersistsIdentityBeforeRequestAndReusesItAfterLostResponse(t *
 	if _, err := client.Enroll(context.Background(), shortLivedToken); err == nil {
 		t.Fatal("lost response reported as enrollment success")
 	}
-	reopened, err := identity.Open(path, identity.Options{})
+	reopened, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestEnrollmentPersistsIdentityBeforeRequestAndReusesItAfterLostResponse(t *
 
 func TestReportRecoveryUsesNodeTokenAndAcknowledgesOnlyAppliedConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "identity.json")
-	state, err := identity.Open(path, identity.Options{})
+	state, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

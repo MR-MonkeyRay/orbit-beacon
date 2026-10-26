@@ -60,7 +60,7 @@ func TestLateConcurrentRotationCannotRollBackNewCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "identity.json")
-	one, err := identity.Open(path, identity.Options{})
+	one, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestLateConcurrentRotationCannotRollBackNewCredential(t *testing.T) {
 	if _, err := clientOne.Enroll(ctx, initial.Token); err != nil {
 		t.Fatal(err)
 	}
-	two, err := identity.Open(path, identity.Options{})
+	two, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

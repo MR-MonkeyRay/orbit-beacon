@@ -88,7 +88,7 @@ func TestLostRotationResponseRecoversPendingCredentialWithoutTicketOrNewGenerati
 			if _, err := f.db.Exec("DELETE FROM enrollment_tokens WHERE id IN (?, ?)", initial.ID, rotation.ID); err != nil {
 				t.Fatal(err)
 			}
-			reopened, err := identity.Open(path, identity.Options{})
+			reopened, err := identity.Open(t.Context(), path, identity.Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,7 +110,7 @@ func TestLostRotationResponseRecoversPendingCredentialWithoutTicketOrNewGenerati
 			if recoveryRequests.Load() == 0 {
 				t.Fatal("recovery promoted a credential without authenticating it at the server")
 			}
-			durable, err := identity.Open(path, identity.Options{})
+			durable, err := identity.Open(t.Context(), path, identity.Options{})
 			if err != nil {
 				t.Fatal(err)
 			}

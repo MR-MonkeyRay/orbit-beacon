@@ -43,7 +43,7 @@ func TestDirectReportConfirmsLostEnrollmentBindingBeforeRotation(t *testing.T) {
 	if _, err := client.Report(ctx, report); err != nil {
 		t.Fatal(err)
 	}
-	durable, err := identity.Open(path, identity.Options{})
+	durable, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

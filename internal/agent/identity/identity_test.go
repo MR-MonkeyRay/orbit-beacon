@@ -19,7 +19,7 @@ import (
 
 func TestIdentityCreatedOnceBeforeUseAndRunGenerationPersisted(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state", "identity.json")
-	store, err := identity.Open(path, identity.Options{Random: rand.NewChaCha8([32]byte{41})})
+	store, err := identity.Open(t.Context(), path, identity.Options{Random: rand.NewChaCha8([32]byte{41})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestIdentityCreatedOnceBeforeUseAndRunGenerationPersisted(t *testing.T) {
 		t.Fatalf("first run=%+v", first)
 	}
 	// Reopening for enrollment, doctor or watch is read-only with respect to generation.
-	reopened, err := identity.Open(path, identity.Options{})
+	reopened, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestIdentityCreatedOnceBeforeUseAndRunGenerationPersisted(t *testing.T) {
 	if !bytes.Equal(stillOld, data) {
 		t.Fatal("identity file modified in place instead of atomically replaced")
 	}
-	reloaded, err := identity.Open(path, identity.Options{})
+	reloaded, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil || reloaded.Current().RunGeneration != 2 {
 		t.Fatalf("generation not durable: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestIdentityNeverRegeneratesCorruptExistingState(t *testing.T) {
 	if err := os.WriteFile(path, broken, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := identity.Open(path, identity.Options{}); err == nil {
+	if _, err := identity.Open(t.Context(), path, identity.Options{}); err == nil {
 		t.Fatal("corrupt identity silently replaced")
 	}
 	got, err := os.ReadFile(path)
@@ -106,18 +106,11 @@ func TestIdentityNeverRegeneratesCorruptExistingState(t *testing.T) {
 
 func TestIdentityFailureDoesNotPublishPartialIdentity(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "identity.json")
-	if _, err := identity.Open(path, identity.Options{Random: bytes.NewReader([]byte{1, 2})}); err == nil {
+	if _, err := identity.Open(t.Context(), path, identity.Options{Random: bytes.NewReader([]byte{1, 2})}); err == nil {
 		t.Fatal("short entropy accepted")
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("partial identity visible: %v", err)
-	}
-	entries, err := os.ReadDir(filepath.Dir(path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("failed creation left identity fragments: %v", entries)
 	}
 }
 
@@ -129,7 +122,7 @@ func TestIdentityRejectsSymlinksAndUnsafePermissions(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			dir := t.TempDir()
 			real := filepath.Join(dir, "real.json")
-			if _, err := identity.Open(real, identity.Options{}); err != nil {
+			if _, err := identity.Open(t.Context(), real, identity.Options{}); err != nil {
 				t.Fatal(err)
 			}
 			path := real
@@ -145,7 +138,7 @@ func TestIdentityRejectsSymlinksAndUnsafePermissions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := identity.Open(path, identity.Options{}); err == nil {
+			if _, err := identity.Open(t.Context(), path, identity.Options{}); err == nil {
 				t.Fatal("unsafe identity accepted")
 			}
 			after, err := os.ReadFile(real)

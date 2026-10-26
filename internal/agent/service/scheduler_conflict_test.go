@@ -24,7 +24,7 @@ func TestSchedulerIdentityConflictStopsRun(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				state, err := identity.Open(filepath.Join(t.TempDir(), "identity.json"), identity.Options{})
+				state, err := identity.Open(t.Context(), filepath.Join(t.TempDir(), "identity.json"), identity.Options{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -116,7 +116,7 @@ func TestSchedulerOtherReportFailuresRemainRetryable(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				state, err := identity.Open(filepath.Join(t.TempDir(), "identity.json"), identity.Options{})
+				state, err := identity.Open(t.Context(), filepath.Join(t.TempDir(), "identity.json"), identity.Options{})
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -17,7 +17,7 @@ import (
 
 func TestReportRecoveryPromotionPreservesConcurrentDurableRun(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "identity.json")
-	state, err := identity.Open(path, identity.Options{})
+	state, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestReportRecoveryPromotionPreservesConcurrentDurableRun(t *testing.T) {
 	if err := state.ConfirmEnrollment(t.Context(), run.NodeToken, "same-node"); err != nil {
 		t.Fatal(err)
 	}
-	other, err := identity.Open(path, identity.Options{})
+	other, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestReportRecoveryPromotionPreservesConcurrentDurableRun(t *testing.T) {
 	if concurrentRun.RunGeneration == 0 {
 		t.Fatal("pending credential was never authenticated")
 	}
-	durable, err := identity.Open(path, identity.Options{})
+	durable, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestReportDoesNotRetryWithoutDistinctCredentialOrWithoutUnauthorized(t *tes
 		{"forbidden with candidate", http.StatusForbidden, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			state, err := identity.Open(filepath.Join(t.TempDir(), "identity.json"), identity.Options{})
+			state, err := identity.Open(t.Context(), filepath.Join(t.TempDir(), "identity.json"), identity.Options{})
 			if err != nil {
 				t.Fatal(err)
 			}

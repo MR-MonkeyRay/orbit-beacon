@@ -18,12 +18,12 @@ func TestEnrollmentRetryRequiresDirectorySyncBeforePublishing(t *testing.T) {
 		t.Run(first, func(t *testing.T) {
 			ctx := context.Background()
 			path := filepath.Join(t.TempDir(), "identity.json")
-			store, err := Open(path, Options{})
+			store, err := Open(t.Context(), path, Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
 			before := store.Current()
-			other, err := Open(path, Options{Random: bytes.NewReader(nil)})
+			other, err := Open(t.Context(), path, Options{Random: bytes.NewReader(nil)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -106,7 +106,7 @@ func TestEnrollmentRetryRequiresDirectorySyncBeforePublishing(t *testing.T) {
 				}
 				assertIdentityUnchanged(t, path, data, inode)
 			}
-			reopened, err := Open(path, Options{Random: bytes.NewReader(nil)})
+			reopened, err := Open(t.Context(), path, Options{Random: bytes.NewReader(nil)})
 			if err != nil || reopened.Current() != visible.Identity {
 				t.Fatalf("Open did not recover the visible identity without entropy: %v", err)
 			}
@@ -118,7 +118,7 @@ func TestEnrollmentRetryRequiresDirectorySyncBeforePublishing(t *testing.T) {
 func TestConfirmEnrollmentRetrySyncsWithoutReplacingVisibleIdentity(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "identity.json")
-	store, err := Open(path, Options{})
+	store, err := Open(t.Context(), path, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestConfirmEnrollmentRetrySyncsWithoutReplacingVisibleIdentity(t *testing.T
 func TestBeginRunSyncFailureDoesNotPublishVisibleGeneration(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "identity.json")
-	store, err := Open(path, Options{})
+	store, err := Open(t.Context(), path, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

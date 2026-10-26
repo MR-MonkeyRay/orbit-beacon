@@ -11,7 +11,7 @@ import (
 
 func TestTicketOperationsRetainExactCandidateAndParentAfterPromotion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "identity.json")
-	store, err := identity.Open(path, identity.Options{})
+	store, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func TestTicketOperationsRetainExactCandidateAndParentAfterPromotion(t *testing.
 	if err := store.ConfirmEnrollment(context.Background(), operation.NodeToken, "node"); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := identity.Open(path, identity.Options{})
+	reopened, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -36,8 +36,27 @@ type Store struct {
 	syncDirectory func(string) error
 }
 
-// Open creates an identity only when no identity exists. Inspection never begins a run.
-func Open(path string, options Options) (*Store, error) {
+// Open coordinates inspection and first creation with atomic identity updates.
+// Inspection never begins a run.
+func Open(ctx context.Context, path string, options Options) (*Store, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return nil, err
+	}
+	if err := prepareNewDirectory(directory); err != nil {
+		return nil, err
+	}
+	unlock, err := filelock.Acquire(ctx, path+".lock")
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	random := options.Random
 	if random == nil {
 		random = rand.Reader
@@ -63,11 +82,7 @@ func Open(path string, options Options) (*Store, error) {
 		return nil, err
 	}
 	current = diskIdentity{Identity: Identity{InstallationID: installation, NodeToken: token}}
-	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0700); err != nil {
-		return nil, err
-	}
-	if err := prepareNewDirectory(directory); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err := store.persist(current, true); err != nil {
