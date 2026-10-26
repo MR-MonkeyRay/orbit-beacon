@@ -118,7 +118,7 @@ func run(args []string) error {
 			}
 			username = strings.TrimSpace(line)
 		}
-		fmt.Fprint(os.Stderr, "Administrator password (at least 8 characters): ")
+		fmt.Fprint(os.Stderr, "Administrator password (8–1024 UTF-8 bytes): ")
 		var password []byte
 		if term.IsTerminal(int(os.Stdin.Fd())) {
 			password, err = term.ReadPassword(int(os.Stdin.Fd()))

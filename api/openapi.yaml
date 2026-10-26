@@ -13,6 +13,10 @@ info:
     request Host and forwarded headers do not establish trust.
     JSON requests must contain one object, reject unknown fields and are limited to
     64 KiB. String limits enforced by the server are UTF-8 byte limits.
+    Byte-constrained strings use x-minLengthBytes/x-maxLengthBytes, not JSON Schema
+    character-count bounds. Validators must opt into these extensions; the Server
+    remains authoritative. For example, four CJK characters can satisfy an
+    eight-byte password minimum.
     Unsupported methods return 405 with Allow before authentication is checked;
     unknown API routes return structured 404, never the UI shell.
     State changes and actor-attributed audit insertion share one transaction;
@@ -49,8 +53,8 @@ paths:
               additionalProperties: false
               required: [username, password]
               properties:
-                username: {type: string, maxLength: 128}
-                password: {type: string, maxLength: 1024}
+                username: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 128}
+                password: {type: string, x-minLengthBytes: 8, x-maxLengthBytes: 1024}
       responses:
         '200':
           description: Session established; Set-Cookie is __Host-orbitbeacon_session with Secure, HttpOnly, SameSite=Lax, Path=/ and a 12-hour expiry.
@@ -96,8 +100,8 @@ paths:
               additionalProperties: false
               required: [old_password, new_password]
               properties:
-                old_password: {type: string, maxLength: 1024}
-                new_password: {type: string, minLength: 8, maxLength: 1024}
+                old_password: {type: string, x-maxLengthBytes: 1024}
+                new_password: {type: string, x-minLengthBytes: 8, x-maxLengthBytes: 1024, examples: [天地玄黄]}
       responses:
         '204': {description: Password changed and all of this user's sessions revoked.}
         '400': {$ref: '#/components/responses/Error'}
@@ -137,8 +141,8 @@ paths:
               additionalProperties: false
               required: [username, password, role]
               properties:
-                username: {type: string, minLength: 1, maxLength: 128}
-                password: {type: string, minLength: 8, maxLength: 1024}
+                username: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 128}
+                password: {type: string, x-minLengthBytes: 8, x-maxLengthBytes: 1024}
                 role: {type: string, enum: [admin, viewer]}
       responses:
         '201':
@@ -176,7 +180,7 @@ paths:
               type: object
               additionalProperties: false
               properties:
-                username: {type: string, minLength: 1, maxLength: 128}
+                username: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 128}
                 role: {type: string, enum: [admin, viewer]}
       responses:
         '200':
@@ -334,7 +338,7 @@ paths:
               additionalProperties: false
               required: [name]
               properties:
-                name: {type: string, minLength: 1, maxLength: 255}
+                name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
       responses:
         '201':
           description: Persistent pending identity created.
@@ -369,7 +373,7 @@ paths:
               type: object
               additionalProperties: false
               properties:
-                name: {type: [string, 'null'], minLength: 1, maxLength: 255, description: Non-whitespace name; null leaves unchanged.}
+                name: {type: [string, 'null'], x-minLengthBytes: 1, x-maxLengthBytes: 255, description: Non-whitespace name; null leaves unchanged.}
                 notes: {type: [string, 'null'], description: Empty string clears; null leaves unchanged.}
                 region: {type: [string, 'null'], description: Empty string clears; null leaves unchanged.}
                 provider: {type: [string, 'null'], description: Empty string clears; null leaves unchanged.}
@@ -380,7 +384,7 @@ paths:
                 tags:
                   type: [array, 'null']
                   uniqueItems: true
-                  items: {type: string, minLength: 1, maxLength: 255, description: Non-whitespace tag; strings are not trimmed or normalized.}
+                  items: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255, description: Non-whitespace tag; strings are not trimmed or normalized.}
                   description: Replaces all tags; [] clears and null leaves unchanged. Duplicate exact strings are rejected. Responses sort tags lexicographically.
       responses:
         '200':
@@ -437,7 +441,7 @@ paths:
                 disk_paths:
                   type: array
                   maxItems: 8
-                  items: {type: string, minLength: 1, maxLength: 1024}
+                  items: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 1024}
                 billing_day: {type: integer, minimum: 1, maximum: 28}
                 quota_bytes: {$ref: '#/components/schemas/DecimalCounter'}
       responses:
@@ -572,7 +576,7 @@ paths:
               required: [protocol_version, installation_id, node_token]
               properties:
                 protocol_version: {const: 1}
-                installation_id: {type: string, minLength: 1}
+                installation_id: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
                 node_token: {type: string, minLength: 43, maxLength: 43, writeOnly: true}
                 system: {$ref: '#/components/schemas/System'}
       responses:
@@ -601,7 +605,7 @@ paths:
               additionalProperties: false
               required: [installation_id]
               properties:
-                installation_id: {type: string, minLength: 1, maxLength: 255}
+                installation_id: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
       responses:
         '200':
           description: Authenticated installation binding, without telemetry mutation.
@@ -695,7 +699,7 @@ components:
             additionalProperties: false
             required: [name]
             properties:
-              name: {type: string, minLength: 1, maxLength: 255}
+              name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
   responses:
     Error:
       description: Structured failure. Invalid JSON/input returns 400, invalid credentials 401, role/Origin/CSRF failures 403, missing resources 404, capacity/enrollment/identity/username conflicts 409, bodies above 64 KiB 413, unsupported agent protocol 426, rate limiting 429, and retryable SQLite contention 503 storage_busy. Unsupported methods return 405 with Allow before authentication; unknown API routes return 404. No API error returns the SPA shell.
@@ -798,8 +802,7 @@ components:
       description: Unique nonblank interface names, each 1–255 UTF-8 bytes, without NUL, CR or LF; shared server/agent/collector validation. Empty selection uses the default route.
       items:
         type: string
-        minLength: 1
-        maxLength: 255
+        x-minLengthBytes: 1
         x-maxLengthBytes: 255
         allOf:
           - {pattern: '^[^\u0000\r\n]+$'}
@@ -819,7 +822,7 @@ components:
           maxItems: 8
           uniqueItems: true
           description: Absolute platform-valid paths, each at most 1024 bytes without NUL. Shared server/agent/collector validation.
-          items: {type: string, minLength: 1, maxLength: 1024, pattern: '^[^\u0000]+$'}
+          items: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 1024, pattern: '^[^\u0000]+$'}
         probe_targets:
           type: array
           maxItems: 0
@@ -841,9 +844,9 @@ components:
       type: object
       additionalProperties: false
       properties:
-        hostname: {type: string}
-        os: {type: string}
-        arch: {type: string}
+        hostname: {type: string, x-maxLengthBytes: 255}
+        os: {type: string, x-maxLengthBytes: 64}
+        arch: {type: string, x-maxLengthBytes: 64}
     DecimalCounter:
       type: string
       pattern: '^(0|[1-9][0-9]*)$'
@@ -853,7 +856,7 @@ components:
       additionalProperties: false
       required: [sample_id, age_ms, source_interval_ms]
       properties:
-        sample_id: {type: string, minLength: 1}
+        sample_id: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
         age_ms: {type: integer, minimum: 0}
         source_interval_ms: {type: integer, minimum: 1}
         measurement_window_ms: {type: integer, minimum: 0}
@@ -885,7 +888,7 @@ components:
             additionalProperties: false
             required: [path, total_bytes, used_bytes, sampled_at]
             properties:
-              path: {type: string}
+              path: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 1024}
               total_bytes: {type: [integer, 'null'], minimum: 0}
               used_bytes: {type: [integer, 'null'], minimum: 0}
               sampled_at: {type: string, format: date-time}
@@ -897,7 +900,7 @@ components:
             additionalProperties: false
             required: [name, rx_bytes_per_sec, tx_bytes_per_sec]
             properties:
-              name: {type: string}
+              name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
               rx_bytes_per_sec: {type: [number, 'null'], minimum: 0}
               tx_bytes_per_sec: {type: [number, 'null'], minimum: 0}
         metric_status:
@@ -923,7 +926,7 @@ components:
       additionalProperties: false
       required: [epoch, period_start, rx_bytes, tx_bytes]
       properties:
-        epoch: {type: string}
+        epoch: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
         period_start: {type: string, format: date-time}
         rx_bytes: {$ref: '#/components/schemas/DecimalCounter'}
         tx_bytes: {$ref: '#/components/schemas/DecimalCounter'}
@@ -934,7 +937,7 @@ components:
       properties:
         protocol_version: {const: 1}
         run_generation: {type: integer, minimum: 1, description: Monotonic within the current node credential; changing the credential resets server fencing.}
-        session_id: {type: string, minLength: 1}
+        session_id: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
         seq: {type: integer, minimum: 1}
         sampled_at: {type: string, format: date-time}
         config_revision: {type: integer, minimum: 1}
@@ -949,7 +952,7 @@ components:
           required: [revision, code]
           properties:
             revision: {type: integer}
-            code: {type: string}
+            code: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 64}
             fields: {type: object, additionalProperties: {type: string}}
     ReportResponse:
       type: object

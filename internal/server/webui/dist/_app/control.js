@@ -3,6 +3,7 @@
 const content = document.getElementById('content');
 const message = document.getElementById('message');
 let csrf = '';
+const utf8 = new TextEncoder();
 
 async function api(path, options = {}) {
   const headers = {'Content-Type': 'application/json', ...options.headers};
@@ -31,16 +32,30 @@ function panel(title) {
   return section;
 }
 
+function byteLimit(input, min, max, perLine = false) {
+  const validate = () => {
+    const values = perLine ? input.value.split('\n').filter((value) => value !== '') : [input.value];
+    const invalid = values.some((value) => {
+      const size = utf8.encode(value).length;
+      return size < min || size > max;
+    });
+    input.setCustomValidity(invalid ? `${perLine ? 'Each entry' : 'Value'} must use ${min}–${max} UTF-8 bytes.` : '');
+  };
+  input.addEventListener('input', validate);
+  validate();
+}
+
 function field(form, labelText, name, value = '', options = {}) {
   const label = text('label', labelText);
   const input = document.createElement(options.multiline ? 'textarea' : 'input');
   input.name = name;
   input.value = value;
   if (!options.multiline) input.type = options.type || 'text';
-  for (const key of ['required', 'maxLength', 'minLength', 'autocomplete', 'disabled']) {
+  for (const key of ['required', 'autocomplete', 'disabled']) {
     if (options[key] !== undefined) input[key] = options[key];
   }
   if (options.multiline) input.rows = 4;
+  if (options.maxBytes !== undefined) byteLimit(input, options.minBytes ?? 0, options.maxBytes, options.perLine);
   label.append(input);
   form.append(label);
   return input;
@@ -84,8 +99,8 @@ function passwordSettings() {
   const section = panel('Change your password');
   section.append(text('p', 'Your current password is required. Changing it signs out every session, including this one. Sign in again with your new password.'));
   const form = document.createElement('form');
-  const oldPassword = field(form, 'Current password', 'old_password', '', {type: 'password', autocomplete: 'current-password', required: true, maxLength: 1024, disabled: !csrf});
-  const newPassword = field(form, 'New password (at least 8 characters)', 'new_password', '', {type: 'password', autocomplete: 'new-password', required: true, minLength: 8, maxLength: 1024, disabled: !csrf});
+  const oldPassword = field(form, 'Current password', 'old_password', '', {type: 'password', autocomplete: 'current-password', required: true, maxBytes: 1024, disabled: !csrf});
+  const newPassword = field(form, 'New password (8–1024 UTF-8 bytes)', 'new_password', '', {type: 'password', autocomplete: 'new-password', required: true, minBytes: 8, maxBytes: 1024, disabled: !csrf});
   mutation(form, 'Change password and sign out', async () => {
     try {
       await api('/me/password', {method: 'PATCH', body: JSON.stringify({old_password: oldPassword.value, new_password: newPassword.value})});
@@ -108,7 +123,7 @@ function userSettings(user, users) {
     entry.append(text('h3', item.username), text('p', `Role: ${item.role} · ID: ${item.id} · Created: ${item.created_at}`));
     if (editable) {
       const form = document.createElement('form');
-      const username = field(form, 'Username', 'username', item.username, {required: true, maxLength: 128, autocomplete: 'off'});
+      const username = field(form, 'Username', 'username', item.username, {required: true, maxBytes: 128, autocomplete: 'off'});
       const role = selection(form, 'Role', 'role', [['viewer', 'Viewer'], ['admin', 'Administrator']], item.role);
       mutation(form, 'Save user', async () => {
         const patch = {};
@@ -142,8 +157,8 @@ function userSettings(user, users) {
   if (editable) {
     section.append(text('h3', 'Create user'));
     const form = document.createElement('form');
-    const username = field(form, 'New username', 'username', '', {required: true, maxLength: 128, autocomplete: 'off'});
-    const password = field(form, 'Initial password (at least 8 characters)', 'password', '', {type: 'password', required: true, minLength: 8, maxLength: 1024, autocomplete: 'new-password'});
+    const username = field(form, 'New username', 'username', '', {required: true, maxBytes: 128, autocomplete: 'off'});
+    const password = field(form, 'Initial password (8–1024 UTF-8 bytes)', 'password', '', {type: 'password', required: true, minBytes: 8, maxBytes: 1024, autocomplete: 'new-password'});
     const role = selection(form, 'Role', 'role', [['viewer', 'Viewer'], ['admin', 'Administrator']], 'viewer');
     mutation(form, 'Create user', async () => {
       try {
@@ -165,7 +180,7 @@ function groupSettings(user, groups) {
     entry.append(text('h3', item.name), text('p', `ID: ${item.id}`));
     if (editable) {
       const form = document.createElement('form');
-      const name = field(form, 'Group name', 'name', item.name, {required: true, maxLength: 255});
+      const name = field(form, 'Group name', 'name', item.name, {required: true, maxBytes: 255});
       mutation(form, 'Save group', async () => {
         await api(`/groups/${encodeURIComponent(item.id)}`, {method: 'PATCH', body: JSON.stringify({name: name.value})});
         await render();
@@ -192,7 +207,7 @@ function groupSettings(user, groups) {
   if (editable) {
     section.append(text('h3', 'Create group'));
     const form = document.createElement('form');
-    const name = field(form, 'New group name', 'name', '', {required: true, maxLength: 255});
+    const name = field(form, 'New group name', 'name', '', {required: true, maxBytes: 255});
     mutation(form, 'Create group', async () => {
       await api('/groups', {method: 'POST', body: JSON.stringify({name: name.value})});
       await render();
@@ -229,14 +244,14 @@ function nodeMetadata(panel, node, groups, editable) {
   panel.append(details);
   if (!editable) return;
   const form = document.createElement('form');
-  const name = field(form, 'Node name', 'name', node.name, {required: true, maxLength: 255});
+  const name = field(form, 'Node name', 'name', node.name, {required: true, maxBytes: 255});
   const notes = field(form, 'Notes', 'notes', node.notes, {multiline: true});
   const region = field(form, 'Region', 'region', node.region);
   const provider = field(form, 'Provider', 'provider', node.provider);
   const choices = [['', 'Ungrouped'], ...groups.map((item) => [item.id, item.name])];
   if (node.group_id && !group) choices.push([node.group_id, node.group_id]);
   const groupID = selection(form, 'Group (Ungrouped clears assignment)', 'group_id', choices, node.group_id || '');
-  const tags = field(form, 'Tags (one per line; empty clears all tags)', 'tags', node.tags.join('\n'), {multiline: true});
+  const tags = field(form, 'Tags (one per line; empty clears all tags)', 'tags', node.tags.join('\n'), {multiline: true, perLine: true, minBytes: 1, maxBytes: 255});
   mutation(form, 'Save node metadata', async () => {
     await api(`/nodes/${encodeURIComponent(node.id)}`, {method: 'PATCH', body: JSON.stringify({name: name.value, notes: notes.value, region: region.value, provider: provider.value, group_id: groupID.value || null, tags: tags.value.split('\n').filter((tag) => tag !== '')})});
     await render();
@@ -247,8 +262,11 @@ function nodeMetadata(panel, node, groups, editable) {
 
 async function render() {
   if (location.pathname === '/login') {
-    content.innerHTML = '<section><h2>Sign in</h2><form id="login"><label>Username<input name="username" autocomplete="username" required maxlength="128"></label><label>Password<input name="password" type="password" autocomplete="current-password" required maxlength="1024"></label><button>Sign in</button></form></section>';
-    document.getElementById('login').addEventListener('submit', async (event) => {
+    content.innerHTML = '<section><h2>Sign in</h2><form id="login"><label>Username<input name="username" autocomplete="username" required></label><label>Password (8–1024 UTF-8 bytes)<input name="password" type="password" autocomplete="current-password" required></label><button>Sign in</button></form></section>';
+    const loginForm = document.getElementById('login');
+    byteLimit(loginForm.elements.namedItem('username'), 1, 128);
+    byteLimit(loginForm.elements.namedItem('password'), 8, 1024);
+    loginForm.addEventListener('submit', async (event) => {
       event.preventDefault();
       const form = event.currentTarget;
       const button = form.querySelector('button');
@@ -300,7 +318,8 @@ async function render() {
     if (result.nodes.length === 100) panel.append(text('p', 'Showing the first 100 nodes. Use the paginated API for additional nodes.'));
     if (user.role === 'admin' && csrf) {
       const form = document.createElement('form');
-      form.innerHTML = '<label>New pending node name<input name="name" required maxlength="255"></label><button>Create pending node</button>';
+      form.innerHTML = '<label>New pending node name<input name="name" required></label><button>Create pending node</button>';
+      byteLimit(form.elements.namedItem('name'), 1, 255);
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         try { await api('/nodes', {method: 'POST', body: JSON.stringify({name: form.elements.namedItem('name').value})}); await render(); }

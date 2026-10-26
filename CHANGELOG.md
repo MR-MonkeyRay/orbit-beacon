@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Align OpenAPI UTF-8 byte-length extensions and browser TextEncoder validation across passwords, usernames, asset names and tag lines; accept valid short Unicode passwords, reject multibyte byte overflows without truncation, and correct bootstrap password guidance.
 - Recover stable, session-bound CSRF proofs through authenticated current-session reads so fresh tabs can mutate and sign out without another login; preserve valid cookies across migration while removing obsolete stored CSRF hashes and web-storage dependence.
 - Log unexpected HTTP service failures with correlated request IDs and allowlisted error-type/SQLite-code metadata, without exposing raw error text, SQL, request values or credentials.
 - Classify SQLite contention by structured primary/extended error codes, return retryable `503 storage_busy` with Retry-After, and preserve per-node busy results without hiding permanent storage errors.
