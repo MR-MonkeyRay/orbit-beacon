@@ -64,7 +64,7 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
-	if err := Migrate(ctx, db, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}, {Version: 5, Apply: repairReportSelections}, {Version: 6, SQL: recoverableCSRFSchema}, {Version: 7, SQL: auditOrderingSchema}}); err != nil {
+	if err := Migrate(ctx, db, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}, {Version: 5, Apply: repairReportSelections}, {Version: 6, SQL: recoverableCSRFSchema}, {Version: 7, SQL: auditOrderingSchema}, {Version: 8, SQL: enrollmentOrderingSchema}}); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -166,6 +166,15 @@ CREATE TABLE update_job_nodes (
 const sessionsExpirySchema = `CREATE INDEX sessions_expiry ON sessions(expires_at);`
 
 const auditOrderingSchema = `CREATE INDEX audit_events_created_id ON audit_events(created_at DESC, id DESC);`
+
+const enrollmentOrderingSchema = `
+CREATE INDEX enrollment_tokens_expiry_id ON enrollment_tokens(expires_at DESC, id);
+CREATE INDEX enrollment_tokens_node ON enrollment_tokens(node_id);
+CREATE INDEX enrollment_tokens_group ON enrollment_tokens(group_id);
+CREATE INDEX enrollment_claims_node ON enrollment_claims(node_id);
+CREATE INDEX nodes_group ON nodes(group_id);
+CREATE INDEX update_job_nodes_node ON update_job_nodes(node_id);
+`
 
 // Preserve existing migration versions: an installed database may already have
 // applied the independent sessions-expiry index migration.

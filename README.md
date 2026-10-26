@@ -86,6 +86,8 @@ SQLite uses WAL, foreign keys, 5000 ms busy timeout, FULL synchronous mode, disa
 
 Audit reads are newest-first by `created_at DESC, id DESC` and use the migration-managed `audit_events_created_id` composite index, so pagination does not require a temporary sort as the audit table grows.
 
+Enrollment pagination uses `enrollment_tokens_expiry_id` for `expires_at DESC, id` ordering. Migration 8 also adds child-side indexes for enrollment token node/group references, enrollment claims by node, node groups and update-job node references, keeping foreign-key lookups and cleanup bounded as these tables grow.
+
 SQLite `BUSY`/`LOCKED` contention, including extended result codes, returns `503 storage_busy` with `Retry-After: 1`; the failed transaction is not acknowledged as a success. Node batches retain per-node results and use `error_code:"storage_busy"` for retryable members. Constraint, corruption, I/O and disk-full errors are not reclassified as contention merely because of their text.
 
 `modernc.org/sqlite` is pinned to **v1.61.0**, not the plan's v1.61.1: v1.61.1 was unavailable when the dependency was resolved. The available v1.61.0 requires Go 1.26 and is compatible with the required Go 1.27.3 toolchain.

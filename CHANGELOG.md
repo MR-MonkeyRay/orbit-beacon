@@ -11,6 +11,7 @@
 - Require root/runtime-owned, non-group/other-writable ticket directories across the full ancestor walk, while retaining only the trusted sticky-directory exception for temporary storage; keep descriptor-relative no-symlink reads and inode-pinned cleanup.
 - Add a bounded single report writer with an eight-operation queue, `503 report_busy` overflow responses, commit-before-ACK state publication, and graceful shutdown draining through the Server lifecycle.
 - Add the migration-managed `(created_at DESC, id DESC)` audit index for newest-first audit pagination without a temporary sort.
+- Add migration 8 enrollment expiry ordering and child foreign-key indexes for token node/group references, claims by node, groups and update-job node cleanup.
 - Coordinate initial identity reads and creation with the existing cancellable sidecar lock, preventing false inode-change failures during legitimate atomic updates; propagate caller contexts through every Open call and retain stable lock files after unsuccessful creation.
 - Reconfirm directory persistence when reopening identity/configuration files and retrying identical operations after rename succeeded but directory sync failed; prevent premature candidate use or configuration ACK, retain cached state on failure, and reuse the exact visible replacement after recovery.
 - Keep configuration-rejection diagnostics protocol-valid for negative remote revisions, preserving the prior applied configuration and the reporting channel needed to receive and acknowledge a later repair.
