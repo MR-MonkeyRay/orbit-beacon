@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Enforce a secure, stable, nonblocking data-directory lifecycle lock before server/bootstrap storage access; reject concurrent owners and release ownership on close or process termination.
 - Isolate uncancellable disk usage in one bounded slow worker, preserve complete snapshots on cancellation, continue other sources and reporting while it is blocked, and discard late results after selection changes.
 - Reject aggregate JSON-escaped disk/interface selections that could exceed report limits, validate partial patches against persisted selections, and preserve the agent's durable configuration and remote repair channel.
 - Atomically publish and audit higher-revision repairs for legacy oversized server selections at startup; keep bounded, explicitly rejected agent diagnostics until the automatic repair is durably accepted, without overwriting the old file prematurely.

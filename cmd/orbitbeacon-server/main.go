@@ -91,6 +91,11 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	dataLock, err := lockDataDir(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	defer dataLock.Close()
 	if err := prepareDataDir(cfg.DataDir); err != nil {
 		return err
 	}
