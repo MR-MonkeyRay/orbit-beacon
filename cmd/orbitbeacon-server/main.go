@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -141,7 +142,7 @@ func run(args []string) error {
 		return nil
 	}
 	nodeService := nodes.NewService(db, nodes.Options{MaxNodes: cfg.MaxNodes})
-	handler, err := server.NewHandler(server.Options{Auth: authService, Nodes: nodeService, PublicURL: cfg.PublicURL})
+	handler, err := server.NewHandler(server.Options{Auth: authService, Nodes: nodeService, PublicURL: cfg.PublicURL, Logger: slog.New(slog.NewJSONHandler(os.Stderr, nil))})
 	if err != nil {
 		return err
 	}

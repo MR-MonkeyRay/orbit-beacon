@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"mime"
 	"net/http"
 	"path"
@@ -37,6 +38,7 @@ type Options struct {
 	Ingest      *ingest.Service
 	PublicURL   string
 	Assets      fs.FS
+	Logger      *slog.Logger
 }
 
 type handler struct {
@@ -47,6 +49,7 @@ type handler struct {
 	ingest      *ingest.Service
 	origin      string
 	assets      fs.FS
+	logger      *slog.Logger
 }
 
 type apiError struct {
@@ -76,10 +79,13 @@ func NewHandler(opts Options) (http.Handler, error) {
 	if opts.Assets == nil {
 		opts.Assets = webui.Assets()
 	}
+	if opts.Logger == nil {
+		opts.Logger = slog.Default()
+	}
 	if _, err := fs.Stat(opts.Assets, "200.html"); err != nil {
 		return nil, fmt.Errorf("UI shell: %w", err)
 	}
-	return &handler{auth: opts.Auth, nodes: opts.Nodes, management: opts.Management, enrollments: opts.Enrollments, ingest: opts.Ingest, origin: origin, assets: opts.Assets}, nil
+	return &handler{auth: opts.Auth, nodes: opts.Nodes, management: opts.Management, enrollments: opts.Enrollments, ingest: opts.Ingest, origin: origin, assets: opts.Assets, logger: opts.Logger}, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -145,6 +151,7 @@ func decodeError(w http.ResponseWriter, err error, message, requestID string) {
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID, err := identity.UUID(rand.Reader)
 	if err != nil {
+		h.logInternalError(err, "")
 		http.Error(w, "Unable to generate request identity", http.StatusInternalServerError)
 		return
 	}
@@ -374,6 +381,7 @@ func (h *handler) serviceError(w http.ResponseWriter, err error, requestID strin
 	case errors.Is(err, nodes.ErrInvalidInput), errors.Is(err, auth.ErrInvalidInput), errors.Is(err, management.ErrInvalidInput):
 		fail(w, http.StatusBadRequest, "validation_failed", "Request values are invalid", requestID)
 	default:
+		h.logInternalError(err, requestID)
 		fail(w, http.StatusInternalServerError, "internal_error", "The operation could not be completed", requestID)
 	}
 }

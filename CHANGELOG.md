@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Log unexpected HTTP service failures with correlated request IDs and allowlisted error-type/SQLite-code metadata, without exposing raw error text, SQL, request values or credentials.
 - Classify SQLite contention by structured primary/extended error codes, return retryable `503 storage_busy` with Retry-After, and preserve per-node busy results without hiding permanent storage errors.
 - Return transactional `409 username_conflict` for duplicate user creation or renaming, including concurrent creation, without partial role/session/audit changes.
 - Reject missing/nonpositive report configuration revisions and unimplemented nonempty probe results before updating node ownership, liveness, acknowledgements or latest state.

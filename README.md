@@ -44,6 +44,8 @@ The embed includes underscore-prefixed `_app` assets. Backend enrollment and met
 
 ## HTTP contract and security
 
+Unexpected service failures are written to Server stderr as structured JSON with the response's `request_id`, a safe `error_kind`, and the numeric extended `sqlite_code` for SQLite errors. Diagnostics deliberately omit raw error text, SQL, paths/queries, request bodies, headers and credentials: these can contain attacker-controlled or private values. Expected domain failures do not produce internal-error records; clients still receive the generic `internal_error` response.
+
 See [`api/openapi.yaml`](api/openapi.yaml) for the implemented request/response schemas. JSON bodies must contain one object, are limited to 64 KiB and reject unknown members. String length limits are measured in UTF-8 bytes. Errors use `{code,message,request_id,fields?}` and `X-Request-ID`. IDs are UUIDs and timestamps are UTC RFC3339. Unsupported methods return `405` with `Allow` **before authentication**, unknown API routes return structured `404`, and API errors never return the UI shell. Invalid input returns `400`, missing/expired sessions or incorrect old-password proof return `401`, authorization/Origin/CSRF failures return `403`, missing resources return `404`, and last-administrator/capacity conflicts return `409`. Implemented routes:
 
 - `POST/DELETE /api/v1/session`, `GET /api/v1/me`. Logout is available to either role and returns `204`.

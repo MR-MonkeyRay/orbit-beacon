@@ -728,7 +728,7 @@ components:
           description: Machine-readable failure code; validation_failed may include per-field messages. Clients must tolerate new error codes.
           examples: [unauthenticated, forbidden, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, username_conflict, invalid_json, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, storage_busy, not_available, internal_error]
         message: {type: string, minLength: 1}
-        request_id: {type: string, format: uuid}
+        request_id: {type: string, format: uuid, description: Correlates the response with safe server diagnostic metadata for internal service failures.}
         fields:
           type: object
           additionalProperties: {type: string}
