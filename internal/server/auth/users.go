@@ -79,6 +79,11 @@ func (s *Service) PatchUser(ctx context.Context, id string, patch UserPatch) (Us
 		}
 	}
 	if patch.Username != nil {
+		if *patch.Username != user.Username {
+			if err := requireAvailableUsername(ctx, tx, *patch.Username, id); err != nil {
+				return User{}, err
+			}
+		}
 		user.Username = *patch.Username
 	}
 	if patch.Role != nil {
@@ -137,6 +142,17 @@ func preserveAdministrator(ctx context.Context, tx *sql.Tx) error {
 	}
 	if count <= 1 {
 		return ErrLastAdmin
+	}
+	return nil
+}
+
+func requireAvailableUsername(ctx context.Context, tx *sql.Tx, username, excludeID string) error {
+	var taken bool
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE username=? AND id<>?)", username, excludeID).Scan(&taken); err != nil {
+		return err
+	}
+	if taken {
+		return ErrUsernameConflict
 	}
 	return nil
 }

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Return transactional `409 username_conflict` for duplicate user creation or renaming, including concurrent creation, without partial role/session/audit changes.
 - Reject missing/nonpositive report configuration revisions and unimplemented nonempty probe results before updating node ownership, liveness, acknowledgements or latest state.
 - Reject empty and explicit-null desired configuration patches, retain strict unknown-field decoding, and keep unchanged configuration retries revision/audit-idempotent.
 - Admit login work before database/hash computation with bounded direct-peer and peer/username token buckets; bound password-work waiters and queue duration, preserve independent peers/accounts, and return retryable overload without a global failed-password lockout.

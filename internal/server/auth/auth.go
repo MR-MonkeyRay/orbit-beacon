@@ -27,15 +27,16 @@ type serviceError string
 func (err serviceError) Error() string { return string(err) }
 
 const (
-	RoleAdmin                       = "admin"
-	RoleViewer                      = "viewer"
-	ErrAdminExists     serviceError = "administrator already exists"
-	ErrUnauthenticated serviceError = "authentication required"
-	ErrRateLimited     serviceError = "login rate limit reached"
-	ErrInvalidInput    serviceError = "invalid user input"
-	ErrNotFound        serviceError = "user not found"
-	ErrLastAdmin       serviceError = "at least one administrator is required"
-	SessionLifetime                 = 12 * time.Hour
+	RoleAdmin                        = "admin"
+	RoleViewer                       = "viewer"
+	ErrAdminExists      serviceError = "administrator already exists"
+	ErrUnauthenticated  serviceError = "authentication required"
+	ErrRateLimited      serviceError = "login rate limit reached"
+	ErrInvalidInput     serviceError = "invalid user input"
+	ErrNotFound         serviceError = "user not found"
+	ErrLastAdmin        serviceError = "at least one administrator is required"
+	ErrUsernameConflict serviceError = "username already exists"
+	SessionLifetime                  = 12 * time.Hour
 )
 
 type User struct {
@@ -214,6 +215,9 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 }
 
 func (s *Service) insertUser(ctx context.Context, tx *sql.Tx, username, password, role string) (User, error) {
+	if err := requireAvailableUsername(ctx, tx, username, ""); err != nil {
+		return User{}, err
+	}
 	hash, err := HashPassword(password, s.random)
 	if err != nil {
 		return User{}, err

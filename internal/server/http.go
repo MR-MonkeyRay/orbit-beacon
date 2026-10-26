@@ -365,6 +365,8 @@ func (h *handler) serviceError(w http.ResponseWriter, err error, requestID strin
 		fail(w, http.StatusNotFound, "not_found", "Resource not found", requestID)
 	case errors.Is(err, auth.ErrLastAdmin):
 		fail(w, http.StatusConflict, "last_administrator", "At least one administrator must remain", requestID)
+	case errors.Is(err, auth.ErrUsernameConflict):
+		fail(w, http.StatusConflict, "username_conflict", "Username is already in use", requestID)
 	case errors.Is(err, nodes.ErrInvalidInput), errors.Is(err, auth.ErrInvalidInput), errors.Is(err, management.ErrInvalidInput):
 		fail(w, http.StatusBadRequest, "validation_failed", "Request values are invalid", requestID)
 	default:

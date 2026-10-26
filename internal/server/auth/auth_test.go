@@ -396,3 +396,33 @@ func TestLoginAdmissionRejectsBeforeDatabaseAndDoesNotLockOtherPeers(t *testing.
 		t.Fatalf("limited login reached unavailable database or bypassed via port: %v", err)
 	}
 }
+
+func TestConcurrentUserCreationReturnsOneDomainConflict(t *testing.T) {
+	first, db, _ := newAuth(t)
+	second := auth.NewService(db, auth.Options{})
+	results := make(chan error, 2)
+	for _, service := range []*auth.Service{first, second} {
+		go func(service *auth.Service) {
+			_, err := service.CreateUser(context.Background(), "contended-name", initialPassword, auth.RoleViewer)
+			results <- err
+		}(service)
+	}
+	created, conflicts := 0, 0
+	for range 2 {
+		err := <-results
+		if err == nil {
+			created++
+		} else if errors.Is(err, auth.ErrUsernameConflict) {
+			conflicts++
+		} else {
+			t.Fatalf("concurrent creation returned internal error: %v", err)
+		}
+	}
+	if created != 1 || conflicts != 1 {
+		t.Fatalf("created=%d conflicts=%d", created, conflicts)
+	}
+	var users int
+	if err := db.QueryRow("SELECT count(*) FROM users WHERE username='contended-name'").Scan(&users); err != nil || users != 1 {
+		t.Fatalf("uniqueness lost: users=%d err=%v", users, err)
+	}
+}

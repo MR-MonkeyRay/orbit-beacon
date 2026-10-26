@@ -130,7 +130,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createUser
-      description: Administrator only.
+      description: Administrator only. An existing exact username returns 409 username_conflict without creating a user.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -152,6 +152,7 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/User'}
+        '409': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/users/{id}:
     parameters:
@@ -169,7 +170,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     patch:
       operationId: updateUser
-      description: Administrator only. Username and role are optional; omitted fields remain unchanged. Changing role revokes all sessions of the affected user. The last administrator cannot be demoted.
+      description: Administrator only. Username and role are optional; omitted fields remain unchanged. An existing exact username returns 409 username_conflict without changing the user or sessions. Changing role revokes all sessions of the affected user. The last administrator cannot be demoted.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -703,7 +704,7 @@ components:
               name: {type: string, minLength: 1, maxLength: 255}
   responses:
     Error:
-      description: Structured failure. Invalid JSON/input returns 400, invalid credentials 401, role/Origin/CSRF failures 403, missing resources 404, capacity/enrollment/identity conflicts 409, bodies above 64 KiB 413, unsupported agent protocol 426, and rate limiting 429. Unsupported methods return 405 with Allow before authentication; unknown API routes return 404. No API error returns the SPA shell.
+      description: Structured failure. Invalid JSON/input returns 400, invalid credentials 401, role/Origin/CSRF failures 403, missing resources 404, capacity/enrollment/identity/username conflicts 409, bodies above 64 KiB 413, unsupported agent protocol 426, and rate limiting 429. Unsupported methods return 405 with Allow before authentication; unknown API routes return 404. No API error returns the SPA shell.
       headers:
         X-Request-ID:
           schema: {type: string, format: uuid}
@@ -722,7 +723,7 @@ components:
         code:
           type: string
           description: Machine-readable failure code; validation_failed may include per-field messages. Clients must tolerate new error codes.
-          examples: [unauthenticated, forbidden, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, invalid_json, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, not_available, internal_error]
+          examples: [unauthenticated, forbidden, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, username_conflict, invalid_json, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, not_available, internal_error]
         message: {type: string, minLength: 1}
         request_id: {type: string, format: uuid}
         fields:
