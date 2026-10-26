@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -289,6 +290,9 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 		if err := ValidatePath(path); err != nil {
 			return Agent{}, err
 		}
+	}
+	if !filepath.IsAbs(policy.StateDir) {
+		return Agent{}, errors.New("state_dir must be an absolute filesystem path")
 	}
 	if policy.ExpectedUID < 0 || policy.ExpectedGID < 0 {
 		return Agent{}, errors.New("expected uid/gid must not be negative")

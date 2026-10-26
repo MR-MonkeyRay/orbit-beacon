@@ -159,6 +159,8 @@ orbitbeacon-agent run --config agent.json --install-policy install-policy.json
 
 The policy must include all immutable keys listed above and point `state_dir`/`runtime_dir` to service-owned private directories. `agent.json` may be `{}` to use policy values without conflicts. Enrollment automatically removes its short-lived token file only after confirmed success; it is never copied into agent state. On cleanup failure, securely remove the retained file after checking the reported outcome. Observe `nodes.last_seen` and the report response's `accepted_seq` for live acceptance; this is not a historical retention guarantee. Doctor checks HTTPS endpoint reachability and real collection without advancing generation or sending a report; it does not claim credential authentication.
 
+`state_dir` must be an absolute local filesystem path. Relative policies are rejected before any identity/configuration files are opened or created, rather than resolving against each shell or service working directory. To migrate an existing relative policy, set it to the absolute location containing the enrolled `identity.json` and `desired.json`, and update matching protected configuration sources; do not point it at a new empty directory or re-enroll merely to change the working directory.
+
 Ticket files must be owned by the runtime user with exact mode 0600, in an owner/administrator-owned directory not writable by group or others. A safe temporary directory beneath `/tmp` is allowed; every path component is opened without following symlinks. Cleanup pins the parent and opened inode, refuses changed entries, and never unlinks a replacement or follows its symlink target. A post-success cleanup warning does not undo confirmed enrollment.
 
 ## Development checks

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Require an absolute Agent state directory before runtime initialization, preventing shell/service working-directory changes from creating independent identities; document preserving the existing enrolled state when migrating relative policies.
 - Make Agent identity/configuration sidecar waits context-cancelable and bounded to two seconds per acquisition without background waiters; keep cached snapshots readable during contention, propagate contexts through all callers, and handle SIGTERM before runtime initialization.
 - Separate explicit ticket operations from ticketless identity recovery; reject invalid supplied tickets without consuming their files, and detect an already-active credential in receipt inspection so missing local node bindings still allow a fresh requested rotation.
 - Persist bounded ticket-digest/candidate/CAS-parent associations across report promotion and restart; restore missing legacy associations with authenticated read-only receipt inspection so original-ticket retries never invent another credential or consume fresh tickets.

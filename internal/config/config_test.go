@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -305,6 +306,36 @@ func TestAgentInstallPolicyRejectsNonRootServerURL(t *testing.T) {
 			policy := config.InstallPolicy{ServerURL: serverURL, StateDir: filepath.Join(base, "state"), RuntimeDir: filepath.Join(base, "run"), TrustKeyFile: filepath.Join(base, "trust.pub"), ExpectedUID: 1000, ExpectedGID: 1000, InstallMode: "native"}
 			if _, err := config.LoadAgent(config.LoadOptions{LookupEnv: lookup(nil)}, &policy); err == nil {
 				t.Fatalf("agent accepted non-root or unsafe server_url %q", serverURL)
+			}
+		})
+	}
+}
+
+func TestAgentStateDirectoryHasOneAbsoluteLocationAcrossWorkingDirectories(t *testing.T) {
+	base := t.TempDir()
+	absolute := filepath.Join(base, "fixed-state")
+	for _, directory := range []string{"shell-start", "service-start"} {
+		t.Run(directory, func(t *testing.T) {
+			cwd := filepath.Join(base, directory)
+			if err := os.Mkdir(cwd, 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(cwd)
+			for _, stateDir := range []string{"state", "./state", "../state", absolute} {
+				policy := config.InstallPolicy{ServerURL: "https://beacon.example.test", StateDir: stateDir, RuntimeDir: filepath.Join(base, "runtime"), TrustKeyFile: filepath.Join(base, "trust.pub"), ExpectedUID: 1000, ExpectedGID: 1000, InstallMode: "native"}
+				resolved, err := config.LoadAgent(config.LoadOptions{LookupEnv: lookup(nil)}, &policy)
+				if stateDir != absolute {
+					if err == nil {
+						t.Fatalf("working-directory-dependent state path accepted: %q", stateDir)
+					}
+					continue
+				}
+				if err != nil || resolved.StateDir != absolute {
+					t.Fatalf("absolute state location changed with cwd: %q err=%v", resolved.StateDir, err)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(cwd, "state")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("policy loading created a working-directory identity location: %v", err)
 			}
 		})
 	}
