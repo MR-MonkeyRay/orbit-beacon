@@ -198,11 +198,19 @@ Ticket files must be owned by the runtime user with exact mode 0600. The immedia
 
 ## Development checks
 
+The pull-request quality gate is `.github/workflows/quality.yml`. It pins Go 1.27.3 on Ubuntu 24.04, rejects unformatted source and unverified modules, runs uncached tests, race tests for server/agent packages, `go vet`, and `govulncheck` v1.7.0 with read-only repository permissions.
+
 ```sh
-GOTOOLCHAIN=go1.27.3 gofmt -w cmd internal
-GOTOOLCHAIN=go1.27.3 go test ./...
-GOTOOLCHAIN=go1.27.3 go test -race ./internal/server/...
+GO_BIN="$(GOTOOLCHAIN=go1.27.3 go env GOROOT)/bin"
+"$GO_BIN/gofmt" -w cmd internal
+GOTOOLCHAIN=go1.27.3 go mod verify
+GOTOOLCHAIN=go1.27.3 go test -count=1 ./...
+GOTOOLCHAIN=go1.27.3 go test -race -count=1 ./internal/server/... ./internal/agent/...
 GOTOOLCHAIN=go1.27.3 go vet ./...
+GOBIN="$(mktemp -d)"
+GOTOOLCHAIN=go1.27.3 GOBIN="$GOBIN" go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+GOTOOLCHAIN=go1.27.3 "$GOBIN/govulncheck" ./...
+rm -rf "$GOBIN"
 ```
 
 ## License
