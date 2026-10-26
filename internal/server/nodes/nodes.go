@@ -17,6 +17,7 @@ import (
 	"orbitbeacon/internal/identity"
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/storage"
 )
 
 type serviceError string
@@ -397,6 +398,8 @@ func (s *Service) Batch(ctx context.Context, req BatchRequest) ([]BatchResult, e
 			result.Status = "failed"
 			if errors.Is(err, ErrNotFound) {
 				result.ErrorCode = "node_not_found"
+			} else if storage.IsBusy(err) {
+				result.ErrorCode = "storage_busy"
 			} else {
 				result.ErrorCode = "storage_error"
 			}

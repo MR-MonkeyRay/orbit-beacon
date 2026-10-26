@@ -23,6 +23,7 @@ import (
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/webui"
 )
 
@@ -352,6 +353,9 @@ func (h *handler) serviceError(w http.ResponseWriter, err error, requestID strin
 		return
 	}
 	switch {
+	case storage.IsBusy(err):
+		w.Header().Set("Retry-After", "1")
+		fail(w, http.StatusServiceUnavailable, "storage_busy", "Storage is busy; retry later", requestID)
 	case errors.Is(err, auth.ErrUnauthenticated), errors.Is(err, nodes.ErrUnauthenticated):
 		fail(w, http.StatusUnauthorized, "unauthenticated", "Credentials or session are invalid or expired", requestID)
 	case errors.Is(err, auth.ErrRateLimited):

@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "modernc.org/sqlite"
-
 	"orbitbeacon/internal/config"
 	"orbitbeacon/internal/server/securefs"
 )
