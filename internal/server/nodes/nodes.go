@@ -9,12 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"orbitbeacon/internal/identity"
+	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
 )
 
@@ -117,6 +117,11 @@ func NewService(db *sql.DB, opts Options) *Service {
 	}
 	return &Service{db: db, maxNodes: opts.MaxNodes, now: opts.Now, random: opts.Random}
 }
+
+// Database and Capacity keep default HTTP services on the same storage policy.
+func (s *Service) Database() *sql.DB { return s.db }
+
+func (s *Service) Capacity() int { return s.maxNodes }
 
 func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, error) {
 	if strings.TrimSpace(req.Name) == "" || len(req.Name) > 255 {
@@ -439,21 +444,20 @@ func (s *Service) PatchConfig(ctx context.Context, id string, patch ConfigPatch)
 		fields["billing_day"] = "must be between 1 and 28"
 	}
 	if p := patch.QuotaBytes; p != nil {
-		if _, err := strconv.ParseUint(*p, 10, 64); err != nil || *p == "" || strings.TrimLeft(*p, "0123456789") != "" {
-			fields["quota_bytes"] = "must be an unsigned decimal byte count"
+		if err := v1.DecimalUint64(*p).Validate(); err != nil {
+			fields["quota_bytes"] = "must be a canonical unsigned decimal byte count"
 		}
 	}
-	for key, values := range map[string]*[]string{"interfaces": patch.Interfaces, "disk_paths": patch.DiskPaths} {
-		if values == nil {
-			continue
-		}
-		if len(*values) > 8 {
-			fields[key] = "must contain at most 8 entries"
-		}
-		for _, value := range *values {
-			if strings.TrimSpace(value) == "" || len(value) > 1024 {
-				fields[key] = "entries must be nonempty and at most 1024 bytes"
-			}
+	var selection v1.DesiredConfig
+	if patch.Interfaces != nil {
+		selection.Interfaces = *patch.Interfaces
+	}
+	if patch.DiskPaths != nil {
+		selection.DiskPaths = *patch.DiskPaths
+	}
+	if err := selection.ValidateSelection(); err != nil {
+		for field, message := range err.(*v1.ValidationError).Fields {
+			fields[field] = message
 		}
 	}
 	if len(fields) != 0 {

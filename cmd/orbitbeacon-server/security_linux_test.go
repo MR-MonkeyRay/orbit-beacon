@@ -12,7 +12,11 @@ import (
 )
 
 func TestPrepareDataDirCreatesPrivateDirectoryAndPersistentKey(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "new-data")
+	base := t.TempDir()
+	if err := os.Chmod(base, 0700); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(base, "new-data")
 	if err := prepareDataDir(dir); err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +55,9 @@ func TestPrepareDataDirRejectsSymlinksAndInsecureModes(t *testing.T) {
 	for _, kind := range []string{"symlink", "group readable", "group writable", "world accessible", "regular file"} {
 		t.Run(kind, func(t *testing.T) {
 			base := t.TempDir()
+			if err := os.Chmod(base, 0700); err != nil {
+				t.Fatal(err)
+			}
 			dir := filepath.Join(base, "data")
 			switch kind {
 			case "symlink":
@@ -90,6 +97,9 @@ func TestPrepareDataDirRejectsUnsafeExistingSecretsKey(t *testing.T) {
 	for _, kind := range []string{"symlink", "group readable", "wrong size"} {
 		t.Run(kind, func(t *testing.T) {
 			dir := t.TempDir()
+			if err := os.Chmod(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
 			path := filepath.Join(dir, "secrets.key")
 			data := bytes.Repeat([]byte{7}, 32)
 			if kind == "wrong size" {
@@ -128,6 +138,9 @@ func TestPrepareDataDirRejectsForeignOwnedDirectoryAndKey(t *testing.T) {
 	for _, component := range []string{"directory", "key"} {
 		t.Run(component, func(t *testing.T) {
 			dir := t.TempDir()
+			if err := os.Chmod(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
 			target := dir
 			if component == "key" {
 				target = filepath.Join(dir, "secrets.key")

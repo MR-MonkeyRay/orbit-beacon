@@ -63,7 +63,7 @@ func TestValidateFilesystemUsesContainingMountAndRejectsUnsafeStorage(t *testing
 }
 
 func TestOpenCreatesOnlyOwnerAccessibleDatabaseAndSidecars(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateDirectory(t)
 	path := filepath.Join(dir, "orbitbeacon.db")
 	db, err := storage.Open(context.Background(), path)
 	if err != nil {
@@ -88,7 +88,7 @@ func TestOpenRejectsUnsafeExistingDatabaseAndSidecarsBeforeChangingThem(t *testi
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		for _, kind := range []string{"group readable", "symlink"} {
 			t.Run(suffix+"/"+kind, func(t *testing.T) {
-				dir := t.TempDir()
+				dir := privateDirectory(t)
 				path := filepath.Join(dir, "orbitbeacon.db")
 				target := path + suffix
 				outside := filepath.Join(t.TempDir(), "outside")

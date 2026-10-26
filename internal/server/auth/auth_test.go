@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -25,7 +26,11 @@ const initialPassword = "initial password for regression"
 
 func newAuth(t *testing.T) (*auth.Service, *sql.DB, *time.Time) {
 	t.Helper()
-	db, err := storage.Open(context.Background(), filepath.Join(t.TempDir(), "orbitbeacon.db"))
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(context.Background(), filepath.Join(dir, "orbitbeacon.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

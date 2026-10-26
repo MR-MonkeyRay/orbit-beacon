@@ -1,0 +1,52 @@
+package server_test
+
+import (
+	"context"
+	"math"
+	"net/http"
+	"testing"
+	"time"
+
+	"orbitbeacon/internal/server/ingest"
+)
+
+func TestCredentialRotationReleasesPoisonedFenceWithoutResettingExactRetries(t *testing.T) {
+	for _, generation := range []uint64{1, math.MaxUint64} {
+		t.Run(reportGenerationName(generation), func(t *testing.T) {
+			f := newAgentHTTP(t, 1)
+			id, oldToken, _ := enrollHTTP(t, f, "rotating", 1)
+			accepted(t, agentRequest(t, f, "/api/agent/v1/report", oldToken, reportBody(generation, 100, "old-session", 99)), 100)
+			ticket, err := f.enrollments.CreateSingle(context.Background(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			newToken := agentSecret(2)
+			claim := enrollBody("installation-rotating", newToken)
+			assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, claim), http.StatusOK)
+			assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/report", oldToken, reportBody(generation, 101, "old-session", 99)), http.StatusUnauthorized)
+			f.now = f.now.Add(time.Second)
+			// Both a poisoned fence and transient sequence ownership must be scoped
+			// to the revoked credential, not the enduring asset identity.
+			accepted(t, agentRequest(t, f, "/api/agent/v1/report", newToken, reportBody(1, 1, "new-session", 25)), 1)
+			latest, err := f.ingest.Latest(context.Background(), id)
+			if err != nil || latest.SessionID != "new-session" || latest.Seq != 1 || *latest.Metrics.CPUPercent != 25 {
+				t.Fatalf("rotation retained revoked snapshot: %+v, %v", latest, err)
+			}
+			assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, claim), http.StatusOK)
+			restarted := ingest.NewService(f.db, ingest.Options{Now: func() time.Time { return f.now }})
+			if _, err := restarted.AcceptToken(context.Background(), newToken, mustReport(t, reportBody(1, 2, "clone", 50))); err == nil {
+				t.Fatal("exact enrollment retry reset established session fence")
+			}
+			if _, err := restarted.AcceptToken(context.Background(), newToken, mustReport(t, reportBody(1, 2, "new-session", 30))); err != nil {
+				t.Fatalf("rotated reporting failed after restart: %v", err)
+			}
+		})
+	}
+}
+
+func reportGenerationName(generation uint64) string {
+	if generation == math.MaxUint64 {
+		return "poisoned durable generation"
+	}
+	return "same generation different credential"
+}

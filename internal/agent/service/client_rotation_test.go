@@ -1,0 +1,59 @@
+package service_test
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync/atomic"
+	"testing"
+
+	"orbitbeacon/internal/agent/identity"
+	"orbitbeacon/internal/agent/service"
+)
+
+func TestRotationStagingFailureDoesNotSendRequestOrReplaceActiveToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "identity.json")
+	state, err := identity.Open(path, identity.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := service.OpenConfigStore(filepath.Join(t.TempDir(), "desired.json"), desired(1, 10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int64
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"node_id":"same-node","server_time":"2026-10-26T12:00:00Z"}`))
+	}))
+	defer server.Close()
+	client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state, Config: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, err := client.Enroll(context.Background(), "initial-ticket"); err != nil {
+		t.Fatal(err)
+	}
+	old := state.Current()
+	before := requests.Load()
+	// A directory cannot be atomically replaced by an identity file, even as root.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Enroll(context.Background(), "rotation-ticket"); err == nil {
+		t.Fatal("rotation continued despite inability to durably stage candidate")
+	}
+	if requests.Load() != before {
+		t.Fatal("rotation request escaped before candidate was durable")
+	}
+	if state.Current() != old {
+		t.Fatal("failed candidate staging altered active identity")
+	}
+}

@@ -5,7 +5,7 @@ import (
 	"io/fs"
 )
 
-//go:embed dist
+//go:embed all:dist
 var distribution embed.FS
 
 func Assets() fs.FS {

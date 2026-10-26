@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Finish step-2 review repairs: reject renameable/untrusted storage ancestry before SQLite creation, scope report fencing to rotated credentials, persist missing node bindings after direct successful reports, serialize configuration revisions across agent processes, and terminate superseded reporting processes.
+- Include underscore-prefixed embedded UI assets so the real login script is served; correct stale capability notices without introducing the later monitoring UI.
+- Verify local-CA HTTPS bootstrap/enroll/doctor/run, configuration acknowledgement, ticketless recovery, live credential rotation, superseded-process exit and root runtime rejection with real binaries; exercise login, pending-node creation and configuration in the existing Docker Chromium at desktop/mobile widths. Full Go tests, vet and server/agent race checks pass. These checks do not certify host-container scope, default UID 1000, or the platform/resource matrix.
+- Recover normal reporting from stale or pending durable credentials only after a 401, with one distinct-credential retry and identity-bound atomic promotion that preserves concurrent run/session changes.
+- Preserve complete partial metrics on collection deadlines/cancellation, including selected series and mandatory CPU/network measurement windows for all statuses; reject noncanonical quota updates atomically and share interface limits across runtime and OpenAPI.
+- Fix step 2 security and compatibility regressions: descriptor-verified administrator policy loading, root-only agent URL paths, shared collector-compatible selection validation, and exact required metric statuses/sources.
+- Stage credential rotation durably without replacing the active secret, retain exact candidates across failures/restarts, and recover committed enrollment through a side-effect-free node-authenticated POST endpoint, including generation-zero identities, without an enrollment ticket.
+- Authenticate and charge report admission before decoding, retain transactional credential rechecks, and return authenticated node identity only in successful responses.
+- Secure configured CA bundles through descriptor-based no-follow ancestry/ownership/mode checks and bounded reads; preserve system roots and fail closed on unsupported platforms.
+- Admit enrollment tickets before body reads or writer transactions, bound invalid/missing credential bursts by direct peer and globally, and retain atomic claim rechecks and exact retry behavior.
+- Make CLI ticket files optional for recovery; securely consume exact 0600 tickets only after confirmed enrollment, preserve failures/replacements, sync cleanup, and surface post-success cleanup errors without secrets.
+- Implement step 2 enrollment with SHA-256-only server credentials, capacity-safe transactional claims, bounded exact retries, explicit revocation and same-installation credential rotation.
+- Add strict v1 telemetry, canonical decimal cumulative counters, durable process-generation/session fencing, process-local latest/sequence state, per-node rate limiting and desired/applied configuration acknowledgements.
+- Add atomic private agent identity/configuration, gopsutil v4.26.9 host collection and bounded offline-tolerant collection/report scheduling with one reusable HTTPS client; wire enroll/run/doctor while keeping updates unavailable.
+- Extend management and agent OpenAPI routes and operational/security documentation; preserve GPL-3.0 and prior migration versions.
 - Add the Go 1.27.3 foundation control plane: validated server configuration, immutable agent install-policy conflict checks, durable transactional SQLite migrations, local-only administrator bootstrap, Argon2id credentials and 12-hour secure sessions.
 - Add administrator/viewer authorization, exact configured-Origin and session-bound CSRF enforcement, structured API errors, capacity-safe pending nodes, transactional delete/revoke/cancel, bounded per-node batches and versioned desired configuration.
 - Add real server command parsing and serving, explicit unavailable backup/restore and agent runtime operations, an embedded minimal live browser UI and OpenAPI wire contract.

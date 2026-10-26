@@ -209,10 +209,12 @@ func validHostname(host string) bool {
 	return true
 }
 
+// ValidateHTTPS requires an HTTPS origin with at most a literal root slash.
+// Agent endpoints are absolute paths; accepting a prefix would silently discard it.
 func ValidateHTTPS(raw string) error {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {
-		return errors.New("URL must be absolute HTTPS without credentials, query or fragment")
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") || u.Opaque != "" || (u.Path != "" && u.Path != "/") || u.RawPath != "" {
+		return errors.New("URL must be absolute HTTPS at its root without credentials, query or fragment")
 	}
 	return nil
 }

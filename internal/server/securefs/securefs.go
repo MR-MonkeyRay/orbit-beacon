@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 )
 
-// ValidateParents rejects symlinks and nondirectories in every existing parent.
-// Shared system ancestors need not have the application's private permissions.
+// ValidateParents rejects symlinks and ancestry writable by untrusted principals.
+// Sticky system directories are allowed when their owner is trusted.
 func ValidateParents(path string) error {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -20,6 +20,11 @@ func ValidateParents(path string) error {
 		}
 		if err == nil && !info.IsDir() {
 			return fmt.Errorf("parent %q must be a directory, not a symlink or other file", parent)
+		}
+		if err == nil {
+			if err := validateAncestor(parent, info); err != nil {
+				return err
+			}
 		}
 		if parent == filepath.Dir(parent) {
 			return nil

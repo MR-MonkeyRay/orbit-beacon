@@ -65,7 +65,7 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
-	if err := Migrate(ctx, db, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}}); err != nil {
+	if err := Migrate(ctx, db, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}}); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -158,3 +158,12 @@ CREATE TABLE update_job_nodes (
 `
 
 const sessionsExpirySchema = `CREATE INDEX sessions_expiry ON sessions(expires_at);`
+
+// Preserve existing migration versions: an installed database may already have
+// applied the independent sessions-expiry index migration.
+const reportIdentitySchema = `
+ALTER TABLE nodes ADD COLUMN run_generation TEXT NOT NULL DEFAULT '0';
+ALTER TABLE nodes ADD COLUMN report_session_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE nodes ADD COLUMN config_error TEXT NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX nodes_installation_identity ON nodes(installation_id) WHERE installation_id IS NOT NULL;
+`

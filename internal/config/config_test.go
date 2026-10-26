@@ -292,3 +292,20 @@ func TestServerTLSPairCanBeComposedAcrossPrecedenceLayers(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentInstallPolicyRejectsNonRootServerURL(t *testing.T) {
+	base := t.TempDir()
+	for _, serverURL := range []string{
+		"https://beacon.example.test/prefix", "https://beacon.example.test/prefix/",
+		"https://beacon.example.test//", "https://beacon.example.test/%2F",
+		"https://beacon.example.test/?query=1", "https://beacon.example.test/?",
+		"https://user@beacon.example.test/",
+	} {
+		t.Run(serverURL, func(t *testing.T) {
+			policy := config.InstallPolicy{ServerURL: serverURL, StateDir: filepath.Join(base, "state"), RuntimeDir: filepath.Join(base, "run"), TrustKeyFile: filepath.Join(base, "trust.pub"), ExpectedUID: 1000, ExpectedGID: 1000, InstallMode: "native"}
+			if _, err := config.LoadAgent(config.LoadOptions{LookupEnv: lookup(nil)}, &policy); err == nil {
+				t.Fatalf("agent accepted non-root or unsafe server_url %q", serverURL)
+			}
+		})
+	}
+}

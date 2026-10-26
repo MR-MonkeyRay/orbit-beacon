@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -35,7 +36,11 @@ type fixture struct {
 
 func newHTTP(t *testing.T, capacity int) fixture {
 	t.Helper()
-	db, err := storage.Open(context.Background(), filepath.Join(t.TempDir(), "orbitbeacon.db"))
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(context.Background(), filepath.Join(dir, "orbitbeacon.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

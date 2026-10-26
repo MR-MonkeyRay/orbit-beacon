@@ -11,13 +11,14 @@ import (
 )
 
 var (
-	readMethods    = []string{http.MethodGet}
-	createMethods  = []string{http.MethodGet, http.MethodPost}
-	itemMethods    = []string{http.MethodGet, http.MethodPatch, http.MethodDelete}
-	configMethods  = []string{http.MethodGet, http.MethodPatch}
-	postMethods    = []string{http.MethodPost}
-	patchMethods   = []string{http.MethodPatch}
-	sessionMethods = []string{http.MethodPost, http.MethodDelete}
+	readMethods           = []string{http.MethodGet}
+	createMethods         = []string{http.MethodGet, http.MethodPost}
+	itemMethods           = []string{http.MethodGet, http.MethodPatch, http.MethodDelete}
+	configMethods         = []string{http.MethodGet, http.MethodPatch}
+	postMethods           = []string{http.MethodPost}
+	patchMethods          = []string{http.MethodPatch}
+	sessionMethods        = []string{http.MethodPost, http.MethodDelete}
+	enrollmentItemMethods = []string{http.MethodGet, http.MethodDelete}
 )
 
 // routeMethods establishes route existence and method support before any
@@ -32,8 +33,10 @@ func routeMethods(p string) []string {
 		return patchMethods
 	case "/api/v1/users", "/api/v1/groups", "/api/v1/nodes":
 		return createMethods
-	case "/api/v1/nodes/batch", "/api/v1/enrollments":
+	case "/api/v1/nodes/batch", "/api/agent/v1/enroll", "/api/agent/v1/report", "/api/agent/v1/recover":
 		return postMethods
+	case "/api/v1/enrollments":
+		return createMethods
 	}
 	if !strings.HasPrefix(p, "/api/v1/") {
 		return nil
@@ -41,6 +44,9 @@ func routeMethods(p string) []string {
 	parts := strings.Split(strings.TrimPrefix(p, "/api/v1/"), "/")
 	if len(parts) < 2 || !identity.ValidUUID(parts[1]) {
 		return nil
+	}
+	if len(parts) == 2 && parts[0] == "enrollments" {
+		return enrollmentItemMethods
 	}
 	if len(parts) == 2 && (parts[0] == "users" || parts[0] == "groups" || parts[0] == "nodes") {
 		return itemMethods

@@ -1,14 +1,14 @@
 openapi: 3.1.0
 info:
-  title: OrbitBeacon foundation control plane
+  title: OrbitBeacon control plane and agent protocol
   version: 0.1.0
   description: |
-    Step 1 foundation control plane only: no agent enrollment, telemetry, alerts,
-    backups or upgrades are implemented. All reads require a valid browser session
-    unless explicitly marked public. Administrators and viewers can read users,
-    groups, nodes and audit events; authenticated mutations require an administrator
-    except logout and changing one's own password. Mutating requests require the canonical configured HTTPS
-    Origin and a session-bound CSRF token; login requires Origin without prior CSRF.
+    Steps 1–2 implement the control plane, enrollment and live agent telemetry.
+    Alerts, durable telemetry history, backups and upgrades are not implemented.
+    Browser reads require a session unless explicitly marked otherwise; agent
+    routes use separate Bearer credentials and never accept browser sessions.
+    Browser mutations require an administrator (except logout/password), the
+    configured HTTPS Origin and a session-bound CSRF token; login requires Origin.
     Canonical origins lowercase DNS names, normalize IPv6 and omit default port 443;
     request Host and forwarded headers do not establish trust.
     JSON requests must contain one object, reject unknown fields and are limited to
@@ -437,16 +437,13 @@ paths:
               properties:
                 report_interval_seconds: {type: integer, minimum: 5, maximum: 60}
                 disk_interval_seconds: {type: integer, minimum: 60, maximum: 3600}
-                interfaces:
-                  type: array
-                  maxItems: 8
-                  items: {type: string, minLength: 1, maxLength: 1024}
+                interfaces: {$ref: '#/components/schemas/InterfaceSelection'}
                 disk_paths:
                   type: array
                   maxItems: 8
                   items: {type: string, minLength: 1, maxLength: 1024}
                 billing_day: {type: integer, minimum: 1, maximum: 28}
-                quota_bytes: {type: string, pattern: '^[0-9]+$', description: Unsigned 64-bit decimal bytes.}
+                quota_bytes: {$ref: '#/components/schemas/DecimalCounter'}
       responses:
         '200':
           description: Updated desired configuration.
@@ -499,14 +496,153 @@ paths:
                         error_code: {type: string, enum: [node_not_found, storage_error]}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/enrollments:
+    get:
+      operationId: listEnrollments
+      description: Administrator only. Returns metadata without token plaintext or hashes.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Paginated enrollment metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enrollments: {type: array, items: {$ref: '#/components/schemas/Enrollment'}}
+        default: {$ref: '#/components/responses/Error'}
     post:
-      operationId: unavailableEnrollment
-      description: Reserved admission boundary. Viewers receive 403; administrators receive explicit 501. No token is issued in this slice.
+      operationId: createEnrollment
+      description: Administrator only. A node-bound ticket expires in 15 minutes and has one claim; a batch ticket expires in 30 minutes and has at most 100 claims, constrained by global node capacity. Only this response exposes the raw token.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                node_id: {type: string, format: uuid}
+                group_id: {type: string, format: uuid}
+                mode: {type: string, enum: [single, batch]}
+      responses:
+        '201':
+          description: Ticket plus one-time plaintext token.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/Enrollment'}
+                  - {type: object, required: [token], properties: {token: {type: string, writeOnly: false}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/enrollments/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    get:
+      operationId: getEnrollment
+      description: Administrator only; no credential material.
+      responses:
+        '200':
+          description: Ticket metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Enrollment'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: revokeEnrollment
+      description: Administrator only. Immediately blocks all claims and otherwise-valid exact retries.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
       responses:
-        '501': {$ref: '#/components/responses/Error'}
+        '204': {description: Revoked.}
+        default: {$ref: '#/components/responses/Error'}
+  /api/agent/v1/enroll:
+    post:
+      operationId: enrollAgent
+      security: [{enrollmentBearer: []}]
+      description: Identity must be saved before sending. Exact successful requests can retry for 24 hours from claim even after natural expiry; revocation blocks retry. Different installation/token binding returns enrollment_conflict. A new node-bound ticket can rotate the same installation credential atomically, invalidating the old credential. Clients durably stage a fresh 256-bit candidate separately from the active token before requesting rotation, retain it for exact retries across restarts/failures, and promote it only after confirmed acceptance. Ticketless recovery uses POST /api/agent/v1/recover, including generation-zero identities. A read-only ticket lookup precedes body reads and writer transactions, with all authorization repeated atomically during claim. Invalid/missing credentials use bounded direct-peer-IP and global token buckets (bursts 32 and 256, one token/second refill); forwarded headers and source ports do not select buckets. Apparently usable tickets bypass invalid buckets. Peer state is capped at 1024 entries with oldest-entry eviction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [protocol_version, installation_id, node_token]
+              properties:
+                protocol_version: {const: 1}
+                installation_id: {type: string, minLength: 1}
+                node_token: {type: string, minLength: 43, maxLength: 43, writeOnly: true}
+                system: {$ref: '#/components/schemas/System'}
+      responses:
+        '200':
+          description: Durable server-selected binding.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [node_id, server_time]
+                properties:
+                  node_id: {type: string, format: uuid}
+                  server_time: {type: string, format: date-time}
+        default: {$ref: '#/components/responses/Error'}
+  /api/agent/v1/recover:
+    post:
+      operationId: recoverAgentEnrollment
+      security: [{nodeBearer: []}]
+      description: Side-effect-free confirmation of a saved node credential and its installation binding, including before the first collection run. Unknown credentials are rejected before body reads. A single read verifies the exact credential and installation together; no liveness, generation, session, report admission, or configuration acknowledgement is updated. Requests never contain a target node_id. Clients try the durable pending credential first and then the active credential only after 401, validate the returned identity, and promote pending only after confirmation. GET and HEAD are unsupported. Maximum body size is 64 KiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [installation_id]
+              properties:
+                installation_id: {type: string, minLength: 1, maxLength: 255}
+      responses:
+        '200':
+          description: Authenticated installation binding, without telemetry mutation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [node_id, server_time]
+                properties:
+                  node_id: {type: string, format: uuid}
+                  server_time: {type: string, format: date-time}
+        default: {$ref: '#/components/responses/Error'}
+  /api/agent/v1/report:
+    post:
+      operationId: reportAgent
+      security: [{nodeBearer: []}]
+      description: POST-only telemetry; credential recovery uses the separate POST /api/agent/v1/recover endpoint and never fabricates a report. Target comes exclusively from Bearer authentication; requests never contain node_id. Maximum 64 KiB; one request/second per node, burst three. Authentication and admission charging precede body reads, so malformed, oversized, unsupported and conflicting authenticated requests all consume capacity. Unauthenticated requests neither read bodies nor charge a node. Processing transactionally rechecks the exact credential. New generations replace the durable session fence; older generations or same-generation different sessions return 409. Duplicate/out-of-order sequence returns the already accepted sequence without updating latest/last_seen. Sequence and latest state are process-local, not durable history.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Report'}
+      responses:
+        '200':
+          description: Accepted live sequence, with only newer desired configuration. No traffic acknowledgements are fabricated before durable traffic storage exists.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReportResponse'}
+        '413': {$ref: '#/components/responses/Error'}
+        '426': {$ref: '#/components/responses/Error'}
+        '429':
+          description: Rate limited.
+          headers:
+            Retry-After: {schema: {type: integer, minimum: 1}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
@@ -514,6 +650,14 @@ components:
       type: apiKey
       in: cookie
       name: __Host-orbitbeacon_session
+    enrollmentBearer:
+      type: http
+      scheme: bearer
+      description: Short-lived enrollment secret, never put in URLs.
+    nodeBearer:
+      type: http
+      scheme: bearer
+      description: Per-node credential, stored only as SHA-256 server-side.
   parameters:
     Origin:
       name: Origin
@@ -558,7 +702,7 @@ components:
               name: {type: string, minLength: 1, maxLength: 255}
   responses:
     Error:
-      description: Structured failure. Invalid JSON or input returns 400, missing/expired sessions 401, role/Origin/CSRF failures 403, missing resources 404, and protected-last-administrator or capacity conflicts 409. Unsupported methods return 405 with Allow before authentication; unknown API routes return 404. No API error returns the SPA shell.
+      description: Structured failure. Invalid JSON/input returns 400, invalid credentials 401, role/Origin/CSRF failures 403, missing resources 404, capacity/enrollment/identity conflicts 409, bodies above 64 KiB 413, unsupported agent protocol 426, and rate limiting 429. Unsupported methods return 405 with Allow before authentication; unknown API routes return 404. No API error returns the SPA shell.
       headers:
         X-Request-ID:
           schema: {type: string, format: uuid}
@@ -577,7 +721,7 @@ components:
         code:
           type: string
           description: Machine-readable failure code; validation_failed may include per-field messages. Clients must tolerate new error codes.
-          examples: [unauthenticated, forbidden, not_found, node_not_found, node_capacity_reached, last_administrator, invalid_json, validation_failed, method_not_allowed, rate_limited, not_available, internal_error]
+          examples: [unauthenticated, forbidden, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, invalid_json, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, not_available, internal_error]
         message: {type: string, minLength: 1}
         request_id: {type: string, format: uuid}
         fields:
@@ -637,6 +781,19 @@ components:
           description: Sorted tag strings; an untagged node returns [], never null.
           items: {type: string}
         created_at: {type: string, format: date-time, description: UTC RFC3339.}
+    InterfaceSelection:
+      type: array
+      maxItems: 8
+      uniqueItems: true
+      description: Unique nonblank interface names, each 1–255 UTF-8 bytes, without NUL, CR or LF; shared server/agent/collector validation. Empty selection uses the default route.
+      items:
+        type: string
+        minLength: 1
+        maxLength: 255
+        x-maxLengthBytes: 255
+        allOf:
+          - {pattern: '^[^\u0000\r\n]+$'}
+          - {pattern: '[^\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]'}
     DesiredConfig:
       type: object
       additionalProperties: false
@@ -645,17 +802,151 @@ components:
         revision: {type: integer, minimum: 1}
         report_interval_seconds: {type: integer, minimum: 5, maximum: 60}
         disk_interval_seconds: {type: integer, minimum: 60, maximum: 3600}
-        interfaces:
-          type: array
-          maxItems: 8
-          items: {type: string}
+        interfaces: {$ref: '#/components/schemas/InterfaceSelection'}
         disk_paths:
           type: array
           maxItems: 8
-          items: {type: string}
+          uniqueItems: true
+          description: Absolute platform-valid paths, each at most 1024 bytes without NUL. Shared server/agent/collector validation.
+          items: {type: string, minLength: 1, maxLength: 1024, pattern: '^[^\u0000]+$'}
         probe_targets:
           type: array
           maxItems: 0
           items: {type: string}
         billing_day: {type: integer, minimum: 1, maximum: 28}
-        quota_bytes: {type: string, pattern: '^[0-9]+$'}
+        quota_bytes: {$ref: '#/components/schemas/DecimalCounter'}
+    Enrollment:
+      type: object
+      required: [id, expires_at, max_uses, uses]
+      properties:
+        id: {type: string, format: uuid}
+        node_id: {type: [string, 'null'], format: uuid}
+        group_id: {type: [string, 'null'], format: uuid}
+        expires_at: {type: string, format: date-time}
+        max_uses: {type: integer, minimum: 1, maximum: 100}
+        uses: {type: integer, minimum: 0}
+        revoked_at: {type: [string, 'null'], format: date-time}
+    System:
+      type: object
+      additionalProperties: false
+      properties:
+        hostname: {type: string}
+        os: {type: string}
+        arch: {type: string}
+    DecimalCounter:
+      type: string
+      pattern: '^(0|[1-9][0-9]*)$'
+      description: Canonical unsigned decimal in 0..18446744073709551615; JSON numbers, signs, exponents and leading zeroes are rejected.
+    Source:
+      type: object
+      additionalProperties: false
+      required: [sample_id, age_ms, source_interval_ms]
+      properties:
+        sample_id: {type: string, minLength: 1}
+        age_ms: {type: integer, minimum: 0}
+        source_interval_ms: {type: integer, minimum: 1}
+        measurement_window_ms: {type: integer, minimum: 0}
+      description: Monotonic age/window; fresh while age <= max(3*interval,45000). Repeated sample IDs are not new observations.
+    DifferentialSource:
+      allOf:
+        - {$ref: '#/components/schemas/Source'}
+        - {required: [measurement_window_ms]}
+      description: CPU and every network source require a nonnegative measurement window for every status, including warm-up and failure; zero is allowed.
+    Metrics:
+      type: object
+      additionalProperties: false
+      required: [cpu_percent, load1, load5, load15, memory_total_bytes, memory_available_bytes, swap_total_bytes, swap_used_bytes, uptime_seconds, disks, networks, metric_status, sources]
+      properties:
+        cpu_percent: {type: [number, 'null'], minimum: 0, maximum: 100}
+        load1: {type: [number, 'null'], minimum: 0}
+        load5: {type: [number, 'null'], minimum: 0}
+        load15: {type: [number, 'null'], minimum: 0}
+        memory_total_bytes: {type: [integer, 'null'], minimum: 0}
+        memory_available_bytes: {type: [integer, 'null'], minimum: 0}
+        swap_total_bytes: {type: [integer, 'null'], minimum: 0}
+        swap_used_bytes: {type: [integer, 'null'], minimum: 0}
+        uptime_seconds: {type: [number, 'null'], minimum: 0}
+        disks:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, total_bytes, used_bytes, sampled_at]
+            properties:
+              path: {type: string}
+              total_bytes: {type: [integer, 'null'], minimum: 0}
+              used_bytes: {type: [integer, 'null'], minimum: 0}
+              sampled_at: {type: string, format: date-time}
+        networks:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, rx_bytes_per_sec, tx_bytes_per_sec]
+            properties:
+              name: {type: string}
+              rx_bytes_per_sec: {type: [number, 'null'], minimum: 0}
+              tx_bytes_per_sec: {type: [number, 'null'], minimum: 0}
+        metric_status:
+          type: object
+          required: [cpu_percent, load1, load5, load15, memory_total_bytes, memory_available_bytes, swap_total_bytes, swap_used_bytes, uptime_seconds]
+          description: Exactly the nine scalar field keys and one disk:<path> or network:<name> key for each reported series, even when unavailable. No unmatched series keys.
+          propertyNames:
+            pattern: '^(cpu_percent|load1|load5|load15|memory_total_bytes|memory_available_bytes|swap_total_bytes|swap_used_bytes|uptime_seconds|disk:.+|network:.+)$'
+          additionalProperties: {type: string, enum: [ok, unsupported, permission_denied, disabled, error, stale]}
+        sources:
+          type: object
+          required: [cpu, load, memory, swap, uptime]
+          description: Exact family keys plus one disk:<path> or network:<name> key per reported series, required even when values are unavailable. cpu covers cpu_percent; load covers load1/load5/load15; memory and swap cover their byte fields; uptime covers uptime_seconds. Unknown or unmatched keys are rejected and all metadata is validated.
+          propertyNames:
+            pattern: '^(cpu|load|memory|swap|uptime|disk:.+|network:.+)$'
+          properties:
+            cpu: {$ref: '#/components/schemas/DifferentialSource'}
+          patternProperties:
+            '^network:': {$ref: '#/components/schemas/DifferentialSource'}
+          additionalProperties: {$ref: '#/components/schemas/Source'}
+    Traffic:
+      type: object
+      additionalProperties: false
+      required: [epoch, period_start, rx_bytes, tx_bytes]
+      properties:
+        epoch: {type: string}
+        period_start: {type: string, format: date-time}
+        rx_bytes: {$ref: '#/components/schemas/DecimalCounter'}
+        tx_bytes: {$ref: '#/components/schemas/DecimalCounter'}
+    Report:
+      type: object
+      additionalProperties: false
+      required: [protocol_version, run_generation, session_id, seq, sampled_at, config_revision, metrics, traffic]
+      properties:
+        protocol_version: {const: 1}
+        run_generation: {type: integer, minimum: 1, description: Monotonic within the current node credential; changing the credential resets server fencing.}
+        session_id: {type: string, minLength: 1}
+        seq: {type: integer, minimum: 1}
+        sampled_at: {type: string, format: date-time}
+        config_revision: {type: integer, minimum: 1}
+        system: {$ref: '#/components/schemas/System'}
+        metrics: {$ref: '#/components/schemas/Metrics'}
+        capabilities: {type: object, properties: {self_update: {type: boolean}}}
+        traffic: {type: array, items: {$ref: '#/components/schemas/Traffic'}}
+        probe_results: {type: array, maxItems: 0, items: {type: object}}
+        update_status: {type: object, properties: {job_id: {type: string}, status: {type: string}, release_seq: {type: integer}}}
+        config_error:
+          type: object
+          required: [revision, code]
+          properties:
+            revision: {type: integer}
+            code: {type: string}
+            fields: {type: object, additionalProperties: {type: string}}
+    ReportResponse:
+      type: object
+      required: [node_id, accepted_seq, server_time]
+      properties:
+        node_id: {type: string, format: uuid, description: Authenticated node identity; never a request target.}
+        accepted_seq: {type: integer, minimum: 1}
+        server_time: {type: string, format: date-time}
+        desired_config: {$ref: '#/components/schemas/DesiredConfig'}
+        update_job: {type: object, properties: {job_id: {type: string}, release_seq: {type: integer}}}
+        traffic_acks: {type: array, items: {$ref: '#/components/schemas/Traffic'}}

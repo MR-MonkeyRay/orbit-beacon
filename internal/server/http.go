@@ -19,6 +19,8 @@ import (
 	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/auth"
+	"orbitbeacon/internal/server/enrollment"
+	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/webui"
@@ -27,19 +29,23 @@ import (
 const sessionCookie = "__Host-orbitbeacon_session"
 
 type Options struct {
-	Auth       *auth.Service
-	Nodes      *nodes.Service
-	Management *management.Service
-	PublicURL  string
-	Assets     fs.FS
+	Auth        *auth.Service
+	Nodes       *nodes.Service
+	Management  *management.Service
+	Enrollments *enrollment.Service
+	Ingest      *ingest.Service
+	PublicURL   string
+	Assets      fs.FS
 }
 
 type handler struct {
-	auth       *auth.Service
-	nodes      *nodes.Service
-	management *management.Service
-	origin     string
-	assets     fs.FS
+	auth        *auth.Service
+	nodes       *nodes.Service
+	management  *management.Service
+	enrollments *enrollment.Service
+	ingest      *ingest.Service
+	origin      string
+	assets      fs.FS
 }
 
 type apiError struct {
@@ -60,13 +66,19 @@ func NewHandler(opts Options) (http.Handler, error) {
 	if opts.Management == nil {
 		opts.Management = opts.Auth.Management()
 	}
+	if opts.Enrollments == nil {
+		opts.Enrollments = enrollment.NewService(opts.Nodes.Database(), enrollment.Options{MaxNodes: opts.Nodes.Capacity()})
+	}
+	if opts.Ingest == nil {
+		opts.Ingest = ingest.NewService(opts.Nodes.Database(), ingest.Options{})
+	}
 	if opts.Assets == nil {
 		opts.Assets = webui.Assets()
 	}
 	if _, err := fs.Stat(opts.Assets, "200.html"); err != nil {
 		return nil, fmt.Errorf("UI shell: %w", err)
 	}
-	return &handler{auth: opts.Auth, nodes: opts.Nodes, management: opts.Management, origin: origin, assets: opts.Assets}, nil
+	return &handler{auth: opts.Auth, nodes: opts.Nodes, management: opts.Management, enrollments: opts.Enrollments, ingest: opts.Ingest, origin: origin, assets: opts.Assets}, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -91,7 +103,7 @@ func decode(w http.ResponseWriter, r *http.Request, dst any, requestID string) b
 	for {
 		first, err := reader.ReadByte()
 		if err != nil {
-			fail(w, http.StatusBadRequest, "invalid_json", "Request must contain a JSON object", requestID)
+			decodeError(w, err, "Request must contain a JSON object", requestID)
 			return false
 		}
 		if first == ' ' || first == '\t' || first == '\r' || first == '\n' {
@@ -110,14 +122,23 @@ func decode(w http.ResponseWriter, r *http.Request, dst any, requestID string) b
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
-		fail(w, http.StatusBadRequest, "invalid_json", "Request must contain a valid JSON object with known fields", requestID)
+		decodeError(w, err, "Request must contain a valid JSON object with known fields", requestID)
 		return false
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
-		fail(w, http.StatusBadRequest, "invalid_json", "Request must contain exactly one JSON value", requestID)
+		decodeError(w, err, "Request must contain exactly one JSON value", requestID)
 		return false
 	}
 	return true
+}
+
+func decodeError(w http.ResponseWriter, err error, message, requestID string) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		fail(w, http.StatusRequestEntityTooLarge, "body_too_large", "Request body exceeds 64 KiB", requestID)
+		return
+	}
+	fail(w, http.StatusBadRequest, "invalid_json", message, requestID)
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +176,10 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 		return
 	}
 	if !method(w, r, requestID, allowed...) {
+		return
+	}
+	if strings.HasPrefix(p, "/api/agent/v1/") {
+		h.agentRoute(w, r, requestID)
 		return
 	}
 	if p == "/api/v1/session" && r.Method == http.MethodPost {
@@ -213,6 +238,9 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 	if h.managementRoute(w, r, requestID, user) {
 		return
 	}
+	if h.enrollmentRoute(w, r, requestID, user) {
+		return
+	}
 	switch p {
 	case "/api/v1/session":
 		if err := h.auth.Logout(r.Context(), c.Value); err != nil {
@@ -223,8 +251,6 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 		w.WriteHeader(http.StatusNoContent)
 	case "/api/v1/me":
 		writeJSON(w, http.StatusOK, user)
-	case "/api/v1/enrollments":
-		fail(w, http.StatusNotImplemented, "not_available", "Agent enrollment is not available in this foundation slice", requestID)
 	case "/api/v1/nodes":
 		if r.Method == http.MethodGet {
 			limit, offset, err := pagination(r)

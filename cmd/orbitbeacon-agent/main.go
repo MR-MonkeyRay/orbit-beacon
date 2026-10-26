@@ -1,14 +1,21 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"os/user"
 	"runtime"
+	"syscall"
+	"time"
 
+	"orbitbeacon/internal/agent/service"
 	"orbitbeacon/internal/config"
+	v1 "orbitbeacon/internal/protocol/v1"
 )
 
 func main() {
@@ -36,7 +43,7 @@ func run(args []string) error {
 		fs.StringVar(&file, "config", "", "agent JSON configuration file")
 		fs.StringVar(&policyPath, "install-policy", "", "administrator-owned immutable install policy JSON file")
 		if args[0] == "enroll" {
-			fs.StringVar(&tokenFile, "token-file", "", "enrollment token file; never pass tokens on the command line")
+			fs.StringVar(&tokenFile, "token-file", "", "optional enrollment token file; omit to recover saved node credentials")
 		}
 		if args[0] == "doctor" {
 			fs.BoolVar(&asJSON, "json", false, "print machine-readable diagnostics")
@@ -67,49 +74,99 @@ func run(args []string) error {
 		fmt.Fprintf(os.Stdout, "OrbitBeacon agent development (%s/%s)\n", runtime.GOOS, runtime.GOARCH)
 		return nil
 	}
-	if args[0] == "enroll" && tokenFile == "" {
-		return errors.New("enroll requires --token-file")
-	}
 	if args[0] == "update" && targetVersion == "" {
 		return errors.New("update requires --version")
 	}
 	if policyPath == "" {
-		return errors.New("--install-policy is required; this foundation does not install or infer a trust policy")
+		return errors.New("--install-policy is required; trust policy is never inferred")
 	}
-	info, err := os.Lstat(policyPath)
-	if err != nil {
-		return fmt.Errorf("read install policy: %w", err)
-	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 {
-		return errors.New("install policy must be a regular file not writable by group or others")
-	}
-	data, err := os.ReadFile(policyPath)
+	policy, err := config.ReadInstallPolicy(policyPath, 0)
 	if err != nil {
 		return err
-	}
-	var policy config.InstallPolicy
-	if err := json.Unmarshal(data, &policy); err != nil {
-		return fmt.Errorf("decode install policy: %w", err)
 	}
 	cfg, err := config.LoadAgent(config.LoadOptions{File: file}, &policy)
 	if err != nil {
 		return err
 	}
-	if runtime.GOOS != "windows" {
-		if os.Geteuid() == 0 || os.Getegid() == 0 || os.Geteuid() != cfg.ExpectedUID || os.Getegid() != cfg.ExpectedGID {
-			return errors.New("runtime_identity_mismatch: run as the non-root UID/GID fixed by the install policy")
+	if runtime.GOOS == "windows" {
+		return errors.New("runtime_identity_unsupported: Windows account enforcement is not implemented; no runtime command was performed")
+	}
+	if os.Geteuid() == 0 || os.Getegid() == 0 || os.Geteuid() != cfg.ExpectedUID || os.Getegid() != cfg.ExpectedGID {
+		return errors.New("runtime_identity_mismatch: run as the non-root UID/GID fixed by the install policy")
+	}
+	if cfg.ExpectedAccount != "" {
+		account, err := user.LookupId(fmt.Sprint(os.Geteuid()))
+		if err != nil || account.Username != cfg.ExpectedAccount {
+			return errors.New("runtime_identity_mismatch: account differs from install policy")
 		}
 	}
-	if args[0] == "doctor" {
+	if args[0] == "update" {
+		return errors.New("update is unavailable until signed release verification and rollback are implemented in step 7; no update was performed")
+	}
+	if err := os.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"); err != nil {
+		return err
+	}
+	agent, err := service.OpenRuntime(cfg)
+	if err != nil {
+		return err
+	}
+	defer agent.Close()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	switch args[0] {
+	case "run":
+		err := agent.Run(ctx)
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return err
+	case "enroll":
+		requestCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+		defer stop()
+		result, err := runEnrollment(requestCtx, tokenFile, agent.Enroll)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "Enrolled node %s\n", result.NodeID)
+		return nil
+	case "doctor":
+		result, checkErr := agent.Doctor(ctx)
 		if asJSON {
-			if err := json.NewEncoder(os.Stdout).Encode(struct {
-				Configuration string `json:"configuration"`
-				RuntimeChecks string `json:"runtime_checks"`
-			}{Configuration: "valid", RuntimeChecks: "not_available"}); err != nil {
+			if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
 				return err
 			}
+		} else {
+			fmt.Fprintf(os.Stdout, "Configuration: %s\nIdentity file: %s\nConnectivity: %s\nNode authentication: %s\nCollection: %s\nInstall mode: %s\n", result.Configuration, result.Identity, result.Connectivity, result.Authentication, result.Collection, result.InstallMode)
+			for metric, status := range result.MetricStatus {
+				fmt.Fprintf(os.Stdout, "%s: %s\n", metric, status)
+			}
 		}
-		return errors.New("doctor runtime checks are not yet available; only configuration and POSIX identity validation completed")
+		return checkErr
 	}
-	return fmt.Errorf("%s is not yet available in the foundation slice; no enrollment, monitoring or update was performed", args[0])
+	return errors.New("unsupported agent command")
+}
+
+// runEnrollment preserves the ticket on every unconfirmed outcome. Cleanup errors
+// return the confirmed response as well, so callers can distinguish local cleanup
+// failure from an enrollment that did not commit.
+func runEnrollment(ctx context.Context, tokenFile string, enroll func(context.Context, string) (v1.EnrollmentResponse, error)) (v1.EnrollmentResponse, error) {
+	if tokenFile == "" {
+		return enroll(ctx, "")
+	}
+	ticket, err := openEnrollmentTicket(tokenFile)
+	if err != nil {
+		return v1.EnrollmentResponse{}, err
+	}
+	defer ticket.close()
+	result, err := enroll(ctx, ticket.token)
+	if err != nil {
+		return result, err
+	}
+	if result.NodeID == "" {
+		return result, errors.New("invalid enrollment response; enrollment ticket retained")
+	}
+	if err := ticket.remove(); err != nil {
+		return result, errors.New("enrollment succeeded but enrollment ticket cleanup failed; verify the original directory and securely remove any remaining ticket or .orbitbeacon-ticket-* recovery files")
+	}
+	return result, nil
 }

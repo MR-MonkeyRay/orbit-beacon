@@ -1,0 +1,324 @@
+package identity
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sync"
+)
+
+type Identity struct {
+	InstallationID   string `json:"installation_id"`
+	NodeToken        string `json:"node_token"`
+	PendingNodeToken string `json:"pending_node_token,omitempty"`
+	NodeID           string `json:"node_id,omitempty"`
+	RunGeneration    uint64 `json:"run_generation"`
+	SessionID        string `json:"session_id,omitempty"`
+}
+
+type Options struct{ Random io.Reader }
+
+type Store struct {
+	mu      sync.Mutex
+	path    string
+	random  io.Reader
+	current Identity
+}
+
+// Open creates an identity only when no identity exists. Inspection never begins a run.
+func Open(path string, options Options) (*Store, error) {
+	random := options.Random
+	if random == nil {
+		random = rand.Reader
+	}
+	store := &Store{path: path, random: random}
+	current, err := load(path)
+	if err == nil {
+		store.current = current
+		return store, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	installation, err := randomID(random, 16)
+	if err != nil {
+		return nil, err
+	}
+	token, err := randomID(random, 32)
+	if err != nil {
+		return nil, err
+	}
+	current = Identity{InstallationID: installation, NodeToken: token}
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return nil, err
+	}
+	if err := prepareNewDirectory(directory); err != nil {
+		return nil, err
+	}
+	if err := persist(path, current, true); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return nil, err
+		}
+		current, err = load(path)
+		if err != nil {
+			return nil, err
+		}
+	}
+	store.current = current
+	return store, nil
+}
+
+func (s *Store) Current() Identity {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.current
+}
+
+// Reload refreshes the in-memory identity under the same cross-process lock used
+// for durable updates. It never creates or changes credentials.
+func (s *Store) Reload() (Identity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := lockGeneration(s.path)
+	if err != nil {
+		return Identity{}, err
+	}
+	defer unlock()
+	current, err := load(s.path)
+	if err != nil {
+		return Identity{}, err
+	}
+	s.current = current
+	return current, nil
+}
+
+// BeginRun publishes the next generation only after the replacement is durable.
+func (s *Store) BeginRun() (Identity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := lockGeneration(s.path)
+	if err != nil {
+		return Identity{}, err
+	}
+	defer unlock()
+	current, err := load(s.path)
+	if err != nil {
+		return Identity{}, err
+	}
+	if current.RunGeneration == math.MaxUint64 {
+		return Identity{}, errors.New("identity run generation exhausted")
+	}
+	session, err := randomID(s.random, 16)
+	if err != nil {
+		return Identity{}, err
+	}
+	current.RunGeneration++
+	current.SessionID = session
+	if err := persist(s.path, current, false); err != nil {
+		return Identity{}, err
+	}
+	s.current = current
+	return current, nil
+}
+
+// StageRotation keeps the active credential until the server confirms its replacement.
+func (s *Store) StageRotation() (Identity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := lockGeneration(s.path)
+	if err != nil {
+		return Identity{}, err
+	}
+	defer unlock()
+	current, err := load(s.path)
+	if err != nil {
+		return Identity{}, err
+	}
+	if current.PendingNodeToken != "" {
+		s.current = current
+		return current, nil
+	}
+	current.PendingNodeToken, err = randomID(s.random, 32)
+	if err != nil {
+		return Identity{}, err
+	}
+	if current.PendingNodeToken == current.NodeToken {
+		return Identity{}, errors.New("identity entropy repeated active credential")
+	}
+	if err := persist(s.path, current, false); err != nil {
+		return Identity{}, err
+	}
+	s.current = current
+	return current, nil
+}
+
+// ConfirmEnrollment promotes only the exact durable credential acknowledged by the server.
+func (s *Store) ConfirmEnrollment(token, nodeID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := lockGeneration(s.path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	current, err := load(s.path)
+	if err != nil {
+		return err
+	}
+	if nodeID == "" || (current.NodeID != "" && current.NodeID != nodeID) || (token != current.NodeToken && token != current.PendingNodeToken) {
+		return errors.New("enrollment confirmation does not match durable identity")
+	}
+	if token == current.PendingNodeToken {
+		current.NodeToken = token
+		current.PendingNodeToken = ""
+	}
+	current.NodeID = nodeID
+	if err := persist(s.path, current, false); err != nil {
+		return err
+	}
+	s.current = current
+	return nil
+}
+
+func randomID(random io.Reader, size int) (string, error) {
+	data := make([]byte, size)
+	if _, err := io.ReadFull(random, data); err != nil {
+		return "", errors.New("identity entropy unavailable")
+	}
+	return base64.RawURLEncoding.EncodeToString(data), nil
+}
+
+func prepareNewDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return errors.New("identity directory must be private and not a symlink")
+	}
+	if runtime.GOOS == "windows" || info.Mode().Perm()&0077 == 0 {
+		return nil
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	if len(entries) != 0 {
+		return errors.New("identity directory must be private before use")
+	}
+	if err := os.Chmod(path, 0700); err != nil {
+		return err
+	}
+	return checkDirectory(path)
+}
+
+func checkDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || (runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0) {
+		return errors.New("identity directory must be private and not a symlink")
+	}
+	return nil
+}
+
+func load(path string) (Identity, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return Identity{}, err
+	}
+	if !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
+		return Identity{}, errors.New("identity must be a regular 0600 file, not a symlink")
+	}
+	if err := checkDirectory(filepath.Dir(path)); err != nil {
+		return Identity{}, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return Identity{}, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return Identity{}, errors.New("identity changed while opening")
+	}
+	decoder := json.NewDecoder(io.LimitReader(file, 65537))
+	decoder.DisallowUnknownFields()
+	var value Identity
+	if err := decoder.Decode(&value); err != nil {
+		return Identity{}, errors.New("invalid identity file")
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return Identity{}, errors.New("invalid identity trailing data")
+	}
+	token, err := base64.RawURLEncoding.DecodeString(value.NodeToken)
+	if err != nil || len(token) != 32 || value.InstallationID == "" || (value.RunGeneration > 0 && value.SessionID == "") {
+		return Identity{}, errors.New("invalid identity fields")
+	}
+	if value.PendingNodeToken != "" {
+		pending, err := base64.RawURLEncoding.DecodeString(value.PendingNodeToken)
+		if err != nil || len(pending) != 32 || value.PendingNodeToken == value.NodeToken {
+			return Identity{}, errors.New("invalid pending identity credential")
+		}
+	}
+	return value, nil
+}
+
+func persist(path string, value Identity, create bool) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), ".identity-*")
+	if err != nil {
+		return err
+	}
+	name := file.Name()
+	defer os.Remove(name)
+	defer file.Close()
+	if err := file.Chmod(0600); err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if create {
+		// Link is an atomic no-replace publication, unlike Rename on POSIX.
+		if err := os.Link(name, path); err != nil {
+			return err
+		}
+		if err := os.Remove(name); err != nil {
+			return err
+		}
+	} else if err := os.Rename(name, path); err != nil {
+		return err
+	}
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("sync identity directory: %w", err)
+	}
+	return nil
+}

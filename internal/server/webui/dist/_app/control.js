@@ -279,7 +279,7 @@ async function render() {
   if (location.pathname === '/nodes' || location.pathname === '/overview') {
     const result = await api('/nodes?limit=100');
     const panel = document.createElement('section');
-    panel.append(text('h2', 'Pending node inventory'));
+    panel.append(text('h2', 'Node inventory'));
     const wrapper = document.createElement('div');
     wrapper.className = 'table-wrap';
     const table = document.createElement('table');
@@ -330,7 +330,7 @@ async function render() {
         try {
           await api(`/nodes/${encodeURIComponent(id)}/config`, {method: 'PATCH', body: JSON.stringify({report_interval_seconds: Number(form.report.value), disk_interval_seconds: Number(form.disk.value), billing_day: Number(form.billing.value)})});
           await render();
-          message.textContent = 'Desired configuration saved. No agent is enrolled in this slice.';
+          message.textContent = 'Desired configuration saved.';
         } catch (error) { showError(error); }
       });
       panel.append(form);
@@ -343,11 +343,11 @@ async function render() {
     groupSettings(user, groups.groups);
     auditSettings(audit.events);
   } else if (location.pathname === '/status') {
-    section.append(text('h2', 'Public status unavailable'), text('p', 'A public status page is not available in this foundation slice. No uptime or telemetry is being reported.'));
+    section.append(text('h2', 'Public status unavailable'), text('p', 'A public status page is not available in this console. Backend metric ingestion does not publish private telemetry.'));
   } else if (location.pathname === '/alerts') {
     section.append(text('h2', 'Alerts unavailable'), text('p', 'Alert rules, notifications and delivery are not available in this foundation slice.'));
   } else {
-    section.append(text('h2', 'Foundation capabilities'), text('p', 'Use Settings to manage users and groups, change your password and read the audit log. Administrators can also manage pending nodes and desired configuration. Alerts, public status, backup and agent enrollment are not available in this slice.'));
+    section.append(text('h2', 'Foundation capabilities'), text('p', 'Use Settings to manage users and groups, change your password and read the audit log. Administrators can also manage node inventory and desired configuration. Agent enrollment is supported by the backend API, but its browser wizard and telemetry display are not yet available. Alerts, public status and backup are not available.'));
   }
 }
 

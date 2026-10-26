@@ -3,6 +3,7 @@ package storage_test
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,9 +11,18 @@ import (
 	"orbitbeacon/internal/server/storage"
 )
 
+func privateDirectory(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func TestOpenMigratesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "orbitbeacon.db")
+	path := filepath.Join(privateDirectory(t), "orbitbeacon.db")
 	db, err := storage.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +79,7 @@ func TestOpenMigratesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
 func TestOpenConfiguresDurableSQLiteConnections(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "orbitbeacon.db"))
+	db, err := storage.Open(ctx, filepath.Join(privateDirectory(t), "orbitbeacon.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +138,7 @@ func TestOpenRejectsURIPaths(t *testing.T) {
 
 func TestMigrationFailureDoesNotRecordOrPartiallyApplyMigration(t *testing.T) {
 	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "orbitbeacon.db"))
+	db, err := storage.Open(ctx, filepath.Join(privateDirectory(t), "orbitbeacon.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
