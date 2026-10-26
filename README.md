@@ -120,6 +120,7 @@ orbitbeacon-server bootstrap --data-dir DIR [--username USER]
 orbitbeacon-server backup --config FILE --output FILE
 orbitbeacon-server restore --data-dir DIR --input FILE
 orbitbeacon-server version [--json]
+orbitbeacon-server health --url HTTPS_ORIGIN [--ca-file CA_PEM]
 
 orbitbeacon-agent version [--json]
 orbitbeacon-agent run --config FILE --install-policy FILE
@@ -127,6 +128,8 @@ orbitbeacon-agent enroll --config FILE --install-policy FILE [--token-file FILE]
 orbitbeacon-agent doctor --config FILE --install-policy FILE [--json]
 orbitbeacon-agent update --config FILE --install-policy FILE --version VERSION
 ```
+
+`GET /healthz/live` is an unauthenticated process liveness probe. `GET /healthz/ready` is an unauthenticated readiness probe that returns `200 {"status":"ready"}` only while the handler is accepting traffic and its SQLite connection responds to `PingContext`; shutdown or storage failure returns `503 {"status":"not_ready"}`. `server health` checks readiness over HTTPS with a five-second timeout and optionally a pinned CA PEM bundle.
 
 Backup/restore deliberately return unsupported errors without modifying files. **Never hot-copy the `.db` file** as a backup. Agent `enroll`, `run` and `doctor` use the real runtime and enforce the immutable installation policy; `update` remains unavailable until the signed-update slice. Enrollment reads an exact 0600 regular token file from a service/administrator-owned directory not writable by group or others, without following symlinks, rather than putting secrets in arguments or URLs. Linux removes the verified ticket only after confirmed success and syncs its parent; enrollment failures or path replacements retain it, while cleanup failures are reported separately from server acceptance. Omitting `--token-file` attempts node-credential recovery and requires a new enrollment ticket if neither saved credential authenticates. The agent saves its private identity before enrollment; recovery works even before its first collection run. Unsupported secure token handling fails closed.
 

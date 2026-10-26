@@ -15,6 +15,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"orbitbeacon/internal/config"
@@ -51,6 +52,8 @@ type handler struct {
 	origin      string
 	assets      fs.FS
 	logger      *slog.Logger
+	lifecycleMu sync.RWMutex
+	ready       bool
 }
 
 type apiError struct {
@@ -86,10 +89,14 @@ func NewHandler(opts Options) (*handler, error) {
 	if _, err := fs.Stat(opts.Assets, "200.html"); err != nil {
 		return nil, fmt.Errorf("UI shell: %w", err)
 	}
-	return &handler{auth: opts.Auth, nodes: opts.Nodes, management: opts.Management, enrollments: opts.Enrollments, ingest: opts.Ingest, origin: origin, assets: opts.Assets, logger: opts.Logger}, nil
+	h := &handler{auth: opts.Auth, nodes: opts.Nodes, management: opts.Management, enrollments: opts.Enrollments, ingest: opts.Ingest, origin: origin, assets: opts.Assets, logger: opts.Logger, ready: true}
+	return h, nil
 }
 
 func (h *handler) Shutdown(ctx context.Context) error {
+	h.lifecycleMu.Lock()
+	h.ready = false
+	h.lifecycleMu.Unlock()
 	if h.ingest == nil {
 		return nil
 	}
@@ -166,6 +173,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Request-ID", requestID)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "same-origin")
+	if r.URL.Path == "/healthz/live" || r.URL.Path == "/healthz/ready" {
+		h.health(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api" {
 		h.api(w, r, requestID)
 		return
