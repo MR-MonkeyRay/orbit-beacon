@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -59,7 +60,7 @@ type apiError struct {
 	Fields    map[string]string `json:"fields,omitempty"`
 }
 
-func NewHandler(opts Options) (http.Handler, error) {
+func NewHandler(opts Options) (*handler, error) {
 	if opts.Auth == nil || opts.Nodes == nil {
 		return nil, errors.New("auth and nodes services are required")
 	}
@@ -86,6 +87,13 @@ func NewHandler(opts Options) (http.Handler, error) {
 		return nil, fmt.Errorf("UI shell: %w", err)
 	}
 	return &handler{auth: opts.Auth, nodes: opts.Nodes, management: opts.Management, enrollments: opts.Enrollments, ingest: opts.Ingest, origin: origin, assets: opts.Assets, logger: opts.Logger}, nil
+}
+
+func (h *handler) Shutdown(ctx context.Context) error {
+	if h.ingest == nil {
+		return nil
+	}
+	return h.ingest.Shutdown(ctx)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

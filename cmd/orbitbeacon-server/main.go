@@ -156,6 +156,7 @@ func run(args []string) error {
 			if err := httpServer.Shutdown(shutdownCtx); err != nil {
 				_ = httpServer.Close()
 			}
+			_ = handler.Shutdown(shutdownCtx)
 		case <-stopped:
 		}
 	}()

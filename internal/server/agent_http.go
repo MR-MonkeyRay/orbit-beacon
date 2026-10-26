@@ -116,6 +116,12 @@ func (h *handler) agentError(w http.ResponseWriter, err error, requestID string)
 	case errors.Is(err, ingest.ErrRateLimited):
 		w.Header().Set("Retry-After", "1")
 		fail(w, http.StatusTooManyRequests, "rate_limited", "Report rate limit exceeded", requestID)
+	case errors.Is(err, ingest.ErrWriterBusy):
+		w.Header().Set("Retry-After", "1")
+		fail(w, http.StatusServiceUnavailable, "report_busy", "Report writer is busy", requestID)
+	case errors.Is(err, ingest.ErrServiceClosed):
+		w.Header().Set("Retry-After", "1")
+		fail(w, http.StatusServiceUnavailable, "service_unavailable", "Report ingestion is shutting down", requestID)
 	default:
 		h.serviceError(w, err, requestID)
 	}

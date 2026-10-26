@@ -21,7 +21,11 @@ var (
 	ErrInvalidReport       = errors.New("invalid report")
 	ErrIdentityConflict    = errors.New("report process identity conflict")
 	ErrRateLimited         = errors.New("report rate limited")
+	ErrWriterBusy          = errors.New("report writer queue is full")
+	ErrServiceClosed       = errors.New("report ingestion service is closed")
 )
+
+const writerQueueCapacity = 8
 
 type Options struct {
 	Now func() time.Time
@@ -41,12 +45,19 @@ type nodeState struct {
 }
 
 type Service struct {
-	db     *sql.DB
-	now    func() time.Time
-	mu     sync.Mutex
-	rateMu sync.Mutex
-	epoch  uint64
-	states map[string]*nodeState
+	db          *sql.DB
+	now         func() time.Time
+	mu          sync.Mutex
+	rateMu      sync.Mutex
+	epoch       uint64
+	states      map[string]*nodeState
+	writerQueue chan struct{}
+	writer      chan struct{}
+	lifecycleMu sync.Mutex
+	inflight    int
+	closing     bool
+	done        chan struct{}
+	doneClosed  bool
 }
 
 type stateCandidate struct {
@@ -58,7 +69,78 @@ func NewService(db *sql.DB, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Service{db: db, now: opts.Now, states: make(map[string]*nodeState)}
+	return &Service{db: db, now: opts.Now, states: make(map[string]*nodeState), writerQueue: make(chan struct{}, writerQueueCapacity), writer: make(chan struct{}, 1), done: make(chan struct{})}
+}
+
+func (s *Service) beginWrite(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.lifecycleMu.Lock()
+	if s.closing {
+		s.lifecycleMu.Unlock()
+		return nil, ErrServiceClosed
+	}
+	s.inflight++
+	s.lifecycleMu.Unlock()
+	finish := func() {
+		s.lifecycleMu.Lock()
+		s.inflight--
+		if s.closing && s.inflight == 0 && !s.doneClosed {
+			close(s.done)
+			s.doneClosed = true
+		}
+		s.lifecycleMu.Unlock()
+	}
+	select {
+	case s.writerQueue <- struct{}{}:
+	case <-ctx.Done():
+		finish()
+		return nil, ctx.Err()
+	default:
+		finish()
+		return nil, ErrWriterBusy
+	}
+	if err := ctx.Err(); err != nil {
+		<-s.writerQueue
+		finish()
+		return nil, err
+	}
+	select {
+	case s.writer <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-s.writer
+			<-s.writerQueue
+			finish()
+			return nil, err
+		}
+		return func() {
+			<-s.writer
+			<-s.writerQueue
+			finish()
+		}, nil
+	case <-ctx.Done():
+		<-s.writerQueue
+		finish()
+		return nil, ctx.Err()
+	}
+}
+
+func (s *Service) Shutdown(ctx context.Context) error {
+	s.lifecycleMu.Lock()
+	s.closing = true
+	if s.inflight == 0 && !s.doneClosed {
+		close(s.done)
+		s.doneClosed = true
+	}
+	done := s.done
+	s.lifecycleMu.Unlock()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type Admission struct {
@@ -206,6 +288,11 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 		}
 		system = string(encoded)
 	}
+	releaseWrite, err := s.beginWrite(ctx)
+	if err != nil {
+		return v1.ReportResponse{}, err
+	}
+	defer releaseWrite()
 	state := s.acquireState(nodeID)
 	defer s.releaseState(state)
 	state.mu.Lock()
