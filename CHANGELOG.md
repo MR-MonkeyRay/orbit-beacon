@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Confirm the complete absolute ancestor chain on every identity/configuration initialization, including existing directories; preserve relative-path stability and directory-symlink ancestors while preventing retries from bypassing an earlier unsynced parent failure.
+- Require root/runtime-owned, non-group/other-writable ticket directories across the full ancestor walk, while retaining only the trusted sticky-directory exception for temporary storage; keep descriptor-relative no-symlink reads and inode-pinned cleanup.
 - Coordinate initial identity reads and creation with the existing cancellable sidecar lock, preventing false inode-change failures during legitimate atomic updates; propagate caller contexts through every Open call and retain stable lock files after unsuccessful creation.
 - Reconfirm directory persistence when reopening identity/configuration files and retrying identical operations after rename succeeded but directory sync failed; prevent premature candidate use or configuration ACK, retain cached state on failure, and reuse the exact visible replacement after recovery.
 - Keep configuration-rejection diagnostics protocol-valid for negative remote revisions, preserving the prior applied configuration and the reporting channel needed to receive and acknowledge a later repair.

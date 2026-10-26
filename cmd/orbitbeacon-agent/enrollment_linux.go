@@ -48,11 +48,9 @@ func openEnrollmentTicket(path string) (*enrollmentTicket, error) {
 		_ = unix.Close(dir)
 		return nil, errors.Join(fail, err)
 	}
-	// The immediate directory may be group/other writable; the file itself must
-	// have the exact owner and mode checked below, and cleanup checks its inode.
-	if parent.Uid != 0 && parent.Uid != uint32(os.Geteuid()) {
+	if err := validateTicketDirectory(&parent); err != nil {
 		_ = unix.Close(dir)
-		return nil, errors.Join(fail, fmt.Errorf("enrollment token directory must be owned by root or the effective UID (uid=%d)", parent.Uid))
+		return nil, errors.Join(fail, err)
 	}
 	name := parts[len(parts)-1]
 	fd, err := unix.Openat(dir, name, flags, 0)
@@ -98,18 +96,52 @@ func openTicketDirectory(absolute string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	if err := validateTicketDirectoryFD(dir); err != nil {
+		_ = unix.Close(dir)
+		return -1, err
+	}
 	for _, part := range strings.Split(absolute, "/") {
 		if part == "" {
 			continue
 		}
 		next, err := unix.Openat(dir, part, flags, 0)
-		_ = unix.Close(dir)
 		if err != nil {
+			_ = unix.Close(dir)
 			return -1, err
 		}
+		if err := validateTicketDirectoryFD(next); err != nil {
+			_ = unix.Close(next)
+			_ = unix.Close(dir)
+			return -1, err
+		}
+		_ = unix.Close(dir)
 		dir = next
 	}
 	return dir, nil
+}
+
+func validateTicketDirectoryFD(fd int) error {
+	var info unix.Stat_t
+	if err := unix.Fstat(fd, &info); err != nil {
+		return err
+	}
+	return validateTicketDirectory(&info)
+}
+
+func validateTicketDirectory(info *unix.Stat_t) error {
+	if info.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return errors.New("enrollment token path component is not a directory")
+	}
+	euid := uint32(os.Geteuid())
+	if info.Uid != 0 && info.Uid != euid {
+		return fmt.Errorf("enrollment token directory must be owned by root or the effective UID (uid=%d)", info.Uid)
+	}
+	const writableByGroupOrOther = 0022
+	const sticky = 01000
+	if info.Mode&writableByGroupOrOther != 0 && info.Mode&sticky == 0 {
+		return fmt.Errorf("enrollment token directory is writable by group or others (mode=%#o)", info.Mode&07777)
+	}
+	return nil
 }
 
 func (t *enrollmentTicket) close() {

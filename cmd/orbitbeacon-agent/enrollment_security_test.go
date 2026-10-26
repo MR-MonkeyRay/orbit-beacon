@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	v1 "orbitbeacon/internal/protocol/v1"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
-
-	v1 "orbitbeacon/internal/protocol/v1"
 )
 
 func TestEnrollWithoutTokenFileReachesRuntimePolicyBoundary(t *testing.T) {
@@ -37,7 +37,7 @@ func TestEnrollmentCommandRecoversWithoutReadingTicketFile(t *testing.T) {
 func TestEnrollmentCommandRemovesTokenOnlyAfterConfirmedSuccess(t *testing.T) {
 	for _, outcome := range []string{"success", "network failure", "credential rejection", "cancellation"} {
 		t.Run(outcome, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "enrollment.token")
+			path := filepath.Join(privateTicketTempDir(t), "enrollment.token")
 			const secret = "private-enrollment-ticket"
 			if err := os.WriteFile(path, []byte(secret+"\n"), 0600); err != nil {
 				t.Fatal(err)
@@ -87,7 +87,7 @@ func TestEnrollmentCommandRemovesTokenOnlyAfterConfirmedSuccess(t *testing.T) {
 func TestEnrollmentCommandNeverUnlinksReplacementTokenPath(t *testing.T) {
 	for _, replacement := range []string{"regular file", "symlink"} {
 		t.Run(replacement, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := privateTicketTempDir(t)
 			path := filepath.Join(dir, "enrollment.token")
 			saved := filepath.Join(dir, "original.token")
 			victim := filepath.Join(dir, "victim.token")
@@ -134,7 +134,7 @@ func TestEnrollmentCommandNeverUnlinksReplacementTokenPath(t *testing.T) {
 func TestEnrollmentCommandRejectsUnsafeTicketBeforeRuntimeCall(t *testing.T) {
 	for _, kind := range []string{"wrong mode", "symlink", "missing"} {
 		t.Run(kind, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "ticket")
+			path := filepath.Join(privateTicketTempDir(t), "ticket")
 			if kind != "missing" {
 				if err := os.WriteFile(path, []byte("secret"), 0600); err != nil {
 					t.Fatal(err)
@@ -162,4 +162,85 @@ func TestEnrollmentCommandRejectsUnsafeTicketBeforeRuntimeCall(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEnrollmentTicketDirectoryWritePolicy(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux descriptor-relative ticket security")
+	}
+	t.Run("rejects writable immediate directory", func(t *testing.T) {
+		root := privateTicketTempDir(t)
+		directory := filepath.Join(root, "tickets")
+		if err := os.Mkdir(directory, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(directory, 0770); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(directory, "enrollment.token")
+		if err := os.WriteFile(path, []byte("secret"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if ticket, err := openEnrollmentTicket(path); err == nil || ticket != nil {
+			if ticket != nil {
+				ticket.close()
+			}
+			t.Fatalf("group-writable ticket directory accepted: ticket=%v err=%v", ticket, err)
+		}
+	})
+	t.Run("rejects writable ancestor", func(t *testing.T) {
+		root := privateTicketTempDir(t)
+		ancestor := filepath.Join(root, "unsafe")
+		directory := filepath.Join(ancestor, "tickets")
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(ancestor, 0777); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(directory, "enrollment.token")
+		if err := os.WriteFile(path, []byte("secret"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if ticket, err := openEnrollmentTicket(path); err == nil || ticket != nil {
+			if ticket != nil {
+				ticket.close()
+			}
+			t.Fatalf("world-writable ancestor accepted: ticket=%v err=%v", ticket, err)
+		}
+	})
+	t.Run("allows trusted sticky temporary directory", func(t *testing.T) {
+		root := privateTicketTempDir(t)
+		if err := os.Chmod(root, 0700); err != nil {
+			t.Fatal(err)
+		}
+		directory := filepath.Join(root, "sticky")
+		if err := os.Mkdir(directory, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(directory, 0777|os.ModeSticky); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(directory, "enrollment.token")
+		if err := os.WriteFile(path, []byte("secret"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		ticket, err := openEnrollmentTicket(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ticket.close()
+	})
+}
+
+func privateTicketTempDir(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Dir(root), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return root
 }
