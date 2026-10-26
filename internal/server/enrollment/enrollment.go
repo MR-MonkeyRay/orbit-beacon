@@ -201,6 +201,27 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]Ticket, error)
 	return tickets, rows.Err()
 }
 
+// CleanupExpiredTickets removes at most limit tickets whose expiration is
+// older than before. Foreign-key cascade removes their enrollment receipts in
+// the same statement, so an exact retry is retained until the configured
+// receipt grace period has elapsed.
+func (s *Service) CleanupExpiredTickets(ctx context.Context, before time.Time, limit int) (int64, error) {
+	if limit < 1 {
+		return 0, ErrInvalidInput
+	}
+	result, err := s.db.ExecContext(ctx, `DELETE FROM enrollment_tokens
+WHERE id IN (
+	SELECT id FROM enrollment_tokens
+	WHERE expires_at < ?
+	ORDER BY expires_at ASC, id ASC
+	LIMIT ?
+)`, before.UTC().Format(time.RFC3339Nano), limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (s *Service) Revoke(ctx context.Context, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

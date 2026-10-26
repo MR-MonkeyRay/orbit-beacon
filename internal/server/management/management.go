@@ -170,3 +170,23 @@ func (s *Service) Events(ctx context.Context, limit, offset int) ([]Event, error
 	}
 	return events, rows.Err()
 }
+
+// CleanupAuditEvents removes at most limit events older than before. The
+// caller owns the retention policy; this method only provides bounded,
+// context-cancelable deletion.
+func (s *Service) CleanupAuditEvents(ctx context.Context, before time.Time, limit int) (int64, error) {
+	if limit < 1 {
+		return 0, ErrInvalidInput
+	}
+	result, err := s.db.ExecContext(ctx, `DELETE FROM audit_events
+WHERE id IN (
+	SELECT id FROM audit_events
+	WHERE created_at < ?
+	ORDER BY created_at ASC, id ASC
+	LIMIT ?
+)`, before.UTC().Format(time.RFC3339Nano), limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

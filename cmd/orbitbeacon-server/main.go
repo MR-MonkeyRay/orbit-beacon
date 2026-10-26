@@ -142,11 +142,31 @@ func run(args []string) error {
 		return nil
 	}
 	nodeService := nodes.NewService(db, nodes.Options{MaxNodes: cfg.MaxNodes})
-	handler, err := server.NewHandler(server.Options{Auth: authService, Nodes: nodeService, PublicURL: cfg.PublicURL, Logger: slog.New(slog.NewJSONHandler(os.Stderr, nil))})
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	handler, err := server.NewHandler(server.Options{Auth: authService, Nodes: nodeService, PublicURL: cfg.PublicURL, Logger: logger})
 	if err != nil {
 		return err
 	}
 	httpServer := &http.Server{Addr: cfg.ListenAddr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
+	go func() {
+		ticker := time.NewTicker(server.RetentionInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				result, err := handler.CleanupRetention(ctx, now)
+				if err != nil {
+					logger.Warn("retention cleanup failed", "error", err)
+					continue
+				}
+				if result.AuditEvents != 0 || result.EnrollmentTickets != 0 {
+					logger.Info("retention cleanup complete", "audit_events", result.AuditEvents, "enrollment_tickets", result.EnrollmentTickets)
+				}
+			}
+		}
+	}()
 	stopped := make(chan struct{})
 	go func() {
 		select {
