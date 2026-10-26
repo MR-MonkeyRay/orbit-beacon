@@ -8,10 +8,14 @@ import (
 	"net"
 	"syscall"
 
+	"github.com/shirou/gopsutil/v4/host"
 	"github.com/shirou/gopsutil/v4/load"
 )
 
-func uptimeSourceAvailable() error { return nil }
+func uptimeValue(ctx context.Context) (float64, error) {
+	value, err := host.UptimeWithContext(ctx)
+	return float64(value), err
+}
 
 func loadAverage(ctx context.Context) (loadValues, error) {
 	value, err := load.AvgWithContext(ctx)

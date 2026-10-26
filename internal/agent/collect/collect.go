@@ -18,7 +18,6 @@ import (
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
-	"github.com/shirou/gopsutil/v4/host"
 	"github.com/shirou/gopsutil/v4/mem"
 	gnet "github.com/shirou/gopsutil/v4/net"
 
@@ -336,20 +335,16 @@ func (c *Collector) collectMemory(ctx context.Context, m *v1.Metrics) {
 }
 
 func (c *Collector) collectUptime(ctx context.Context, m *v1.Metrics) {
-	var uptime uint64
+	var uptime float64
 	err := checked(ctx, func() (err error) {
-		if err = uptimeSourceAvailable(); err != nil {
-			return err
-		}
-		uptime, err = host.UptimeWithContext(ctx)
+		uptime, err = uptimeValue(ctx)
 		return err
 	})
 	m.MetricStatus["uptime_seconds"] = "ok"
 	if err != nil {
 		m.MetricStatus["uptime_seconds"] = failureStatus(err)
 	} else {
-		seconds := float64(uptime)
-		m.UptimeSeconds = &seconds
+		m.UptimeSeconds = &uptime
 	}
 	m.Sources["uptime"] = c.source("uptime", time.Now(), c.baseInterval())
 }

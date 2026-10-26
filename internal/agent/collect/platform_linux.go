@@ -6,7 +6,9 @@ package collect
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -22,18 +24,39 @@ func procPath(parts ...string) string {
 	return filepath.Join(append([]string{root}, parts...)...)
 }
 
-// gopsutil's Linux uptime reader uses sysinfo rather than procfs. Require the
-// configured host source to be available as well; otherwise a remapped or
-// inaccessible host procfs would silently report the collector host's uptime.
-func uptimeSourceAvailable() error {
+func uptimeValue(ctx context.Context) (float64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	file, err := os.Open(procPath("uptime"))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer file.Close()
-	var first [1]byte
-	_, err = io.ReadFull(file, first[:])
-	return err
+	scanner := bufio.NewScanner(io.LimitReader(file, 4096))
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return 0, err
+		}
+		return 0, io.ErrUnexpectedEOF
+	}
+	fields := strings.Fields(scanner.Text())
+	if len(fields) == 0 {
+		return 0, io.ErrUnexpectedEOF
+	}
+	field := fields[0]
+	if !strings.ContainsAny(field, ".eE") {
+		integer, err := strconv.ParseUint(field, 10, 64)
+		if err != nil {
+			return 0, errors.New("invalid proc uptime")
+		}
+		return float64(integer), nil
+	}
+	seconds, err := strconv.ParseFloat(field, 64)
+	if err != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds < 0 || seconds >= math.Ldexp(1, 64) {
+		return 0, errors.New("invalid proc uptime")
+	}
+	return seconds, nil
 }
 
 func loadAverage(ctx context.Context) (loadValues, error) {
