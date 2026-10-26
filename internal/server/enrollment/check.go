@@ -9,6 +9,7 @@ import (
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/timekey"
 )
 
 // CheckClaim inspects one SQLite read snapshot. It never consumes a ticket,
@@ -42,7 +43,7 @@ func (s *Service) CheckClaim(ctx context.Context, token string, req v1.Enrollmen
 	if err != nil {
 		return v1.EnrollmentCheckResponse{}, err
 	}
-	expiresAt, err := time.Parse(time.RFC3339Nano, expires)
+	expiresAt, err := timekey.Parse(expires)
 	if err != nil {
 		return v1.EnrollmentCheckResponse{}, err
 	}
@@ -66,7 +67,7 @@ func (s *Service) CheckClaim(ctx context.Context, token string, req v1.Enrollmen
 	if !active || subtle.ConstantTimeCompare(candidate, actual[:]) != 1 {
 		return v1.EnrollmentCheckResponse{}, ErrConflict
 	}
-	claimedAt, err := time.Parse(time.RFC3339Nano, claimed.String)
+	claimedAt, err := timekey.Parse(claimed.String)
 	if err != nil {
 		return v1.EnrollmentCheckResponse{}, err
 	}

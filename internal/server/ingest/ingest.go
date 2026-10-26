@@ -14,6 +14,7 @@ import (
 
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/timekey"
 )
 
 var (
@@ -344,7 +345,7 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 		return response, nil
 	}
 	// Rejection cannot erase a prior successful configuration acknowledgement.
-	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET run_generation = ?, report_session_id = ?, last_seen = ?, system = COALESCE(?, system), applied_revision = CASE WHEN ? = '' AND ? <= desired_revision THEN max(applied_revision, ?) ELSE applied_revision END, config_error = ? WHERE id = ?`, strconv.FormatUint(report.RunGeneration, 10), report.SessionID, now.Format(time.RFC3339Nano), system, configError, report.ConfigRevision, report.ConfigRevision, configError, nodeID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET run_generation = ?, report_session_id = ?, last_seen = ?, system = COALESCE(?, system), applied_revision = CASE WHEN ? = '' AND ? <= desired_revision THEN max(applied_revision, ?) ELSE applied_revision END, config_error = ? WHERE id = ?`, strconv.FormatUint(report.RunGeneration, 10), report.SessionID, timekey.Format(now), system, configError, report.ConfigRevision, report.ConfigRevision, configError, nodeID); err != nil {
 		return v1.ReportResponse{}, err
 	}
 	if err := tx.Commit(); err != nil {

@@ -11,6 +11,7 @@ import (
 
 	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/timekey"
 )
 
 var (
@@ -160,7 +161,7 @@ func (s *Service) Events(ctx context.Context, limit, offset int) ([]Event, error
 		if err := rows.Scan(&event.ID, &event.ActorID, &event.Action, &event.TargetID, &created, &details); err != nil {
 			return nil, err
 		}
-		event.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
+		event.CreatedAt, err = timekey.Parse(created)
 		if err != nil {
 			return nil, err
 		}
@@ -184,7 +185,7 @@ WHERE id IN (
 	WHERE created_at < ?
 	ORDER BY created_at ASC, id ASC
 	LIMIT ?
-)`, before.UTC().Format(time.RFC3339Nano), limit)
+	)`, timekey.Format(before), limit)
 	if err != nil {
 		return 0, err
 	}

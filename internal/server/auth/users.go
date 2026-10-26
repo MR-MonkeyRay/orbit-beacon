@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"time"
 
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/timekey"
 )
 
 // UserPatch updates only public user metadata; passwords have a separate flow.
@@ -25,7 +25,7 @@ func scanUser(row interface{ Scan(...any) error }) (User, error) {
 		return User{}, err
 	}
 	var err error
-	user.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
+	user.CreatedAt, err = timekey.Parse(created)
 	if err != nil {
 		return User{}, err
 	}

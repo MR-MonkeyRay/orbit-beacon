@@ -18,6 +18,7 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/storage"
+	"orbitbeacon/internal/timekey"
 )
 
 type serviceError string
@@ -151,7 +152,7 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 	if count >= s.maxNodes {
 		return Node{}, ErrCapacityReached
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO nodes(id, name, status, created_at) VALUES (?, ?, ?, ?)", id, req.Name, node.Status, node.CreatedAt.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO nodes(id, name, status, created_at) VALUES (?, ?, ?, ?)", id, req.Name, node.Status, timekey.Format(node.CreatedAt)); err != nil {
 		return Node{}, err
 	}
 	if err := audit.Insert(ctx, tx, "node.create", id, s.now()); err != nil {
@@ -178,7 +179,7 @@ func scanNode(row scanner) (Node, error) {
 		return Node{}, err
 	}
 	var err error
-	node.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
+	node.CreatedAt, err = timekey.Parse(created)
 	if err != nil {
 		return Node{}, err
 	}

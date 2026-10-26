@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/netip"
 	"time"
+
+	"orbitbeacon/internal/timekey"
 )
 
 const maxInvalidPeers = 1024
@@ -64,7 +66,7 @@ func (s *Service) usableTicket(ctx context.Context, token string) error {
 		if err := rows.Scan(&claimed); err != nil {
 			return err
 		}
-		claimedAt, err := time.Parse(time.RFC3339Nano, claimed)
+		claimedAt, err := timekey.Parse(claimed)
 		if err != nil {
 			return err
 		}

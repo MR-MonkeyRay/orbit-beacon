@@ -90,6 +90,8 @@ Enrollment pagination uses `enrollment_tokens_expiry_id` for `expires_at DESC, i
 
 Retention maintenance runs hourly in bounded batches of 128: audit events older than 90 days are removed, while expired enrollment tickets and their receipts are retained for the 24-hour exact-retry grace period before cascading deletion. Cleanup uses the request context and reports failures without blocking HTTP serving.
 
+All persisted wall-clock timestamps use UTC RFC3339 with fixed 9-digit nanosecond precision through the shared `internal/timekey` encoder. Migration 9 normalizes legacy offset-bearing values before they participate in SQLite ordering or retention cutoffs; readers parse through the same boundary.
+
 SQLite `BUSY`/`LOCKED` contention, including extended result codes, returns `503 storage_busy` with `Retry-After: 1`; the failed transaction is not acknowledged as a success. Node batches retain per-node results and use `error_code:"storage_busy"` for retryable members. Constraint, corruption, I/O and disk-full errors are not reclassified as contention merely because of their text.
 
 `modernc.org/sqlite` is pinned to **v1.61.0**, not the plan's v1.61.1: v1.61.1 was unavailable when the dependency was resolved. The available v1.61.0 requires Go 1.26 and is compatible with the required Go 1.27.3 toolchain.

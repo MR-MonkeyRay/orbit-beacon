@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/identity"
+	"orbitbeacon/internal/timekey"
 )
 
 type actorKey struct{}
@@ -27,6 +28,6 @@ func Insert(ctx context.Context, tx *sql.Tx, action, targetID string, now time.T
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, "INSERT INTO audit_events(id, actor_id, action, target_id, created_at, details) VALUES (?, ?, ?, ?, ?, ?)", id, actorID, action, targetID, now.UTC().Format(time.RFC3339Nano), "{}")
+	_, err = tx.ExecContext(ctx, "INSERT INTO audit_events(id, actor_id, action, target_id, created_at, details) VALUES (?, ?, ?, ?, ?, ?)", id, actorID, action, targetID, timekey.Format(now), "{}")
 	return err
 }

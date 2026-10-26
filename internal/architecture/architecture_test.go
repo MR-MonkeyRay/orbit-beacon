@@ -35,6 +35,7 @@ var allowedInternalImports = map[string]map[string]bool{
 	"orbitbeacon/internal/config":      {},
 	"orbitbeacon/internal/identity":    {},
 	"orbitbeacon/internal/protocol/v1": {},
+	"orbitbeacon/internal/timekey":     {},
 	"orbitbeacon/internal/server": {
 		"orbitbeacon/internal/config":            true,
 		"orbitbeacon/internal/identity":          true,
@@ -50,31 +51,37 @@ var allowedInternalImports = map[string]map[string]bool{
 	},
 	"orbitbeacon/internal/server/audit": {
 		"orbitbeacon/internal/identity": true,
+		"orbitbeacon/internal/timekey":  true,
 	},
 	"orbitbeacon/internal/server/auth": {
 		"orbitbeacon/internal/identity":          true,
 		"orbitbeacon/internal/server/audit":      true,
 		"orbitbeacon/internal/server/management": true,
+		"orbitbeacon/internal/timekey":           true,
 	},
 	"orbitbeacon/internal/server/enrollment": {
 		"orbitbeacon/internal/identity":     true,
 		"orbitbeacon/internal/protocol/v1":  true,
 		"orbitbeacon/internal/server/audit": true,
 		"orbitbeacon/internal/server/nodes": true,
+		"orbitbeacon/internal/timekey":      true,
 	},
 	"orbitbeacon/internal/server/ingest": {
 		"orbitbeacon/internal/protocol/v1":  true,
 		"orbitbeacon/internal/server/nodes": true,
+		"orbitbeacon/internal/timekey":      true,
 	},
 	"orbitbeacon/internal/server/management": {
 		"orbitbeacon/internal/identity":     true,
 		"orbitbeacon/internal/server/audit": true,
+		"orbitbeacon/internal/timekey":      true,
 	},
 	"orbitbeacon/internal/server/nodes": {
 		"orbitbeacon/internal/identity":       true,
 		"orbitbeacon/internal/protocol/v1":    true,
 		"orbitbeacon/internal/server/audit":   true,
 		"orbitbeacon/internal/server/storage": true,
+		"orbitbeacon/internal/timekey":        true,
 	},
 	"orbitbeacon/internal/server/securefs": {},
 	"orbitbeacon/internal/server/storage": {
@@ -82,6 +89,7 @@ var allowedInternalImports = map[string]map[string]bool{
 		"orbitbeacon/internal/identity":        true,
 		"orbitbeacon/internal/protocol/v1":     true,
 		"orbitbeacon/internal/server/securefs": true,
+		"orbitbeacon/internal/timekey":         true,
 	},
 	"orbitbeacon/internal/server/webui": {},
 }

@@ -18,6 +18,7 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/timekey"
 )
 
 type serviceError string
@@ -136,7 +137,7 @@ func (s *Service) create(ctx context.Context, nodeID, groupID *string, lifetime 
 	if exists == 0 {
 		return CreatedTicket{}, ErrNotFound
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO enrollment_tokens(id, token_hash, node_id, group_id, expires_at, max_uses) VALUES (?, ?, ?, ?, ?, ?)`, id, digest[:], nodeID, groupID, created.ExpiresAt.Format(time.RFC3339Nano), maxUses); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO enrollment_tokens(id, token_hash, node_id, group_id, expires_at, max_uses) VALUES (?, ?, ?, ?, ?, ?)`, id, digest[:], nodeID, groupID, timekey.Format(created.ExpiresAt), maxUses); err != nil {
 		return CreatedTicket{}, err
 	}
 	if err := audit.Insert(ctx, tx, "enrollment.create", id, now); err != nil {
@@ -163,12 +164,12 @@ func scanTicket(row scanner) (Ticket, error) {
 		return Ticket{}, err
 	}
 	var err error
-	ticket.ExpiresAt, err = time.Parse(time.RFC3339Nano, expires)
+	ticket.ExpiresAt, err = timekey.Parse(expires)
 	if err != nil {
 		return Ticket{}, err
 	}
 	if revoked.Valid {
-		timestamp, err := time.Parse(time.RFC3339Nano, revoked.String)
+		timestamp, err := timekey.Parse(revoked.String)
 		if err != nil {
 			return Ticket{}, err
 		}
@@ -215,7 +216,7 @@ WHERE id IN (
 	WHERE expires_at < ?
 	ORDER BY expires_at ASC, id ASC
 	LIMIT ?
-)`, before.UTC().Format(time.RFC3339Nano), limit)
+	)`, timekey.Format(before), limit)
 	if err != nil {
 		return 0, err
 	}
@@ -236,7 +237,7 @@ func (s *Service) Revoke(ctx context.Context, id string) error {
 		return tx.Commit()
 	}
 	now := s.now().UTC()
-	if _, err := tx.ExecContext(ctx, "UPDATE enrollment_tokens SET revoked_at = ? WHERE id = ?", now.Format(time.RFC3339Nano), id); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE enrollment_tokens SET revoked_at = ? WHERE id = ?", timekey.Format(now), id); err != nil {
 		return err
 	}
 	if err := audit.Insert(ctx, tx, "enrollment.revoke", id, now); err != nil {
@@ -307,7 +308,7 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 		if !claimActive || subtle.ConstantTimeCompare(claimHash, nodeHash[:]) != 1 {
 			return v1.EnrollmentResponse{}, ErrConflict
 		}
-		claimedAt, err := time.Parse(time.RFC3339Nano, claimed)
+		claimedAt, err := timekey.Parse(claimed)
 		if err != nil {
 			return v1.EnrollmentResponse{}, err
 		}
@@ -384,7 +385,7 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 		if strings.TrimSpace(name) == "" {
 			name = req.InstallationID
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO nodes(id, name, group_id, created_at) VALUES (?, ?, ?, ?)`, nodeID, name, ticket.GroupID, now.Format(time.RFC3339Nano)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO nodes(id, name, group_id, created_at) VALUES (?, ?, ?, ?)`, nodeID, name, ticket.GroupID, timekey.Format(now)); err != nil {
 			return v1.EnrollmentResponse{}, err
 		}
 	}
@@ -392,10 +393,10 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 	if err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET run_generation = CASE WHEN token_hash = ? THEN run_generation ELSE '0' END, report_session_id = CASE WHEN token_hash = ? THEN report_session_id ELSE '' END, token_hash = ?, installation_id = ?, first_enrolled_at = COALESCE(first_enrolled_at, ?), system = ?, status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'unknown' END WHERE id = ?`, nodeHash[:], nodeHash[:], nodeHash[:], req.InstallationID, now.Format(time.RFC3339Nano), string(system), nodeID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET run_generation = CASE WHEN token_hash = ? THEN run_generation ELSE '0' END, report_session_id = CASE WHEN token_hash = ? THEN report_session_id ELSE '' END, token_hash = ?, installation_id = ?, first_enrolled_at = COALESCE(first_enrolled_at, ?), system = ?, status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'unknown' END WHERE id = ?`, nodeHash[:], nodeHash[:], nodeHash[:], req.InstallationID, timekey.Format(now), string(system), nodeID); err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO enrollment_claims(enrollment_id, installation_id, node_id, token_hash, claimed_at) VALUES (?, ?, ?, ?, ?)`, ticket.ID, req.InstallationID, nodeID, nodeHash[:], now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO enrollment_claims(enrollment_id, installation_id, node_id, token_hash, claimed_at) VALUES (?, ?, ?, ?, ?)`, ticket.ID, req.InstallationID, nodeID, nodeHash[:], timekey.Format(now)); err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE enrollment_tokens SET uses = uses + 1 WHERE id = ?", ticket.ID); err != nil {

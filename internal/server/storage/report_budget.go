@@ -11,6 +11,7 @@ import (
 
 	"orbitbeacon/internal/identity"
 	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/timekey"
 )
 
 // Publish a new safe revision before serving so upgraded agents need no manual
@@ -58,7 +59,7 @@ func repairReportSelections(ctx context.Context, tx *sql.Tx) error {
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, "INSERT INTO audit_events(id,actor_id,action,target_id,created_at,details) VALUES(?,NULL,'node.config.report_budget_repair',?,?,'{}')", eventID, id, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO audit_events(id,actor_id,action,target_id,created_at,details) VALUES(?,NULL,'node.config.report_budget_repair',?,?,'{}')", eventID, id, timekey.Format(time.Now())); err != nil {
 			return err
 		}
 	}

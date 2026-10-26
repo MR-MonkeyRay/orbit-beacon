@@ -12,6 +12,7 @@ import (
 
 	"orbitbeacon/internal/config"
 	"orbitbeacon/internal/server/securefs"
+	"orbitbeacon/internal/timekey"
 )
 
 type Migration struct {
@@ -64,7 +65,7 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
-	if err := Migrate(ctx, db, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}, {Version: 5, Apply: repairReportSelections}, {Version: 6, SQL: recoverableCSRFSchema}, {Version: 7, SQL: auditOrderingSchema}, {Version: 8, SQL: enrollmentOrderingSchema}}); err != nil {
+	if err := Migrate(ctx, db, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}, {Version: 5, Apply: repairReportSelections}, {Version: 6, SQL: recoverableCSRFSchema}, {Version: 7, SQL: auditOrderingSchema}, {Version: 8, SQL: enrollmentOrderingSchema}, {Version: 9, Apply: normalizeTimestampColumns}}); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -110,7 +111,7 @@ func applyMigration(ctx context.Context, db *sql.DB, migration Migration) error 
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)", migration.Version, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)", migration.Version, timekey.Format(time.Now())); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -196,5 +197,66 @@ INSERT INTO enrollment_claims_retained SELECT enrollment_id, installation_id, no
 DROP TABLE enrollment_claims;
 ALTER TABLE enrollment_claims_retained RENAME TO enrollment_claims;
 `
+
+type timestampColumn struct {
+	table  string
+	column string
+}
+
+func normalizeTimestampColumns(ctx context.Context, tx *sql.Tx) error {
+	for _, field := range []timestampColumn{
+		{table: "users", column: "created_at"},
+		{table: "nodes", column: "first_enrolled_at"},
+		{table: "nodes", column: "last_seen"},
+		{table: "nodes", column: "created_at"},
+		{table: "enrollment_tokens", column: "expires_at"},
+		{table: "enrollment_tokens", column: "revoked_at"},
+		{table: "enrollment_claims", column: "claimed_at"},
+		{table: "audit_events", column: "created_at"},
+		{table: "update_jobs", column: "created_at"},
+	} {
+		rows, err := tx.QueryContext(ctx, "SELECT rowid, "+field.column+" FROM "+field.table)
+		if err != nil {
+			return fmt.Errorf("read %s.%s: %w", field.table, field.column, err)
+		}
+		type value struct {
+			rowid int64
+			raw   sql.NullString
+		}
+		values := make([]value, 0)
+		for rows.Next() {
+			var item value
+			if err := rows.Scan(&item.rowid, &item.raw); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan %s.%s: %w", field.table, field.column, err)
+			}
+			values = append(values, item)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("read %s.%s: %w", field.table, field.column, err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("close %s.%s: %w", field.table, field.column, err)
+		}
+		for _, item := range values {
+			if !item.raw.Valid {
+				continue
+			}
+			parsed, err := timekey.Parse(item.raw.String)
+			if err != nil {
+				return fmt.Errorf("parse %s.%s row %d: %w", field.table, field.column, item.rowid, err)
+			}
+			canonical := timekey.Format(parsed)
+			if canonical == item.raw.String {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, "UPDATE "+field.table+" SET "+field.column+" = ? WHERE rowid = ?", canonical, item.rowid); err != nil {
+				return fmt.Errorf("normalize %s.%s row %d: %w", field.table, field.column, item.rowid, err)
+			}
+		}
+	}
+	return nil
+}
 
 const recoverableCSRFSchema = `ALTER TABLE sessions DROP COLUMN csrf_hash;`

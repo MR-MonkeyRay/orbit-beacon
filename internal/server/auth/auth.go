@@ -21,6 +21,7 @@ import (
 	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/management"
+	"orbitbeacon/internal/timekey"
 )
 
 type serviceError string
@@ -230,7 +231,7 @@ func (s *Service) insertUser(ctx context.Context, tx *sql.Tx, username, password
 		return User{}, err
 	}
 	user := User{ID: id, Username: username, Role: role, CreatedAt: s.now().UTC()}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO users(id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)", id, username, hash, role, user.CreatedAt.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO users(id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)", id, username, hash, role, timekey.Format(user.CreatedAt)); err != nil {
 		return User{}, err
 	}
 	return user, nil
@@ -266,7 +267,7 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 	if err != nil || !ok {
 		return Session{}, ErrUnauthenticated
 	}
-	user.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
+	user.CreatedAt, err = timekey.Parse(created)
 	if err != nil {
 		return Session{}, err
 	}
@@ -347,7 +348,7 @@ func (s *Service) lookupSession(ctx context.Context, token string) (User, int64,
 	if s.now().UnixNano() >= expiry {
 		return User{}, 0, ErrUnauthenticated
 	}
-	user.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
+	user.CreatedAt, err = timekey.Parse(created)
 	return user, expiry, err
 }
 
