@@ -525,10 +525,20 @@ paths:
             schema:
               type: object
               additionalProperties: false
+              description: Exactly one UUID target is required. Omitted mode is inferred from the target; an explicit mode must agree with it.
               properties:
                 node_id: {type: string, format: uuid}
                 group_id: {type: string, format: uuid}
                 mode: {type: string, enum: [single, batch]}
+              oneOf:
+                - required: [node_id]
+                  not: {required: [group_id]}
+                  properties:
+                    mode: {const: single}
+                - required: [group_id]
+                  not: {required: [node_id]}
+                  properties:
+                    mode: {const: batch}
       responses:
         '201':
           description: Ticket plus one-time plaintext token.
