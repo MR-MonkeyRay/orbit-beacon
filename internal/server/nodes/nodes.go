@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -79,12 +80,13 @@ type DesiredConfig struct {
 }
 
 type ConfigPatch struct {
-	ReportIntervalSeconds *int      `json:"report_interval_seconds"`
-	DiskIntervalSeconds   *int      `json:"disk_interval_seconds"`
-	Interfaces            *[]string `json:"interfaces"`
-	DiskPaths             *[]string `json:"disk_paths"`
-	BillingDay            *int      `json:"billing_day"`
-	QuotaBytes            *string   `json:"quota_bytes"`
+	ReportIntervalSeconds *int      `json:"report_interval_seconds,omitempty"`
+	DiskIntervalSeconds   *int      `json:"disk_interval_seconds,omitempty"`
+	Interfaces            *[]string `json:"interfaces,omitempty"`
+	DiskPaths             *[]string `json:"disk_paths,omitempty"`
+	BillingDay            *int      `json:"billing_day,omitempty"`
+	QuotaBytes            *string   `json:"quota_bytes,omitempty"`
+	invalidFields         map[string]string
 }
 
 type ValidationError struct{ Fields map[string]string }
@@ -434,6 +436,12 @@ func (s *Service) GetConfig(ctx context.Context, id string) (DesiredConfig, erro
 
 func (s *Service) PatchConfig(ctx context.Context, id string, patch ConfigPatch) (DesiredConfig, error) {
 	fields := make(map[string]string)
+	for field, message := range patch.invalidFields {
+		fields[field] = message
+	}
+	if len(fields) == 0 && patch.ReportIntervalSeconds == nil && patch.DiskIntervalSeconds == nil && patch.Interfaces == nil && patch.DiskPaths == nil && patch.BillingDay == nil && patch.QuotaBytes == nil {
+		fields["config"] = "at least one supported field is required"
+	}
 	if p := patch.ReportIntervalSeconds; p != nil && (*p < 5 || *p > 60) {
 		fields["report_interval_seconds"] = "must be between 5 and 60"
 	}
@@ -472,27 +480,43 @@ func (s *Service) PatchConfig(ctx context.Context, id string, patch ConfigPatch)
 	if err != nil {
 		return DesiredConfig{}, err
 	}
+	changed := false
 	if patch.ReportIntervalSeconds != nil {
+		changed = changed || cfg.ReportIntervalSeconds != *patch.ReportIntervalSeconds
 		cfg.ReportIntervalSeconds = *patch.ReportIntervalSeconds
 	}
 	if patch.DiskIntervalSeconds != nil {
+		changed = changed || cfg.DiskIntervalSeconds != *patch.DiskIntervalSeconds
 		cfg.DiskIntervalSeconds = *patch.DiskIntervalSeconds
 	}
 	if patch.BillingDay != nil {
+		changed = changed || cfg.BillingDay != *patch.BillingDay
 		cfg.BillingDay = *patch.BillingDay
 	}
 	if patch.Interfaces != nil {
+		changed = changed || !slices.Equal(cfg.Interfaces, *patch.Interfaces)
 		cfg.Interfaces = *patch.Interfaces
+		if cfg.Interfaces == nil {
+			cfg.Interfaces = []string{}
+		}
 	}
 	if patch.DiskPaths != nil {
+		changed = changed || !slices.Equal(cfg.DiskPaths, *patch.DiskPaths)
 		cfg.DiskPaths = *patch.DiskPaths
+		if cfg.DiskPaths == nil {
+			cfg.DiskPaths = []string{}
+		}
 	}
 	if patch.QuotaBytes != nil {
+		changed = changed || cfg.QuotaBytes != *patch.QuotaBytes
 		cfg.QuotaBytes = *patch.QuotaBytes
 	}
 	// A partial PATCH must also fit together with the persisted other selection.
 	if err := (v1.DesiredConfig{Interfaces: cfg.Interfaces, DiskPaths: cfg.DiskPaths}).ValidateSelection(); err != nil {
 		return DesiredConfig{}, &ValidationError{Fields: err.(*v1.ValidationError).Fields}
+	}
+	if !changed {
+		return cfg, nil
 	}
 	interfaces, err := json.Marshal(cfg.Interfaces)
 	if err != nil {

@@ -423,7 +423,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     patch:
       operationId: patchDesiredConfig
-      description: Administrator only. Valid changes increment revision atomically. All invalid supported fields are returned together. Combined interface and disk identifiers must fit a 48 KiB budget for their three JSON-escaped report occurrences, leaving 16 KiB for other fields; partial patches are checked against persisted selections. Probe scheduling is not implemented and probe_targets cannot be changed in this slice.
+      description: Administrator only. Actual changes increment revision atomically. Omitted fields remain unchanged; explicit null and empty patches are rejected. Unchanged values return the existing revision without another audit event. All invalid supported fields are returned together. Combined interface and disk identifiers must fit a 48 KiB budget for their three JSON-escaped report occurrences, leaving 16 KiB for other fields; partial patches are checked against persisted selections. Probe scheduling is not implemented and probe_targets cannot be changed in this slice.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -434,6 +434,7 @@ paths:
             schema:
               type: object
               additionalProperties: false
+              minProperties: 1
               properties:
                 report_interval_seconds: {type: integer, minimum: 5, maximum: 60}
                 disk_interval_seconds: {type: integer, minimum: 60, maximum: 3600}
