@@ -27,6 +27,7 @@ func OpenConfigStore(path string, initial v1.DesiredConfig) (*ConfigStore, error
 	}
 	defer unlock()
 	current, err := loadConfig(path)
+	var failure *v1.ConfigError
 	if errors.Is(err, os.ErrNotExist) {
 		if err := initial.Validate(); err != nil {
 			return nil, err
@@ -35,10 +36,20 @@ func OpenConfigStore(path string, initial v1.DesiredConfig) (*ConfigStore, error
 			return nil, err
 		}
 		current = initial
+	} else if errors.Is(err, v1.ErrReportBudget) {
+		// Preserve the old file and revision, but keep the repair channel alive.
+		// The error prevents the server from acknowledging these diagnostics as
+		// successful application of the oversized desired configuration.
+		current.DiskPaths = []string{}
+		current.Interfaces = []string{}
+		if err := current.Validate(); err != nil {
+			return nil, err
+		}
+		failure = &v1.ConfigError{Revision: current.Revision, Code: "report_size_exceeded"}
 	} else if err != nil {
 		return nil, err
 	}
-	return &ConfigStore{path: path, current: cloneConfig(current)}, nil
+	return &ConfigStore{path: path, current: cloneConfig(current), failure: failure}, nil
 }
 
 func loadConfig(path string) (v1.DesiredConfig, error) {
@@ -120,7 +131,7 @@ func (s *ConfigStore) Apply(next v1.DesiredConfig) error {
 	current, err := loadConfig(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		current = s.current
-	} else if err != nil {
+	} else if err != nil && !errors.Is(err, v1.ErrReportBudget) {
 		return fail(err)
 	}
 	if s.current.Revision > current.Revision {

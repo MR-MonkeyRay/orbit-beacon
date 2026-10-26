@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reject aggregate JSON-escaped disk/interface selections that could exceed report limits, validate partial patches against persisted selections, and preserve the agent's durable configuration and remote repair channel.
+- Atomically publish and audit higher-revision repairs for legacy oversized server selections at startup; keep bounded, explicitly rejected agent diagnostics until the automatic repair is durably accepted, without overwriting the old file prematurely.
 - Preserve batch enrollment receipts across asset deletion and reject deleted-asset retries without reactivating credentials or consuming quota; migrate existing receipts transactionally.
 - Finish step-2 review repairs: reject renameable/untrusted storage ancestry before SQLite creation, scope report fencing to rotated credentials, persist missing node bindings after direct successful reports, serialize configuration revisions across agent processes, and terminate superseded reporting processes.
 - Include underscore-prefixed embedded UI assets so the real login script is served; correct stale capability notices without introducing the later monitoring UI.

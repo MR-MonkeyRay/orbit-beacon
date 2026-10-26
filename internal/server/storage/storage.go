@@ -19,6 +19,7 @@ import (
 type Migration struct {
 	Version int
 	SQL     string
+	Apply   func(context.Context, *sql.Tx) error
 }
 
 // Open opens a persistent local database. The driver applies connection-local
@@ -65,7 +66,7 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
-	if err := Migrate(ctx, db, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}}); err != nil {
+	if err := Migrate(ctx, db, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}, {Version: 5, Apply: repairReportSelections}}); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -101,8 +102,15 @@ func applyMigration(ctx context.Context, db *sql.DB, migration Migration) error 
 	if count != 0 {
 		return tx.Commit()
 	}
-	if _, err := tx.ExecContext(ctx, migration.SQL); err != nil {
-		return err
+	if migration.SQL != "" {
+		if _, err := tx.ExecContext(ctx, migration.SQL); err != nil {
+			return err
+		}
+	}
+	if migration.Apply != nil {
+		if err := migration.Apply(ctx, tx); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)", migration.Version, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		return err

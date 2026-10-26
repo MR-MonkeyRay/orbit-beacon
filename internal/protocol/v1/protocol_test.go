@@ -105,3 +105,27 @@ func TestMetricStatusesAndMonotonicFreshness(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectionRejectsAggregateReportExpansion(t *testing.T) {
+	for _, character := range []string{"<", "&", "\x01", "\u2028", "\\"} {
+		t.Run(character, func(t *testing.T) {
+			paths := make([]string, 8)
+			interfaces := make([]string, 8)
+			for i := range paths {
+				paths[i] = "/" + strings.Repeat(character, (1020/len(character))) + string(rune('a'+i))
+				interfaces[i] = strings.Repeat("<", 254) + string(rune('a'+i))
+			}
+			if err := (v1.DesiredConfig{DiskPaths: paths, Interfaces: interfaces}).ValidateSelection(); err == nil {
+				t.Fatal("selection can expand beyond the report budget")
+			}
+		})
+	}
+	paths, interfaces := make([]string, 8), make([]string, 8)
+	for i := range paths {
+		paths[i] = "/" + strings.Repeat("a", 1022) + string(rune('a'+i))
+		interfaces[i] = strings.Repeat("a", 254) + string(rune('a'+i))
+	}
+	if err := (v1.DesiredConfig{DiskPaths: paths, Interfaces: interfaces}).ValidateSelection(); err != nil {
+		t.Fatalf("ordinary maximum-length selections rejected: %v", err)
+	}
+}

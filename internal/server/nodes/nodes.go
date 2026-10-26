@@ -490,6 +490,10 @@ func (s *Service) PatchConfig(ctx context.Context, id string, patch ConfigPatch)
 	if patch.QuotaBytes != nil {
 		cfg.QuotaBytes = *patch.QuotaBytes
 	}
+	// A partial PATCH must also fit together with the persisted other selection.
+	if err := (v1.DesiredConfig{Interfaces: cfg.Interfaces, DiskPaths: cfg.DiskPaths}).ValidateSelection(); err != nil {
+		return DesiredConfig{}, &ValidationError{Fields: err.(*v1.ValidationError).Fields}
+	}
 	interfaces, err := json.Marshal(cfg.Interfaces)
 	if err != nil {
 		return DesiredConfig{}, err

@@ -228,7 +228,7 @@ func (c *Client) post(ctx context.Context, path, token string, body, result any)
 	if err != nil {
 		return errors.New("cannot encode agent request")
 	}
-	if len(data) > 64*1024 {
+	if len(data) > v1.MaxMessageBytes {
 		return errors.New("agent request exceeds 64 KiB")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(data))
@@ -251,15 +251,15 @@ func (c *Client) post(ctx context.Context, path, token string, body, result any)
 		}
 		// Error text is never propagated; only the fixed protocol code is used
 		// to distinguish permanent ownership loss from transient rejection.
-		_ = json.NewDecoder(io.LimitReader(response.Body, 64*1024)).Decode(&failure)
+		_ = json.NewDecoder(io.LimitReader(response.Body, v1.MaxMessageBytes)).Decode(&failure)
 		code := ""
 		if failure.Code == "identity_conflict" {
 			code = failure.Code
 		}
 		return &HTTPError{StatusCode: response.StatusCode, RetryAfter: response.Header.Get("Retry-After"), Code: code}
 	}
-	data, err = io.ReadAll(io.LimitReader(response.Body, 64*1024+1))
-	if err != nil || len(data) > 64*1024 {
+	data, err = io.ReadAll(io.LimitReader(response.Body, v1.MaxMessageBytes+1))
+	if err != nil || len(data) > v1.MaxMessageBytes {
 		return errors.New("invalid agent response size")
 	}
 	if err := json.Unmarshal(data, result); err != nil {

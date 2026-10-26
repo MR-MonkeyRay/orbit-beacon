@@ -170,3 +170,42 @@ func TestConfigPatchInterfaceConstraintsAreAtomicAndAgentCompatible(t *testing.T
 		}
 	}
 }
+
+func TestConfigPatchRejectsAggregateReportSizeBeforeRevisionChange(t *testing.T) {
+	f := newHTTP(t, 5)
+	admin, csrf := login(t, f, "admin")
+	node, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: "report budget"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/nodes/" + node.ID + "/config"
+	patch := func(value any, status int) {
+		t.Helper()
+		before := request(t, f.handler, http.MethodGet, path, "", admin, "", "")
+		body, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := request(t, f.handler, http.MethodPatch, path, string(body), admin, csrf, publicURL)
+		assertHTTPStatus(t, response, status)
+		if status == http.StatusBadRequest {
+			after := request(t, f.handler, http.MethodGet, path, "", admin, "", "")
+			if !bytes.Equal(before.Body.Bytes(), after.Body.Bytes()) {
+				t.Fatal("oversized selection changed configuration or revision")
+			}
+		}
+	}
+	paths := make([]string, 4)
+	for i := range paths {
+		paths[i] = "/" + string(rune('a'+i)) + strings.Repeat("<", 1000)
+	}
+	patch(map[string]any{"disk_paths": paths}, http.StatusBadRequest)
+	paths = []string{"/" + strings.Repeat("<", 800), "/" + strings.Repeat("&", 800)}
+	patch(map[string]any{"disk_paths": paths}, http.StatusOK)
+	interfaces := make([]string, 8)
+	for i := range interfaces {
+		interfaces[i] = strings.Repeat("<", 254) + string(rune('a'+i))
+	}
+	patch(map[string]any{"interfaces": interfaces}, http.StatusBadRequest)
+	patch(map[string]any{"disk_paths": []string{"/"}, "interfaces": []string{"eth0"}}, http.StatusOK)
+}

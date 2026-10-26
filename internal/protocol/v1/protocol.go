@@ -383,12 +383,21 @@ type DesiredConfig struct {
 	QuotaBytes            string   `json:"quota_bytes"`
 }
 
-type ValidationError struct{ Fields map[string]string }
+type ValidationError struct {
+	Fields       map[string]string
+	reportBudget bool
+}
 
 func (err *ValidationError) Error() string { return "desired configuration validation failed" }
 
+func (err *ValidationError) Is(target error) bool {
+	return target == ErrReportBudget && err.reportBudget
+}
+
 func (c DesiredConfig) Validate() error {
 	fields := make(map[string]string)
+	reportBudget := false
+	reportBudgetFields := 0
 	if c.Revision < 1 {
 		fields["revision"] = "must be positive"
 	}
@@ -405,6 +414,8 @@ func (c DesiredConfig) Validate() error {
 		fields["quota_bytes"] = "must be a canonical unsigned decimal byte count"
 	}
 	if err := c.ValidateSelection(); err != nil {
+		reportBudget = errors.Is(err, ErrReportBudget)
+		reportBudgetFields = len(err.(*ValidationError).Fields)
 		for field, message := range err.(*ValidationError).Fields {
 			fields[field] = message
 		}
@@ -418,7 +429,7 @@ func (c DesiredConfig) Validate() error {
 		}
 	}
 	if len(fields) != 0 {
-		return &ValidationError{Fields: fields}
+		return &ValidationError{Fields: fields, reportBudget: reportBudget && len(fields) == reportBudgetFields}
 	}
 	return nil
 }
@@ -462,6 +473,16 @@ func (c DesiredConfig) ValidateSelection() error {
 			}
 			fields[selection.field] = message
 		}
+	}
+	if len(fields) == 0 && !selectionFitsReport(c) {
+		fields = make(map[string]string, 2)
+		if len(c.DiskPaths) != 0 {
+			fields["disk_paths"] = "combined JSON-escaped selections exceed the report size budget"
+		}
+		if len(c.Interfaces) != 0 {
+			fields["interfaces"] = "combined JSON-escaped selections exceed the report size budget"
+		}
+		return &ValidationError{Fields: fields, reportBudget: true}
 	}
 	if len(fields) != 0 {
 		return &ValidationError{Fields: fields}

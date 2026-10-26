@@ -423,7 +423,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     patch:
       operationId: patchDesiredConfig
-      description: Administrator only. Valid changes increment revision atomically. All invalid supported fields are returned together. Probe scheduling is not implemented and probe_targets cannot be changed in this slice.
+      description: Administrator only. Valid changes increment revision atomically. All invalid supported fields are returned together. Combined interface and disk identifiers must fit a 48 KiB budget for their three JSON-escaped report occurrences, leaving 16 KiB for other fields; partial patches are checked against persisted selections. Probe scheduling is not implemented and probe_targets cannot be changed in this slice.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -798,6 +798,7 @@ components:
       type: object
       additionalProperties: false
       required: [revision, report_interval_seconds, disk_interval_seconds, interfaces, disk_paths, probe_targets, billing_day, quota_bytes]
+      description: Shared server/agent selection validation reserves 16 KiB of the 64 KiB report limit for the envelope; three JSON-escaped occurrences of all selected disk paths and interface names together must fit the remaining 48 KiB.
       properties:
         revision: {type: integer, minimum: 1}
         report_interval_seconds: {type: integer, minimum: 5, maximum: 60}

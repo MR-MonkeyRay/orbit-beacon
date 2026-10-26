@@ -85,6 +85,12 @@ func TestRejectedConfigKeepsPriorDiskAndRuntimeRevision(t *testing.T) {
 		{"relative disk", func(c *v1.DesiredConfig) { c.DiskPaths = []string{"relative/data"} }},
 		{"drive relative disk", func(c *v1.DesiredConfig) { c.DiskPaths = []string{"C:relative"} }},
 		{"oversized disk", func(c *v1.DesiredConfig) { c.DiskPaths = []string{"/" + strings.Repeat("a", 1024)} }},
+		{"aggregate report expansion", func(c *v1.DesiredConfig) {
+			c.DiskPaths = make([]string, 4)
+			for i := range c.DiskPaths {
+				c.DiskPaths[i] = "/" + strings.Repeat("<", 1000) + string(rune('a'+i))
+			}
+		}},
 		{"duplicate disk", func(c *v1.DesiredConfig) { c.DiskPaths = []string{"/", "/"} }},
 		{"NUL disk", func(c *v1.DesiredConfig) { c.DiskPaths = []string{"/data\x00suffix"} }},
 		{"duplicate interface", func(c *v1.DesiredConfig) { c.Interfaces = []string{"eth0", "eth0"} }},
@@ -213,5 +219,74 @@ func TestEveryPersistedDesiredConfigIsCollectorCompatible(t *testing.T) {
 				t.Fatalf("persisted revision %d cannot be collected: %v", store.Current().Revision, err)
 			}
 		})
+	}
+}
+
+func TestLegacyOversizedConfigRetainsDiskStateUntilRemoteRepair(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "desired.json")
+	legacy := desired(7, 10)
+	legacy.DiskPaths = make([]string, 4)
+	for i := range legacy.DiskPaths {
+		legacy.DiskPaths[i] = "/" + strings.Repeat("<", 1000) + string(rune('a'+i))
+	}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := service.OpenConfigStore(path, desired(1, 10))
+	if err != nil {
+		t.Fatalf("legacy selection prevents remote repair: %v", err)
+	}
+	effective := store.Current()
+	if effective.Revision != 7 || len(effective.DiskPaths) != 0 || len(effective.Interfaces) != 0 {
+		t.Fatalf("legacy diagnostic configuration = %+v", effective)
+	}
+	if err := effective.Validate(); err != nil {
+		t.Fatalf("diagnostic selection cannot report: %v", err)
+	}
+	beforeRepair, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(data, beforeRepair) {
+		t.Fatal("legacy configuration overwritten without a remote repair")
+	}
+	if failure := store.ConfigError(); failure == nil || failure.Revision != 7 {
+		t.Fatalf("legacy rejection was silently acknowledged: %+v", failure)
+	}
+	repair := desired(8, 5)
+	if err := store.Apply(repair); err != nil {
+		t.Fatalf("higher-revision remote repair rejected: %v", err)
+	}
+	reopened, err := service.OpenConfigStore(path, desired(1, 10))
+	if err != nil || !reflect.DeepEqual(reopened.Current(), repair) || reopened.ConfigError() != nil {
+		t.Fatalf("remote repair not durable: %v", err)
+	}
+}
+
+func TestBudgetRecoveryDoesNotAcceptOtherCorruptSavedFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "desired.json")
+	prior := desired(1, 10)
+	store, err := service.OpenConfigStore(path, prior)
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrupt := desired(2, 4)
+	for i := range 4 {
+		corrupt.DiskPaths = append(corrupt.DiskPaths, "/"+strings.Repeat("<", 1000)+string(rune('a'+i)))
+	}
+	data, err := json.Marshal(corrupt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Apply(desired(3, 5)); err == nil {
+		t.Fatal("other corruption was incorrectly treated as a legacy budget error")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(data, after) || !reflect.DeepEqual(store.Current(), prior) {
+		t.Fatal("corrupt saved configuration was overwritten or applied")
 	}
 }
