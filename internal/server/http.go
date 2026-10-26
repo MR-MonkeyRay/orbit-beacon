@@ -194,7 +194,7 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 		if !decode(w, r, &input, requestID) {
 			return
 		}
-		session, err := h.auth.Login(r.Context(), input.Username, input.Password)
+		session, err := h.auth.Login(auth.WithLoginPeer(r.Context(), r.RemoteAddr), input.Username, input.Password)
 		if err != nil {
 			h.serviceError(w, err, requestID)
 			return
@@ -355,8 +355,8 @@ func (h *handler) serviceError(w http.ResponseWriter, err error, requestID strin
 	case errors.Is(err, auth.ErrUnauthenticated), errors.Is(err, nodes.ErrUnauthenticated):
 		fail(w, http.StatusUnauthorized, "unauthenticated", "Credentials or session are invalid or expired", requestID)
 	case errors.Is(err, auth.ErrRateLimited):
-		w.Header().Set("Retry-After", "60")
-		fail(w, http.StatusTooManyRequests, "rate_limited", "Too many login attempts; retry later", requestID)
+		w.Header().Set("Retry-After", "1")
+		fail(w, http.StatusTooManyRequests, "rate_limited", "Password work admission is busy; retry later", requestID)
 	case errors.Is(err, nodes.ErrCapacityReached):
 		fail(w, http.StatusConflict, "node_capacity_reached", "Configured node capacity has been reached", requestID)
 	case errors.Is(err, nodes.ErrNotFound):

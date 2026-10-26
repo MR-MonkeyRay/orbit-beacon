@@ -37,7 +37,7 @@ paths:
     post:
       operationId: login
       security: []
-      description: Requires the configured public Origin. Argon2 work is serialized. After 60 invalid credentials in a minute, further invalid attempts are rate-limited; valid credentials remain admissible.
+      description: Requires the configured public Origin. Before database lookup and Argon2, direct-peer and peer/username token budgets bound computation; ports and forwarded headers do not change identity. Password work is serialized with at most eight waiters and a one-second queue deadline. Admission overload returns 429 with Retry-After of one second. There is no global failed-password lockout; users sharing a reverse proxy also share its direct-peer budget.
       parameters:
         - $ref: '#/components/parameters/Origin'
       requestBody:

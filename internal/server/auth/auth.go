@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -62,10 +63,11 @@ type Service struct {
 	random io.Reader
 	// The gate bounds expensive password calculations to one per service and
 	// protects injectable entropy readers, which need not be concurrency-safe.
-	gate     chan struct{}
-	rateMu   sync.Mutex
-	window   time.Time
-	attempts int
+	gate       chan struct{}
+	waiters    chan struct{}
+	rateMu     sync.Mutex
+	loginPeers map[netip.Addr]loginBucket
+	loginNames map[loginIdentityKey]loginBucket
 }
 
 func NewService(db *sql.DB, opts Options) *Service {
@@ -75,7 +77,7 @@ func NewService(db *sql.DB, opts Options) *Service {
 	if opts.Random == nil {
 		opts.Random = rand.Reader
 	}
-	return &Service{db: db, now: opts.Now, random: opts.Random, gate: make(chan struct{}, 1)}
+	return &Service{db: db, now: opts.Now, random: opts.Random, gate: make(chan struct{}, 1), waiters: make(chan struct{}, 8), loginPeers: make(map[netip.Addr]loginBucket), loginNames: make(map[loginIdentityKey]loginBucket)}
 }
 
 func (s *Service) Management() *management.Service {
@@ -113,11 +115,37 @@ func VerifyPassword(password, encoded string) (bool, error) {
 }
 
 func (s *Service) acquire(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case s.gate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-s.gate
+			return err
+		}
+		return nil
+	default:
+	}
+	select {
+	case s.waiters <- struct{}{}:
+		defer func() { <-s.waiters }()
+	default:
+		return ErrRateLimited
+	}
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case s.gate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-s.gate
+			return err
+		}
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-timer.C:
+		return ErrRateLimited
 	}
 }
 
@@ -201,24 +229,15 @@ func (s *Service) insertUser(ctx context.Context, tx *sql.Tx, username, password
 	return user, nil
 }
 
-func (s *Service) failedLoginError() error {
-	s.rateMu.Lock()
-	defer s.rateMu.Unlock()
-	now := s.now()
-	if s.window.IsZero() || now.Sub(s.window) >= time.Minute {
-		s.window = now
-		s.attempts = 0
-	}
-	s.attempts++
-	if s.attempts > 60 {
-		return ErrRateLimited
-	}
-	return ErrUnauthenticated
-}
-
 func (s *Service) Login(ctx context.Context, username, password string) (Session, error) {
 	if !validUsername(username) || len(password) < 8 || len(password) > 1024 {
 		return Session{}, ErrUnauthenticated
+	}
+	if err := ctx.Err(); err != nil {
+		return Session{}, err
+	}
+	if err := s.admitLogin(ctx, username); err != nil {
+		return Session{}, err
 	}
 	if err := s.acquire(ctx); err != nil {
 		return Session{}, err
@@ -231,14 +250,14 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 		// Unknown usernames consume the same Argon2 work as incorrect passwords.
 		var salt [16]byte
 		_ = argon2.IDKey([]byte(password), salt[:], 2, 32*1024, 1, 32)
-		return Session{}, s.failedLoginError()
+		return Session{}, ErrUnauthenticated
 	}
 	if err != nil {
 		return Session{}, err
 	}
 	ok, err := VerifyPassword(password, hash)
 	if err != nil || !ok {
-		return Session{}, s.failedLoginError()
+		return Session{}, ErrUnauthenticated
 	}
 	user.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
 	if err != nil {

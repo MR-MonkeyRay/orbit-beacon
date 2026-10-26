@@ -360,3 +360,39 @@ func TestSessionExpirationHasLeadingIndex(t *testing.T) {
 		t.Error("sessions.expires_at has no leading, nonpartial index for bounded expiry cleanup")
 	}
 }
+
+func TestLoginAdmissionRejectsBeforeDatabaseAndDoesNotLockOtherPeers(t *testing.T) {
+	service, db, _ := newAuth(t)
+	if _, err := service.BootstrapAdministrator(context.Background(), "admin", initialPassword); err != nil {
+		t.Fatal(err)
+	}
+	attacker := auth.WithLoginPeer(context.Background(), "192.0.2.1:1000")
+	limited := false
+	for range 100 {
+		_, err := service.Login(attacker, "unknown", "invalid password")
+		if errors.Is(err, auth.ErrRateLimited) {
+			limited = true
+			break
+		}
+		if !errors.Is(err, auth.ErrUnauthenticated) {
+			t.Fatal(err)
+		}
+	}
+	if !limited {
+		t.Fatal("invalid source never reached computation admission limit")
+	}
+	otherPeer := auth.WithLoginPeer(context.Background(), "192.0.2.2:1000")
+	if _, err := service.Login(otherPeer, "admin", initialPassword); err != nil {
+		t.Fatalf("attacker exhausted another peer's valid login: %v", err)
+	}
+	if _, err := service.Login(attacker, "admin", initialPassword); err != nil {
+		t.Fatalf("one invalid username locked every account at the peer: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	samePeerNewPort := auth.WithLoginPeer(context.Background(), "192.0.2.1:9999")
+	if _, err := service.Login(samePeerNewPort, "unknown", "invalid password"); !errors.Is(err, auth.ErrRateLimited) {
+		t.Fatalf("limited login reached unavailable database or bypassed via port: %v", err)
+	}
+}

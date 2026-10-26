@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Admit login work before database/hash computation with bounded direct-peer and peer/username token buckets; bound password-work waiters and queue duration, preserve independent peers/accounts, and return retryable overload without a global failed-password lockout.
 - Enforce a secure, stable, nonblocking data-directory lifecycle lock before server/bootstrap storage access; reject concurrent owners and release ownership on close or process termination.
 - Isolate uncancellable disk usage in one bounded slow worker, preserve complete snapshots on cancellation, continue other sources and reporting while it is blocked, and discard late results after selection changes.
 - Reject aggregate JSON-escaped disk/interface selections that could exceed report limits, validate partial patches against persisted selections, and preserve the agent's durable configuration and remote repair channel.
