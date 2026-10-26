@@ -2,11 +2,13 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"net/http"
 	"testing"
 	"time"
 
+	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/ingest"
 )
 
@@ -21,7 +23,11 @@ func TestCredentialRotationReleasesPoisonedFenceWithoutResettingExactRetries(t *
 				t.Fatal(err)
 			}
 			newToken := agentSecret(2)
-			claim := enrollBody("installation-rotating", newToken)
+			body, err := json.Marshal(v1.EnrollmentRequest{ProtocolVersion: 1, InstallationID: "installation-rotating", NodeToken: newToken, PreviousNodeToken: oldToken, System: v1.System{Hostname: "identical-host", OS: "linux", Arch: "amd64"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			claim := string(body)
 			assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, claim), http.StatusOK)
 			assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/report", oldToken, reportBody(generation, 101, "old-session", 99)), http.StatusUnauthorized)
 			f.now = f.now.Add(time.Second)

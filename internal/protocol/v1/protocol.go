@@ -69,10 +69,11 @@ type System struct {
 }
 
 type EnrollmentRequest struct {
-	ProtocolVersion int    `json:"protocol_version"`
-	InstallationID  string `json:"installation_id"`
-	NodeToken       string `json:"node_token"`
-	System          System `json:"system"`
+	ProtocolVersion   int    `json:"protocol_version"`
+	InstallationID    string `json:"installation_id"`
+	NodeToken         string `json:"node_token"`
+	PreviousNodeToken string `json:"previous_node_token,omitempty"`
+	System            System `json:"system"`
 }
 
 func (r EnrollmentRequest) Validate() error {
@@ -88,6 +89,9 @@ func (r EnrollmentRequest) Validate() error {
 	}
 	if err != nil || len(decoded) != 32 {
 		return errors.New("node credential must contain 256 bits")
+	}
+	if r.PreviousNodeToken != "" && (len(r.PreviousNodeToken) < 32 || len(r.PreviousNodeToken) > 256) {
+		return errors.New("invalid previous node credential")
 	}
 	return r.System.Validate()
 }

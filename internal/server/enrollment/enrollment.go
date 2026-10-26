@@ -276,14 +276,14 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 		return v1.EnrollmentResponse{}, ErrRevoked
 	}
 
-	// A receipt is checked before natural ticket expiry or quota: an exact retry
-	// never creates another asset and remains valid through the inclusive 24h edge.
+	// A receipt precedes natural expiry/quota, but only an active credential
+	// can retry through the inclusive 24h edge. Superseded claims cannot revive it.
 	var claimNodeID, claimed string
 	var claimHash []byte
-	var nodeExists bool
-	err = tx.QueryRowContext(ctx, `SELECT node_id, token_hash, claimed_at, EXISTS(SELECT 1 FROM nodes WHERE id = enrollment_claims.node_id) FROM enrollment_claims WHERE enrollment_id = ? AND installation_id = ?`, ticket.ID, req.InstallationID).Scan(&claimNodeID, &claimHash, &claimed, &nodeExists)
+	var claimActive bool
+	err = tx.QueryRowContext(ctx, `SELECT node_id, token_hash, claimed_at, EXISTS(SELECT 1 FROM nodes WHERE id = enrollment_claims.node_id AND token_hash = enrollment_claims.token_hash) FROM enrollment_claims WHERE enrollment_id = ? AND installation_id = ?`, ticket.ID, req.InstallationID).Scan(&claimNodeID, &claimHash, &claimed, &claimActive)
 	if err == nil {
-		if !nodeExists || subtle.ConstantTimeCompare(claimHash, nodeHash[:]) != 1 {
+		if !claimActive || subtle.ConstantTimeCompare(claimHash, nodeHash[:]) != 1 {
 			return v1.EnrollmentResponse{}, ErrConflict
 		}
 		claimedAt, err := time.Parse(time.RFC3339Nano, claimed)
@@ -312,7 +312,8 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 	if ticket.NodeID != nil {
 		nodeID = *ticket.NodeID
 		var installation sql.NullString
-		if err := tx.QueryRowContext(ctx, "SELECT installation_id FROM nodes WHERE id = ?", nodeID).Scan(&installation); err != nil {
+		var currentHash []byte
+		if err := tx.QueryRowContext(ctx, "SELECT installation_id, token_hash FROM nodes WHERE id = ?", nodeID).Scan(&installation, &currentHash); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return v1.EnrollmentResponse{}, ErrConflict
 			}
@@ -320,6 +321,17 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 		}
 		if installation.Valid && installation.String != req.InstallationID {
 			return v1.EnrollmentResponse{}, ErrConflict
+		}
+		// A ticket authorizes a change, not a stale overwrite. Concurrent
+		// candidates may share a parent, but only the current parent can win.
+		if len(currentHash) != 0 && subtle.ConstantTimeCompare(currentHash, nodeHash[:]) != 1 {
+			if req.PreviousNodeToken == "" {
+				return v1.EnrollmentResponse{}, ErrConflict
+			}
+			previousHash := sha256.Sum256([]byte(req.PreviousNodeToken))
+			if subtle.ConstantTimeCompare(currentHash, previousHash[:]) != 1 {
+				return v1.EnrollmentResponse{}, ErrConflict
+			}
 		}
 	} else if ticket.GroupID == nil {
 		// A deleted batch group must not silently turn into ungrouped admission.

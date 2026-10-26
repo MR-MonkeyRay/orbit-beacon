@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fence credential replacement with a transactionally checked current-credential proof; reload Agent identity before enrollment, reject late concurrent candidates and superseded receipts without resetting ownership or consuming claims, and migrate rotation callers to the new proof.
 - Model enrollment creation as mutually exclusive node/single and group/batch request branches in OpenAPI, requiring one target while preserving optional inferred modes.
 - Align OpenAPI UTF-8 byte-length extensions and browser TextEncoder validation across passwords, usernames, asset names and tag lines; accept valid short Unicode passwords, reject multibyte byte overflows without truncation, and correct bootstrap password guidance.
 - Recover stable, session-bound CSRF proofs through authenticated current-session reads so fresh tabs can mutate and sign out without another login; preserve valid cookies across migration while removing obsolete stored CSRF hashes and web-storage dependence.

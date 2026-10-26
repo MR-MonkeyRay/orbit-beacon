@@ -377,7 +377,11 @@ func TestNodeTokenCollisionIsConflictAndRotationRevokesOldCredential(t *testing.
 		t.Fatal(err)
 	}
 	newToken := agentSecret(3)
-	r := agentRequest(t, f, "/api/agent/v1/enroll", rotation.Token, enrollBody("installation-a", newToken))
+	body, err := json.Marshal(v1.EnrollmentRequest{ProtocolVersion: 1, InstallationID: "installation-a", NodeToken: newToken, PreviousNodeToken: oldToken, System: v1.System{Hostname: "identical-host", OS: "linux", Arch: "amd64"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := agentRequest(t, f, "/api/agent/v1/enroll", rotation.Token, string(body))
 	assertHTTPStatus(t, r, http.StatusOK)
 	var result v1.EnrollmentResponse
 	if err := json.Unmarshal(r.Body.Bytes(), &result); err != nil || result.NodeID != a {

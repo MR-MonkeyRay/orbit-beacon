@@ -575,7 +575,7 @@ paths:
     post:
       operationId: enrollAgent
       security: [{enrollmentBearer: []}]
-      description: Identity must be saved before sending. Exact successful requests can retry for 24 hours from claim even after natural expiry; revocation blocks retry. Different installation/token binding returns enrollment_conflict. A new node-bound ticket can rotate the same installation credential atomically, invalidating the old credential. Clients durably stage a fresh 256-bit candidate separately from the active token before requesting rotation, retain it for exact retries across restarts/failures, and promote it only after confirmed acceptance. Ticketless recovery uses POST /api/agent/v1/recover, including generation-zero identities. A read-only ticket lookup precedes body reads and writer transactions, with all authorization repeated atomically during claim. Invalid/missing credentials use bounded direct-peer-IP and global token buckets (bursts 32 and 256, one token/second refill); forwarded headers and source ports do not select buckets. Apparently usable tickets bypass invalid buckets. Peer state is capped at 1024 entries with oldest-entry eviction.
+      description: Identity must be saved before sending. Exact successful requests can retry for 24 hours from claim even after natural expiry while the claimed credential remains active; revocation or later credential replacement blocks retry. Different installation/token binding returns enrollment_conflict. A new node-bound ticket can rotate the same installation credential atomically, invalidating the old credential. Changing an existing credential requires previous_node_token to match the current credential inside the claim transaction; a stale/missing proof returns enrollment_conflict without changing credentials, ownership fences, uses or receipts. An already-current candidate remains idempotent. Clients reload durable identity, durably stage a fresh 256-bit candidate separately from the active token, send the active token as the CAS proof, retain the candidate for exact retries across restarts/failures, and promote only after confirmed acceptance. Upgrade the Server before Agents that send rotation proofs. Ticketless recovery uses POST /api/agent/v1/recover, including generation-zero identities. A read-only ticket lookup precedes body reads and writer transactions, with all authorization repeated atomically during claim. Invalid/missing credentials use bounded direct-peer-IP and global token buckets (bursts 32 and 256, one token/second refill); forwarded headers and source ports do not select buckets. Apparently usable tickets bypass invalid buckets. Peer state is capped at 1024 entries with oldest-entry eviction.
       requestBody:
         required: true
         content:
@@ -588,6 +588,12 @@ paths:
                 protocol_version: {const: 1}
                 installation_id: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
                 node_token: {type: string, minLength: 43, maxLength: 43, writeOnly: true}
+                previous_node_token:
+                  type: string
+                  writeOnly: true
+                  x-minLengthBytes: 32
+                  x-maxLengthBytes: 256
+                  description: Exact current credential proof, required only when replacing an already-enrolled credential. Never returned or logged.
                 system: {$ref: '#/components/schemas/System'}
       responses:
         '200':

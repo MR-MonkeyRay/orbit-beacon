@@ -113,7 +113,10 @@ func NewClient(options ClientOptions) (*Client, error) {
 func (c *Client) Close() { c.http.CloseIdleConnections() }
 
 func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentResponse, error) {
-	state := c.identity.Current()
+	state, err := c.identity.Reload()
+	if err != nil {
+		return v1.EnrollmentResponse{}, err
+	}
 	validTicket := token != "" && !strings.ContainsAny(token, "\r\n")
 	if !validTicket || (state.RunGeneration > 0 && state.NodeID == "" && state.PendingNodeToken == "") {
 		response, err := c.recoverEnrollment(ctx, state)
@@ -129,7 +132,6 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 		}
 	}
 	if state.NodeID != "" || state.PendingNodeToken != "" {
-		var err error
 		state, err = c.identity.StageRotation()
 		if err != nil {
 			return v1.EnrollmentResponse{}, err
@@ -140,6 +142,9 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 		credential = state.PendingNodeToken
 	}
 	request := v1.EnrollmentRequest{ProtocolVersion: 1, InstallationID: state.InstallationID, NodeToken: credential, System: c.system}
+	if state.PendingNodeToken != "" {
+		request.PreviousNodeToken = state.NodeToken
+	}
 	var response v1.EnrollmentResponse
 	if err := c.post(ctx, "/api/agent/v1/enroll", token, request, &response); err != nil {
 		return v1.EnrollmentResponse{}, err
