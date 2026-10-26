@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Package collect reads a bounded selection of host metrics. Sampling is
-// synchronous: callers use one sampling loop, without per-metric goroutines.
+// Package collect reads a bounded selection of host metrics. The caller owns one
+// sampling loop; uncancellable disk reads use at most one in-flight slow worker.
 package collect
 
 import (
@@ -55,6 +55,9 @@ type Collector struct {
 	cpuAt         time.Time
 	cpuReady      bool
 	disks         map[string]diskSample
+	diskUsage     func(context.Context, string) (*disk.UsageStat, error)
+	diskPending   *diskCollection
+	diskEpoch     uint64
 	networks      map[string]networkSample
 	networkAt     time.Time
 	autoInterface string
@@ -63,7 +66,7 @@ type Collector struct {
 
 func New(options Options) (*Collector, error) {
 	now := time.Now()
-	c := &Collector{started: now, epoch: strconv.FormatInt(now.UnixNano(), 36)}
+	c := &Collector{started: now, epoch: strconv.FormatInt(now.UnixNano(), 36), diskUsage: disk.UsageWithContext}
 	if err := c.SetConfig(options.Config); err != nil {
 		return nil, err
 	}
@@ -101,6 +104,7 @@ func (c *Collector) SetConfig(config v1.DesiredConfig) error {
 	}
 	if !slices.Equal(c.config.DiskPaths, config.DiskPaths) || c.config.DiskIntervalSeconds != config.DiskIntervalSeconds {
 		c.disks = nil
+		c.diskEpoch++
 	}
 	if !slices.Equal(c.config.Interfaces, config.Interfaces) || c.config.ReportIntervalSeconds != config.ReportIntervalSeconds {
 		c.networks = nil
@@ -146,8 +150,8 @@ func (c *Collector) Collect(parent context.Context) (v1.Metrics, error) {
 	c.collectLoad(ctx, &m)
 	c.collectMemory(ctx, &m)
 	c.collectUptime(ctx, &m)
-	c.collectDisks(ctx, &m)
 	c.collectNetworks(ctx, &m)
+	c.collectDisks(ctx, &m)
 	return m, ctx.Err()
 }
 
@@ -299,44 +303,6 @@ func (c *Collector) collectUptime(ctx context.Context, m *v1.Metrics) {
 		m.UptimeSeconds = &seconds
 	}
 	m.Sources["uptime"] = c.source("uptime", time.Now(), c.baseInterval())
-}
-
-func (c *Collector) collectDisks(ctx context.Context, m *v1.Metrics) {
-	paths := c.config.DiskPaths
-	if len(paths) == 0 {
-		root := "/"
-		if runtime.GOOS == "windows" {
-			root = os.Getenv("SystemDrive") + `\`
-		}
-		paths = []string{root}
-	}
-	if c.disks == nil {
-		c.disks = make(map[string]diskSample, len(paths))
-	}
-	interval := time.Duration(c.config.DiskIntervalSeconds) * time.Second
-	for _, path := range paths {
-		key := "disk:" + path
-		sample, exists := c.disks[path]
-		if !exists || time.Since(sample.at) >= interval {
-			var usage *disk.UsageStat
-			err := checked(ctx, func() (err error) { usage, err = disk.UsageWithContext(ctx, path); return err })
-			at := time.Now()
-			sample = diskSample{metric: v1.DiskMetrics{Path: path, SampledAt: at.UTC()}, at: at, status: "ok", source: c.source(key, at, interval)}
-			if err != nil || usage == nil || usage.Used > usage.Total {
-				sample.status = failureStatus(err)
-			} else {
-				sample.metric.TotalBytes, sample.metric.UsedBytes = &usage.Total, &usage.Used
-			}
-			c.disks[path] = sample
-		}
-		sample.source.AgeMS = max(int64(0), time.Since(sample.at).Milliseconds())
-		if !sample.source.Fresh() {
-			sample.status = "stale"
-			sample.metric.TotalBytes, sample.metric.UsedBytes = nil, nil
-		}
-		m.Disks = append(m.Disks, sample.metric)
-		m.MetricStatus[key], m.Sources[key] = sample.status, sample.source
-	}
 }
 
 func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
