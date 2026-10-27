@@ -232,7 +232,7 @@ Windows任务使用bootstrap的`recover-update`模式，同账户完成stop→�
 
 ### 8. 完成备份恢复、运行诊断和最终验收
 
-当前已交付基础命令：`backup` 持有数据目录锁，以 SQLite `VACUUM INTO` 生成 0600 一致性副本；`restore` 持有同一锁，在私有 staging 中复制、迁移、执行 `integrity_check`/schema/index 契约校验、完整 checkpoint 后原子替换 live 数据库，保留 `.orbitbeacon.db.before-restore-*`，并清理旧 WAL/SHM/journal。目标中的完整归档包仍需另行完成：把数据库、`secrets.key`、Server 配置、信任公钥与发行 manifest 打包到临时文件再原子发布为0600，不能包含发布私钥；需补充备份超时、UI结果、空目录接回和断电验收。恢复不轮换节点凭据，按unknown宽限期接回现有Agent；已排队升级全部转cancelled并重新审批，不凭旧备份重放升级。
+当前已交付基础命令：`backup` 持有数据目录锁，以 SQLite `VACUUM INTO` 生成 0600 一致性副本；`restore` 持有同一锁，在私有 staging 中复制、迁移、执行 `integrity_check`/schema/index 契约校验，先复制并同步不可变的 live 主库快照，再处理 checkpoint 与 sidecar，完成后原子替换 live 数据库并保留 `.orbitbeacon.db.before-restore-*`。若 live checkpoint 失败且仍有 WAL/SHM/journal，恢复失败关闭，不删除可能包含恢复信息的 sidecar。目标中的完整归档包仍需另行完成：把数据库、`secrets.key`、Server 配置、信任公钥与发行 manifest 打包到临时文件再原子发布为0600，不能包含发布私钥；需补充备份超时、UI结果、空目录接回和断电验收。恢复不轮换节点凭据，按unknown宽限期接回现有Agent；已排队升级全部转cancelled并重新审批，不凭旧备份重放升级。
 
 提供 `/healthz`（存活）、`/readyz`（迁移完成且数据库可写），结构化日志脱敏；状态页显示数据库写入故障、当前存储大小、节点规模、协议/版本，不额外部署遥测后端。Server日志不记录报文/token，Agent日志状态变化才输出并本地轮转3×1MiB。分钟聚合与有界任务的执行耗时用内部计数展示，pprof只允许显式loopback开发开关，不能暴露公网。
 

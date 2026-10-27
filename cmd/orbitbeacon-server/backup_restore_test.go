@@ -54,11 +54,6 @@ func TestBackupAndRestoreUseConsistentSQLiteSnapshot(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
-		if err := os.WriteFile(livePath+suffix, []byte("stale sidecar"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
 	if err := restoreDatabase(dataDir, backupPath); err != nil {
 		t.Fatal(err)
 	}
@@ -77,11 +72,6 @@ func TestBackupAndRestoreUseConsistentSQLiteSnapshot(t *testing.T) {
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
-	}
-	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
-		if _, err := os.Lstat(livePath + suffix); !os.IsNotExist(err) {
-			t.Fatalf("restored database retained live sidecar %s: %v", suffix, err)
-		}
 	}
 	previous, err := filepath.Glob(filepath.Join(dataDir, ".orbitbeacon.db.before-restore-*"))
 	if err != nil || len(previous) != 1 {
@@ -232,6 +222,109 @@ func TestBackupRejectsMissingSourceDatabase(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(dataDir, "server.lock")); !os.IsNotExist(err) {
 		t.Fatalf("missing-source backup mutated data directory: %v", err)
+	}
+}
+
+func TestRestoreReplacesCorruptLiveDatabase(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.Chmod(dataDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(dataDir, "orbitbeacon.db")
+	db, err := storage.Open(context.Background(), live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO settings(key,value) VALUES ('restore', 'from-backup')`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	backupDir := t.TempDir()
+	if err := os.Chmod(backupDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(backupDir, "restore.backup")
+	if err := backupDatabase(dataDir, backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live, []byte("corrupt live database"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreDatabase(dataDir, backup); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := filepath.Glob(filepath.Join(dataDir, ".orbitbeacon.db.before-restore-*"))
+	if err != nil || len(previous) != 1 {
+		t.Fatalf("corrupt live snapshot was not retained: matches=%v err=%v", previous, err)
+	}
+	db, err = storage.Open(context.Background(), live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value string
+	if err := db.QueryRow(`SELECT value FROM settings WHERE key='restore'`).Scan(&value); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if value != "from-backup" {
+		t.Fatalf("restored value=%q, want from-backup", value)
+	}
+}
+
+func TestRestoreRefusesCorruptLiveWithSidecar(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.Chmod(dataDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(dataDir, "orbitbeacon.db")
+	db, err := storage.Open(context.Background(), live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	backupDir := t.TempDir()
+	if err := os.Chmod(backupDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(backupDir, "restore.backup")
+	if err := backupDatabase(dataDir, backup); err != nil {
+		t.Fatal(err)
+	}
+	const corrupt = "corrupt live database"
+	if err := os.WriteFile(live, []byte(corrupt), 0600); err != nil {
+		t.Fatal(err)
+	}
+	journal := live + "-journal"
+	if err := os.WriteFile(journal, []byte("unsafe journal"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreDatabase(dataDir, backup); err == nil {
+		t.Fatal("restore accepted a corrupt live database with a sidecar")
+	}
+	current, err := os.ReadFile(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(current) != corrupt {
+		t.Fatalf("failed restore modified live database: %q", current)
+	}
+	if _, err := os.Lstat(journal); err != nil {
+		t.Fatalf("failed restore removed live sidecar: %v", err)
+	}
+	previous, err := filepath.Glob(filepath.Join(dataDir, ".orbitbeacon.db.before-restore-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(previous) != 0 {
+		t.Fatalf("failed restore retained a partial snapshot: %v", previous)
 	}
 }
 

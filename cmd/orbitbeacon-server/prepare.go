@@ -14,6 +14,16 @@ import (
 // prepareDataDir rejects unsafe existing components rather than repairing their
 // permissions. All existing files are checked before anything is created.
 func prepareDataDir(path string) error {
+	return prepareDataDirWithDatabaseValidation(path, true)
+}
+
+// prepareRestoreDataDir validates the directory and secrets key but leaves
+// database files for restore to validate, preserve, or replace atomically.
+func prepareRestoreDataDir(path string) error {
+	return prepareDataDirWithDatabaseValidation(path, false)
+}
+
+func prepareDataDirWithDatabaseValidation(path string, validateDatabaseFiles bool) error {
 	dir, err := filepath.Abs(path)
 	if err != nil {
 		return err
@@ -41,9 +51,11 @@ func prepareDataDir(path string) error {
 			return err
 		}
 	}
-	for _, name := range []string{"orbitbeacon.db", "orbitbeacon.db-wal", "orbitbeacon.db-shm"} {
-		if _, err := securefs.ValidateFile(filepath.Join(dir, name)); err != nil {
-			return err
+	if validateDatabaseFiles {
+		for _, name := range []string{"orbitbeacon.db", "orbitbeacon.db-wal", "orbitbeacon.db-shm"} {
+			if _, err := securefs.ValidateFile(filepath.Join(dir, name)); err != nil {
+				return err
+			}
 		}
 	}
 	if !exists {

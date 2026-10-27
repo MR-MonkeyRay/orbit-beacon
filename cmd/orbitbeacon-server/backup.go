@@ -200,7 +200,7 @@ func restoreDatabase(dataDir, input string) (retErr error) {
 		return err
 	}
 	defer lock.Close()
-	if err := prepareDataDir(dataDir); err != nil {
+	if err := prepareRestoreDataDir(dataDir); err != nil {
 		return err
 	}
 	stage, err := os.CreateTemp(dataDir, ".orbitbeacon-restore-*.db")
@@ -262,6 +262,7 @@ func restoreDatabase(dataDir, input string) (retErr error) {
 	}
 	live := filepath.Join(dataDir, "orbitbeacon.db")
 	liveInfo, err := os.Lstat(live)
+	previous := ""
 	if err == nil {
 		validated, err = securefs.ValidateFile(live)
 		if err != nil {
@@ -270,13 +271,28 @@ func restoreDatabase(dataDir, input string) (retErr error) {
 		if !validated {
 			return errors.New("live database file is missing")
 		}
-		if err := checkpointDatabase(live); err != nil {
-			return fmt.Errorf("checkpoint live database before restore: %w", err)
+		if err := validateLiveSidecars(live); err != nil {
+			return fmt.Errorf("live sidecars: %w", err)
+		}
+		previous, err = preserveLiveSnapshot(live)
+		if err != nil {
+			return fmt.Errorf("preserve live snapshot: %w", err)
+		}
+		if checkpointErr := checkpointDatabase(live); checkpointErr != nil {
+			if sidecarErr := rejectLiveSidecars(live); sidecarErr != nil {
+				if rollbackErr := rollbackPreservedLive(previous, live); rollbackErr != nil {
+					return errors.Join(fmt.Errorf("checkpoint live database before restore: %w", checkpointErr), sidecarErr, rollbackErr)
+				}
+				return errors.Join(fmt.Errorf("checkpoint live database before restore: %w", checkpointErr), sidecarErr)
+			}
 		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
 	if liveInfo == nil {
+		if err := validateLiveSidecars(live); err != nil {
+			return fmt.Errorf("live sidecars: %w", err)
+		}
 		if err := removeSQLiteSidecars(live); err != nil {
 			return err
 		}
@@ -284,29 +300,10 @@ func restoreDatabase(dataDir, input string) (retErr error) {
 			return err
 		}
 	}
-	previous := ""
-	if liveInfo != nil {
-		previous, err = reservePreviousPath(dataDir)
-		if err != nil {
-			return err
-		}
-		if err := os.Link(live, previous); err != nil {
-			_ = os.Remove(previous)
-			return fmt.Errorf("retain previous database: %w", err)
-		}
-		if err := syncDirectory(dataDir); err != nil {
-			_ = os.Remove(previous)
-			_ = syncDirectory(dataDir)
-			return err
-		}
-	}
 	if err := os.Rename(stagePath, live); err != nil {
 		if previous != "" {
-			if removeErr := os.Remove(previous); removeErr != nil && !os.IsNotExist(removeErr) {
-				return errors.Join(err, fmt.Errorf("remove partial previous database: %w", removeErr))
-			}
-			if syncErr := syncDirectory(dataDir); syncErr != nil {
-				return errors.Join(err, fmt.Errorf("sync failed restore: %w", syncErr))
+			if rollbackErr := rollbackPreservedLive(previous, live); rollbackErr != nil {
+				return errors.Join(err, fmt.Errorf("rollback previous database: %w", rollbackErr))
 			}
 		}
 		return err
@@ -609,6 +606,93 @@ func reservePreviousPath(dataDir string) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+func validateLiveSidecars(live string) error {
+	for _, suffix := range sqliteSidecars {
+		if _, err := securefs.ValidateFile(live + suffix); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rejectLiveSidecars(live string) error {
+	for _, suffix := range sqliteSidecars {
+		if _, err := os.Lstat(live + suffix); err == nil {
+			return fmt.Errorf("live database sidecar %q prevents safe restore", suffix)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func preserveLiveSnapshot(live string) (_ string, retErr error) {
+	if err := rejectLiveSidecars(live); err != nil {
+		return "", err
+	}
+	snapshotPath, err := reservePreviousPath(filepath.Dir(live))
+	if err != nil {
+		return "", err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(live), ".orbitbeacon-previous-*.db")
+	if err != nil {
+		_ = os.Remove(snapshotPath)
+		return "", err
+	}
+	tempPath := temp.Name()
+	tempOpen := true
+	complete := false
+	defer func() {
+		if tempOpen {
+			if err := temp.Close(); err != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("close retained snapshot temp: %w", err))
+			}
+		}
+		if complete {
+			return
+		}
+		if err := os.Remove(tempPath); err != nil && !os.IsNotExist(err) {
+			retErr = errors.Join(retErr, fmt.Errorf("cleanup retained snapshot temp: %w", err))
+		}
+		if err := os.Remove(snapshotPath); err != nil && !os.IsNotExist(err) {
+			retErr = errors.Join(retErr, fmt.Errorf("cleanup retained snapshot: %w", err))
+		}
+		if err := syncDirectory(filepath.Dir(live)); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("sync retained snapshot cleanup: %w", err))
+		}
+	}()
+	source, err := securefs.OpenFile(live, os.O_RDONLY, 0)
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(temp, source); err != nil {
+		_ = source.Close()
+		return "", err
+	}
+	syncErr := temp.Sync()
+	sourceCloseErr := source.Close()
+	tempCloseErr := temp.Close()
+	tempOpen = false
+	if err := errors.Join(syncErr, sourceCloseErr, tempCloseErr); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tempPath, snapshotPath); err != nil {
+		return "", err
+	}
+	if err := syncDirectory(filepath.Dir(live)); err != nil {
+		return "", err
+	}
+	complete = true
+	return snapshotPath, nil
+}
+
+func rollbackPreservedLive(previous, live string) error {
+	if err := os.Remove(previous); err != nil && !os.IsNotExist(err) {
+		return errors.Join(err, syncDirectory(filepath.Dir(live)))
+	}
+	return syncDirectory(filepath.Dir(live))
 }
 
 func syncFile(path string) error {
