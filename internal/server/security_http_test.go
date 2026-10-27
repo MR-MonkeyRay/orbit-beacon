@@ -32,7 +32,7 @@ func TestBrowserCanonicalOriginInteroperatesOrConfigurationIsRejected(t *testing
 			})
 			handler, handlerErr := server.NewHandler(server.Options{
 				Auth: f.auth, Nodes: f.nodes, PublicURL: tt.configured,
-				Assets: fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte("<!doctype html><main>shell</main>")}},
+				Assets: fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte("<!doctype html><main>shell</main>")}, "public.html": &fstest.MapFile{Data: []byte("public shell")}},
 			})
 			if configErr != nil || handlerErr != nil {
 				if configErr == nil || handlerErr == nil {
@@ -130,7 +130,7 @@ func TestUnsupportedMethodsPrecedeAuthenticationAuthorizationAndCSRF(t *testing.
 
 func TestUIDocumentsDisallowFramingWithCSP(t *testing.T) {
 	f := newHTTP(t, 2)
-	for _, path := range []string{"/login", "/overview", "/nodes", "/alerts", "/settings", "/status", "/200.html", "/login.html"} {
+	for _, path := range []string{"/", "/public.html", "/login", "/overview", "/nodes", "/alerts", "/settings", "/200.html", "/login.html"} {
 		for _, method := range []string{http.MethodGet, http.MethodHead} {
 			t.Run(method+" "+path, func(t *testing.T) {
 				response := request(t, f.handler, method, path, "", nil, "", "")
@@ -157,7 +157,7 @@ func TestUIDocumentsDisallowFramingWithCSP(t *testing.T) {
 	}
 }
 
-func TestAuthenticatedIndexAccessReclaimsExpiredSessions(t *testing.T) {
+func TestAuthenticatedCurrentSessionReclaimsExpiredSessions(t *testing.T) {
 	f := newHTTP(t, 2)
 	cookie, _ := login(t, f, "admin")
 	for i := range 2 {
@@ -166,16 +166,21 @@ func TestAuthenticatedIndexAccessReclaimsExpiredSessions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	response := request(t, f.handler, http.MethodGet, "/", "", cookie, "", "")
-	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/overview" {
-		t.Fatalf("authenticated root redirect = %d %q", response.Code, response.Header().Get("Location"))
+	for _, path := range []string{"/", "/api/public/v1/nodes", "/api/v1/me"} {
+		_ = request(t, f.handler, http.MethodGet, path, "", nil, "", "")
 	}
+	var before int
+	if err := f.db.QueryRow("SELECT count(*) FROM sessions WHERE expires_at <= 0").Scan(&before); err != nil || before != 2 {
+		t.Fatalf("anonymous traffic cleaned sessions: %d %v", before, err)
+	}
+	response := request(t, f.handler, http.MethodGet, "/api/v1/me", "", cookie, "", "")
+	assertHTTPStatus(t, response, http.StatusOK)
 	var expired int
 	if err := f.db.QueryRow("SELECT count(*) FROM sessions WHERE expires_at <= 0").Scan(&expired); err != nil {
 		t.Fatal(err)
 	}
 	if expired != 0 {
-		t.Errorf("authenticated index access left %d expired sessions", expired)
+		t.Errorf("authenticated current-session access left %d expired sessions", expired)
 	}
 }
 

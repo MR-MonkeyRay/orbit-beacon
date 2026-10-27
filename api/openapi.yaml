@@ -22,9 +22,10 @@ info:
     State changes and actor-attributed audit insertion share one transaction;
     failed audit insertion rolls back the change. Batch nodes use one transaction
     per node and report individual failures rather than committing unaudited changes.
-    Sessions expire after 12 hours. Successful login and authenticated index access
-    perform bounded expired-session cleanup. Password changes revoke every session
-    of the affected user; user role changes also revoke that user's sessions.
+    Sessions expire after 12 hours. Successful login and successful authenticated
+    GET /api/v1/me perform bounded expired-session cleanup; anonymous public reads
+    neither create sessions nor trigger cleanup. Password changes revoke every
+    session of the affected user; user role changes also revoke that user's sessions.
     UI responses deny framing with CSP frame-ancestors 'none' and X-Frame-Options DENY.
     The data directory must be effective-user-owned and private (0700); SQLite,
     its sidecars and secrets.key must be owned regular 0600 files, never symlinks.
@@ -37,6 +38,57 @@ servers:
 security:
   - session: []
 paths:
+  /api/public/v1/nodes:
+    get:
+      operationId: listPublicNodes
+      security: []
+      description: |
+        Anonymous read of explicitly published nodes, identical with absent, valid
+        or invalid session cookies. No session, Origin or CSRF token is required;
+        no session is created or cleaned up and no CORS access is granted. Only
+        this exact public path bypasses browser authentication. All responses,
+        including errors, use Cache-Control: no-store.
+
+        Includes only nodes with valid enabled public settings, a nonempty public
+        name, internal status unknown, an active node credential and completed
+        enrollment. Pending, disabled, deleted and unpublished nodes are excluded;
+        malformed JSON or invalid public settings are excluded, not backfilled.
+        Publication is revalidated before each candidate is projected; a concurrent
+        withdrawal or deletion skips that candidate. Other read failures fail the
+        entire request rather than returning a partial successful response.
+        Disabling, deleting or withdrawing a node excludes it on the next request;
+        information already delivered to visitors cannot be recalled.
+
+        Orders candidates by creation time then node UUID, without exposing either
+        field. Reads at most limit candidates plus one to determine has_more.
+        next_offset advances by the number of candidates consumed, not the number
+        of nodes returned, so concurrent withdrawal may yield a short or empty page
+        with a next page. This is offset pagination, not a stable collection snapshot
+        or a total node count. Invalid pagination parameters return 400. Only GET
+        is supported; other methods return 405 with Allow: GET before authentication.
+
+        Only independently configured public text and four resource values are
+        returned. Internal metadata, node IDs, IP addresses, system hostnames,
+        credentials, installation/session IDs, last-seen/report timestamps, raw
+        reports, source metadata, disk paths and network names are not projected.
+        Administrators remain responsible for secrets they enter into public text.
+        One server time is shared by generated_at and all node status/freshness
+        decisions in this request; no historical telemetry is returned.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Public page; an empty collection is nodes [], never null.
+          headers:
+            Cache-Control:
+              schema: {type: string, const: no-store}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PublicNodeList'}
+        '400': {$ref: '#/components/responses/Error'}
+        '405': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/session:
     post:
       operationId: login
@@ -79,7 +131,7 @@ paths:
       operationId: currentSession
       responses:
         '200':
-          description: Current authenticated session and stable CSRF token, recoverable in a new tab without rotating another tab's token. No session bearer credential is exposed.
+          description: Current authenticated session and stable CSRF token, recoverable in a new tab without rotating another tab's token. No session bearer credential is exposed. Successful authentication performs best-effort bounded expired-session cleanup; unauthenticated requests do not.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/BrowserSession'}
@@ -407,6 +459,65 @@ paths:
           schema: {type: boolean, const: true}
       responses:
         '204': {description: Asset removed and identity revoked.}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/public-settings:
+    parameters:
+      - $ref: '#/components/parameters/NodeID'
+    get:
+      operationId: getNodePublicSettings
+      description: Available to authenticated administrators and viewers. Returns the independent public settings, including for pending or disabled nodes; no values are filled from internal node metadata.
+      responses:
+        '200':
+          description: Complete public settings; legacy empty settings default to disabled and empty text.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PublicSettings'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: patchNodePublicSettings
+      description: |
+        Administrator only; requires the trusted configured Origin and this
+        session's CSRF token. Omitted or null fields remain unchanged; empty
+        strings clear text. Text is trimmed before enforcing UTF-8 byte limits;
+        invalid UTF-8 and control characters are rejected, not removed by trimming.
+        The merged settings must have a nonempty public name when enabled is true. Invalid
+        settings return 400 validation_failed with field keys name, region and/or
+        provider, leaving all previous settings unchanged. Unknown fields are rejected.
+
+        Reads, merges, validates, persists and inserts the actor-attributed
+        node.public_settings.patch audit event in one transaction; audit details
+        are {} and audit insertion failure rolls back the settings. A valid
+        unchanged patch is also audited. Changes do not modify internal metadata
+        or credentials. Disabling publication preserves the public text for reuse.
+        Settings may be saved before enrollment or while disabled, but the node
+        is not shown until enrolled and enabled; saving does not establish online
+        status or prove a report has arrived.
+
+        Publishing exposes the configured name, region and provider plus CPU,
+        memory percentage, one-minute load and uptime when valid. Public text is
+        intentionally independent and defaults to empty, never private metadata.
+        Do not enter IP addresses, hostnames, domains or credentials. No automatic
+        secret detection or redaction is promised.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PublicSettingsPatch'}
+      responses:
+        '200':
+          description: Complete saved public settings, not a claim that the node is online.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PublicSettings'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes/{id}/config:
     parameters:
@@ -851,6 +962,96 @@ components:
           description: Sorted tag strings; an untagged node returns [], never null.
           items: {type: string}
         created_at: {type: string, format: date-time, description: UTC RFC3339.}
+    PublicSettings:
+      type: object
+      additionalProperties: false
+      required: [enabled, name, region, provider]
+      description: Independent administrator-published text; never populated from internal metadata. Text is trimmed, valid UTF-8 and free of control characters. Limits are UTF-8 bytes. A nonempty name is required when enabled. Existing empty settings decode to disabled and three empty strings.
+      properties:
+        enabled: {type: boolean, default: false}
+        name: {type: string, x-maxLengthBytes: 255, default: '', pattern: '^[^\u0000-\u001f\u007f-\u009f]*$', description: Independent public name; empty is allowed only while publication is disabled.}
+        region: {type: string, x-maxLengthBytes: 128, default: '', pattern: '^[^\u0000-\u001f\u007f-\u009f]*$'}
+        provider: {type: string, x-maxLengthBytes: 128, default: '', pattern: '^[^\u0000-\u001f\u007f-\u009f]*$'}
+      allOf:
+        - if:
+            properties:
+              enabled: {const: true}
+          then:
+            properties:
+              name: {x-minLengthBytes: 1}
+    PublicSettingsPatch:
+      type: object
+      additionalProperties: false
+      description: All four fields are optional; omission or null leaves the stored value unchanged. Empty strings clear text. UTF-8 byte limits apply after trimming; invalid UTF-8 or control characters are rejected, not trimmed away. The merged stored settings, not just this patch, must have a nonempty name when enabled. An empty object is a valid unchanged patch.
+      properties:
+        enabled: {type: [boolean, 'null'], description: Enable or disable publication; null leaves unchanged.}
+        name: {type: [string, 'null'], x-maxLengthBytes: 255, pattern: '^[^\u0000-\u001f\u007f-\u009f]*$', description: Trimmed public name; empty clears when the merged settings are disabled; null leaves unchanged.}
+        region: {type: [string, 'null'], x-maxLengthBytes: 128, pattern: '^[^\u0000-\u001f\u007f-\u009f]*$', description: Trimmed public region; empty clears; null leaves unchanged.}
+        provider: {type: [string, 'null'], x-maxLengthBytes: 128, pattern: '^[^\u0000-\u001f\u007f-\u009f]*$', description: Trimmed public provider; empty clears; null leaves unchanged.}
+    PublicNode:
+      type: object
+      additionalProperties: false
+      required: [name, region, provider, status, cpu_percent, memory_percent, load1, uptime_seconds]
+      description: |
+        A minimal public projection, never the internal node or raw report.
+        Public text is explicitly configured, not derived from private metadata.
+        Resource keys are always present; null means unavailable, not zero.
+
+        Status is unknown if the current credential has no report generation or
+        session, or last_seen is missing or later than the request's server time.
+        Otherwise online means an accepted new report was received between zero
+        and 180 seconds ago, inclusive; greater than 180 seconds is offline.
+        This is recent valid reporting, not ping, service health or availability.
+        Rejected, duplicate and old-sequence reports do not refresh last_seen.
+        Credential rotation resets report ownership and yields unknown until a
+        new report. Server restart retains persisted status but all resources
+        remain null until a new accepted report populates the in-memory snapshot.
+
+        Resources are considered only when online and the snapshot matches the
+        current credential, generation, session and persisted receive time.
+        A missing or future-dated snapshot yields null. Each resource must have
+        a nonnull value and ok metric status; a new unavailable value clears the
+        old value. Source freshness is reevaluated independently on each read.
+        Let elapsed_ms be floor((server_time - received_at) / 1ms). For source
+        interval_ms <= 3074457345618258602 (floor(MaxInt64/3)), the freshness
+        limit is max(3 * interval_ms, 45000) milliseconds; the value is valid
+        only if age_ms <= limit and elapsed_ms <= limit - age_ms, including
+        equality. Larger intervals are treated as not source-expired, matching
+        the ingestion protocol's overflow-safe freshness rule. Thus resources
+        may become null while the node remains online. Offline or unknown
+        nodes always return four null resources, never stale cached values.
+      properties:
+        name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255, description: Explicit public name.}
+        region: {type: string, x-maxLengthBytes: 128, description: Explicit public region; empty when unset.}
+        provider: {type: string, x-maxLengthBytes: 128, description: Explicit public provider; empty when unset.}
+        status: {type: string, enum: [online, offline, unknown]}
+        cpu_percent: {type: [number, 'null'], minimum: 0, maximum: 100, description: CPU utilization in percent; a real zero is returned as 0.}
+        memory_percent: {type: [number, 'null'], minimum: 0, maximum: 100, description: 'Memory utilization in percent: 100 * (total - available) / total, calculated without integer overflow; requires both metrics to be nonnull and ok, and total > 0.'}
+        load1: {type: [number, 'null'], minimum: 0, description: One-minute system load average; unitless, not a percentage.}
+        uptime_seconds: {type: [number, 'null'], minimum: 0, description: System uptime in seconds.}
+    PublicNodeList:
+      type: object
+      additionalProperties: false
+      required: [nodes, has_more, next_offset, generated_at]
+      properties:
+        nodes:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/PublicNode'}
+          description: Published projections in candidate order; empty is [], never null. Concurrent withdrawal can reduce the returned count without changing candidate pagination.
+        has_more: {type: boolean, description: Whether another candidate page exists; not a total or a promise that the next page will remain published.}
+        next_offset: {type: [integer, 'null'], minimum: 0, description: When has_more is true, request offset plus candidate IDs consumed before any concurrent-withdrawal skips; otherwise null. Never derived from the number of returned nodes.}
+        generated_at: {type: string, format: date-time, description: UTC RFC3339Nano server time shared by all status and freshness decisions in this response.}
+      allOf:
+        - if:
+            properties:
+              has_more: {const: true}
+          then:
+            properties:
+              next_offset: {type: integer}
+          else:
+            properties:
+              next_offset: {type: 'null'}
     InterfaceSelection:
       type: array
       maxItems: 8

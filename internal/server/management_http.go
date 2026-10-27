@@ -27,7 +27,7 @@ func routeMethods(p string) []string {
 	switch p {
 	case "/api/v1/session":
 		return sessionMethods
-	case "/api/v1/me", "/api/v1/audit":
+	case "/api/v1/me", "/api/v1/audit", "/api/public/v1/nodes":
 		return readMethods
 	case "/api/v1/me/password":
 		return patchMethods
@@ -51,7 +51,7 @@ func routeMethods(p string) []string {
 	if len(parts) == 2 && (parts[0] == "users" || parts[0] == "groups" || parts[0] == "nodes") {
 		return itemMethods
 	}
-	if len(parts) == 3 && parts[0] == "nodes" && parts[2] == "config" {
+	if len(parts) == 3 && parts[0] == "nodes" && (parts[2] == "config" || parts[2] == "public-settings") {
 		return configMethods
 	}
 	return nil

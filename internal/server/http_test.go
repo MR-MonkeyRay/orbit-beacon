@@ -58,6 +58,7 @@ func newHTTP(t *testing.T, capacity int) fixture {
 		Auth: authService, Nodes: nodeService, PublicURL: publicURL,
 		Assets: fstest.MapFS{
 			"200.html":               &fstest.MapFile{Data: []byte("<!doctype html><main>regression SPA shell</main>")},
+			"public.html":            &fstest.MapFile{Data: []byte("<!doctype html><main>regression public shell</main>")},
 			"login.html":             &fstest.MapFile{Data: []byte("<!doctype html><main>regression login shell</main>")},
 			"_app/immutable/main.js": &fstest.MapFile{Data: []byte("export const fixture = true;")},
 		},
@@ -346,7 +347,7 @@ func TestAPIFailuresHaveStructuredErrorsAndNeverSPAFallback(t *testing.T) {
 func TestStaticFallbackIsLimitedToDeclaredUIRoutes(t *testing.T) {
 	f := newHTTP(t, 2)
 	cookie, _ := login(t, f, "admin")
-	for _, path := range []string{"/login", "/overview", "/nodes", "/nodes/00000000-0000-4000-8000-000000000123", "/alerts", "/settings", "/status"} {
+	for _, path := range []string{"/login", "/overview", "/nodes", "/nodes/00000000-0000-4000-8000-000000000123", "/alerts", "/settings"} {
 		t.Run(path, func(t *testing.T) {
 			response := request(t, f.handler, http.MethodGet, path, "", cookie, "", "")
 			if response.Code != http.StatusOK || !strings.HasPrefix(response.Header().Get("Content-Type"), "text/html") {
@@ -360,6 +361,7 @@ func TestStaticFallbackIsLimitedToDeclaredUIRoutes(t *testing.T) {
 	for _, path := range []string{
 		"/not-a-page", "/overview/unexpected", "/nodes/00000000-0000-4000-8000-000000000123/extra",
 		"/_app/immutable/missing.js", "/favicon-missing.svg", "/api/v1/missing", "/api/agent/v1/missing",
+		"/status",
 	} {
 		t.Run(path, func(t *testing.T) {
 			response := request(t, f.handler, http.MethodGet, path, "", cookie, "", "")
@@ -381,18 +383,24 @@ func TestStaticFallbackIsLimitedToDeclaredUIRoutes(t *testing.T) {
 	}
 }
 
-func TestRootRedirectUsesSession(t *testing.T) {
+func TestRootPublicPageIgnoresSessions(t *testing.T) {
 	f := newHTTP(t, 2)
 	cookie, _ := login(t, f, "admin")
-	for _, tt := range []struct {
-		cookie   *http.Cookie
-		location string
-	}{{nil, "/login"}, {cookie, "/overview"}} {
-		response := request(t, f.handler, http.MethodGet, "/", "", tt.cookie, "", "")
-		if response.Code < 300 || response.Code >= 400 || response.Header().Get("Location") != tt.location {
-			t.Errorf("root redirect = %d %q, want %q", response.Code, response.Header().Get("Location"), tt.location)
+	for _, c := range []*http.Cookie{nil, cookie, {Name: cookie.Name, Value: "expired-session"}} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			response := request(t, f.handler, method, "/", "", c, "", "")
+			if response.Code != http.StatusOK || response.Header().Get("Location") != "" {
+				t.Fatalf("root response = %d %q", response.Code, response.Header().Get("Location"))
+			}
+			if method == http.MethodHead && response.Body.Len() != 0 {
+				t.Fatal("HEAD includes body")
+			}
+			if method == http.MethodGet && !bytes.Contains(response.Body.Bytes(), []byte("regression public shell")) {
+				t.Fatal("root did not serve independent public shell")
+			}
 		}
 	}
+	assertHTTPStatus(t, request(t, f.handler, http.MethodPost, "/", "", nil, "", ""), http.StatusMethodNotAllowed)
 }
 
 func TestLogoutRevokesCookieSession(t *testing.T) {

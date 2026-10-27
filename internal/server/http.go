@@ -42,6 +42,7 @@ type Options struct {
 	PublicURL   string
 	Assets      fs.FS
 	Logger      *slog.Logger
+	Now         func() time.Time
 }
 
 type handler struct {
@@ -53,6 +54,7 @@ type handler struct {
 	origin      string
 	assets      fs.FS
 	logger      *slog.Logger
+	now         func() time.Time
 	lifecycleMu sync.RWMutex
 	ready       bool
 }
@@ -87,10 +89,16 @@ func NewHandler(opts Options) (*handler, error) {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
 	if _, err := fs.Stat(opts.Assets, "200.html"); err != nil {
 		return nil, fmt.Errorf("UI shell: %w", err)
 	}
-	h := &handler{auth: opts.Auth, nodes: opts.Nodes, management: opts.Management, enrollments: opts.Enrollments, ingest: opts.Ingest, origin: origin, assets: opts.Assets, logger: opts.Logger, ready: true}
+	if _, err := fs.Stat(opts.Assets, "public.html"); err != nil {
+		return nil, fmt.Errorf("public UI shell: %w", err)
+	}
+	h := &handler{auth: opts.Auth, nodes: opts.Nodes, management: opts.Management, enrollments: opts.Enrollments, ingest: opts.Ingest, origin: origin, assets: opts.Assets, logger: opts.Logger, now: opts.Now, ready: true}
 	return h, nil
 }
 
@@ -156,6 +164,11 @@ func decode(w http.ResponseWriter, r *http.Request, dst any, requestID string) b
 }
 
 func decodeError(w http.ResponseWriter, err error, message, requestID string) {
+	var validation *nodes.ValidationError
+	if errors.As(err, &validation) {
+		writeJSON(w, http.StatusBadRequest, apiError{Code: "validation_failed", Message: validation.Error(), RequestID: requestID, Fields: validation.Fields})
+		return
+	}
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
 		fail(w, http.StatusRequestEntityTooLarge, "body_too_large", "Request body exceeds 64 KiB", requestID)
@@ -206,6 +219,10 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 	if !method(w, r, requestID, allowed...) {
 		return
 	}
+	if p == "/api/public/v1/nodes" {
+		h.publicNodes(w, r, requestID)
+		return
+	}
 	if strings.HasPrefix(p, "/api/agent/v1/") {
 		h.agentRoute(w, r, requestID)
 		return
@@ -243,6 +260,7 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 			h.serviceError(w, err, requestID)
 			return
 		}
+		_ = h.auth.CleanupExpiredSessions(r.Context())
 		writeJSON(w, http.StatusOK, session)
 		return
 	}
@@ -328,6 +346,10 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 		}{Results: results})
 	default:
 		id := parts[1]
+		if len(parts) == 3 && parts[2] == "public-settings" {
+			h.publicSettings(w, r, id, requestID)
+			return
+		}
 		if len(parts) == 3 {
 			var cfg v1.DesiredConfig
 			if r.Method == http.MethodGet {
@@ -420,19 +442,8 @@ func (h *handler) static(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := r.URL.Path
-	if p == "/" {
-		target := "/login"
-		if c, err := r.Cookie(sessionCookie); err == nil {
-			if _, err := h.auth.Authenticate(r.Context(), c.Value); err == nil {
-				target = "/overview"
-				_ = h.auth.CleanupExpiredSessions(r.Context())
-			}
-		}
-		http.Redirect(w, r, target, http.StatusSeeOther)
-		return
-	}
 	name := strings.TrimPrefix(p, "/")
-	uiRoute := p == "/login" || p == "/overview" || p == "/nodes" || p == "/alerts" || p == "/settings" || p == "/status" || (strings.HasPrefix(p, "/nodes/") && identity.ValidUUID(strings.TrimPrefix(p, "/nodes/")))
+	uiRoute := p == "/login" || p == "/overview" || p == "/nodes" || p == "/alerts" || p == "/settings" || (strings.HasPrefix(p, "/nodes/") && identity.ValidUUID(strings.TrimPrefix(p, "/nodes/")))
 	if uiRoute {
 		name = "200.html"
 		if p == "/login" {
@@ -440,6 +451,9 @@ func (h *handler) static(w http.ResponseWriter, r *http.Request) {
 				name = "login.html"
 			}
 		}
+	}
+	if p == "/" {
+		name = "public.html"
 	}
 	if !fs.ValidPath(name) || path.Clean(name) != name {
 		http.NotFound(w, r)

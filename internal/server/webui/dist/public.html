@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OrbitBeacon · 节点概览</title>
+<link rel="stylesheet" href="/_app/public.css">
+<script src="/_app/public.js" defer></script>
+</head>
+<body>
+<div class="container">
+<header class="brand"><a class="wordmark" href="/">OrbitBeacon</a><a class="login" href="/login">管理登录 <span aria-hidden="true">↗</span></a></header>
+<main>
+<div class="intro"><p class="eyebrow">PUBLIC NODES</p><h1>节点概览</h1><p class="muted">仅展示已公开的节点信息</p></div>
+<div class="toolbar" aria-label="节点数据工具栏"><div><p id="count">本页节点数：—</p><p class="muted timestamp" id="updated">尚未成功更新</p></div><button id="refresh" type="button">刷新</button></div>
+<p id="announcement" class="announcement" role="status" aria-live="polite">正在加载节点…</p>
+<div id="empty" class="empty" hidden></div>
+<ul id="nodes" class="nodes" aria-label="公开节点"></ul>
+<nav class="pagination" aria-label="节点分页"><button id="previous" type="button" disabled>上一页</button><span id="page">第 1 页</span><button id="next" type="button" disabled>下一页</button></nav>
+<noscript><p class="empty">请启用 JavaScript 以获取公开节点信息。</p></noscript>
+</main>
+<footer><p>在线表示最近3分钟收到有效上报；资源数据可能暂不可用。</p><p>OrbitBeacon · 公开节点概览</p></footer>
+</div>
+</body>
+</html>

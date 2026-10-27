@@ -29,7 +29,7 @@ func TestHealthEndpointsExposeLivenessAndReadinessWithoutAuthentication(t *testi
 		Auth:      auth.NewService(db, auth.Options{}),
 		Nodes:     nodes.NewService(db, nodes.Options{}),
 		PublicURL: "https://beacon.example.test",
-		Assets:    fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte("shell")}},
+		Assets:    fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte("shell")}, "public.html": &fstest.MapFile{Data: []byte("public shell")}},
 	})
 	if err != nil {
 		t.Fatal(err)

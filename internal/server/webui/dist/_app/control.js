@@ -260,6 +260,36 @@ function nodeMetadata(panel, node, groups, editable) {
   panel.append(form);
 }
 
+function nodePublicSettings(panel, node, settings, editable) {
+  panel.append(text('h3', 'Public page'));
+  panel.append(text('p', 'Publishing exposes the independent public name, region and provider, plus online status, CPU, memory, load and uptime. Internal inventory fields are not included.'));
+  panel.append(text('p', 'Do not enter IP addresses, hostnames, domains or credentials.'));
+  if (node.status === 'pending' || node.status === 'disabled') panel.append(text('p', 'Not shown until enrolled and enabled.'));
+  const link = text('a', 'View public page');
+  link.href = '/';
+  panel.append(link);
+  if (!editable) {
+    const details = document.createElement('dl');
+    for (const [label, value] of [['Published', settings.enabled ? 'Yes' : 'No'], ['Public name', settings.name || 'None'], ['Public region', settings.region || 'None'], ['Public provider', settings.provider || 'None']]) details.append(text('dt', label), text('dd', value));
+    panel.append(details);
+    return;
+  }
+  const form = document.createElement('form');
+  const enabled = field(form, 'Publish this node', 'enabled', '', {type: 'checkbox'});
+  enabled.checked = settings.enabled;
+  enabled.style.width = 'auto';
+  const name = field(form, 'Public name', 'public_name', settings.name, {required: enabled.checked, maxBytes: 255});
+  const region = field(form, 'Public region', 'public_region', settings.region, {maxBytes: 128});
+  const provider = field(form, 'Public provider', 'public_provider', settings.provider, {maxBytes: 128});
+  enabled.addEventListener('change', () => { name.required = enabled.checked; });
+  mutation(form, 'Save public settings', async () => {
+    await api(`/nodes/${encodeURIComponent(node.id)}/public-settings`, {method: 'PATCH', body: JSON.stringify({enabled: enabled.checked, name: name.value, region: region.value, provider: provider.value})});
+    await render();
+    message.textContent = 'Public settings saved. Online status depends on valid agent reports.';
+  });
+  panel.append(form);
+}
+
 async function render() {
   if (location.pathname === '/login') {
     content.innerHTML = '<section><h2>Sign in</h2><form id="login"><label>Username<input name="username" autocomplete="username" required></label><label>Password (8–1024 UTF-8 bytes)<input name="password" type="password" autocomplete="current-password" required></label><button>Sign in</button></form></section>';
@@ -333,9 +363,11 @@ async function render() {
     const node = await api(`/nodes/${encodeURIComponent(id)}`);
     const config = await api(`/nodes/${encodeURIComponent(id)}/config`);
     const groups = await api('/groups');
+    const publicSettings = await api(`/nodes/${encodeURIComponent(id)}/public-settings`);
     const panel = document.createElement('section');
     panel.append(text('h2', node.name), text('p', `Status: ${node.status}`));
     nodeMetadata(panel, node, groups.groups, user.role === 'admin' && csrf);
+    nodePublicSettings(panel, node, publicSettings, user.role === 'admin' && csrf);
     panel.append(text('h3', 'Desired configuration'), text('pre', JSON.stringify(config, null, 2)));
     if (user.role === 'admin' && csrf) {
       const form = document.createElement('form');
@@ -360,12 +392,10 @@ async function render() {
     userSettings(user, users.users);
     groupSettings(user, groups.groups);
     auditSettings(audit.events);
-  } else if (location.pathname === '/status') {
-    section.append(text('h2', 'Public status unavailable'), text('p', 'A public status page is not available in this console. Backend metric ingestion does not publish private telemetry.'));
   } else if (location.pathname === '/alerts') {
     section.append(text('h2', 'Alerts unavailable'), text('p', 'Alert rules, notifications and delivery are not available in this foundation slice.'));
   } else {
-    section.append(text('h2', 'Foundation capabilities'), text('p', 'Use Settings to manage users and groups, change your password and read the audit log. Administrators can also manage node inventory and desired configuration. Agent enrollment is supported by the backend API, but its browser wizard and telemetry display are not yet available. Alerts, public status and backup are not available.'));
+    section.append(text('h2', 'Foundation capabilities'), text('p', 'Use Settings to manage users and groups, change your password and read the audit log. Administrators can also manage node inventory, desired configuration and explicit public-page settings. Agent enrollment is supported by the backend API, but its browser wizard and private telemetry display are not yet available. Alerts are not available.'));
   }
 }
 

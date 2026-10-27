@@ -41,6 +41,7 @@ type nodeState struct {
 	session    string
 	seq        uint64
 	latest     []byte
+	public     publicMetrics
 	tokens     float64
 	refilled   time.Time
 }
@@ -356,6 +357,7 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	state.session = report.SessionID
 	state.seq = report.Seq
 	state.latest = body
+	state.public = snapshotPublic(report.Metrics, now)
 	return response, nil
 }
 

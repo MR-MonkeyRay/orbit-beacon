@@ -28,6 +28,7 @@ import (
 type agentFixture struct {
 	handler     http.Handler
 	db          *sql.DB
+	auth        *auth.Service
 	nodes       *nodes.Service
 	enrollments *enrollment.Service
 	ingest      *ingest.Service
@@ -50,8 +51,8 @@ func newAgentHTTP(t *testing.T, capacity int) *agentFixture {
 	f.nodes = nodes.NewService(db, nodes.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{21})})
 	f.enrollments = enrollment.NewService(db, enrollment.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{22})})
 	f.ingest = ingest.NewService(db, ingest.Options{Now: clock})
-	a := auth.NewService(db, auth.Options{Now: clock})
-	f.handler, err = server.NewHandler(server.Options{Auth: a, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL})
+	f.auth = auth.NewService(db, auth.Options{Now: clock})
+	f.handler, err = server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: clock})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,7 +2,7 @@
 
 自托管的多节点监控系统。Server 提供管理 API、内嵌 Web 控制台和 SQLite 存储；Agent 采集主机指标，通过 HTTPS 上报。
 
-当前可用的是节点接入、鉴权上报、期望配置下发和备份恢复。控制台仍以管理功能为主，**没有指标图表、在线判定、告警和公开状态页**，适合自用或小团队做接入验证。
+当前可用：节点接入、鉴权上报、期望配置下发、备份恢复，以及逐节点显式公开的中文节点首页。管理控制台为英文；尚无历史图表、告警或浏览器接入向导。
 
 文档：[部署](deploy/README.md) · [Linux Agent 接入](docs/agent.md) · [HTTP API](api/openapi.yaml)
 
@@ -10,17 +10,18 @@
 
 | 模块 | 状态 |
 | --- | --- |
-| 控制台 | 登录/退出、节点清单与元数据、期望配置、用户/组、修改自己的密码、审计。界面为英文。 |
+| 控制台 | 登录/退出、节点清单与元数据、期望配置、公开设置、用户/组、修改自己的密码、审计。界面为英文。 |
 | 接入 | 管理 API 签发接入凭证，Linux Agent CLI 注册；支持单节点和分组批量接入。 |
 | 上报 | CPU、负载、内存/Swap、运行时间、磁盘和网络；Bearer 鉴权、退避重试、应用期望配置。 |
+| 公开首页 | 中文响应式卡片：独立公开名称、地区、服务商、最近上报在线状态及 CPU/内存/1分钟负载/运行时长。默认全部私有。 |
 | 运维 | 健康检查、SQLite 备份/恢复、systemd、Docker Compose。 |
-| 未实现 | 浏览器接入向导、指标展示、在线/离线、历史与流量汇总、探测任务、告警、公开状态页、Agent 自动升级。 |
+| 未实现 | 浏览器接入向导、私有指标面板、历史与流量汇总、探测任务、告警、Agent 自动升级。 |
 
 上线前需要知道：
 
-- 注册成功的节点状态仍是 `unknown`，管理 API 也不返回 `last_seen` 或最新指标。它不是在线/离线判定。
+- 管理节点状态仍为 `unknown`，不代表实时在线状态。公开首页按最近180秒有效新上报判定在线，不代表 ping、业务健康或可用率。
 - 保存期望配置只代表服务端已记录。Agent 会在后续上报中接收并保存配置，但控制台不展示应用确认。
-- 无法采集的指标上报为 `null`，不会用 0 伪装。Server 把最新指标报告正文放在内存中，重启即丢，也还没有查询接口；断网期间不积压历史样本。
+- 公开资源缺失或来源过期时显示 `—`，真实0值仍显示0。资源快照仅存内存，Server 重启后须等新上报；在线判定保留数据库记录。断网期间不积压历史样本。
 - 当前按 Linux 部署。Windows 运行身份校验未实现；其他平台的采集代码不等于已支持的部署方式。
 - `backup` 只生成 SQLite 数据库文件，不包含 `secrets.key`、配置或 TLS 证书；`restore` 也不是损坏数据库的通用修复工具。
 
@@ -71,11 +72,17 @@ build/orbitbeacon-server health --url https://localhost:8443 \
   --ca-file "$DEMO_DIR/server-cert.pem"
 ```
 
-浏览器信任 `$DEMO_DIR/server-cert.pem` 后访问 <https://localhost:8443>，用刚创建的账号登录。这张证书仅用于本机演示，不要分发 `server-key.pem`。会话 Cookie 固定为 `Secure`，不能改用 HTTP 登录。
+浏览器信任 `$DEMO_DIR/server-cert.pem` 后访问 <https://localhost:8443> 查看公开首页，点“管理登录”使用刚创建的账号。这张证书仅用于本机演示，不要分发 `server-key.pem`。会话 Cookie 固定为 `Secure`，不能改用 HTTP 登录。
 
 ### 3. 接入 Agent
 
 按 [Linux Agent 接入指南](docs/agent.md) 完成：登录管理 API、创建节点、签发凭证、安装固定的安装策略，再以非 root 身份注册并运行。该指南也说明了远程节点与同机体验的区别。
+
+### 4. 选择公开节点
+
+管理员进入 Nodes → 节点详情 → Public page，填写独立的 Public name、Region、Provider，勾选 Publish this node 后保存。不会自动复制内部元数据；已注册且启用的节点才会展示。不要填入 IP、域名、主机名或凭证；这些文本是主动发布的内容，不会自动脱敏。CPU、内存、负载和运行时长也会公开。
+
+取消公开、禁用或删除后，下次请求立即排除该节点；已发送的数据无法撤回。首页每10秒刷新，失败或隐藏时清空上次数据。`/status` 不再提供页面。
 
 ## 正式部署
 
@@ -109,6 +116,7 @@ Server 配置优先级：**CLI 参数 > `ORBITBEACON_` 环境变量 > JSON 文�
 
 - 管理端：`/api/v1/`，使用会话 Cookie。写请求校验 `Origin` 和会话 CSRF token；登录需要 `Origin`，但不需要已有会话。
 - Agent 端：`/api/agent/v1/`，使用接入凭证或节点 Bearer 凭证，不能与浏览器会话互换。
+- 公开端：`GET /api/public/v1/nodes?limit=50&offset=0`，无需会话；每页1–100条，仅返回公开白名单字段。配置入口为受保护的 `GET/PATCH /api/v1/nodes/{id}/public-settings`。
 - 健康检查：`GET /healthz/live` 检查进程，`GET /healthz/ready` 检查是否接收流量及 SQLite 是否可用；两者都不需要认证。
 - 错误响应包含 `code`、`message`、`request_id` 和可选 `fields`。排障时记录 `request_id`，不要发送 Cookie、密码或 token。
 
