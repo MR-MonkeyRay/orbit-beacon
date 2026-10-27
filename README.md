@@ -4,7 +4,7 @@
 
 当前可用：节点接入、鉴权上报、期望配置下发、备份恢复，以及逐节点显式公开的中文节点首页。管理控制台为英文；尚无历史图表、告警或浏览器接入向导。
 
-文档：[部署](deploy/README.md) · [Linux Agent 接入](docs/agent.md) · [HTTP API](api/openapi.yaml)
+文档：[部署](deploy/README.md) · [Linux Agent 接入](docs/agent.md) · [HTTP API](api/openapi.yaml) · [Web UI 开发](web/README.md)
 
 ## 功能
 

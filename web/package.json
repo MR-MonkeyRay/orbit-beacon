@@ -1,0 +1,14 @@
+{
+  "name": "orbitbeacon-web",
+  "private": true,
+  "type": "module",
+  "description": "Source for the embedded OrbitBeacon web UI. Built output is committed to internal/server/webui/dist.",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "check": "node build.mjs --check"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

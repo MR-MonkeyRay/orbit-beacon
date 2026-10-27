@@ -54,6 +54,14 @@ jobs:
       - name: Verify module contents
         run: go mod verify
 
+      # The embedded UI in internal/server/webui/dist is committed so Go builds
+      # need no Node.js; this fails when it was not rebuilt from web/.
+      - name: Verify embedded web UI matches its source
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check
+
       - name: Run tests without cache
         env:
           GOTOOLCHAIN: go1.27.3

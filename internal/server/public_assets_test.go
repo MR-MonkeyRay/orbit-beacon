@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -16,10 +17,29 @@ func TestPublicEmbeddedAssetsAndRequiredShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, asset := range []struct{ path, mime string }{{"/", "text/html"}, {"/_app/public.js", "javascript"}, {"/_app/public.css", "text/css"}} {
+	// The shells reference content-hashed bundles built from web/; follow those
+	// references instead of hard-coding names that change with every build.
+	assets := []struct{ path, mime string }{{"/", "text/html"}, {"/overview", "text/html"}}
+	for _, shell := range []string{"/", "/overview"} {
+		body := request(t, h, http.MethodGet, shell, "", nil, "", "").Body.String()
+		for _, match := range regexp.MustCompile(`(?:src|href)="(/_app/immutable/[^"]+)"`).FindAllStringSubmatch(body, -1) {
+			mime := "text/css"
+			if strings.HasSuffix(match[1], ".js") {
+				mime = "javascript"
+			}
+			assets = append(assets, struct{ path, mime string }{match[1], mime})
+		}
+	}
+	if len(assets) != 6 {
+		t.Fatalf("expected a script and stylesheet per shell, got %v", assets)
+	}
+	for _, asset := range assets {
 		response := request(t, h, http.MethodGet, asset.path, "", nil, "", "")
 		if response.Code != http.StatusOK || !strings.Contains(response.Header().Get("Content-Type"), asset.mime) {
 			t.Fatalf("asset %s status/type: %d %s", asset.path, response.Code, response.Header().Get("Content-Type"))
+		}
+		if strings.HasPrefix(asset.path, "/_app/immutable/") && !strings.Contains(response.Header().Get("Cache-Control"), "immutable") {
+			t.Fatalf("asset %s cache-control: %q", asset.path, response.Header().Get("Cache-Control"))
 		}
 		head := request(t, h, http.MethodHead, asset.path, "", nil, "", "")
 		if head.Code != http.StatusOK || head.Body.Len() != 0 {

@@ -1,0 +1,62 @@
+/* Design tokens shared by the console and the public page.
+   Palette: deep "night sky" indigo surfaces, a sodium-amber beacon for brand and
+   primary actions, a periwinkle orbit for links and data, and status hues. */
+:root{
+  --bg:#f1f4f9;--rail:#e8edf5;--panel:#fff;--panel-2:#f6f8fc;--line:#d8dfeb;--line-2:#c2ccdd;
+  --ink:#14203a;--ink-2:#46546f;--ink-3:#69768f;
+  --beacon:#f2b53a;--beacon-hover:#f6c45c;--beacon-ink:#241703;--beacon-text:#8a5a00;
+  --orbit:#3d5bd9;--orbit-soft:rgba(61,91,217,.1);
+  --ok:#11815a;--ok-bg:#dcf3e8;--bad:#c2385a;--bad-bg:#fbe4ea;--warn:#946000;--warn-bg:#fcefd2;
+  --idle:#5c6882;--idle-bg:#e6eaf1;--pend:#5450cf;--pend-bg:#e7e6fb;--off:#7a8296;--off-bg:#eceef2;
+  --shadow:0 1px 2px rgba(20,32,58,.05),0 10px 30px -18px rgba(20,32,58,.35);
+  --shadow-lg:0 24px 60px -20px rgba(10,18,40,.45);
+  --r-lg:16px;--r-md:10px;--r-sm:7px;
+  --ease:cubic-bezier(.2,.8,.2,1);
+  --font:system-ui,-apple-system,"Segoe UI Variable Text","Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  --mono:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0e1526;--rail:#0b1120;--panel:#141f36;--panel-2:#19253f;--line:#233150;--line-2:#32446b;
+  --ink:#e3e9f5;--ink-2:#a7b3cb;--ink-3:#7f8ba6;
+  --beacon-text:#f5c25a;--orbit:#8ea4ff;--orbit-soft:rgba(142,164,255,.12);
+  --ok:#47d39d;--ok-bg:rgba(71,211,157,.13);--bad:#ff7d99;--bad-bg:rgba(255,125,153,.13);--warn:#f5c25a;--warn-bg:rgba(245,194,90,.13);
+  --idle:#9ba7c0;--idle-bg:rgba(155,167,192,.13);--pend:#aaa8ff;--pend-bg:rgba(170,168,255,.14);--off:#7f879a;--off-bg:rgba(127,135,154,.14);
+  --shadow:0 1px 0 rgba(255,255,255,.03) inset,0 12px 32px -20px rgba(0,0,0,.7);--shadow-lg:0 30px 70px -20px rgba(0,0,0,.75);
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0e1526;--rail:#0b1120;--panel:#141f36;--panel-2:#19253f;--line:#233150;--line-2:#32446b;
+  --ink:#e3e9f5;--ink-2:#a7b3cb;--ink-3:#7f8ba6;
+  --beacon-text:#f5c25a;--orbit:#8ea4ff;--orbit-soft:rgba(142,164,255,.12);
+  --ok:#47d39d;--ok-bg:rgba(71,211,157,.13);--bad:#ff7d99;--bad-bg:rgba(255,125,153,.13);--warn:#f5c25a;--warn-bg:rgba(245,194,90,.13);
+  --idle:#9ba7c0;--idle-bg:rgba(155,167,192,.13);--pend:#aaa8ff;--pend-bg:rgba(170,168,255,.14);--off:#7f879a;--off-bg:rgba(127,135,154,.14);
+  --shadow:0 1px 0 rgba(255,255,255,.03) inset,0 12px 32px -20px rgba(0,0,0,.7);--shadow-lg:0 30px 70px -20px rgba(0,0,0,.75);
+  color-scheme:dark;
+}
+
+/* Base shared by both pages */
+*,*::before,*::after{box-sizing:border-box}
+html{background:var(--bg);-webkit-text-size-adjust:100%}
+body{margin:0;min-height:100vh;font:15px/1.55 var(--font);color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+h1,h2,h3,p,dl,dd,ol,ul{margin:0}
+ol,ul{padding:0;list-style:none}
+a{color:var(--orbit);text-decoration-thickness:1px;text-underline-offset:3px}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--beacon);outline-offset:2px;border-radius:var(--r-sm)}
+[tabindex="-1"]:focus{outline:none}
+[hidden]{display:none!important}
+.icon{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.num{font-variant-numeric:tabular-nums}
+.muted{color:var(--ink-3)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.mark{width:30px;height:30px;flex:none;overflow:visible}
+.mark-orbit{fill:none;stroke:var(--orbit);stroke-width:2.2}
+.mark-core{fill:var(--beacon)}
+.mark-sat{fill:var(--orbit)}
+.icon-button{display:inline-grid;place-items:center;width:38px;height:38px;border:1px solid transparent;border-radius:var(--r-md);background:transparent;color:var(--ink-2);cursor:pointer;transition:background-color .15s,color .15s}
+.icon-button:hover{background:var(--orbit-soft);color:var(--ink)}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes orbit{to{transform:rotate(360deg)}}
+@keyframes fade-only{from{opacity:0}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after,::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
