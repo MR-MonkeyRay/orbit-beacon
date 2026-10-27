@@ -1,0 +1,25 @@
+services:
+  orbitbeacon:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        VERSION: ${ORBITBEACON_VERSION:-development}
+        COMMIT: ${ORBITBEACON_COMMIT:-unknown}
+        BUILD_DATE: ${ORBITBEACON_BUILD_DATE:-unknown}
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - orbitbeacon-data:/var/lib/orbitbeacon
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  orbitbeacon-data:
+    name: orbitbeacon-data

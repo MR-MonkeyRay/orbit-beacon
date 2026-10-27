@@ -1,0 +1,25 @@
+[Unit]
+Description=OrbitBeacon control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=orbitbeacon
+Group=orbitbeacon
+StateDirectory=orbitbeacon
+StateDirectoryMode=0700
+ExecStart=/usr/local/bin/orbitbeacon-server serve --config /etc/orbitbeacon/server.json
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/orbitbeacon
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target
