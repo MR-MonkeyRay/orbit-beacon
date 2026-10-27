@@ -16,7 +16,7 @@
 | systemd | 将 unit 的 `ExecStart` 指向实际临时构建二进制后 `systemd-analyze verify` | 通过；未修改宿主 `/usr/local/bin`。直接验证原始 unit 的唯一提示是目标安装路径尚不存在 |
 | 容器构建 | `docker build -f deploy/Dockerfile -t orbitbeacon:verify2 .` | 通过；Go 1.27.3 构建阶段与 distroless nonroot 运行阶段均完成 |
 | 容器运行 | `docker run -P orbitbeacon:verify2`，访问容器 `/healthz/ready`，检查容器用户 | 通过；返回 `{"status":"ready"}`，用户为 `nonroot:nonroot`。此前发现的数据目录 0700 问题已由独立提交 `1b1bbb7` 修复 |
-| O16关键场景 | 一致性 `VACUUM INTO` backup、staged restore、WAL/SHM/journal 清理、schema/index/integrity 拒绝、同名并发输出、失败 staging 清理 | 通过；见 `cmd/orbitbeacon-server/backup_restore_test.go` |
+| O16/F1-F5关键场景 | 一致性 `VACUUM INTO` backup、staged restore、journal-sidecar 安全失败关闭、schema/index/future-version 拒绝、空/非SQLite输入拒绝、独立数据锁同名并发输出、失败 staging 清理、损坏 live 无sidecar恢复 | 通过；见 `cmd/orbitbeacon-server/backup_restore_test.go` |
 
 主机直接运行 `CGO_ENABLED=1 go test -race ...` 因环境没有 `gcc` 未通过；同一固定 Go 1.27.3 Debian 容器内的竞态命令已通过，未把主机缺少编译器误报为代码失败。
 
