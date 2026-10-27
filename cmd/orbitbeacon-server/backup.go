@@ -435,7 +435,7 @@ func validateDatabase(ctx context.Context, db *sql.DB) error {
 			}
 		}
 	}
-	for version := 1; version <= 9; version++ {
+	for version := 1; version <= storage.CurrentSchemaVersion; version++ {
 		var count int
 		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations WHERE version = ?", version).Scan(&count); err != nil {
 			return fmt.Errorf("schema migration %d: %w", version, err)
@@ -445,7 +445,7 @@ func validateDatabase(ctx context.Context, db *sql.DB) error {
 		}
 	}
 	var unsupported int
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations WHERE version NOT BETWEEN 1 AND 9").Scan(&unsupported); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations WHERE version NOT BETWEEN 1 AND ?", storage.CurrentSchemaVersion).Scan(&unsupported); err != nil {
 		return fmt.Errorf("schema migration range: %w", err)
 	}
 	if unsupported != 0 {

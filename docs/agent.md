@@ -20,10 +20,10 @@ AGENT_UID="$(id -u)"
 AGENT_GID="$(id -g)"
 DEMO_DIR="$HOME/orbitbeacon-demo"
 sudo install -o root -g root -m 0755 \
-  bin/orbitbeacon-agent /usr/local/bin/orbitbeacon-agent
+  build/orbitbeacon-agent /usr/local/bin/orbitbeacon-agent
 sudo install -d -o root -g root -m 0755 /etc/orbitbeacon
 sudo install -d -o "$AGENT_UID" -g "$AGENT_GID" -m 0700 \
-  /var/lib/orbitbeacon-agent /var/lib/orbitbeacon-agent/run
+  /var/lib/orbitbeacon-agent
 sudo install -o root -g root -m 0644 \
   "$DEMO_DIR/server-cert.pem" /etc/orbitbeacon/ca.pem
 sudo tee /etc/orbitbeacon/install-policy.json > /dev/null <<EOF
@@ -31,12 +31,10 @@ sudo tee /etc/orbitbeacon/install-policy.json > /dev/null <<EOF
   "server_url": "https://localhost:8443",
   "ca_file": "/etc/orbitbeacon/ca.pem",
   "state_dir": "/var/lib/orbitbeacon-agent",
-  "runtime_dir": "/var/lib/orbitbeacon-agent/run",
   "expected_uid": $AGENT_UID,
   "expected_gid": $AGENT_GID,
   "expected_account": "",
   "install_mode": "foreground",
-  "trust_key_file": "/etc/orbitbeacon/update-public.pem"
 }
 EOF
 sudo chown root:root /etc/orbitbeacon/install-policy.json
@@ -50,11 +48,9 @@ sudo chmod 0644 /etc/orbitbeacon/install-policy.json
 | `server_url` | HTTPS 源站，只允许空路径或 `/`，不能带账号、查询参数或片段 |
 | `ca_file` | 空字符串表示使用系统信任；否则为绝对路径、root 所有的 PEM 文件，祖先目录也必须 root 所有且不可被组/其他用户写入 |
 | `state_dir` | Agent 用户所有的私有绝对目录，存放 `identity.json` 和 `desired.json` |
-| `runtime_dir` | 本地运行目录；示例使用已创建的私有子目录 |
 | `expected_uid` / `expected_gid` | 实际运行进程的非 root UID/GID，必须同时匹配 |
 | `expected_account` | 可为空；非空时还会核对系统账号名 |
 | `install_mode` | `foreground`、`native` 或 `docker`；这里只运行前台进程，不会安装服务 |
-| `trust_key_file` | 必填的本地路径；当前升级命令不可用，运行和接入都不会读取该文件，所以示例不需要创建它 |
 
 policy 文件和从 `/` 开始的每个祖先目录都必须归 root 所有，组/其他用户不可写（root 所有的 sticky 临时目录是例外），并且不能经过符号链接。不要把 policy 放进普通用户的仓库或家目录。CA 文件也必须归 root 所有，并放在 root 所有的安全目录中；`/tmp` 这类组/其他用户可写的位置不行。state 目录和凭证属于运行用户，不要用 `sudo orbitbeacon-agent ...` 运行它们。
 

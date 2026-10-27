@@ -32,11 +32,11 @@
 
 ```sh
 umask 077
-mkdir -p bin "$HOME/orbitbeacon-demo"
+mkdir -p build "$HOME/orbitbeacon-demo"
 chmod 700 "$HOME/orbitbeacon-demo"
-GOTOOLCHAIN=go1.27.3 go build -o bin/orbitbeacon-server ./cmd/orbitbeacon-server
-GOTOOLCHAIN=go1.27.3 go build -o bin/orbitbeacon-agent ./cmd/orbitbeacon-agent
-bin/orbitbeacon-server bootstrap --data-dir "$HOME/orbitbeacon-demo" --username admin
+GOTOOLCHAIN=go1.27.3 go build -o build/orbitbeacon-server ./cmd/orbitbeacon-server
+GOTOOLCHAIN=go1.27.3 go build -o build/orbitbeacon-agent ./cmd/orbitbeacon-agent
+build/orbitbeacon-server bootstrap --data-dir "$HOME/orbitbeacon-demo" --username admin
 ```
 
 按提示输入密码，长度 8–1024 个 UTF-8 字节，终端不回显。没有默认密码或 HTTP 初始化入口；已有管理员时不会覆盖。自动化场景可从标准输入传入一行密码，但不要放进命令参数。
@@ -60,14 +60,14 @@ cat > server.json <<EOF
   "max_nodes": 500
 }
 EOF
-bin/orbitbeacon-server serve --config server.json
+build/orbitbeacon-server serve --config server.json
 ```
 
 保持服务运行，在另一个终端检查（如果新开了终端，先重新设置 `DEMO_DIR`）：
 
 ```sh
 DEMO_DIR="$HOME/orbitbeacon-demo"
-bin/orbitbeacon-server health --url https://localhost:8443 \
+build/orbitbeacon-server health --url https://localhost:8443 \
   --ca-file "$DEMO_DIR/server-cert.pem"
 ```
 
@@ -100,7 +100,6 @@ Server 配置优先级：**CLI 参数 > `ORBITBEACON_` 环境变量 > JSON 文�
 | `public_url` | `https://localhost`；必须是实际 HTTPS 地址，用于浏览器 Origin 校验 |
 | `max_nodes` | `500`；包括待接入和禁用节点，是容量上限，不是性能承诺 |
 | `tls_cert_file` / `tls_key_file` | 默认空；直接提供 HTTPS 时必须成对设置 |
-| `trusted_proxy_cidrs` | 默认空；仅为预留配置，当前不读取转发头 |
 
 环境变量使用同名的 `ORBITBEACON_` 前缀，例如 `ORBITBEACON_MAX_NODES=100`；对应 CLI 参数为 `--max-nodes 100`。Agent 的服务器地址、CA、目录和运行身份由安装策略固定，不能用普通配置或环境变量覆盖，详见[接入指南](docs/agent.md)。
 

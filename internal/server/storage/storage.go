@@ -21,6 +21,9 @@ type Migration struct {
 	Apply   func(context.Context, *sql.Tx) error
 }
 
+// CurrentSchemaVersion is the highest schema version produced by this binary.
+const CurrentSchemaVersion = 9
+
 // Open opens a persistent local database. The driver applies connection-local
 // pragmas to every pooled connection, not just the migration connection.
 func Open(ctx context.Context, path string) (*sql.DB, error) {
@@ -65,7 +68,7 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
-	if err := Migrate(ctx, db, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}, {Version: 5, Apply: repairReportSelections}, {Version: 6, SQL: recoverableCSRFSchema}, {Version: 7, SQL: auditOrderingSchema}, {Version: 8, SQL: enrollmentOrderingSchema}, {Version: 9, Apply: normalizeTimestampColumns}}); err != nil {
+	if err := Migrate(ctx, db, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}, {Version: 5, Apply: repairReportSelections}, {Version: 6, SQL: recoverableCSRFSchema}, {Version: 7, SQL: auditOrderingSchema}, {Version: 8, SQL: enrollmentOrderingSchema}, {Version: CurrentSchemaVersion, Apply: normalizeTimestampColumns}}); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

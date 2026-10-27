@@ -159,9 +159,6 @@ type SourceMetadata struct {
 	MeasurementWindowMS *int64 `json:"measurement_window_ms,omitempty"`
 }
 
-// Source is the short name used by protocol consumers.
-type Source = SourceMetadata
-
 func (s SourceMetadata) Validate() error {
 	if s.SampleID == "" || len(s.SampleID) > 255 || s.AgeMS < 0 || s.SourceIntervalMS <= 0 {
 		return errors.New("invalid metric source")

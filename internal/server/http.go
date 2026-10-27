@@ -20,6 +20,7 @@ import (
 
 	"orbitbeacon/internal/config"
 	"orbitbeacon/internal/identity"
+	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/enrollment"
@@ -328,7 +329,7 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 	default:
 		id := parts[1]
 		if len(parts) == 3 {
-			var cfg nodes.DesiredConfig
+			var cfg v1.DesiredConfig
 			if r.Method == http.MethodGet {
 				cfg, err = h.nodes.GetConfig(r.Context(), id)
 			} else {

@@ -1,12 +1,9 @@
 services:
   orbitbeacon:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-      args:
-        VERSION: ${ORBITBEACON_VERSION:-development}
-        COMMIT: ${ORBITBEACON_COMMIT:-unknown}
-        BUILD_DATE: ${ORBITBEACON_BUILD_DATE:-unknown}
+    image: ghcr.io/mr-monkeyray/orbit-beacon:${ORBITBEACON_IMAGE_TAG:-latest}
+    environment:
+      ORBITBEACON_LISTEN_ADDR: "${ORBITBEACON_LISTEN_ADDR:-0.0.0.0:8080}"
+      ORBITBEACON_PUBLIC_URL: "${ORBITBEACON_PUBLIC_URL:?set ORBITBEACON_PUBLIC_URL}"
     ports:
       - "127.0.0.1:8080:8080"
     volumes:

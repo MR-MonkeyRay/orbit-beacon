@@ -70,17 +70,6 @@ type BatchResult struct {
 	ErrorCode string `json:"error_code,omitempty"`
 }
 
-type DesiredConfig struct {
-	Revision              int64    `json:"revision"`
-	ReportIntervalSeconds int      `json:"report_interval_seconds"`
-	DiskIntervalSeconds   int      `json:"disk_interval_seconds"`
-	Interfaces            []string `json:"interfaces"`
-	DiskPaths             []string `json:"disk_paths"`
-	ProbeTargets          []string `json:"probe_targets"`
-	BillingDay            int      `json:"billing_day"`
-	QuotaBytes            string   `json:"quota_bytes"`
-}
-
 type ConfigPatch struct {
 	ReportIntervalSeconds *int      `json:"report_interval_seconds,omitempty"`
 	DiskIntervalSeconds   *int      `json:"disk_interval_seconds,omitempty"`
@@ -412,33 +401,33 @@ func (s *Service) Batch(ctx context.Context, req BatchRequest) ([]BatchResult, e
 
 func readConfig(ctx context.Context, query interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, id string) (DesiredConfig, error) {
-	var cfg DesiredConfig
+}, id string) (v1.DesiredConfig, error) {
+	var cfg v1.DesiredConfig
 	var interfaces, disks, probes string
 	err := query.QueryRowContext(ctx, `SELECT desired_revision, report_interval_seconds, disk_interval_seconds, interfaces, disk_paths, probe_targets, billing_day, quota_bytes FROM nodes WHERE id = ?`, id).Scan(&cfg.Revision, &cfg.ReportIntervalSeconds, &cfg.DiskIntervalSeconds, &interfaces, &disks, &probes, &cfg.BillingDay, &cfg.QuotaBytes)
 	if errors.Is(err, sql.ErrNoRows) {
-		return DesiredConfig{}, ErrNotFound
+		return v1.DesiredConfig{}, ErrNotFound
 	}
 	if err != nil {
-		return DesiredConfig{}, err
+		return v1.DesiredConfig{}, err
 	}
 	if err := json.Unmarshal([]byte(interfaces), &cfg.Interfaces); err != nil {
-		return DesiredConfig{}, err
+		return v1.DesiredConfig{}, err
 	}
 	if err := json.Unmarshal([]byte(disks), &cfg.DiskPaths); err != nil {
-		return DesiredConfig{}, err
+		return v1.DesiredConfig{}, err
 	}
 	if err := json.Unmarshal([]byte(probes), &cfg.ProbeTargets); err != nil {
-		return DesiredConfig{}, err
+		return v1.DesiredConfig{}, err
 	}
 	return cfg, nil
 }
 
-func (s *Service) GetConfig(ctx context.Context, id string) (DesiredConfig, error) {
+func (s *Service) GetConfig(ctx context.Context, id string) (v1.DesiredConfig, error) {
 	return readConfig(ctx, s.db, id)
 }
 
-func (s *Service) PatchConfig(ctx context.Context, id string, patch ConfigPatch) (DesiredConfig, error) {
+func (s *Service) PatchConfig(ctx context.Context, id string, patch ConfigPatch) (v1.DesiredConfig, error) {
 	fields := make(map[string]string)
 	for field, message := range patch.invalidFields {
 		fields[field] = message
@@ -473,16 +462,16 @@ func (s *Service) PatchConfig(ctx context.Context, id string, patch ConfigPatch)
 		}
 	}
 	if len(fields) != 0 {
-		return DesiredConfig{}, &ValidationError{Fields: fields}
+		return v1.DesiredConfig{}, &ValidationError{Fields: fields}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return DesiredConfig{}, err
+		return v1.DesiredConfig{}, err
 	}
 	defer tx.Rollback()
 	cfg, err := readConfig(ctx, tx, id)
 	if err != nil {
-		return DesiredConfig{}, err
+		return v1.DesiredConfig{}, err
 	}
 	changed := false
 	if patch.ReportIntervalSeconds != nil {
@@ -517,28 +506,28 @@ func (s *Service) PatchConfig(ctx context.Context, id string, patch ConfigPatch)
 	}
 	// A partial PATCH must also fit together with the persisted other selection.
 	if err := (v1.DesiredConfig{Interfaces: cfg.Interfaces, DiskPaths: cfg.DiskPaths}).ValidateSelection(); err != nil {
-		return DesiredConfig{}, &ValidationError{Fields: err.(*v1.ValidationError).Fields}
+		return v1.DesiredConfig{}, &ValidationError{Fields: err.(*v1.ValidationError).Fields}
 	}
 	if !changed {
 		return cfg, nil
 	}
 	interfaces, err := json.Marshal(cfg.Interfaces)
 	if err != nil {
-		return DesiredConfig{}, err
+		return v1.DesiredConfig{}, err
 	}
 	disks, err := json.Marshal(cfg.DiskPaths)
 	if err != nil {
-		return DesiredConfig{}, err
+		return v1.DesiredConfig{}, err
 	}
 	cfg.Revision++
 	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET desired_revision = ?, report_interval_seconds = ?, disk_interval_seconds = ?, interfaces = ?, disk_paths = ?, billing_day = ?, quota_bytes = ? WHERE id = ?`, cfg.Revision, cfg.ReportIntervalSeconds, cfg.DiskIntervalSeconds, string(interfaces), string(disks), cfg.BillingDay, cfg.QuotaBytes, id); err != nil {
-		return DesiredConfig{}, err
+		return v1.DesiredConfig{}, err
 	}
 	if err := audit.Insert(ctx, tx, "node.config.patch", id, s.now()); err != nil {
-		return DesiredConfig{}, err
+		return v1.DesiredConfig{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return DesiredConfig{}, err
+		return v1.DesiredConfig{}, err
 	}
 	return cfg, nil
 }

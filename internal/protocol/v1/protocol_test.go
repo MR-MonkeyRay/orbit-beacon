@@ -99,7 +99,7 @@ func TestMetricStatusesAndMonotonicFreshness(t *testing.T) {
 	}{
 		{10000, 45000, true}, {10000, 45001, false}, {60000, 180000, true}, {60000, 180001, false},
 	} {
-		source := v1.Source{SampleID: "one-real-sample", SourceIntervalMS: tt.interval, AgeMS: tt.age}
+		source := v1.SourceMetadata{SampleID: "one-real-sample", SourceIntervalMS: tt.interval, AgeMS: tt.age}
 		if got := source.Fresh(); got != tt.fresh {
 			t.Errorf("interval=%d age=%d fresh=%v, want %v", tt.interval, tt.age, got, tt.fresh)
 		}

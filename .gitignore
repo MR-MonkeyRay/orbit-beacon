@@ -1,6 +1,7 @@
 /.omx/
 /dist/
-/data/
+/build/*
+!/build/server.Dockerfile
 /bin/
 /coverage.out
 *.db

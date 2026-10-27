@@ -20,13 +20,12 @@ type LoadOptions struct {
 }
 
 type Server struct {
-	ListenAddr        string   `json:"listen_addr"`
-	DataDir           string   `json:"data_dir"`
-	PublicURL         string   `json:"public_url"`
-	TLSCertFile       string   `json:"tls_cert_file"`
-	TLSKeyFile        string   `json:"tls_key_file"`
-	TrustedProxyCIDRs []string `json:"trusted_proxy_cidrs"`
-	MaxNodes          int      `json:"max_nodes"`
+	ListenAddr  string `json:"listen_addr"`
+	DataDir     string `json:"data_dir"`
+	PublicURL   string `json:"public_url"`
+	TLSCertFile string `json:"tls_cert_file"`
+	TLSKeyFile  string `json:"tls_key_file"`
+	MaxNodes    int    `json:"max_nodes"`
 }
 
 // InstallPolicy is administrator-owned configuration. Every source is checked
@@ -35,12 +34,10 @@ type InstallPolicy struct {
 	ServerURL       string `json:"server_url"`
 	CAFile          string `json:"ca_file"`
 	StateDir        string `json:"state_dir"`
-	RuntimeDir      string `json:"runtime_dir"`
 	ExpectedUID     int    `json:"expected_uid"`
 	ExpectedGID     int    `json:"expected_gid"`
 	ExpectedAccount string `json:"expected_account"`
 	InstallMode     string `json:"install_mode"`
-	TrustKeyFile    string `json:"trust_key_file"`
 }
 
 type Agent struct{ InstallPolicy }
@@ -106,11 +103,6 @@ func encodeValue(key, value string) (json.RawMessage, error) {
 			return json.Marshal(value)
 		}
 		return json.Marshal(n)
-	case "trusted_proxy_cidrs":
-		if value == "" {
-			return json.Marshal([]string{})
-		}
-		return json.Marshal(strings.Split(value, ","))
 	default:
 		return json.Marshal(value)
 	}
@@ -118,7 +110,7 @@ func encodeValue(key, value string) (json.RawMessage, error) {
 
 func LoadServer(opts LoadOptions) (Server, error) {
 	cfg := Server{ListenAddr: "127.0.0.1:8080", DataDir: "./data", PublicURL: "https://localhost", MaxNodes: 500}
-	layers, err := sources(opts, []string{"listen_addr", "data_dir", "public_url", "tls_cert_file", "tls_key_file", "trusted_proxy_cidrs", "max_nodes"})
+	layers, err := sources(opts, []string{"listen_addr", "data_dir", "public_url", "tls_cert_file", "tls_key_file", "max_nodes"})
 	if err != nil {
 		return Server{}, err
 	}
@@ -244,11 +236,6 @@ func (cfg Server) Validate() error {
 	if (cfg.TLSCertFile == "") != (cfg.TLSKeyFile == "") {
 		return errors.New("tls_cert_file and tls_key_file must be supplied together")
 	}
-	for _, cidr := range cfg.TrustedProxyCIDRs {
-		if _, _, err := net.ParseCIDR(cidr); err != nil {
-			return fmt.Errorf("trusted_proxy_cidrs: %w", err)
-		}
-	}
 	return nil
 }
 
@@ -256,7 +243,7 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	if policy == nil {
 		return Agent{}, errors.New("administrator-owned install policy is required")
 	}
-	keys := []string{"server_url", "ca_file", "state_dir", "runtime_dir", "expected_uid", "expected_gid", "expected_account", "install_mode", "trust_key_file"}
+	keys := []string{"server_url", "ca_file", "state_dir", "expected_uid", "expected_gid", "expected_account", "install_mode"}
 	layers, err := sources(opts, keys)
 	if err != nil {
 		return Agent{}, err
@@ -286,10 +273,8 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	if err := ValidateHTTPS(policy.ServerURL); err != nil {
 		return Agent{}, fmt.Errorf("server_url: %w", err)
 	}
-	for _, path := range []string{policy.StateDir, policy.RuntimeDir, policy.TrustKeyFile} {
-		if err := ValidatePath(path); err != nil {
-			return Agent{}, err
-		}
+	if err := ValidatePath(policy.StateDir); err != nil {
+		return Agent{}, err
 	}
 	if !filepath.IsAbs(policy.StateDir) {
 		return Agent{}, errors.New("state_dir must be an absolute filesystem path")

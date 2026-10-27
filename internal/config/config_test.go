@@ -131,17 +131,42 @@ func TestServerConfigurationAcceptsHTTPSAndExplicitCapacityIncrease(t *testing.T
 		t.Errorf("valid configuration changed: %+v", got)
 	}
 }
+func TestRemovedConfigurationKeysAreRejected(t *testing.T) {
+	if _, err := config.LoadServer(config.LoadOptions{
+		File:      configFile(t, map[string]any{"trusted_proxy_cidrs": []string{"127.0.0.0/8"}}),
+		LookupEnv: lookup(nil),
+	}); err == nil {
+		t.Fatal("accepted removed trusted_proxy_cidrs configuration")
+	}
+	policy := config.InstallPolicy{
+		ServerURL:   "https://beacon.example.test",
+		StateDir:    t.TempDir(),
+		ExpectedUID: 1000,
+		ExpectedGID: 1000,
+		InstallMode: "native",
+	}
+	for _, key := range []string{"runtime_dir", "trust_key_file"} {
+		t.Run(key, func(t *testing.T) {
+			if _, err := config.LoadAgent(config.LoadOptions{
+				File:      configFile(t, map[string]any{key: "/tmp/removed"}),
+				LookupEnv: lookup(nil),
+			}, &policy); err == nil {
+				t.Fatalf("accepted removed %s configuration", key)
+			}
+		})
+	}
+}
 
 func TestAgentInstallPolicyCannotBeOverridden(t *testing.T) {
 	base := t.TempDir()
 	policy := config.InstallPolicy{
-		ServerURL:   "https://beacon.example.test",
-		CAFile:      filepath.Join(base, "ca.pem"),
-		StateDir:    filepath.Join(base, "state"),
-		RuntimeDir:  filepath.Join(base, "runtime"),
-		ExpectedUID: 1000, ExpectedGID: 1000,
+		ServerURL:       "https://beacon.example.test",
+		CAFile:          filepath.Join(base, "ca.pem"),
+		StateDir:        filepath.Join(base, "state"),
+		ExpectedUID:     1000,
+		ExpectedGID:     1000,
 		ExpectedAccount: "orbitbeacon",
-		InstallMode:     "native", TrustKeyFile: filepath.Join(base, "release.pub"),
+		InstallMode:     "native",
 	}
 	for _, tt := range []struct {
 		key   string
@@ -152,12 +177,10 @@ func TestAgentInstallPolicyCannotBeOverridden(t *testing.T) {
 		{"server_url", "ORBITBEACON_SERVER_URL", "https://attacker.example.test", "https://attacker.example.test"},
 		{"ca_file", "ORBITBEACON_CA_FILE", "/other/ca.pem", "/other/ca.pem"},
 		{"state_dir", "ORBITBEACON_STATE_DIR", "/other/state", "/other/state"},
-		{"runtime_dir", "ORBITBEACON_RUNTIME_DIR", "/other/runtime", "/other/runtime"},
 		{"expected_uid", "ORBITBEACON_EXPECTED_UID", 1001, "1001"},
 		{"expected_gid", "ORBITBEACON_EXPECTED_GID", 1001, "1001"},
 		{"expected_account", "ORBITBEACON_EXPECTED_ACCOUNT", "Administrator", "Administrator"},
 		{"install_mode", "ORBITBEACON_INSTALL_MODE", "docker", "docker"},
-		{"trust_key_file", "ORBITBEACON_TRUST_KEY_FILE", "/other/release.pub", "/other/release.pub"},
 	} {
 		t.Run(tt.key, func(t *testing.T) {
 			for _, source := range []string{"JSON", "environment", "flag"} {
@@ -190,7 +213,7 @@ func TestAgentInstallPolicyCannotBeOverridden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("matching protected values must be accepted: %v", err)
 	}
-	if got.ServerURL != policy.ServerURL || got.ExpectedUID != 1000 || got.TrustKeyFile != policy.TrustKeyFile {
+	if got.ServerURL != policy.ServerURL || got.ExpectedUID != 1000 {
 		t.Errorf("policy was not retained: %+v", got)
 	}
 }
@@ -210,7 +233,6 @@ func TestServerValidatesOnlyResolvedOrdinaryConfiguration(t *testing.T) {
 		{"public URL", "public_url", "ORBITBEACON_PUBLIC_URL", "http://invalid.test", "http://invalid.test", "https://beacon.example.test", "https://beacon.example.test"},
 		{"data directory", "data_dir", "ORBITBEACON_DATA_DIR", "file:unsafe.db", "file:unsafe.db", "/var/lib/orbitbeacon", "/var/lib/orbitbeacon"},
 		{"listen address", "listen_addr", "ORBITBEACON_LISTEN_ADDR", "not-an-address", "not-an-address", "127.0.0.1:8181", "127.0.0.1:8181"},
-		{"proxy CIDRs", "trusted_proxy_cidrs", "ORBITBEACON_TRUSTED_PROXY_CIDRS", []string{"invalid"}, "invalid", []string{"127.0.0.0/8"}, "127.0.0.0/8"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, source := range []string{"environment overrides file", "flag overrides file", "flag overrides environment"} {
@@ -303,7 +325,7 @@ func TestAgentInstallPolicyRejectsNonRootServerURL(t *testing.T) {
 		"https://user@beacon.example.test/",
 	} {
 		t.Run(serverURL, func(t *testing.T) {
-			policy := config.InstallPolicy{ServerURL: serverURL, StateDir: filepath.Join(base, "state"), RuntimeDir: filepath.Join(base, "run"), TrustKeyFile: filepath.Join(base, "trust.pub"), ExpectedUID: 1000, ExpectedGID: 1000, InstallMode: "native"}
+			policy := config.InstallPolicy{ServerURL: serverURL, StateDir: filepath.Join(base, "state"), ExpectedUID: 1000, ExpectedGID: 1000, InstallMode: "native"}
 			if _, err := config.LoadAgent(config.LoadOptions{LookupEnv: lookup(nil)}, &policy); err == nil {
 				t.Fatalf("agent accepted non-root or unsafe server_url %q", serverURL)
 			}
@@ -322,7 +344,7 @@ func TestAgentStateDirectoryHasOneAbsoluteLocationAcrossWorkingDirectories(t *te
 			}
 			t.Chdir(cwd)
 			for _, stateDir := range []string{"state", "./state", "../state", absolute} {
-				policy := config.InstallPolicy{ServerURL: "https://beacon.example.test", StateDir: stateDir, RuntimeDir: filepath.Join(base, "runtime"), TrustKeyFile: filepath.Join(base, "trust.pub"), ExpectedUID: 1000, ExpectedGID: 1000, InstallMode: "native"}
+				policy := config.InstallPolicy{ServerURL: "https://beacon.example.test", StateDir: stateDir, ExpectedUID: 1000, ExpectedGID: 1000, InstallMode: "native"}
 				resolved, err := config.LoadAgent(config.LoadOptions{LookupEnv: lookup(nil)}, &policy)
 				if stateDir != absolute {
 					if err == nil {

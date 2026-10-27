@@ -65,8 +65,6 @@ func NewService(db *sql.DB, opts Options) *Service {
 	return &Service{db: db, maxNodes: opts.MaxNodes, now: opts.Now, random: opts.Random, invalidPeers: make(map[string]invalidBucket)}
 }
 
-func (s *Service) DB() *sql.DB { return s.db }
-
 // Ticket deliberately contains neither the enrollment secret nor its hash.
 type Ticket struct {
 	ID        string     `json:"id"`
@@ -82,14 +80,6 @@ type Ticket struct {
 type CreatedTicket struct {
 	Ticket
 	Token string `json:"token"`
-}
-
-type SingleRequest struct {
-	NodeID string `json:"node_id"`
-}
-
-type BatchRequest struct {
-	GroupID string `json:"group_id"`
 }
 
 func (s *Service) CreateSingle(ctx context.Context, nodeID string) (CreatedTicket, error) {

@@ -51,7 +51,9 @@ func run(args []string) error {
 	var healthURL, healthCA string
 	var asJSON bool
 	if args[0] != "version" && args[0] != "health" && args[0] != "verify-bundle" {
-		fs.StringVar(&configPath, "config", "", "JSON configuration file")
+		if args[0] != "restore" {
+			fs.StringVar(&configPath, "config", "", "JSON configuration file")
+		}
 		fs.StringVar(&dataDir, "data-dir", "", "persistent local data directory")
 	}
 	switch args[0] {
@@ -60,7 +62,6 @@ func run(args []string) error {
 		fs.String("public-url", "", "public HTTPS URL; required for browser origin validation")
 		fs.String("tls-cert-file", "", "optional TLS certificate PEM")
 		fs.String("tls-key-file", "", "optional TLS private key PEM")
-		fs.String("trusted-proxy-cidrs", "", "comma-separated trusted proxy CIDRs (forwarded headers are not consumed by this slice)")
 		fs.Int("max-nodes", 500, "positive node capacity, including pending and disabled nodes")
 	case "bootstrap":
 		fs.StringVar(&username, "username", "", "first administrator username; prompted if omitted")

@@ -34,7 +34,7 @@ func TestCLIRejectsUnsafeInstallPolicyBeforeRuntimeSetup(t *testing.T) {
 				t.Fatal(err)
 			}
 			path := filepath.Join(parent, "install.json")
-			data, err := json.Marshal(config.InstallPolicy{ServerURL: "https://beacon.example.test", StateDir: filepath.Join(base, "state"), RuntimeDir: filepath.Join(base, "run"), TrustKeyFile: filepath.Join(base, "trust.pub"), ExpectedUID: 1000, ExpectedGID: 1000, InstallMode: "native"})
+			data, err := json.Marshal(config.InstallPolicy{ServerURL: "https://beacon.example.test", StateDir: filepath.Join(base, "state"), ExpectedUID: 1000, ExpectedGID: 1000, InstallMode: "native"})
 			if err != nil {
 				t.Fatal(err)
 			}

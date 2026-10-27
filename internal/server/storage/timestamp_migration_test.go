@@ -22,7 +22,7 @@ INSERT INTO enrollment_tokens(id, token_hash, node_id, expires_at, revoked_at) V
 INSERT INTO enrollment_claims(enrollment_id, installation_id, node_id, token_hash, claimed_at) VALUES ('t','installation','n',x'02','2026-10-26T14:05:00+02:00');
 INSERT INTO update_jobs(id, release_seq, created_at) VALUES ('j',1,'2026-10-26T14:06:00+02:00');
 INSERT INTO audit_events(id, action, created_at) VALUES ('e','legacy','2026-10-26T14:07:00+02:00');
-DELETE FROM schema_migrations WHERE version=9;`)
+DELETE FROM schema_migrations WHERE version=?`, storage.CurrentSchemaVersion)
 	if err != nil {
 		_ = db.Close()
 		t.Fatal(err)
