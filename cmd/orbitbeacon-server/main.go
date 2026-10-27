@@ -111,13 +111,23 @@ func run(args []string) error {
 		if output == "" {
 			return errors.New("backup requires --output")
 		}
-		return errors.New("backup is not yet available; do not copy a live SQLite database file")
+		toolFlags := make(map[string]string)
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "data-dir" {
+				toolFlags["data_dir"] = f.Value.String()
+			}
+		})
+		cfg, err := config.LoadServer(config.LoadOptions{File: configPath, Flags: toolFlags})
+		if err != nil {
+			return err
+		}
+		return backupDatabase(cfg.DataDir, output)
 	}
 	if args[0] == "restore" {
 		if dataDir == "" || input == "" {
 			return errors.New("restore requires --data-dir and --input")
 		}
-		return errors.New("restore is not yet available; no files have been changed")
+		return restoreDatabase(dataDir, input)
 	}
 	flags := make(map[string]string)
 	fs.Visit(func(f *flag.Flag) {

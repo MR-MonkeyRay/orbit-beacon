@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Add locked SQLite `backup` snapshots via `VACUUM INTO` and staged, schema-validated `restore` with checkpointing, atomic installation and a retained pre-restore database.
 
 - Confirm the complete absolute ancestor chain on every identity/configuration initialization, including existing directories; preserve relative-path stability and directory-symlink ancestors while preventing retries from bypassing an earlier unsynced parent failure.
 - Compute every metric source age at one final monotonic snapshot boundary, including cached disk/network observations, and apply freshness/stale conversion at that same boundary after slow collection completes.
