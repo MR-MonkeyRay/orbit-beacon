@@ -35,4 +35,4 @@ docker compose -f deploy/compose.yaml build \
 docker compose -f deploy/compose.yaml up -d
 ```
 
-The image runs as distroless `nonroot`, exposes only port 8080, keeps the root filesystem read-only, drops Linux capabilities, and persists only `/var/lib/orbitbeacon`. The named volume must remain owned and writable by UID/GID 65532 with mode 0700; do not replace it with a host bind mount unless those ownership and ancestry constraints are preserved.
+The image runs as distroless `nonroot`, exposes only port 8080, keeps the root filesystem read-only, drops Linux capabilities, and persists only `/var/lib/orbitbeacon`. The image seeds that directory as UID/GID 65532 with mode 0700; the named volume must remain owned and writable by UID/GID 65532 with mode 0700. Do not replace it with a host bind mount unless those ownership and ancestry constraints are preserved.
