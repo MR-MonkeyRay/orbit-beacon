@@ -5,7 +5,7 @@
 
 原始方案基于空目录假设；现已在实际仓库核对并继续开发。实施现状、已验证与未验证范围见下表；后文未勾选能力仍是目标契约，不能据此认定已经实现。
 
-## 实施进度（2026-10-26 核对）
+## 实施进度（2026-10-27 最终验收）
 
 |步骤|状态|证据与缺口|
 |---|---|---|
@@ -21,6 +21,8 @@
 本轮验证通过：`go test ./...`、`go vet ./...`；现有Go1.27容器提供gcc，执行 `CGO_ENABLED=1 go test -race ./internal/server/... ./internal/agent/...` 全通过（源码与module cache只读挂载）。Go真实二进制+本地CA HTTPS完成bootstrap→API建节点/令牌→Agent enroll/doctor/run→配置revision确认→无票据恢复→运行中轮换及旧凭据401；再启动新generation，旧Agent退出1；root运行doctor被拒绝。Agent在可销毁容器中显式UID/GID=1001:1001，policy/CA仅容器内管理员持有，不等同默认1000:1000或Docker宿主范围验收。现有Docker Chromium实际登录→创建pending→详情改配置→深链接刷新，1440浅色/390深色截图；移动端无整页横向溢出、无JS控制台错误，键盘Tab和退出可用。未安装Playwright。临时Server/Agent/Chromium及测试容器已停止，现有服务未改动。
 
 已确认偏差：项目许可证保留仓库现有 GPL-3.0；直接 Go 依赖及 modernc 传递通知基线见 `THIRD_PARTY_LICENSES.md`，不把参考项目许可证延伸到本项目；SQLite driver 使用可用的 v1.61.0，不写成 v1.61.1。完整平台运行、500节点资源预算、升级/断电恢复、公开隐私、完整归档备份及跨空目录 Agent 接回仍未验证；O16 仅证明本地一致性快照与隔离恢复路径。
+
+最终回归与关键场景证据见 `ACCEPTANCE.md`：全量测试、vet、模块校验、固定 Go 1.27.3 容器竞态、双端构建、真实 Server readiness、systemd 实路径校验、Compose 配置和 distroless nonroot 容器健康运行均通过；主机直接 race 因缺少 gcc 在编译阶段失败，已在固定 Go 容器内完成。跨平台实机、资源预算、升级断电、完整归档备份、公开隐私和完整依赖法律扫描仍保持未验收状态。
 
 ## 项目命名与调研结论
 
