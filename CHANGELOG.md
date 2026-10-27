@@ -8,6 +8,7 @@
 - Tighten restore schema validation to require the canonical table-owned, unique partial identity index predicate instead of accepting only index names and columns.
 - Reject empty, truncated, and non-SQLite restore inputs before schema migration can create a fresh database from invalid bytes.
 - Reject restore snapshots carrying schema migration versions outside the supported v1–v9 range.
+- Strengthen concurrent backup regression coverage with independent data-directory locks so same-output races exercise no-overwrite cleanup.
 
 - Confirm the complete absolute ancestor chain on every identity/configuration initialization, including existing directories; preserve relative-path stability and directory-symlink ancestors while preventing retries from bypassing an earlier unsynced parent failure.
 - Compute every metric source age at one final monotonic snapshot boundary, including cached disk/network observations, and apply freshness/stale conversion at that same boundary after slow collection completes.

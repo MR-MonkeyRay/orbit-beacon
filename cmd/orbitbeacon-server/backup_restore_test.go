@@ -105,31 +105,36 @@ func TestBackupAndRestoreUseConsistentSQLiteSnapshot(t *testing.T) {
 }
 
 func TestConcurrentBackupsDoNotDeleteWinner(t *testing.T) {
-	dataDir := t.TempDir()
-	if err := os.Chmod(dataDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	db, err := storage.Open(context.Background(), filepath.Join(dataDir, "orbitbeacon.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
+	dataDirs := []string{t.TempDir(), t.TempDir()}
+	for _, dataDir := range dataDirs {
+		if err := os.Chmod(dataDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		db, err := storage.Open(context.Background(), filepath.Join(dataDir, "orbitbeacon.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	outputDir := t.TempDir()
 	if err := os.Chmod(outputDir, 0700); err != nil {
 		t.Fatal(err)
 	}
 	output := filepath.Join(outputDir, "same.backup")
-	errs := make(chan error, 2)
+	start := make(chan struct{})
+	errs := make(chan error, len(dataDirs))
 	var group sync.WaitGroup
-	for range 2 {
+	for _, dataDir := range dataDirs {
 		group.Add(1)
-		go func() {
+		go func(dataDir string) {
 			defer group.Done()
+			<-start
 			errs <- backupDatabase(dataDir, output)
-		}()
+		}(dataDir)
 	}
+	close(start)
 	group.Wait()
 	close(errs)
 	successes := 0
