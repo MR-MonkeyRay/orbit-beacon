@@ -1,239 +1,129 @@
 # OrbitBeacon
 
-OrbitBeacon is a self-hosted node monitoring project. Steps 1–2 provide the SQLite-backed control plane, short-lived enrollment, real host collection, authenticated reporting and centrally versioned agent configuration. Alerts, history/traffic aggregation, backup/restore and upgrades remain unavailable; unsupported commands fail explicitly.
+自托管的多节点监控项目：Server 提供管理 API、内嵌 Web 控制台和 SQLite 存储，Agent 采集主机指标并通过 HTTPS 上报。当前适合开发体验和接入验证，**还不是具备实时看板、历史图表与告警的完整监控平台**。
 
-## Build and run
+## 当前能做什么
 
-Requires Go **1.27.3**. Dependencies are pinned in `go.mod` and `go.sum`.
+| 能力 | 当前状态 |
+| --- | --- |
+| 管理控制台 | 英文界面；登录/退出、节点清单与元数据、期望配置、用户/分组管理、修改自己的密码、审计记录 |
+| Agent 接入 | 管理 API 创建短期接入凭证，Linux CLI 完成注册；支持单节点和分组批量接入 |
+| 指标采集与上报 | 真实 CPU、负载、内存、Swap、运行时间、磁盘和网络数据；支持鉴权上报、重试和期望配置应用 |
+| 备份与恢复 | Server CLI 已实现 SQLite 一致性备份和恢复；操作前必须停服，没有 Web 入口 |
+| 部署材料 | Server 的 Dockerfile、Compose、systemd unit；需自行配置 HTTPS |
+| 暂未提供 | Web 接入向导、指标展示、在线/离线判定、历史查询与流量汇总、探测任务、告警通知、公开状态页、Agent 自动/远程升级 |
+
+注意：
+
+- 注册后的节点当前显示 `unknown`，不是在线/离线结论；管理 API 的节点响应也不包含最新指标或 `last_seen`。
+- 保存期望配置不等于 Agent 已应用。Agent 在上报交互中接收、校验并持久化配置；控制台暂不展示应用确认状态。
+- 指标缺失以 `null` 和状态原因表示，不用零值伪装正常。断网时继续采集最新快照，但没有离线历史队列。Server 最新报告只保存在内存中，重启丢失，当前没有 HTTP 查询入口。
+- 首次接入按 Linux 路径操作。非 Linux 的安全 token 文件接入未实现，Windows 运行身份校验也未实现；不要把跨平台采集代码理解为完整跨平台部署支持。
+- CLI 备份产物只是单个 SQLite 数据库文件，不包含 `secrets.key`、配置或 TLS 文件，需另行保管。恢复不是自动修复工具，遇到无法安全处理的 SQLite 辅助文件会拒绝继续。
+
+## 快速开始：本机 HTTPS 体验
+
+需要 **Go 1.27.3**、Linux 和 OpenSSL。以下在仓库根目录、以普通用户执行，适用于新建的本机体验环境；不需要 Node.js 或前端构建。
+
+### 1. 编译并创建首个管理员
 
 ```sh
+umask 077
+mkdir -p bin data
+chmod 700 data
 GOTOOLCHAIN=go1.27.3 go build -o bin/orbitbeacon-server ./cmd/orbitbeacon-server
 GOTOOLCHAIN=go1.27.3 go build -o bin/orbitbeacon-agent ./cmd/orbitbeacon-agent
-mkdir -m 700 data
 bin/orbitbeacon-server bootstrap --data-dir ./data --username admin
 ```
 
-Release builds inject `version`, `commit` and `build_date` into both binaries with linker flags:
+按提示输入密码（8–1024 个 UTF-8 字节，终端不回显）。没有默认密码或 HTTP 初始化入口；已有管理员时，`bootstrap` 不会覆盖它。自动化可从标准输入传入一行密码，不要放进命令参数。
+
+### 2. 配置并启动 HTTPS
+
+生成仅用于本机体验的短期自签名证书：
 
 ```sh
-LDFLAGS="-X orbitbeacon/internal/buildinfo.Version=${VERSION} -X orbitbeacon/internal/buildinfo.Commit=${COMMIT} -X orbitbeacon/internal/buildinfo.BuildDate=${BUILD_DATE}"
-GOTOOLCHAIN=go1.27.3 go build -trimpath -ldflags "$LDFLAGS" -o bin/orbitbeacon-server ./cmd/orbitbeacon-server
-GOTOOLCHAIN=go1.27.3 go build -trimpath -ldflags "$LDFLAGS" -o bin/orbitbeacon-agent ./cmd/orbitbeacon-agent
-```
-
-`orbitbeacon-server version --json` and `orbitbeacon-agent version --json` expose the same injected values plus the Go toolchain and target OS/architecture. Uninjected development binaries report explicit `development`/`unknown` values instead of pretending to be a release.
-
-Bootstrap prompts for a password (hidden on a terminal). For automation, pass the password as one line on standard input, never a command-line flag. If `--username` is omitted, the first input line is the username. Passwords must be 8–1024 bytes. Bootstrap refuses to replace any existing administrator; there is no HTTP bootstrap endpoint.
-
-Create a local `server.json`:
-
-```json
+openssl req -x509 -newkey rsa:3072 -nodes -days 7 \
+  -keyout data/server-key.pem -out data/server-cert.pem \
+  -subj '/CN=localhost' \
+  -addext 'subjectAltName=DNS:localhost' \
+  -addext 'basicConstraints=critical,CA:TRUE'
+cat > server.json <<'EOF'
 {
-  "listen_addr": "127.0.0.1:8080",
+  "listen_addr": "127.0.0.1:8443",
   "data_dir": "./data",
-  "public_url": "https://beacon.example.test",
+  "public_url": "https://localhost:8443",
+  "tls_cert_file": "./data/server-cert.pem",
+  "tls_key_file": "./data/server-key.pem",
   "max_nodes": 500
 }
-```
-
-```sh
+EOF
 bin/orbitbeacon-server serve --config server.json
 ```
 
-Place an HTTPS reverse proxy in front of the loopback listener, serving the same origin as `public_url`, or configure both `tls_cert_file` and `tls_key_file` and explicitly set a TLS listen port such as `127.0.0.1:8443`. Browser session cookies are always Secure, so use HTTPS even during interactive local development. Containers must explicitly set `listen_addr` to `0.0.0.0:8080` and mount a persistent local data directory owned by the service's effective user with mode `0700`. SQLite, its WAL/SHM/journal sidecars and `secrets.key` must be regular files owned by that user with mode `0600`; symlink paths are rejected. Linux startup validates that the backing mount is local and writable. Do not store SQLite on a network or read-only filesystem.
-
-Every existing ancestor must be root/effective-user owned and must not be group/other writable, except trusted sticky directories such as `/tmp`. A private final directory cannot protect SQLite from a renameable ancestor; startup rejects that layout before creating database files.
-
-`serve` and `bootstrap` acquire a nonblocking exclusive `server.lock` before key preparation, migrations or database access. A second command using the same directory fails with `data_dir_in_use`, even on another listen port. The private lock file is intentionally retained; never unlink or replace it while a process owns the directory. Stop the old server before upgrading from a version without this lock. Closing or terminating the owner releases the kernel lock; a stale lock file does not require deletion.
-
-Server keys are `listen_addr`, `data_dir`, `public_url`, `tls_cert_file`, `tls_key_file`, `trusted_proxy_cidrs`, `max_nodes`. Ordinary values use explicit CLI flags > `ORBITBEACON_` environment variables > JSON file > defaults. CLI names use hyphens; JSON/environment names use underscores (for example `--max-nodes` and `ORBITBEACON_MAX_NODES`). Proxy CIDRs in the environment or flags are comma-separated. The foundation does not consume forwarded headers; neither client Host nor forwarded headers can redefine the trusted browser Origin. Defaults are loopback port 8080, `./data`, `https://localhost` and 500 nodes. Set the real public URL explicitly; it must be absolute HTTPS with no credentials, query or fragment. Its trusted origin is canonicalized: DNS names are lowercase, default port 443 is omitted and IPv6 literals are normalized. Local paths cannot be SQLite DSNs or URIs. Capacity must be positive; pending and disabled nodes count. Increasing capacity is an admission setting, not a resource-budget guarantee.
-
-The tracked HTML/JavaScript UI is embedded directly into the binary and needs no Node process or frontend build. It supports real login/logout, inventory, pending node creation, node metadata and desired interval changes. Settings provides own-password changes for both roles, user/group lists and the first 50 audit events; administrator controls create/update/delete users and groups. Successful password changes require a fresh login. This is not the later full monitoring UI. `/` redirects to `/login` or `/overview` based on session validity. Only `/login`, `/overview`, `/nodes`, `/nodes/{uuid}`, `/alerts`, `/settings`, `/status` receive UI fallback. Unknown API routes and assets return true 404s; assets support GET/HEAD. Alerts and status remain explicitly unavailable.
-
-The embed includes underscore-prefixed `_app` assets. Backend enrollment and metric ingestion are available, but the browser has no enrollment wizard or telemetry display yet. Stored inventory status is not a live availability indicator until the step-3 liveness slice; enrolled nodes currently remain `unknown`.
-
-## HTTP contract and security
-
-Unexpected service failures are written to Server stderr as structured JSON with the response's `request_id`, a safe `error_kind`, and the numeric extended `sqlite_code` for SQLite errors. Diagnostics deliberately omit raw error text, SQL, paths/queries, request bodies, headers and credentials: these can contain attacker-controlled or private values. Expected domain failures do not produce internal-error records; clients still receive the generic `internal_error` response.
-
-OpenAPI represents byte-constrained strings with `x-minLengthBytes`/`x-maxLengthBytes`; generic JSON Schema validators must opt into those extensions rather than treating character counts as bytes. Browser forms use `TextEncoder` and constraint validation, not HTML's UTF-16 length limits or silent truncation. Four CJK characters occupy 12 UTF-8 bytes and can satisfy an 8-byte password minimum; names and individual tag lines are rejected when their encoded bytes exceed the API limit.
-
-See [`api/openapi.yaml`](api/openapi.yaml) for the implemented request/response schemas. JSON bodies must contain one object, are limited to 64 KiB and reject unknown members. String length limits are measured in UTF-8 bytes. Errors use `{code,message,request_id,fields?}` and `X-Request-ID`. IDs are UUIDs and timestamps are UTC RFC3339. Unsupported methods return `405` with `Allow` **before authentication**, unknown API routes return structured `404`, and API errors never return the UI shell. Invalid input returns `400`, missing/expired sessions or incorrect old-password proof return `401`, authorization/Origin/CSRF failures return `403`, missing resources return `404`, and last-administrator/capacity conflicts return `409`. Implemented routes:
-
-- `POST/DELETE /api/v1/session`, `GET /api/v1/me`. Login and current-session reads return `{user,csrf_token,expires_at}` without the HttpOnly session credential. The UI recovers its stable CSRF token on each page load, including a fresh tab or cleared tab storage; it no longer persists the token in web storage. Logout is available to either role and returns `204`.
-- `PATCH /api/v1/me/password`: `{old_password,new_password}`; either role may change their own password after proving the old one. The new password must be 8–1024 bytes. Success returns `204` and atomically revokes **every** session of that user, including the current one; log in again.
-- `GET/POST /api/v1/users`, `GET/PATCH/DELETE /api/v1/users/{id}`. Reads return credential-free user DTOs to either authenticated role; the collection is `{users:[...]}`. Admin creation accepts `{username,password,role}`. PATCH accepts optional `username` and `role` only; omitted fields are unchanged. Usernames must be non-whitespace and 1–128 bytes, roles are `admin`/`viewer`. A role change revokes all affected-user sessions; deletion also revokes sessions. The last administrator cannot be demoted or deleted (`409 last_administrator`).
-  Creating or renaming a user to an existing exact username returns `409 username_conflict`; failed conflicts leave roles, sessions and audit history unchanged.
-- `GET/POST /api/v1/groups`, `GET/PATCH/DELETE /api/v1/groups/{id}`. Reads are available to either authenticated role and return `{groups:[...]}` or `{id,name}`. Admin creation/rename accepts `{name}` only (non-whitespace, at most 255 bytes). Deletion atomically detaches member nodes (`group_id:null`); it does not delete those nodes.
-- `GET/POST /api/v1/nodes`, `GET/PATCH/DELETE /api/v1/nodes/{id}` (delete requires `?confirm=true`). Node lists return `{nodes:[...]}`, default to 50, and accept `limit` 1–100 and nonnegative `offset`. Every node DTO includes `id,name,status,notes,region,provider,group_id,tags,created_at`; `group_id` is a UUID or `null`, and `tags` is a sorted string array, including `[]` for no tags. Admin metadata PATCH accepts optional `name,notes,region,provider,group_id,tags`; omitted fields are unchanged, `group_id:null` clears membership, and `tags:[]` clears tags. Empty `notes`, `region` or `provider` strings clear those fields; null string fields and null `tags` leave them unchanged. Tags must be unique non-whitespace strings of at most 255 bytes each and are not trimmed or normalized. Metadata edits preserve node credentials.
-- `GET/PATCH /api/v1/nodes/{id}/config`. PATCH accepts report interval 5–60 seconds, disk interval 60–3600 seconds, billing day 1–28, at most eight unique interface names/disk paths, and canonical unsigned 64-bit decimal `quota_bytes` (`0` or a nonzero digit followed by digits, without leading zeroes). Interface names are nonblank, 1–255 UTF-8 bytes, without NUL, CR or LF. Omitted fields remain unchanged; explicit null and an empty PATCH are rejected. Supplying unchanged values returns the existing revision without another audit event. Invalid fields are returned together without changing configuration or revision. Probe targets cannot be changed until the probe slice exists.
-- `POST /api/v1/nodes/batch`: `{node_ids:[...],action:"disable"|"enable"|"delete",confirm?:true}`. Select 1–500 unique UUIDs; delete requires confirmation. Each asset has its own result and transaction. Enable returns unenrolled assets to pending, not online.
-- `GET/POST /api/v1/enrollments` and `GET/DELETE /api/v1/enrollments/{id}` are administrator-only. POST requires exactly one UUID target: `{node_id:"UUID"}` creates a single-node 15-minute ticket; `{group_id:"UUID"}` creates a 30-minute batch ticket with at most 100 claims, subject to total node capacity. `mode` is optional and inferred from the target; an explicit mode must be `"single"` for `node_id` or `"batch"` for `group_id`. Empty requests, both targets, or mismatched modes are invalid. Only creation returns the raw token. List/get never expose token hashes or secrets. DELETE explicitly revokes a ticket, including retries.
-- `GET /api/v1/audit`: available to either authenticated role; returns `{events:[{id,actor_id,action,target_id,created_at,details:{}}]}`. `limit` is 1–100 (default 50), `offset` is nonnegative (default 0), and events are ordered newest first with UUID tie-breaking. Actor/target IDs may be null for events without that reference; credential secrets are never exposed in details.
-
-Both authenticated roles can read users, groups, nodes, desired configuration and audit events without credential fields. Authenticated mutations require an administrator except logout and changing one's own password. Mutations require the canonical configured HTTPS Origin and the CSRF token returned by the same session's login or current-session read; login itself requires Origin but no prior session or CSRF. Cookies are HttpOnly, Secure, SameSite=Lax, host-only, path `/`, and expire after 12 hours. CSRF proofs use domain-separated HMAC-SHA256 keyed by the secret session cookie; recovering a proof does not rotate the session or invalidate another tab. Only the session's SHA-256 digest is stored. Migration 6 removes obsolete CSRF hashes without revoking valid sessions; pages already open during upgrade must reload once to recover the new proof, not log in again. Password hashing is serialized, with at most eight queued operations and a one-second queue deadline; overload returns `429` with `Retry-After: 1` before password computation. Passwords use salted Argon2id, 32 MiB, two iterations, one lane; verification uses constant-time digest comparison. Successful login and authenticated index access perform bounded expired-session cleanup; rejected login does not reclaim sessions. UI responses set CSP `frame-ancestors 'none'` and `X-Frame-Options: DENY`. No request bodies or secrets are logged. A private 32-byte `secrets.key` is created on startup for later encrypted-secret storage; back it up securely, never commit it.
-
-Login computation admission runs before database lookup and Argon2: each direct peer has burst 32/refill four attempts per second, and each peer/username pair has burst 16/refill one per second. Both peer maps are capped at 1024 entries. Source ports and forwarding headers cannot bypass the budgets; an already-exhausted pair does not spend more peer tokens. There is no global failed-password lockout. Correct credentials from an exhausted source can still be temporarily rate-limited: reverse-proxy users share the proxy's transport-peer budget, so deploy per-client admission at the trusted edge rather than trusting arbitrary forwarded headers.
-
-## Architecture and persistence
-
-- `cmd/orbitbeacon-server`: command parsing, local bootstrap and HTTP lifecycle.
-- `internal/config`: source precedence, validation and immutable installation policy conflict detection.
-- `internal/server/storage`: local-file SQLite and versioned transactional migrations.
-- `internal/server/auth`: user credentials, bounded login work and session lifecycle.
-- `internal/server/management`: group management and paginated audit reads.
-- `internal/server/nodes`: capacity reservation, asset operations, desired configuration and per-node batch results.
-- `internal/server/http.go`: credential-free DTOs, authorization, Origin/CSRF gates, structured errors and precise static routing.
-- `internal/server/webui`: embedded minimal browser UI.
-
-`go test -count=1 ./internal/architecture` runs the dependency-boundary gate. Always disable the Go test cache for this check: the subprocess reads the graph outside the parent test's declared source inputs. Every `internal` package is explicitly listed; only declared internal edges are allowed, while standard-library and third-party imports remain unconstrained. This keeps the current single-module, SQLite/local-file design lightweight and makes a new cross-layer dependency an explicit review change rather than an accidental architecture drift.
-
-`/api/agent/v1/report` keeps a per-node state lock for generation/session/sequence fencing and snapshot publication; it no longer holds one ingest-wide mutex while another node's report transaction, JSON encoding or latest-snapshot read runs. Report encoding occurs before the per-node critical section, and `Latest` copies the stored bytes under that node lock before decoding outside it. Admission token buckets use a separate lock, while the SQLite transaction still rechecks the credential and commits the durable fence before ACK.
-
-Report writes use one bounded writer: at most eight admitted report operations (including the active commit) occupy the queue; overflow returns `503 report_busy` with `Retry-After: 1`. The writer slot is held through SQLite commit and in-memory ACK-state publication, so no report is acknowledged before its durable transaction commits. During graceful Server shutdown, HTTP stops admitting new requests and the ingest service waits for the bounded writer set to drain or the shutdown deadline to expire.
-
-SQLite uses WAL, foreign keys, 5000 ms busy timeout, FULL synchronous mode, disabled mmap and 8 MiB cache per connection. The pool is capped at three connections. `BEGIN IMMEDIATE` serializes transactional writers before capacity checks. State changes and actor-attributed audit inserts share the same transaction: an audit insertion failure rolls back the change, rather than leaving an unaudited success. Node batches retain this guarantee independently per node and return a failure for a node whose transaction fails. Node deletion revokes credentials, cancels active update state and removes the asset atomically; historical update result node IDs intentionally survive asset deletion. Group deletion atomically clears node membership. The later ingestion/history slice will introduce its bounded single-writer queues and read-only connection routing; those are not simulated here. Assets are never deleted automatically because they go offline.
-
-Audit reads are newest-first by `created_at DESC, id DESC` and use the migration-managed `audit_events_created_id` composite index, so pagination does not require a temporary sort as the audit table grows.
-
-Enrollment pagination uses `enrollment_tokens_expiry_id` for `expires_at DESC, id` ordering. Migration 8 also adds child-side indexes for enrollment token node/group references, enrollment claims by node, node groups and update-job node references, keeping foreign-key lookups and cleanup bounded as these tables grow.
-
-Retention maintenance runs hourly in bounded batches of 128: audit events older than 90 days are removed, while expired enrollment tickets and their receipts are retained for the 24-hour exact-retry grace period before cascading deletion. Cleanup uses the request context and reports failures without blocking HTTP serving.
-
-All persisted wall-clock timestamps use UTC RFC3339 with fixed 9-digit nanosecond precision through the shared `internal/timekey` encoder. Migration 9 normalizes legacy offset-bearing values before they participate in SQLite ordering or retention cutoffs; readers parse through the same boundary.
-
-The agent's network rate baselines use eight fixed slots, matching the protocol's maximum network series; interface replacement evicts the oldest slot instead of growing a map or retaining stale interface state.
-
-The metric wire contract is defined once in `internal/protocol/v1`: scalar status fields, five base source families, and `disk:<path>`/`network:<name>` series-key constructors are reused by validation, collection and scheduler error completion.
-
-SQLite `BUSY`/`LOCKED` contention, including extended result codes, returns `503 storage_busy` with `Retry-After: 1`; the failed transaction is not acknowledged as a success. Node batches retain per-node results and use `error_code:"storage_busy"` for retryable members. Constraint, corruption, I/O and disk-full errors are not reclassified as contention merely because of their text.
-
-`modernc.org/sqlite` is pinned to **v1.61.0**, not the plan's v1.61.1: v1.61.1 was unavailable when the dependency was resolved. The available v1.61.0 requires Go 1.26 and is compatible with the required Go 1.27.3 toolchain.
-
-## Command boundaries
-
-All commands parse `--help`, reject unknown flags/positionals and return nonzero on errors.
-
-```text
-orbitbeacon-server serve --config FILE [--data-dir DIR] [--listen-addr ADDR] [--public-url URL] [--max-nodes N]
-orbitbeacon-server bootstrap --data-dir DIR [--username USER]
-orbitbeacon-server backup --config FILE --output FILE
-orbitbeacon-server restore --data-dir DIR --input FILE
-orbitbeacon-server version [--json]
-orbitbeacon-server health --url HTTPS_ORIGIN [--ca-file CA_PEM]
-orbitbeacon-server verify-bundle --directory SIGNED_DIR --public-key ED25519_KEY
-
-orbitbeacon-agent version [--json]
-orbitbeacon-agent run --config FILE --install-policy FILE
-orbitbeacon-agent enroll --config FILE --install-policy FILE [--token-file FILE]
-orbitbeacon-agent doctor --config FILE --install-policy FILE [--json]
-orbitbeacon-agent update --config FILE --install-policy FILE --version VERSION
-```
-
-`GET /healthz/live` is an unauthenticated process liveness probe. `GET /healthz/ready` is an unauthenticated readiness probe that returns `200 {"status":"ready"}` only while the handler is accepting traffic and its SQLite connection responds to `PingContext`; shutdown or storage failure returns `503 {"status":"not_ready"}`. `server health` checks readiness over HTTPS with a five-second timeout and optionally a pinned CA PEM bundle.
-
-Deployment materials are under [`deploy/`](deploy/): a hardened systemd unit, distroless container image, Compose constraints, and separate systemd/container JSON templates. They assume the operator supplies the HTTPS reverse proxy/TLS boundary; the server itself remains responsible for local data ownership, SQLite permissions and health/readiness semantics.
-
-Release bundles contain a raw-UTF-8 `manifest.json` and raw 64-byte Ed25519 `manifest.sig`. The manifest has `format:1`, release/protocol metadata and artifacts with `os`, `arch`, `kind`, basename-only `filename`, byte `size` and lowercase SHA-256. `verify-bundle` verifies the signature over the exact manifest bytes, rejects symlinks/path traversal/duplicate names, and streams each artifact with 50 MiB and 64 KiB manifest bounds; the public key is PKIX PEM or 32 raw Ed25519 bytes.
-`backup` acquires the data-directory lock, opens the current schema and uses SQLite `VACUUM INTO` for a consistent snapshot; it refuses an existing output and writes a regular 0600 file, first syncing a private temporary snapshot and its output directory. `restore` acquires the same lock, validates/migrates the input in a private staging file, confirms a complete checkpoint and syncs it, copies and syncs an immutable pre-restore main database before checkpointing the live database, validates all WAL/SHM/journal entries, atomically replaces the live database entry, and retains the previous database under `.orbitbeacon.db.before-restore-*`. If the live database cannot be checkpointed while any sidecar remains, restore fails closed rather than deleting recovery state. Never copy a live SQLite main file by hand; keep backup inputs/outputs on local trusted filesystems.
-**Never hot-copy the `.db` file** as a backup. Agent `enroll`, `run` and `doctor` use the real runtime and enforce the immutable installation policy; `update` remains unavailable until the signed-update slice. Enrollment reads an exact 0600 regular token file from a service/administrator-owned directory not writable by group or others, without following symlinks, rather than putting secrets in arguments or URLs. Linux removes the verified ticket only after confirmed success and syncs its parent; enrollment failures or path replacements retain it, while cleanup failures are reported separately from server acceptance. Omitting `--token-file` attempts node-credential recovery and requires a new enrollment ticket if neither saved credential authenticates. The agent saves its private identity before enrollment; recovery works even before its first collection run. Unsupported secure token handling fails closed.
-
-The agent installation policy fixes `server_url`, `ca_file`, `state_dir`, `runtime_dir`, `expected_uid`, `expected_gid`, `expected_account`, `install_mode`, `trust_key_file`. Every supplied configuration source is checked against policy independently, even if a higher-precedence value would hide a conflict. Agent server URLs must be HTTPS origins with no path other than a literal `/`, credentials, query or fragment. On supported POSIX systems the CLI opens policy files through no-follow directory descriptors, requires administrator ownership and safe non-writable ancestry, and decodes only the verified regular-file descriptor. It checks effective UID/GID, rejecting UID/GID 0 and mismatches. Unsupported platform security enforcement fails closed; installers remain outside this slice.
-
-Configured CA bundles must be absolute administrator/root-owned regular files, at most 1 MiB, with no group/other writes or special permission bits. On supported POSIX systems the agent walks every ancestor through no-follow directory descriptors, requiring root/administrator ownership and no group/other writes, then reads only the verified descriptor with a size bound. Relative paths, symlinks, unsafe ancestry and unsupported platform enforcement fail closed. The verified bundle supplements system roots; an empty `ca_file` preserves system trust.
-
-## Agent protocol and operation
-
-Agent requests use HTTPS with system trust or the immutable policy's CA file, one reusable HTTP client, and a five-second request timeout. Browser cookies never authenticate agent endpoints; node Bearer credentials never authenticate management endpoints. `POST /api/agent/v1/enroll` uses the enrollment Bearer token with `{protocol_version:1,installation_id,node_token,previous_node_token?,system}`. Server-side credentials are SHA-256 hashes. Exact successful claims can retry for 24 hours after the initial claim, even after natural ticket expiry, while the claimed credential remains active; explicit revocation or a later credential replacement blocks them. A fresh node-bound ticket rotates credentials for the same installation and immediately invalidates the old server credential. Replacing an existing credential requires `previous_node_token` to match the current secret in the same immediate transaction as claim/quota/fence changes. Stale proofs and superseded receipts return `409 enrollment_conflict` without rolling back a newer credential or consuming a claim. Before requesting rotation the agent reloads durable identity and stages a fresh 256-bit `pending_node_token` separately from its active secret. Retries and reopened identities reuse that candidate; failures retain it because a response may have been lost after commit. Only confirmed acceptance durably promotes the candidate and removes the pending field.
-
-Upgrade the Server before updated Agents use rotation proofs and version-2 receipt inspection, then upgrade Agents. Normal enrollment/report messages remain version 1; only `/enroll/check` requires `protocol_version:2`. Old version-1 checks fail explicitly with `426 protocol_unsupported` rather than receive an incompatible success shape; new Agents fail before staging if credential state is absent or unknown. There is no ambiguous version fallback or CAS bypass. Identity files now include a private `enrollment_attempts` journal; do not downgrade to binaries that reject this field.
-
-Successful batch-claim receipts survive node deletion. Retrying the original installation and credential after its asset was deleted returns `409 enrollment_conflict`, never recreates the asset or reactivates its credential, and does not consume another claim. Other installations can still use the batch ticket. Database migration preserves existing receipts; tickets retain their normal expiry and revocation behavior.
-
-The Agent atomically journals each ticket's SHA-256 digest, exact candidate and CAS parent with its 0600 identity before claiming. Background report/recovery promotion preserves this association, so retrying the retained ticket after a lost response reuses the same credential even after restart; the ticket plaintext is never persisted. The journal admits at most 64 ticket aliases per active/pending credential and rejects excess without sending a claim; successful replacement prunes operations for superseded credentials. It retains current-credential operations for exact retries without unbounded historical growth.
-
-When no journal association exists, `POST /api/agent/v1/enroll/check` inspects the ticket with `{protocol_version:2,installation_id,node_token}` before allocating a candidate. An unclaimed ticket returns `{claimed:false,credential_state:"active"|"unbound",server_time}` without consuming it; an exact active receipt returns `{claimed:true,credential_state:"active",node_id,server_time}` and can restore the missing association in legacy identities. `credential_state` checks the exact credential and installation in that same snapshot, allowing a fresh ticket to rotate even if the local node binding was lost. Inspection honors the same expiry, revocation, credential and deleted-node boundaries as claim retries, without changing liveness, ownership, quota or audits.
-
-A supplied ticket is always validated as that ticket's operation: recovery of an unrelated saved node credential cannot report it as consumed. Invalid explicit tickets fail and remain on disk; fresh tickets claim/rotate, and previously claimed tickets confirm their own receipt. Only omitting `--token-file` selects ticketless credential recovery, which never rotates. This also holds before the first run or when a lost response left `node_id` empty after a run began.
-
-Enrollment admission verifies the ticket hash with read-only lookups before any body read or writer transaction; the claim transaction repeats authorization, revocation, expiry, identity and quota checks atomically. Missing/unknown/revoked/expired credentials share invalid-only token buckets (burst 32 per direct peer IP, 256 globally, one token/second refill), returning 429 with Retry-After after exhaustion. Forwarding headers and source ports do not determine peer identity. The peer map is bounded to 1024 entries with oldest-entry eviction. Apparently usable tickets, including unexpired exact-retry receipts, bypass these invalid buckets and cannot be charged or blocked by an invalid flood.
-
-`POST /api/agent/v1/recover` uses a node Bearer credential with only `{installation_id}` and returns `{node_id,server_time}`. A single read authenticates the credential's installation binding; recovery does not update node liveness, generation, session, reports, or configuration acknowledgements. The enrollment client tries a durable pending rotation credential first, then its active credential only on rejection. It validates the response identity and promotes a pending credential only after server confirmation. No enrollment ticket or runtime generation is required. Normal reporting separately sends its active credential first; only a 401 reloads durable identity under cross-process coordination and permits one retry with a distinct current or pending credential. A successful retry must confirm the same node identity before pending promotion; independently committed generation/session fields are preserved. Other errors and absent alternatives never trigger this retry.
-
-A direct successful report also persists an initially missing node binding. Already-bound steady-state reports do not rewrite identity. This prevents a lost enrollment response from making a later explicit credential rotation silently become recovery.
-
-`POST /api/agent/v1/report` uses the node Bearer token. Its body has `protocol_version,run_generation,session_id,seq,sampled_at,config_revision,metrics,traffic` and optional system/capabilities/config error/update/probe fields; it has no target node ID. Successful responses include the authenticated `node_id`, never a request target. Unsupported protocols return 426, invalid bodies/metrics 400, identity conflicts 409, oversized bodies 413, and rate-limited reports 429 with Retry-After. Bodies are limited to 64 KiB and each node receives one request/second with burst three. Authentication and per-node charging precede all body reads: malformed, oversized, unsupported and conflicting authenticated attempts all consume capacity; unrelated nodes remain independent. Processing rechecks the exact credential transactionally against concurrent rotation. Invalid, duplicate or out-of-order reports do not refresh last_seen. Generation/session fencing survives server restart, while accepted sequence and latest snapshots are intentionally process-local, not a durable history guarantee.
-
-Report `config_revision` is required and positive; missing, null, zero or negative values are rejected. Until probe execution and result consumption are implemented, `probe_results` must be omitted or empty. These validation failures return `400 validation_failed` without advancing generation/session ownership, `last_seen`, configuration acknowledgement or the latest snapshot.
-
-Process fencing is scoped to the current node credential. A changed credential resets the durable generation/session fence atomically, and transient sequence deduplication checks the credential hash. Exact enrollment retries and unchanged credentials preserve fencing. This allows credential rotation to recover a fence poisoned by a compromised old token.
-
-The agent atomically saves 0600 identity/config files with file and directory sync. A new collection process increments its durable generation once and keeps a stable session for retries; doctor and enrollment recovery do not increment it. Clone machines must enroll independently. Configuration revision increases only after validated configuration is saved atomically; rejection keeps the previous configuration and is reported with `config_error`. Disk selections are at most eight unique absolute platform-valid paths, at most 1024 bytes each without NUL. Interface selections are at most eight unique nonblank names, at most 255 bytes each without NUL, CR or LF. The server, saved desired configuration and collector share these checks.
-
-Configuration rejections preserve a legal report envelope: `config_error.revision` is the rejected nonnegative revision, or `0` when an invalid negative revision cannot be represented; `fields.revision` still describes the validation failure. The valid applied revision and saved configuration remain unchanged, so subsequent reports can receive and durably apply a later repair before acknowledging it.
-
-Selections also share an aggregate JSON wire budget: their three occurrences in each report may use at most 48 KiB after the default JSON escaping, reserving 16 KiB for the report envelope and other bounded fields. A partial configuration PATCH is checked together with the persisted other selections. Oversized selections return field errors without changing configuration or revision; the agent independently rejects them before saving, preserving its reporting and remote-repair channel.
-
-On upgrade, a transactional server migration clears only legacy selections that exceed the aggregate budget, increments each affected desired revision once, and records `node.config.report_budget_repair` in the same transaction. An agent with the old oversized saved selection temporarily collects the bounded automatic selection, keeps its original revision and file, and reports `config_error.code:"report_size_exceeded"` rather than acknowledging application. Its first bounded report receives the server's higher repair revision; only validated durable replacement clears the error. This upgrade recovery requires no manual PATCH. Other invalid saved agent configurations still fail closed.
-
-Desired-configuration writes use a stable cross-process sidecar lock and reload the durable revision before comparison/replacement. A stale runtime cannot overwrite a newer persisted configuration; identical retries do not rewrite the file.
-
-Initial identity inspection and creation hold the same stable sidecar lock as atomic updates, through file validation and directory sync. Cooperating replacements cannot race the `Lstat`/open inode check; no-replace creation and the inode check still reject uncoordinated replacement. The stable `.lock` file may remain after a failed creation and must not be deleted while another process could use it; failure does not publish a partial identity.
-
-When a state/configuration directory is created or reopened, initialization syncs the complete absolute ancestor chain from the state directory's parent through the filesystem root after syncing the state file's own directory. A failure at any ancestor boundary fails initialization before credentials or configuration are acknowledged; this deliberately also applies to existing directories so a prior failed initialization cannot be bypassed merely because its directories are now visible. Relative paths are converted to absolute paths before file, lock, directory and sync operations. Directory symlink ancestors continue to follow the same physical directory tree as the file operation; the state directory itself remains subject to the existing private-directory checks. These directory-sync guarantees apply on non-Windows platforms; Windows retains its existing directory-sync limitation.
-
-A visible replacement is not proof that its directory entry was synced. Existing identity/configuration reads and exact retries confirm the containing directory sync before publishing refreshed state, using a ticket candidate or acknowledging a revision; continued sync failure leaves the cached state/error unchanged. Once sync recovers, the exact visible credential/configuration is reused without another replacement. Missing configuration files are recreated before acknowledgement. These directory-sync guarantees apply on non-Windows platforms; Windows retains its existing directory-sync limitation.
-
-Agent identity and desired-configuration sidecar waits use nonblocking kernel locks, retry at 20 ms intervals and stop after two seconds per acquisition or earlier caller cancellation. A canceled waiter closes its descriptor and cannot acquire ownership later; cached identity/configuration reads do not wait behind another process's sidecar ownership. Enrollment, report recovery/config application, scheduler startup and runtime initialization propagate their operation/signal contexts; SIGTERM during a lock-blocked `run` startup exits normally. These bounds cover lock contention, not forced interruption of a filesystem syscall already executing.
-
-Collection reads real host CPU/load/memory/swap/uptime, selected disks and interfaces using gopsutil v4.26.9 with bounded contexts. Missing values are null with `ok|unsupported|permission_denied|disabled|error|stale` status, never fabricated zeroes. Status keys are exactly the nine scalar field names plus one `disk:<path>` or `network:<name>` key per reported series. Source keys are exactly `cpu`, `load`, `memory`, `swap`, `uptime` and those same disk/network series keys. Every key remains required for unavailable values; unknown or unmatched keys are rejected. Cancellation/deadlines return a structurally complete partial snapshot plus the error, retaining configured series and source metadata for reporting. CPU/network rates use nonblocking differentials; initial samples are marked stale. Source metadata carries sample ID, monotonic age and interval; CPU and every network source also require a nonnegative measurement window for every status (zero is valid during warm-up or failure). Freshness is `max(3 × interval, 45 seconds)`. Cumulative traffic counters use canonical decimal strings, avoiding JavaScript precision loss. Traffic high-water acknowledgements and aggregation are not implemented in step 2 and are not fabricated.
-
-On Linux, uptime is parsed from the same `HOST_PROC/uptime` source used for proc-backed collection, with finite nonnegative validation; it never silently falls back to the collector process's host `sysinfo` value when that source is remapped or unavailable.
-
-Each snapshot records source observation times with the monotonic clock and calculates every `AgeMS` at one final snapshot boundary after all source work completes. Cached disk/network observations retain their original observation time; their freshness decision and stale/null conversion use that same boundary, so a slow later collection cannot make earlier sources appear newer than they are.
-
-CPU percentages require finite, nonnegative, nondecreasing component counters and a positive elapsed window, with busy delta no greater than total delta. A rollback (including Linux iowait) produces `null`/`stale` and resets the baseline; the next continuous window can recover normally. Percentages are not clamped to hide inconsistent counters.
-
-Disk usage runs in at most one in-flight slow worker per collector because the operating system's `statfs` may ignore context cancellation. A new read may use only the current collection budget; later snapshots do not wait again or start replacement workers while it remains blocked. Other sources and reports continue, cached data ages normally, unavailable disk values stay null, and results from removed selections are discarded. Application cancellation does not join the slow worker; this does not claim that an uninterruptible kernel task or a debugger's injected delay can be forcibly canceled.
-
-One collection loop continues during network outages; a capacity-one notification and latest snapshot feed one report worker with at most one request in flight. There is no offline history queue. Failures use exponential backoff through 60 seconds with 20% jitter; 429/503 Retry-After is clamped to 1–300 seconds and 401 waits 60 seconds. Linux collection does not execute shell commands. Darwin's gopsutil network path may execute system netstat/ifconfig; it is sampled separately at 30-second intervals with fixed system-only PATH and original source timestamps.
-
-`Retry-After` delta-seconds are parsed without allowing integer overflow to escape the 1–300 second bound: a syntactically decimal value too large for the host integer type saturates at 300 seconds. Malformed values use ordinary jittered backoff; valid HTTP dates are clamped to the same range.
-
-An HTTP `409 identity_conflict` is terminal: the superseded process stops collection/reporting and exits with the ownership error. Other conflicts and network failures retain retry behavior.
-
-For a local HTTPS deployment, issue a certificate with a SAN for `localhost`, configure the server's TLS certificate/key and `public_url:"https://localhost:8443"`, and trust its issuing CA through the agent policy's `ca_file`. Create a pending node and a ticket through an administrator session; save the returned token into a private 0600 file. Run the agent as the dedicated **non-root** UID/GID fixed in its policy:
+保持该进程运行，在另一个终端执行：
 
 ```sh
-orbitbeacon-agent enroll --config agent.json --install-policy install-policy.json --token-file enrollment.token
-orbitbeacon-agent doctor --config agent.json --install-policy install-policy.json --json
-orbitbeacon-agent run --config agent.json --install-policy install-policy.json
+bin/orbitbeacon-server health --url https://localhost:8443 \
+  --ca-file ./data/server-cert.pem
 ```
 
-The policy must include all immutable keys listed above and point `state_dir`/`runtime_dir` to service-owned private directories. `agent.json` may be `{}` to use policy values without conflicts. Enrollment automatically removes its short-lived token file only after confirmed success; it is never copied into agent state. On cleanup failure, securely remove the retained file after checking the reported outcome. Observe `nodes.last_seen` and the report response's `accepted_seq` for live acceptance; this is not a historical retention guarantee. Doctor checks HTTPS endpoint reachability and real collection without advancing generation or sending a report; it does not claim credential authentication.
+浏览器将证书加入受信任列表后访问 **https://localhost:8443**，用刚创建的管理员登录。此证书包含私钥的同一信任主体，仅用于本机演示，不要用于生产或分发私钥。浏览器会话 Cookie 始终为 `Secure`，不能改用普通 HTTP 完成登录。
 
-`state_dir` must be an absolute local filesystem path. Relative policies are rejected before any identity/configuration files are opened or created, rather than resolving against each shell or service working directory. To migrate an existing relative policy, set it to the absolute location containing the enrolled `identity.json` and `desired.json`, and update matching protected configuration sources; do not point it at a new empty directory or re-enroll merely to change the working directory.
-Ticket files must be owned by the runtime user with exact mode 0600. The immediate ticket directory and every ancestor must be owned by root or the runtime user and must not be group/other writable; a root- or runtime-owned sticky directory is the only writable-directory exception for safe temporary storage such as `/tmp`. Every component is opened without following symlinks. Cleanup pins the parent and opened inode, refuses changed entries, and never unlinks a replacement or follows its symlink target. A post-success cleanup warning does not undo confirmed enrollment.
+### 3. 接入第一个 Agent
 
-## Development checks
+按 [Linux Agent 接入指南](docs/agent.md) 完成：API 登录 → 创建待接入节点 → 签发 15 分钟凭证 → 安全保存 token → 配置管理员所有的安装策略 → 以非 root 身份注册和运行。指南可直接衔接上面的本机 HTTPS 环境，也说明了远程节点的区别。
 
-The pull-request quality gate is `.github/workflows/quality.yml`. It pins Go 1.27.3 on Ubuntu 24.04, rejects unformatted source and unverified modules, runs uncached tests, race tests for server/agent packages, `go vet`, and `govulncheck` v1.7.0 with read-only repository permissions.
+## 正式部署
+
+见 [部署与备份说明](deploy/README.md)，包括 Server Docker/Compose、systemd、首次管理员初始化和停服备份恢复。
+
+部署前必须明确以下边界：
+
+- 使用可信 HTTPS 证书，或在客户端显式信任你的私有 CA；不要用跳过 TLS 校验代替信任配置。
+- `public_url` 设置为实际浏览器访问的 HTTPS 地址，并保持 API 与页面同源。推荐部署在域名根路径，不要加子路径前缀。
+- 可由反向代理终结 TLS，Server 监听回环 HTTP；也可同时配置 `tls_cert_file` 和 `tls_key_file` 直接提供 HTTPS。容器内监听地址需为 `0.0.0.0:8080`。
+- 数据必须放在可写的本地文件系统，目录由运行用户所有且权限为 `0700`；数据库、SQLite 辅助文件和 `secrets.key` 应为同一用户所有的普通 `0600` 文件。路径不能经过符号链接；祖先目录也必须具有安全的所有者和权限。
+- 同一数据目录仅允许一个 Server 管理命令持有。备份、恢复、重新 bootstrap 前先停服；遇到 `data_dir_in_use` 不要删除 `server.lock`，应停止占用进程。
+- 当前不消费转发头。反向代理后登录限流按代理的直连 IP 共享，需在入口额外配置按客户端限流。
+
+## 配置与接口
+
+Server 配置优先级：**显式 CLI 参数 > `ORBITBEACON_` 环境变量 > JSON 文件 > 默认值**。未知配置项会报错。
+
+| JSON 配置项 | 默认值 / 说明 |
+| --- | --- |
+| `listen_addr` | `127.0.0.1:8080` |
+| `data_dir` | `./data`，持久化本地目录 |
+| `public_url` | `https://localhost`，必须改为实际 HTTPS 地址 |
+| `max_nodes` | `500`，包括待接入和禁用节点的容量上限，不是性能承诺 |
+| `tls_cert_file` / `tls_key_file` | 默认空；启用内置 TLS 时必须同时设置 |
+| `trusted_proxy_cidrs` | 默认空；当前不会据此启用转发头处理 |
+
+例如 `--max-nodes 100`、`ORBITBEACON_MAX_NODES=100` 对应 JSON 的 `max_nodes`。Agent 的服务器地址、CA、目录和运行身份由受保护的安装策略固定，不能用普通配置或环境变量覆盖成不同值，详见 [接入指南](docs/agent.md)。
+
+接口契约见 [OpenAPI](api/openapi.yaml)：
+
+- 管理端：`/api/v1/`，使用会话 Cookie。写请求校验配置的 HTTPS Origin 和会话 CSRF token；登录需要 Origin，但不需要已有会话。
+- Agent：`/api/agent/v1/`，使用接入 token 或节点 Bearer 凭证，不能与浏览器会话互换。
+- 健康检查：`GET /healthz/live` 检查进程存活，`GET /healthz/ready` 检查服务是否接收流量及 SQLite 是否可用；均无需认证。
+- API 错误包含 `code`、`message`、`request_id` 和可选 `fields`。排障时记录 `request_id`，不要发送 Cookie、密码或 token。
+
+## 开发
+
+主要入口是 [`cmd/`](cmd/)，Server 和 Agent 实现位于 [`internal/`](internal/)。Web 静态资源直接嵌入 Server 二进制。
+
+常用检查命令（需自行执行）：
 
 ```sh
-GO_BIN="$(GOTOOLCHAIN=go1.27.3 go env GOROOT)/bin"
-"$GO_BIN/gofmt" -w cmd internal
 GOTOOLCHAIN=go1.27.3 go mod verify
 GOTOOLCHAIN=go1.27.3 go test -count=1 ./...
 GOTOOLCHAIN=go1.27.3 go test -race -count=1 ./internal/server/... ./internal/agent/...
 GOTOOLCHAIN=go1.27.3 go vet ./...
-GOBIN="$(mktemp -d)"
-GOTOOLCHAIN=go1.27.3 GOBIN="$GOBIN" go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
-GOTOOLCHAIN=go1.27.3 "$GOBIN/govulncheck" ./...
-rm -rf "$GOBIN"
 ```
 
-`internal/server/openapi_contract_test.go` parses the OpenAPI `paths` mapping with a YAML AST, checks every concrete `{id}` route against `routeMethods`, and runs each declared method in an isolated real handler fixture. A documented operation that drifts to 404/405 fails; existing authentication, validation and status-code tests cover the semantics after route admission.
+完整质量门禁见 [CI 配置](.github/workflows/quality.yml)，还包括格式检查和固定版本的漏洞扫描。架构边界检查包含在 `go test -count=1 ./...` 中，不能依赖测试缓存。
 
-## License
+## 许可证
 
-The existing [`LICENSE`](LICENSE) is preserved: **GNU General Public License, version 3 (GPL-3.0)**. The plan's Apache/empty-repository assumption does not apply to this repository.
+本项目使用 **GNU GPL v3**，以仓库中的 [LICENSE](LICENSE) 为准。
