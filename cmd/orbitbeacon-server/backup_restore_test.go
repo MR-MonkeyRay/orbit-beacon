@@ -265,6 +265,35 @@ func TestRestoreRejectsSchemaLedgerWithoutTables(t *testing.T) {
 	}
 }
 
+func TestRestoreRejectsFutureSchemaVersion(t *testing.T) {
+	inputDir := t.TempDir()
+	if err := os.Chmod(inputDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(inputDir, "future-schema.db")
+	db, err := storage.Open(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at) VALUES (10, 'future')`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := t.TempDir()
+	if err := os.Chmod(dataDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreDatabase(dataDir, input); err == nil {
+		t.Fatal("restore accepted a future schema version")
+	}
+	if _, err := os.Lstat(filepath.Join(dataDir, "orbitbeacon.db")); !os.IsNotExist(err) {
+		t.Fatalf("future schema installed a live database: %v", err)
+	}
+}
+
 func TestRestoreRejectsMalformedIdentityIndex(t *testing.T) {
 	tests := []struct {
 		name  string

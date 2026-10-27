@@ -447,6 +447,13 @@ func validateDatabase(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("schema migration %d is missing", version)
 		}
 	}
+	var unsupported int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations WHERE version NOT BETWEEN 1 AND 9").Scan(&unsupported); err != nil {
+		return fmt.Errorf("schema migration range: %w", err)
+	}
+	if unsupported != 0 {
+		return fmt.Errorf("schema contains %d unsupported migration versions", unsupported)
+	}
 	return nil
 }
 
