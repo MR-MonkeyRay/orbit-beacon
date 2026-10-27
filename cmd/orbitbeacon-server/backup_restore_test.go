@@ -171,6 +171,44 @@ func TestRestoreFailureCleansStagingArtifacts(t *testing.T) {
 	}
 }
 
+func TestRestoreRejectsEmptyOrNonSQLiteInput(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "empty", data: nil},
+		{name: "non-sqlite", data: []byte("not a sqlite database")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			if err := os.Chmod(dataDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			inputDir := t.TempDir()
+			if err := os.Chmod(inputDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			input := filepath.Join(inputDir, "invalid.backup")
+			if err := os.WriteFile(input, test.data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := restoreDatabase(dataDir, input); err == nil {
+				t.Fatal("restore accepted invalid input")
+			}
+			if _, err := os.Lstat(filepath.Join(dataDir, "orbitbeacon.db")); !os.IsNotExist(err) {
+				t.Fatalf("invalid input installed a live database: %v", err)
+			}
+			matches, err := filepath.Glob(filepath.Join(dataDir, ".orbitbeacon-restore-*"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(matches) != 0 {
+				t.Fatalf("restore staging artifacts remain: %v", matches)
+			}
+		})
+	}
+}
+
 func TestBackupRejectsMissingSourceDatabase(t *testing.T) {
 	dataDir := t.TempDir()
 	if err := os.Chmod(dataDir, 0700); err != nil {

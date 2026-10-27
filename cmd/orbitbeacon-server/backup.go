@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -243,6 +244,9 @@ func restoreDatabase(dataDir, input string) (retErr error) {
 		return err
 	}
 	stageOpen = false
+	if err := validateSQLiteInput(stagePath); err != nil {
+		return err
+	}
 	if err := os.Chmod(stagePath, 0600); err != nil {
 		return err
 	}
@@ -309,6 +313,33 @@ func restoreDatabase(dataDir, input string) (retErr error) {
 	}
 	if err := syncDirectory(dataDir); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateSQLiteInput(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.Size() == 0 {
+		return errors.New("input backup is empty")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	header := make([]byte, len("SQLite format 3\x00"))
+	_, readErr := io.ReadFull(file, header)
+	closeErr := file.Close()
+	if readErr != nil {
+		return fmt.Errorf("read SQLite header: %w", errors.Join(readErr, closeErr))
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if !bytes.Equal(header, []byte("SQLite format 3\x00")) {
+		return errors.New("input backup is not a SQLite database")
 	}
 	return nil
 }

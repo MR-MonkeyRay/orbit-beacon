@@ -6,6 +6,7 @@
 - Fix the container image seed directory mode so the distroless nonroot server passes its 0700 data-directory security check on first startup.
 - Record final regression evidence: uncached full tests/vet/module verification, fixed-toolchain container race tests, binary and readiness smoke checks, systemd path verification, Compose validation, and distroless nonroot container health; keep cross-platform, load-budget, signed-update, full-archive and legal-scan gaps explicit.
 - Tighten restore schema validation to require the canonical table-owned, unique partial identity index predicate instead of accepting only index names and columns.
+- Reject empty, truncated, and non-SQLite restore inputs before schema migration can create a fresh database from invalid bytes.
 
 - Confirm the complete absolute ancestor chain on every identity/configuration initialization, including existing directories; preserve relative-path stability and directory-symlink ancestors while preventing retries from bypassing an earlier unsynced parent failure.
 - Compute every metric source age at one final monotonic snapshot boundary, including cached disk/network observations, and apply freshness/stale conversion at that same boundary after slow collection completes.
