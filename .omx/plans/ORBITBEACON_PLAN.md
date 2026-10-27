@@ -12,15 +12,15 @@
 |1. 单仓、静态交付与身份控制面|后端已交付；静态技术栈部分完成|已有提交 `2fb224c`；用户/会话/权限/分组/节点/审计真实实现。当前为内嵌原生 HTML/JS，不是方案要求的 Svelte/type generation，留在步骤5完成。|
 |2. 接入、采集、上报与配置|核心闭环已实现并完成本轮修复验证|真实短期令牌/重试/轮换，非root Agent enroll/doctor/run，来源质量、generation/session/seq、远程配置确认。修复存储祖先权限、轮换后fence恢复、首报绑定、跨进程配置回退、被fence旧进程退出。首次立即采集已实现；固定随机相位、静态信息仅变化传输仍未实现，不能标整步完成。|
 |3. 可信状态、历史和月流量|未实现|当前 enrolled inventory 保持 unknown；无在线离线单调计时、聚合/查询/账本/流量ack；普通上报仍逐次写事务。下一切片应先完成可信连接状态与脱敏最新指标读取，再做存储writer/历史和月流量。|
-|4. 安装与平台|未实现|只有受保护安装policy和非root运行检查；无安装器、部署模板或平台服务验收。|
+|4. 安装与平台|部署材料基础已交付；安装器与平台验收未实现|已交付 `deploy/` 的 systemd、容器、Compose、healthcheck 与 verify-bundle 配置；仍无跨平台安装器、Agent服务安装和平台实机验收。|
 |5. 完整管理UI|未实现|基础控制台可用，本轮修复 `_app` 未嵌入导致登录JS 404；文案由真实 `omp --model designer` 设计并review通过；无接入向导、监控指标/SSE/图表/完整中文主题UI。|
 |6. 探测与告警|未实现|无真实探测/告警/通知闭环。|
 |7. 签名升级|未实现|update 命令明确拒绝，不把预建表当升级功能。|
-|8. 备份诊断及最终验收|部分基础诊断|Agent doctor可用；backup/restore明确拒绝；完整health/readiness/资源及故障验收尚未交付。|
+|8. 备份诊断及最终验收|基础命令与健康检查已交付；最终验收未完成|Agent doctor、health/readiness、verify-bundle、锁定的 `backup`/隔离 `restore` 已实现并有针对性测试；完整归档包、资源预算、断电/跨平台/空目录接回验收仍未交付。|
 
 本轮验证通过：`go test ./...`、`go vet ./...`；现有Go1.27容器提供gcc，执行 `CGO_ENABLED=1 go test -race ./internal/server/... ./internal/agent/...` 全通过（源码与module cache只读挂载）。Go真实二进制+本地CA HTTPS完成bootstrap→API建节点/令牌→Agent enroll/doctor/run→配置revision确认→无票据恢复→运行中轮换及旧凭据401；再启动新generation，旧Agent退出1；root运行doctor被拒绝。Agent在可销毁容器中显式UID/GID=1001:1001，policy/CA仅容器内管理员持有，不等同默认1000:1000或Docker宿主范围验收。现有Docker Chromium实际登录→创建pending→详情改配置→深链接刷新，1440浅色/390深色截图；移动端无整页横向溢出、无JS控制台错误，键盘Tab和退出可用。未安装Playwright。临时Server/Agent/Chromium及测试容器已停止，现有服务未改动。
 
-已确认偏差：保留仓库现有GPL-3.0；SQLite driver使用可用的v1.61.0，不写成v1.61.1。完整平台运行、500节点资源预算、升级/断电恢复、公开隐私、备份恢复仍未验证。
+已确认偏差：项目许可证保留仓库现有 GPL-3.0；直接 Go 依赖及 modernc 传递通知基线见 `THIRD_PARTY_LICENSES.md`，不把参考项目许可证延伸到本项目；SQLite driver 使用可用的 v1.61.0，不写成 v1.61.1。完整平台运行、500节点资源预算、升级/断电恢复、公开隐私、完整归档备份及跨空目录 Agent 接回仍未验证；O16 仅证明本地一致性快照与隔离恢复路径。
 
 ## 项目命名与调研结论
 
@@ -35,16 +35,16 @@
 |[Komari](https://github.com/komari-monitor/komari)|Server 1.6.0、Agent 1.5.11，二者 MIT；[注册凭据换节点凭据](https://github.com/komari-monitor/komari/blob/main/web/api/client/autoDiscovery.go)。官方前端 `radix` 分支本次未找到明确项目许可证，不能把后端 MIT 自动延伸到 UI。|借鉴自动注册、独立节点 token、静态 UI 内嵌；不复制前端代码或引入 JavaScript 插件执行器。|
 |[Beszel](https://github.com/henrygd/beszel)|v0.21.1，MIT；Hub 内嵌 PocketBase/SQLite。[接入](https://beszel.dev/guide/getting-started)、[安装限制](https://beszel.dev/guide/agent-installation)、[实时 worker](https://github.com/henrygd/beszel/blob/main/internal/hub/systems/system_realtime.go)。|借鉴 Docker/二进制统一向导、能力提示、有限历史。无需引入完整 PocketBase 模型，也不建立订阅时额外向 Agent 拉取的第二条采集路径。|
 
-“未发现”不是安全审计结论；所有上游资源占用宣传均不作为本项目验收数据。新项目默认采用 Apache-2.0，实际引入依赖保留各自许可证；不依赖参考项目协议兼容层。
+“未发现”不是安全审计结论；项目本身遵循仓库 GPL-3.0，直接及传递依赖的许可证和通知按 `THIRD_PARTY_LICENSES.md` 基线维护。参考项目许可证只描述上游，不自动兼容或延伸到本项目；不复制其代码或授权不明的前端。
 
 ## 技术选型与架构
 
 |层|确定选型|理由与取舍|
 |---|---|---|
 |Server / Agent|Go 1.27.3，标准库 `net/http`、`slog`、`crypto`；Agent 使用 gopsutil v4.26.9|统一语言和发布链，成熟跨平台采集。Rust 可降低部分运行时基线，但本次未实测，不能据此声称 Go 最省内存；用明确资源门禁约束。|
-|数据库|`database/sql` + `modernc.org/sqlite` v1.61.1；手写参数化 SQL、内嵌顺序迁移|单本地数据库，无 CGO、无 ORM、无独立数据库服务。只进入 Server 依赖图。匹配驱动要求的 `modernc.org/libc`，不用向量扩展。|
-|浏览器 UI|Svelte 5.57.2、SvelteKit 3.1.0、adapter-static 4.0.0、Vite 8、TypeScript 6；Bits UI按需引入Dialog/Dropdown/Tabs；原生表格、CSS tokens、uPlot懒加载|编译后静态资源嵌入Go，无Node常驻、无SSR服务；采用文件路由，不导入整套后台模板或地图引擎。版本及peer约束已读npm官方注册表。|
-|开发期|Node 24 LTS、npm lockfile；Go module|上述精确版本作为初始基线，其余库取对应兼容稳定补丁并锁定；@sveltejs/vite-plugin-svelte使用7.x。配置在`web/vite.config.ts`，不混用SvelteKit旧版配置。|
+|数据库|`database/sql` + `modernc.org/sqlite` v1.61.0|单本地数据库，无 CGO、无 ORM、无独立数据库服务。只进入 Server 依赖图。版本以 `go.mod`/`go.sum` 为准；modernc 的 SQLite 与传递第三方通知按许可证基线保留。|
+|浏览器 UI|目标基线：Svelte 5.57.2、SvelteKit 3.1.0、adapter-static 4.0.0、Vite 8、TypeScript 6；Bits UI按需引入Dialog/Dropdown/Tabs；原生表格、CSS tokens、uPlot懒加载|目标前端尚未进入当前仓库，不能把这些版本、构建产物或许可证视为已交付依赖；进入 `web/` 前重新锁定版本、peer约束和许可证通知。|
+|开发期|目标基线：Node 24 LTS、npm lockfile；当前后端仅使用 Go module|只有依赖实际进入仓库并生成 lockfile 后才执行对应 npm 构建/许可证检查；不以方案版本替代现有实现状态。|
 |通信|Agent 主动 HTTPS JSON POST；管理 API 同源 REST；浏览器一个 SSE 连接|穿透 NAT/常规反向代理，只开放服务端端口；不同时维护 gRPC/WebSocket。小 JSON 的维护成本低于自定义二进制协议，限制报文大小并复用 TLS 连接。|
 |部署|Linux Server amd64/arm64 二进制及 Docker；Agent 平台矩阵见下文|单 Server 进程、每节点单 Agent 稳态进程；仅升级窗口允许同身份临时辅助进程。|
 |扩展|按采集、探测、通知、更新划分包；版本化 HTTP/OpenAPI + Webhook|平台差异使用编译标签，渠道差异限制在通知包；出现第二个具体实现时再提取最小接口，不预建插件 ABI、脚本 runtime、多租户、集群或通用任务队列。|
@@ -84,7 +84,7 @@ flowchart LR
 
 ## Approach
 
-按以下顺序交付可运行的纵向切片。步骤 1–3 是共享基础；完成协议后，步骤 4 的平台安装与步骤 5 的 UI 可并行；步骤 6–7 在采集、身份和存储闭环后接入。每步接入真实实现，不以固定数据、空 API 或伪成功按钮占位。
+按依赖顺序交付可运行的纵向切片：步骤 1（身份/存储/协议基础）→步骤 2（真实接入与采集）→步骤 3（可信状态、历史和账本）。步骤 4 的平台安装材料与步骤 5 的静态 UI 壳只能在协议稳定后并行；UI 的实时指标、历史和配置页面仍依赖步骤 3。步骤 6 探测告警依赖步骤 2–3 的采集与历史，步骤 7 签名升级还依赖步骤 4 的服务托管、发布清单和可回滚状态。步骤 8 的 health、verify-bundle、备份恢复可提前交付基础命令，但完整归档包、故障注入和最终验收必须放在相应存储/升级契约完成后；每步接入真实实现，不以固定数据、空 API 或伪成功按钮占位。
 
 ### 1. 建立单仓、静态交付与身份控制面
 
@@ -230,7 +230,7 @@ Windows任务使用bootstrap的`recover-update`模式，同账户完成stop→�
 
 ### 8. 完成备份恢复、运行诊断和最终验收
 
-备份固定使用SQLite `VACUUM INTO`一致性副本，不热拷贝裸.db。命令另开一个只用于备份的连接，不能占单writer队列；同一时刻最多一个备份，超时120秒中止并删自己的不完整临时包，不能影响实时接收。数据库检查通过并fsync后，将数据库、secrets.key、server配置、信任公钥与发行manifest打包至临时文件再原子发布为0600最终文件，不含发布私钥。UI只显示最近备份结果和本机命令。restore要求Server停止、目标为空，验证hash、`PRAGMA integrity_check`与schema，失败不覆盖。恢复不轮换节点凭据，按unknown宽限期接回现有Agent；已排队升级全部转cancelled并重新审批，不凭旧备份重放升级。
+当前已交付基础命令：`backup` 持有数据目录锁，以 SQLite `VACUUM INTO` 生成 0600 一致性副本；`restore` 持有同一锁，在私有 staging 中复制、迁移、执行 `integrity_check`/schema/index 契约校验、完整 checkpoint 后原子替换 live 数据库，保留 `.orbitbeacon.db.before-restore-*`，并清理旧 WAL/SHM/journal。目标中的完整归档包仍需另行完成：把数据库、`secrets.key`、Server 配置、信任公钥与发行 manifest 打包到临时文件再原子发布为0600，不能包含发布私钥；需补充备份超时、UI结果、空目录接回和断电验收。恢复不轮换节点凭据，按unknown宽限期接回现有Agent；已排队升级全部转cancelled并重新审批，不凭旧备份重放升级。
 
 提供 `/healthz`（存活）、`/readyz`（迁移完成且数据库可写），结构化日志脱敏；状态页显示数据库写入故障、当前存储大小、节点规模、协议/版本，不额外部署遥测后端。Server日志不记录报文/token，Agent日志状态变化才输出并本地轮转3×1MiB。分钟聚合与有界任务的执行耗时用内部计数展示，pprof只允许显式loopback开发开关，不能暴露公网。
 
