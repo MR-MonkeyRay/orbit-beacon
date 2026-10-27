@@ -114,7 +114,7 @@ Server 配置优先级：**CLI 参数 > `ORBITBEACON_` 环境变量 > JSON 文�
 
 ## 开发
 
-主要入口在 [`cmd/`](cmd/)，Server 和 Agent 实现在 [`internal/`](internal/)，Web 静态资源直接嵌入 Server 二进制。
+主要入口在 [`cmd/`](cmd/)，Server 和 Agent 实现在 [`internal/`](internal/)，Web 静态资源直接嵌入 Server 二进制。项目版本集中记录在根目录 [`VERSION`](VERSION)；发布流水线从该文件读取版本，不要在流水线中另行维护版本号。
 
 ```sh
 GOTOOLCHAIN=go1.27.3 go mod verify
@@ -123,7 +123,7 @@ GOTOOLCHAIN=go1.27.3 go test -race -count=1 ./internal/server/... ./internal/age
 GOTOOLCHAIN=go1.27.3 go vet ./...
 ```
 
-完整门禁见 [CI 配置](.github/workflows/quality.yml)，还包括格式检查和固定版本的漏洞扫描。架构边界检查包含在 `go test -count=1 ./...` 中，不能依赖测试缓存。
+完整门禁见 [CI 配置](.github/workflows/quality.yml)，还包括格式检查和固定版本的漏洞扫描。`main` 分支构建会发布版本镜像、SHA 镜像标签和 GitHub Release 包；同一版本的版本镜像与 Release 包均已存在时，后续构建不会重复推送。架构边界检查包含在 `go test -count=1 ./...` 中，不能依赖测试缓存。
 
 ## 许可证
 

@@ -8,6 +8,7 @@ Server 提供两种部署方式，命令均从仓库根目录执行：
 ## 文件布局
 
 ```text
+VERSION                           当前项目版本，发布流水线的唯一版本来源
 build/server.Dockerfile          Docker 镜像构建文件
 deploy/docker/compose.yaml       Compose 定义
 deploy/docker/server.json         容器配置
@@ -73,7 +74,7 @@ export ORBITBEACON_IMAGE_TAG=latest
 docker compose -f deploy/docker/compose.yaml pull
 ```
 
-镜像地址默认为 `ghcr.io/mr-monkeyray/orbit-beacon:latest`。Compose 只拉取镜像，不在主机执行 build；`ORBITBEACON_IMAGE_TAG` 可改为 GitHub Actions 发布的 SHA 标签。
+镜像地址默认为 `ghcr.io/mr-monkeyray/orbit-beacon:latest`。Compose 只拉取镜像，不在主机执行 build；`ORBITBEACON_IMAGE_TAG` 可改为 GitHub Actions 发布的版本标签（例如 `0.1.0`）或 SHA 标签。
 
 首次部署初始化并启动：
 
@@ -84,7 +85,7 @@ docker compose -f deploy/docker/compose.yaml run --rm --no-deps \
 docker compose -f deploy/docker/compose.yaml up -d
 ```
 
-GitHub Actions 在 `main` 分支发布 `latest`，每次 push 也发布 SHA 标签。修改 `public_url` 不需要重新构建镜像，只需更新环境变量并重建容器。
+GitHub Actions 从根目录 `VERSION` 读取版本。在 `main` 分支发布 `latest`、版本标签和 SHA 标签，同时创建带 Linux Server/Agent 多架构二进制的 GitHub Release。若该版本的版本镜像和 Release 包都已存在，后续同版本构建会跳过推送；需要发布新内容时先更新 `VERSION`。修改 `public_url` 不需要重新构建镜像，只需更新环境变量并重建容器。
 
 ```sh
 docker compose -f deploy/docker/compose.yaml ps

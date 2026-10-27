@@ -15,9 +15,22 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    outputs:
+      version: ${{ steps.project-version.outputs.version }}
     steps:
       - name: Check out source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Read project version
+        id: project-version
+        run: |
+          set -eu
+          version="$(< VERSION)"
+          if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo 'VERSION must contain one SemVer-like value such as 0.1.0' >&2
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
       - name: Set up pinned Go toolchain
         uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
@@ -62,10 +75,13 @@ jobs:
         run: |
           GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           GOTOOLCHAIN=go1.27.3 "$RUNNER_TEMP/bin/govulncheck" ./...
+
   publish-image:
     if: github.event_name == 'push'
     needs: verify
     runs-on: ubuntu-24.04
+    outputs:
+      skip: ${{ steps.publication-state.outputs.skip }}
     permissions:
       contents: read
       packages: write
@@ -78,21 +94,125 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
-      - name: Build and push image
+      - name: Check existing version publication
+        id: publication-state
         env:
-          IMAGE_TAG: ${{ github.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -eu
+          skip=false
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          package="orbitbeacon-${VERSION}-linux.tar.gz"
+          checksums='SHA256SUMS'
+          if docker buildx imagetools inspect "$image:$VERSION" >/dev/null 2>&1; then
+            release_assets="$(gh release view "v$VERSION" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+            if printf '%s\n' "$release_assets" | grep -Fxq "$package" && \
+              printf '%s\n' "$release_assets" | grep -Fxq "$checksums"; then
+              skip=true
+              echo "version $VERSION already has image $image:$VERSION and release assets; skipping publication"
+            fi
+          fi
+          printf 'skip=%s\n' "$skip" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        if: steps.publication-state.outputs.skip != 'true'
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -eu
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
-          tags=(--tag "$image:$IMAGE_TAG")
+          tags=(--tag "$image:$GITHUB_SHA")
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            tags+=(--tag "$image:latest")
+            tags+=(--tag "$image:latest" --tag "$image:$VERSION")
           fi
           docker buildx build \
             --file build/server.Dockerfile \
             --push \
             "${tags[@]}" \
-            --build-arg VERSION="$GITHUB_REF_NAME" \
+            --build-arg VERSION="$VERSION" \
             --build-arg COMMIT="$GITHUB_SHA" \
             --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             .
+
+  publish-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [verify, publish-image]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up pinned Go toolchain
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: '1.27.3'
+          cache: true
+
+      - name: Log in to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Check existing version publication
+        id: publication-state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -eu
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          package="orbitbeacon-${VERSION}-linux.tar.gz"
+          checksums='SHA256SUMS'
+          release_assets="$(gh release view "v$VERSION" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+          if docker buildx imagetools inspect "$image:$VERSION" >/dev/null 2>&1 && \
+            printf '%s\n' "$release_assets" | grep -Fxq "$package" && \
+            printf '%s\n' "$release_assets" | grep -Fxq "$checksums"; then
+            echo "version $VERSION already has image $image:$VERSION and release assets; skipping publication"
+            printf 'skip=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'skip=false\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build release package
+        if: steps.publication-state.outputs.skip != 'true'
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -eu
+          package_dir="$RUNNER_TEMP/orbitbeacon-$VERSION"
+          rm -rf "$package_dir" dist
+          mkdir -p "$package_dir" dist
+          printf '%s\n' "$VERSION" > "$package_dir/VERSION"
+          build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          for arch in amd64 arm64; do
+            for kind in server agent; do
+              GOTOOLCHAIN=go1.27.3 CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+                go build -trimpath \
+                -ldflags "-s -w -X orbitbeacon/internal/buildinfo.Version=$VERSION -X orbitbeacon/internal/buildinfo.Commit=$GITHUB_SHA -X orbitbeacon/internal/buildinfo.BuildDate=$build_date" \
+                -o "$package_dir/orbitbeacon-$kind-linux-$arch" \
+                "./cmd/orbitbeacon-$kind"
+            done
+          done
+          tar -C "$RUNNER_TEMP" -czf "dist/orbitbeacon-$VERSION-linux.tar.gz" "orbitbeacon-$VERSION"
+          (cd dist && sha256sum "orbitbeacon-$VERSION-linux.tar.gz" > SHA256SUMS)
+
+      - name: Publish GitHub release package
+        if: steps.publication-state.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -eu
+          tag="v$VERSION"
+          assets=("dist/orbitbeacon-$VERSION-linux.tar.gz" dist/SHA256SUMS)
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber
+          else
+            gh release create "$tag" "${assets[@]}" \
+              --title "OrbitBeacon $VERSION" \
+              --notes "OrbitBeacon $VERSION release. See SHA256SUMS for artifact verification."
+          fi
