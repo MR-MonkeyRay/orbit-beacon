@@ -232,7 +232,8 @@ func TestRestoreRejectsMalformedIdentityIndex(t *testing.T) {
 		name  string
 		index string
 	}{
-		{name: "wrong table", index: "CREATE INDEX nodes_installation_identity ON groups(name)"},
+		{name: "wrong table with same columns", index: "CREATE UNIQUE INDEX nodes_installation_identity ON enrollment_claims(installation_id) WHERE installation_id IS NOT NULL"},
+		{name: "wrong partial predicate", index: "CREATE UNIQUE INDEX nodes_installation_identity ON nodes(installation_id) WHERE 0"},
 		{name: "not unique or partial", index: "CREATE INDEX nodes_installation_identity ON nodes(installation_id)"},
 	}
 	for _, test := range tests {

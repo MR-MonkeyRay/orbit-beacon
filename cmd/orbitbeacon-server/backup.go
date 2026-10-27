@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"orbitbeacon/internal/config"
 	"orbitbeacon/internal/server/securefs"
@@ -46,17 +47,18 @@ var requiredOrbitBeaconColumns = map[string][]string{
 }
 
 type orbitBeaconIndexContract struct {
-	name    string
-	table   string
-	columns []string
-	unique  bool
-	partial bool
+	name       string
+	table      string
+	columns    []string
+	unique     bool
+	partial    bool
+	definition string
 }
 
 var requiredOrbitBeaconIndexes = []orbitBeaconIndexContract{
 	{name: "sessions_user", table: "sessions", columns: []string{"user_id"}},
 	{name: "sessions_expiry", table: "sessions", columns: []string{"expires_at"}},
-	{name: "nodes_installation_identity", table: "nodes", columns: []string{"installation_id"}, unique: true, partial: true},
+	{name: "nodes_installation_identity", table: "nodes", columns: []string{"installation_id"}, unique: true, partial: true, definition: "CREATE UNIQUE INDEX nodes_installation_identity ON nodes(installation_id) WHERE installation_id IS NOT NULL"},
 	{name: "audit_events_created_id", table: "audit_events", columns: []string{"created_at", "id"}},
 	{name: "enrollment_tokens_expiry_id", table: "enrollment_tokens", columns: []string{"expires_at", "id"}},
 	{name: "enrollment_tokens_node", table: "enrollment_tokens", columns: []string{"node_id"}},
@@ -395,6 +397,15 @@ func validateDatabase(ctx context.Context, db *sql.DB) error {
 		if !equalStrings(actual, contract.columns) {
 			return fmt.Errorf("schema index %q has columns %v, want %v", contract.name, actual, contract.columns)
 		}
+		if contract.definition != "" {
+			definition, err := indexDefinition(ctx, db, contract.table, contract.name)
+			if err != nil {
+				return fmt.Errorf("schema index %q definition: %w", contract.name, err)
+			}
+			if normalizeSQL(definition) != normalizeSQL(contract.definition) {
+				return fmt.Errorf("schema index %q definition is %q, want %q", contract.name, definition, contract.definition)
+			}
+		}
 	}
 	for version := 1; version <= 9; version++ {
 		var count int
@@ -406,6 +417,25 @@ func validateDatabase(ctx context.Context, db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+func indexDefinition(ctx context.Context, db *sql.DB, table, index string) (string, error) {
+	var definition sql.NullString
+	if err := db.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND name = ?", table, index).Scan(&definition); err != nil {
+		return "", err
+	}
+	if !definition.Valid {
+		return "", errors.New("index has no SQL definition")
+	}
+	return definition.String, nil
+}
+
+func normalizeSQL(definition string) string {
+	normalized := strings.ToLower(strings.Join(strings.Fields(definition), " "))
+	normalized = strings.ReplaceAll(normalized, " (", "(")
+	normalized = strings.ReplaceAll(normalized, "( ", "(")
+	normalized = strings.ReplaceAll(normalized, " )", ")")
+	return strings.TrimSuffix(normalized, ";")
 }
 
 func tableColumns(ctx context.Context, db *sql.DB, table string) ([]string, error) {
