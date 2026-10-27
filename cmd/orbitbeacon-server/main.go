@@ -22,6 +22,7 @@ import (
 	"golang.org/x/term"
 
 	"orbitbeacon/internal/buildinfo"
+	"orbitbeacon/internal/bundle"
 	"orbitbeacon/internal/config"
 	"orbitbeacon/internal/server"
 	"orbitbeacon/internal/server/auth"
@@ -38,17 +39,18 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("expected subcommand: serve, bootstrap, backup, restore, version or health")
+		return errors.New("expected subcommand: serve, bootstrap, backup, restore, version, health or verify-bundle")
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stdout, "Usage: orbitbeacon-server {serve|bootstrap|backup|restore|version|health} --help")
+		fmt.Fprintln(os.Stdout, "Usage: orbitbeacon-server {serve|bootstrap|backup|restore|version|health|verify-bundle} --help")
 		return nil
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	var configPath, dataDir, output, input, username string
+	var bundleDir, publicKey string
 	var healthURL, healthCA string
 	var asJSON bool
-	if args[0] != "version" && args[0] != "health" {
+	if args[0] != "version" && args[0] != "health" && args[0] != "verify-bundle" {
 		fs.StringVar(&configPath, "config", "", "JSON configuration file")
 		fs.StringVar(&dataDir, "data-dir", "", "persistent local data directory")
 	}
@@ -71,8 +73,11 @@ func run(args []string) error {
 		fs.StringVar(&healthCA, "ca-file", "", "optional CA PEM bundle")
 	case "version":
 		fs.BoolVar(&asJSON, "json", false, "print machine-readable build information")
+	case "verify-bundle":
+		fs.StringVar(&bundleDir, "directory", "", "signed bundle directory")
+		fs.StringVar(&publicKey, "public-key", "", "Ed25519 public key PEM or raw file")
 	default:
-		return fmt.Errorf("unknown subcommand %q; expected serve, bootstrap, backup, restore, version or health", args[0])
+		return fmt.Errorf("unknown subcommand %q; expected serve, bootstrap, backup, restore, version, health or verify-bundle", args[0])
 	}
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -93,6 +98,14 @@ func run(args []string) error {
 	}
 	if args[0] == "health" {
 		return checkHealth(healthURL, healthCA)
+	}
+	if args[0] == "verify-bundle" {
+		manifest, err := bundle.VerifyBundle(bundleDir, publicKey)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "verified bundle %s with %d artifacts\n", manifest.Version, len(manifest.Artifacts))
+		return nil
 	}
 	if args[0] == "backup" {
 		if output == "" {

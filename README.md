@@ -121,6 +121,7 @@ orbitbeacon-server backup --config FILE --output FILE
 orbitbeacon-server restore --data-dir DIR --input FILE
 orbitbeacon-server version [--json]
 orbitbeacon-server health --url HTTPS_ORIGIN [--ca-file CA_PEM]
+orbitbeacon-server verify-bundle --directory SIGNED_DIR --public-key ED25519_KEY
 
 orbitbeacon-agent version [--json]
 orbitbeacon-agent run --config FILE --install-policy FILE
@@ -130,6 +131,8 @@ orbitbeacon-agent update --config FILE --install-policy FILE --version VERSION
 ```
 
 `GET /healthz/live` is an unauthenticated process liveness probe. `GET /healthz/ready` is an unauthenticated readiness probe that returns `200 {"status":"ready"}` only while the handler is accepting traffic and its SQLite connection responds to `PingContext`; shutdown or storage failure returns `503 {"status":"not_ready"}`. `server health` checks readiness over HTTPS with a five-second timeout and optionally a pinned CA PEM bundle.
+
+Release bundles contain a raw-UTF-8 `manifest.json` and raw 64-byte Ed25519 `manifest.sig`. The manifest has `format:1`, release/protocol metadata and artifacts with `os`, `arch`, `kind`, basename-only `filename`, byte `size` and lowercase SHA-256. `verify-bundle` verifies the signature over the exact manifest bytes, rejects symlinks/path traversal/duplicate names, and streams each artifact with 50 MiB and 64 KiB manifest bounds; the public key is PKIX PEM or 32 raw Ed25519 bytes.
 
 Backup/restore deliberately return unsupported errors without modifying files. **Never hot-copy the `.db` file** as a backup. Agent `enroll`, `run` and `doctor` use the real runtime and enforce the immutable installation policy; `update` remains unavailable until the signed-update slice. Enrollment reads an exact 0600 regular token file from a service/administrator-owned directory not writable by group or others, without following symlinks, rather than putting secrets in arguments or URLs. Linux removes the verified ticket only after confirmed success and syncs its parent; enrollment failures or path replacements retain it, while cleanup failures are reported separately from server acceptance. Omitting `--token-file` attempts node-credential recovery and requires a new enrollment ticket if neither saved credential authenticates. The agent saves its private identity before enrollment; recovery works even before its first collection run. Unsupported secure token handling fails closed.
 

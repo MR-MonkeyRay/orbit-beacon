@@ -20,6 +20,7 @@
 - Add an OpenAPI behavior gate using YAML AST parsing, exact path/method routing comparison and isolated real-handler fixtures that fail documented 404/405 drift.
 - Expose linker-injected version, commit, build date, Go toolchain, OS and architecture from both `server version --json` and `agent version --json`; development binaries use explicit non-release defaults.
 - Add unauthenticated `/healthz/live` and SQLite-backed `/healthz/ready` probes plus an HTTPS `server health` command with optional pinned CA verification and bounded timeout.
+- Add offline Ed25519 raw-manifest verification with bounded artifact SHA-256/size checks, basename-only non-symlink assets and the `server verify-bundle` command.
 - Coordinate initial identity reads and creation with the existing cancellable sidecar lock, preventing false inode-change failures during legitimate atomic updates; propagate caller contexts through every Open call and retain stable lock files after unsuccessful creation.
 - Reconfirm directory persistence when reopening identity/configuration files and retrying identical operations after rename succeeded but directory sync failed; prevent premature candidate use or configuration ACK, retain cached state on failure, and reuse the exact visible replacement after recovery.
 - Keep configuration-rejection diagnostics protocol-valid for negative remote revisions, preserving the prior applied configuration and the reporting channel needed to receive and acknowledge a later repair.
