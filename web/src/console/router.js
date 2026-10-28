@@ -1,7 +1,8 @@
 import {h, reducedMotion} from '../shared/dom.js';
+import {setNavigationSignal} from './api.js';
 import {closeMenu, setActiveNav} from './shell.js';
 import {button, emptyState, linkButton, pageHead, resetIDs, skeleton} from './ui/components.js';
-import {confirmDiscard} from './ui/dialogs.js';
+import {closeDialogs, confirmDiscard, dialogActionStale} from './ui/dialogs.js';
 import {progress} from './ui/feedback.js';
 
 // History-API router. A page is an async function returning an element (or a
@@ -10,31 +11,41 @@ import {progress} from './ui/feedback.js';
 const view = document.getElementById('view');
 let routes = [];
 let navigation = 0;
+let controller;
+let currentURL = location.pathname + location.search + location.hash;
+let intent = 0;
 
 const hasUnsavedChanges = () => Boolean(view.querySelector('form[data-dirty="true"]'));
 
 export async function go(target, options = {}) {
+  const attempt = ++intent;
   if (!options.force && hasUnsavedChanges() && !(await confirmDiscard())) return;
+  if (attempt !== intent) return;
   if (target !== location.pathname + location.search + location.hash) {
-    history.replaceState({scroll: window.scrollY}, '');
+    history.replaceState({...history.state, scroll: window.scrollY}, '');
     history[options.replace ? 'replaceState' : 'pushState']({scroll: 0}, '', target);
   }
   await render({scroll: 0});
 }
 
 // Re-renders the current page in place after a change, keeping scroll and focus.
-export const refresh = () => render({quiet: true});
+export const refresh = () => dialogActionStale() ? Promise.resolve() : render({quiet: true});
 
 async function render(options = {}) {
   const token = ++navigation;
+  controller?.abort();
+  controller = new AbortController();
+  setNavigationSignal(controller.signal);
+  const openerID = closeDialogs();
+  currentURL = location.pathname + location.search + location.hash;
   const route = routes.find((item) => item.match(location.pathname)) || routes.find((item) => item.fallback);
-  const focusID = options.quiet && document.activeElement ? document.activeElement.id : '';
+  const focusID = options.quiet ? openerID || document.activeElement?.id : '';
   progress.start();
   let skeletonShown = false;
   const skeletonTimer = options.quiet ? 0 : setTimeout(() => {
     if (token !== navigation) return;
     skeletonShown = true;
-    swap(skeleton(), route, 'fade');
+    swap(skeleton(), route, 'fade', token);
   }, 160);
   let content;
   try {
@@ -48,10 +59,13 @@ async function render(options = {}) {
   }
   if (token !== navigation) return;
   if (typeof content === 'string') { go(content, {replace: true, force: true}); return; }
-  await swap(content, route, options.quiet ? 'none' : skeletonShown ? 'fade' : 'transition');
+  await swap(content, route, options.quiet ? 'none' : skeletonShown ? 'fade' : 'transition', token);
+  if (token !== navigation) return;
   if (options.quiet) {
-    const target = focusID && document.getElementById(focusID);
+    const previous = focusID && document.getElementById(focusID);
+    const target = previous && !previous.disabled ? previous : view.querySelector('h1');
     if (target) target.focus({preventScroll: true});
+    if (document.activeElement !== target) view.querySelector('h1')?.focus({preventScroll: true});
     return;
   }
   if (options.scroll !== undefined) window.scrollTo(0, options.scroll);
@@ -59,8 +73,9 @@ async function render(options = {}) {
   if (target) target.focus({preventScroll: true});
 }
 
-function swap(content, route, mode) {
+function swap(content, route, mode, token) {
   const update = () => {
+    if (token !== navigation) return;
     document.documentElement.classList.toggle('route-login', Boolean(route.bare));
     setActiveNav(route.nav);
     view.replaceChildren(content);
@@ -100,7 +115,22 @@ export function startRouter(table) {
     closeMenu();
     go(url.pathname + url.search + url.hash);
   });
-  window.addEventListener('popstate', (event) => render({scroll: (event.state && event.state.scroll) || 0}));
+  window.addEventListener('popstate', async (event) => {
+    const attempt = ++intent;
+    const previousURL = currentURL;
+    const scroll = window.scrollY;
+    if (hasUnsavedChanges() && !(await confirmDiscard())) {
+      if (attempt !== intent) return;
+      history.pushState({scroll}, '', previousURL);
+      window.scrollTo(0, scroll);
+      return;
+    }
+    if (attempt === intent) render({scroll: (event.state && event.state.scroll) || 0});
+  });
+  // Tabs replace the hash in place; remember it when a form is edited.
+  for (const type of ['input', 'change', 'tags']) document.addEventListener(type, () => {
+    currentURL = location.pathname + location.search + location.hash;
+  });
   window.addEventListener('beforeunload', (event) => { if (hasUnsavedChanges()) event.preventDefault(); });
   render();
 }

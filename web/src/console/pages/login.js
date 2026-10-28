@@ -16,10 +16,20 @@ function orbits() {
   return element;
 }
 
+function nextPath() {
+  const next = new URLSearchParams(location.search).get('next');
+  if (!next || !next.startsWith('/') || next.startsWith('//') || next.includes('\\')) return '/overview';
+  let target;
+  try { target = new URL(next, location.origin); } catch { return '/overview'; }
+  const normalizedPath = target.pathname.replace(/\/$/, '') || '/';
+  if (target.origin !== location.origin || normalizedPath === '/login') return '/overview';
+  return `${target.pathname}${target.search}${target.hash}`;
+}
+
 export async function loginPage() {
   try {
     setSession(await api('/me', {noRedirect: true}));
-    return '/overview';
+    return nextPath();
   } catch { /* not signed in */ }
   const errorBox = h('div', {class: 'form-error', role: 'alert', hidden: true});
   const username = input({name: 'username', autocomplete: 'username', required: true, autocapitalize: 'none', dataset: {autofocus: ''}});
@@ -35,7 +45,7 @@ export async function loginPage() {
     busy(submit, true);
     try {
       setSession(await api('/session', {method: 'POST', body: {username: username.value, password: password.value}, noRedirect: true}));
-      go('/overview', {replace: true});
+      go(nextPath(), {replace: true});
     } catch (error) {
       const message = error.status === 401 ? 'Username or password is incorrect.'
         : error.status === 429 ? 'Too many sign-in attempts. Wait a moment and try again.' : error.message;
