@@ -51,8 +51,16 @@ func (e *HTTPError) Error() string {
 	if e.StatusCode == http.StatusUnauthorized {
 		return "credentials_invalid"
 	}
+	if e.StatusCode == http.StatusConflict && e.Code == "identity_conflict" {
+		return "identity_conflict"
+	}
 	return "agent request rejected by server"
 }
+
+var (
+	errAgentConnectionFailed = errors.New("agent connection failed")
+	errAgentTimeout          = errors.New("agent request timed out")
+)
 
 func NewClient(options ClientOptions) (*Client, error) {
 	if options.Identity == nil || options.Config == nil {
@@ -283,7 +291,11 @@ func (c *Client) post(ctx context.Context, path, token string, body, result any)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return errors.New("agent connection failed")
+		var timeout interface{ Timeout() bool }
+		if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout() {
+			return errAgentTimeout
+		}
+		return errAgentConnectionFailed
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {

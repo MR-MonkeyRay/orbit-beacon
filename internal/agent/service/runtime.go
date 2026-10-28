@@ -12,6 +12,7 @@ import (
 
 	"orbitbeacon/internal/agent/collect"
 	"orbitbeacon/internal/agent/identity"
+	"orbitbeacon/internal/agent/probe"
 	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
@@ -77,12 +78,19 @@ func (r *Runtime) collect(ctx context.Context) (v1.Metrics, error) {
 }
 
 func (r *Runtime) Run(ctx context.Context) error {
-	scheduler := NewScheduler(SchedulerOptions{Identity: r.identity, Config: r.config, Collect: r.collect, Report: r.client.Report, System: &r.system, CollectedRevision: func() int64 { return r.collectorRevision }, CredentialsChanged: func(invalid bool) {
+	ctx, cancel := context.WithCancel(ctx)
+	probes := probe.NewRunner(probe.Options{Targets: func() []string { return r.config.Current().ProbeTargets }})
+	done := make(chan struct{})
+	go func() { defer close(done); _ = probes.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	scheduler := NewScheduler(SchedulerOptions{Probes: probes, Traffic: r.collector.Traffic(), Identity: r.identity, Config: r.config, Collect: r.collect, Report: r.client.Report, System: &r.system, CollectedRevision: func() int64 { return r.collectorRevision }, CredentialsChanged: func(invalid bool) {
 		if invalid {
 			fmt.Fprintln(os.Stderr, "orbitbeacon-agent: credentials_invalid; rechecking in 60 seconds")
 		} else {
 			fmt.Fprintln(os.Stderr, "orbitbeacon-agent: credentials recovered")
 		}
+	}, Log: func(message string) {
+		fmt.Fprintln(os.Stderr, "orbitbeacon-agent:", message)
 	}})
 	return scheduler.Run(ctx)
 }

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -12,7 +13,19 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
+type TrafficReporter interface {
+	Entries() []v1.Traffic
+	Acknowledge([]v1.Traffic)
+}
+
+// ProbeReporter returns cached checks without waiting for network work.
+type ProbeReporter interface {
+	Results([]string) []v1.ProbeResult
+}
+
 type SchedulerOptions struct {
+	Probes      ProbeReporter
+	Traffic     TrafficReporter
 	Identity    *identity.Store
 	Config      *ConfigStore
 	Collect     func(context.Context) (v1.Metrics, error)
@@ -23,6 +36,7 @@ type SchedulerOptions struct {
 	// a remote configuration arrives during a sample. Nil uses Config.Current.
 	CollectedRevision  func() int64
 	CredentialsChanged func(bool)
+	Log                func(string)
 }
 
 type Scheduler struct {
@@ -123,6 +137,8 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) error {
 	backoff := NewBackoff(s.options.RandomFloat)
 	var sent uint64
+	var consecutiveFailures uint64
+	var lastFailureLog time.Time
 	for {
 		select {
 		case <-ctx.Done():
@@ -142,14 +158,28 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 			if report.Seq <= sent {
 				break
 			}
-			_, err := s.options.Report(ctx, report)
+			if s.options.Traffic != nil {
+				report.Traffic = s.options.Traffic.Entries()
+			}
+			if s.options.Probes != nil {
+				report.ProbeResults = s.options.Probes.Results(s.options.Config.Current().ProbeTargets)
+			}
+			response, err := s.options.Report(ctx, report)
 			if ctx.Err() != nil {
 				return nil
 			}
 			if err == nil {
+				if s.options.Traffic != nil {
+					s.options.Traffic.Acknowledge(response.TrafficAcks)
+				}
 				sent = report.Seq
 				backoff.Reset()
 				s.setCredentialsInvalid(false)
+				if consecutiveFailures > 0 && s.options.Log != nil {
+					s.options.Log(fmt.Sprintf("report recovered after %d consecutive failures", consecutiveFailures))
+				}
+				consecutiveFailures = 0
+				lastFailureLog = time.Time{}
 				break
 			}
 			status, retryAfter := 0, ""
@@ -163,7 +193,22 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 			if status == 401 {
 				s.setCredentialsInvalid(true)
 			}
-			timer := time.NewTimer(backoff.Next(status, retryAfter, time.Now()))
+			now := time.Now()
+			delay := backoff.Next(status, retryAfter, now)
+			consecutiveFailures++
+			if s.options.Log != nil && (consecutiveFailures == 1 || now.Sub(lastFailureLog) >= 5*time.Minute) {
+				state := fmt.Sprintf("error=%s", reportFailureKind(err))
+				if status != 0 {
+					state = fmt.Sprintf("status=%d", status)
+				}
+				if consecutiveFailures == 1 {
+					s.options.Log(fmt.Sprintf("report failed: %s; retrying in %s", state, delay))
+				} else {
+					s.options.Log(fmt.Sprintf("report still failing: consecutive_failures=%d; %s; retrying in %s", consecutiveFailures, state, delay))
+				}
+				lastFailureLog = now
+			}
+			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
 				timer.Stop()
@@ -172,4 +217,15 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 			}
 		}
 	}
+}
+
+func reportFailureKind(err error) string {
+	if errors.Is(err, errAgentTimeout) || errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	var timeout interface{ Timeout() bool }
+	if errors.As(err, &timeout) && timeout.Timeout() {
+		return "timeout"
+	}
+	return "connection_failed"
 }
