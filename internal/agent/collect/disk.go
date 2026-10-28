@@ -3,7 +3,9 @@ package collect
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/disk"
@@ -12,10 +14,11 @@ import (
 )
 
 type diskReading struct {
-	path  string
-	usage *disk.UsageStat
-	err   error
-	at    time.Time
+	path      string
+	usagePath string
+	usage     *disk.UsageStat
+	err       error
+	at        time.Time
 }
 
 type diskCollection struct {
@@ -80,7 +83,7 @@ func (c *Collector) collectDisks(ctx context.Context, m *v1.Metrics) {
 		if count != 0 {
 			job := &diskCollection{epoch: c.diskEpoch, count: count, done: make(chan struct{})}
 			for i, path := range due[:count] {
-				job.reads[i].path = path
+				job.reads[i].path, job.reads[i].usagePath = path, diskUsagePath(path)
 			}
 			c.diskPending = job
 			read := c.diskUsage
@@ -89,7 +92,7 @@ func (c *Collector) collectDisks(ctx context.Context, m *v1.Metrics) {
 				for i := range job.reads[:job.count] {
 					reading := &job.reads[i]
 					reading.err = checked(ctx, func() (err error) {
-						reading.usage, err = read(ctx, reading.path)
+						reading.usage, err = read(ctx, reading.usagePath)
 						return err
 					})
 					reading.at = time.Now()
@@ -111,4 +114,16 @@ func (c *Collector) collectDisks(ctx context.Context, m *v1.Metrics) {
 		m.Disks = append(m.Disks, sample.metric)
 		m.MetricStatus["disk:"+path], m.Sources["disk:"+path] = sample.status, sample.source
 	}
+}
+
+func diskUsagePath(path string) string {
+	root := os.Getenv("HOST_ROOT")
+	if root == "" {
+		return path
+	}
+	// Clean as an absolute path first so parent components cannot escape the
+	// host mount after the volume and leading separator are removed.
+	clean := filepath.Clean(path)
+	clean = strings.TrimPrefix(clean[len(filepath.VolumeName(clean)):], string(filepath.Separator))
+	return filepath.Join(root, clean)
 }

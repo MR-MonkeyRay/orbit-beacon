@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 func procPath(parts ...string) string {
@@ -91,15 +92,41 @@ func loadAverage(ctx context.Context) (loadValues, error) {
 }
 
 func usableInterface(name string) bool {
+	if root := os.Getenv("HOST_SYS"); root != "" {
+		if name == "" || len(name) > 15 || name == "." || strings.Contains(name, "..") || strings.ContainsAny(name, "/\\\x00: \t\r\n") {
+			return false
+		}
+		// Sysfs NIC symlinks may reach devices/, but must stay inside HOST_SYS.
+		file, err := os.OpenInRoot(root, filepath.Join("class", "net", name, "flags"))
+		if err != nil {
+			return false
+		}
+		defer file.Close()
+		data, err := io.ReadAll(io.LimitReader(file, 64))
+		if err != nil {
+			return false
+		}
+		flags, err := strconv.ParseUint(strings.TrimSpace(string(data)), 0, 32)
+		return err == nil && flags&syscall.IFF_UP != 0 && flags&syscall.IFF_LOOPBACK == 0
+	}
 	iface, err := net.InterfaceByName(name)
 	return err == nil && iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagLoopback == 0
+}
+
+func networkProcPath(name string) string {
+	// /proc/net follows self/net even on a host proc mount. Pin routes and
+	// counters to PID 1 so both describe the host init network namespace.
+	if os.Getenv("HOST_PROC") != "" {
+		return procPath("1", "net", name)
+	}
+	return procPath("net", name)
 }
 
 func defaultInterface(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	file, err := os.Open(procPath("net", "route"))
+	file, err := os.Open(networkProcPath("route"))
 	if err == nil {
 		defer file.Close()
 		scanner := bufio.NewScanner(io.LimitReader(file, 1<<20))
@@ -127,7 +154,7 @@ func defaultInterface(ctx context.Context) (string, error) {
 		}
 	}
 	// IPv6-only hosts need their actual default route, not an arbitrary NIC.
-	v6, err := os.Open(procPath("net", "ipv6_route"))
+	v6, err := os.Open(networkProcPath("ipv6_route"))
 	if err != nil {
 		return "", noDefaultInterface()
 	}

@@ -19,6 +19,7 @@ const modulePath = "orbitbeacon"
 var allowedInternalImports = map[string]map[string]bool{
 	"orbitbeacon/internal/architecture": {},
 	"orbitbeacon/internal/agent/collect": {
+		"orbitbeacon/internal/buildinfo":   true,
 		"orbitbeacon/internal/protocol/v1": true,
 	},
 	"orbitbeacon/internal/agent/filelock": {},

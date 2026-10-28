@@ -4,14 +4,89 @@ package collect
 
 import (
 	"context"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/shirou/gopsutil/v4/cpu"
+
 	v1 "orbitbeacon/internal/protocol/v1"
 )
+
+func TestCPUCountersContinuous(t *testing.T) {
+	base := cpu.TimesStat{User: 100, System: 20, Idle: 800, Nice: 10, Iowait: 100, Irq: 2, Softirq: 3, Steal: 4, Guest: 5, GuestNice: 6}
+	for _, tt := range []struct {
+		name    string
+		current cpu.TimesStat
+		want    bool
+	}{
+		{
+			name:    "iowait decrease offset by idle growth",
+			current: cpu.TimesStat{User: 150, System: 20, Idle: 950, Nice: 10, Iowait: 0, Irq: 2, Softirq: 3, Steal: 4, Guest: 5, GuestNice: 6},
+			want:    true,
+		},
+		{
+			name:    "uncompensated iowait decrease",
+			current: cpu.TimesStat{User: 150, System: 20, Idle: 850, Nice: 10, Iowait: 0, Irq: 2, Softirq: 3, Steal: 4, Guest: 5, GuestNice: 6},
+		},
+		{
+			name:    "other counter reset",
+			current: cpu.TimesStat{User: 99, System: 20, Idle: 950, Nice: 10, Iowait: 0, Irq: 2, Softirq: 3, Steal: 4, Guest: 5, GuestNice: 6},
+		},
+		{
+			name:    "negative iowait",
+			current: cpu.TimesStat{User: 150, System: 20, Idle: 1051, Nice: 10, Iowait: -1, Irq: 2, Softirq: 3, Steal: 4, Guest: 5, GuestNice: 6},
+		},
+		{
+			name:    "nonfinite idle",
+			current: cpu.TimesStat{User: 150, System: 20, Idle: math.Inf(1), Nice: 10, Iowait: 0, Irq: 2, Softirq: 3, Steal: 4, Guest: 5, GuestNice: 6},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cpuCountersContinuous(base, tt.current); got != tt.want {
+				t.Fatalf("cpuCountersContinuous() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCPUTimesWithIowaitDecrease(t *testing.T) {
+	for _, tt := range []struct {
+		name              string
+		previous, current cpu.TimesStat
+		wantTotalDelta    float64
+		wantBusyDelta     float64
+	}{
+		{
+			name:           "idle growth offsets iowait decrease",
+			previous:       cpu.TimesStat{User: 100, Idle: 800, Iowait: 100},
+			current:        cpu.TimesStat{User: 150, Idle: 950},
+			wantTotalDelta: 100,
+			wantBusyDelta:  50,
+		},
+		{
+			name:           "idle and iowait growth remain nonbusy",
+			previous:       cpu.TimesStat{User: 100, Idle: 800, Iowait: 100},
+			current:        cpu.TimesStat{User: 100, Idle: 850, Iowait: 150},
+			wantTotalDelta: 100,
+			wantBusyDelta:  0,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			previousTotal, previousBusy := cpuTimes(tt.previous)
+			currentTotal, currentBusy := cpuTimes(tt.current)
+			if got := currentTotal - previousTotal; got != tt.wantTotalDelta {
+				t.Errorf("total delta = %v, want %v", got, tt.wantTotalDelta)
+			}
+			if got := currentBusy - previousBusy; got != tt.wantBusyDelta {
+				t.Errorf("busy delta = %v, want %v", got, tt.wantBusyDelta)
+			}
+		})
+	}
+}
 
 func TestCPUCounterRollbackIsStaleAndNextContinuousWindowRecovers(t *testing.T) {
 	for _, scenario := range []struct {

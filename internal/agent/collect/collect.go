@@ -21,6 +21,7 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 	gnet "github.com/shirou/gopsutil/v4/net"
 
+	"orbitbeacon/internal/buildinfo"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -61,12 +62,13 @@ type Collector struct {
 	networkAt     time.Time
 	autoInterface string
 	rates         NetworkDifferencer
+	traffic       *TrafficAccumulator
 	sourceAt      map[string]time.Time
 }
 
 func New(options Options) (*Collector, error) {
 	now := time.Now()
-	c := &Collector{started: now, epoch: strconv.FormatInt(now.UnixNano(), 36), diskUsage: disk.UsageWithContext, sourceAt: make(map[string]time.Time, 21)}
+	c := &Collector{traffic: NewTrafficAccumulator(nil), started: now, epoch: strconv.FormatInt(now.UnixNano(), 36), diskUsage: disk.UsageWithContext, sourceAt: make(map[string]time.Time, 21)}
 	if err := c.SetConfig(options.Config); err != nil {
 		return nil, err
 	}
@@ -112,6 +114,9 @@ func (c *Collector) SetConfig(config v1.DesiredConfig) error {
 		c.rates = NetworkDifferencer{}
 		c.autoInterface = ""
 	}
+	if c.traffic != nil && !slices.Equal(c.config.Interfaces, config.Interfaces) {
+		c.traffic.Observe(config.Interfaces, nil)
+	}
 	c.config = config
 	c.rates.interval = c.networkInterval()
 	return nil
@@ -130,7 +135,7 @@ func System(ctx context.Context) (v1.System, error) {
 	if len(name) > 255 {
 		return v1.System{}, errors.New("hostname exceeds protocol limit")
 	}
-	return v1.System{Hostname: name, OS: runtime.GOOS, Arch: runtime.GOARCH}, nil
+	return v1.System{Hostname: name, OS: runtime.GOOS, Arch: runtime.GOARCH, AgentVersion: buildinfo.Version}, nil
 }
 
 // Collect returns independent failures as null values with explicit statuses.
@@ -275,18 +280,29 @@ func cpuTimes(t cpu.TimesStat) (total, busy float64) {
 }
 
 func cpuCountersContinuous(previous, current cpu.TimesStat) bool {
+	// Linux iowait may decrease on SMP; idle+iowait remains the idle total.
+	previousIdle := previous.Idle + previous.Iowait
+	currentIdle := current.Idle + current.Iowait
+	if !validCPUCounter(previous.Idle) || !validCPUCounter(current.Idle) ||
+		!validCPUCounter(previous.Iowait) || !validCPUCounter(current.Iowait) ||
+		math.IsInf(previousIdle, 0) || math.IsInf(currentIdle, 0) || currentIdle < previousIdle {
+		return false
+	}
 	for _, counter := range [...][2]float64{
 		{previous.User, current.User}, {previous.System, current.System},
-		{previous.Idle, current.Idle}, {previous.Nice, current.Nice},
-		{previous.Iowait, current.Iowait}, {previous.Irq, current.Irq},
+		{previous.Nice, current.Nice}, {previous.Irq, current.Irq},
 		{previous.Softirq, current.Softirq}, {previous.Steal, current.Steal},
 		{previous.Guest, current.Guest}, {previous.GuestNice, current.GuestNice},
 	} {
-		if counter[0] < 0 || counter[1] < counter[0] || math.IsNaN(counter[0]) || math.IsNaN(counter[1]) || math.IsInf(counter[0], 0) || math.IsInf(counter[1], 0) {
+		if !validCPUCounter(counter[0]) || !validCPUCounter(counter[1]) || counter[1] < counter[0] {
 			return false
 		}
 	}
 	return true
+}
+
+func validCPUCounter(counter float64) bool {
+	return counter >= 0 && !math.IsNaN(counter) && !math.IsInf(counter, 0)
 }
 
 type loadValues struct {
@@ -349,12 +365,18 @@ func (c *Collector) collectUptime(ctx context.Context, m *v1.Metrics) {
 	m.Sources[v1.SourceUptime] = c.source(v1.SourceUptime, time.Now(), c.baseInterval())
 }
 
+// Traffic exposes the concurrency-safe cumulative traffic state to reporting.
+func (c *Collector) Traffic() *TrafficAccumulator { return c.traffic }
+
 func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 	names := c.config.Interfaces
 	if len(names) == 0 {
 		name, err := defaultInterface(ctx)
 		if err != nil {
 			c.rates.forget(c.autoInterface)
+			if c.traffic != nil {
+				c.traffic.Observe(nil, nil)
+			}
 			c.autoInterface = ""
 			c.networks = nil
 			m.Networks = append(m.Networks, v1.NetworkMetrics{Name: "default"})
@@ -370,15 +392,19 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 		}
 		names = []string{name}
 	}
+	if c.traffic != nil {
+		c.traffic.Observe(names, nil)
+	}
 	// gopsutil Darwin invokes system netstat (and sometimes ifconfig).
 	// Cache its real observations for 30 seconds; never relabel a replay as new.
 	due := runtime.GOOS != "darwin" || c.networkAt.IsZero() || time.Since(c.networkAt) >= c.networkInterval()
 	if due {
 		var counters []gnet.IOCountersStat
-		err := checked(ctx, func() (err error) { counters, err = gnet.IOCountersWithContext(ctx, true); return err })
+		err := checked(ctx, func() (err error) { counters, err = networkCounters(ctx); return err })
 		at := time.Now()
 		c.networkAt = at
 		c.networks = make(map[string]networkSample, len(names))
+		trafficCounters := make(map[string]NetworkCounter, len(names))
 		for _, name := range names {
 			networkKey := v1.NetworkMetricKey(name)
 			observation := NetworkObservation{Network: v1.NetworkMetrics{Name: name}, Status: "unsupported", Source: c.source(networkKey, at, c.networkInterval())}
@@ -389,7 +415,9 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 				found := false
 				for _, counter := range counters {
 					if counter.Name == name {
-						observation = c.rates.Observe(name, NetworkCounter{RxBytes: counter.BytesRecv, TxBytes: counter.BytesSent}, at.Sub(c.started))
+						raw := NetworkCounter{RxBytes: counter.BytesRecv, TxBytes: counter.BytesSent}
+						trafficCounters[name] = raw
+						observation = c.rates.Observe(name, raw, at.Sub(c.started))
 						found = true
 						break
 					}
@@ -399,6 +427,9 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 				}
 			}
 			c.networks[name] = networkSample{observation: observation, at: at}
+		}
+		if c.traffic != nil {
+			c.traffic.ObserveAt(at, names, trafficCounters)
 		}
 	}
 	for _, name := range names {

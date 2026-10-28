@@ -3,12 +3,26 @@
 package collect
 
 import (
+	"context"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync/atomic"
 	"time"
 
+	gnet "github.com/shirou/gopsutil/v4/net"
+
 	v1 "orbitbeacon/internal/protocol/v1"
 )
+
+func networkCounters(ctx context.Context) ([]gnet.IOCountersStat, error) {
+	if root := os.Getenv("HOST_PROC"); runtime.GOOS == "linux" && root != "" {
+		// Match the PID 1 namespace used by defaultInterface on host proc mounts.
+		return gnet.IOCountersByFileWithContext(ctx, true, filepath.Join(root, "1", "net", "dev"))
+	}
+	return gnet.IOCountersWithContext(ctx, true)
+}
 
 // NetworkCounter is an interface's cumulative kernel byte counters.
 type NetworkCounter struct {
