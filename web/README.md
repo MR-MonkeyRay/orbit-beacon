@@ -1,35 +1,42 @@
-# Web UI 源码
+# Web UI
 
-管理控制台（英文）与公开节点首页（中文）的源码。构建产物提交在 `internal/server/webui/dist`，由 Go `embed` 打包进 Server，所以编译 Go 不需要 Node.js；只有修改界面时才需要。
+英文管理控制台与中文公开节点页，使用原生 JavaScript/CSS 和 esbuild，无前端运行时依赖或外部字体/CDN。产物提交在 `internal/server/webui/dist` 并由 Go `embed` 打包；普通 Go 构建和 Server 运行不需要 Node.js。
+
+## 修改界面
+
+需要 Node.js 22+（仓库 `.nvmrc` 为 22）。在仓库根目录执行：
 
 ```sh
 cd web
 npm ci
-npm run build   # 生成 dist；提交前运行
-npm run watch   # 开发时自动重建（需重新编译并重启 Server 才会生效）
-npm run check   # 校验 dist 与源码一致，CI 会运行
+npm run build   # 更新提交的内嵌产物
+npm run watch   # 监听 src 并重建；与 build 二选一
 ```
 
-## 结构
+这里没有独立开发服务器。重建网页后，还需重新编译并重启 Server 才能看到变更；部署和启动方式见[部署说明](../deploy/README.md)。
 
-```
-src/
-  shared/        两个页面共用：设计 token（tokens.css）、DOM 工具、图标、主题切换
-  console/       管理控制台，单页应用
-    main.js        路由表（须与 Go 服务端返回 200.html 的路径一致）
-    router.js      History 路由：先取数据再切换，慢时显示骨架屏，支持 View Transitions
-    api.js         /api/v1 客户端、会话、CSRF、短时请求缓存
-    shell.js       侧栏、账户区、移动端抽屉
-    ui/            组件、表单（UTF-8 字节校验、脏状态）、对话框、Tabs、Toast
-    pages/         各页面
-    styles/        按关注点拆分的样式，responsive.css 必须最后导入
-  public/        公开首页：轮询、卡片原地更新、星轨图
+提交界面变更时一并提交源码与产物，并运行：
+
+```sh
+npm run check  # 临时构建并逐文件比较 dist，不修改已提交产物
+npm test       # Node.js 前端回归
 ```
 
-## 约定
+CI 会运行这两项检查。构建目标为 Chrome 111、Firefox 115、Safari 16.4；这不是浏览器实测兼容性保证。
 
-- 不引入运行时依赖和外部资源（字体、CDN），页面可在离线内网使用。
-- 脚本和样式输出到 `_app/immutable/` 并带内容哈希，服务端对该目录返回一年 `immutable` 缓存；HTML 外壳为 `no-store`。
-- 图标在构建时以 SVG sprite 内联进 HTML，首屏无需等待脚本。
-- 公开首页的数据处理语义（8 秒超时、严格校验响应、隐藏或失败时清空数据）属于安全约定，修改时保持不变。
-- 动画遵循 `prefers-reduced-motion`；主题偏好保存在 `localStorage` 的 `orbitbeacon-theme`，两个页面共享。
+## 源码入口
+
+| 路径 | 用途 |
+| --- | --- |
+| `src/console/` | 管理控制台：`main.js` 路由、`api.js` 会话/CSRF 客户端、`pages/` 页面、`ui/` 组件 |
+| `src/public/` | 公开页：`main.js` 更新与分页、`stream.js` SSE、`validate.js` 响应校验、卡片和星轨图 |
+| `src/shared/` | 共享设计 token、DOM 工具、图标与主题 |
+| `test/` | Node.js 测试；不替代真实浏览器验收 |
+| `build.mjs` | 两个入口构建、HTML 外壳和内联 SVG 图标生成 |
+
+## 必须保持的边界
+
+- `/` 返回 `public.html`；控制台路由返回 `200.html`。改路由时同时更新 `src/console/main.js` 与 `internal/server/http.go`，刷新直达链接也必须可用。API 契约见 [OpenAPI](../api/openapi.yaml)。
+- 内容哈希脚本和样式放在 `_app/immutable/`，Server 缓存一年；HTML 为 `no-store`。不要手改产物或去掉 Go 的 `all:dist` 嵌入声明。
+- 公开页请求不带凭据，优先 SSE；建流失败降级为 10 秒轮询。建流首帧及普通请求超时为 8 秒，收到流帧后以 18 秒检查中断。响应严格校验；页面隐藏、离开或更新失败时清空节点数据，避免继续展示旧公开信息。
+- 动画遵循 `prefers-reduced-motion`；主题偏好共用 `localStorage` 的 `orbitbeacon-theme`。不加入外部资源或必须联网加载的运行时依赖。

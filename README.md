@@ -2,28 +2,28 @@
 
 自托管的多节点监控系统。Server 提供管理 API、内嵌 Web 控制台和 SQLite 存储；Agent 采集主机指标，通过 HTTPS 上报。
 
-当前可用：节点接入、鉴权上报、期望配置下发、备份恢复，以及逐节点显式公开的中文节点首页。管理控制台为英文；尚无历史图表、告警或浏览器接入向导。
+管理控制台为英文，公开节点首页为中文。Agent 当前按 Linux 部署；Windows 和 macOS 的采集代码不代表已支持部署。
 
-文档：[部署](deploy/README.md) · [Linux Agent 接入](docs/agent.md) · [HTTP API](api/openapi.yaml) · [Web UI 开发](web/README.md)
+文档：[部署与备份](deploy/README.md) · [Linux Agent 接入](docs/agent.md) · [架构与数据边界](docs/architecture.md) · [HTTP API](api/openapi.yaml) · [Web 开发](web/README.md)
 
 ## 功能
 
-| 模块 | 状态 |
-| --- | --- |
-| 控制台 | 登录/退出、节点清单与元数据、期望配置、公开设置、用户/组、修改自己的密码、审计。界面为英文。 |
-| 接入 | 管理 API 签发接入凭证，Linux Agent CLI 注册；支持单节点和分组批量接入。 |
-| 上报 | CPU、负载、内存/Swap、运行时间、磁盘和网络；Bearer 鉴权、退避重试、应用期望配置。 |
-| 公开首页 | 中文响应式卡片：独立公开名称、地区、服务商、最近上报在线状态及 CPU/内存/1分钟负载/运行时长。默认全部私有。 |
-| 运维 | 健康检查、SQLite 备份/恢复、systemd、Docker Compose。 |
-| 未实现 | 浏览器接入向导、私有指标面板、历史与流量汇总、探测任务、告警、Agent 自动升级。 |
+- 管理节点、分组、用户、接入凭证和 Agent 配置；查看最近指标、历史图表、流量和服务探测结果。
+- 配置告警规则，查看告警事件，通过 Webhook、Telegram 或邮件发送通知。
+- 为每个节点独立设置公开名称、地区和服务商，选择是否在公开首页展示；默认不公开。
+- 支持 SQLite 备份恢复、systemd 和 Docker Compose。Agent 自动升级尚未实现。
 
-上线前需要知道：
+在线状态按最近上报时间判断，不等于 ping、业务健康或可用率。资源缺失或过期显示 `—`；公开资源快照在内存中，Server 重启后需等待新上报。历史指标是尽力记录，不应作为完整审计或计费数据。
 
-- 管理节点状态仍为 `unknown`，不代表实时在线状态。公开首页按最近180秒有效新上报判定在线，不代表 ping、业务健康或可用率。
-- 保存期望配置只代表服务端已记录。Agent 会在后续上报中接收并保存配置，但控制台不展示应用确认。
-- 公开资源缺失或来源过期时显示 `—`，真实0值仍显示0。资源快照仅存内存，Server 重启后须等新上报；在线判定保留数据库记录。断网期间不积压历史样本。
-- 当前按 Linux 部署。Windows 运行身份校验未实现；其他平台的采集代码不等于已支持的部署方式。
-- `backup` 只生成 SQLite 数据库文件，不包含 `secrets.key`、配置或 TLS 证书；`restore` 也不是损坏数据库的通用修复工具。
+数据库备份不包含历史指标库 `metrics.db`、通知加密密钥 `secrets.key`、配置或证书；恢复通知凭据需要原密钥。备份及恢复步骤见[部署文档](deploy/README.md)。
+
+### 使用控制台
+
+- **Nodes**：创建节点，在详情的 **Enroll agent** 签发凭证；上报后查看最新指标、历史、流量与探测结果。修改 **Agent configuration** 后，查看应用状态与版本，保存本身不代表 Agent 已应用。
+- **Alerts**：在 **Channels** 配置并测试通知通道，在 **Rules** 添加规则并绑定通道；在 **Active** 和 **History** 查看事件。规则可覆盖全部节点、分组或单节点，支持 CPU、内存、Swap、磁盘、负载、探测失败和离线。未绑定通道时仍可产生事件，但不会发送通知。
+- **Settings → API tokens**：管理员可创建自动化只读令牌，明文只显示一次；通过 HTTPS 的 `Authorization: Bearer` 使用，不要放入 URL。令牌不支持写操作，也不能访问账户、用户或接入凭证管理接口。具体范围见 [OpenAPI](api/openapi.yaml)。
+
+告警每 30 秒评估一次，通知可能延迟或丢失，不能替代独立的高可靠告警系统。更多数据保留和可靠性边界见[架构说明](docs/architecture.md)。
 
 ## 快速开始：本机 HTTPS 体验
 
@@ -51,7 +51,7 @@ openssl req -x509 -newkey rsa:3072 -nodes -days 7 \
   -subj '/CN=localhost' \
   -addext 'subjectAltName=DNS:localhost' \
   -addext 'basicConstraints=critical,CA:TRUE'
-cat > server.json <<EOF
+cat > "$DEMO_DIR/server.json" <<EOF
 {
   "listen_addr": "127.0.0.1:8443",
   "data_dir": "$DEMO_DIR",
@@ -61,7 +61,7 @@ cat > server.json <<EOF
   "max_nodes": 500
 }
 EOF
-build/orbitbeacon-server serve --config server.json
+build/orbitbeacon-server serve --config "$DEMO_DIR/server.json"
 ```
 
 保持服务运行，在另一个终端检查（如果新开了终端，先重新设置 `DEMO_DIR`）：
@@ -76,25 +76,25 @@ build/orbitbeacon-server health --url https://localhost:8443 \
 
 ### 3. 接入 Agent
 
-按 [Linux Agent 接入指南](docs/agent.md) 完成：登录管理 API、创建节点、签发凭证、安装固定的安装策略，再以非 root 身份注册并运行。该指南也说明了远程节点与同机体验的区别。
+在控制台 Nodes 中创建节点，在节点详情的 Enroll agent 签发凭证；然后按 [Linux Agent 接入指南](docs/agent.md) 安装并运行。指南也说明私有 CA 和远程节点的配置。
 
 ### 4. 选择公开节点
 
 管理员进入 Nodes → 节点详情 → Public page，填写独立的 Public name、Region、Provider，勾选 Publish this node 后保存。不会自动复制内部元数据；已注册且启用的节点才会展示。不要填入 IP、域名、主机名或凭证；这些文本是主动发布的内容，不会自动脱敏。CPU、内存、负载和运行时长也会公开。
 
-取消公开、禁用或删除后，下次请求立即排除该节点；已发送的数据无法撤回。首页每10秒刷新，失败或隐藏时清空上次数据。`/status` 不再提供页面。
+取消公开、禁用、删除节点或撤销节点凭证后，下次请求将其排除；已发送的数据无法撤回。首页优先使用事件流，建立连接失败时回退到轮询。`/status` 不提供页面。
 
 ## 正式部署
 
-见 [部署与备份说明](deploy/README.md)，包含 systemd、Docker Compose、首次管理员初始化和停服备份恢复。
+见 [部署与备份说明](deploy/README.md)，包含 systemd、Docker Compose、管理员初始化和备份恢复。
 
 部署前至少确认：
 
 - 使用可信 HTTPS 证书，或让客户端显式信任你的私有 CA；不要用跳过 TLS 校验代替信任配置。
 - `public_url` 是浏览器实际访问的 HTTPS 源站，推荐域名根路径。API 与页面同源，不支持子路径前缀。
 - 数据目录放在本地文件系统，由运行用户单独所有并设为 `0700`；数据库、SQLite 辅助文件和 `secrets.key` 必须是同一用户的 `0600` 普通文件，路径不能经过符号链接。
-- 同一数据目录只能有一个 Server 命令持有。备份、恢复或重新 `bootstrap` 前先停服；遇到 `data_dir_in_use` 不要删除 `server.lock`。
-- 服务默认只监听回环地址，由反向代理终结 TLS。当前不消费转发头，代理后的登录限流会按代理的直连 IP 计算，需在入口另做按客户端限流。
+- 离线备份、恢复或重新 `bootstrap` 前先停服；在线备份使用 `backup --online`。遇到 `data_dir_in_use` 不要删除 `server.lock`。
+- 默认不信任转发头，代理后的登录限流按代理直连 IP 计算。仅在受控代理下配置 `trusted_proxies`，并确保代理正确设置 `X-Forwarded-For`；详见部署文档。
 
 ## 配置
 
@@ -107,6 +107,10 @@ Server 配置优先级：**CLI 参数 > `ORBITBEACON_` 环境变量 > JSON 文�
 | `public_url` | `https://localhost`；必须是实际 HTTPS 地址，用于浏览器 Origin 校验 |
 | `max_nodes` | `500`；包括待接入和禁用节点，是容量上限，不是性能承诺 |
 | `tls_cert_file` / `tls_key_file` | 默认空；直接提供 HTTPS 时必须成对设置 |
+| `trusted_proxies` | 默认空数组；仅信任指定代理 IP 或 CIDR 的 `X-Forwarded-For` |
+| `metrics_listen` | 默认空，即关闭独立指标监听；开启时应限制访问 |
+| `access_log` | 默认 `false`，是否启用访问日志 |
+| `allow_insecure_webhooks` / `notification_allow_private_networks` | 默认 `false`；通知目标的网络安全限制见部署文档 |
 
 环境变量使用同名的 `ORBITBEACON_` 前缀，例如 `ORBITBEACON_MAX_NODES=100`；对应 CLI 参数为 `--max-nodes 100`。Agent 的服务器地址、CA、目录和运行身份由安装策略固定，不能用普通配置或环境变量覆盖，详见[接入指南](docs/agent.md)。
 
@@ -114,9 +118,9 @@ Server 配置优先级：**CLI 参数 > `ORBITBEACON_` 环境变量 > JSON 文�
 
 接口契约见 [OpenAPI](api/openapi.yaml)。
 
-- 管理端：`/api/v1/`，使用会话 Cookie。写请求校验 `Origin` 和会话 CSRF token；登录需要 `Origin`，但不需要已有会话。
+- 管理端：`/api/v1/`，使用会话 Cookie；写请求校验 `Origin` 和会话 CSRF token。部分只读接口也支持只读 API token，权限及限制见 OpenAPI。
 - Agent 端：`/api/agent/v1/`，使用接入凭证或节点 Bearer 凭证，不能与浏览器会话互换。
-- 公开端：`GET /api/public/v1/nodes?limit=50&offset=0`，无需会话；每页1–100条，仅返回公开白名单字段。配置入口为受保护的 `GET/PATCH /api/v1/nodes/{id}/public-settings`。
+- 公开端：`GET /api/public/v1/nodes?limit=50&offset=0` 和 `/api/public/v1/stream`，无需会话，仅返回公开白名单字段。公开设置由管理端保护。
 - 健康检查：`GET /healthz/live` 检查进程，`GET /healthz/ready` 检查是否接收流量及 SQLite 是否可用；两者都不需要认证。
 - 错误响应包含 `code`、`message`、`request_id` 和可选 `fields`。排障时记录 `request_id`，不要发送 Cookie、密码或 token。
 

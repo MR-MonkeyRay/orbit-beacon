@@ -3,9 +3,8 @@ info:
   title: OrbitBeacon control plane and agent protocol
   version: 0.1.0
   description: |
-    Steps 1–2 implement the control plane, enrollment and live agent telemetry.
-    Alert rules, evaluation, event history and encrypted notification channels
-    with durable delivery are available. Durable metric history and backups are available; upgrades are pending.
+    The control plane supports enrollment, agent telemetry, metric history,
+    alert rules and encrypted notification channels. Agent upgrades are not available.
     Read-only automation tokens use Authorization: Bearer obt_<base64url secret>.
     Allowed management GET operations (and their HEAD equivalents) accept bearerAuth
     as an alternative to a session. All token writes return 403 token_read_only,
@@ -741,7 +740,7 @@ paths:
         and nodes, falling back to event snapshots after deletion. Unknown,
         repeated or empty query parameters return 400. Resolved events are kept
         for 90 days after resolution with hourly bounded cleanup. Open events are
-        never expired. Notifications are not yet delivered.
+        never expired. Configured notification channels can deliver alert events.
       parameters:
         - $ref: '#/components/parameters/Limit'
         - name: state
@@ -1394,7 +1393,7 @@ paths:
             schema: {$ref: '#/components/schemas/Report'}
       responses:
         '200':
-          description: Accepted live sequence, with only newer desired configuration. No traffic acknowledgements are fabricated before durable traffic storage exists.
+          description: Accepted live sequence, with only newer desired configuration. Traffic acknowledgements cover committed counters and expired entries discarded by the server.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ReportResponse'}
