@@ -100,3 +100,33 @@ func OpenFile(path string, flag int, mode os.FileMode) (*os.File, error) {
 	}
 	return file, nil
 }
+
+// OpenRegular opens an existing readable regular file without following symlinks.
+// Unlike OpenFile, it accepts public or foreign-owned ciphertext inputs. Ancestry
+// must still meet the shared pathname policy, and no write flags are accepted.
+func OpenRegular(path string) (*os.File, error) {
+	if err := ValidateParents(path); err != nil {
+		return nil, err
+	}
+	file, err := openFile(path, os.O_RDONLY, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = fmt.Errorf("file %q must be a regular file", path)
+	}
+	if err == nil {
+		entry, statErr := os.Lstat(path)
+		if statErr != nil {
+			err = statErr
+		} else if !os.SameFile(info, entry) || !entry.Mode().IsRegular() {
+			err = fmt.Errorf("file %q changed while being opened", path)
+		}
+	}
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return file, nil
+}

@@ -159,3 +159,36 @@ func TestValidateDirectoryRejectsUntrustedOwnersAndNonprivateFinalDirectory(t *t
 		})
 	}
 }
+
+func TestOpenRegularAllowsReadableArchiveAndRejectsLinksAndSpecialFiles(t *testing.T) {
+	dir := privateDirectory(t)
+	path := filepath.Join(dir, "archive")
+	if err := os.WriteFile(path, []byte("ciphertext"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	file, err := securefs.OpenRegular(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	ancestor := filepath.Join(privateDirectory(t), "linked")
+	if err := os.Symlink(dir, ancestor); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []string{link, filepath.Join(ancestor, "archive"), fifo, dir, filepath.Join(dir, "missing")} {
+		if file, err := securefs.OpenRegular(invalid); err == nil {
+			file.Close()
+			t.Fatalf("accepted nonregular or linked path %q", invalid)
+		}
+	}
+}
