@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -35,6 +36,48 @@ type Event struct {
 	TargetID  *string         `json:"target_id"`
 	CreatedAt time.Time       `json:"created_at"`
 	Details   json.RawMessage `json:"details"`
+}
+
+type EventPage struct {
+	Events     []Event `json:"events"`
+	HasMore    bool    `json:"has_more"`
+	NextOffset *int    `json:"next_offset,omitempty"`
+	NextCursor string  `json:"next_cursor,omitempty"`
+}
+
+// Event cursors use the same fixed-width UTC timestamp as SQLite ordering.
+func eventCursor(event Event) string {
+	return EncodeEventCursor(event.CreatedAt, event.ID)
+}
+
+func parseEventCursor(cursor string) (string, string, error) {
+	return DecodeEventCursor(cursor)
+}
+
+// EncodeEventCursor encodes a timestamp/UUID keyset position shared by event APIs.
+func EncodeEventCursor(created time.Time, id string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(timekey.Format(created) + "|" + id))
+}
+
+// DecodeEventCursor accepts only canonical timestamp/UUID positions.
+func DecodeEventCursor(cursor string) (string, string, error) {
+	// A canonical timestamp, separator, and UUID encode to exactly 90 characters.
+	if len(cursor) != 90 {
+		return "", "", ErrInvalidInput
+	}
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(cursor)
+	if err != nil || base64.RawURLEncoding.EncodeToString(raw) != cursor {
+		return "", "", ErrInvalidInput
+	}
+	created, id, ok := strings.Cut(string(raw), "|")
+	if !ok || !identity.ValidUUID(id) {
+		return "", "", ErrInvalidInput
+	}
+	parsed, err := timekey.Parse(created)
+	if err != nil || timekey.Format(parsed) != created {
+		return "", "", ErrInvalidInput
+	}
+	return created, id, nil
 }
 
 func scanGroup(row interface{ Scan(...any) error }) (Group, error) {
