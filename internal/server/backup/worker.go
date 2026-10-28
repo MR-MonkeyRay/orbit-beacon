@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -20,7 +21,8 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-// Run owns the one execution slot. Only its service context controls accepted work.
+// Run owns the scheduler and the sole execution slot. Scheduling remains live
+// during compression/upload; all mutation and completion events share one wake.
 func (s *Service) Run(ctx context.Context) {
 	if !s.running.CompareAndSwap(false, true) {
 		return
@@ -41,24 +43,52 @@ func (s *Service) Run(ctx context.Context) {
 	_ = s.cleanupWork(ctx)
 	_, _ = s.CleanupOrphans(ctx, 500)
 	_, _ = s.CleanupLocalTemps(ctx, 500)
+	workerCtx, cancelWorker := context.WithCancel(ctx)
+	jobs := make(chan Task)
+	workerDone := make(chan struct{})
+	var executing atomic.Bool
+	go func() {
+		defer close(workerDone)
+		for task := range jobs {
+			s.execute(workerCtx, task)
+			executing.Store(false)
+			s.signal()
+		}
+	}()
+	defer func() {
+		cancelWorker()
+		close(jobs)
+		<-workerDone
+	}()
+	timer := time.NewTimer(time.Hour)
+	defer timer.Stop()
 	for ctx.Err() == nil {
-		task, err := s.claim(ctx)
-		if errors.Is(err, sql.ErrNoRows) {
-			select {
-			case <-ctx.Done():
-				return
-			case <-s.wake:
-			case <-time.After(time.Minute):
+		now := s.opts.Now()
+		tickErr := s.Tick(ctx, now)
+		var claimErr error
+		if !executing.Load() {
+			var task Task
+			task, claimErr = s.claim(ctx)
+			if claimErr == nil {
+				executing.Store(true)
+				select {
+				case jobs <- task:
+				case <-ctx.Done():
+					return
+				}
 			}
-			continue
 		}
-		if err != nil {
-			if !workerDelay(ctx) {
-				return
-			}
-			continue
+		wait, waitErr := s.schedulerWait(ctx, s.opts.Now())
+		if tickErr != nil || waitErr != nil || claimErr != nil && !errors.Is(claimErr, sql.ErrNoRows) {
+			wait = time.Second
 		}
-		s.execute(ctx, task)
+		timer.Reset(wait)
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.wake:
+		case <-timer.C:
+		}
 	}
 }
 func workerDelay(ctx context.Context) bool {

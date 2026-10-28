@@ -22,6 +22,9 @@ func workerFixture(t *testing.T) (*sql.DB, Options) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec(`DELETE FROM backup_plans`); err != nil {
+		t.Fatal(err)
+	}
 	key, err := datadir.LoadKey(filepath.Join(dir, "secrets.key"))
 	if err != nil {
 		t.Fatal(err)

@@ -261,7 +261,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	backups, err := backup.New(db, backup.Options{DataDir: cfg.DataDir, SecretBox: backupBox, ServerVersion: buildinfo.Current().Version})
+	backups, err := backup.New(db, backup.Options{DataDir: cfg.DataDir, SecretBox: backupBox, ServerVersion: buildinfo.Current().Version, Uploader: backup.NewObjectUploader()})
 	if err != nil {
 		return err
 	}

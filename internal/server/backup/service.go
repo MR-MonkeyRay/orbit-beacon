@@ -27,10 +27,12 @@ type Uploader interface {
 }
 type UploadResult struct{ OutcomeUnknown bool }
 type Options struct {
-	DataDir        string
-	SecretBox      *secretbox.Box
-	ServerVersion  string
-	Now            func() time.Time
+	DataDir       string
+	SecretBox     *secretbox.Box
+	ServerVersion string
+	Now           func() time.Time
+	// Location is captured at construction; nil uses the server process timezone.
+	Location       *time.Location
 	Random         io.Reader
 	Uploader       Uploader
 	removeArtifact func(string) error
@@ -42,6 +44,7 @@ type Service struct {
 	db             *sql.DB
 	box            *secretbox.Box
 	opts           Options
+	serverLocation *time.Location
 	wake           chan struct{}
 	running        atomic.Bool
 	randomMu       sync.Mutex
@@ -84,7 +87,11 @@ func New(db *sql.DB, opts Options) (*Service, error) {
 	if opts.Random == nil {
 		opts.Random = rand.Reader
 	}
-	return &Service{db: db, box: opts.SecretBox, opts: opts, wake: make(chan struct{}, 1)}, nil
+	location := opts.Location
+	if location == nil {
+		location = time.Local
+	}
+	return &Service{db: db, box: opts.SecretBox, opts: opts, serverLocation: location, wake: make(chan struct{}, 1)}, nil
 }
 func (s *Service) signal() {
 	select {
