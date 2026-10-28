@@ -7,7 +7,7 @@ const ACTIONS = {
   'node.create': 'Node created', 'node.delete': 'Node deleted', 'node.disable': 'Node disabled', 'node.enable': 'Node enabled',
   'node.metadata.patch': 'Node details updated', 'node.config.patch': 'Desired configuration updated',
   'node.public_settings.patch': 'Public page settings saved', 'group.create': 'Group created', 'group.update': 'Group renamed',
-  'group.delete': 'Group deleted', 'user.create': 'User created', 'user.patch': 'User updated', 'user.delete': 'User deleted',
+  'group.delete': 'Group deleted', 'user.create': 'Administrator added', 'user.patch': 'Administrator renamed', 'user.delete': 'Administrator deleted',
   'user.password.change': 'Password changed', 'enrollment.create': 'Enrollment credential issued',
   'enrollment.claim': 'Agent enrolled', 'enrollment.revoke': 'Enrollment credential revoked',
   'session.create': 'Signed in', 'session.delete': 'Signed out',

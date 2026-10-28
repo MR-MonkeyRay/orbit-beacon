@@ -9,7 +9,7 @@
 /* Responsive */
 @media (max-width:1100px){.split{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:860px){
-  .shell{grid-template-columns:minmax(0,1fr)}
+  .shell{grid-template-columns:minmax(0,1fr);grid-template-rows:58px minmax(0,1fr)}
   .topbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:6px;height:58px;padding:0 10px;background:color-mix(in srgb,var(--bg) 85%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
   .topbar .brand{padding:0 4px}
   .nav .notification-desktop{display:none}

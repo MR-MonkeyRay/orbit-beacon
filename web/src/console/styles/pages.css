@@ -92,3 +92,12 @@ input[type=range]{width:100%;accent-color:var(--beacon)}
 .probe-row:last-child{padding-bottom:0}
 .probe-heading{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px 12px;margin-bottom:12px;min-width:0}
 .probe-target{min-width:0;max-width:100%;overflow-wrap:anywhere;white-space:pre-wrap}
+/* Administrator names shrink without hiding the current-account marker. */
+.administrators-table{table-layout:fixed}
+.administrators-table th:last-child{width:112px}
+.administrators-table th.hide-sm{width:170px}
+.administrator-who,.administrator-name{min-width:0}
+.administrator-name{display:flex;align-items:baseline;gap:4px;flex:1}
+.administrator-username{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.administrator-self{flex:none;white-space:nowrap}
+.administrator-protection{padding:12px 16px;border-top:1px solid var(--line);font-size:13px}

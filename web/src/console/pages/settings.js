@@ -21,10 +21,10 @@ export async function settingsPage() {
     requestAnimationFrame(() => { if (!signal?.aborted) showTask(task, {signal}); });
   }
   return h('div', null,
-    pageHead('Settings', 'Your account, people with console access, node groups and the audit trail.'),
+    pageHead('Settings', 'Manage your account, administrators, node groups, audit history and backups.'),
     tabSet([
       {id: 'account', label: 'Account', icon: 'user', build: accountTab},
-      {id: 'users', label: 'Users', icon: 'users', build: () => usersTab(users)},
+      {id: 'administrators', label: 'Administrators', icon: 'users', build: () => administratorsTab(users)},
       {id: 'groups', label: 'Groups', icon: 'folder', build: () => groupsTab(groups, nodes)},
       {id: 'audit', label: 'Audit log', icon: 'list', build: () => auditTab(audit, nameLookup(nodes, users, groups))},
       {id: 'data', label: 'Data operations', icon: 'cloud', build: dataOperationsTab}
@@ -75,14 +75,15 @@ function accountTab() {
     panel('Change password', {}, h('p', {class: 'lede'}, 'Changing your password signs out every session, including this one.'), form));
 }
 
-function usersTab(users) {
+function administratorsTab(users) {
   const self = (item) => item.id === session.user.id;
+  const lastAdministrator = users.length === 1;
 
   const editUser = (item) => {
     let username;
     formDialog({
-      title: `Edit ${item.username}`,
-      submit: 'Save user',
+      title: 'Rename administrator',
+      submit: 'Save',
       build: (form) => {
         username = input({name: 'username', required: true, value: item.username, autocomplete: 'off'});
         validateBytes(username, 1, 128, 'Username');
@@ -103,9 +104,9 @@ function usersTab(users) {
 
   const deleteUser = async (item) => {
     const confirmed = await confirmDialog({
-      title: `Delete ${item.username}?`,
-      message: self(item) ? 'You are deleting your own account. Every session ends and you will be signed out.' : 'Their sessions end immediately. This cannot be undone.',
-      confirm: 'Delete user', danger: true
+      title: self(item) ? 'Delete your account' : 'Delete administrator',
+      message: self(item) ? 'You are deleting your own account. Every session ends and you will be signed out.' : `Delete "${item.username}"? Their sessions will end immediately. This cannot be undone.`,
+      confirm: self(item) ? 'Delete my account' : 'Delete administrator', danger: true
     });
     if (!confirmed) return;
     try {
@@ -114,22 +115,28 @@ function usersTab(users) {
       invalidate('users');
       await refresh();
       toast(`Deleted ${item.username}.`);
-    } catch (error) { toastError(error); }
+    } catch (error) {
+      toastError(error);
+      if (error.code === 'last_administrator') {
+        invalidate('users');
+        await refresh();
+      }
+    }
   };
 
   const createUser = () => {
     let username;
     let password;
     formDialog({
-      title: 'Add user',
-      submit: 'Add user',
+      title: 'Add administrator',
+      submit: 'Add administrator',
       build: (form) => {
         username = input({name: 'username', required: true, autocomplete: 'off'});
         password = passwordInput({name: 'password', required: true, autocomplete: 'new-password'});
         validateBytes(username, 1, 128, 'Username');
         validateBytes(password, 8, 1024, 'Password');
         form.append(field('Username', username),
-          field('Initial password', password, {inner: password.wrapper, hint: '8–1024 UTF-8 bytes. Share it with the user through a secure channel.'}));
+          field('Initial password', password, {inner: password.wrapper, hint: '8–1024 UTF-8 bytes. Share it with the administrator through a secure channel.'}));
       },
       action: async () => {
         try {
@@ -142,20 +149,25 @@ function usersTab(users) {
     });
   };
 
-  const rows = users.map((item) => h('tr', null,
-    h('td', null, h('div', {class: 'who'}, h('span', {class: 'avatar', 'aria-hidden': 'true'}, item.username.slice(0, 1)),
-      h('div', {class: 'who-text'}, h('div', {class: 'who-name'}, item.username, self(item) ? h('span', {class: 'muted'}, ' (you)') : null)))),
-    h('td', {class: 'muted hide-sm'}, when(item.created_at)),
-    h('td', {class: 'actions'}, iconButton('edit', `Edit ${item.username}`, () => editUser(item)), iconButton('trash', `Delete ${item.username}`, () => deleteUser(item)))));
+  const rows = users.map((item) => {
+    const remove = iconButton('trash', `Delete administrator "${item.username}"`, () => deleteUser(item));
+    remove.disabled = lastAdministrator;
+    return h('tr', null,
+      h('td', null, h('div', {class: 'who administrator-who'}, h('span', {class: 'avatar', 'aria-hidden': 'true'}, item.username.slice(0, 1)),
+        h('div', {class: 'administrator-name'}, h('span', {class: 'administrator-username', title: item.username}, item.username),
+          self(item) ? h('span', {class: 'muted administrator-self'}, '(you)') : null))),
+      h('td', {class: 'muted hide-sm'}, when(item.created_at)),
+      h('td', {class: 'actions'}, iconButton('edit', `Rename administrator "${item.username}"`, () => editUser(item)), remove));
+  });
 
-  return h('section', {class: 'panel', 'aria-labelledby': 'users-title'},
-    h('div', {class: 'panel-head'}, h('h2', {id: 'users-title'}, 'Users'), button('Add user', {icon: 'plus', variant: 'primary', small: true, onClick: createUser})),
-    h('div', {class: 'panel-body flush'}, h('p', {class: 'lede'}, 'All administrators have full access. The last administrator cannot be removed.')),
-    users.length ? h('div', {class: 'table-wrap'}, h('table', {class: 'table'},
-      h('thead', null, h('tr', null, h('th', {scope: 'col'}, 'User'), h('th', {scope: 'col', class: 'hide-sm'}, 'Created'),
+  return h('section', {class: 'panel', 'aria-labelledby': 'administrators-title'},
+    h('div', {class: 'panel-head'}, h('h2', {id: 'administrators-title'}, 'Administrators'), button('Add administrator', {icon: 'plus', variant: 'primary', small: true, onClick: createUser})),
+    h('div', {class: 'panel-body flush'}, h('p', {class: 'lede'}, 'All administrators have full access.')),
+    h('div', {class: 'table-wrap'}, h('table', {class: 'table administrators-table'},
+      h('thead', null, h('tr', null, h('th', {scope: 'col'}, 'Username'), h('th', {scope: 'col', class: 'hide-sm'}, 'Created'),
         h('th', {scope: 'col'}, h('span', {class: 'sr'}, 'Actions')))),
-      h('tbody', null, rows)))
-      : emptyState('No users returned', null));
+      h('tbody', null, users.length ? rows : h('tr', null, h('td', {colspan: 3}, 'No administrators.'))))),
+    lastAdministrator ? h('p', {class: 'administrator-protection muted'}, 'At least one administrator is required.') : null);
 }
 
 function groupsTab(groups, nodes) {

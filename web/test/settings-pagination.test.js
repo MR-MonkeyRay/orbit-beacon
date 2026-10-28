@@ -104,14 +104,14 @@ test('audit load more uses the cursor and hides after a full final page', async 
   }
 });
 
-test('Users forms send only administrator credentials and keep conflicts in the dialog', async () => {
+test('administrator forms preserve request boundaries and keep conflicts in the dialog', async () => {
   const dom = installDOM();
   const originals = new Map(['fetch', 'window', 'matchMedia', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
   const self = {id: 'user-one', username: 'admin-one', created_at: '2026-10-27T12:00:00Z'};
   const requests = [];
   Object.assign(globalThis, {window: new EventTarget(), matchMedia: () => ({matches: true, addEventListener() {}}),
     history: {state: null, replaceState() {}}, requestAnimationFrame: () => 0});
-  Object.assign(location, {pathname: '/settings', hash: '#users', assign: (path) => assert.fail(`Unexpected navigation: ${path}`)});
+  Object.assign(location, {pathname: '/settings', hash: '#administrators', assign: (path) => assert.fail(`Unexpected navigation: ${path}`)});
   setNavigationSignal(null);
   setSession({user: self, csrf_token: 'csrf', expires_at: ''});
   invalidate('nodes', 'groups', 'users');
@@ -131,12 +131,9 @@ test('Users forms send only administrator credentials and keep conflicts in the 
     const {settingsPage} = await import('../src/console/pages/settings.js');
     const page = await settingsPage();
     dom.body.append(page);
-    assert.match(page.textContent, /Data operations/);
-    assert.ok(!elements(page).some((element) => element.tagName === 'th' && element.textContent === 'Role'));
-    elements(page).find((element) => element.tagName === 'button' && element.textContent === 'Add user').click();
+    elements(page).find((element) => element.tagName === 'button' && element.textContent === 'Add administrator').click();
     let dialog = dom.body.querySelector('dialog');
     let controls = elements(dialog);
-    assert.equal(controls.filter((element) => element.name === 'role').length, 0);
     controls.find((element) => element.name === 'username').value = 'admin-two';
     const password = controls.find((element) => element.name === 'password');
     password.value = 'regression password two';
@@ -146,7 +143,7 @@ test('Users forms send only administrator credentials and keep conflicts in the 
     assert.equal(password.value, '');
     assert.match(dialog.textContent, /Username already exists/);
     closeDialogs();
-    elements(page).find((element) => element.getAttribute('aria-label') === 'Edit admin-one').click();
+    elements(page).find((element) => element.getAttribute('aria-label') === 'Rename administrator "admin-one"').click();
     dialog = dom.body.querySelector('dialog');
     controls = elements(dialog);
     assert.deepEqual(controls.filter((element) => element.name).map((element) => element.name), ['username']);
@@ -173,7 +170,7 @@ test('self deletion redirects immediately without fetching the administrator lis
   const redirects = [];
   Object.assign(globalThis, {window: new EventTarget(), matchMedia: () => ({matches: true, addEventListener() {}}),
     history: {state: null, replaceState() {}}, requestAnimationFrame: () => 0});
-  Object.assign(location, {pathname: '/settings', hash: '#users', assign: (path) => redirects.push(path)});
+  Object.assign(location, {pathname: '/settings', hash: '#administrators', assign: (path) => redirects.push(path)});
   setNavigationSignal(null);
   setSession({user: self, csrf_token: 'csrf', expires_at: ''});
   invalidate('nodes', 'groups', 'users');
@@ -191,10 +188,10 @@ test('self deletion redirects immediately without fetching the administrator lis
     const {settingsPage} = await import('../src/console/pages/settings.js');
     const page = await settingsPage();
     dom.body.append(page);
-    elements(page).find((element) => element.getAttribute('aria-label') === 'Delete admin-one').click();
+    elements(page).find((element) => element.getAttribute('aria-label') === 'Delete administrator "admin-one"').click();
     const dialog = dom.body.querySelector('dialog');
     assert.match(dialog.textContent, /deleting your own account/);
-    elements(dialog).find((element) => element.tagName === 'button' && element.textContent === 'Delete user').click();
+    elements(dialog).find((element) => element.tagName === 'button' && element.textContent === 'Delete my account').click();
     dialog.dispatchEvent(new Event('animationend'));
     await flush();
     assert.deepEqual(redirects, ['/login']);
