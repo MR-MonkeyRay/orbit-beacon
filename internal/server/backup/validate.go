@@ -23,6 +23,7 @@ import (
 	"orbitbeacon/internal/server/alerts"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/history"
+	"orbitbeacon/internal/server/inbox"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/notify"
 	"orbitbeacon/internal/server/secretbox"
@@ -322,7 +323,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 		_, err := notify.ParsePayload([]byte(r.text("payload_json")))
 		return err
 	case "inbox_notifications":
-		if !oneOf(r.text("kind"), "task", "alert") || !oneOf(r.text("audience"), "admin", "authenticated") || r.text("source_id") == "" || r.text("transition") == "" || len(r.text("details_json")) > 64<<10 || !jsonObject(r.text("details_json")) {
+		if !oneOf(r.text("kind"), "task", "alert") || !oneOf(r.text("audience"), "admin", "authenticated") || r.text("source_id") == "" || r.text("transition") == "" || inbox.ValidateDetails(r.text("kind"), json.RawMessage(r.text("details_json"))) != nil {
 			return invalidRow()
 		}
 	case "inbox_reads":

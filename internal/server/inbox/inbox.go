@@ -73,8 +73,7 @@ func Insert(ctx context.Context, tx *sql.Tx, event Event) error {
 	if len(event.Details) == 0 {
 		event.Details = json.RawMessage(`{}`)
 	}
-	var object map[string]json.RawMessage
-	if len(event.Details) > 64<<10 || json.Unmarshal(event.Details, &object) != nil || object == nil {
+	if ValidateDetails(event.Kind, event.Details) != nil {
 		return ErrInvalidInput
 	}
 	if event.ID == "" {
