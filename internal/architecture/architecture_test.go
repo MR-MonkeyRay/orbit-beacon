@@ -119,6 +119,9 @@ var allowedInternalImports = map[string]map[string]bool{
 		"orbitbeacon/internal/timekey":           true,
 	},
 	"orbitbeacon/internal/server/securefs": {},
+	"orbitbeacon/internal/server/traffic": {
+		"orbitbeacon/internal/timekey": true,
+	},
 	"orbitbeacon/internal/server/storage": {
 		"orbitbeacon/internal/config":          true,
 		"orbitbeacon/internal/identity":        true,
