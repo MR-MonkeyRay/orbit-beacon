@@ -182,36 +182,19 @@ chmod 600 ./orbitbeacon-backup/orbitbeacon.db ./orbitbeacon-backup/secrets.key
 
 ## 恢复
 
-先停服，并另存现有数据库和密钥。恢复必须使用备份时匹配的 `secrets.key`，不能只运行 `restore` 后继续使用新生成的密钥。
-
-systemd：将 `BACKUP` 指向选定的备份目录：
+先停止 Server，使用运行服务的同一用户执行。只接受新版 `.tar.gz.age` 包，密码文件必须归该用户所有、为 `0600` 普通文件，内容为该包的 16 位密码，可带一个换行。也可省略 `--password-file` 从终端无回显输入；不支持命令行明文密码或环境变量密码。
 
 ```sh
-sudo systemctl stop orbitbeacon-server
-sudo install -o orbitbeacon -g orbitbeacon -m 0600 \
-  "$BACKUP/secrets.key" /var/lib/orbitbeacon/secrets.key
-sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore \
-  --data-dir /var/lib/orbitbeacon --input "$BACKUP/orbitbeacon.db"
-sudo systemctl start orbitbeacon-server
+orbitbeacon-server restore --data-dir /var/lib/orbitbeacon \
+  --input /backup/orbitbeacon-....tar.gz.age --password-file /backup/password.txt \
+  --replace
 ```
 
-Compose：下面用于 Linux 本机的 rootful Docker，备份位于 `./orbitbeacon-backup`，已有 `orbitbeacon-data` 卷。先将目录交给容器身份，再把匹配密钥安装到 Docker 返回的实际卷路径；远程或 rootless Docker 应在对应 daemon 主机完成卷文件操作，不要把该路径当成本机路径。
+目标已有业务数据时必须显式 `--replace`；真正空目录可省略，但包内须包含 Configuration。包内类别整体替换，未含类别保留；缺失稳定 ID 依赖时整次拒绝，不按名称匹配或自动创建节点。配置包自带匹配密钥，恢复后计划全部停用；登录会话及接入票据不从包导入。
 
-```sh
-docker compose -f deploy/docker/compose.yaml stop orbitbeacon
-sudo chown -R 65532:65532 ./orbitbeacon-backup
-DATA_DIR="$(docker volume inspect --format '{{ .Mountpoint }}' orbitbeacon-data)"
-sudo install -o 65532 -g 65532 -m 0600 \
-  ./orbitbeacon-backup/secrets.key "$DATA_DIR/secrets.key"
-docker compose -f deploy/docker/compose.yaml run --rm --no-deps \
-  --volume "${PWD}/orbitbeacon-backup:/backup:ro" \
-  --entrypoint /usr/local/bin/orbitbeacon-server orbitbeacon \
-  restore --data-dir /var/lib/orbitbeacon --input /backup/orbitbeacon.db
-sudo chown -R "$(id -u):$(id -g)" ./orbitbeacon-backup
-docker compose -f deploy/docker/compose.yaml up -d orbitbeacon
-```
+多文件恢复保持目录与锁 inode 不变；成功后输出 `.restore-<id>/old/` 回滚副本位置，不自动删除。失败或启动发现未完成事务时先恢复完整旧文件组；回滚副本缺失、损坏或 journal 无效会阻止启动。不要删除锁、journal 或 SQLite sidecar 强行继续。
 
-恢复命令成功后再启动，并重新检查 HTTPS readiness、登录、节点上报和通知解密。失败时保持停服，排查错误，不要删除锁或 sidecar 文件强行继续。
+成功后再启动，检查 HTTPS readiness、登录、节点上报和通知凭据。Compose 先停服务，再通过一次性 `compose run` 将包及密码文件只读挂载到容器，使用相同数据卷和运行身份执行上述命令。
 
 ## 升级
 

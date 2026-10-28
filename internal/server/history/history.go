@@ -77,11 +77,17 @@ type Service struct {
 	dropped           atomic.Uint64
 }
 
+// OpenDatabase initializes only the trusted metrics schema, without starting a
+// writer or retention worker. Offline restore uses it for its private staging.
+func OpenDatabase(ctx context.Context, path string) (*sql.DB, error) {
+	return storage.OpenWithMigrations(ctx, path, []storage.Migration{{Version: CurrentSchemaVersion, SQL: schema}})
+}
+
 // Open creates metrics.db with its own migration ledger and read-only query
 // pool. The main pool is used only to read node IDs during orphan retention.
 func Open(ctx context.Context, dataDir string, nodes *sql.DB, opts Options) (*Service, error) {
 	path := filepath.Join(dataDir, "metrics.db")
-	db, err := storage.OpenWithMigrations(ctx, path, []storage.Migration{{Version: CurrentSchemaVersion, SQL: schema}})
+	db, err := OpenDatabase(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("open metric history: %w", err)
 	}

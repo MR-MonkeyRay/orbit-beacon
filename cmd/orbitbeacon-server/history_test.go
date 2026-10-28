@@ -14,7 +14,7 @@ import (
 	"orbitbeacon/internal/server/storage"
 )
 
-func TestNewerHistorySchemaDisablesHistoryWithoutBlockingRestore(t *testing.T) {
+func TestNewerHistorySchemaDisablesHistoryWithoutChangingFiles(t *testing.T) {
 	parent := t.TempDir()
 	if err := os.Chmod(parent, 0700); err != nil {
 		t.Fatal(err)
@@ -37,14 +37,6 @@ func TestNewerHistorySchemaDisablesHistoryWithoutBlockingRestore(t *testing.T) {
 	if err := newer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// Both backup and restore operate exclusively on the main database.
-	archive := filepath.Join(parent, "backup.db")
-	if err := backupDatabase(dir, archive); err != nil {
-		t.Fatal(err)
-	}
-	if err := restoreDatabase(dir, archive); err != nil {
-		t.Fatalf("restore blocked by history: %v", err)
-	}
 	db, err := storage.Open(context.Background(), filepath.Join(dir, "orbitbeacon.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -66,13 +58,5 @@ func TestNewerHistorySchemaDisablesHistoryWithoutBlockingRestore(t *testing.T) {
 	// The incompatible history file is retained, never deleted or silently reset.
 	if _, err := os.Stat(filepath.Join(dir, "metrics.db")); err != nil {
 		t.Fatal(err)
-	}
-	backup, err := storage.OpenReader(context.Background(), archive)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer backup.Close()
-	if err := backup.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name IN ('buckets','future_metrics')`).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("backup included history: count=%d err=%v", count, err)
 	}
 }

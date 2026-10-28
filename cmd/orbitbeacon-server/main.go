@@ -29,6 +29,7 @@ import (
 	"orbitbeacon/internal/server"
 	"orbitbeacon/internal/server/alerts"
 	"orbitbeacon/internal/server/auth"
+	"orbitbeacon/internal/server/backup"
 	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/nodes"
@@ -56,6 +57,8 @@ func run(args []string) error {
 	var configPath, dataDir, output, input, username string
 	var bundleDir, publicKey string
 	var healthURL, healthCA string
+	var passwordFile string
+	var replace bool
 	var asJSON, onlineBackup bool
 	if args[0] != "version" && args[0] != "health" && args[0] != "verify-bundle" {
 		if args[0] != "restore" {
@@ -82,6 +85,8 @@ func run(args []string) error {
 		fs.BoolVar(&onlineBackup, "online", false, "back up the running server without locking or migrating its database")
 	case "restore":
 		fs.StringVar(&input, "input", "", "source restore archive")
+		fs.BoolVar(&replace, "replace", false, "replace selected categories in an existing data directory")
+		fs.StringVar(&passwordFile, "password-file", "", "owned 0600 file containing the archive password")
 	case "health":
 		fs.StringVar(&healthURL, "url", "", "server HTTPS origin or HTTP origin at 127.0.0.1 or [::1]")
 		fs.StringVar(&healthCA, "ca-file", "", "optional CA PEM bundle")
@@ -144,7 +149,22 @@ func run(args []string) error {
 		if dataDir == "" || input == "" {
 			return errors.New("restore requires --data-dir and --input")
 		}
-		return restoreDatabase(dataDir, input)
+		password, err := readRestorePassword(passwordFile)
+		if err != nil {
+			return err
+		}
+		result, err := backup.Restore(context.Background(), dataDir, input, password, replace)
+		password = ""
+		if err != nil {
+			var detail *backup.DependencyConflict
+			if errors.As(err, &detail) {
+				return fmt.Errorf("restore_dependency_conflict: %s", detail)
+			}
+			return err
+		}
+		fmt.Fprintln(os.Stdout, "Restored archive", result.ArchiveID)
+		fmt.Fprintln(os.Stdout, "Rollback files:", result.RollbackPath)
+		return nil
 	}
 	flags := make(map[string]string)
 	fs.Visit(func(f *flag.Flag) {
@@ -161,6 +181,9 @@ func run(args []string) error {
 		return err
 	}
 	defer dataLock.Close()
+	if err := backup.RecoverRestore(cfg.DataDir); err != nil {
+		return err
+	}
 	if err := datadir.Prepare(cfg.DataDir); err != nil {
 		return err
 	}
