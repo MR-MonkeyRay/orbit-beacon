@@ -135,7 +135,12 @@ GOTOOLCHAIN=go1.27.3 go test -race -count=1 ./internal/server/... ./internal/age
 GOTOOLCHAIN=go1.27.3 go vet ./...
 ```
 
-完整门禁见 [CI 配置](.github/workflows/quality.yml)，还包括格式检查和固定版本的漏洞扫描。`main` 分支构建会发布版本镜像、SHA 镜像标签和 GitHub Release 包；同一版本的版本镜像与 Release 包均已存在时，后续构建不会重复推送。架构边界检查包含在 `go test -count=1 ./...` 中，不能依赖测试缓存。
+| Workflow | 触发与职责 |
+| --- | --- |
+| [CI](.github/workflows/ci.yml) | push / PR：并行执行 Go 格式、测试、race、跨平台 vet、Staticcheck，Web 产物一致性与测试，漏洞扫描，Agent 安装脚本检查与回归 |
+| [Release](.github/workflows/release.yml) | 仅由 `main` push 的 CI 全部门禁通过后调用；发布 amd64/arm64 镜像和 Linux Server/Agent 包 |
+
+Go 版本读取 `go.mod`，Node.js 版本读取 `web/.nvmrc`。发布镜像标签为版本号、提交 SHA 和 `latest`，Release tag 为 `v<VERSION>`；版本镜像、发布包及 `SHA256SUMS` 均已存在时跳过发布。PR、其他分支和 tag push 只检查、不发布。架构边界检查包含在 `go test -count=1 ./...` 中，不能依赖测试缓存。
 
 ## 许可证
 

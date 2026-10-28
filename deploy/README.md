@@ -70,7 +70,7 @@ docker compose -f deploy/docker/compose.yaml logs --tail=100 orbitbeacon
 
 `deploy/docker/server.json` 在构建时复制进镜像，并非运行时挂载。修改仓库中的该文件不会改变现有容器；额外设置需在 Compose 的 `environment` 中传入对应 `ORBITBEACON_*`，或只读挂载完整配置到 `/etc/orbitbeacon/server.json`。宿主机 `export` 的变量只有被 Compose 引用或显式传入时才会进入容器。环境或镜像标签变更后执行 `up -d` 重建容器。
 
-镜像构建文件为 [`build/server.Dockerfile`](../build/server.Dockerfile)；发布流水线使用根目录 `VERSION`，发布逻辑见 [quality.yml](../.github/workflows/quality.yml)。流水线配置不代表对应版本已在 GHCR 或 GitHub Release 可用。
+镜像构建文件为 [`build/server.Dockerfile`](../build/server.Dockerfile)。[`ci.yml`](../.github/workflows/ci.yml) 在 `main` push 且全部检查通过后调用 [`release.yml`](../.github/workflows/release.yml)，按根目录 `VERSION` 发布 amd64/arm64 镜像、Linux Server/Agent 包及 `SHA256SUMS`；版本镜像与两项 Release 资产齐全时跳过。PR、其他分支和 tag push 不发布；流水线配置不代表产物已可用。
 
 ## HTTPS 与反向代理
 

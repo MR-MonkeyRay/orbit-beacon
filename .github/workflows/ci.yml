@@ -1,0 +1,154 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # Do not interrupt a main-branch run once publication may have started.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  go:
+    name: Go checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.project-version.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Read project version
+        id: project-version
+        run: |
+          set -eu
+          version="$(< VERSION)"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo 'VERSION must contain one SemVer-like value such as 0.1.0' >&2
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting
+        run: |
+          if ! unformatted="$(gofmt -l cmd internal)"; then
+            exit 1
+          fi
+          if [ -n "$unformatted" ]; then
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Verify module contents
+        run: go mod verify
+
+      - name: Run tests without cache and report coverage
+        run: |
+          go test -count=1 -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out
+
+      - name: Run race tests
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -count=1 ./...
+
+      - name: Run vet
+        run: go vet ./...
+
+      - name: Run cross-platform vet
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          GOOS=darwin go vet ./...
+          GOOS=windows go vet ./...
+
+      - name: Run Staticcheck
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+          "$RUNNER_TEMP/bin/staticcheck" ./...
+
+  web:
+    name: Web checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # Go builds embed the committed distribution without requiring Node.js.
+      - name: Verify embedded web UI matches its source
+        run: npm run check
+
+      - name: Run web tests
+        run: npm test
+
+  security:
+    name: Vulnerability scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run Go vulnerability scan
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+          "$RUNNER_TEMP/bin/govulncheck" ./...
+
+  installer:
+    name: Agent installer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Check shell scripts
+        run: shellcheck deploy/install-agent.sh deploy/install-agent.test.sh
+
+      - name: Run installer regression tests
+        run: sh deploy/install-agent.test.sh
+
+  release:
+    name: Release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [go, web, security, installer]
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/release.yml
+    with:
+      version: ${{ needs.go.outputs.version }}
