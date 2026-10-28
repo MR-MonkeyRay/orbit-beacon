@@ -20,12 +20,17 @@ type LoadOptions struct {
 }
 
 type Server struct {
-	ListenAddr  string `json:"listen_addr"`
-	DataDir     string `json:"data_dir"`
-	PublicURL   string `json:"public_url"`
-	TLSCertFile string `json:"tls_cert_file"`
-	TLSKeyFile  string `json:"tls_key_file"`
-	MaxNodes    int    `json:"max_nodes"`
+	AllowInsecureWebhooks            bool           `json:"allow_insecure_webhooks"`
+	NotificationAllowPrivateNetworks bool           `json:"notification_allow_private_networks"`
+	ListenAddr                       string         `json:"listen_addr"`
+	MetricsListen                    string         `json:"metrics_listen"`
+	AccessLog                        bool           `json:"access_log"`
+	DataDir                          string         `json:"data_dir"`
+	PublicURL                        string         `json:"public_url"`
+	TLSCertFile                      string         `json:"tls_cert_file"`
+	TLSKeyFile                       string         `json:"tls_key_file"`
+	MaxNodes                         int            `json:"max_nodes"`
+	TrustedProxies                   []netip.Prefix `json:"-"`
 }
 
 // InstallPolicy is administrator-owned configuration. Every source is checked
@@ -103,6 +108,23 @@ func encodeValue(key, value string) (json.RawMessage, error) {
 			return json.Marshal(value)
 		}
 		return json.Marshal(n)
+	case "access_log", "allow_insecure_webhooks", "notification_allow_private_networks":
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			// Preserve the malformed value so decoding reports a typed
+			// configuration error after source precedence is resolved.
+			return json.Marshal(value)
+		}
+		return json.Marshal(enabled)
+	case "trusted_proxies":
+		if value == "" {
+			return json.Marshal([]string{})
+		}
+		parts := strings.Split(value, ",")
+		for i := range parts {
+			parts[i] = strings.TrimSpace(parts[i])
+		}
+		return json.Marshal(parts)
 	default:
 		return json.Marshal(value)
 	}
@@ -110,7 +132,7 @@ func encodeValue(key, value string) (json.RawMessage, error) {
 
 func LoadServer(opts LoadOptions) (Server, error) {
 	cfg := Server{ListenAddr: "127.0.0.1:8080", DataDir: "./data", PublicURL: "https://localhost", MaxNodes: 500}
-	layers, err := sources(opts, []string{"listen_addr", "data_dir", "public_url", "tls_cert_file", "tls_key_file", "max_nodes"})
+	layers, err := sources(opts, []string{"allow_insecure_webhooks", "notification_allow_private_networks", "listen_addr", "metrics_listen", "access_log", "data_dir", "public_url", "tls_cert_file", "tls_key_file", "max_nodes", "trusted_proxies"})
 	if err != nil {
 		return Server{}, err
 	}
@@ -132,7 +154,49 @@ func LoadServer(opts LoadOptions) (Server, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Server{}, fmt.Errorf("invalid configuration: %w", err)
 	}
+	if value, ok := resolved["trusted_proxies"]; ok {
+		var entries []string
+		if err := json.Unmarshal(value, &entries); err != nil {
+			return Server{}, fmt.Errorf("invalid configuration: trusted_proxies must be an array of strings: %w", err)
+		}
+		cfg.TrustedProxies, err = parseTrustedProxies(entries)
+		if err != nil {
+			return Server{}, err
+		}
+	}
 	return cfg, cfg.Validate()
+}
+
+func parseTrustedProxies(entries []string) ([]netip.Prefix, error) {
+	prefixes := make([]netip.Prefix, 0, len(entries))
+	for _, entry := range entries {
+		if entry == "" || strings.TrimSpace(entry) != entry {
+			return nil, fmt.Errorf("trusted_proxies: invalid address or prefix %q", entry)
+		}
+		if address, err := netip.ParseAddr(entry); err == nil {
+			if address.Zone() != "" {
+				return nil, fmt.Errorf("trusted_proxies: scoped address %q is not supported", entry)
+			}
+			address = address.Unmap()
+			prefixes = append(prefixes, netip.PrefixFrom(address, address.BitLen()))
+			continue
+		}
+		prefix, err := netip.ParsePrefix(entry)
+		if err != nil || prefix.Addr().Zone() != "" {
+			return nil, fmt.Errorf("trusted_proxies: invalid address or prefix %q", entry)
+		}
+		if prefix.Bits() == 0 {
+			return nil, fmt.Errorf("trusted_proxies: prefix %q is too broad", entry)
+		}
+		if prefix.Addr().Is4In6() {
+			if prefix.Bits() <= 96 {
+				return nil, fmt.Errorf("trusted_proxies: mapped IPv4 prefix %q is too broad", entry)
+			}
+			prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96)
+		}
+		prefixes = append(prefixes, prefix.Masked())
+	}
+	return prefixes, nil
 }
 
 // CanonicalOrigin validates an absolute HTTPS URL and returns its browser Origin.
@@ -223,6 +287,16 @@ func ValidatePath(path string) error {
 func (cfg Server) Validate() error {
 	if _, _, err := net.SplitHostPort(cfg.ListenAddr); err != nil {
 		return fmt.Errorf("listen_addr: %w", err)
+	}
+	if cfg.MetricsListen != "" {
+		_, port, err := net.SplitHostPort(cfg.MetricsListen)
+		if err != nil {
+			return fmt.Errorf("metrics_listen: %w", err)
+		}
+		// Metrics must never share the public listener.
+		if cfg.MetricsListen == cfg.ListenAddr && port != "0" {
+			return errors.New("metrics_listen: must differ from listen_addr")
+		}
 	}
 	if err := ValidatePath(cfg.DataDir); err != nil {
 		return fmt.Errorf("data_dir: %w", err)

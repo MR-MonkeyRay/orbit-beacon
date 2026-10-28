@@ -3,6 +3,7 @@ package config_test
 import (
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -64,6 +65,78 @@ func TestServerConfigurationPrecedence(t *testing.T) {
 			}
 			if got.ListenAddr != tt.wantAddress || got.MaxNodes != tt.wantCapacity {
 				t.Errorf("configuration = (%q, %d), want (%q, %d)", got.ListenAddr, got.MaxNodes, tt.wantAddress, tt.wantCapacity)
+			}
+		})
+	}
+}
+
+func TestServerTrustedProxiesPrecedenceAndParsing(t *testing.T) {
+	file := configFile(t, map[string]any{"trusted_proxies": []string{"192.0.2.10", "2001:db8::/48"}})
+	for _, tt := range []struct {
+		name  string
+		file  string
+		env   map[string]string
+		flags map[string]string
+		want  []netip.Prefix
+	}{
+		{name: "default is empty", want: []netip.Prefix{}},
+		{name: "JSON array", file: file, want: []netip.Prefix{netip.MustParsePrefix("192.0.2.10/32"), netip.MustParsePrefix("2001:db8::/48")}},
+		{name: "environment comma list overrides JSON", file: file, env: map[string]string{"ORBITBEACON_TRUSTED_PROXIES": "10.0.0.0/8, 2001:db8:1::1"}, want: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("2001:db8:1::1/128")}},
+		{name: "flag overrides environment", file: file, env: map[string]string{"ORBITBEACON_TRUSTED_PROXIES": "10.0.0.0/8"}, flags: map[string]string{"trusted_proxies": "172.16.4.9,fd00::/8"}, want: []netip.Prefix{netip.MustParsePrefix("172.16.4.9/32"), netip.MustParsePrefix("fd00::/8")}},
+		{name: "mapped IPv4 is normalized", env: map[string]string{"ORBITBEACON_TRUSTED_PROXIES": "::ffff:192.0.2.10,::ffff:198.51.100.0/120"}, want: []netip.Prefix{netip.MustParsePrefix("192.0.2.10/32"), netip.MustParsePrefix("198.51.100.0/24")}},
+		{name: "empty environment clears JSON", file: file, env: map[string]string{"ORBITBEACON_TRUSTED_PROXIES": ""}, want: []netip.Prefix{}},
+		{name: "empty flag clears environment", env: map[string]string{"ORBITBEACON_TRUSTED_PROXIES": "10.0.0.0/8"}, flags: map[string]string{"trusted_proxies": ""}, want: []netip.Prefix{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := config.LoadServer(config.LoadOptions{File: tt.file, LookupEnv: lookup(tt.env), Flags: tt.flags})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.TrustedProxies) != len(tt.want) {
+				t.Fatalf("trusted proxies = %v, want %v", got.TrustedProxies, tt.want)
+			}
+			for i := range tt.want {
+				if got.TrustedProxies[i] != tt.want[i] {
+					t.Errorf("trusted proxy %d = %v, want %v", i, got.TrustedProxies[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestServerTrustedProxiesRejectInvalidValues(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		value any
+		text  string
+	}{
+		{name: "IPv4 default route", value: []string{"0.0.0.0/0"}, text: "0.0.0.0/0"},
+		{name: "IPv6 default route", value: []string{"::/0"}, text: "::/0"},
+		{name: "malformed address", value: []string{"192.0.2.999"}, text: "192.0.2.999"},
+		{name: "malformed prefix", value: []string{"10.0.0.0/33"}, text: "10.0.0.0/33"},
+		{name: "scoped address", value: []string{"fe80::1%eth0"}, text: "fe80::1%eth0"},
+		{name: "mapped IPv4 prefix covers non-IPv4 addresses", value: []string{"::ffff:0:0/96"}, text: "::ffff:0:0/96"},
+		{name: "empty list entry", value: []string{""}, text: ",10.0.0.1"},
+		{name: "JSON string", value: "10.0.0.1", text: "10.0.0.1"},
+		{name: "JSON null", value: nil, text: "10.0.0.1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := config.LoadServer(config.LoadOptions{File: configFile(t, map[string]any{"trusted_proxies": tt.value}), LookupEnv: lookup(nil)}); err == nil {
+				t.Fatal("accepted invalid trusted_proxies JSON value")
+			}
+			if tt.name == "JSON string" || tt.name == "JSON null" {
+				return
+			}
+			for _, source := range []string{"environment", "flag"} {
+				opts := config.LoadOptions{LookupEnv: lookup(nil)}
+				if source == "environment" {
+					opts.LookupEnv = lookup(map[string]string{"ORBITBEACON_TRUSTED_PROXIES": tt.text})
+				} else {
+					opts.Flags = map[string]string{"trusted_proxies": tt.text}
+				}
+				if _, err := config.LoadServer(opts); err == nil {
+					t.Fatalf("accepted invalid trusted_proxies from %s", source)
+				}
 			}
 		})
 	}
