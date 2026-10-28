@@ -3,6 +3,7 @@ package storage_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -31,6 +32,7 @@ func TestOpenMigratesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
 	for _, table := range []string{
 		"users", "sessions", "nodes", "groups", "node_tags", "enrollment_tokens",
 		"enrollment_claims", "settings", "audit_events", "schema_migrations",
+		"traffic_hourly", "traffic_daily", "probe_latest", "probe_hourly",
 	} {
 		var count int
 		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&count); err != nil {
@@ -115,6 +117,72 @@ func TestOpenConfiguresDurableSQLiteConnections(t *testing.T) {
 			if got != want {
 				t.Errorf("connection %d %s = %d, want %d", i, pragma, got, want)
 			}
+		}
+	}
+}
+
+func TestOpenReaderUsesReadOnlyPoolAndDoesNotCreateDatabase(t *testing.T) {
+	ctx := context.Background()
+	dir := privateDirectory(t)
+	path := filepath.Join(dir, "orbitbeacon.db")
+	reader, err := storage.OpenReader(ctx, path)
+	if reader != nil {
+		_ = reader.Close()
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("OpenReader missing database error = %v, want os.ErrNotExist", err)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("OpenReader created missing database: %v", err)
+	}
+
+	writer, err := storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if _, err := writer.ExecContext(ctx, "CREATE TABLE reader_sentinel (value TEXT NOT NULL); INSERT INTO reader_sentinel VALUES ('visible')"); err != nil {
+		t.Fatal(err)
+	}
+	reader, err = storage.OpenReader(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	if got := reader.Stats().MaxOpenConnections; got != 4 {
+		t.Fatalf("reader MaxOpenConnections = %d, want 4", got)
+	}
+	var value string
+	if err := reader.QueryRowContext(ctx, "SELECT value FROM reader_sentinel").Scan(&value); err != nil {
+		t.Fatal(err)
+	}
+	if value != "visible" {
+		t.Fatalf("reader value = %q", value)
+	}
+	if _, err := reader.ExecContext(ctx, "INSERT INTO reader_sentinel VALUES ('forbidden')"); err == nil {
+		t.Fatal("read-only pool accepted a write")
+	}
+	var connections []*sql.Conn
+	defer func() {
+		for _, conn := range connections {
+			_ = conn.Close()
+		}
+	}()
+	for i := range 4 {
+		conn, err := reader.Conn(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		connections = append(connections, conn)
+		var queryOnly, busyTimeout int
+		if err := conn.QueryRowContext(ctx, "PRAGMA query_only").Scan(&queryOnly); err != nil {
+			t.Fatal(err)
+		}
+		if err := conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+			t.Fatal(err)
+		}
+		if queryOnly != 1 || busyTimeout != 5000 {
+			t.Fatalf("reader connection %d pragmas query_only=%d busy_timeout=%d", i, queryOnly, busyTimeout)
 		}
 	}
 }

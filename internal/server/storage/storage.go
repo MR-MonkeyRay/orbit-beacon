@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"net/url"
@@ -15,33 +16,33 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
+// ErrSchemaTooNew reports a database written by a newer OrbitBeacon release.
+var ErrSchemaTooNew = errors.New("database schema is newer than this binary")
+
 type Migration struct {
 	Version int
 	SQL     string
 	Apply   func(context.Context, *sql.Tx) error
+	// DisableForeignKeys reserves one connection and disables enforcement before
+	// BEGIN for SQLite's generalized table rebuild procedure, restoring it after.
+	DisableForeignKeys bool
 }
 
 // CurrentSchemaVersion is the highest schema version produced by this binary.
-const CurrentSchemaVersion = 9
+const CurrentSchemaVersion = 14
 
 // Open opens a persistent local database. The driver applies connection-local
 // pragmas to every pooled connection, not just the migration connection.
 func Open(ctx context.Context, path string) (*sql.DB, error) {
-	if err := config.ValidatePath(path); err != nil {
-		return nil, err
-	}
-	absolute, err := filepath.Abs(path)
+	return OpenWithMigrations(ctx, path, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}, {Version: 5, Apply: repairReportSelections}, {Version: 6, SQL: recoverableCSRFSchema}, {Version: 7, SQL: auditOrderingSchema}, {Version: 8, SQL: enrollmentOrderingSchema}, {Version: 9, Apply: normalizeTimestampColumns}, {Version: 10, SQL: alertsSchema}, {Version: 11, SQL: notificationsSchema}, {Version: 12, SQL: apiTokensSchema}, {Version: 13, SQL: trafficSchema}, {Version: 14, SQL: probesSchema, Apply: rebuildProbeAlertRules, DisableForeignKeys: true}})
+}
+
+// OpenWithMigrations applies an independent schema using the same secure file
+// checks and SQLite connection settings as the main database.
+func OpenWithMigrations(ctx context.Context, path string, migrations []Migration) (*sql.DB, error) {
+	absolute, _, err := validateDatabasePath(path)
 	if err != nil {
 		return nil, err
-	}
-	if err := validateLocalFilesystem(absolute); err != nil {
-		return nil, err
-	}
-	// Inspect every existing component before creating even an empty database.
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if _, err := securefs.ValidateFile(absolute + suffix); err != nil {
-			return nil, err
-		}
 	}
 	// SQLite derives WAL and shared-memory permissions from the main database.
 	// Create it privately before the driver can apply its default creation mode.
@@ -68,17 +69,83 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
-	if err := Migrate(ctx, db, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}, {Version: 5, Apply: repairReportSelections}, {Version: 6, SQL: recoverableCSRFSchema}, {Version: 7, SQL: auditOrderingSchema}, {Version: 8, SQL: enrollmentOrderingSchema}, {Version: CurrentSchemaVersion, Apply: normalizeTimestampColumns}}); err != nil {
+	if err := Migrate(ctx, db, migrations); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return db, nil
 }
 
+// OpenReader opens an existing database through a separate read-only pool.
+// Open must run first so the database exists and all migrations are complete.
+func OpenReader(ctx context.Context, path string) (*sql.DB, error) {
+	absolute, exists, err := validateDatabasePath(path)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, fmt.Errorf("open database reader: %w", os.ErrNotExist)
+	}
+	u := url.URL{Scheme: "file", Path: absolute}
+	u.RawQuery = url.Values{
+		"mode":    {"ro"},
+		"_pragma": {"query_only(ON)", "busy_timeout(5000)", "mmap_size(0)", "cache_size(-8192)"},
+	}.Encode()
+	db, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return nil, fmt.Errorf("open database reader: %w", err)
+	}
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("connect database reader: %w", err)
+	}
+	return db, nil
+}
+
+func validateDatabasePath(path string) (string, bool, error) {
+	if err := config.ValidatePath(path); err != nil {
+		return "", false, err
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", false, err
+	}
+	if err := validateLocalFilesystem(absolute); err != nil {
+		return "", false, err
+	}
+	exists := false
+	// Inspect every existing component before opening or creating the database.
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		componentExists, err := securefs.ValidateFile(absolute + suffix)
+		if err != nil {
+			return "", false, err
+		}
+		if suffix == "" {
+			exists = componentExists
+		}
+	}
+	return absolute, exists, nil
+}
+
 // Migrate atomically applies each unapplied version together with its ledger row.
 func Migrate(ctx context.Context, db *sql.DB, migrations []Migration) error {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
 		return err
+	}
+	// An older binary must not run against a schema written by a newer one: it
+	// would silently ignore columns and invariants it does not know about.
+	known := 0
+	for _, migration := range migrations {
+		known = max(known, migration.Version)
+	}
+	var applied sql.NullInt64
+	if err := db.QueryRowContext(ctx, "SELECT max(version) FROM schema_migrations").Scan(&applied); err != nil {
+		return err
+	}
+	if applied.Valid && applied.Int64 > int64(known) {
+		return fmt.Errorf("%w: database schema version %d is newer than supported version %d", ErrSchemaTooNew, applied.Int64, known)
 	}
 	for _, migration := range migrations {
 		if migration.Version < 1 {
@@ -91,8 +158,32 @@ func Migrate(ctx context.Context, db *sql.DB, migrations []Migration) error {
 	return nil
 }
 
-func applyMigration(ctx context.Context, db *sql.DB, migration Migration) error {
-	tx, err := db.BeginTx(ctx, nil)
+func applyMigration(ctx context.Context, db *sql.DB, migration Migration) (retErr error) {
+	begin := db.BeginTx
+	if migration.DisableForeignKeys {
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			// A canceled migration must still restore this connection's pragma.
+			restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			_, restoreErr := conn.ExecContext(restoreCtx, "PRAGMA foreign_keys=ON")
+			if restoreErr != nil {
+				// Never return a connection with enforcement disabled to the pool.
+				_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+			}
+			retErr = errors.Join(retErr, restoreErr, conn.Close())
+		}()
+		// SQLite ignores this pragma inside a transaction. Reserve the same
+		// connection for disabling enforcement, BEGIN, and restoring it later.
+		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+			return err
+		}
+		begin = conn.BeginTx
+	}
+	tx, err := begin(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -112,6 +203,20 @@ func applyMigration(ctx context.Context, db *sql.DB, migration Migration) error 
 	if migration.Apply != nil {
 		if err := migration.Apply(ctx, tx); err != nil {
 			return err
+		}
+	}
+	if migration.DisableForeignKeys {
+		rows, err := tx.QueryContext(ctx, "PRAGMA foreign_key_check")
+		if err != nil {
+			return err
+		}
+		violation := rows.Next()
+		checkErr := errors.Join(rows.Err(), rows.Close())
+		if violation {
+			return errors.Join(errors.New("foreign_key_check failed after table rebuild"), checkErr)
+		}
+		if checkErr != nil {
+			return checkErr
 		}
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)", migration.Version, timekey.Format(time.Now())); err != nil {
