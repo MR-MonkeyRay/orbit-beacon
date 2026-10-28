@@ -1,0 +1,20 @@
+# request_body 需要 Caddy 2.10.0 或更新版本。
+beacon.example.com {
+	request_body {
+		max_size 1048576
+	}
+
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	reverse_proxy 127.0.0.1:8080 {
+		header_up Host {http.request.hostport}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		transport http {
+			versions 1.1
+			dial_timeout 5s
+			response_header_timeout 30s
+			keepalive 2m
+		}
+	}
+}
