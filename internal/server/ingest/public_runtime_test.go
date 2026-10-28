@@ -97,6 +97,8 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 	if err != nil || out.CPUPercent == nil || *out.CPUPercent != 12.5 {
 		t.Fatalf("duplicate replaced snapshot: %+v %v", out, err)
 	}
+	// Cross the coalescing interval to exercise a failed durable write.
+	now = now.Add(11 * time.Second)
 	if _, err := db.Exec(`CREATE TRIGGER reject_report BEFORE UPDATE OF last_seen ON nodes BEGIN SELECT RAISE(ABORT,'reject report'); END`); err != nil {
 		t.Fatal(err)
 	}
@@ -111,6 +113,10 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 	if _, err := db.Exec("DROP TRIGGER reject_report"); err != nil {
 		t.Fatal(err)
 	}
+	records, _, err := ns.ListPublicRecords(ctx, 100, 0)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("page before commit: %+v %v", records, err)
+	}
 	report.Metrics.MetricStatus["cpu_percent"] = "error"
 	if _, err := s.Accept(ctx, n.ID, report); err != nil {
 		t.Fatal(err)
@@ -118,6 +124,12 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 	out, err = s.PublicNode(ctx, n.ID, now)
 	if err != nil || out.CPUPercent != nil || out.MemoryPercent == nil {
 		t.Fatalf("unavailable new metric retained old CPU: %+v %v", out, err)
+	}
+	// The newer report committed between the page query and projection lock.
+	// Preserve durable liveness while suppressing every metric from the new snapshot.
+	raced := s.ProjectPublicRecord(records[0], now)
+	if raced.Status != "online" || raced.CPUPercent != nil || raced.MemoryPercent != nil || raced.Load1 != nil || raced.UptimeSeconds != nil {
+		t.Fatalf("stale page record reused newer metrics: %+v", raced)
 	}
 	for _, timestamp := range []any{nil, "2026-10-28T00:00:00.000000000Z", "broken"} {
 		if _, err := db.Exec("UPDATE nodes SET last_seen=? WHERE id=?", timestamp, n.ID); err != nil {

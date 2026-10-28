@@ -2,7 +2,9 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"math"
+	"sync"
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
@@ -88,30 +90,143 @@ func (p publicMetrics) project(out *PublicNode, now time.Time) {
 	}
 }
 
-// PublicNode revalidates publication and runtime ownership under the per-node
-// lock used by report commits. It never creates state or decodes raw reports.
+// PublicNode reads durable identity before taking any ingest state lock.
+// It never creates state or decodes raw reports.
 func (s *Service) PublicNode(ctx context.Context, nodeID string, now time.Time) (PublicNode, error) {
-	state := s.acquireExistingState(nodeID)
-	if state != nil {
-		defer s.releaseState(state)
-		state.mu.Lock()
-		defer state.mu.Unlock()
-	}
 	record, err := nodes.ReadPublicRecord(ctx, s.db, nodeID)
 	if err != nil {
 		return PublicNode{}, err
 	}
+	return s.ProjectPublicRecord(record, now), nil
+}
+
+// ProjectPublicRecord overlays reception time only for the same durable identity.
+// Metrics are omitted if a durable report committed after the page query.
+func (s *Service) ProjectPublicRecord(record nodes.PublicRecord, now time.Time) PublicNode {
 	out := PublicNode{Name: record.Settings.Name, Region: record.Settings.Region, Provider: record.Settings.Provider, Status: "unknown"}
 	if record.Generation == 0 || record.Session == "" || record.LastSeen.IsZero() || record.LastSeen.After(now) {
-		return out, nil
+		return out
+	}
+	lastSeen := record.LastSeen
+	var snapshot publicMetrics
+	state := s.acquireExistingState(record.ID)
+	if state != nil {
+		state.mu.Lock()
+		if state.credential == record.Credential && state.generation == record.Generation && state.session == record.Session {
+			lastSeen = record.LatestSeen(state.receivedAt)
+			if state.lastSeenPersisted.Equal(record.LastSeen) || state.public.receivedAt.Equal(record.LastSeen) {
+				snapshot = state.public
+			}
+		}
+		state.mu.Unlock()
+		s.releaseState(state)
+	}
+	if lastSeen.After(now) {
+		return out
 	}
 	out.Status = "offline"
-	if now.Sub(record.LastSeen) > 180*time.Second {
-		return out, nil
+	if now.Sub(lastSeen) > nodes.OnlineWindow {
+		return out
 	}
 	out.Status = "online"
-	if state != nil && state.credential == record.Credential && state.generation == record.Generation && state.session == record.Session && state.public.receivedAt.Equal(record.LastSeen) {
-		state.public.project(&out, now)
+	snapshot.project(&out, now)
+	return out
+}
+
+// PublicPage preserves the anonymous response's field order and null semantics.
+type PublicPage struct {
+	Nodes       []PublicNode `json:"nodes"`
+	HasMore     bool         `json:"has_more"`
+	NextOffset  *int         `json:"next_offset"`
+	GeneratedAt time.Time    `json:"generated_at"`
+}
+
+const publicPageTTL = 2 * time.Second
+const publicPageCacheLimit = 128
+
+type publicPageKey struct {
+	service       *nodes.Service
+	limit, offset int
+}
+
+type publicPageEntry struct {
+	page    PublicPage
+	version uint64
+}
+
+type publicPageCall struct {
+	done chan struct{}
+	err  error
+}
+
+type publicPageCache struct {
+	mu      sync.Mutex
+	entries map[publicPageKey]publicPageEntry
+	calls   map[publicPageKey]*publicPageCall
+}
+
+// PublicPage coalesces concurrent misses and bounds cached pages. The visibility
+// version is captured before querying: a racing mutation cannot bless old data
+// with a new version. Returned pages are immutable while cached.
+func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offset int, clock func() time.Time) (PublicPage, error) {
+	key := publicPageKey{service: ns, limit: limit, offset: offset}
+	cache := &s.publicPages
+	for {
+		if err := ctx.Err(); err != nil {
+			return PublicPage{}, err
+		}
+		cache.mu.Lock()
+		version := ns.PublicVisibilityVersion()
+		now := clock().UTC()
+		entry, ok := cache.entries[key]
+		if age := now.Sub(entry.page.GeneratedAt); ok && entry.version == version && age >= 0 && age < publicPageTTL {
+			cache.mu.Unlock()
+			return entry.page, nil
+		}
+		if call := cache.calls[key]; call != nil {
+			cache.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return PublicPage{}, ctx.Err()
+			case <-call.done:
+				// The leader's own cancellation says nothing about this request.
+				if call.err != nil && !errors.Is(call.err, context.Canceled) && !errors.Is(call.err, context.DeadlineExceeded) {
+					return PublicPage{}, call.err
+				}
+				continue
+			}
+		}
+		if cache.calls == nil {
+			cache.calls = make(map[publicPageKey]*publicPageCall)
+			cache.entries = make(map[publicPageKey]publicPageEntry)
+		}
+		call := &publicPageCall{done: make(chan struct{})}
+		cache.calls[key] = call
+		cache.mu.Unlock()
+
+		records, more, err := ns.ListPublicRecords(ctx, limit, offset)
+		page := PublicPage{Nodes: make([]PublicNode, 0, len(records)), HasMore: more, GeneratedAt: now}
+		if more {
+			next := offset + len(records)
+			page.NextOffset = &next
+		}
+		for _, record := range records {
+			page.Nodes = append(page.Nodes, s.ProjectPublicRecord(record, now))
+		}
+		cache.mu.Lock()
+		if err == nil {
+			if len(cache.entries) >= publicPageCacheLimit {
+				for old := range cache.entries {
+					delete(cache.entries, old)
+					break
+				}
+			}
+			cache.entries[key] = publicPageEntry{page: page, version: version}
+		}
+		call.err = err
+		delete(cache.calls, key)
+		close(call.done)
+		cache.mu.Unlock()
+		return page, err
 	}
-	return out, nil
 }
