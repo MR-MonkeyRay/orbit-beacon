@@ -54,6 +54,13 @@ jobs:
       - name: Verify module contents
         run: go mod verify
 
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
       # The embedded UI in internal/server/webui/dist is committed so Go builds
       # need no Node.js; this fails when it was not rebuilt from web/.
       - name: Verify embedded web UI matches its source
@@ -61,21 +68,39 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm run check
+          npm test
 
-      - name: Run tests without cache
+      - name: Run tests without cache and report coverage
         env:
           GOTOOLCHAIN: go1.27.3
-        run: go test -count=1 ./...
+        run: |
+          go test -count=1 -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out
 
-      - name: Run race tests on concurrency-critical packages
+      - name: Run race tests
         env:
           GOTOOLCHAIN: go1.27.3
-        run: go test -race -count=1 ./internal/server/... ./internal/agent/...
+        run: go test -race -count=1 ./...
 
       - name: Run vet
         env:
           GOTOOLCHAIN: go1.27.3
         run: go vet ./...
+
+      - name: Run cross-platform vet
+        env:
+          GOTOOLCHAIN: go1.27.3
+          CGO_ENABLED: '0'
+        run: |
+          GOOS=darwin go vet ./...
+          GOOS=windows go vet ./...
+
+      - name: Run Staticcheck
+        env:
+          GOTOOLCHAIN: go1.27.3
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+          "$RUNNER_TEMP/bin/staticcheck" ./...
 
       - name: Run Go vulnerability scan
         env:
@@ -96,6 +121,14 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        with:
+          platforms: arm64
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
       - name: Log in to GitHub Container Registry
         env:
@@ -136,6 +169,9 @@ jobs:
           fi
           docker buildx build \
             --file build/server.Dockerfile \
+            --platform linux/amd64,linux/arm64 \
+            --provenance=true \
+            --sbom=true \
             --push \
             "${tags[@]}" \
             --build-arg VERSION="$VERSION" \
