@@ -168,8 +168,8 @@ func (s *ConfigStore) ConfigError() *v1.ConfigError {
 }
 
 func (s *ConfigStore) Apply(ctx context.Context, next v1.DesiredConfig) error {
-	fail := func(err error) error {
-		s.failure = &v1.ConfigError{Revision: max(0, next.Revision), Code: "invalid_config"}
+	fail := func(err error, code string) error {
+		s.failure = &v1.ConfigError{Revision: max(0, next.Revision), Code: code}
 		var validation *v1.ValidationError
 		if errors.As(err, &validation) {
 			s.failure.Fields = validation.Fields
@@ -179,67 +179,67 @@ func (s *ConfigStore) Apply(ctx context.Context, next v1.DesiredConfig) error {
 	if err := next.Validate(); err != nil {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return fail(err)
+		return fail(err, "invalid_config")
 	}
 	if err := ctx.Err(); err != nil {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return fail(err)
+		return fail(err, "persist_failed")
 	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return fail(err)
+		return fail(err, "persist_failed")
 	}
 	unlock, err := filelock.Acquire(ctx, s.path+".lock")
 	if err != nil {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return fail(err)
+		return fail(err, "persist_failed")
 	}
 	defer unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return fail(err)
+		return fail(err, "persist_failed")
 	}
 	current, err := loadConfig(s.path)
 	matchesSaved := err == nil
 	if errors.Is(err, os.ErrNotExist) {
 		current = s.current
 	} else if err != nil && !errors.Is(err, v1.ErrReportBudget) {
-		return fail(err)
+		return fail(err, "persist_failed")
 	}
 	if s.current.Revision > current.Revision {
 		current = s.current
 		matchesSaved = false
 	}
 	if next.Revision < current.Revision {
-		return fail(errors.New("desired config revision decreased"))
+		return fail(errors.New("desired config revision decreased"), "invalid_config")
 	}
 	if next.Revision == current.Revision {
 		if !reflect.DeepEqual(next, current) {
-			return fail(errors.New("conflicting desired config revision"))
+			return fail(errors.New("conflicting desired config revision"), "invalid_config")
 		}
 		if err := ctx.Err(); err != nil {
-			return fail(err)
+			return fail(err, "persist_failed")
 		}
 		if !matchesSaved {
 			if err := s.saveConfig(next); err != nil {
-				return fail(err)
+				return fail(err, "persist_failed")
 			}
 		} else if err := s.syncDirectory(filepath.Dir(s.path)); err != nil {
-			return fail(err)
+			return fail(err, "persist_failed")
 		}
 		s.current = cloneConfig(current)
 		s.failure = nil
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
-		return fail(err)
+		return fail(err, "persist_failed")
 	}
 	if err := s.saveConfig(next); err != nil {
-		return fail(err)
+		return fail(err, "persist_failed")
 	}
 	s.current = cloneConfig(next)
 	s.failure = nil

@@ -73,7 +73,7 @@ func TestConfigStoreApplyRetryRequiresDirectorySync(t *testing.T) {
 		t.Fatal("failed directory sync did not leave visible replacement and prior runtime state")
 	}
 	failure := store.ConfigError()
-	if failure == nil || failure.Revision != next.Revision {
+	if failure == nil || failure.Revision != next.Revision || failure.Code != "persist_failed" {
 		t.Fatalf("failed application was acknowledged: %+v", failure)
 	}
 	for attempt := range 2 {

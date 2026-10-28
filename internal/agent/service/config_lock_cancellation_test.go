@@ -90,8 +90,8 @@ func TestConfigApplyLockCancellationKeepsCachedSnapshotsAvailable(t *testing.T) 
 	if err != nil || !reflect.DeepEqual(persisted, prior) || !reflect.DeepEqual(store.Current(), prior) {
 		t.Fatalf("canceled Apply changed durable or cached config: %+v, %v", persisted, err)
 	}
-	if failure := store.ConfigError(); failure == nil || failure.Revision != 2 || failure.Code != "invalid_config" {
-		t.Fatalf("lock failure lost existing ConfigError semantics: %+v", failure)
+	if failure := store.ConfigError(); failure == nil || failure.Revision != 2 || failure.Code != "persist_failed" {
+		t.Fatalf("lock failure has wrong ConfigError semantics: %+v", failure)
 	}
 
 	release()

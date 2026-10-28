@@ -30,6 +30,7 @@ var allowedInternalImports = map[string]map[string]bool{
 		"orbitbeacon/internal/agent/collect":  true,
 		"orbitbeacon/internal/agent/filelock": true,
 		"orbitbeacon/internal/agent/identity": true,
+		"orbitbeacon/internal/agent/probe":    true,
 		"orbitbeacon/internal/config":         true,
 		"orbitbeacon/internal/protocol/v1":    true,
 	},

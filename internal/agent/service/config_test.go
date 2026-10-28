@@ -151,8 +151,8 @@ func TestConfigPersistenceFailureDoesNotApplyInMemory(t *testing.T) {
 	if !reflect.DeepEqual(store.Current(), prior) {
 		t.Fatal("runtime changed before successful durable replacement")
 	}
-	if store.ConfigError() == nil {
-		t.Fatal("persistence failure not exposed in config_error")
+	if failure := store.ConfigError(); failure == nil || failure.Revision != 2 || failure.Code != "persist_failed" {
+		t.Fatalf("persistence failure not exposed in config_error: %+v", failure)
 	}
 }
 
