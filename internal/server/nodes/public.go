@@ -209,7 +209,7 @@ func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int) ([]P
 	if db == nil {
 		db = s.db
 	}
-	rows, err := db.QueryContext(ctx, "SELECT id,public_settings,last_seen,token_hash,run_generation,report_session_id FROM nodes WHERE "+publicVisibility+" ORDER BY created_at,id LIMIT ? OFFSET ?", limit+1, offset)
+	rows, err := db.QueryContext(ctx, "SELECT id,public_settings,last_seen,token_hash,credential_epoch,run_generation,report_session_id FROM nodes WHERE "+publicVisibility+" ORDER BY created_at,id LIMIT ? OFFSET ?", limit+1, offset)
 	if err != nil {
 		return nil, false, err
 	}
@@ -243,12 +243,13 @@ func (s *Service) ListPublicIDs(ctx context.Context, limit, offset int) ([]strin
 
 // PublicRecord is an internal identity fence, never an HTTP representation.
 type PublicRecord struct {
-	ID         string         `json:"-"`
-	Settings   PublicSettings `json:"-"`
-	LastSeen   time.Time      `json:"-"`
-	Credential [32]byte       `json:"-"`
-	Generation uint64         `json:"-"`
-	Session    string         `json:"-"`
+	ID              string         `json:"-"`
+	Settings        PublicSettings `json:"-"`
+	LastSeen        time.Time      `json:"-"`
+	Credential      [32]byte       `json:"-"`
+	CredentialEpoch int64          `json:"-"`
+	Generation      uint64         `json:"-"`
+	Session         string         `json:"-"`
 }
 
 // LatestSeen includes reports coalesced in memory after the durable last_seen.
@@ -261,7 +262,7 @@ func (p PublicRecord) LatestSeen(receivedAt time.Time) time.Time {
 }
 
 func ReadPublicRecord(ctx context.Context, db *sql.DB, id string) (PublicRecord, error) {
-	return scanPublicRecord(db.QueryRowContext(ctx, "SELECT id,public_settings,last_seen,token_hash,run_generation,report_session_id FROM nodes WHERE id = ? AND "+publicVisibility, id))
+	return scanPublicRecord(db.QueryRowContext(ctx, "SELECT id,public_settings,last_seen,token_hash,credential_epoch,run_generation,report_session_id FROM nodes WHERE id = ? AND "+publicVisibility, id))
 }
 
 func scanPublicRecord(row interface{ Scan(...any) error }) (PublicRecord, error) {
@@ -269,7 +270,7 @@ func scanPublicRecord(row interface{ Scan(...any) error }) (PublicRecord, error)
 	var raw, generation string
 	var seen sql.NullString
 	var credential []byte
-	err := row.Scan(&p.ID, &raw, &seen, &credential, &generation, &p.Session)
+	err := row.Scan(&p.ID, &raw, &seen, &credential, &p.CredentialEpoch, &generation, &p.Session)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}

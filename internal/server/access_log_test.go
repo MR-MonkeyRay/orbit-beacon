@@ -15,7 +15,7 @@ func TestAccessLogRedactsPrivateDataAndCorrelatesResponse(t *testing.T) {
 	var logs bytes.Buffer
 	h := &handler{accessLog: true, metrics: newHTTPMetrics("test"), logger: slog.New(slog.NewJSONHandler(&logs, nil)), trustedProxies: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}}
 	for _, path := range []string{
-		"/api/v1/nodes/00000000-0000-4000-8000-000000000001/config?token=private-query",
+		"/api/v1/nodes/00000000-0000-4000-8000-000000000001/runtime?token=private-query",
 		"/api/agent/v1/enroll/private-enrollment-token?other=private-query",
 		"/_app/immutable/private-filename?secret=private-query",
 	} {
@@ -76,10 +76,10 @@ func TestAccessLogDisabledAndHealthProbeFiltering(t *testing.T) {
 
 func TestRequestRouteUsesOnlyKnownTemplates(t *testing.T) {
 	for _, test := range []struct{ path, want string }{
-		{"/api/v1/nodes/00000000-0000-4000-8000-000000000001/config", "/api/v1/nodes/{id}/config"},
+		{"/api/v1/nodes/00000000-0000-4000-8000-000000000001/runtime", "/api/v1/nodes/{id}/runtime"},
 		{"/api/v1/nodes/batch", "/api/v1/nodes/batch"},
 		{"/api/v1/users/00000000-0000-4000-8000-000000000001", "/api/v1/users/{id}"},
-		{"/api/v1/nodes/secret/config", "unmatched"},
+		{"/api/v1/nodes/secret/runtime", "unmatched"},
 		{"/api/v1/enrollments/secret", "unmatched"},
 		{"/unknown/secret", "unmatched"},
 	} {

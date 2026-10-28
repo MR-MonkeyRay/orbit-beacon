@@ -27,7 +27,7 @@ type Migration struct {
 }
 
 // CurrentSchemaVersion is the highest schema version produced by this binary.
-const CurrentSchemaVersion = 18
+const CurrentSchemaVersion = 19
 
 // Open opens a persistent local database. The driver applies connection-local
 // pragmas to every pooled connection, not just the migration connection.
@@ -249,20 +249,17 @@ CREATE TABLE sessions (
 );
 CREATE INDEX sessions_user ON sessions(user_id);
 CREATE INDEX sessions_expiry ON sessions(expires_at);
-CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, desired_config TEXT NOT NULL DEFAULT '{}');
+CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
 CREATE TABLE nodes (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
  group_id TEXT REFERENCES groups(id) ON DELETE SET NULL,
  region TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
  token_hash BLOB UNIQUE, installation_id TEXT, first_enrolled_at TEXT, last_seen TEXT,
- system TEXT NOT NULL DEFAULT '{}', desired_revision INTEGER NOT NULL DEFAULT 1,
- applied_revision INTEGER NOT NULL DEFAULT 0, public_settings TEXT NOT NULL DEFAULT '{}',
- report_interval_seconds INTEGER NOT NULL DEFAULT 10, disk_interval_seconds INTEGER NOT NULL DEFAULT 60,
- interfaces TEXT NOT NULL DEFAULT '[]', disk_paths TEXT NOT NULL DEFAULT '[]',
- probe_targets TEXT NOT NULL DEFAULT '[]', billing_day INTEGER NOT NULL DEFAULT 1,
+ credential_epoch INTEGER NOT NULL DEFAULT 0,
+ system TEXT NOT NULL DEFAULT '{}', public_settings TEXT NOT NULL DEFAULT '{}',
+ agent_runtime TEXT NOT NULL DEFAULT '', billing_day INTEGER NOT NULL DEFAULT 1,
  quota_bytes TEXT NOT NULL DEFAULT '0', created_at TEXT NOT NULL,
- run_generation TEXT NOT NULL DEFAULT '0', report_session_id TEXT NOT NULL DEFAULT '',
- config_error TEXT NOT NULL DEFAULT ''
+ run_generation TEXT NOT NULL DEFAULT '0', report_session_id TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX nodes_installation_identity ON nodes(installation_id) WHERE installation_id IS NOT NULL;
 CREATE INDEX nodes_group ON nodes(group_id);

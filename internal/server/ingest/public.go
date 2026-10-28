@@ -112,7 +112,7 @@ func (s *Service) ProjectPublicRecord(record nodes.PublicRecord, now time.Time) 
 	state := s.acquireExistingState(record.ID)
 	if state != nil {
 		state.mu.Lock()
-		if state.credential == record.Credential && state.generation == record.Generation && state.session == record.Session {
+		if state.credential == record.Credential && state.credentialEpoch == record.CredentialEpoch && state.generation == record.Generation && state.session == record.Session {
 			lastSeen = record.LatestSeen(state.receivedAt)
 			if state.lastSeenPersisted.Equal(record.LastSeen) || state.public.receivedAt.Equal(record.LastSeen) {
 				snapshot = state.public

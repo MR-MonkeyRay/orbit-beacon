@@ -8,7 +8,7 @@
 
 ## 功能
 
-- 管理节点、分组、管理员、接入凭证和 Agent 配置；查看最近指标、历史图表、流量和服务探测结果。
+- 管理节点、分组、管理员和接入凭证；只读查看 Agent 本地运行设置，管理流量账期/配额及指标、历史与探测结果。
 - 配置告警规则，查看告警事件，通过 Webhook、Telegram 或邮件发送通知。
 - 为每个节点独立设置公开名称、地区和服务商，选择是否在公开首页展示；默认不公开。
 - 在 Settings → Data operations 导出加密归档、管理本地/对象存储备份计划，支持离线按类别恢复；提供 systemd 和 Docker Compose 部署。Agent 自动升级尚未实现。
@@ -21,7 +21,7 @@
 
 ### 使用控制台
 
-- **Nodes**：创建节点，在详情的 **Enroll agent** 签发凭证；上报后查看最新指标、历史、流量与探测结果。修改 **Agent configuration** 后，查看应用状态与版本，保存本身不代表 Agent 已应用。
+- **Nodes**：创建节点，在 **Enroll agent** 签发凭证。**Agent settings** 只读显示最近报告的本地设置；修改 Agent JSON 后 reload。**Details → Traffic billing** 单独保存 Server 账期与配额，不影响 Agent 采集周期。
 - **Alerts**：在 **Channels** 配置并测试通知通道，在 **Rules** 添加规则并绑定通道；在 **Active** 和 **History** 查看事件。规则可覆盖全部节点、分组或单节点，支持 CPU、内存、Swap、磁盘、负载、探测失败和离线。未绑定通道时仍可产生事件和站内通知，但不会外发。
 - **Settings → Administrators**：新增、更名和删除管理员；所有账户权限相同，至少保留一名管理员。存在其他管理员时可删除本人并立即退出。**Account** 仅支持验证旧密码后修改本人密码，成功后结束本人全部会话；不能重置他人密码。
 - **Settings → Data operations**：发起后台导出、管理备份计划、查看任务详情；完成后自行下载，不会自动下载。备份结果只进站内通知，不外发。
@@ -97,7 +97,7 @@ build/orbitbeacon-server health --url https://localhost:8443 \
 - 使用可信 HTTPS 证书，或让客户端显式信任你的私有 CA；不要用跳过 TLS 校验代替信任配置。
 - `public_url` 是浏览器实际访问的 HTTPS 源站，推荐域名根路径。API 与页面同源，不支持子路径前缀。
 - 数据目录放在本地文件系统，由运行用户单独所有并设为 `0700`；数据库、SQLite 辅助文件和 `secrets.key` 必须是同一用户的 `0600` 普通文件，路径不能经过符号链接。
-- 主库使用 schema 18：空库直接建表，不执行历史迁移；旧 schema 16/17 库、版本记录不匹配的库及旧 schema 归档（含仅 Monitoring 的包）均拒绝，不自动清空或转换数据。请使用新的私有数据目录，保留旧目录供原版本使用。
+- 主库使用 schema 19：空库直接建表，不执行历史迁移；旧库（含 schema 18）及旧 schema 归档均拒绝，不清空或转换。使用新的私有数据目录，保留旧目录供原版本使用。
 - 导出和计划备份由运行中的 Server 执行；恢复或重新 `bootstrap` 前先停服。遇到 `data_dir_in_use` 不要删除 `server.lock`。
 - 默认不信任转发头，代理后的登录限流按代理直连 IP 计算。仅在受控代理下配置 `trusted_proxies`，并确保代理正确设置 `X-Forwarded-For`；详见部署文档。
 
@@ -117,7 +117,7 @@ Server 配置优先级：**CLI 参数 > `ORBITBEACON_` 环境变量 > JSON 文�
 | `access_log` | 默认 `false`，是否启用访问日志 |
 | `allow_insecure_webhooks` / `notification_allow_private_networks` | 默认 `false`；通知目标的网络安全限制见部署文档 |
 
-环境变量使用同名的 `ORBITBEACON_` 前缀，例如 `ORBITBEACON_MAX_NODES=100`；对应 CLI 参数为 `--max-nodes 100`。Agent 的服务器地址、CA、目录和运行身份由安装策略固定，不能用普通配置或环境变量覆盖，详见[接入指南](docs/agent.md)。
+环境变量使用同名 `ORBITBEACON_` 前缀，对应 CLI 使用连字符，例如 `ORBITBEACON_MAX_NODES=100` / `--max-nodes 100`。Agent 五项运行设置由本地 JSON/env/CLI 合并；服务器地址、CA、状态目录和身份仍受安装策略保护。`systemctl reload orbitbeacon-agent` 发送 SIGHUP，结果以日志和下一报告为准，详见[接入指南](docs/agent.md)。
 
 ## API 与排障
 

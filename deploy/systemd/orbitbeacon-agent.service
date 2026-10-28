@@ -10,7 +10,8 @@ User=orbitbeacon-agent
 Group=orbitbeacon-agent
 StateDirectory=orbitbeacon-agent
 StateDirectoryMode=0700
-ExecStart=/usr/local/bin/orbitbeacon-agent run --install-policy /etc/orbitbeacon/install-policy.json
+ExecStart=/usr/local/bin/orbitbeacon-agent run --install-policy /etc/orbitbeacon/install-policy.json --config /etc/orbitbeacon/agent.json
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10s
 # A clone must be enrolled separately instead of reclaiming the same identity.

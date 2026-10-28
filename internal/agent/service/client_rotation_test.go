@@ -19,10 +19,6 @@ func TestRotationStagingFailureDoesNotSendRequestOrReplaceActiveToken(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 10))
-	if err != nil {
-		t.Fatal(err)
-	}
 	var requests atomic.Int64
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -34,7 +30,7 @@ func TestRotationStagingFailureDoesNotSendRequestOrReplaceActiveToken(t *testing
 		_, _ = w.Write([]byte(`{"node_id":"same-node","server_time":"2026-10-26T12:00:00Z"}`))
 	}))
 	defer server.Close()
-	client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state, Config: cfg})
+	client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,10 +63,6 @@ func TestMissingReceiptCredentialStateFailsBeforeClaimOrStaging(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 10))
-	if err != nil {
-		t.Fatal(err)
-	}
 	before := state.Current()
 	var claims atomic.Int64
 	https := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +76,7 @@ func TestMissingReceiptCredentialStateFailsBeforeClaimOrStaging(t *testing.T) {
 		_, _ = w.Write([]byte(`{"node_id":"already-active-node","server_time":"2026-10-26T12:00:00Z"}`))
 	}))
 	defer https.Close()
-	client, err := service.NewClient(service.ClientOptions{ServerURL: https.URL, HTTPClient: https.Client(), Identity: state, Config: cfg})
+	client, err := service.NewClient(service.ClientOptions{ServerURL: https.URL, HTTPClient: https.Client(), Identity: state})
 	if err != nil {
 		t.Fatal(err)
 	}

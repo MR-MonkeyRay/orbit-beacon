@@ -41,7 +41,11 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := "22222222-2222-4222-8222-222222222222"
-	if _, err = db.Exec(`INSERT INTO nodes(id,name,status,token_hash,installation_id,first_enrolled_at,last_seen,system,run_generation,report_session_id,created_at) VALUES(?,'node','online',?,'fixture-installation',?,?,?,'17','33333333-3333-4333-8333-333333333333',?)`, node, bytes.Repeat([]byte{3}, 32), at, at, `{"hostname":"monitoring-canary"}`, at); err != nil {
+	runtime := `{"report_interval_seconds":5,"disk_interval_seconds":120,"interfaces":["eth0"],"disk_paths":["/srv/monitoring-canary"],"probe_targets":["https://example.com/health"]}`
+	if _, err = db.Exec(`INSERT INTO groups(id,name) VALUES('66666666-6666-4666-8666-666666666666','fixture-group')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO nodes(id,name,status,group_id,token_hash,credential_epoch,installation_id,first_enrolled_at,last_seen,system,agent_runtime,billing_day,quota_bytes,run_generation,report_session_id,created_at) VALUES(?,'node','online','66666666-6666-4666-8666-666666666666',?,23,'fixture-installation',?,?,?,?,2,'18446744073709551615','17','33333333-3333-4333-8333-333333333333',?)`, node, bytes.Repeat([]byte{3}, 32), at, at, `{"hostname":"monitoring-canary"}`, runtime, at); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = db.Exec(`INSERT INTO audit_events VALUES('44444444-4444-4444-8444-444444444444',NULL,'fixture',NULL,?,?)`, at, `{"marker":"events-canary"}`); err != nil {
@@ -117,13 +121,22 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 				}
 				clear(key)
 				if c == Configuration {
-					var gen, session, status string
+					var gen, session, status, quota, group string
+					var billing int
+					var credentialEpoch int64
 					var token []byte
-					if err = reader.QueryRow(`SELECT run_generation,report_session_id,status,token_hash FROM nodes WHERE id=?`, node).Scan(&gen, &session, &status, &token); err != nil {
+					if err = reader.QueryRow(`SELECT run_generation,report_session_id,status,token_hash,billing_day,quota_bytes,group_id,credential_epoch FROM nodes WHERE id=?`, node).Scan(&gen, &session, &status, &token, &billing, &quota, &group, &credentialEpoch); err != nil {
 						t.Fatal(err)
 					}
-					if gen != "17" || session != "33333333-3333-4333-8333-333333333333" || status != "unknown" || !bytes.Equal(token, bytes.Repeat([]byte{3}, 32)) {
+					if gen != "17" || session != "33333333-3333-4333-8333-333333333333" || status != "unknown" || credentialEpoch != 23 || !bytes.Equal(token, bytes.Repeat([]byte{3}, 32)) {
 						t.Fatal("agent authentication fence lost")
+					}
+					if billing != 2 || quota != "18446744073709551615" || group != "66666666-6666-4666-8666-666666666666" {
+						t.Fatal("traffic billing or group configuration lost")
+					}
+					var name string
+					if err = reader.QueryRow(`SELECT name FROM groups WHERE id=?`, group).Scan(&name); err != nil || name != "fixture-group" {
+						t.Fatalf("group configuration: name=%q err=%v", name, err)
 					}
 					raw, e := os.ReadFile(path)
 					if e != nil {
@@ -133,6 +146,15 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 						if bytes.Contains(raw, []byte(canary)) {
 							t.Fatalf("unselected data leaked: %s", canary)
 						}
+					}
+				}
+				if c == Monitoring {
+					var gotRuntime, system, lastSeen string
+					if err = reader.QueryRow(`SELECT agent_runtime,system,last_seen FROM node_observations WHERE node_id=?`, node).Scan(&gotRuntime, &system, &lastSeen); err != nil {
+						t.Fatal(err)
+					}
+					if gotRuntime != runtime || system != `{"hostname":"monitoring-canary"}` || lastSeen != at {
+						t.Fatal("last observed runtime, system, or receipt time lost")
 					}
 				}
 				reader.Close()

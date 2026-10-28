@@ -39,6 +39,9 @@ func TestListPublicRecordsVisibilityOrderingPaginationAndIdentity(t *testing.T) 
 	firstCredential := publishRecord(t, db, first, base, base.Add(time.Minute), "First", 7, "session-first")
 	publishRecord(t, db, second, base.Add(time.Second), base.Add(2*time.Minute), "Second", 8, "session-second")
 	publishRecord(t, db, third, base.Add(2*time.Second), base.Add(3*time.Minute), "Third", 9, "session-third")
+	if _, err := db.Exec(`UPDATE nodes SET credential_epoch=9 WHERE id=?`, first.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`UPDATE nodes SET created_at=?, public_settings='not json', status='unknown', token_hash=randomblob(32), first_enrolled_at=?, last_seen=? WHERE id=?`,
 		base.Add(-time.Second).Format(time.RFC3339Nano), base.Format(time.RFC3339Nano), base.Format(time.RFC3339Nano), malformed.ID); err != nil {
 		t.Fatal(err)
@@ -56,7 +59,7 @@ func TestListPublicRecordsVisibilityOrderingPaginationAndIdentity(t *testing.T) 
 	}
 	wantFirst := nodes.PublicRecord{
 		ID: first.ID, Settings: nodes.PublicSettings{Enabled: true, Name: "First", Region: "region", Provider: "provider"},
-		LastSeen: base.Add(time.Minute), Credential: firstCredential, Generation: 7, Session: "session-first",
+		LastSeen: base.Add(time.Minute), Credential: firstCredential, CredentialEpoch: 9, Generation: 7, Session: "session-first",
 	}
 	if records[0] != wantFirst {
 		t.Errorf("first record = %+v, want %+v", records[0], wantFirst)

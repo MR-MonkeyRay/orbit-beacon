@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"errors"
+	"slices"
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
@@ -25,10 +26,11 @@ type probeTargetBuffer struct {
 }
 
 type probeBuffer struct {
-	credential [sha256.Size]byte
-	generation uint64
-	session    string
-	targets    map[string]probeTargetBuffer
+	credential      [sha256.Size]byte
+	credentialEpoch int64
+	generation      uint64
+	session         string
+	targets         map[string]probeTargetBuffer
 }
 
 type probeQueryer interface {
@@ -37,17 +39,17 @@ type probeQueryer interface {
 
 // The node's accept gate serializes buffer changes and commits. Identity is the
 // durable identity observed when buffering, including across a process advance.
-func (state *nodeState) fenceProbes(credential []byte, generation uint64, session string) {
+func (state *nodeState) fenceProbes(credential []byte, credentialEpoch int64, generation uint64, session string) {
 	b := &state.probes
-	if b.targets != nil && (subtle.ConstantTimeCompare(b.credential[:], credential) != 1 || b.generation != generation || b.session != session) {
+	if b.targets != nil && (subtle.ConstantTimeCompare(b.credential[:], credential) != 1 || b.credentialEpoch != credentialEpoch || b.generation != generation || b.session != session) {
 		*b = probeBuffer{}
 	}
 }
 
-func (state *nodeState) copyProbes(credential []byte, generation uint64, session string) probeBuffer {
+func (state *nodeState) copyProbes(credential []byte, credentialEpoch int64, generation uint64, session string) probeBuffer {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	b := probeBuffer{generation: generation, session: session, targets: make(map[string]probeTargetBuffer, probeTargetLimit)}
+	b := probeBuffer{credentialEpoch: credentialEpoch, generation: generation, session: session, targets: make(map[string]probeTargetBuffer, probeTargetLimit)}
 	copy(b.credential[:], credential)
 	for target, entry := range state.probes.targets {
 		entry.pending = append([]v1.ProbeResult(nil), entry.pending...)
@@ -75,20 +77,25 @@ func probeWatermark(ctx context.Context, q probeQueryer, nodeID, target string) 
 	return timekey.Parse(text)
 }
 
-func (b *probeBuffer) buffer(ctx context.Context, q probeQueryer, nodeID string, results []v1.ProbeResult) error {
-	// Reserve existing targets before evicting idle slots, so order within a
-	// report cannot displace a target that the same report still contains.
-	wanted := make(map[string]bool, len(results))
-	for _, result := range results {
-		wanted[result.Target] = true
+func (b *probeBuffer) retainTargets(targets []string) {
+	for target := range b.targets {
+		if !slices.Contains(targets, target) {
+			delete(b.targets, target)
+		}
 	}
+}
+
+func (b *probeBuffer) buffer(ctx context.Context, q probeQueryer, nodeID string, results []v1.ProbeResult, targets []string) error {
 	for _, result := range results {
+		if !slices.Contains(targets, result.Target) {
+			continue
+		}
 		entry, exists := b.targets[result.Target]
 		if !exists {
 			if len(b.targets) >= probeTargetLimit {
 				oldest := ""
 				for target, candidate := range b.targets {
-					if wanted[target] || len(candidate.pending) != 0 {
+					if slices.Contains(targets, target) || len(candidate.pending) != 0 {
 						continue
 					}
 					if oldest == "" || candidate.counted.Before(b.targets[oldest].counted) {

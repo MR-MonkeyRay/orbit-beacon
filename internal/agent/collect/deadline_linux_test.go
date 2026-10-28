@@ -12,7 +12,7 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
-func assertCompletePartialMetrics(t *testing.T, metrics v1.Metrics, config v1.DesiredConfig) {
+func assertCompletePartialMetrics(t *testing.T, metrics v1.Metrics, config v1.RuntimeSettings) {
 	t.Helper()
 	if err := metrics.Validate(); err != nil {
 		t.Errorf("partial collection is not protocol-valid: %v", err)

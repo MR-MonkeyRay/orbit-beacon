@@ -14,7 +14,7 @@ import (
 
 func TestBlockedDiskCannotBlockCancellationOrSpawnMoreReaders(t *testing.T) {
 	path := t.TempDir()
-	config := v1.DesiredConfig{Revision: 1, ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{path}, Interfaces: []string{"lo"}, BillingDay: 1, QuotaBytes: "0"}
+	config := v1.RuntimeSettings{ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{path}, Interfaces: []string{"lo"}}
 	c, err := New(Options{Config: config})
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestBlockedDiskCannotBlockCancellationOrSpawnMoreReaders(t *testing.T) {
 
 func TestLateDiskReadCannotRestoreRemovedSelection(t *testing.T) {
 	oldPath, newPath := t.TempDir(), t.TempDir()
-	config := v1.DesiredConfig{Revision: 1, ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{oldPath}, Interfaces: []string{"lo"}, BillingDay: 1, QuotaBytes: "0"}
+	config := v1.RuntimeSettings{ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{oldPath}, Interfaces: []string{"lo"}}
 	c, err := New(Options{Config: config})
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +113,6 @@ func TestLateDiskReadCannotRestoreRemovedSelection(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("old disk prevented cancellation")
 	}
-	config.Revision++
 	config.DiskPaths = []string{newPath}
 	if err := c.SetConfig(config); err != nil {
 		t.Fatal(err)

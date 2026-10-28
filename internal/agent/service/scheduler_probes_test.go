@@ -20,21 +20,24 @@ func TestSchedulerSendsLatestProbesOnRetryAndDropsRemovedTargets(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		initial := desired(1, 5)
+		initial := runtimeSettings(5)
 		initial.ProbeTargets = []string{"tcp://example.com:80"}
-		cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), initial)
-		if err != nil {
-			t.Fatal(err)
-		}
 		runner := probe.NewRunner(probe.Options{Check: func(ctx context.Context, target string) v1.ProbeResult {
 			time.Sleep(500 * time.Millisecond)
 			latency := 2.0
 			return v1.ProbeResult{Target: target, OK: true, LatencyMS: &latency, CheckedAt: time.Now().UTC()}
 		}})
+		if err := runner.SetTargets(initial.ProbeTargets); err != nil {
+			t.Fatal(err)
+		}
+		reload := make(chan struct{}, 1)
 		reports := make(chan v1.Report, 10)
 		attempt := 0
 		scheduler := service.NewScheduler(service.SchedulerOptions{
-			Identity: state, Config: cfg, Probes: runner, RandomFloat: func() float64 { return .5 },
+			Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return initial }, Probes: runner, Reload: reload, ReloadConfig: func(context.Context) error {
+				initial = runtimeSettings(5)
+				return runner.SetTargets(nil)
+			}, RandomFloat: func() float64 { return .5 },
 			Collect: func(context.Context) (v1.Metrics, error) { return schedulerMetrics(), nil },
 			Report: func(_ context.Context, report v1.Report) (v1.ReportResponse, error) {
 				reports <- report
@@ -68,13 +71,7 @@ func TestSchedulerSendsLatestProbesOnRetryAndDropsRemovedTargets(t *testing.T) {
 		if len(next.ProbeResults) != 1 || !next.ProbeResults[0].CheckedAt.Equal(retry.ProbeResults[0].CheckedAt) {
 			t.Fatal("report did not repeat latest completed check")
 		}
-		updated := cfg.Current()
-		updated.Revision++
-		updated.ProbeTargets = []string{}
-		if err := cfg.Apply(ctx, updated); err != nil {
-			t.Fatal(err)
-		}
-		time.Sleep(5 * time.Second)
+		reload <- struct{}{}
 		synctest.Wait()
 		next = <-reports
 		if len(next.ProbeResults) != 0 {

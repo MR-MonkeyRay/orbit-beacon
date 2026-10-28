@@ -17,7 +17,7 @@ func TestLostEnrollmentResponseRecoversByNodeCredentialWithoutTicket(t *testing.
 		t.Run(disposition, func(t *testing.T) {
 			ctx := context.Background()
 			f := newAgentHTTP(t, 1)
-			state, cfg, path := clientState(t)
+			state, path := clientState(t)
 			run, err := state.BeginRun(t.Context())
 			if err != nil {
 				t.Fatal(err)
@@ -49,7 +49,7 @@ func TestLostEnrollmentResponseRecoversByNodeCredentialWithoutTicket(t *testing.
 			}))
 			defer server.Close()
 			transport := &enrollmentResponseDropper{base: server.Client().Transport, drop: true}
-			client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: &http.Client{Transport: transport}, Identity: state, Config: cfg})
+			client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: &http.Client{Transport: transport}, Identity: state})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -73,7 +73,7 @@ func TestLostEnrollmentResponseRecoversByNodeCredentialWithoutTicket(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			retry, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: reopened, Config: cfg})
+			retry, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: reopened})
 			if err != nil {
 				t.Fatal(err)
 			}

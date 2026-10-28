@@ -57,12 +57,19 @@ func restoreFixture(t *testing.T, marker string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	reportInterval, diskInterval, billingDay, quota := 5, 120, 2, "18446744073709551615"
+	credentialEpoch := int64(23)
+	if marker == "target" {
+		reportInterval, diskInterval, billingDay, quota = 10, 60, 3, "1024"
+		credentialEpoch = 41
+	}
+	runtime := fmt.Sprintf(`{"report_interval_seconds":%d,"disk_interval_seconds":%d,"interfaces":[],"disk_paths":["/srv/%s"],"probe_targets":[]}`, reportInterval, diskInterval, marker)
 	statements := []struct {
 		q string
 		a []any
 	}{
 		{`INSERT INTO users(id,username,password_hash,created_at) VALUES(?,?,?,?)`, []any{restoreUser, marker, hash, at}},
-		{`INSERT INTO nodes(id,name,status,token_hash,installation_id,first_enrolled_at,last_seen,system,run_generation,report_session_id,desired_revision,created_at) VALUES(?,?,'online',?,'restore-installation',?,?,?,'17','55555555-5555-4555-8555-555555555555',19,?)`, []any{restoreNode, marker, bytes.Repeat([]byte{3}, 32), at, at, fmt.Sprintf(`{"hostname":%q}`, marker), at}},
+		{`INSERT INTO nodes(id,name,status,token_hash,credential_epoch,installation_id,first_enrolled_at,last_seen,system,agent_runtime,billing_day,quota_bytes,run_generation,report_session_id,created_at) VALUES(?,?,'online',?,?,'restore-installation',?,?,?,?,?,?,'17','55555555-5555-4555-8555-555555555555',?)`, []any{restoreNode, marker, bytes.Repeat([]byte{3}, 32), credentialEpoch, at, at, fmt.Sprintf(`{"hostname":%q}`, marker), runtime, billingDay, quota, at}},
 		{`INSERT INTO audit_events(id,actor_id,action,target_id,created_at,details) VALUES('66666666-6666-4666-8666-666666666666',NULL,'fixture',NULL,?,?)`, []any{at, fmt.Sprintf(`{"marker":%q}`, marker)}},
 		{`INSERT INTO backup_plans(id,name,enabled,kind,categories_json,cron,destination_json,retain_count,next_run_at,created_at,updated_at) VALUES(?, 'plan',1,'local','["configuration"]','0 3 * * *','{"path":"/does/not/exist/on/new/machine"}',7,?,?,?)`, []any{restorePlan, at, at, at}},
 		{`INSERT INTO notification_channels(id,name,kind,enabled,config_json,url_ciphertext,created_at,updated_at) VALUES('99999999-9999-4999-8999-999999999999','Hook','webhook',1,'{}',?,?,?)`, []any{urlCipher, at, at}},
@@ -222,13 +229,81 @@ func TestRestoreSevenCategoryCombinations(t *testing.T) {
 			} else if enabled != 1 || !next.Valid || sessions != 1 || tickets != 1 {
 				t.Fatal("retained configuration changed")
 			}
-			var generation, session string
-			var desired int
-			if err = db.QueryRow(`SELECT run_generation,report_session_id,desired_revision FROM nodes WHERE id=?`, restoreNode).Scan(&generation, &session, &desired); err != nil {
+			var generation, session, runtime, quota string
+			var billingDay int
+			var credentialEpoch int64
+			if err = db.QueryRow(`SELECT run_generation,report_session_id,agent_runtime,billing_day,quota_bytes,credential_epoch FROM nodes WHERE id=?`, restoreNode).Scan(&generation, &session, &runtime, &billingDay, &quota, &credentialEpoch); err != nil {
 				t.Fatal(err)
 			}
-			if generation != "17" || session != "55555555-5555-4555-8555-555555555555" || desired != 19 {
-				t.Fatal("authentication/config fence lost")
+			if generation != "17" || session != "55555555-5555-4555-8555-555555555555" {
+				t.Fatal("authentication fence lost")
+			}
+			wantCredentialEpoch := int64(41)
+			if mask&1 != 0 {
+				wantCredentialEpoch = 23
+			}
+			if credentialEpoch != wantCredentialEpoch {
+				t.Fatalf("credential identity epoch=%d want %d", credentialEpoch, wantCredentialEpoch)
+			}
+			wantRuntime := `{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":["/srv/target"],"probe_targets":[]}`
+			if mask&2 != 0 {
+				wantRuntime = `{"report_interval_seconds":5,"disk_interval_seconds":120,"interfaces":[],"disk_paths":["/srv/source"],"probe_targets":[]}`
+			}
+			if runtime != wantRuntime {
+				t.Fatalf("observed runtime=%s want %s", runtime, wantRuntime)
+			}
+			wantBilling, wantQuota := 3, "1024"
+			if mask&1 != 0 {
+				wantBilling, wantQuota = 2, "18446744073709551615"
+			}
+			if billingDay != wantBilling || quota != wantQuota {
+				t.Fatalf("billing=%d/%s want %d/%s", billingDay, quota, wantBilling, wantQuota)
+			}
+		})
+	}
+}
+
+func TestRestoreNormalizesObservedRuntime(t *testing.T) {
+	const unnormalized = `{"probe_targets":null,"disk_paths":null,"interfaces":null,"disk_interval_seconds":60,"report_interval_seconds":10}`
+	const canonical = `{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]}`
+	for _, tc := range []struct {
+		name               string
+		categories         []Category
+		selectedMonitoring bool
+		runtime            string
+		want               string
+	}{
+		{"imported runtime", []Category{Monitoring}, true, unnormalized, canonical},
+		{"retained runtime", []Category{Configuration}, false, unnormalized, canonical},
+		{"no report", []Category{Monitoring}, true, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			source, target := restoreFixture(t, "source"), restoreFixture(t, "target")
+			observationDir := target
+			if tc.selectedMonitoring {
+				observationDir = source
+			}
+			db, err := storage.Open(ctx, filepath.Join(observationDir, "orbitbeacon.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(`UPDATE nodes SET agent_runtime=? WHERE id=?`, tc.runtime, restoreNode); err != nil {
+				t.Fatal(err)
+			}
+			if err = db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			archive, password := restoreArchive(t, source, tc.categories)
+			if _, err = Restore(ctx, target, archive, password, true); err != nil {
+				t.Fatal(err)
+			}
+			var runtime string
+			if err = restoreDB(t, target).QueryRow(`SELECT agent_runtime FROM nodes WHERE id=?`, restoreNode).Scan(&runtime); err != nil {
+				t.Fatal(err)
+			}
+			if runtime != tc.want {
+				t.Fatalf("persisted runtime=%s want %s", runtime, tc.want)
 			}
 		})
 	}
@@ -319,6 +394,19 @@ func TestRestoreEmptyAndRefusalNeverMutateLive(t *testing.T) {
 	}
 	if _, err := Restore(context.Background(), empty, config, password, false); err != nil {
 		t.Fatal(err)
+	}
+	db := restoreDB(t, empty)
+	var runtime, system string
+	var lastSeen sql.NullString
+	var credentialEpoch int64
+	if err := db.QueryRow(`SELECT agent_runtime,system,last_seen,credential_epoch FROM nodes WHERE id=?`, restoreNode).Scan(&runtime, &system, &lastSeen, &credentialEpoch); err != nil {
+		t.Fatal(err)
+	}
+	if runtime != "" || system != "{}" || lastSeen.Valid {
+		t.Fatal("configuration-only restore imported monitoring observations")
+	}
+	if credentialEpoch != 23 {
+		t.Fatalf("configuration-only restore lost credential identity epoch: %d", credentialEpoch)
 	}
 	target := restoreFixture(t, "target")
 	before := restoreBytes(t, target)

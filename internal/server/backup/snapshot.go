@@ -173,10 +173,10 @@ func projectCategory(ctx context.Context, destination, main, metrics *sql.DB, ca
 		}
 		query := "SELECT " + columnNames(spec) + " FROM " + spec.Name
 		if spec.Name == "node_observations" {
-			query = "SELECT id,last_seen,system,applied_revision,config_error FROM nodes"
+			query = "SELECT id,last_seen,system,agent_runtime FROM nodes"
 		}
 		if spec.Name == "nodes" {
-			query = `SELECT id,name,CASE WHEN status='disabled' THEN 'disabled' WHEN token_hash IS NOT NULL THEN 'unknown' ELSE 'pending' END,group_id,region,provider,notes,created_at,public_settings,desired_revision,report_interval_seconds,disk_interval_seconds,interfaces,disk_paths,probe_targets,billing_day,quota_bytes,token_hash,installation_id,first_enrolled_at,run_generation,report_session_id FROM nodes`
+			query = `SELECT id,name,CASE WHEN status='disabled' THEN 'disabled' WHEN token_hash IS NOT NULL THEN 'unknown' ELSE 'pending' END,group_id,region,provider,notes,created_at,public_settings,billing_day,quota_bytes,token_hash,credential_epoch,installation_id,first_enrolled_at,run_generation,report_session_id FROM nodes`
 		}
 		if spec.Where != "" {
 			query += " WHERE " + spec.Where

@@ -343,6 +343,7 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 
 	var nodeID string
 	rotation := false
+	identityChanged := true
 	if ticket.NodeID != nil {
 		nodeID = *ticket.NodeID
 		var installation sql.NullString
@@ -359,6 +360,7 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 		// A ticket authorizes a change, not a stale overwrite. Concurrent
 		// candidates may share a parent, but only the current parent can win.
 		rotation = len(currentHash) != 0 && subtle.ConstantTimeCompare(currentHash, nodeHash[:]) != 1
+		identityChanged = len(currentHash) == 0 || rotation
 		if rotation {
 			if req.PreviousNodeToken == "" {
 				return v1.EnrollmentResponse{}, ErrConflict
@@ -406,7 +408,16 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 	if err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET run_generation = CASE WHEN token_hash = ? THEN run_generation ELSE '0' END, report_session_id = CASE WHEN token_hash = ? THEN report_session_id ELSE '' END, token_hash = ?, installation_id = ?, first_enrolled_at = COALESCE(first_enrolled_at, ?), system = ?, status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'unknown' END WHERE id = ?`, nodeHash[:], nodeHash[:], nodeHash[:], req.InstallationID, timekey.Format(now), string(system), nodeID); err != nil {
+	if identityChanged {
+		for _, table := range []string{"probe_latest", "probe_hourly"} {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE node_id=?", nodeID); err != nil {
+				return v1.EnrollmentResponse{}, err
+			}
+		}
+	}
+	// The unchanged active credential does not consume an epoch. A true bind
+	// at integer exhaustion violates NOT NULL and rolls back the whole claim.
+	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET credential_epoch = CASE WHEN token_hash = ? THEN credential_epoch WHEN credential_epoch < 9223372036854775807 THEN credential_epoch + 1 ELSE NULL END, run_generation = CASE WHEN token_hash = ? THEN run_generation ELSE '0' END, report_session_id = CASE WHEN token_hash = ? THEN report_session_id ELSE '' END, agent_runtime = CASE WHEN token_hash = ? THEN agent_runtime ELSE '' END, last_seen = CASE WHEN token_hash = ? THEN last_seen ELSE NULL END, system = CASE WHEN token_hash = ? THEN system ELSE ? END, token_hash = ?, installation_id = ?, first_enrolled_at = COALESCE(first_enrolled_at, ?), status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'unknown' END WHERE id = ?`, nodeHash[:], nodeHash[:], nodeHash[:], nodeHash[:], nodeHash[:], nodeHash[:], string(system), nodeHash[:], req.InstallationID, timekey.Format(now), nodeID); err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO enrollment_claims(enrollment_id, installation_id, node_id, token_hash, claimed_at) VALUES (?, ?, ?, ?, ?)`, ticket.ID, req.InstallationID, nodeID, nodeHash[:], timekey.Format(now)); err != nil {
@@ -423,11 +434,13 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 	if err := tx.Commit(); err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
-	s.hookMu.Lock()
-	hooks := s.identityHooks
-	s.hookMu.Unlock()
-	for _, hook := range hooks {
-		hook()
+	if identityChanged {
+		s.hookMu.Lock()
+		hooks := s.identityHooks
+		s.hookMu.Unlock()
+		for _, hook := range hooks {
+			hook()
+		}
 	}
 	return v1.EnrollmentResponse{NodeID: nodeID, ServerTime: now}, nil
 }

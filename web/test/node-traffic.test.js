@@ -197,3 +197,20 @@ test('traffic requests use navigation cancellation and aborted responses cannot 
     assert.doesNotMatch(env.root.textContent, /Could not load traffic|Daily traffic|Received|Sent/);
   } finally { env.cleanup(); }
 });
+
+test('billing-triggered traffic reload cannot be overwritten by an older pending read', async () => {
+  const env = setupPanel();
+  try {
+    const older = env.requests[0];
+    const reload = env.root.reload();
+    assert.equal(env.requests.length, 2);
+    env.respond(env.requests[1], {...emptyTraffic(), quota_bytes: '1000',
+      cycle: {...emptyTraffic().cycle, total_bytes: '800'}, updated_at: '2026-10-28T12:00:00Z'});
+    await reload;
+    assert.match(env.root.textContent, /800 B \/ 1000 B/);
+    env.respond(older, emptyTraffic());
+    await flush();
+    assert.match(env.root.textContent, /800 B \/ 1000 B/);
+    assert.doesNotMatch(env.root.textContent, /No traffic has been recorded yet/);
+  } finally { env.cleanup(); }
+});

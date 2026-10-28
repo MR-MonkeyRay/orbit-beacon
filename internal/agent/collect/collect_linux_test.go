@@ -18,8 +18,8 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
-func linuxConfig() v1.DesiredConfig {
-	return v1.DesiredConfig{Revision: 1, ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{"/"}, Interfaces: []string{"lo"}, ProbeTargets: []string{}, BillingDay: 1, QuotaBytes: "0"}
+func linuxConfig() v1.RuntimeSettings {
+	return v1.RuntimeSettings{ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{"/"}, Interfaces: []string{"lo"}, ProbeTargets: []string{}}
 }
 
 func meminfo(t *testing.T) map[string]uint64 {

@@ -70,12 +70,7 @@
 .preview-card .where .icon{width:14px;height:14px}
 .preview-card .placeholder{color:var(--ink-3);font-style:italic}
 .preview-label{font-size:12.5px;color:var(--ink-3);margin-bottom:10px}
-.range-field{display:grid;grid-template-columns:minmax(0,1fr) 92px;gap:12px;align-items:center}
-input[type=range]{width:100%;accent-color:var(--beacon)}
 .revision{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;background:var(--orbit-soft);color:var(--orbit);font-size:12.5px;font-weight:600}
-.json-toggle{margin-top:18px}
-.json-toggle summary{cursor:pointer;color:var(--ink-2);font-size:14px;font-weight:550}
-.json-toggle .code{margin-top:10px}
 .lede+.rows,.lede+.timeline,.lede+.empty{margin-top:14px}
 .timeline+.btn{margin-top:4px}
 /* Explicit selection controls sit above the node row's full-width link. */

@@ -14,7 +14,7 @@ var (
 	readMethods           = []string{http.MethodGet}
 	createMethods         = []string{http.MethodGet, http.MethodPost}
 	itemMethods           = []string{http.MethodGet, http.MethodPatch, http.MethodDelete}
-	configMethods         = []string{http.MethodGet, http.MethodPatch}
+	settingsMethods       = []string{http.MethodGet, http.MethodPatch}
 	postMethods           = []string{http.MethodPost}
 	patchMethods          = []string{http.MethodPatch}
 	sessionMethods        = []string{http.MethodPost, http.MethodDelete}
@@ -82,10 +82,10 @@ func routeMethods(p string) []string {
 	if len(parts) == 3 && parts[0] == "notification-channels" && parts[2] == "test" {
 		return postMethods
 	}
-	if len(parts) == 3 && parts[0] == "nodes" && (parts[2] == "config" || parts[2] == "public-settings") {
-		return configMethods
+	if len(parts) == 3 && parts[0] == "nodes" && (parts[2] == "traffic-settings" || parts[2] == "public-settings") {
+		return settingsMethods
 	}
-	if len(parts) == 3 && parts[0] == "nodes" && (parts[2] == "latest" || parts[2] == "history" || parts[2] == "traffic" || parts[2] == "probes") {
+	if len(parts) == 3 && parts[0] == "nodes" && (parts[2] == "runtime" || parts[2] == "latest" || parts[2] == "history" || parts[2] == "traffic" || parts[2] == "probes") {
 		return readMethods
 	}
 	if len(parts) == 3 && parts[0] == "nodes" && parts[2] == "credential" {

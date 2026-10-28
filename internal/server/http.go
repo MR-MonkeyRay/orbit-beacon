@@ -501,22 +501,33 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		if len(parts) == 3 {
-			var cfg v1.DesiredConfig
+		if len(parts) == 3 && parts[2] == "runtime" {
+			runtime, err := h.nodes.GetRuntime(r.Context(), id)
+			if err != nil {
+				h.serviceError(w, err, requestID)
+				return
+			}
+			writeJSON(w, http.StatusOK, struct {
+				Runtime *v1.RuntimeSettings `json:"runtime"`
+			}{runtime})
+			return
+		}
+		if len(parts) == 3 && parts[2] == "traffic-settings" {
+			var settings nodes.TrafficSettings
 			if r.Method == http.MethodGet {
-				cfg, err = h.nodes.GetConfig(r.Context(), id)
+				settings, err = h.nodes.GetTrafficSettings(r.Context(), id)
 			} else {
-				var patch nodes.ConfigPatch
+				var patch nodes.TrafficSettingsPatch
 				if !decode(w, r, &patch, requestID) {
 					return
 				}
-				cfg, err = h.nodes.PatchConfig(r.Context(), id, patch)
+				settings, err = h.nodes.PatchTrafficSettings(r.Context(), id, patch)
 			}
 			if err != nil {
 				h.serviceError(w, err, requestID)
 				return
 			}
-			writeJSON(w, http.StatusOK, cfg)
+			writeJSON(w, http.StatusOK, settings)
 			return
 		}
 		if r.Method == http.MethodPatch {

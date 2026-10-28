@@ -12,7 +12,7 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-func TestManagementPresenceAndConfigStatus(t *testing.T) {
+func TestManagementPresenceAndAgentVersion(t *testing.T) {
 	service, db := newNodes(t, 20)
 	ctx := context.Background()
 	now := time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)
@@ -59,9 +59,6 @@ func TestManagementPresenceAndConfigStatus(t *testing.T) {
 			if got.AgentVersion != "v1.2.3+test" {
 				t.Fatalf("agent_version=%q", got.AgentVersion)
 			}
-			if got.Config.State != "pending" || got.Config.DesiredRevision != 1 || got.Config.AppliedRevision != 0 || got.Config.Error != nil {
-				t.Fatalf("initial config=%+v", got.Config)
-			}
 			list, err := service.List(ctx, 100, 0)
 			if err != nil {
 				t.Fatal(err)
@@ -73,35 +70,12 @@ func TestManagementPresenceAndConfigStatus(t *testing.T) {
 			}
 		})
 	}
-	node := pending(t, service, "config")
-	for _, tc := range []struct {
-		desired, applied int
-		raw, state       string
-	}{
-		{1, 1, "", "applied"}, {2, 1, "", "pending"},
-		{2, 1, `{"revision":2,"code":"invalid_config","fields":{"interfaces":"missing"}}`, "error"},
-		{3, 1, `{"revision":2,"code":"invalid_config"}`, "error"},
-		{3, 3, "", "applied"},
-	} {
-		if _, err := db.Exec(`UPDATE nodes SET desired_revision=?,applied_revision=?,config_error=? WHERE id=?`, tc.desired, tc.applied, tc.raw, node.ID); err != nil {
-			t.Fatal(err)
-		}
-		got, err := service.Get(ctx, node.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got.Config.State != tc.state || got.Config.DesiredRevision != int64(tc.desired) || got.Config.AppliedRevision != int64(tc.applied) {
-			t.Fatalf("config=%+v want %+v", got.Config, tc)
-		}
-		if tc.raw != "" && (got.Config.Error == nil || got.Config.Error.Code != "invalid_config" || got.Config.Error.Revision != 2) {
-			t.Fatalf("error=%+v", got.Config.Error)
-		}
-	}
+	node := pending(t, service, "wire fields")
 	encoded, err := json.Marshal(node)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{`"last_seen":null`, `"presence":"pending"`, `"error":null`, `"agent_version":""`} {
+	for _, field := range []string{`"last_seen":null`, `"presence":"pending"`, `"agent_version":""`} {
 		if !strings.Contains(string(encoded), field) {
 			t.Errorf("missing %s: %s", field, encoded)
 		}
@@ -142,20 +116,14 @@ func TestManagementStatusToleratesUnreadableStoredAgentData(t *testing.T) {
 	service, db := newNodes(t, 5)
 	ctx := context.Background()
 	node := pending(t, service, "unreadable")
-	if _, err := db.Exec(`UPDATE nodes SET config_error='{not json', system='[', applied_revision=desired_revision+1 WHERE id=?`, node.ID); err != nil {
+	if _, err := db.Exec(`UPDATE nodes SET system='[' WHERE id=?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
 	got, err := service.Get(ctx, node.ID)
 	if err != nil {
 		t.Fatalf("unreadable stored agent data broke the node API: %v", err)
 	}
-	if got.Config.State != "error" || got.Config.Error == nil || got.Config.Error.Code != "unreadable" || got.AgentVersion != "" {
-		t.Fatalf("config=%+v agent_version=%q", got.Config, got.AgentVersion)
-	}
-	if _, err := db.Exec(`UPDATE nodes SET config_error='' WHERE id=?`, node.ID); err != nil {
-		t.Fatal(err)
-	}
-	if got, err = service.Get(ctx, node.ID); err != nil || got.Config.State != "applied" {
-		t.Fatalf("applied revision above desired: state=%q err=%v", got.Config.State, err)
+	if got.AgentVersion != "" {
+		t.Fatalf("agent_version=%q", got.AgentVersion)
 	}
 }

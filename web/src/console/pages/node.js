@@ -6,12 +6,13 @@ import {callout, facts, iconButton, link, note, panel, statusBadge} from '../ui/
 import {toast} from '../ui/feedback.js';
 import {field, input, onSubmit, saveBar, select, tagEditor, textarea, trackDirty, validateBytes} from '../ui/forms.js';
 import {tabSet} from '../ui/tabs.js';
-import {configTab} from './node-config.js';
+import {agentSettingsTab} from './node-agent-settings.js';
 import {enrollmentTab} from './enrollments.js';
 import {diskSummary, loadSummary, memorySummary, networkSummary} from './latest-sample-helpers.js';
 import {lifecycleActions} from './node-lifecycle.js';
 import {historyPanel} from './node-history.js';
 import {trafficPanel} from './node-traffic.js';
+import {trafficSettingsPanel} from './node-traffic-settings.js';
 import {probesPanel} from './node-probes.js';
 
 export const NODE_PATH = /^\/nodes\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
@@ -21,8 +22,8 @@ export async function nodePage() {
   await ensureSession();
   const id = location.pathname.match(NODE_PATH)[1];
   const path = `/nodes/${encodeURIComponent(id)}`;
-  const [node, config, groups, publicSettings, latest] = await Promise.all([
-    api(path), api(`${path}/config`), groupsList(), api(`${path}/public-settings`),
+  const [node, runtime, trafficSettings, groups, publicSettings, latest] = await Promise.all([
+    api(path), api(`${path}/runtime`), api(`${path}/traffic-settings`), groupsList(), api(`${path}/public-settings`),
     api(`${path}/latest`).catch((error) => {
       if (error.status === 404) return null;
       throw error;
@@ -57,6 +58,7 @@ export async function nodePage() {
   back.className = 'back';
   let history;
   let traffic;
+  let billingSettings = trafficSettings;
   let probes;
   return h('div', null,
     h('header', {class: 'page-head'}, h('div', null, back,
@@ -65,9 +67,13 @@ export async function nodePage() {
     tabSet([
       {id: 'details', label: 'Details', icon: 'server', build: () => detailsTab(node, groups, latest,
         history ||= historyPanel(id, signal), traffic ||= trafficPanel(id, signal),
-        probes ||= probesPanel(id, signal, () => document.getElementById('tab-config')?.click()))},
+        probes ||= probesPanel(id, signal),
+        trafficSettingsPanel(id, billingSettings, (settings) => {
+          billingSettings = settings;
+          return traffic.reload();
+        }, signal))},
       {id: 'public', label: 'Public page', icon: 'globe', build: () => publicTab(node, publicSettings)},
-      {id: 'config', label: 'Agent configuration', icon: 'sliders', build: () => configTab(node, config)},
+      {id: 'agent', label: 'Agent settings', icon: 'sliders', build: () => agentSettingsTab(node, runtime.runtime)},
       {id: 'enrollment', label: 'Enroll agent', icon: 'server', build: () => enrollmentTab(node)}
     ], 'Node sections'));
 }
@@ -100,7 +106,7 @@ function latestPanel(node, latest) {
   ]));
 }
 
-function detailsTab(node, groups, latest, history, traffic, probes) {
+function detailsTab(node, groups, latest, history, traffic, probes, billing) {
   const group = groups.find((item) => item.id === node.group_id);
   const summary = panel('Summary', {}, facts([
     ['Presence', statusBadge(node.presence)],
@@ -136,7 +142,7 @@ function detailsTab(node, groups, latest, history, traffic, probes) {
     invalidate('nodes');
     return `Saved ${result.name}.`;
   });
-  return h('div', {class: 'stack'}, h('div', {class: 'split'}, summary, panel('Edit details', {}, form)), sample, history, traffic, probes);
+  return h('div', {class: 'stack'}, h('div', {class: 'split'}, summary, panel('Edit details', {}, form)), sample, history, traffic, billing, probes);
 }
 
 function publicPreview() {

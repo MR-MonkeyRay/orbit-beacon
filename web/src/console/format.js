@@ -6,6 +6,7 @@ export const STATUS_ORDER = ['online', 'offline', 'never', 'pending', 'disabled'
 const ACTIONS = {
   'node.create': 'Node created', 'node.delete': 'Node deleted', 'node.disable': 'Node disabled', 'node.enable': 'Node enabled',
   'node.metadata.patch': 'Node details updated', 'node.config.patch': 'Desired configuration updated',
+  'node.traffic_settings.patch': 'Traffic billing settings saved',
   'node.public_settings.patch': 'Public page settings saved', 'group.create': 'Group created', 'group.update': 'Group renamed',
   'group.delete': 'Group deleted', 'user.create': 'Administrator added', 'user.patch': 'Administrator renamed', 'user.delete': 'Administrator deleted',
   'user.password.change': 'Password changed', 'enrollment.create': 'Enrollment credential issued',
@@ -78,12 +79,3 @@ export function formatRate(bytesPerSecond) {
   return Number.isFinite(bytesPerSecond) && bytesPerSecond >= 0 ? `${formatBytes(Math.round(bytesPerSecond))}/s` : 'Unavailable';
 }
 
-export function configStateLabel(config) {
-  if (!config) return 'Unavailable';
-  if (config.state === 'error') {
-    const revision = config.error?.revision ?? config.desired_revision;
-    return `Error: ${config.error?.code || 'unknown'}${revision ? ` (revision ${revision})` : ''}`;
-  }
-  if (config.state === 'pending') return `Pending revision ${config.desired_revision}`;
-  return `Applied revision ${config.applied_revision}`;
-}

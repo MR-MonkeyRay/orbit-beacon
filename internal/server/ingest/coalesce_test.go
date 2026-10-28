@@ -31,7 +31,7 @@ type coalesceFixture struct {
 	report  v1.Report
 }
 
-func newCoalesceFixture(t *testing.T, interval time.Duration) *coalesceFixture {
+func newCoalesceFixture(t *testing.T, interval time.Duration, targets ...string) *coalesceFixture {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0700); err != nil {
@@ -72,7 +72,10 @@ func newCoalesceFixture(t *testing.T, interval time.Duration) *coalesceFixture {
 	source := m.Sources["cpu"]
 	source.MeasurementWindowMS = &window
 	m.Sources["cpu"] = source
-	f.report = v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "session", Seq: 1, SampledAt: f.now, ConfigRevision: 1, System: &v1.System{Hostname: "host", OS: "linux", Arch: "amd64"}, Metrics: m, Traffic: []v1.Traffic{}}
+	f.report = v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "session", Seq: 1, SampledAt: f.now, Runtime: v1.DefaultRuntimeSettings(), System: &v1.System{Hostname: "host", OS: "linux", Arch: "amd64"}, Metrics: m, Traffic: []v1.Traffic{}}
+	if len(targets) != 0 {
+		f.report.Runtime.ProbeTargets = targets
+	}
 	if _, err := f.service.Accept(context.Background(), f.id, f.report); err != nil {
 		t.Fatal(err)
 	}
@@ -90,41 +93,26 @@ func (f *coalesceFixture) writes(t *testing.T) int {
 
 func TestCoalesceDurabilityConditions(t *testing.T) {
 	for _, test := range []struct {
-		name    string
-		mutate  func(*testing.T, *coalesceFixture)
-		write   bool
-		desired int64
+		name   string
+		mutate func(*testing.T, *coalesceFixture)
+		write  bool
 	}{
-		{"equal system hash", func(t *testing.T, f *coalesceFixture) {}, false, 0},
-		{"nil system unchanged", func(t *testing.T, f *coalesceFixture) { f.report.System = nil }, false, 0},
-		{"system changed", func(t *testing.T, f *coalesceFixture) { f.report.System.Hostname = "changed" }, true, 0},
-		{"new run", func(t *testing.T, f *coalesceFixture) { f.report.RunGeneration++; f.report.SessionID = "next" }, true, 0},
+		{"equal system hash", func(t *testing.T, f *coalesceFixture) {}, false},
+		{"nil system unchanged", func(t *testing.T, f *coalesceFixture) { f.report.System = nil }, false},
+		{"system changed", func(t *testing.T, f *coalesceFixture) { f.report.System.Hostname = "changed" }, true},
+		{"new run", func(t *testing.T, f *coalesceFixture) { f.report.RunGeneration++; f.report.SessionID = "next" }, true},
 		{"restart", func(t *testing.T, f *coalesceFixture) {
 			f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }})
-		}, true, 0},
-		{"config error", func(t *testing.T, f *coalesceFixture) {
-			f.report.ConfigError = &v1.ConfigError{Revision: 2, Code: "invalid_config"}
-		}, true, 0},
-		{"desired ahead", func(t *testing.T, f *coalesceFixture) {
-			if _, err := f.db.Exec("UPDATE nodes SET desired_revision=2 WHERE id=?", f.id); err != nil {
-				t.Fatal(err)
-			}
-		}, true, 2},
-		{"restore advance", func(t *testing.T, f *coalesceFixture) { f.report.ConfigRevision = 4 }, true, 5},
-		{"ack differs", func(t *testing.T, f *coalesceFixture) {
-			if _, err := f.db.Exec("UPDATE nodes SET desired_revision=2 WHERE id=?", f.id); err != nil {
-				t.Fatal(err)
-			}
-			f.report.ConfigRevision = 2
-		}, true, 0},
-		{"interval boundary", func(t *testing.T, f *coalesceFixture) { f.now = f.now.Add(time.Second) }, true, 0},
+		}, true},
+		{"runtime changed", func(t *testing.T, f *coalesceFixture) { f.report.Runtime.ReportIntervalSeconds = 5 }, true},
+		{"interval boundary", func(t *testing.T, f *coalesceFixture) { f.now = f.now.Add(time.Second) }, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newCoalesceFixture(t, 2*time.Second)
 			f.now = f.now.Add(time.Second)
 			f.report.Seq++
 			test.mutate(t, f)
-			response, err := f.service.Accept(context.Background(), f.id, f.report)
+			_, err := f.service.Accept(context.Background(), f.id, f.report)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -135,9 +123,6 @@ func TestCoalesceDurabilityConditions(t *testing.T) {
 			if got := f.writes(t); got != want {
 				t.Fatalf("writes=%d want %d", got, want)
 			}
-			if test.desired == 0 && response.DesiredConfig != nil || test.desired != 0 && (response.DesiredConfig == nil || response.DesiredConfig.Revision != test.desired) {
-				t.Fatalf("desired config=%+v, want revision %d", response.DesiredConfig, test.desired)
-			}
 			latest, err := f.service.Latest(context.Background(), f.id)
 			if err != nil || latest.Seq != 2 || !latest.ReceivedAt.Equal(f.now) {
 				t.Fatalf("latest=%+v err=%v", latest, err)
@@ -146,23 +131,23 @@ func TestCoalesceDurabilityConditions(t *testing.T) {
 	}
 }
 
-func TestCoalesceErrorRecoveryAndDuplicate(t *testing.T) {
+func TestCoalesceRuntimeChangeAndDuplicate(t *testing.T) {
 	f := newCoalesceFixture(t, 0)
 	ctx := context.Background()
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
-	f.report.ConfigError = &v1.ConfigError{Revision: 1, Code: "invalid_config"}
+	f.report.Runtime.ReportIntervalSeconds = 5
 	if _, err := f.service.Accept(ctx, f.id, f.report); err != nil {
 		t.Fatal(err)
 	}
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
-	f.report.ConfigError = nil
+	f.report.Runtime.ReportIntervalSeconds = 10
 	if _, err := f.service.Accept(ctx, f.id, f.report); err != nil {
 		t.Fatal(err)
 	}
 	if f.writes(t) != 3 {
-		t.Fatal("config error clearing did not persist")
+		t.Fatal("runtime changes did not persist")
 	}
 	latest, err := f.service.Latest(ctx, f.id)
 	if err != nil {
@@ -282,7 +267,7 @@ func TestCoalesceConcurrentMutationBeforeAuthentication(t *testing.T) {
 			result := make(chan error, 1)
 			credential := sha256.Sum256([]byte("coalesce-test-credential"))
 			go func() {
-				_, err := f.service.accept(ctx, f.id, credential[:], f.report, false)
+				_, err := f.service.accept(ctx, f.id, credential[:], 0, f.report, false)
 				result <- err
 			}()
 			// Hold the report before its current-state SELECT, then commit the
@@ -328,7 +313,7 @@ func TestCoalesceConcurrentMutationBeforeAuthentication(t *testing.T) {
 }
 
 func TestCoalesceLatestFencesCommittedMutations(t *testing.T) {
-	for _, mutation := range []string{"revoke", "disable", "delete", "rotate", "generation", "session"} {
+	for _, mutation := range []string{"revoke", "disable", "delete", "rotate", "credential_epoch", "generation", "session"} {
 		t.Run(mutation, func(t *testing.T) {
 			f := newCoalesceFixture(t, 0)
 			ctx := context.Background()
@@ -343,6 +328,8 @@ func TestCoalesceLatestFencesCommittedMutations(t *testing.T) {
 			case "rotate":
 				credential := sha256.Sum256([]byte("rotated-credential"))
 				_, err = f.db.Exec("UPDATE nodes SET token_hash=? WHERE id=?", credential[:], f.id)
+			case "credential_epoch":
+				_, err = f.db.Exec("UPDATE nodes SET credential_epoch=credential_epoch+1 WHERE id=?", f.id)
 			case "generation":
 				_, err = f.db.Exec("UPDATE nodes SET run_generation='2' WHERE id=?", f.id)
 			case "session":
@@ -383,7 +370,7 @@ func TestCoalesceLatestFencesMutationAfterFastPathRead(t *testing.T) {
 			result := make(chan error, 1)
 			credential := sha256.Sum256([]byte("coalesce-test-credential"))
 			go func() {
-				_, err := f.service.accept(ctx, f.id, credential[:], f.report, false)
+				_, err := f.service.accept(ctx, f.id, credential[:], 0, f.report, false)
 				result <- err
 			}()
 			select {
@@ -420,8 +407,8 @@ func TestCoalesceLatestFencesMutationAfterFastPathRead(t *testing.T) {
 			seq := state.seq
 			state.mu.Unlock()
 			f.service.releaseState(state)
-			if seq != 2 || f.writes(t) != 1 {
-				t.Fatalf("report did not take fast path: seq=%d writes=%d", seq, f.writes(t))
+			if seq != 2 {
+				t.Fatalf("linearized report did not advance sequence: seq=%d", seq)
 			}
 			if latest, err := f.service.Latest(ctx, f.id); !errors.Is(err, nodes.ErrNotFound) {
 				t.Fatalf("post-SELECT %s exposed snapshot=%+v err=%v", mutation, latest, err)
@@ -440,10 +427,9 @@ func TestCoalesceCredentialABAReclaimsBeforeAndAfterRead(t *testing.T) {
 				t.Fatal(err)
 			}
 			f.report.Seq = 100
-			if _, err := f.service.accept(ctx, f.id, nil, f.report, false); err != nil {
+			if _, err := f.service.accept(ctx, f.id, nil, 0, f.report, false); err != nil {
 				t.Fatal(err)
 			}
-			baseline := f.writes(t)
 			f.now = f.now.Add(time.Second)
 			reenroll := func() {
 				if err := f.nodes.RevokeCredential(ctx, f.id); err != nil {
@@ -462,15 +448,21 @@ func TestCoalesceCredentialABAReclaimsBeforeAndAfterRead(t *testing.T) {
 				}
 			}
 			if resetAfterRead {
-				// Force the writer path, then reuse A after its first SELECT.
-				f.report.System.Hostname = "changed"
+				// Make persistence due, then reuse A after its first SELECT.
+				f.now = f.now.Add(30 * time.Second)
 				var once sync.Once
 				f.service.now = func() time.Time { once.Do(reenroll); return f.now }
 			} else {
 				reenroll()
 			}
 			f.report.Seq = 2
-			response, err := f.service.accept(ctx, f.id, nil, f.report, false)
+			response, err := f.service.accept(ctx, f.id, nil, 0, f.report, false)
+			if resetAfterRead {
+				if !errors.Is(err, ErrIdentityConflict) {
+					t.Fatalf("queued pre-reset report error=%v", err)
+				}
+				response, err = f.service.accept(ctx, f.id, nil, 0, f.report, false)
+			}
 			if err != nil || response.AcceptedSeq != 2 {
 				t.Fatalf("ABA report deduplicated: response=%+v err=%v", response, err)
 			}
@@ -478,54 +470,114 @@ func TestCoalesceCredentialABAReclaimsBeforeAndAfterRead(t *testing.T) {
 			if err := f.db.QueryRow("SELECT run_generation, report_session_id FROM nodes WHERE id=?", f.id).Scan(&generation, &session); err != nil {
 				t.Fatal(err)
 			}
-			if generation != "1" || session != f.report.SessionID || f.writes(t) != baseline+1 {
-				t.Fatalf("identity not reclaimed: generation=%s session=%q writes=%d", generation, session, f.writes(t))
+			if generation != "1" || session != f.report.SessionID {
+				t.Fatalf("identity not reclaimed: generation=%s session=%q", generation, session)
 			}
 			f.report.Seq++
-			if response, err := f.service.accept(ctx, f.id, nil, f.report, false); err != nil || response.AcceptedSeq != 3 {
+			if response, err := f.service.accept(ctx, f.id, nil, 0, f.report, false); err != nil || response.AcceptedSeq != 3 {
 				t.Fatalf("sequence history survived ABA: response=%+v err=%v", response, err)
 			}
 			if latest, err := f.service.Latest(ctx, f.id); err != nil || latest.Seq != 3 {
 				t.Fatalf("new sequence dropped after ABA: latest=%+v err=%v", latest, err)
 			}
-			if f.writes(t) != baseline+1 {
-				t.Fatal("reclaimed identity did not resume coalescing")
-			}
 		})
 	}
 }
 
-func TestCoalescePersistentConfigError(t *testing.T) {
-	for _, pending := range []bool{false, true} {
-		t.Run(fmt.Sprintf("pending=%v", pending), func(t *testing.T) {
-			f := newCoalesceFixture(t, 0)
-			ctx := context.Background()
-			f.report.ConfigError = &v1.ConfigError{Revision: 1, Code: "invalid_config"}
-			f.report.Seq++
-			if _, err := f.service.accept(ctx, f.id, nil, f.report, false); err != nil {
-				t.Fatal(err)
-			}
-			if pending {
-				if _, err := f.db.Exec("UPDATE nodes SET desired_revision=2 WHERE id=?", f.id); err != nil {
-					t.Fatal(err)
-				}
-			}
-			f.report.Seq++
-			response, err := f.service.accept(ctx, f.id, nil, f.report, false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := 2
-			if pending {
-				want = 3
-				if response.DesiredConfig == nil || response.DesiredConfig.Revision != 2 {
-					t.Fatalf("pending config missing: %+v", response)
-				}
-			}
-			if f.writes(t) != want {
-				t.Fatalf("persistent error writes=%d want %d", f.writes(t), want)
-			}
-		})
+func TestFreshCredentialEpochRejectsQueuedExactABA(t *testing.T) {
+	f := newCoalesceFixture(t, 0)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	enrollments := enrollment.NewService(f.db, enrollment.Options{Now: func() time.Time { return f.now }})
+	rebind := func() {
+		t.Helper()
+		if err := f.nodes.RevokeCredential(ctx, f.id); err != nil {
+			t.Fatal(err)
+		}
+		ticket, err := enrollments.CreateSingle(ctx, f.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := enrollments.Enroll(ctx, ticket.Token, v1.EnrollmentRequest{ProtocolVersion: 1, InstallationID: "exact-aba", NodeToken: coalesceToken, System: v1.System{Hostname: "enrolled", OS: "linux", Arch: "amd64"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rebind()
+	// No report has been accepted under this identity: A/0/'' is the exact
+	// durable identity both before and after the revoke/rebind below.
+	f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }})
+	target := "tcp://queued-identity.test:443"
+	f.report.Runtime.ProbeTargets = []string{target}
+	f.report.ProbeResults = []v1.ProbeResult{probeResult(target, f.now, true)}
+	f.report.Traffic = []v1.Traffic{trafficEntry("a", f.now, "100", "200")}
+	f.report.System.Hostname = "queued-old-host"
+	admission, err := f.service.AdmitToken(ctx, coalesceToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseWrite, err := f.service.beginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var release sync.Once
+	defer release.Do(releaseWrite)
+	result := make(chan error, 1)
+	go func() {
+		_, err := f.service.AcceptAdmitted(ctx, admission, f.report)
+		result <- err
+	}()
+	for len(f.service.writerQueue) != 2 {
+		select {
+		case <-ctx.Done():
+			t.Fatal("first report did not queue before its transaction")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	rebind()
+	release.Do(releaseWrite)
+	select {
+	case err := <-result:
+		if !errors.Is(err, ErrIdentityConflict) && !errors.Is(err, nodes.ErrUnauthenticated) {
+			t.Fatalf("queued exact-ABA report error=%v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("queued report did not finish")
+	}
+	var runtime, system, generation, session string
+	var seen sql.NullString
+	if err := f.db.QueryRow(`SELECT agent_runtime,system,last_seen,run_generation,report_session_id FROM nodes WHERE id=?`, f.id).Scan(&runtime, &system, &seen, &generation, &session); err != nil {
+		t.Fatal(err)
+	}
+	if runtime != "" || seen.Valid || generation != "0" || session != "" || system != `{"hostname":"enrolled","os":"linux","arch":"amd64"}` {
+		t.Fatalf("queued report resurrected identity: runtime=%q system=%q seen=%v run=%s/%q", runtime, system, seen, generation, session)
+	}
+	for _, table := range []string{"probe_latest", "probe_hourly", "traffic_hourly", "traffic_daily"} {
+		var count int
+		if err := f.db.QueryRow(`SELECT count(*) FROM `+table+` WHERE node_id=?`, f.id).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("queued report resurrected %s: count=%d err=%v", table, count, err)
+		}
+	}
+	if _, err := f.service.Latest(ctx, f.id); !errors.Is(err, nodes.ErrNotFound) {
+		t.Fatalf("queued report exposed latest: %v", err)
+	}
+	// A request authenticated after the reset can claim the fresh identity;
+	// neither the rejected report nor its pending counters may produce ACKs.
+	f.report.Traffic = nil
+	f.report.ProbeResults = nil
+	f.report.Runtime.ProbeTargets = nil
+	f.report.System.Hostname = "fresh-host"
+	response, err := f.service.AcceptToken(ctx, coalesceToken, f.report)
+	if err != nil || response.AcceptedSeq != 1 || len(response.TrafficAcks) != 0 {
+		t.Fatalf("fresh report response=%+v err=%v", response, err)
+	}
+	if err := f.service.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"probe_latest", "probe_hourly", "traffic_hourly", "traffic_daily"} {
+		var count int
+		if err := f.db.QueryRow(`SELECT count(*) FROM `+table+` WHERE node_id=?`, f.id).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("pending old identity resurrected %s after fresh report/drain: count=%d err=%v", table, count, err)
+		}
 	}
 }
 
@@ -546,7 +598,7 @@ func TestCoalesceCanceledSameNodeWaiterDoesNotBlockShutdown(t *testing.T) {
 	defer cancelSlow()
 	slow := make(chan error, 1)
 	go func() {
-		_, err := f.service.accept(slowCtx, f.id, nil, f.report, false)
+		_, err := f.service.accept(slowCtx, f.id, nil, 0, f.report, false)
 		slow <- err
 	}()
 	for len(f.service.writerQueue) != 2 {
@@ -565,7 +617,7 @@ func TestCoalesceCanceledSameNodeWaiterDoesNotBlockShutdown(t *testing.T) {
 	defer cancelWaiter()
 	waiter := make(chan error, 1)
 	go func() {
-		_, err := f.service.accept(waiterCtx, f.id, nil, f.report, false)
+		_, err := f.service.accept(waiterCtx, f.id, nil, 0, f.report, false)
 		waiter <- err
 	}()
 	state := f.service.acquireExistingState(f.id)
@@ -618,5 +670,28 @@ func TestCoalesceCanceledSameNodeWaiterDoesNotBlockShutdown(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("cancelled report blocked shutdown")
+	}
+}
+
+func TestTypedRuntimeSelectionsStayCanonicalWithoutAnotherDurableWrite(t *testing.T) {
+	f := newCoalesceFixture(t, 30*time.Second)
+	f.now = f.now.Add(time.Second)
+	f.report.Seq++
+	f.report.Runtime.Interfaces = nil
+	f.report.Runtime.DiskPaths = nil
+	f.report.Runtime.ProbeTargets = nil
+	if _, err := f.service.accept(context.Background(), f.id, nil, 0, f.report, false); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := f.service.Latest(context.Background(), f.id)
+	if err != nil || latest.Runtime.Interfaces == nil || latest.Runtime.DiskPaths == nil || latest.Runtime.ProbeTargets == nil {
+		t.Fatalf("latest runtime=%+v err=%v", latest.Runtime, err)
+	}
+	observed, err := f.nodes.GetRuntime(context.Background(), f.id)
+	if err != nil || observed == nil || observed.Interfaces == nil || observed.DiskPaths == nil || observed.ProbeTargets == nil {
+		t.Fatalf("observed runtime=%+v err=%v", observed, err)
+	}
+	if f.writes(t) != 1 {
+		t.Fatal("equivalent empty runtime selections caused another durable write")
 	}
 }

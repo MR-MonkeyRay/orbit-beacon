@@ -17,7 +17,7 @@ func TestExplicitTicketIsNeverReplacedByCredentialRecovery(t *testing.T) {
 		t.Run(map[bool]string{false: "before first run", true: "after beginning run"}[beganRun], func(t *testing.T) {
 			ctx := context.Background()
 			f := newAgentHTTP(t, 1)
-			state, cfg, _ := clientState(t)
+			state, _ := clientState(t)
 			node, err := f.nodes.CreatePending(ctx, nodes.CreateRequest{Name: "explicit ticket"})
 			if err != nil {
 				t.Fatal(err)
@@ -38,7 +38,7 @@ func TestExplicitTicketIsNeverReplacedByCredentialRecovery(t *testing.T) {
 			}
 			https := httptest.NewTLSServer(f.handler)
 			defer https.Close()
-			client, err := service.NewClient(service.ClientOptions{ServerURL: https.URL, HTTPClient: https.Client(), Identity: state, Config: cfg})
+			client, err := service.NewClient(service.ClientOptions{ServerURL: https.URL, HTTPClient: https.Client(), Identity: state})
 			if err != nil {
 				t.Fatal(err)
 			}

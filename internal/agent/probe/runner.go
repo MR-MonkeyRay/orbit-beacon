@@ -16,14 +16,12 @@ const (
 	maxConcurrent   = 5
 )
 
-// Options permits short intervals and synthetic checks in tests. Targets must
-// return the currently applied configuration; it is polled once per second.
+// Options permits short intervals and synthetic checks in tests. Selection is
+// applied explicitly at initialization and configuration reload boundaries.
 type Options struct {
-	Targets        func() []string
-	Check          func(context.Context, string) v1.ProbeResult
-	Interval       time.Duration
-	Timeout        time.Duration
-	ConfigInterval time.Duration
+	Check    func(context.Context, string) v1.ProbeResult
+	Interval time.Duration
+	Timeout  time.Duration
 }
 
 type targetState struct {
@@ -50,9 +48,6 @@ func NewRunner(options Options) *Runner {
 	}
 	if options.Timeout <= 0 {
 		options.Timeout = DefaultTimeout
-	}
-	if options.ConfigInterval <= 0 {
-		options.ConfigInterval = time.Second
 	}
 	return &Runner{options: options, targets: make(map[string]*targetState), wake: make(chan struct{}, 1)}
 }
@@ -97,13 +92,9 @@ func (r *Runner) SetTargets(targets []string) error {
 	return nil
 }
 
-// Results returns independent copies in configuration order, omitting checks
-// that have not completed. Applying the selection here also prevents a removed
-// target leaking into a report between configuration polls.
+// Results returns independent copies in the report's target order, omitting
+// unfinished or removed checks. Reading an old snapshot never changes selection.
 func (r *Runner) Results(targets []string) []v1.ProbeResult {
-	if r.SetTargets(targets) != nil {
-		return nil
-	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var results []v1.ProbeResult
@@ -147,14 +138,6 @@ func (r *Runner) Run(ctx context.Context) error {
 		check = checker.Check
 	}
 	defer func() { cancel(); workers.Wait() }()
-	poll := func() {
-		if r.options.Targets != nil {
-			_ = r.SetTargets(r.options.Targets())
-		}
-	}
-	poll()
-	configTicker := time.NewTicker(r.options.ConfigInterval)
-	defer configTicker.Stop()
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -206,8 +189,6 @@ func (r *Runner) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-configTicker.C:
-			poll()
 		case <-due:
 		case <-r.wake:
 		}

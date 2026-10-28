@@ -7,14 +7,14 @@ import {elements, flush, installDOM} from './console-dom.js';
 const probe = (values = {}) => ({target: 'tcp://db:5432', status: 'pending', latency_ms: null,
   error: '', status_code: null, checked_at: null, uptime_24h: null, checks_24h: 0, ...values});
 
-function setup(onConfigure) {
+function setup() {
   const dom = installDOM();
   const originalFetch = globalThis.fetch;
   const requests = [];
   globalThis.fetch = (path, options) => new Promise((resolve) => requests.push({path, signal: options.signal, resolve}));
   const page = new AbortController();
   setNavigationSignal(page.signal);
-  const root = probesPanel('node/id', page.signal, onConfigure);
+  const root = probesPanel('node/id', page.signal);
   dom.body.append(root);
   dom.mutations();
   return {...dom, page, root, requests,
@@ -89,21 +89,6 @@ test('probe up and down rows retain server order, badges, latency, error, timest
   } finally { env.cleanup(); }
 });
 
-test('empty probe panel offers configuration only when an admin action is provided', async () => {
-  for (const admin of [false, true]) {
-    let configured = false;
-    const env = setup(admin ? () => { configured = true; } : null);
-    try {
-      env.respond(env.requests[0], {probes: []});
-      await flush();
-      assert.match(env.root.textContent, /No service probes configured\./);
-      assert.doesNotMatch(env.root.textContent, /Results appear after/);
-      const action = env.root.querySelector('button');
-      assert.equal(Boolean(action), admin);
-      if (action) { action.click(); assert.equal(configured, true); }
-    } finally { env.cleanup(); }
-  }
-});
 
 test('probe request failures render a working retry', async () => {
   const env = setup();

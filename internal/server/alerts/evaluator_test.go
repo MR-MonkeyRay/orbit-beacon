@@ -76,7 +76,7 @@ func newFixture(t *testing.T, seconds int) *alertFixture {
 }
 func (f *alertFixture) value(v float64) {
 	f.latest.err = nil
-	f.latest.report = ingest.LatestReport{ReceivedAt: f.now, Report: v1.Report{Metrics: v1.Metrics{CPUPercent: ptr(v), MetricStatus: map[string]string{"cpu_percent": "ok"}, Sources: map[string]v1.SourceMetadata{"cpu": {SampleID: "cpu", SourceIntervalMS: 10000}}}}}
+	f.latest.report = ingest.LatestReport{ReceivedAt: f.now, Report: v1.Report{Runtime: v1.DefaultRuntimeSettings(), Metrics: v1.Metrics{CPUPercent: ptr(v), MetricStatus: map[string]string{"cpu_percent": "ok"}, Sources: map[string]v1.SourceMetadata{"cpu": {SampleID: "cpu", SourceIntervalMS: 10000}}}}}
 }
 func (f *alertFixture) tick(t *testing.T) {
 	t.Helper()
@@ -315,7 +315,7 @@ func TestProbesDownMetricCountsFailuresAndEmptyIsZero(t *testing.T) {
 	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 	latest := ingest.LatestReport{
 		ReceivedAt: now,
-		Report: v1.Report{ProbeResults: []v1.ProbeResult{
+		Report: v1.Report{Runtime: v1.RuntimeSettings{ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, Interfaces: []string{}, DiskPaths: []string{}, ProbeTargets: []string{"tcp://one.example:443", "https://two.example/health", "icmp://three.example"}}, ProbeResults: []v1.ProbeResult{
 			{Target: "tcp://one.example:443", OK: true},
 			{Target: "https://two.example/health", OK: false},
 			{Target: "icmp://three.example", OK: false},
@@ -352,7 +352,7 @@ func TestProbesDownFiresAndEmptyResultsResolve(t *testing.T) {
 	f.rule = r
 	f.latest.report = ingest.LatestReport{
 		ReceivedAt: f.now,
-		Report: v1.Report{ProbeResults: []v1.ProbeResult{
+		Report: v1.Report{Runtime: v1.RuntimeSettings{ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, Interfaces: []string{}, DiskPaths: []string{}, ProbeTargets: []string{"tcp://one.example:443", "https://two.example/health"}}, ProbeResults: []v1.ProbeResult{
 			{Target: "tcp://one.example:443", OK: true},
 			{Target: "https://two.example/health", OK: false},
 		}},
@@ -458,6 +458,27 @@ func TestPendingResetsOnIdentityChange(t *testing.T) {
 	f.tick(t)
 	if len(f.events(t, "firing")) != 1 {
 		t.Fatal("new identity should fire after its own duration")
+	}
+}
+
+func TestPendingResetsOnCredentialEpochChange(t *testing.T) {
+	f := newFixture(t, 60)
+	f.tick(t)
+	f.advance(59)
+	f.exec(t, "UPDATE nodes SET credential_epoch=credential_epoch+1 WHERE id=?", f.node)
+	f.value(90)
+	f.tick(t)
+	f.advance(1)
+	f.value(90)
+	f.tick(t)
+	if len(f.events(t, "all")) != 0 {
+		t.Fatal("same-token replacement inherited prior credential pending duration")
+	}
+	f.advance(59)
+	f.value(90)
+	f.tick(t)
+	if len(f.events(t, "firing")) != 1 {
+		t.Fatal("new credential epoch did not establish its own pending duration")
 	}
 }
 func TestFailedEventWriteDoesNotNotify(t *testing.T) {
@@ -684,7 +705,7 @@ func TestPendingResetSurvivesOtherEventWriteFailure(t *testing.T) {
 	}
 }
 func TestFireRevalidatesIdentityAndDisabledRules(t *testing.T) {
-	for _, mode := range []string{"identity", "disabled"} {
+	for _, mode := range []string{"identity", "credential_epoch", "disabled"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newFixture(t, 0)
 			inventory, err := f.e.readNodes(context.Background())
@@ -693,6 +714,8 @@ func TestFireRevalidatesIdentityAndDisabledRules(t *testing.T) {
 			}
 			if mode == "identity" {
 				f.exec(t, "UPDATE nodes SET token_hash=x'02' WHERE id=?", f.node)
+			} else if mode == "credential_epoch" {
+				f.exec(t, "UPDATE nodes SET credential_epoch=credential_epoch+1 WHERE id=?", f.node)
 			} else {
 				f.exec(t, "UPDATE alert_rules SET enabled=0 WHERE id=?", f.rule.ID)
 			}
@@ -711,7 +734,7 @@ func TestRealIngestIdentityFence(t *testing.T) {
 	f.e = NewEvaluator(f.s, real, EvaluatorOptions{})
 	f.exec(t, "UPDATE nodes SET run_generation='1',report_session_id='one' WHERE id=?", f.node)
 	var report v1.Report
-	raw := `{"protocol_version":1,"run_generation":1,"session_id":"one","seq":1,"sampled_at":"2026-10-27T12:00:00Z","config_revision":1,"metrics":{"cpu_percent":90,"load1":0,"load5":0,"load15":0,"memory_total_bytes":100,"memory_available_bytes":50,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":10,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000}}},"traffic":[]}`
+	raw := `{"protocol_version":1,"run_generation":1,"session_id":"one","seq":1,"sampled_at":"2026-10-27T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]},"metrics":{"cpu_percent":90,"load1":0,"load5":0,"load15":0,"memory_total_bytes":100,"memory_available_bytes":50,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":10,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000}}},"traffic":[]}`
 	if err := json.Unmarshal([]byte(raw), &report); err != nil {
 		t.Fatal(err)
 	}

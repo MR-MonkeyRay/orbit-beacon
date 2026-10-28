@@ -15,7 +15,7 @@ import (
 )
 
 func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
-	config := v1.DesiredConfig{Revision: 1, ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, BillingDay: 1, QuotaBytes: "0"}
+	config := v1.DefaultRuntimeSettings()
 	base := os.TempDir() + string(filepath.Separator)
 	for i := range 8 {
 		config.DiskPaths = append(config.DiskPaths, base+strings.Repeat("a", 1023-len(base))+string(rune('a'+i)))
@@ -32,7 +32,7 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	metrics, _ := collector.Collect(ctx)
-	report := v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "report-size-boundary", Seq: 1, SampledAt: time.Now().UTC(), ConfigRevision: 1, Metrics: metrics, Traffic: []v1.Traffic{}, System: &v1.System{Hostname: strings.Repeat("<", 255), OS: strings.Repeat("&", 64), Arch: strings.Repeat(">", 64)}}
+	report := v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "report-size-boundary", Seq: 1, SampledAt: time.Now().UTC(), Runtime: config, Metrics: metrics, Traffic: []v1.Traffic{}, System: &v1.System{Hostname: strings.Repeat("<", 255), OS: strings.Repeat("&", 64), Arch: strings.Repeat(">", 64)}}
 	for i := range 24 {
 		report.Traffic = append(report.Traffic, v1.Traffic{Epoch: strings.Repeat("f", 64), PeriodStart: time.Now().UTC().Truncate(time.Hour).Add(-time.Duration(i) * time.Hour), RxBytes: "9223372036854775807", TxBytes: "9223372036854775807"})
 	}

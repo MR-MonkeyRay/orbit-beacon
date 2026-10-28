@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {configStateLabel, describeAction, formatBytes, formatDuration, formatLoad, formatPercent, formatRate, relative, shortID} from '../src/console/format.js';
+import {describeAction, formatBytes, formatDuration, formatLoad, formatPercent, formatRate, relative, shortID} from '../src/console/format.js';
 
 test('formatBytes formats decimal byte strings with binary units', () => {
   assert.equal(formatBytes('0'), '0 B');
@@ -53,11 +53,6 @@ test('load, percent and byte rates format history values and unavailable samples
   assert.equal(formatPercent(Infinity), 'Unavailable');
 });
 
-test('configStateLabel describes applied, pending, and error revisions', () => {
-  assert.equal(configStateLabel({state: 'applied', applied_revision: 4}), 'Applied revision 4');
-  assert.equal(configStateLabel({state: 'pending', desired_revision: 5, applied_revision: 4}), 'Pending revision 5');
-  assert.equal(configStateLabel({state: 'error', desired_revision: 6, error: {revision: 6, code: 'invalid_config'}}), 'Error: invalid_config (revision 6)');
-});
 
 test('describeAction includes server audit actions and fallback formatting', () => {
   assert.equal(describeAction('session.create'), 'Signed in');
@@ -65,6 +60,7 @@ test('describeAction includes server audit actions and fallback formatting', () 
   assert.equal(describeAction('node.credential.revoke'), 'Revoked agent credential');
   assert.equal(describeAction('enrollment.claim'), 'Agent enrolled');
   assert.equal(describeAction('node.create'), 'Node created');
+  assert.equal(describeAction('node.traffic_settings.patch'), 'Traffic billing settings saved');
   assert.equal(describeAction('custom.audit_event'), 'Custom audit event');
   assert.equal(describeAction(''), '');
   assert.equal(describeAction('thing.changed'), 'Thing changed');

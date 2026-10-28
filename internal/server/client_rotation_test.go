@@ -35,18 +35,14 @@ func (d *enrollmentResponseDropper) RoundTrip(r *http.Request) (*http.Response, 
 	return response, err
 }
 
-func clientState(t *testing.T) (*identity.Store, *service.ConfigStore, string) {
+func clientState(t *testing.T) (*identity.Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "identity.json")
 	state, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), v1.DesiredConfig{Revision: 1, ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{}, Interfaces: []string{}, ProbeTargets: []string{}, BillingDay: 1, QuotaBytes: "0"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return state, cfg, path
+	return state, path
 }
 
 func TestClientRotationStagesFreshCredentialBeforeRequestAndPromotesAfterExactRetry(t *testing.T) {
@@ -60,7 +56,7 @@ func TestClientRotationStagesFreshCredentialBeforeRequestAndPromotesAfterExactRe
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, cfg, path := clientState(t)
+	state, path := clientState(t)
 	var mu sync.Mutex
 	var staged []string
 	var oldToken string
@@ -105,7 +101,7 @@ func TestClientRotationStagesFreshCredentialBeforeRequestAndPromotesAfterExactRe
 	defer server.Close()
 	transport := &enrollmentResponseDropper{base: server.Client().Transport}
 	newClient := func(store *identity.Store) *service.Client {
-		client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: &http.Client{Transport: transport}, Identity: store, Config: cfg})
+		client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: &http.Client{Transport: transport}, Identity: store})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -174,7 +170,7 @@ func TestClientFailedOrRevokedRotationKeepsOldActiveCredential(t *testing.T) {
 		t.Run(map[bool]string{false: "server failure", true: "revoked ticket"}[revoked], func(t *testing.T) {
 			f := newAgentHTTP(t, 1)
 			ctx := context.Background()
-			state, cfg, path := clientState(t)
+			state, path := clientState(t)
 			node, err := f.nodes.CreatePending(ctx, nodes.CreateRequest{Name: "failed rotation"})
 			if err != nil {
 				t.Fatal(err)
@@ -194,7 +190,7 @@ func TestClientFailedOrRevokedRotationKeepsOldActiveCredential(t *testing.T) {
 				f.handler.ServeHTTP(w, r)
 			}))
 			defer server.Close()
-			client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state, Config: cfg})
+			client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state})
 			if err != nil {
 				t.Fatal(err)
 			}

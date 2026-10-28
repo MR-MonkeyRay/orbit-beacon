@@ -36,10 +36,6 @@ func TestReportRecoveryPromotionPreservesConcurrentDurableRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 10))
-	if err != nil {
-		t.Fatal(err)
-	}
 	var mu sync.Mutex
 	var credentials []string
 	var concurrentRun identity.Identity
@@ -68,12 +64,12 @@ func TestReportRecoveryPromotionPreservesConcurrentDurableRun(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(v1.ReportResponse{NodeID: "same-node", AcceptedSeq: 1})
 	}))
 	defer server.Close()
-	client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state, Config: cfg})
+	client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	if _, err := client.Report(context.Background(), v1.Report{ProtocolVersion: 1, RunGeneration: run.RunGeneration, SessionID: run.SessionID, Seq: 1, Metrics: schedulerMetrics()}); err != nil {
+	if _, err := client.Report(context.Background(), v1.Report{ProtocolVersion: 1, RunGeneration: run.RunGeneration, SessionID: run.SessionID, Seq: 1, Runtime: runtimeSettings(10), Metrics: schedulerMetrics()}); err != nil {
 		t.Errorf("report did not recover stale in-memory identity: %v", err)
 	}
 	mu.Lock()
@@ -116,10 +112,6 @@ func TestReportDoesNotRetryWithoutDistinctCredentialOrWithoutUnauthorized(t *tes
 				}
 			}
 			before := state.Current()
-			cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 10))
-			if err != nil {
-				t.Fatal(err)
-			}
 			var mu sync.Mutex
 			var calls int
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -129,12 +121,12 @@ func TestReportDoesNotRetryWithoutDistinctCredentialOrWithoutUnauthorized(t *tes
 				w.WriteHeader(tt.status)
 			}))
 			defer server.Close()
-			client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state, Config: cfg})
+			client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer client.Close()
-			if _, err := client.Report(context.Background(), v1.Report{Seq: 1, Metrics: schedulerMetrics()}); err == nil {
+			if _, err := client.Report(context.Background(), v1.Report{Seq: 1, Runtime: runtimeSettings(10), Metrics: schedulerMetrics()}); err == nil {
 				t.Error("rejected report returned success")
 			}
 			mu.Lock()

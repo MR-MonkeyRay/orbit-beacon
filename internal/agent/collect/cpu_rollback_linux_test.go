@@ -99,7 +99,7 @@ func TestCPUCounterRollbackIsStaleAndNextContinuousWindowRecovers(t *testing.T) 
 			proc := t.TempDir()
 			t.Setenv("HOST_PROC", proc)
 			synctest.Test(t, func(t *testing.T) {
-				collector, err := New(Options{Config: v1.DesiredConfig{Revision: 1, ReportIntervalSeconds: 5, DiskIntervalSeconds: 60, BillingDay: 1, QuotaBytes: "0"}})
+				collector, err := New(Options{Config: v1.RuntimeSettings{ReportIntervalSeconds: 5, DiskIntervalSeconds: 60}})
 				if err != nil {
 					t.Fatal(err)
 				}

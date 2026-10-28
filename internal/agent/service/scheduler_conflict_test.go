@@ -28,10 +28,7 @@ func TestSchedulerIdentityConflictStopsRun(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 5))
-				if err != nil {
-					t.Fatal(err)
-				}
+				cfg := runtimeSettings(5)
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				conflict := &service.HTTPError{StatusCode: http.StatusConflict, Code: "identity_conflict"}
@@ -39,8 +36,7 @@ func TestSchedulerIdentityConflictStopsRun(t *testing.T) {
 				release := make(chan struct{})
 				var collections, activeCollections, reports, activeReports atomic.Int64
 				var reportContext context.Context
-				scheduler := service.NewScheduler(service.SchedulerOptions{
-					Identity: state, Config: cfg, RandomFloat: func() float64 { return 0.5 },
+				scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 					Collect: func(ctx context.Context) (v1.Metrics, error) {
 						activeCollections.Add(1)
 						defer activeCollections.Add(-1)
@@ -61,8 +57,7 @@ func TestSchedulerIdentityConflictStopsRun(t *testing.T) {
 						case <-ctx.Done():
 							return v1.ReportResponse{}, ctx.Err()
 						}
-					},
-				})
+					}})
 				done := make(chan error, 1)
 				go func() { done <- scheduler.Run(ctx) }()
 				synctest.Wait()
@@ -120,15 +115,11 @@ func TestSchedulerOtherReportFailuresRemainRetryable(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 5))
-				if err != nil {
-					t.Fatal(err)
-				}
+				cfg := runtimeSettings(5)
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				var collections, reports atomic.Int64
-				scheduler := service.NewScheduler(service.SchedulerOptions{
-					Identity: state, Config: cfg, RandomFloat: func() float64 { return 0.5 },
+				scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 					Collect: func(context.Context) (v1.Metrics, error) {
 						collections.Add(1)
 						return schedulerMetrics(), nil
@@ -136,8 +127,7 @@ func TestSchedulerOtherReportFailuresRemainRetryable(t *testing.T) {
 					Report: func(context.Context, v1.Report) (v1.ReportResponse, error) {
 						reports.Add(1)
 						return v1.ReportResponse{}, &service.HTTPError{StatusCode: tt.status, Code: tt.code}
-					},
-				})
+					}})
 				done := make(chan error, 1)
 				go func() { done <- scheduler.Run(ctx) }()
 				synctest.Wait()

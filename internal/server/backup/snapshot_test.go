@@ -45,6 +45,40 @@ func TestPayloadSchemaRejectsExecutableAndExtraObjects(t *testing.T) {
 	}
 }
 
+func TestPayloadSchemaRejectsRemoteConfigurationColumns(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		category Category
+		mutation string
+	}{
+		{"group desired configuration", Configuration, `ALTER TABLE groups ADD COLUMN desired_config TEXT`},
+		{"node desired revision", Configuration, `ALTER TABLE nodes ADD COLUMN desired_revision INTEGER`},
+		{"node runtime configuration", Configuration, `ALTER TABLE nodes ADD COLUMN report_interval_seconds INTEGER`},
+		{"missing credential identity epoch", Configuration, `ALTER TABLE nodes DROP COLUMN credential_epoch`},
+		{"credential identity in monitoring", Monitoring, `ALTER TABLE node_observations ADD COLUMN credential_epoch INTEGER`},
+		{"observation applied revision", Monitoring, `DROP TABLE node_observations; CREATE TABLE node_observations (node_id TEXT,last_seen TEXT,system TEXT,applied_revision INTEGER,config_error TEXT,PRIMARY KEY(node_id))`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			dir := t.TempDir()
+			if err := os.Chmod(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			db, err := createPayload(ctx, filepath.Join(dir, "payload.sqlite"), tc.category)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if _, err = db.Exec(tc.mutation); err != nil {
+				t.Fatal(err)
+			}
+			if err = ValidatePayloadSchema(ctx, db, tc.category); err == nil {
+				t.Fatal("accepted obsolete remote configuration schema")
+			}
+		})
+	}
+}
+
 func TestSnapshotIncludesCommittedWALWithoutOwningServerLock(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

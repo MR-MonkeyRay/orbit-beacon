@@ -184,7 +184,7 @@ func TestSecondAdministratorCanMutateWithoutExposingStoredCredentials(t *testing
 		{http.MethodPost, "/api/v1/nodes", `{"name":"second-admin-created"}`, http.StatusCreated},
 		{http.MethodPost, "/api/v1/users", `{"username":"managed-admin","password":"` + password + `"}`, http.StatusCreated},
 		{http.MethodPost, "/api/v1/enrollments", `{"node_id":"` + node.ID + `"}`, http.StatusCreated},
-		{http.MethodPatch, "/api/v1/nodes/" + node.ID + "/config", `{"report_interval_seconds":30}`, http.StatusOK},
+		{http.MethodPatch, "/api/v1/nodes/" + node.ID + "/traffic-settings", `{"billing_day":2}`, http.StatusOK},
 		{http.MethodPost, "/api/v1/nodes/batch", `{"node_ids":["` + node.ID + `"],"action":"disable"}`, http.StatusOK},
 	} {
 		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
@@ -283,27 +283,27 @@ func TestNodeWireFormatAndCapacityError(t *testing.T) {
 	apiError(t, response, http.StatusConflict, "node_capacity_reached")
 }
 
-func TestInvalidDesiredConfigReportsEveryInvalidFieldWithoutChangingRevision(t *testing.T) {
+func TestInvalidTrafficSettingsReportsEveryInvalidFieldAtomically(t *testing.T) {
 	f := newHTTP(t, 2)
 	cookie, csrf := login(t, f, "admin")
 	node, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: "config target"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := "/api/v1/nodes/" + node.ID + "/config"
+	path := "/api/v1/nodes/" + node.ID + "/traffic-settings"
 	before := request(t, f.handler, http.MethodGet, path, "", cookie, "", "")
 	if before.Code != http.StatusOK {
-		t.Fatalf("read desired configuration = %d: %s", before.Code, before.Body)
+		t.Fatalf("read traffic settings = %d: %s", before.Code, before.Body)
 	}
 	response := request(t, f.handler, http.MethodPatch, path,
-		`{"report_interval_seconds":4,"disk_interval_seconds":59,"billing_day":29}`,
+		`{"billing_day":29,"quota_bytes":"01"}`,
 		cookie, csrf, publicURL)
 	object := apiError(t, response, http.StatusBadRequest, "validation_failed")
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(object["fields"], &fields); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"report_interval_seconds", "disk_interval_seconds", "billing_day"} {
+	for _, key := range []string{"billing_day", "quota_bytes"} {
 		if value, ok := fields[key]; !ok || len(value) == 0 || bytes.Equal(value, []byte(`""`)) {
 			t.Errorf("missing field error for %s", key)
 		}
@@ -319,7 +319,7 @@ func TestInvalidDesiredConfigReportsEveryInvalidFieldWithoutChangingRevision(t *
 	if err := json.Unmarshal(after.Body.Bytes(), &afterConfig); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"revision", "report_interval_seconds", "disk_interval_seconds", "billing_day"} {
+	for _, key := range []string{"billing_day", "quota_bytes"} {
 		if beforeConfig[key] == nil || beforeConfig[key] != afterConfig[key] {
 			t.Errorf("rejected configuration changed %s: before=%v after=%v", key, beforeConfig[key], afterConfig[key])
 		}

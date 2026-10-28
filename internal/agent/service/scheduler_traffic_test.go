@@ -21,10 +21,7 @@ func TestSchedulerSendsTrafficAndAppliesOnlySuccessfulAcks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 5))
-		if err != nil {
-			t.Fatal(err)
-		}
+		cfg := runtimeSettings(5)
 		var samples atomic.Int64
 		base := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
 		traffic := collect.NewTrafficAccumulator(func() time.Time { return base.Add(time.Duration(samples.Load()-1) * time.Hour) })
@@ -32,8 +29,7 @@ func TestSchedulerSendsTrafficAndAppliesOnlySuccessfulAcks(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		attempt := 0
-		scheduler := service.NewScheduler(service.SchedulerOptions{
-			Identity: state, Config: cfg, Traffic: traffic, RandomFloat: func() float64 { return 0.5 },
+		scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, Traffic: traffic, RandomFloat: func() float64 { return 0.5 },
 			Collect: func(context.Context) (v1.Metrics, error) {
 				n := samples.Add(1)
 				traffic.Observe([]string{"eth0"}, map[string]collect.NetworkCounter{"eth0": {RxBytes: uint64(100 * n), TxBytes: uint64(200 * n)}})
@@ -54,8 +50,7 @@ func TestSchedulerSendsTrafficAndAppliesOnlySuccessfulAcks(t *testing.T) {
 					return v1.ReportResponse{TrafficAcks: acks}, nil
 				}
 				return v1.ReportResponse{TrafficAcks: report.Traffic}, nil
-			},
-		})
+			}})
 		done := make(chan error, 1)
 		go func() { done <- scheduler.Run(ctx) }()
 		synctest.Wait()

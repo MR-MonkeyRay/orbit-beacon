@@ -102,7 +102,7 @@ func enrollHTTP(t *testing.T, f *agentFixture, name string, secret byte) (string
 }
 
 func reportBody(generation, seq uint64, session string, cpu int) string {
-	return fmt.Sprintf(`{"protocol_version":1,"run_generation":%d,"session_id":%q,"seq":%d,"sampled_at":"2026-10-26T12:00:00Z","config_revision":1,"metrics":{"cpu_percent":%d,"load1":0.5,"load5":0.5,"load15":0.5,"memory_total_bytes":8192,"memory_available_bytes":4096,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":100,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-%d","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000}}},"traffic":[]}`, generation, session, seq, cpu, seq)
+	return fmt.Sprintf(`{"protocol_version":1,"run_generation":%d,"session_id":%q,"seq":%d,"sampled_at":"2026-10-26T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]},"metrics":{"cpu_percent":%d,"load1":0.5,"load5":0.5,"load15":0.5,"memory_total_bytes":8192,"memory_available_bytes":4096,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":100,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-%d","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000}}},"traffic":[]}`, generation, session, seq, cpu, seq)
 }
 
 func accepted(t *testing.T, r *httptest.ResponseRecorder, seq uint64) v1.ReportResponse {
@@ -325,36 +325,6 @@ func mustReport(t *testing.T, body string) v1.Report {
 		t.Fatal(err)
 	}
 	return report
-}
-
-func TestReportSendsOnlyNewerConfigAndPersistsAppliedAcknowledgement(t *testing.T) {
-	f := newAgentHTTP(t, 1)
-	id, token, _ := enrollHTTP(t, f, "a", 1)
-	interval := 30
-	config, err := f.nodes.PatchConfig(context.Background(), id, nodes.ConfigPatch{ReportIntervalSeconds: &interval})
-	if err != nil {
-		t.Fatal(err)
-	}
-	response := accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, reportBody(1, 1, "a", 10)), 1)
-	if response.DesiredConfig == nil || response.DesiredConfig.Revision != config.Revision || response.DesiredConfig.ReportIntervalSeconds != 30 {
-		t.Fatalf("new config missing: %+v", response.DesiredConfig)
-	}
-	f.now = f.now.Add(time.Second)
-	body := strings.Replace(reportBody(1, 2, "a", 10), `"config_revision":1`, fmt.Sprintf(`"config_revision":%d`, config.Revision), 1)
-	response = accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, body), 2)
-	if response.DesiredConfig != nil {
-		t.Fatal("already applied config resent")
-	}
-	var applied int64
-	if err := f.db.QueryRow("SELECT applied_revision FROM nodes WHERE id=?", id).Scan(&applied); err != nil || applied != config.Revision {
-		t.Fatalf("applied revision=%d err=%v", applied, err)
-	}
-	f.now = f.now.Add(time.Second)
-	rejected := strings.Replace(reportBody(1, 3, "a", 10), `"traffic":[]`, `"traffic":[],"config_error":{"revision":999,"code":"invalid_config","fields":{"report_interval_seconds":"out_of_range"}}`, 1)
-	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, rejected), 3)
-	if err := f.db.QueryRow("SELECT applied_revision FROM nodes WHERE id=?", id).Scan(&applied); err != nil || applied != config.Revision {
-		t.Fatalf("config rejection changed acknowledgement=%d err=%v", applied, err)
-	}
 }
 
 func TestNodeTokenCollisionIsConflictAndRotationRevokesOldCredential(t *testing.T) {

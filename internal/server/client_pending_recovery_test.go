@@ -24,7 +24,7 @@ func TestLostRotationResponseRecoversPendingCredentialWithoutTicketOrNewGenerati
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			f := newAgentHTTP(t, 1)
-			state, cfg, path := clientState(t)
+			state, path := clientState(t)
 			if started {
 				if _, err := state.BeginRun(t.Context()); err != nil {
 					t.Fatal(err)
@@ -58,7 +58,7 @@ func TestLostRotationResponseRecoversPendingCredentialWithoutTicketOrNewGenerati
 			}))
 			defer server.Close()
 			dropper := &enrollmentResponseDropper{base: server.Client().Transport}
-			client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: &http.Client{Transport: dropper}, Identity: state, Config: cfg})
+			client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: &http.Client{Transport: dropper}, Identity: state})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -92,7 +92,7 @@ func TestLostRotationResponseRecoversPendingCredentialWithoutTicketOrNewGenerati
 			if err != nil {
 				t.Fatal(err)
 			}
-			retry, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: reopened, Config: cfg})
+			retry, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: reopened})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -141,7 +141,7 @@ func TestTicketlessEnrollmentWithoutRecoverableCredentialRequiresTicket(t *testi
 	for _, started := range []bool{false, true} {
 		t.Run(map[bool]string{false: "fresh identity", true: "rejected active and pending credentials"}[started], func(t *testing.T) {
 			f := newAgentHTTP(t, 1)
-			state, cfg, _ := clientState(t)
+			state, _ := clientState(t)
 			if started {
 				if _, err := state.BeginRun(t.Context()); err != nil {
 					t.Fatal(err)
@@ -153,7 +153,7 @@ func TestTicketlessEnrollmentWithoutRecoverableCredentialRequiresTicket(t *testi
 			before := state.Current()
 			server := httptest.NewTLSServer(f.handler)
 			defer server.Close()
-			client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state, Config: cfg})
+			client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state})
 			if err != nil {
 				t.Fatal(err)
 			}

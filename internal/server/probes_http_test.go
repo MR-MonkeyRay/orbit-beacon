@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/timekey"
@@ -21,16 +22,19 @@ func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.handler = handler
-	admin, csrf := login(t, f, "admin")
+	_, _ = login(t, f, "admin")
 	second, _ := login(t, f, "admin-two")
 	node, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: "probe api"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	targets := []string{"icmp://pending.example", "https://up.example/health", "tcp://down.example:443"}
-	body, _ := json.Marshal(map[string]any{"probe_targets": targets})
-	path := "/api/v1/nodes/" + node.ID + "/config"
-	assertHTTPStatus(t, request(t, f.handler, http.MethodPatch, path, string(body), admin, csrf, publicURL), http.StatusOK)
+	runtime := v1.DefaultRuntimeSettings()
+	runtime.ProbeTargets = targets
+	body, _ := json.Marshal(runtime)
+	if _, err := f.db.Exec(`UPDATE nodes SET token_hash=zeroblob(32),status='unknown',run_generation='1',report_session_id='probe-fixture',agent_runtime=? WHERE id=?`, string(body), node.ID); err != nil {
+		t.Fatal(err)
+	}
 	checked := timekey.Format(now.Add(-time.Minute))
 	unconfigured := "https://old.example/removed"
 	if _, err := f.db.Exec(`INSERT INTO probe_latest(node_id,target,ok,latency_ms,error,status_code,checked_at) VALUES(?,?,1,12.5,'',200,?),(?,?,0,NULL,'timeout',NULL,?),(?,?,0,NULL,'timeout',503,?)`, node.ID, targets[1], checked, node.ID, targets[2], checked, node.ID, unconfigured, checked); err != nil {

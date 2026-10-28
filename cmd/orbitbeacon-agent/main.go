@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -43,29 +44,36 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("expected subcommand: run, enroll, doctor, version or update")
+		return errors.New("expected subcommand: run, enroll, doctor or version")
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stdout, "Usage: orbitbeacon-agent {run|enroll|doctor|version|update} --help")
+		fmt.Fprintln(os.Stdout, "Usage: orbitbeacon-agent {run|enroll|doctor|version} --help")
 		return nil
 	}
+	var reload <-chan struct{}
+	if args[0] == "run" {
+		var stopReload func()
+		reload, stopReload = reloadSignals()
+		defer stopReload()
+	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
-	var file, policyPath, tokenFile, targetVersion string
+	var file, policyPath, tokenFile string
+	runtimeFlags := make(map[string]*string)
 	var asJSON bool
 	switch args[0] {
 	case "version":
 		fs.BoolVar(&asJSON, "json", false, "print machine-readable build information")
-	case "run", "enroll", "doctor", "update":
+	case "run", "enroll", "doctor":
 		fs.StringVar(&file, "config", "", "agent JSON configuration file")
 		fs.StringVar(&policyPath, "install-policy", "", "administrator-owned immutable install policy JSON file")
+		for _, key := range []string{"report_interval_seconds", "disk_interval_seconds", "interfaces", "disk_paths", "probe_targets"} {
+			runtimeFlags[key] = fs.String(strings.ReplaceAll(key, "_", "-"), "", "local runtime override; lists use a JSON array of strings")
+		}
 		if args[0] == "enroll" {
 			fs.StringVar(&tokenFile, "token-file", "", "optional enrollment token file; omit to recover saved node credentials")
 		}
 		if args[0] == "doctor" {
 			fs.BoolVar(&asJSON, "json", false, "print machine-readable diagnostics")
-		}
-		if args[0] == "update" {
-			fs.StringVar(&targetVersion, "version", "", "signed release version")
 		}
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
@@ -87,9 +95,6 @@ func run(args []string) error {
 		fmt.Fprintf(os.Stdout, "OrbitBeacon agent %s (%s/%s, commit %s, built %s, %s)\n", info.Version, info.OS, info.Arch, info.Commit, info.BuildDate, info.GoVersion)
 		return nil
 	}
-	if args[0] == "update" && targetVersion == "" {
-		return errors.New("update requires --version")
-	}
 	if policyPath == "" {
 		return errors.New("--install-policy is required; trust policy is never inferred")
 	}
@@ -97,7 +102,18 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := config.LoadAgent(config.LoadOptions{File: file}, &policy)
+	flags := make(map[string]string)
+	fs.Visit(func(f *flag.Flag) {
+		key := strings.ReplaceAll(f.Name, "-", "_")
+		if value, ok := runtimeFlags[key]; ok {
+			flags[key] = *value
+		}
+	})
+	loadAgent, err := agentLoader(file, flags, policy)
+	if err != nil {
+		return err
+	}
+	cfg, err := loadAgent()
 	if err != nil {
 		return err
 	}
@@ -112,9 +128,6 @@ func run(args []string) error {
 		if err != nil || account.Username != cfg.ExpectedAccount {
 			return errors.New("runtime_identity_mismatch: account differs from install policy")
 		}
-	}
-	if args[0] == "update" {
-		return errors.New("update is unavailable until signed release verification and rollback are implemented in step 7; no update was performed")
 	}
 	if err := os.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"); err != nil {
 		return err
@@ -141,7 +154,10 @@ func run(args []string) error {
 	defer agent.Close()
 	switch args[0] {
 	case "run":
-		err := agent.Run(ctx)
+		err := agent.Run(ctx, reload, func() (v1.RuntimeSettings, error) {
+			next, err := loadAgent()
+			return next.RuntimeSettings, err
+		})
 		if errors.Is(err, context.Canceled) {
 			return nil
 		}
@@ -170,6 +186,34 @@ func run(args []string) error {
 		return checkErr
 	}
 	return errors.New("unsupported agent command")
+}
+
+// Capture the verified policy, environment and explicit flags once. Reload only
+// reopens the same local JSON file; trust roots cannot change with the process env.
+func agentLoader(file string, flags map[string]string, policy config.InstallPolicy) (func() (config.Agent, error), error) {
+	if file != "" {
+		var err error
+		file, err = filepath.Abs(file)
+		if err != nil {
+			return nil, err
+		}
+	}
+	environment := make(map[string]string)
+	for _, entry := range os.Environ() {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && strings.HasPrefix(key, "ORBITBEACON_") {
+			environment[key] = value
+		}
+	}
+	overrides := make(map[string]string, len(flags))
+	for key, value := range flags {
+		overrides[key] = value
+	}
+	opts := config.LoadOptions{File: file, Flags: overrides, LookupEnv: func(key string) (string, bool) {
+		value, ok := environment[key]
+		return value, ok
+	}}
+	return func() (config.Agent, error) { return config.LoadAgent(opts, &policy) }, nil
 }
 
 func lockRun(ctx context.Context, stateDir string) (func(), error) {

@@ -126,31 +126,61 @@ function trafficContent(data) {
     h('section', {class: 'traffic-cycle', 'aria-label': 'Current cycle'}, h('h3', null, 'Current cycle'),
       h('p', {class: 'muted'}, cycleDateLabel(cycle)),
       facts([['Received', formatBytes(rx)], ['Sent', formatBytes(tx)], ['Total', formatBytes(total)]])),
-    // A quota of 0 means unlimited, matching the node configuration form.
+    // A quota of 0 means unlimited, matching the Traffic billing form.
     parseTrafficBytes(data.quota_bytes) > 0n ? quotaMeter(total, parseTrafficBytes(data.quota_bytes)) : null,
     empty ? h('p', {class: 'muted', role: 'status'}, 'No traffic has been recorded yet. Counting starts once the agent is upgraded to a version that reports traffic.') : dailyChart(fillTrafficDays(daily)),
     data.updated_at ? h('p', {class: 'note'}, 'Updated ', when(data.updated_at)) : null);
 }
 
-// Retained with the Details tab; requests run only on first load and retry.
+// Retained with the Details tab; billing changes refresh this panel only.
 export function trafficPanel(id, signal) {
   const content = h('div', {class: 'traffic-body'});
   const root = panel('Traffic', {}, content);
+  let loadVersion = 0;
+  let currentPlot;
+  let followLatest = true;
+  const alignLatest = () => {
+    const plot = content.querySelector('.traffic-plot');
+    if (!plot || signal?.aborted) return;
+    if (plot !== currentPlot) {
+      currentPlot = plot;
+      followLatest = true;
+      const stopFollowing = () => { if (currentPlot === plot) followLatest = false; };
+      plot.addEventListener('pointerdown', stopFollowing, {once: true});
+      plot.addEventListener('wheel', (event) => {
+        if (event.deltaX || event.shiftKey) stopFollowing();
+      }, {passive: true});
+      plot.addEventListener('keydown', (event) => {
+        if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) stopFollowing();
+      });
+    }
+    if (followLatest && plot.clientWidth > 0) {
+      plot.scrollLeft = plot.scrollWidth;
+    }
+  };
+  const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(alignLatest) : null;
+  resize?.observe(content);
+  signal?.addEventListener('abort', () => resize?.disconnect(), {once: true});
   async function load() {
     if (signal?.aborted) return;
+    const version = ++loadVersion;
     content.setAttribute('aria-busy', 'true');
     content.replaceChildren(h('p', {class: 'muted', role: 'status'}, 'Loading traffic…'));
     try {
       const data = await api(`/nodes/${encodeURIComponent(id)}/traffic?days=30`, {signal});
-      if (!signal?.aborted) content.replaceChildren(trafficContent(data));
+      if (!signal?.aborted && version === loadVersion) {
+        content.replaceChildren(trafficContent(data));
+        alignLatest();
+      }
     } catch (error) {
-      if (!signal?.aborted && error.name !== 'AbortError') content.replaceChildren(h('div', {class: 'history-error'},
+      if (!signal?.aborted && version === loadVersion && error.name !== 'AbortError') content.replaceChildren(h('div', {class: 'history-error'},
         h('p', {class: 'muted', role: 'status'}, `Could not load traffic: ${error.message}`),
         button('Retry', {small: true, id: 'traffic-retry', onClick: load})));
     } finally {
-      if (!signal?.aborted) content.setAttribute('aria-busy', 'false');
+      if (!signal?.aborted && version === loadVersion) content.setAttribute('aria-busy', 'false');
     }
   }
+  root.reload = load;
   load();
   return root;
 }

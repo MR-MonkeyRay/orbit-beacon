@@ -8,22 +8,21 @@ import (
 // MaxMessageBytes bounds agent requests and responses, including JSON escaping.
 const MaxMessageBytes = 64 * 1024
 
-// ErrReportBudget identifies a formerly valid saved selection that needs a
-// bounded diagnostic report before a higher-revision remote repair can arrive.
+// ErrReportBudget identifies a local selection exceeding the report wire limit.
 var ErrReportBudget = errors.New("selection exceeds report encoding budget")
 
-// The collector repeats each selected path/name in its series and two metadata
-// keys. Reserve 16 KiB for the bounded scalar metrics, metadata, system identity,
-// configuration errors, up to MaxTrafficEntries traffic buckets, and envelope.
-// This is a configuration admission bound, not permission for clients to omit
-// the final encoded-message size check.
-const reportEnvelopeBytes = 16 * 1024
+// Selected paths/names occur in series, two metadata keys and runtime. The
+// collector's bounded ASCII source IDs (at most 35 bytes, 21 sources), scalar
+// metrics, maximally escaped System, 24 traffic buckets and envelope fit 13 KiB.
+// Probe result envelopes are reserved separately below. Arbitrary producers
+// must still enforce the final encoded-message limit before sending.
+const reportEnvelopeBytes = 13 * 1024
 
 // Reserve the fixed fields around each encoded probe target. The target itself
 // is accounted for below with encoding/json-compatible escaping.
 const probeResultEnvelopeBytes = 160
 
-func selectionFitsReport(c DesiredConfig) bool {
+func selectionFitsReport(c RuntimeSettings) bool {
 	bytes := 0
 	for _, path := range c.DiskPaths {
 		bytes += jsonStringBytes(path)
@@ -33,9 +32,9 @@ func selectionFitsReport(c DesiredConfig) bool {
 	}
 	probeBytes := 0
 	for _, target := range c.ProbeTargets {
-		probeBytes += jsonStringBytes(target) + probeResultEnvelopeBytes
+		probeBytes += 2*jsonStringBytes(target) + probeResultEnvelopeBytes
 	}
-	return 3*bytes+probeBytes+reportEnvelopeBytes <= MaxMessageBytes
+	return 4*bytes+probeBytes+reportEnvelopeBytes <= MaxMessageBytes
 }
 
 // jsonStringBytes matches encoding/json's default HTML-safe string escaping

@@ -22,11 +22,6 @@ func TestEnrollmentPersistsIdentityBeforeRequestAndReusesItAfterLostResponse(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	configPath := filepath.Join(t.TempDir(), "desired.json")
-	cfg, err := service.OpenConfigStore(t.Context(), configPath, desired(1, 10))
-	if err != nil {
-		t.Fatal(err)
-	}
 	const shortLivedToken = "short-lived-enrollment-token-never-saved"
 	var mu sync.Mutex
 	var requests []v1.EnrollmentRequest
@@ -78,7 +73,7 @@ func TestEnrollmentPersistsIdentityBeforeRequestAndReusesItAfterLostResponse(t *
 		_, _ = w.Write([]byte(`{"node_id":"bound-node","server_time":"2026-10-26T12:00:00Z"}`))
 	}))
 	defer server.Close()
-	client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state, Config: cfg})
+	client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +84,7 @@ func TestEnrollmentPersistsIdentityBeforeRequestAndReusesItAfterLostResponse(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err = service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: reopened, Config: cfg})
+	client, err = service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: reopened})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,31 +96,25 @@ func TestEnrollmentPersistsIdentityBeforeRequestAndReusesItAfterLostResponse(t *
 	if len(requests) != 2 || requests[0].InstallationID != requests[1].InstallationID || requests[0].NodeToken != requests[1].NodeToken || requests[0].ProtocolVersion != 1 {
 		t.Fatal("retry changed claim identity")
 	}
-	for _, file := range []string{path, configPath} {
-		data, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(data), shortLivedToken) {
-			t.Fatal("short-lived enrollment token persisted")
-		}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), shortLivedToken) {
+		t.Fatal("short-lived enrollment token persisted")
 	}
 	if reopened.Current().RunGeneration != 0 {
 		t.Fatal("enroll-only invocation incremented run_generation")
 	}
 }
 
-func TestReportRecoveryUsesNodeTokenAndAcknowledgesOnlyAppliedConfig(t *testing.T) {
+func TestReportRecoveryUsesNodeTokenAndReportsOnlyLocalRuntime(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "identity.json")
 	state, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	run, err := state.BeginRun(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,49 +137,36 @@ func TestReportRecoveryUsesNodeTokenAndAcknowledgesOnlyAppliedConfig(t *testing.
 		}
 		mu.Lock()
 		bodies = append(bodies, body)
-		attempt := len(bodies)
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		switch attempt {
-		case 1:
-			_, _ = w.Write([]byte(`{"node_id":"00000000-0000-4000-8000-000000000123","accepted_seq":1,"server_time":"2026-10-26T12:00:00Z","desired_config":{"revision":2,"report_interval_seconds":30,"disk_interval_seconds":60,"interfaces":["eth0"],"disk_paths":["/"],"probe_targets":[],"billing_day":1,"quota_bytes":"0"}}`))
-		case 2:
-			_, _ = w.Write([]byte(`{"node_id":"00000000-0000-4000-8000-000000000123","accepted_seq":2,"server_time":"2026-10-26T12:00:00Z","desired_config":{"revision":3,"report_interval_seconds":1,"disk_interval_seconds":60,"interfaces":["eth0"],"disk_paths":["/"],"probe_targets":[],"billing_day":1,"quota_bytes":"0"}}`))
-		default:
-			_, _ = w.Write([]byte(`{"node_id":"00000000-0000-4000-8000-000000000123","accepted_seq":3,"server_time":"2026-10-26T12:00:00Z"}`))
-		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"node_id": "00000000-0000-4000-8000-000000000123", "accepted_seq": len(bodies), "server_time": "2026-10-26T12:00:00Z", "future_server_metadata": map[string]any{"ignored": true}})
 	}))
 	defer server.Close()
-	client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state, Config: cfg})
+	client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for seq := uint64(1); seq <= 3; seq++ {
-		_, err := client.Report(context.Background(), v1.Report{ProtocolVersion: 1, RunGeneration: run.RunGeneration, SessionID: run.SessionID, Seq: seq, Metrics: schedulerMetrics()})
-		if seq != 2 && err != nil {
+		_, err := client.Report(context.Background(), v1.Report{ProtocolVersion: 1, RunGeneration: run.RunGeneration, SessionID: run.SessionID, Seq: seq, Runtime: runtimeSettings(10), Metrics: schedulerMetrics()})
+		if err != nil {
 			t.Fatal(err)
 		}
-	}
-	if cfg.Current().Revision != 2 || cfg.Current().ReportIntervalSeconds != 30 {
-		t.Fatal("invalid remote config replaced working settings")
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(bodies) != 3 {
 		t.Fatalf("report recovery performed additional enrollment/requests: %d", len(bodies))
 	}
-	for i, expected := range []int64{1, 2, 2} {
-		var revision int64
-		if err := json.Unmarshal(bodies[i]["config_revision"], &revision); err != nil || revision != expected {
-			t.Fatalf("report %d acknowledged revision=%d want=%d err=%v", i, revision, expected, err)
+	for i, body := range bodies {
+		var settings v1.RuntimeSettings
+		if err := json.Unmarshal(body["runtime"], &settings); err != nil || settings.ReportIntervalSeconds != 10 {
+			t.Fatalf("report %d changed local settings: %+v %v", i, settings, err)
 		}
-	}
-	var failure struct {
-		Revision int64  `json:"revision"`
-		Code     string `json:"code"`
-	}
-	if err := json.Unmarshal(bodies[2]["config_error"], &failure); err != nil || failure.Revision != 3 || failure.Code != "invalid_config" {
-		t.Fatalf("rejected config missing next-report error: %+v %v", failure, err)
+		for _, removed := range []string{"config_revision", "config_error"} {
+			if _, ok := body[removed]; ok {
+				t.Fatalf("report retained removed field %q", removed)
+			}
+		}
 	}
 	if state.Current().RunGeneration != 1 {
 		t.Fatal("HTTP retries/recovery changed generation")

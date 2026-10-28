@@ -27,11 +27,11 @@ func TestOriginalTicketRetryAfterReportPromotionKeepsExactCredential(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			state, cfg, path := clientState(t)
+			state, path := clientState(t)
 			https := httptest.NewTLSServer(f.handler)
 			defer https.Close()
 			dropper := &enrollmentResponseDropper{base: https.Client().Transport}
-			client, err := service.NewClient(service.ClientOptions{ServerURL: https.URL, HTTPClient: &http.Client{Transport: dropper}, Identity: state, Config: cfg})
+			client, err := service.NewClient(service.ClientOptions{ServerURL: https.URL, HTTPClient: &http.Client{Transport: dropper}, Identity: state})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -87,7 +87,7 @@ func TestOriginalTicketRetryAfterReportPromotionKeepsExactCredential(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			retry, err := service.NewClient(service.ClientOptions{ServerURL: https.URL, HTTPClient: https.Client(), Identity: reopened, Config: cfg})
+			retry, err := service.NewClient(service.ClientOptions{ServerURL: https.URL, HTTPClient: https.Client(), Identity: reopened})
 			if err != nil {
 				t.Fatal(err)
 			}

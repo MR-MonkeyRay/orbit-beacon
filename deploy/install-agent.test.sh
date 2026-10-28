@@ -205,6 +205,10 @@ secret='basic-token-DO-NOT-LOG'
 run_with_token "$secret" "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 --ca-file "$TEST_FIXTURES/ca.pem"
 assert_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
 assert_exists "$TEST_ROOT/etc/orbitbeacon/install-policy.json"
+assert_exists "$TEST_ROOT/etc/orbitbeacon/agent.json"
+assert_mode "$TEST_ROOT/etc/orbitbeacon/agent.json" 640
+[ "$(cat "$TEST_ROOT/etc/orbitbeacon/agent.json")" = '{}' ] || fail "new runtime configuration is not empty defaults"
+assert_log_has "chown root:12346"
 assert_exists "$TEST_ROOT/etc/orbitbeacon/ca.pem"
 assert_exists "$TEST_ROOT/etc/systemd/system/orbitbeacon-agent.service"
 assert_exists "$TEST_ROOT/var/lib/orbitbeacon-agent/identity.json"
@@ -237,19 +241,47 @@ assert_log_has "https://github.com/mr-monkeyray/orbit-beacon/releases/download/v
 assert_log_has "https://github.com/mr-monkeyray/orbit-beacon/releases/download/v0.1.0/SHA256SUMS"
 assert_log_has "systemctl daemon-reload"
 assert_log_has "systemctl enable --now orbitbeacon-agent"
+assert_log_has "--config $TEST_ROOT/etc/orbitbeacon/agent.json"
 assert_log_lacks "$secret"
 if grep -F -- "$secret" "$CASE_DIR/output" >/dev/null 2>&1; then fail "token leaked to installer output"; fi
 pass "download install creates valid policy, secure files, synced unit, and does not leak token"
 
 printf '%s\n' '{"node_id":"identity-must-survive"}' >"$TEST_ROOT/var/lib/orbitbeacon-agent/identity.json"
+printf '%s\n' '{"report_interval_seconds":5,"probe_targets":[]}' >"$TEST_ROOT/etc/orbitbeacon/agent.json"
 before_enrollments=$(wc -l <"$TEST_ROOT/enrollments.log")
 : >"$TEST_LOG"
 run_installer "$CASE_DIR/upgrade-output" --server https://monitor.example.com --version 0.1.0 </dev/null
 grep -F 'identity-must-survive' "$TEST_ROOT/var/lib/orbitbeacon-agent/identity.json" >/dev/null || fail "upgrade replaced identity"
+[ "$(cat "$TEST_ROOT/etc/orbitbeacon/agent.json")" = '{"report_interval_seconds":5,"probe_targets":[]}' ] || fail "upgrade replaced local runtime settings"
 after_enrollments=$(wc -l <"$TEST_ROOT/enrollments.log")
 [ "$before_enrollments" = "$after_enrollments" ] || fail "tokenless upgrade enrolled again"
 assert_log_has "systemctl restart orbitbeacon-agent"
 pass "tokenless re-run preserves identity and restarts upgraded service"
+
+setup_case config_symlink
+mkdir -p "$TEST_ROOT/etc/orbitbeacon"
+printf '%s\n' '{"report_interval_seconds":5}' >"$CASE_DIR/external.json"
+ln -s "$CASE_DIR/external.json" "$TEST_ROOT/etc/orbitbeacon/agent.json"
+if run_with_token 'symlink-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0; then
+	fail "installer accepted a symlinked runtime configuration"
+fi
+[ "$(cat "$CASE_DIR/external.json")" = '{"report_interval_seconds":5}' ] || fail "installer modified symlink target"
+pass "runtime configuration symlink is rejected without changing its target"
+
+setup_case config_directory
+mkdir -p "$TEST_ROOT/etc/orbitbeacon/agent.json"
+if run_with_token 'directory-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0; then
+	fail "installer accepted a directory as runtime configuration"
+fi
+assert_not_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
+pass "non-regular runtime configuration is rejected before installation"
+
+setup_case foreground
+rm -rf -- "$TEST_ROOT/run/systemd"
+run_with_token 'foreground-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0
+grep -F -- "run --install-policy $TEST_ROOT/etc/orbitbeacon/install-policy.json --config $TEST_ROOT/etc/orbitbeacon/agent.json" "$CASE_DIR/output" >/dev/null || fail "foreground instructions omitted local configuration"
+assert_log_lacks "systemctl enable"
+pass "non-systemd instructions use the installed local configuration"
 
 setup_case checksum
 if TEST_BAD_CHECKSUM=1 run_with_token 'checksum-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0; then
@@ -321,6 +353,7 @@ assert_exists "$TEST_ROOT/var/lib/orbitbeacon-agent/identity.json"
 run_installer "$CASE_DIR/uninstall-output" --uninstall --yes
 assert_not_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
 assert_not_exists "$TEST_ROOT/etc/orbitbeacon/install-policy.json"
+assert_not_exists "$TEST_ROOT/etc/orbitbeacon/agent.json"
 assert_not_exists "$TEST_ROOT/etc/orbitbeacon/ca.pem"
 assert_not_exists "$TEST_ROOT/etc/systemd/system/orbitbeacon-agent.service"
 assert_not_exists "$TEST_ROOT/var/lib/orbitbeacon-agent"

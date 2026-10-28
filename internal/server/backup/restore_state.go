@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/identity"
+	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/inbox"
@@ -215,7 +216,7 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 				}
 			}
 			if spec.Name == "node_observations" && !selected[Monitoring] {
-				query = "SELECT id,last_seen,system,applied_revision,config_error FROM nodes"
+				query = "SELECT id,last_seen,system,agent_runtime FROM nodes"
 			}
 			if reader == nil {
 				return &Error{Code: "restore_invalid_data"}
@@ -238,15 +239,36 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 				for rows.Next() {
 					var node string
 					var last any
-					var system, configError string
-					var revision int64
-					if e = rows.Scan(&node, &last, &system, &revision, &configError); e != nil {
+					var system, runtime string
+					if e = rows.Scan(&node, &last, &system, &runtime); e != nil {
 						break
 					}
 					if e = check(nil, []any{node}); e != nil {
 						break
 					}
-					_, e = tx.ExecContext(ctx, `UPDATE nodes SET last_seen=?,system=?,applied_revision=?,config_error=? WHERE id=?`, last, system, revision, configError, node)
+					if runtime != "" {
+						var settings v1.RuntimeSettings
+						if objectJSON(runtime, &settings) != nil || settings.Validate() != nil {
+							e = invalidPayload("node_observations", node)
+							break
+						}
+						if settings.Interfaces == nil {
+							settings.Interfaces = []string{}
+						}
+						if settings.DiskPaths == nil {
+							settings.DiskPaths = []string{}
+						}
+						if settings.ProbeTargets == nil {
+							settings.ProbeTargets = []string{}
+						}
+						encoded, err := json.Marshal(settings)
+						if err != nil {
+							e = invalidPayload("node_observations", node)
+							break
+						}
+						runtime = string(encoded)
+					}
+					_, e = tx.ExecContext(ctx, `UPDATE nodes SET last_seen=?,system=?,agent_runtime=? WHERE id=?`, last, system, runtime, node)
 					if e != nil {
 						break
 					}

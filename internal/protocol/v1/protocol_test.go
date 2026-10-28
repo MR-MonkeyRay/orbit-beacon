@@ -35,7 +35,7 @@ func assertJSONRoundTrip(t *testing.T, input string, dst any) {
 
 const reportJSON = `{
  "protocol_version":1,"run_generation":7,"session_id":"run-seven","seq":9,
- "sampled_at":"2026-10-26T12:00:00Z","config_revision":3,
+ "sampled_at":"2026-10-26T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":["eth0"],"disk_paths":["/"],"probe_targets":[]},
  "system":{"hostname":"same-hostname","os":"linux","arch":"amd64"},
  "metrics":{
   "cpu_percent":null,"load1":0.5,"load5":1.25,"load15":2,
@@ -66,7 +66,7 @@ func TestEnrollmentAndResponseDTOs(t *testing.T) {
 	var enrolled v1.EnrollmentResponse
 	assertJSONRoundTrip(t, `{"node_id":"server-bound-id","server_time":"2026-10-26T12:00:00Z"}`, &enrolled)
 	var response v1.ReportResponse
-	assertJSONRoundTrip(t, `{"accepted_seq":9,"server_time":"2026-10-26T12:00:00Z","desired_config":{"revision":4,"report_interval_seconds":30,"disk_interval_seconds":60,"interfaces":["eth0"],"disk_paths":["/"],"probe_targets":[],"billing_day":1,"quota_bytes":"9007199254740993"},"traffic_acks":[{"epoch":"deadbeef","period_start":"2026-10-01T00:00:00Z","rx_bytes":"9223372036854775807","tx_bytes":"9007199254740993"}]}`, &response)
+	assertJSONRoundTrip(t, `{"accepted_seq":9,"server_time":"2026-10-26T12:00:00Z","traffic_acks":[{"epoch":"deadbeef","period_start":"2026-10-01T00:00:00Z","rx_bytes":"9223372036854775807","tx_bytes":"9007199254740993"}]}`, &response)
 }
 
 func TestSystemAgentVersionValidation(t *testing.T) {
@@ -209,7 +209,6 @@ func TestValidateProbeTarget(t *testing.T) {
 		"icmp://bad_host", "icmp://", "tcp://db :5432", "https://example.com/a b", "icmp://host\u0085",
 		"https://example.com/\ufeff", "http://host:65536", "http://[bad]/",
 		"http://999.1.1.1/", "http://example.test/%zz",
-		// Parity with the console validator (web/src/console/pages/node-config-helpers.js).
 		"http://127.1/", "http://127.0.0.1./", "http://0177.0.0.1/", "http://2130706433/", "http://0x100000000/", "http://%65xample.com/", "http://%25/", "http://例え.テスト/", "http://\u200d.com/", "http://h^x/", "http://0x7f.1/", "tcp://0x7f.1:80",
 		"http://h/\u0000x", "http://h/\u007fx", "http://h?x=\u0001", "http://h:99999/", "http://h:abc/", "http://[::1/", "http://[fe80::1%25eth0]/", "http://[::1]evil/", "http://[::1]evil:80/", "http://[::1].example/",
 		"https://example.com/" + strings.Repeat("é", 503),
@@ -228,10 +227,10 @@ func TestValidateProbeTarget(t *testing.T) {
 	}
 }
 
-func TestDesiredConfigProbeTargetValidation(t *testing.T) {
-	valid := v1.DesiredConfig{
-		Revision: 1, ReportIntervalSeconds: 30, DiskIntervalSeconds: 60,
-		ProbeTargets: []string{"tcp://db:5432", "https://example.com/health"}, BillingDay: 1, QuotaBytes: "0",
+func TestRuntimeSettingsProbeTargetValidation(t *testing.T) {
+	valid := v1.RuntimeSettings{
+		ReportIntervalSeconds: 30, DiskIntervalSeconds: 60,
+		ProbeTargets: []string{"tcp://db:5432", "https://example.com/health"},
 	}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid probe targets rejected: %v", err)
@@ -259,6 +258,7 @@ func TestReportProbeResultValidation(t *testing.T) {
 		CheckedAt: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC),
 	}
 	report.ProbeResults = []v1.ProbeResult{valid}
+	report.Runtime.ProbeTargets = []string{valid.Target}
 	if err := report.Validate(); err != nil {
 		t.Fatalf("valid probe result rejected: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestSelectionRejectsAggregateReportExpansion(t *testing.T) {
 				paths[i] = "/" + strings.Repeat(character, (1020/len(character))) + string(rune('a'+i))
 				interfaces[i] = strings.Repeat("<", 254) + string(rune('a'+i))
 			}
-			if err := (v1.DesiredConfig{DiskPaths: paths, Interfaces: interfaces}).ValidateSelection(); err == nil {
+			if err := (v1.RuntimeSettings{DiskPaths: paths, Interfaces: interfaces}).ValidateSelection(); err == nil {
 				t.Fatal("selection can expand beyond the report budget")
 			}
 		})
@@ -365,7 +365,7 @@ func TestSelectionRejectsAggregateReportExpansion(t *testing.T) {
 		paths[i] = "/" + strings.Repeat("a", 1022) + string(rune('a'+i))
 		interfaces[i] = strings.Repeat("a", 254) + string(rune('a'+i))
 	}
-	if err := (v1.DesiredConfig{DiskPaths: paths, Interfaces: interfaces}).ValidateSelection(); err != nil {
+	if err := (v1.RuntimeSettings{DiskPaths: paths, Interfaces: interfaces}).ValidateSelection(); err != nil {
 		t.Fatalf("ordinary maximum-length selections rejected: %v", err)
 	}
 	probes := make([]string, 5)
@@ -373,10 +373,10 @@ func TestSelectionRejectsAggregateReportExpansion(t *testing.T) {
 		suffix := "?id=" + strconv.Itoa(i)
 		probes[i] = "https://example.com/" + strings.Repeat("<", 1024-len("https://example.com/")-len(suffix)) + suffix
 	}
-	if err := (v1.DesiredConfig{DiskPaths: paths, Interfaces: interfaces, ProbeTargets: probes}).ValidateSelection(); err == nil {
+	if err := (v1.RuntimeSettings{DiskPaths: paths, Interfaces: interfaces, ProbeTargets: probes}).ValidateSelection(); err == nil {
 		t.Fatal("probe results can expand beyond the report budget")
 	}
-	probeHeavy := v1.DesiredConfig{DiskPaths: paths, ProbeTargets: probes}
+	probeHeavy := v1.RuntimeSettings{DiskPaths: paths, ProbeTargets: probes}
 	if err := probeHeavy.ValidateSelection(); err == nil {
 		t.Fatal("probe target expansion alone can exceed the report budget")
 	} else if validation, ok := err.(*v1.ValidationError); !ok || validation.Fields["probe_targets"] == "" {

@@ -24,17 +24,19 @@ type ProbeReporter interface {
 }
 
 type SchedulerOptions struct {
-	Probes      ProbeReporter
-	Traffic     TrafficReporter
-	Identity    *identity.Store
-	Config      *ConfigStore
-	Collect     func(context.Context) (v1.Metrics, error)
-	Report      func(context.Context, v1.Report) (v1.ReportResponse, error)
-	RandomFloat func() float64
-	System      *v1.System
-	// CollectedRevision identifies settings actually used by the collector when
-	// a remote configuration arrives during a sample. Nil uses Config.Current.
-	CollectedRevision  func() int64
+	Probes   ProbeReporter
+	Traffic  TrafficReporter
+	Identity *identity.Store
+	// RuntimeSettings returns an immutable snapshot; only ReloadConfig may
+	// publish a replacement, synchronously on this collection loop.
+	RuntimeSettings func() v1.RuntimeSettings
+	Reload          <-chan struct{}
+	// ReloadConfig validates completely before changing any active component.
+	ReloadConfig       func(context.Context) error
+	Collect            func(context.Context) (v1.Metrics, error)
+	Report             func(context.Context, v1.Report) (v1.ReportResponse, error)
+	RandomFloat        func() float64
+	System             *v1.System
 	CredentialsChanged func(bool)
 	Log                func(string)
 }
@@ -64,7 +66,7 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 		return errors.New("scheduler already running")
 	}
 	defer s.running.Store(false)
-	if s.options.Identity == nil || s.options.Config == nil || s.options.Collect == nil || s.options.Report == nil {
+	if s.options.Identity == nil || s.options.RuntimeSettings == nil || s.options.Collect == nil || s.options.Report == nil {
 		return errors.New("scheduler dependencies are required")
 	}
 	if err := ctx.Err(); err != nil {
@@ -93,12 +95,36 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	var seq uint64
+	reload := s.options.Reload
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case _, ok := <-reload:
+			if !ok {
+				reload = nil
+				continue
+			}
+			before := s.options.RuntimeSettings()
+			if s.options.ReloadConfig == nil || s.options.ReloadConfig(ctx) != nil {
+				if s.options.Log != nil {
+					s.options.Log("configuration reload rejected")
+				}
+				continue
+			}
+			if sameRuntimeSettings(before, s.options.RuntimeSettings()) {
+				if s.options.Log != nil {
+					s.options.Log("configuration unchanged")
+				}
+				continue
+			}
+			if s.options.Log != nil {
+				s.options.Log("configuration reloaded")
+			}
+			timer.Reset(0)
 		case <-timer.C:
 			started := time.Now()
+			settings := s.options.RuntimeSettings()
 			collectionCtx, stop := context.WithTimeout(ctx, 3*time.Second)
 			metrics, collectErr := s.options.Collect(collectionCtx)
 			stop()
@@ -116,11 +142,7 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 				}
 			}
 			seq++
-			revision, interval := s.options.Config.settings()
-			if s.options.CollectedRevision != nil {
-				revision = s.options.CollectedRevision()
-			}
-			snapshot := v1.Report{ProtocolVersion: 1, RunGeneration: state.RunGeneration, SessionID: state.SessionID, Seq: seq, SampledAt: time.Now().UTC(), ConfigRevision: revision, System: s.options.System, Metrics: metrics, Traffic: []v1.Traffic{}, ConfigError: s.options.Config.ConfigError()}
+			snapshot := v1.Report{ProtocolVersion: 1, RunGeneration: state.RunGeneration, SessionID: state.SessionID, Seq: seq, SampledAt: time.Now().UTC(), Runtime: settings, System: s.options.System, Metrics: metrics, Traffic: []v1.Traffic{}}
 			s.mu.Lock()
 			s.latest = snapshot
 			s.mu.Unlock()
@@ -128,7 +150,7 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 			case notify <- struct{}{}:
 			default:
 			}
-			timer.Reset(max(0, time.Until(started.Add(time.Duration(interval)*time.Second))))
+			timer.Reset(max(0, time.Until(started.Add(time.Duration(settings.ReportIntervalSeconds)*time.Second))))
 		}
 	}
 }
@@ -161,7 +183,7 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 				report.Traffic = s.options.Traffic.Entries()
 			}
 			if s.options.Probes != nil {
-				report.ProbeResults = s.options.Probes.Results(s.options.Config.Current().ProbeTargets)
+				report.ProbeResults = s.options.Probes.Results(report.Runtime.ProbeTargets)
 			}
 			response, err := s.options.Report(ctx, report)
 			if ctx.Err() != nil {

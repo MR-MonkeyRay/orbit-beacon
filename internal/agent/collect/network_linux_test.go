@@ -118,7 +118,7 @@ func TestLinuxHostNetworkRatesUseInitCounters(t *testing.T) {
 			writeNetworkFixture(t, proc, "self/net/dev", dev(800000, 800000))
 			writeNetworkFixture(t, proc, "1/net/dev", dev(100, 200))
 			synctest.Test(t, func(t *testing.T) {
-				config := v1.DesiredConfig{Revision: 1, ReportIntervalSeconds: 5, DiskIntervalSeconds: 60, BillingDay: 1, QuotaBytes: "0"}
+				config := v1.RuntimeSettings{ReportIntervalSeconds: 5, DiskIntervalSeconds: 60}
 				if explicit {
 					config.Interfaces = []string{"host0"}
 				}

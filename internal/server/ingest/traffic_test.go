@@ -19,7 +19,7 @@ func trafficEntry(epoch string, period time.Time, rx, tx string) v1.Traffic {
 
 func trafficAccept(t *testing.T, f *coalesceFixture) (v1.ReportResponse, error) {
 	t.Helper()
-	return f.service.accept(context.Background(), f.id, nil, f.report, false)
+	return f.service.accept(context.Background(), f.id, nil, 0, f.report, false)
 }
 
 func TestTrafficCoalescesAcksAfterCommitAndMaxUpsert(t *testing.T) {
@@ -122,7 +122,7 @@ func TestTrafficSkipsFutureAndAcknowledgesExpired(t *testing.T) {
 }
 
 func TestTrafficShutdownFlushAndIdentityFences(t *testing.T) {
-	for _, mutation := range []string{"none", "delete", "revoke", "disable", "generation", "aba"} {
+	for _, mutation := range []string{"none", "delete", "revoke", "disable", "credential_epoch", "generation", "aba"} {
 		t.Run(mutation, func(t *testing.T) {
 			f := newCoalesceFixture(t, 30*time.Second)
 			f.now = f.now.Add(time.Second)
@@ -139,6 +139,8 @@ func TestTrafficShutdownFlushAndIdentityFences(t *testing.T) {
 				err = f.nodes.RevokeCredential(context.Background(), f.id)
 			case "disable":
 				err = f.nodes.SetDisabled(context.Background(), f.id, true)
+			case "credential_epoch":
+				_, err = f.db.Exec(`UPDATE nodes SET credential_epoch=credential_epoch+1 WHERE id=?`, f.id)
 			case "generation":
 				_, err = f.db.Exec(`UPDATE nodes SET run_generation='2',report_session_id='new' WHERE id=?`, f.id)
 			case "aba":
@@ -180,8 +182,8 @@ func TestTrafficPendingAndCommittedAreBounded(t *testing.T) {
 	credential := sha256.Sum256([]byte("credential"))
 	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
 	for n := 0; n < 100; n++ {
-		report := v1.Report{RunGeneration: 1, SessionID: "session", Traffic: []v1.Traffic{trafficEntry(fmt.Sprintf("%x", n), now, "1", "2")}}
-		state.bufferTraffic(credential[:], report, 1, "session", now)
+		report := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 1, SessionID: "session", Traffic: []v1.Traffic{trafficEntry(fmt.Sprintf("%x", n), now, "1", "2")}}
+		state.bufferTraffic(credential[:], 0, report, 1, "session", now)
 	}
 	if len(state.traffic.pending) != trafficBufferLimit {
 		t.Fatalf("pending=%d", len(state.traffic.pending))
@@ -297,12 +299,12 @@ func TestTrafficExpiredPendingReleasesCapacity(t *testing.T) {
 	credential := sha256.Sum256([]byte("credential"))
 	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
 	for n := 0; n < trafficBufferLimit; n++ {
-		report := v1.Report{RunGeneration: 1, SessionID: "session", Traffic: []v1.Traffic{trafficEntry(fmt.Sprintf("%x", n), now, "1", "2")}}
-		state.bufferTraffic(credential[:], report, 1, "session", now)
+		report := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 1, SessionID: "session", Traffic: []v1.Traffic{trafficEntry(fmt.Sprintf("%x", n), now, "1", "2")}}
+		state.bufferTraffic(credential[:], 0, report, 1, "session", now)
 	}
 	now = now.Add(36 * 24 * time.Hour)
-	report := v1.Report{RunGeneration: 1, SessionID: "session", Traffic: []v1.Traffic{trafficEntry("ff", now, "3", "4")}}
-	state.bufferTraffic(credential[:], report, 1, "session", now)
+	report := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 1, SessionID: "session", Traffic: []v1.Traffic{trafficEntry("ff", now, "3", "4")}}
+	state.bufferTraffic(credential[:], 0, report, 1, "session", now)
 	if len(state.traffic.pending) != 1 {
 		t.Fatalf("expired buckets occupy pending capacity: %d", len(state.traffic.pending))
 	}
@@ -321,7 +323,7 @@ func TestTrafficShutdownAttemptsEveryNodeAfterFailure(t *testing.T) {
 	if _, err := f.db.Exec(`UPDATE nodes SET token_hash=?,status='unknown' WHERE id=?`, credential[:], node.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.service.accept(context.Background(), node.ID, nil, f.report, false); err != nil {
+	if _, err := f.service.accept(context.Background(), node.ID, nil, 0, f.report, false); err != nil {
 		t.Fatal(err)
 	}
 	f.now = f.now.Add(time.Second)
@@ -332,7 +334,7 @@ func TestTrafficShutdownAttemptsEveryNodeAfterFailure(t *testing.T) {
 	}
 	second := f.report
 	second.Traffic = []v1.Traffic{trafficEntry("b", f.now.Truncate(time.Hour), "10", "20")}
-	if _, err := f.service.accept(context.Background(), node.ID, nil, second, false); err != nil {
+	if _, err := f.service.accept(context.Background(), node.ID, nil, 0, second, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.db.Exec(`CREATE TRIGGER fail_one_node_traffic BEFORE INSERT ON traffic_hourly WHEN NEW.rx_bytes=13 BEGIN SELECT RAISE(ABORT,'one node failed'); END`); err != nil {
@@ -382,13 +384,13 @@ func TestTrafficStagesRestartWithoutReplacingAcceptedCounters(t *testing.T) {
 	oldKey := trafficKey{"a", timekey.Format(now)}
 	newKey := trafficKey{"b", timekey.Format(now)}
 	state := &nodeState{}
-	old := v1.Report{RunGeneration: 1, SessionID: "old", Traffic: []v1.Traffic{trafficEntry("a", now, "100", "200")}}
-	state.bufferTraffic(credential[:], old, 1, "old", now)
+	old := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 1, SessionID: "old", Traffic: []v1.Traffic{trafficEntry("a", now, "100", "200")}}
+	state.bufferTraffic(credential[:], 0, old, 1, "old", now)
 	state.commitTraffic(map[trafficKey]trafficCounters{oldKey: {100, 200}}, now)
 	old.Traffic[0] = trafficEntry("a", now, "150", "250")
-	state.bufferTraffic(credential[:], old, 1, "old", now)
-	incoming := v1.Report{RunGeneration: 2, SessionID: "new", Traffic: []v1.Traffic{trafficEntry("b", now, "25", "35")}}
-	state.stageTraffic(credential[:], incoming, 1, "old", now)
+	state.bufferTraffic(credential[:], 0, old, 1, "old", now)
+	incoming := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 2, SessionID: "new", Traffic: []v1.Traffic{trafficEntry("b", now, "25", "35")}}
+	state.stageTraffic(credential[:], 0, incoming, 1, "old", now)
 	if state.traffic.generation != 1 || state.traffic.pending[oldKey].rx != 150 || state.traffic.committed[oldKey].rx != 100 {
 		t.Fatal("incoming run replaced accepted counters before commit")
 	}
@@ -399,7 +401,7 @@ func TestTrafficStagesRestartWithoutReplacingAcceptedCounters(t *testing.T) {
 		t.Fatalf("staged traffic acknowledged before commit: %+v", acks)
 	}
 	// Observing the same durable fence after a failed transaction preserves both.
-	state.fenceTraffic(credential[:], 1, "old")
+	state.fenceTraffic(credential[:], 0, 1, "old")
 	if state.traffic.pending[oldKey].rx != 150 || state.stagedTraffic == nil {
 		t.Fatal("rollback lost accepted counters")
 	}
@@ -418,10 +420,10 @@ func TestTrafficStagedRestartStillFencesIdentityChanges(t *testing.T) {
 			now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
 			credential := sha256.Sum256([]byte("restart-credential"))
 			state := &nodeState{}
-			old := v1.Report{RunGeneration: 1, SessionID: "old", Traffic: []v1.Traffic{trafficEntry("a", now, "150", "250")}}
-			incoming := v1.Report{RunGeneration: 2, SessionID: "new", Traffic: []v1.Traffic{trafficEntry("b", now, "25", "35")}}
-			state.bufferTraffic(credential[:], old, 1, "old", now)
-			state.stageTraffic(credential[:], incoming, 1, "old", now)
+			old := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 1, SessionID: "old", Traffic: []v1.Traffic{trafficEntry("a", now, "150", "250")}}
+			incoming := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 2, SessionID: "new", Traffic: []v1.Traffic{trafficEntry("b", now, "25", "35")}}
+			state.bufferTraffic(credential[:], 0, old, 1, "old", now)
+			state.stageTraffic(credential[:], 0, incoming, 1, "old", now)
 			generation, session := uint64(1), "old"
 			switch mutation {
 			case "credential":
@@ -431,7 +433,7 @@ func TestTrafficStagedRestartStillFencesIdentityChanges(t *testing.T) {
 			case "session":
 				session = "replacement"
 			}
-			state.fenceTraffic(credential[:], generation, session)
+			state.fenceTraffic(credential[:], 0, generation, session)
 			if len(state.traffic.pending) != 0 || state.stagedTraffic != nil {
 				t.Fatal("old traffic survived durable identity mismatch")
 			}
@@ -519,7 +521,7 @@ func TestTrafficRestartFlushesAcceptedCountersAtomically(t *testing.T) {
 }
 
 func TestTrafficRestartDiscardsPendingAcrossCredentialOrDurableFenceChanges(t *testing.T) {
-	for _, mutation := range []string{"credential", "generation", "session"} {
+	for _, mutation := range []string{"credential", "credential_epoch", "generation", "session"} {
 		t.Run(mutation, func(t *testing.T) {
 			f := newTrafficRestartFixture(t)
 			// Stage a new run during a failed attempt before the external mutation.
@@ -540,6 +542,10 @@ func TestTrafficRestartDiscardsPendingAcrossCredentialOrDurableFenceChanges(t *t
 			case "credential":
 				rotated := sha256.Sum256([]byte("rotated-traffic-credential"))
 				if _, err := f.db.Exec(`UPDATE nodes SET token_hash=? WHERE id=?`, rotated[:], f.id); err != nil {
+					t.Fatal(err)
+				}
+			case "credential_epoch":
+				if _, err := f.db.Exec(`UPDATE nodes SET credential_epoch=credential_epoch+1 WHERE id=?`, f.id); err != nil {
 					t.Fatal(err)
 				}
 			case "generation":
@@ -615,8 +621,12 @@ func TestTrafficCredentialRotationAfterInitialReadCannotCarryPending(t *testing.
 		return f.now
 	}
 	response, err := trafficAccept(t, f)
+	if !errors.Is(err, nodes.ErrUnauthenticated) || len(response.TrafficAcks) != 0 {
+		t.Fatalf("queued old-credential response=%+v err=%v", response, err)
+	}
+	response, err = trafficAccept(t, f)
 	if err != nil || len(response.TrafficAcks) != 1 {
-		t.Fatalf("rotated acceptance=%+v err=%v", response, err)
+		t.Fatalf("fresh identity response=%+v err=%v", response, err)
 	}
 	var rx int64
 	if err := f.db.QueryRow(`SELECT rx_bytes FROM traffic_hourly WHERE node_id=? AND epoch='a'`, f.id).Scan(&rx); err != nil || rx != 100 {
@@ -628,16 +638,16 @@ func TestTrafficStagesRetryWhenOnlyIncomingBufferSurvivesFence(t *testing.T) {
 	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
 	credential := sha256.Sum256([]byte("credential"))
 	state := &nodeState{}
-	old := v1.Report{RunGeneration: 1, SessionID: "old", Traffic: []v1.Traffic{trafficEntry("a", now, "150", "250")}}
-	incoming := v1.Report{RunGeneration: 2, SessionID: "new", Traffic: []v1.Traffic{trafficEntry("b", now, "25", "35")}}
-	state.bufferTraffic(credential[:], old, 1, "old", now)
-	state.stageTraffic(credential[:], incoming, 1, "old", now)
+	old := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 1, SessionID: "old", Traffic: []v1.Traffic{trafficEntry("a", now, "150", "250")}}
+	incoming := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 2, SessionID: "new", Traffic: []v1.Traffic{trafficEntry("b", now, "25", "35")}}
+	state.bufferTraffic(credential[:], 0, old, 1, "old", now)
+	state.stageTraffic(credential[:], 0, incoming, 1, "old", now)
 	// Model an incoming buffer admitted under a newer observed identity than
 	// the accepted run, then independently fence away the older run.
 	state.stagedTraffic.observedSession = "external"
-	state.fenceTraffic(credential[:], 1, "external")
+	state.fenceTraffic(credential[:], 0, 1, "external")
 	incoming.Traffic = nil
-	state.stageTraffic(credential[:], incoming, 1, "external", now)
+	state.stageTraffic(credential[:], 0, incoming, 1, "external", now)
 	key := trafficKey{"b", timekey.Format(now)}
 	if state.traffic.pending != nil || state.stagedTraffic == nil || state.stagedTraffic.pending[key].rx != 25 {
 		t.Fatal("retry discarded fenced incoming pending counters")

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,8 +10,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
+
+	v1 "orbitbeacon/internal/protocol/v1"
 )
 
 type LoadOptions struct {
@@ -45,7 +49,10 @@ type InstallPolicy struct {
 	InstallMode     string `json:"install_mode"`
 }
 
-type Agent struct{ InstallPolicy }
+type Agent struct {
+	InstallPolicy
+	v1.RuntimeSettings
+}
 
 func sources(opts LoadOptions, keys []string) ([]map[string]json.RawMessage, error) {
 	file := make(map[string]json.RawMessage)
@@ -100,7 +107,7 @@ func sources(opts LoadOptions, keys []string) ([]map[string]json.RawMessage, err
 
 func encodeValue(key, value string) (json.RawMessage, error) {
 	switch key {
-	case "max_nodes", "expected_uid", "expected_gid":
+	case "max_nodes", "expected_uid", "expected_gid", "report_interval_seconds", "disk_interval_seconds":
 		n, err := strconv.Atoi(value)
 		if err != nil {
 			// Keep malformed values typed as strings until source precedence is
@@ -116,6 +123,11 @@ func encodeValue(key, value string) (json.RawMessage, error) {
 			return json.Marshal(value)
 		}
 		return json.Marshal(enabled)
+	case "interfaces", "disk_paths", "probe_targets":
+		if !json.Valid([]byte(value)) {
+			return nil, fmt.Errorf("%s must be a JSON array of strings", key)
+		}
+		return json.RawMessage(value), nil
 	case "trusted_proxies":
 		if value == "" {
 			return json.Marshal([]string{})
@@ -317,7 +329,7 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	if policy == nil {
 		return Agent{}, errors.New("administrator-owned install policy is required")
 	}
-	keys := []string{"server_url", "ca_file", "state_dir", "expected_uid", "expected_gid", "expected_account", "install_mode"}
+	keys := []string{"server_url", "ca_file", "state_dir", "expected_uid", "expected_gid", "expected_account", "install_mode", "report_interval_seconds", "disk_interval_seconds", "interfaces", "disk_paths", "probe_targets"}
 	layers, err := sources(opts, keys)
 	if err != nil {
 		return Agent{}, err
@@ -330,8 +342,32 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	if err := json.Unmarshal(data, &protected); err != nil {
 		return Agent{}, err
 	}
+	settings := v1.DefaultRuntimeSettings()
+	resolved := make(map[string]json.RawMessage)
 	for _, layer := range layers {
 		for key, value := range layer {
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return Agent{}, fmt.Errorf("%s must not be null", key)
+			}
+			// Each local source must be well-typed and valid even when a higher
+			// precedence source supplies another value for the same runtime key.
+			if _, ok := protected[key]; !ok {
+				candidate := v1.DefaultRuntimeSettings()
+				encoded, err := json.Marshal(map[string]json.RawMessage{key: value})
+				if err != nil {
+					return Agent{}, err
+				}
+				if err := json.Unmarshal(encoded, &candidate); err != nil {
+					return Agent{}, fmt.Errorf("%s has an invalid runtime configuration type", key)
+				}
+				if err := candidate.Validate(); err != nil {
+					return Agent{}, err
+				}
+			}
+			if _, ok := protected[key]; !ok {
+				resolved[key] = value
+				continue
+			}
 			var actual, expected any
 			if err := json.Unmarshal(value, &actual); err != nil {
 				return Agent{}, err
@@ -339,10 +375,20 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 			if err := json.Unmarshal(protected[key], &expected); err != nil {
 				return Agent{}, err
 			}
-			if actual != expected {
+			if !reflect.DeepEqual(actual, expected) {
 				return Agent{}, fmt.Errorf("install_policy_conflict: %s", key)
 			}
 		}
+	}
+	data, err = json.Marshal(resolved)
+	if err != nil {
+		return Agent{}, err
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return Agent{}, errors.New("invalid runtime configuration types")
+	}
+	if err := settings.Validate(); err != nil {
+		return Agent{}, err
 	}
 	if err := ValidateHTTPS(policy.ServerURL); err != nil {
 		return Agent{}, fmt.Errorf("server_url: %w", err)
@@ -359,5 +405,5 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	if policy.InstallMode != "native" && policy.InstallMode != "docker" && policy.InstallMode != "foreground" {
 		return Agent{}, errors.New("install_mode must be native, docker or foreground")
 	}
-	return Agent{InstallPolicy: *policy}, nil
+	return Agent{InstallPolicy: *policy, RuntimeSettings: settings}, nil
 }

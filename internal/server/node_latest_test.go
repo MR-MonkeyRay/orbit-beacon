@@ -28,6 +28,16 @@ func TestManagementLatestSample(t *testing.T) {
 	apiError(t, request(t, f.handler, http.MethodGet, path, "", second, "", ""), http.StatusNotFound, "node_not_found")
 	body := strings.Replace(reportBody(1, 1, "private-session", 25), `"metrics":`, `"system":{"hostname":"test","os":"linux","arch":"amd64","agent_version":"v1.2.3"},"metrics":`, 1)
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, body), 1)
+	runtimePath := "/api/v1/nodes/" + id + "/runtime"
+	settings := request(t, f.handler, http.MethodGet, runtimePath, "", second, "", "")
+	assertHTTPStatus(t, settings, http.StatusOK)
+	var runtimeEnvelope struct {
+		Runtime map[string]json.RawMessage `json:"runtime"`
+	}
+	if err := json.Unmarshal(settings.Body.Bytes(), &runtimeEnvelope); err != nil || len(runtimeEnvelope.Runtime) != 5 || string(runtimeEnvelope.Runtime["report_interval_seconds"]) != "10" || string(runtimeEnvelope.Runtime["probe_targets"]) != "[]" {
+		t.Fatalf("runtime=%s err=%v", settings.Body, err)
+	}
+	assertHTTPStatus(t, request(t, f.handler, http.MethodPatch, runtimePath, `{"report_interval_seconds":5}`, second, "", ""), http.StatusMethodNotAllowed)
 	got := request(t, f.handler, http.MethodGet, path, "", second, "", "")
 	assertHTTPStatus(t, got, http.StatusOK)
 	var sample map[string]json.RawMessage
@@ -56,7 +66,7 @@ func TestManagementLatestSample(t *testing.T) {
 	}
 	node := request(t, f.handler, http.MethodGet, "/api/v1/nodes/"+id, "", second, "", "")
 	assertHTTPStatus(t, node, http.StatusOK)
-	if !strings.Contains(node.Body.String(), `"presence":"online"`) || !strings.Contains(node.Body.String(), `"state":"applied"`) || !strings.Contains(node.Body.String(), `"agent_version":"v1.2.3"`) {
+	if !strings.Contains(node.Body.String(), `"presence":"online"`) || !strings.Contains(node.Body.String(), `"agent_version":"v1.2.3"`) {
 		t.Fatalf("node=%s", node.Body)
 	}
 	// Optional system on a later report produces explicit null, while inventory
@@ -85,6 +95,11 @@ func TestManagementLatestSample(t *testing.T) {
 		t.Fatal(err)
 	}
 	apiError(t, request(t, f.handler, http.MethodGet, path, "", second, "", ""), http.StatusNotFound, "node_not_found")
+	settings = request(t, f.handler, http.MethodGet, runtimePath, "", second, "", "")
+	assertHTTPStatus(t, settings, http.StatusOK)
+	if strings.TrimSpace(settings.Body.String()) != `{"runtime":null}` {
+		t.Fatalf("revoked runtime=%s", settings.Body)
+	}
 	apiError(t, request(t, f.handler, http.MethodGet, "/api/v1/nodes/00000000-0000-4000-8000-000000000001/latest", "", second, "", ""), http.StatusNotFound, "node_not_found")
 	wrongMethod := request(t, f.handler, http.MethodPost, path, "", second, "", "")
 	assertHTTPStatus(t, wrongMethod, http.StatusMethodNotAllowed)

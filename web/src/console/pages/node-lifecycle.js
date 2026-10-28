@@ -45,7 +45,7 @@ export function lifecycleActions(node) {
     }, async () => { await refresh(); toast(`${node.name} ${disabled ? 'enabled' : 'disabled'}.`); }),
     action('Revoke agent credential', {variant: 'danger'}, () => confirmDialog({
       title: `Revoke ${node.name}’s agent credential?`, confirm: 'Revoke credential', danger: true,
-      message: 'The asset, metadata, desired configuration and public settings are kept. The agent stops being accepted (401), and this node disappears from the public page. A new enrollment ticket is needed to enroll the agent again.'
+      message: 'The asset, metadata, traffic billing and public settings are kept. Last reported settings, system details and probe observations are cleared. The agent stops being accepted (401), and this node disappears from the public page. A new enrollment ticket is needed to enroll the agent again.'
     }), () => api(`${path}/credential`, {method: 'DELETE'}), async () => { await refresh(); toast('Agent credential revoked. Issue a new enrollment ticket to enroll again.'); }),
     action('Delete node', {variant: 'danger'}, () => typedConfirmation({
       title: `Delete ${node.name}?`, expected: node.name, confirm: 'Delete node',

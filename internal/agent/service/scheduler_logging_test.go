@@ -23,17 +23,13 @@ func TestSchedulerReportFailureLoggingTransitions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 5))
-		if err != nil {
-			t.Fatal(err)
-		}
+		cfg := runtimeSettings(5)
 		var attempts atomic.Int64
 		var mu sync.Mutex
 		var logs []string
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		scheduler := service.NewScheduler(service.SchedulerOptions{
-			Identity: state, Config: cfg, RandomFloat: func() float64 { return 0.5 },
+		scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 			Collect: func(context.Context) (v1.Metrics, error) { return schedulerMetrics(), nil },
 			Report: func(_ context.Context, report v1.Report) (v1.ReportResponse, error) {
 				attempt := attempts.Add(1)
@@ -46,8 +42,7 @@ func TestSchedulerReportFailureLoggingTransitions(t *testing.T) {
 				mu.Lock()
 				defer mu.Unlock()
 				logs = append(logs, message)
-			},
-		})
+			}})
 		done := make(chan error, 1)
 		go func() { done <- scheduler.Run(ctx) }()
 		synctest.Wait()
@@ -101,21 +96,16 @@ func TestSchedulerReportFailureLoggingHTTPStatusAndBackoff(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 5))
-				if err != nil {
-					t.Fatal(err)
-				}
+				cfg := runtimeSettings(5)
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				logged := make(chan string, 1)
-				scheduler := service.NewScheduler(service.SchedulerOptions{
-					Identity: state, Config: cfg, RandomFloat: func() float64 { return 0.5 },
+				scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 					Collect: func(context.Context) (v1.Metrics, error) { return schedulerMetrics(), nil },
 					Report: func(context.Context, v1.Report) (v1.ReportResponse, error) {
 						return v1.ReportResponse{}, &service.HTTPError{StatusCode: tt.status, RetryAfter: tt.retryAfter}
 					},
-					Log: func(message string) { logged <- message },
-				})
+					Log: func(message string) { logged <- message }})
 				done := make(chan error, 1)
 				go func() { done <- scheduler.Run(ctx) }()
 				synctest.Wait()
@@ -152,19 +142,14 @@ func TestSchedulerReportFailureLoggingClassifiesLocalErrors(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 5))
-				if err != nil {
-					t.Fatal(err)
-				}
+				cfg := runtimeSettings(5)
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				logged := make(chan string, 1)
-				scheduler := service.NewScheduler(service.SchedulerOptions{
-					Identity: state, Config: cfg, RandomFloat: func() float64 { return 0.5 },
+				scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 					Collect: func(context.Context) (v1.Metrics, error) { return schedulerMetrics(), nil },
 					Report:  func(context.Context, v1.Report) (v1.ReportResponse, error) { return v1.ReportResponse{}, tt.err },
-					Log:     func(message string) { logged <- message },
-				})
+					Log:     func(message string) { logged <- message }})
 				done := make(chan error, 1)
 				go func() { done <- scheduler.Run(ctx) }()
 				synctest.Wait()
@@ -201,21 +186,15 @@ func TestSchedulerCancellationDoesNotLogFailure(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 5))
-		if err != nil {
-			t.Fatal(err)
-		}
+		cfg := runtimeSettings(5)
 		ctx, cancel := context.WithCancel(context.Background())
 		var logs atomic.Int64
-		scheduler := service.NewScheduler(service.SchedulerOptions{
-			Identity: state, Config: cfg,
-			Collect: func(context.Context) (v1.Metrics, error) { return schedulerMetrics(), nil },
+		scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, Collect: func(context.Context) (v1.Metrics, error) { return schedulerMetrics(), nil },
 			Report: func(ctx context.Context, _ v1.Report) (v1.ReportResponse, error) {
 				<-ctx.Done()
 				return v1.ReportResponse{}, ctx.Err()
 			},
-			Log: func(string) { logs.Add(1) },
-		})
+			Log: func(string) { logs.Add(1) }})
 		done := make(chan error, 1)
 		go func() { done <- scheduler.Run(ctx) }()
 		synctest.Wait()
@@ -247,16 +226,10 @@ func TestSchedulerClientTimeoutLoggingIsSanitized(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 5))
-		if err != nil {
-			t.Fatal(err)
-		}
-		client, err := service.NewClient(service.ClientOptions{
-			ServerURL:  "https://server-controlled.example",
+		cfg := runtimeSettings(5)
+		client, err := service.NewClient(service.ClientOptions{ServerURL: "https://server-controlled.example",
 			HTTPClient: &http.Client{Transport: loggingTimeoutTransport{}},
-			Identity:   state,
-			Config:     cfg,
-		})
+			Identity:   state})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -264,12 +237,10 @@ func TestSchedulerClientTimeoutLoggingIsSanitized(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		logged := make(chan string, 1)
-		scheduler := service.NewScheduler(service.SchedulerOptions{
-			Identity: state, Config: cfg, RandomFloat: func() float64 { return 0.5 },
+		scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 			Collect: func(context.Context) (v1.Metrics, error) { return schedulerMetrics(), nil },
 			Report:  client.Report,
-			Log:     func(message string) { logged <- message },
-		})
+			Log:     func(message string) { logged <- message }})
 		done := make(chan error, 1)
 		go func() { done <- scheduler.Run(ctx) }()
 		synctest.Wait()

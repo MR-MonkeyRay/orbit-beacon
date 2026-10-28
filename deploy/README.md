@@ -166,7 +166,7 @@ Endpoint 只允许 HTTPS 源站（可带端口），不能含路径、用户信�
 
 ## 恢复
 
-先停止 Server，使用运行服务的同一用户执行。只接受归档格式 v1、主库 schema 18、指标库 schema 1 精确匹配的 `.tar.gz.age` 包；旧 schema 16/17 包（包括仅 Monitoring 的包）也拒绝，不接收裸 SQLite 或转换旧格式。密码文件必须归该用户所有、为 `0600` 普通文件，内容为该包的 16 位密码，可带一个换行。也可省略 `--password-file` 从终端无回显输入；不支持命令行明文密码或环境变量密码。
+先停止 Server，用服务账号恢复。仅接受格式 v1、主库 schema19、指标库 schema1 精确匹配的 `.tar.gz.age` 包；旧 schema 包（含仅 Monitoring）拒绝，不转换。密码文件须归运行用户、0600 普通文件，含该包16位密码，可带换行；省略 `--password-file` 则终端无回显输入。不支持 argv 或环境变量明文密码。
 
 ```sh
 orbitbeacon-server restore --data-dir /var/lib/orbitbeacon \
@@ -182,7 +182,7 @@ orbitbeacon-server restore --data-dir /var/lib/orbitbeacon \
 
 ## 升级
 
-当前主库为 schema 18：仅空库直接初始化，已有库必须只有一条匹配的版本记录；旧库、缺失/混合版本记录或更高版本库均拒绝，不运行迁移，也不自动清理原文件。旧 schema 16/17 及其他旧格式不能通过备份恢复转换为当前格式，需使用新的私有数据目录；保留旧目录、旧包及原版本程序。
+主库 schema19 仅为空库初始化。旧库（含18）、缺失/混合版本记录及更高版本库均拒绝，不迁移或自动删除。使用新的私有 data-dir，保留旧目录、旧包及原版本程序；备份恢复也不提供跨 schema 转换。
 
 以下替换步骤仅适用于数据库 schema 不变的版本：
 

@@ -46,6 +46,7 @@ type nodeState struct {
 	refs              int
 	touch             uint64
 	credential        [sha256.Size]byte
+	credentialEpoch   int64
 	generation        uint64
 	session           string
 	seq               uint64
@@ -62,17 +63,18 @@ type nodeState struct {
 
 // These helpers require state.mu to be held. Rate history is independent
 // of process identity and survives invalidation.
-func (state *nodeState) matchesIdentity(credential []byte, generation uint64, session string) bool {
-	return len(state.latest) != 0 && subtle.ConstantTimeCompare(state.credential[:], credential) == 1 && state.generation == generation && state.session == session
+func (state *nodeState) matchesIdentity(credential []byte, credentialEpoch int64, generation uint64, session string) bool {
+	return len(state.latest) != 0 && subtle.ConstantTimeCompare(state.credential[:], credential) == 1 && state.credentialEpoch == credentialEpoch && state.generation == generation && state.session == session
 }
 
-func (state *nodeState) invalidateIdentity(credential []byte, generation uint64, session string) {
-	state.fenceTraffic(credential, generation, session)
-	state.fenceProbes(credential, generation, session)
-	if state.matchesIdentity(credential, generation, session) {
+func (state *nodeState) invalidateIdentity(credential []byte, credentialEpoch int64, generation uint64, session string) {
+	state.fenceTraffic(credential, credentialEpoch, generation, session)
+	state.fenceProbes(credential, credentialEpoch, generation, session)
+	if state.matchesIdentity(credential, credentialEpoch, generation, session) {
 		return
 	}
 	state.credential = [sha256.Size]byte{}
+	state.credentialEpoch = 0
 	state.generation, state.session, state.seq = 0, "", 0
 	state.latest = nil
 	state.receivedAt, state.lastSeenPersisted = time.Time{}, time.Time{}
@@ -203,11 +205,12 @@ func (s *Service) Shutdown(ctx context.Context) error {
 }
 
 type Admission struct {
-	service    *Service
-	nodeID     string
-	credential [sha256.Size]byte
-	usedMu     sync.Mutex
-	used       bool
+	service         *Service
+	nodeID          string
+	credential      [sha256.Size]byte
+	credentialEpoch int64
+	usedMu          sync.Mutex
+	used            bool
 }
 
 func (s *Service) AdmitToken(ctx context.Context, token string) (*Admission, error) {
@@ -216,7 +219,8 @@ func (s *Service) AdmitToken(ctx context.Context, token string) (*Admission, err
 	}
 	digest := sha256.Sum256([]byte(token))
 	var nodeID, status string
-	if err := s.db.QueryRowContext(ctx, "SELECT id, status FROM nodes WHERE token_hash = ?", digest[:]).Scan(&nodeID, &status); err != nil {
+	var credentialEpoch int64
+	if err := s.db.QueryRowContext(ctx, "SELECT id, status, credential_epoch FROM nodes WHERE token_hash = ?", digest[:]).Scan(&nodeID, &status, &credentialEpoch); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nodes.ErrUnauthenticated
 		}
@@ -241,7 +245,7 @@ func (s *Service) AdmitToken(ctx context.Context, token string) (*Admission, err
 	if err := s.charge(state); err != nil {
 		return nil, err
 	}
-	return &Admission{service: s, nodeID: nodeID, credential: digest}, nil
+	return &Admission{service: s, nodeID: nodeID, credential: digest, credentialEpoch: credentialEpoch}, nil
 }
 
 func (s *Service) AcceptAdmitted(ctx context.Context, admission *Admission, report v1.Report) (v1.ReportResponse, error) {
@@ -255,7 +259,7 @@ func (s *Service) AcceptAdmitted(ctx context.Context, admission *Admission, repo
 	}
 	admission.used = true
 	admission.usedMu.Unlock()
-	return s.accept(ctx, admission.nodeID, admission.credential[:], report, false)
+	return s.accept(ctx, admission.nodeID, admission.credential[:], admission.credentialEpoch, report, false)
 }
 
 func (s *Service) AcceptToken(ctx context.Context, token string, report v1.Report) (v1.ReportResponse, error) {
@@ -321,10 +325,10 @@ func (s *Service) charge(state *nodeState) error {
 // Accept fences process identity durably; sequence deduplication and snapshots
 // intentionally last only for this server process.
 func (s *Service) Accept(ctx context.Context, nodeID string, report v1.Report) (v1.ReportResponse, error) {
-	return s.accept(ctx, nodeID, nil, report, true)
+	return s.accept(ctx, nodeID, nil, 0, report, true)
 }
 
-func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, report v1.Report, charge bool) (v1.ReportResponse, error) {
+func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, credentialEpoch int64, report v1.Report, charge bool) (v1.ReportResponse, error) {
 	finish, err := s.beginUse(ctx)
 	if err != nil {
 		return v1.ReportResponse{}, err
@@ -339,22 +343,24 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	if err := validateTraffic(report.Traffic); err != nil {
 		return v1.ReportResponse{}, fmt.Errorf("%w: %v", ErrInvalidReport, err)
 	}
-	// This server never issues revisions above the ceiling, so a larger value
-	// cannot be a real acknowledgement and would starve later configuration.
-	if report.ConfigRevision > nodes.MaxConfigRevision {
-		return v1.ReportResponse{}, fmt.Errorf("%w: config revision exceeds the server limit", ErrInvalidReport)
+	runtime := report.Runtime
+	if runtime.Interfaces == nil {
+		runtime.Interfaces = []string{}
 	}
+	if runtime.DiskPaths == nil {
+		runtime.DiskPaths = []string{}
+	}
+	if runtime.ProbeTargets == nil {
+		runtime.ProbeTargets = []string{}
+	}
+	report.Runtime = runtime
 	body, err := json.Marshal(report)
 	if err != nil {
 		return v1.ReportResponse{}, fmt.Errorf("%w: %v", ErrInvalidReport, err)
 	}
-	configError := ""
-	if report.ConfigError != nil {
-		encoded, err := json.Marshal(report.ConfigError)
-		if err != nil {
-			return v1.ReportResponse{}, err
-		}
-		configError = string(encoded)
+	runtimeJSON, err := json.Marshal(runtime)
+	if err != nil {
+		return v1.ReportResponse{}, err
 	}
 	var system any
 	var systemHash [sha256.Size]byte
@@ -382,17 +388,17 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	// The read-only authentication fence is linearized at the SELECT below.
 	// A credential/status change committed before it is always observed; a
 	// change committed after it takes effect after this concurrent request.
-	var generationText, session, status, storedSystem, storedConfigError string
+	var generationText, session, status, storedSystem, storedRuntime string
 	var lastSeenText sql.NullString
 	var storedCredential []byte
-	var appliedRevision, desiredRevision int64
-	if err := s.db.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, status, applied_revision, desired_revision, COALESCE(system, ''), config_error, last_seen FROM nodes WHERE id = ?", nodeID).Scan(&generationText, &session, &storedCredential, &status, &appliedRevision, &desiredRevision, &storedSystem, &storedConfigError, &lastSeenText); err != nil {
+	var storedEpoch int64
+	if err := s.db.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status, COALESCE(system, ''), agent_runtime, last_seen FROM nodes WHERE id = ?", nodeID).Scan(&generationText, &session, &storedCredential, &storedEpoch, &status, &storedSystem, &storedRuntime, &lastSeenText); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return v1.ReportResponse{}, nodes.ErrUnauthenticated
 		}
 		return v1.ReportResponse{}, err
 	}
-	if len(storedCredential) == 0 || (credential != nil && subtle.ConstantTimeCompare(storedCredential, credential) != 1) {
+	if len(storedCredential) == 0 || (credential != nil && (subtle.ConstantTimeCompare(storedCredential, credential) != 1 || storedEpoch != credentialEpoch)) {
 		return v1.ReportResponse{}, nodes.ErrUnauthenticated
 	}
 	if status == "disabled" {
@@ -403,15 +409,14 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 		return v1.ReportResponse{}, err
 	}
 	state.mu.Lock()
-	state.invalidateIdentity(storedCredential, generation, session)
-	cachedCredential, cachedGeneration, cachedSession := state.credential, state.generation, state.session
+	state.invalidateIdentity(storedCredential, storedEpoch, generation, session)
+	cachedCredential, cachedEpoch, cachedGeneration, cachedSession := state.credential, state.credentialEpoch, state.generation, state.session
 	cachedSeq, hasLatest := state.seq, len(state.latest) != 0
 	state.mu.Unlock()
 	now := s.now().UTC()
 	if report.RunGeneration < generation || (report.RunGeneration == generation && session != "" && session != report.SessionID) {
 		return v1.ReportResponse{}, ErrIdentityConflict
 	}
-	desired := v1.DesiredConfig{Revision: desiredRevision}
 	var persistedLastSeen time.Time
 	if lastSeenText.Valid {
 		persistedLastSeen, err = timekey.Parse(lastSeenText.String)
@@ -421,20 +426,16 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	}
 	// Dedupe belongs to the durable process fence as well as the credential:
 	// revoke/re-enroll may reuse a credential while resetting that fence (ABA).
-	sameState := hasLatest && subtle.ConstantTimeCompare(cachedCredential[:], storedCredential) == 1 &&
+	sameState := hasLatest && subtle.ConstantTimeCompare(cachedCredential[:], storedCredential) == 1 && cachedEpoch == storedEpoch &&
 		cachedGeneration == generation && cachedSession == session &&
 		cachedGeneration == report.RunGeneration && cachedSession == report.SessionID
 	storedSystemHash := sha256.Sum256([]byte(storedSystem))
 	sameSystem := report.System == nil || subtle.ConstantTimeCompare(storedSystemHash[:], systemHash[:]) == 1
 	intervalDue := persistedLastSeen.IsZero() || now.Sub(persistedLastSeen) >= s.persistInterval
-	durable := !sameState || generation != report.RunGeneration || session != report.SessionID ||
-		report.ConfigRevision != appliedRevision || desired.Revision != report.ConfigRevision ||
-		storedConfigError != configError || !sameSystem || intervalDue
-	response := v1.ReportResponse{NodeID: nodeID, AcceptedSeq: report.Seq, ServerTime: now}
-	if desired.Revision > report.ConfigRevision {
-		response.DesiredConfig = &desired
-	}
 	duplicate := sameState && report.Seq <= cachedSeq
+	durable := !sameState || generation != report.RunGeneration || session != report.SessionID ||
+		(!duplicate && (storedRuntime != string(runtimeJSON) || !sameSystem)) || intervalDue
+	response := v1.ReportResponse{NodeID: nodeID, AcceptedSeq: report.Seq, ServerTime: now}
 	if !durable {
 		if charge {
 			s.rateMu.Lock()
@@ -444,12 +445,20 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 				return v1.ReportResponse{}, err
 			}
 		}
-		probes := state.copyProbes(storedCredential, generation, session)
-		if err := probes.buffer(ctx, s.db, nodeID, report.ProbeResults); err != nil {
+		probes := state.copyProbes(storedCredential, storedEpoch, generation, session)
+		currentRuntime := runtime
+		if duplicate {
+			currentRuntime, err = decodeRuntime(storedRuntime)
+			if err != nil {
+				return v1.ReportResponse{}, err
+			}
+		}
+		probes.retainTargets(currentRuntime.ProbeTargets)
+		if err := probes.buffer(ctx, s.db, nodeID, report.ProbeResults, currentRuntime.ProbeTargets); err != nil {
 			return v1.ReportResponse{}, err
 		}
 		state.commitProbes(probes, generation, session)
-		state.bufferTraffic(storedCredential, report, generation, session, now)
+		state.bufferTraffic(storedCredential, storedEpoch, report, generation, session, now)
 		response.TrafficAcks = state.trafficAcks(report.Traffic, now)
 		if duplicate {
 			response.AcceptedSeq = cachedSeq
@@ -470,23 +479,27 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 		return v1.ReportResponse{}, err
 	}
 	defer releaseWrite()
-	state.stageTraffic(storedCredential, report, generation, session, now)
+	state.stageTraffic(storedCredential, storedEpoch, report, generation, session, now)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return v1.ReportResponse{}, err
 	}
 	defer tx.Rollback()
-	var txGenerationText, txSession, txStatus string
+	var txGenerationText, txSession, txStatus, txRuntime string
 	var txCredential []byte
-	if err := tx.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, status FROM nodes WHERE id = ?", nodeID).Scan(&txGenerationText, &txSession, &txCredential, &txStatus); err != nil {
+	var txEpoch int64
+	if err := tx.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status, agent_runtime FROM nodes WHERE id = ?", nodeID).Scan(&txGenerationText, &txSession, &txCredential, &txEpoch, &txStatus, &txRuntime); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return v1.ReportResponse{}, nodes.ErrUnauthenticated
 		}
 		return v1.ReportResponse{}, err
 	}
 	// Recheck in the write transaction so rotation cannot race authentication.
-	if len(txCredential) == 0 || (credential != nil && subtle.ConstantTimeCompare(txCredential, credential) != 1) {
+	if len(txCredential) == 0 || subtle.ConstantTimeCompare(txCredential, storedCredential) != 1 || (credential != nil && subtle.ConstantTimeCompare(txCredential, credential) != 1) {
 		return v1.ReportResponse{}, nodes.ErrUnauthenticated
+	}
+	if txEpoch != storedEpoch || txGenerationText != generationText || txSession != session {
+		return v1.ReportResponse{}, ErrIdentityConflict
 	}
 	if txStatus == "disabled" {
 		return v1.ReportResponse{}, nodes.ErrDisabled
@@ -496,7 +509,7 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 		return v1.ReportResponse{}, err
 	}
 	state.mu.Lock()
-	state.invalidateIdentity(txCredential, generation, txSession)
+	state.invalidateIdentity(txCredential, txEpoch, generation, txSession)
 	hasLatest = hasLatest && len(state.latest) != 0
 	state.mu.Unlock()
 	if report.RunGeneration < generation || (report.RunGeneration == generation && txSession != "" && txSession != report.SessionID) {
@@ -510,34 +523,30 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 			return v1.ReportResponse{}, err
 		}
 	}
-	state.stageTraffic(txCredential, report, generation, txSession, now)
-	desired, err = readConfig(ctx, tx, nodeID)
-	if err != nil {
-		return v1.ReportResponse{}, err
-	}
-	// A restored database can lag the revision the agent already persisted. The
-	// agent ignores revisions it has passed, so move past it and resend the
-	// stored settings instead of silently dropping every later change.
-	if report.ConfigRevision > desired.Revision && report.ConfigRevision < nodes.MaxConfigRevision {
-		desired.Revision = report.ConfigRevision + 1
-		if _, err := tx.ExecContext(ctx, "UPDATE nodes SET desired_revision = ? WHERE id = ?", desired.Revision, nodeID); err != nil {
+	state.stageTraffic(txCredential, txEpoch, report, generation, txSession, now)
+	duplicate = hasLatest && subtle.ConstantTimeCompare(cachedCredential[:], txCredential) == 1 && cachedEpoch == txEpoch &&
+		cachedGeneration == generation && cachedSession == txSession &&
+		cachedGeneration == report.RunGeneration && cachedSession == report.SessionID && report.Seq <= cachedSeq
+	currentRuntime := runtime
+	if duplicate {
+		currentRuntime, err = decodeRuntime(txRuntime)
+		if err != nil {
 			return v1.ReportResponse{}, err
 		}
 	}
-	response.DesiredConfig = nil
-	if desired.Revision > report.ConfigRevision {
-		response.DesiredConfig = &desired
+	probes := state.copyProbes(txCredential, txEpoch, generation, txSession)
+	probes.retainTargets(currentRuntime.ProbeTargets)
+	if !duplicate && txRuntime != string(runtimeJSON) {
+		for _, table := range []string{"probe_latest", "probe_hourly"} {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE node_id=? AND target NOT IN (SELECT value FROM json_each(?, '$.probe_targets'))", nodeID, string(runtimeJSON)); err != nil {
+				return v1.ReportResponse{}, err
+			}
+		}
 	}
-	duplicate = hasLatest && subtle.ConstantTimeCompare(cachedCredential[:], txCredential) == 1 &&
-		cachedGeneration == generation && cachedSession == txSession &&
-		cachedGeneration == report.RunGeneration && cachedSession == report.SessionID && report.Seq <= cachedSeq
-	// Flush accepted checks before adding incoming targets. This frees idle
-	// slots during configuration churn without exceeding five target buffers.
-	probes := state.copyProbes(txCredential, generation, txSession)
 	if err := probes.persist(ctx, tx, nodeID, now); err != nil {
 		return v1.ReportResponse{}, err
 	}
-	if err := probes.buffer(ctx, tx, nodeID, report.ProbeResults); err != nil {
+	if err := probes.buffer(ctx, tx, nodeID, report.ProbeResults, currentRuntime.ProbeTargets); err != nil {
 		return v1.ReportResponse{}, err
 	}
 	if err := probes.persist(ctx, tx, nodeID, now); err != nil {
@@ -564,8 +573,7 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	if err != nil {
 		return v1.ReportResponse{}, err
 	}
-	// Rejection cannot erase a prior successful configuration acknowledgement.
-	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET run_generation = ?, report_session_id = ?, last_seen = ?, system = COALESCE(?, system), applied_revision = CASE WHEN ? = '' AND ? <= desired_revision THEN max(applied_revision, ?) ELSE applied_revision END, config_error = ? WHERE id = ?`, strconv.FormatUint(report.RunGeneration, 10), report.SessionID, timekey.Format(now), system, configError, report.ConfigRevision, report.ConfigRevision, configError, nodeID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET run_generation = ?, report_session_id = ?, last_seen = ?, system = COALESCE(?, system), agent_runtime = ? WHERE id = ?`, strconv.FormatUint(report.RunGeneration, 10), report.SessionID, timekey.Format(now), system, string(runtimeJSON), nodeID); err != nil {
 		return v1.ReportResponse{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -578,6 +586,7 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	state.generation, state.seq, state.latest, state.receivedAt = report.RunGeneration, report.Seq, body, now
 	state.public = snapshotPublic(report.Metrics, now)
 	copy(state.credential[:], txCredential)
+	state.credentialEpoch = txEpoch
 	state.session = report.SessionID
 	state.lastSeenPersisted = now
 	state.mu.Unlock()
@@ -636,22 +645,15 @@ func (s *Service) pruneStates(live map[string]bool, candidates map[string]stateC
 	}
 }
 
-func readConfig(ctx context.Context, tx *sql.Tx, nodeID string) (v1.DesiredConfig, error) {
-	var desired v1.DesiredConfig
-	var interfaces, disks, probes string
-	if err := tx.QueryRowContext(ctx, `SELECT desired_revision, report_interval_seconds, disk_interval_seconds, interfaces, disk_paths, probe_targets, billing_day, quota_bytes FROM nodes WHERE id = ?`, nodeID).Scan(&desired.Revision, &desired.ReportIntervalSeconds, &desired.DiskIntervalSeconds, &interfaces, &disks, &probes, &desired.BillingDay, &desired.QuotaBytes); err != nil {
-		return v1.DesiredConfig{}, err
+func decodeRuntime(raw string) (v1.RuntimeSettings, error) {
+	var runtime v1.RuntimeSettings
+	if raw == "" {
+		return runtime, nil
 	}
-	if err := json.Unmarshal([]byte(interfaces), &desired.Interfaces); err != nil {
-		return v1.DesiredConfig{}, err
+	if err := json.Unmarshal([]byte(raw), &runtime); err != nil {
+		return runtime, err
 	}
-	if err := json.Unmarshal([]byte(disks), &desired.DiskPaths); err != nil {
-		return v1.DesiredConfig{}, err
-	}
-	if err := json.Unmarshal([]byte(probes), &desired.ProbeTargets); err != nil {
-		return v1.DesiredConfig{}, err
-	}
-	return desired, nil
+	return runtime, runtime.Validate()
 }
 
 // LatestReport owns a report snapshot and its server reception time.
@@ -664,8 +666,9 @@ func (s *Service) Latest(ctx context.Context, nodeID string) (LatestReport, erro
 	// Read before taking the snapshot mutex, matching the public projection's fence.
 	// This is a plain SELECT and never waits for writer admission.
 	var credential []byte
+	var credentialEpoch int64
 	var status, generationText, session string
-	if err := s.db.QueryRowContext(ctx, "SELECT token_hash, status, run_generation, report_session_id FROM nodes WHERE id = ?", nodeID).Scan(&credential, &status, &generationText, &session); err != nil {
+	if err := s.db.QueryRowContext(ctx, "SELECT token_hash, credential_epoch, status, run_generation, report_session_id FROM nodes WHERE id = ?", nodeID).Scan(&credential, &credentialEpoch, &status, &generationText, &session); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return LatestReport{}, nodes.ErrNotFound
 		}
@@ -684,7 +687,7 @@ func (s *Service) Latest(ctx context.Context, nodeID string) (LatestReport, erro
 	}
 	defer s.releaseState(state)
 	state.mu.Lock()
-	if !state.matchesIdentity(credential, generation, session) {
+	if !state.matchesIdentity(credential, credentialEpoch, generation, session) {
 		state.mu.Unlock()
 		return LatestReport{}, nodes.ErrNotFound
 	}

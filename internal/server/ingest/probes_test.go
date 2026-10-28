@@ -13,6 +13,10 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
+func newProbeFixture(t *testing.T) *coalesceFixture {
+	return newCoalesceFixture(t, 30*time.Second, "https://example.test/health", "tcp://example.test:443", "tcp://old.example.test:443", "tcp://new.example.test:443")
+}
+
 func probeResult(target string, checkedAt time.Time, ok bool) v1.ProbeResult {
 	result := v1.ProbeResult{Target: target, OK: ok, CheckedAt: checkedAt}
 	if ok {
@@ -26,7 +30,7 @@ func probeResult(target string, checkedAt time.Time, ok bool) v1.ProbeResult {
 
 func probeAccept(t *testing.T, f *coalesceFixture) (v1.ReportResponse, error) {
 	t.Helper()
-	return f.service.accept(context.Background(), f.id, nil, f.report, false)
+	return f.service.accept(context.Background(), f.id, nil, 0, f.report, false)
 }
 
 func probeTotals(t *testing.T, f *coalesceFixture, target string) (checks, failures int, latest string) {
@@ -41,7 +45,7 @@ func probeTotals(t *testing.T, f *coalesceFixture, target string) (checks, failu
 }
 
 func TestProbeCheckedAtDedupeCadenceAndRestart(t *testing.T) {
-	f := newCoalesceFixture(t, 30*time.Second)
+	f := newProbeFixture(t)
 	target := "https://example.test/health"
 	first := f.now.Add(time.Second)
 	f.now = first
@@ -93,7 +97,7 @@ func TestProbeCheckedAtDedupeCadenceAndRestart(t *testing.T) {
 }
 
 func TestProbeDrainPersistsPendingAndOwnsCallerPointers(t *testing.T) {
-	f := newCoalesceFixture(t, 30*time.Second)
+	f := newProbeFixture(t)
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
 	latency, status := 7.25, 204
@@ -114,7 +118,7 @@ func TestProbeDrainPersistsPendingAndOwnsCallerPointers(t *testing.T) {
 }
 
 func TestProbePersistFailureRetainsAcceptedPending(t *testing.T) {
-	f := newCoalesceFixture(t, 30*time.Second)
+	f := newProbeFixture(t)
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
 	target := "tcp://example.test:443"
@@ -152,9 +156,9 @@ func TestProbePersistFailureRetainsAcceptedPending(t *testing.T) {
 }
 
 func TestProbeShutdownIdentityFences(t *testing.T) {
-	for _, mutation := range []string{"none", "delete", "revoke", "disable", "generation", "session"} {
+	for _, mutation := range []string{"none", "delete", "revoke", "disable", "credential_epoch", "generation", "session"} {
 		t.Run(mutation, func(t *testing.T) {
-			f := newCoalesceFixture(t, 30*time.Second)
+			f := newProbeFixture(t)
 			f.now = f.now.Add(time.Second)
 			f.report.Seq++
 			f.report.ProbeResults = []v1.ProbeResult{probeResult("tcp://example.test:443", f.now, false)}
@@ -169,6 +173,8 @@ func TestProbeShutdownIdentityFences(t *testing.T) {
 				err = f.nodes.RevokeCredential(context.Background(), f.id)
 			case "disable":
 				err = f.nodes.SetDisabled(context.Background(), f.id, true)
+			case "credential_epoch":
+				_, err = f.db.Exec(`UPDATE nodes SET credential_epoch=credential_epoch+1 WHERE id=?`, f.id)
 			case "generation":
 				_, err = f.db.Exec(`UPDATE nodes SET run_generation='2',report_session_id='new' WHERE id=?`, f.id)
 			case "session":
@@ -203,7 +209,7 @@ func TestProbeBufferTargetAndPendingBounds(t *testing.T) {
 		target := fmt.Sprintf("tcp://host-%d.test:443", n)
 		b.targets[target] = probeTargetBuffer{counted: now, pending: []v1.ProbeResult{probeResult(target, now, true)}}
 	}
-	if err := b.buffer(context.Background(), nil, "node", []v1.ProbeResult{probeResult("tcp://overflow.test:443", now.Add(time.Second), true)}); !errors.Is(err, ErrWriterBusy) {
+	if err := b.buffer(context.Background(), nil, "node", []v1.ProbeResult{probeResult("tcp://overflow.test:443", now.Add(time.Second), true)}, []string{"tcp://overflow.test:443"}); !errors.Is(err, ErrWriterBusy) {
 		t.Fatalf("target overflow error=%v", err)
 	}
 	if len(b.targets) != probeTargetLimit {
@@ -218,7 +224,7 @@ func TestProbeBufferTargetAndPendingBounds(t *testing.T) {
 	b = probeBuffer{credential: credential, generation: 1, session: "session", targets: map[string]probeTargetBuffer{
 		target: {counted: pending[len(pending)-1].CheckedAt, pending: pending},
 	}}
-	if err := b.buffer(context.Background(), nil, "node", []v1.ProbeResult{probeResult(target, now.Add(time.Hour), true)}); !errors.Is(err, ErrWriterBusy) {
+	if err := b.buffer(context.Background(), nil, "node", []v1.ProbeResult{probeResult(target, now.Add(time.Hour), true)}, []string{target}); !errors.Is(err, ErrWriterBusy) {
 		t.Fatalf("pending overflow error=%v", err)
 	}
 	if len(b.targets[target].pending) != probePendingLimit {
@@ -229,7 +235,7 @@ func TestProbeBufferTargetAndPendingBounds(t *testing.T) {
 func TestProbeFastPathAuthenticationFences(t *testing.T) {
 	for _, mutation := range []string{"delete", "revoke", "disable"} {
 		t.Run(mutation, func(t *testing.T) {
-			f := newCoalesceFixture(t, 30*time.Second)
+			f := newProbeFixture(t)
 			var err error
 			switch mutation {
 			case "delete":
@@ -258,7 +264,7 @@ func TestProbeFastPathAuthenticationFences(t *testing.T) {
 }
 
 func TestProbeOverlappingWritersRebasePartialQueue(t *testing.T) {
-	f := newCoalesceFixture(t, 30*time.Second)
+	f := newProbeFixture(t)
 	target := "tcp://example.test:443"
 	t1, t2 := f.now.Add(time.Second), f.now.Add(2*time.Second)
 	f.now = t1
@@ -279,7 +285,7 @@ func TestProbeOverlappingWritersRebasePartialQueue(t *testing.T) {
 	report := f.report
 	report.Seq++
 	report.ProbeResults = []v1.ProbeResult{probeResult(target, t1, false)}
-	if _, err := other.accept(context.Background(), f.id, nil, report, false); err != nil {
+	if _, err := other.accept(context.Background(), f.id, nil, 0, report, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := other.Shutdown(context.Background()); err != nil {
@@ -297,7 +303,7 @@ func TestProbeOverlappingWritersRebasePartialQueue(t *testing.T) {
 func TestProbeProcessAdvanceRetriesPriorAndIncomingAtomically(t *testing.T) {
 	for _, failure := range []string{"probe", "node_update", "commit"} {
 		t.Run(failure, func(t *testing.T) {
-			f := newCoalesceFixture(t, 30*time.Second)
+			f := newProbeFixture(t)
 			oldTarget, newTarget := "tcp://old.example.test:443", "tcp://new.example.test:443"
 			f.now = f.now.Add(time.Second)
 			f.report.Seq++
@@ -354,7 +360,7 @@ func TestProbeProcessAdvanceRetriesPriorAndIncomingAtomically(t *testing.T) {
 }
 
 func TestProbeCredentialRotationAfterInitialReadDropsOldPending(t *testing.T) {
-	f := newCoalesceFixture(t, 30*time.Second)
+	f := newProbeFixture(t)
 	oldTarget, newTarget := "tcp://old.example.test:443", "tcp://new.example.test:443"
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
@@ -377,8 +383,8 @@ func TestProbeCredentialRotationAfterInitialReadDropsOldPending(t *testing.T) {
 		}
 		return f.now
 	}
-	if _, err := probeAccept(t, f); err != nil {
-		t.Fatal(err)
+	if _, err := probeAccept(t, f); !errors.Is(err, nodes.ErrUnauthenticated) {
+		t.Fatalf("queued old-credential report error=%v", err)
 	}
 	var oldCount, newCount int
 	if err := f.db.QueryRow(`SELECT count(*) FROM probe_hourly WHERE target=?`, oldTarget).Scan(&oldCount); err != nil {
@@ -387,7 +393,65 @@ func TestProbeCredentialRotationAfterInitialReadDropsOldPending(t *testing.T) {
 	if err := f.db.QueryRow(`SELECT count(*) FROM probe_hourly WHERE target=?`, newTarget).Scan(&newCount); err != nil {
 		t.Fatal(err)
 	}
-	if oldCount != 0 || newCount != 1 {
+	if oldCount != 0 || newCount != 0 {
 		t.Fatalf("old credential carried probes: old=%d new=%d", oldCount, newCount)
+	}
+}
+
+func TestRuntimeTargetRemovalPurgesPendingAtomicallyAndDuplicatesCannotRestore(t *testing.T) {
+	target := "tcp://removed.example:443"
+	f := newCoalesceFixture(t, 30*time.Second, target)
+	f.now = f.now.Add(time.Second)
+	f.report.Seq++
+	f.report.ProbeResults = []v1.ProbeResult{probeResult(target, f.now, true)}
+	if _, err := probeAccept(t, f); err != nil {
+		t.Fatal(err)
+	}
+	old := f.report
+	f.report.Seq++
+	f.report.Runtime.ProbeTargets = []string{}
+	f.report.ProbeResults = nil
+	if _, err := f.db.Exec(`CREATE TRIGGER reject_runtime_removal BEFORE UPDATE OF agent_runtime ON nodes BEGIN SELECT RAISE(ABORT,'runtime rollback'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := probeAccept(t, f); err == nil {
+		t.Fatal("failed runtime transaction accepted")
+	}
+	runtime, err := f.nodes.GetRuntime(context.Background(), f.id)
+	if err != nil || runtime == nil || len(runtime.ProbeTargets) != 1 || runtime.ProbeTargets[0] != target {
+		t.Fatalf("rollback runtime=%+v err=%v", runtime, err)
+	}
+	state := f.service.acquireExistingState(f.id)
+	state.mu.Lock()
+	pending := len(state.probes.targets[target].pending)
+	state.mu.Unlock()
+	f.service.releaseState(state)
+	if pending != 1 {
+		t.Fatalf("rollback discarded accepted pending probes=%d", pending)
+	}
+	if _, err := f.db.Exec(`DROP TRIGGER reject_runtime_removal`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := probeAccept(t, f); err != nil {
+		t.Fatal(err)
+	}
+	f.report = old
+	f.report.ProbeResults = []v1.ProbeResult{probeResult(target, f.now.Add(time.Second), true)}
+	response, err := probeAccept(t, f)
+	if err != nil || response.AcceptedSeq != 3 {
+		t.Fatalf("duplicate response=%+v err=%v", response, err)
+	}
+	if err := f.service.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err = f.nodes.GetRuntime(context.Background(), f.id)
+	if err != nil || runtime == nil || len(runtime.ProbeTargets) != 0 {
+		t.Fatalf("duplicate restored runtime=%+v err=%v", runtime, err)
+	}
+	for _, table := range []string{"probe_latest", "probe_hourly"} {
+		var count int
+		if err := f.db.QueryRow("SELECT count(*) FROM "+table+" WHERE node_id=?", f.id).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s resurrected target: count=%d err=%v", table, count, err)
+		}
 	}
 }

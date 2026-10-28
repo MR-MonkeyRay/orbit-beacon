@@ -25,10 +25,10 @@ export function formatProbeUptime(uptime, checks) {
   return `${percent} · ${count} ${count === 1 ? 'check' : 'checks'}`;
 }
 
-function probeContent(probes, onConfigure) {
+function probeContent(probes) {
   if (!probes.length) return h('div', {class: 'stack'},
     h('p', {class: 'muted'}, 'No service probes configured.'),
-    onConfigure ? button('Configure service probes', {small: true, onClick: onConfigure}) : null);
+    h('p', {class: 'muted'}, 'Edit the agent’s local configuration and reload it to change probe targets.'));
   return h('div', {class: 'stack'},
     h('ul', {class: 'probe-list'}, probes.map((probe) => {
       const status = {up: ['online', 'Up'], down: ['offline', 'Down'], pending: ['pending', 'Pending']}[probe.status] || ['pending', 'Pending'];
@@ -49,7 +49,7 @@ function probeContent(probes, onConfigure) {
 
 // Retained across Details tab visits. Detaching pauses polling; navigation
 // permanently disposes it and prevents late responses from repainting.
-export function probesPanel(id, signal, onConfigure) {
+export function probesPanel(id, signal) {
   let controller;
   let timer;
   let gone = false;
@@ -83,7 +83,7 @@ export function probesPanel(id, signal, onConfigure) {
     try {
       const data = await api(`/nodes/${encodeURIComponent(id)}/probes`, {signal: request.signal});
       if (!Array.isArray(data.probes)) throw new Error('The server returned unreadable probe results.');
-      if (!request.signal.aborted && !signal?.aborted && controller === request) content.replaceChildren(probeContent(data.probes, onConfigure));
+      if (!request.signal.aborted && !signal?.aborted && controller === request) content.replaceChildren(probeContent(data.probes));
     } catch (error) {
       if (!request.signal.aborted && !signal?.aborted && controller === request && error.name !== 'AbortError') {
         content.replaceChildren(h('div', {class: 'history-error'},

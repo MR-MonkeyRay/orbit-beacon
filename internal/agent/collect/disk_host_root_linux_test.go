@@ -55,7 +55,7 @@ func TestDiskCollectionResolvesPathsUnderHostRoot(t *testing.T) {
 				root = t.TempDir()
 			}
 			t.Setenv("HOST_ROOT", root)
-			collector, err := New(Options{Config: v1.DesiredConfig{
+			collector, err := New(Options{Config: v1.RuntimeSettings{
 				ReportIntervalSeconds: 10,
 				DiskIntervalSeconds:   60,
 				DiskPaths:             test.configured,

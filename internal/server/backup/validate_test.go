@@ -102,7 +102,7 @@ func TestPayloadMonitoringRejectsMalformedJSON(t *testing.T) {
 	db := validationDB(t, Monitoring)
 	for _, system := range []string{"{", "null", `{"hostname":42}`} {
 		db.Exec("DELETE FROM node_observations")
-		if _, err := db.Exec("INSERT INTO node_observations(node_id,last_seen,system,applied_revision,config_error) VALUES(?,NULL,?,0,'')", validationID, system); err != nil {
+		if _, err := db.Exec("INSERT INTO node_observations(node_id,last_seen,system,agent_runtime) VALUES(?,NULL,?,'')", validationID, system); err != nil {
 			t.Fatal(err)
 		}
 		if err := ValidatePayloadData(context.Background(), db, Monitoring, nil); err == nil {
@@ -162,9 +162,9 @@ func TestPayloadChannelCiphertextUsesExistingPurposeAndAAD(t *testing.T) {
 	}
 }
 
-func TestPayloadNodeGenerationAndConfiguration(t *testing.T) {
+func TestPayloadNodeGenerationAndTrafficSettings(t *testing.T) {
 	db := validationDB(t, Configuration)
-	_, err := db.Exec(`INSERT INTO nodes(id,name,status,group_id,region,provider,notes,created_at,public_settings,desired_revision,report_interval_seconds,disk_interval_seconds,interfaces,disk_paths,probe_targets,billing_day,quota_bytes,token_hash,installation_id,first_enrolled_at,run_generation,report_session_id) VALUES(?,'Node','pending',NULL,'','','',?,'{}',1,10,60,'[]','[]','[]',1,'0',NULL,NULL,NULL,'0','')`, validationID, validationTime)
+	_, err := db.Exec(`INSERT INTO nodes(id,name,status,group_id,region,provider,notes,created_at,public_settings,billing_day,quota_bytes,token_hash,credential_epoch,installation_id,first_enrolled_at,run_generation,report_session_id) VALUES(?,'Node','pending',NULL,'','','',?,'{}',1,'0',NULL,0,NULL,NULL,'0','')`, validationID, validationTime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,13 +177,52 @@ func TestPayloadNodeGenerationAndConfiguration(t *testing.T) {
 			t.Fatal("accepted generation", value)
 		}
 	}
-	db.Exec("UPDATE nodes SET run_generation='0',interfaces='[1]'")
-	if err = ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err == nil {
-		t.Fatal("accepted invalid desired JSON")
+	if _, err = db.Exec("UPDATE nodes SET run_generation='0'"); err != nil {
+		t.Fatal(err)
 	}
-	db.Exec("UPDATE nodes SET interfaces='[]',public_settings='null'")
+	for _, tc := range []struct {
+		billingDay int
+		quota      string
+	}{{0, "0"}, {29, "0"}, {1, "-1"}, {1, "01"}, {1, "18446744073709551616"}, {1, ""}} {
+		if _, err = db.Exec("UPDATE nodes SET billing_day=?,quota_bytes=?", tc.billingDay, tc.quota); err != nil {
+			t.Fatal(err)
+		}
+		if err = ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err == nil {
+			t.Fatalf("accepted invalid billing %d/%q", tc.billingDay, tc.quota)
+		}
+	}
+	if _, err = db.Exec("UPDATE nodes SET billing_day=28,quota_bytes='18446744073709551615'"); err != nil {
+		t.Fatal(err)
+	}
+	if err = ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err != nil {
+		t.Fatalf("valid maximum billing settings rejected: %v", err)
+	}
+	db.Exec("UPDATE nodes SET public_settings='null'")
 	if err = ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err == nil {
 		t.Fatal("accepted null public settings")
+	}
+}
+
+func TestPayloadNodeCredentialEpochRequiresNonnegativeInteger(t *testing.T) {
+	db := validationDB(t, Configuration)
+	if _, err := db.Exec(`INSERT INTO nodes(id,name,status,group_id,region,provider,notes,created_at,public_settings,billing_day,quota_bytes,token_hash,credential_epoch,installation_id,first_enrolled_at,run_generation,report_session_id) VALUES(?,'Node','pending',NULL,'','','',?,'{}',1,'0',NULL,0,NULL,NULL,'0','')`, validationID, validationTime); err != nil {
+		t.Fatal(err)
+	}
+	for _, epoch := range []int64{0, 23, 9223372036854775807} {
+		if _, err := db.Exec("UPDATE nodes SET credential_epoch=?", epoch); err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err != nil {
+			t.Fatalf("valid credential epoch %d rejected: %v", epoch, err)
+		}
+	}
+	for _, epoch := range []any{int64(-1), nil, "invalid", 1.5} {
+		if _, err := db.Exec("UPDATE nodes SET credential_epoch=?", epoch); err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err == nil {
+			t.Fatalf("accepted invalid credential epoch %v", epoch)
+		}
 	}
 }
 
@@ -242,15 +281,32 @@ func TestPayloadScheduleWeekdayAndWildcardSemantics(t *testing.T) {
 	}
 }
 
-func TestPayloadObservationConfigurationError(t *testing.T) {
+func TestPayloadObservationRuntimeValidation(t *testing.T) {
 	db := validationDB(t, Monitoring)
-	for _, raw := range []string{`{"revision":-1,"code":"invalid"}`, `{"revision":0,"code":""}`, `null`, `{"fields":[]}`} {
-		db.Exec("DELETE FROM node_observations")
-		if _, err := db.Exec("INSERT INTO node_observations(node_id,last_seen,system,applied_revision,config_error) VALUES(?,NULL,'{}',0,?)", validationID, raw); err != nil {
+	for _, raw := range []string{"", `{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]}`, `{"report_interval_seconds":5,"disk_interval_seconds":3600,"interfaces":["eth0"],"disk_paths":["/srv/data"],"probe_targets":["https://example.com/health"]}`} {
+		if _, err := db.Exec("DELETE FROM node_observations"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("INSERT INTO node_observations(node_id,last_seen,system,agent_runtime) VALUES(?,NULL,'{}',?)", validationID, raw); err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidatePayloadData(context.Background(), db, Monitoring, nil); err != nil {
+			t.Fatalf("valid runtime %q rejected: %v", raw, err)
+		}
+	}
+	for _, raw := range []string{
+		`{`, `null`, `{}`, `[]`,
+		`{"report_interval_seconds":1,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]}`,
+		`{"report_interval_seconds":10,"disk_interval_seconds":59,"interfaces":[],"disk_paths":[],"probe_targets":[]}`,
+		`{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[1],"disk_paths":[],"probe_targets":[]}`,
+		`{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":["relative"],"probe_targets":[]}`,
+		`{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":["ftp://example.com"]}`,
+	} {
+		if _, err := db.Exec("UPDATE node_observations SET agent_runtime=?", raw); err != nil {
 			t.Fatal(err)
 		}
 		if err := ValidatePayloadData(context.Background(), db, Monitoring, nil); err == nil {
-			t.Fatal("accepted invalid config error")
+			t.Fatalf("accepted invalid runtime %q", raw)
 		}
 	}
 }

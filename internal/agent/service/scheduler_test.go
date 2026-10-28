@@ -84,17 +84,13 @@ func TestSchedulerKeepsCollectingWithOneInFlightAndLatestOnlyNotification(t *tes
 		if err != nil {
 			t.Fatal(err)
 		}
-		cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 5))
-		if err != nil {
-			t.Fatal(err)
-		}
+		cfg := runtimeSettings(5)
 		var collections, activeCollections, maxCollections, reports, activeReports, maxReports atomic.Int64
 		started := make(chan v1.Report, 4)
 		release := make(chan struct{})
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		scheduler := service.NewScheduler(service.SchedulerOptions{
-			Identity: state, Config: cfg, RandomFloat: func() float64 { return 0.5 },
+		scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 			Collect: func(ctx context.Context) (v1.Metrics, error) {
 				active := activeCollections.Add(1)
 				if active > maxCollections.Load() {
@@ -122,8 +118,7 @@ func TestSchedulerKeepsCollectingWithOneInFlightAndLatestOnlyNotification(t *tes
 				case <-ctx.Done():
 					return v1.ReportResponse{}, ctx.Err()
 				}
-			},
-		})
+			}})
 		done := make(chan error, 1)
 		go func() { done <- scheduler.Run(ctx) }()
 		synctest.Wait()
@@ -167,24 +162,19 @@ func TestSchedulerNetworkBackoffDoesNotPauseCollection(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), desired(1, 5))
-		if err != nil {
-			t.Fatal(err)
-		}
+		cfg := runtimeSettings(5)
 		var collections atomic.Int64
 		var times []time.Time
 		var generations []uint64
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		scheduler := service.NewScheduler(service.SchedulerOptions{
-			Identity: state, Config: cfg, RandomFloat: func() float64 { return 0.5 },
+		scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 			Collect: func(context.Context) (v1.Metrics, error) { collections.Add(1); return schedulerMetrics(), nil },
 			Report: func(_ context.Context, report v1.Report) (v1.ReportResponse, error) {
 				times = append(times, time.Now())
 				generations = append(generations, report.RunGeneration)
 				return v1.ReportResponse{}, errors.New("offline")
-			},
-		})
+			}})
 		done := make(chan error, 1)
 		go func() { done <- scheduler.Run(ctx) }()
 		synctest.Wait()

@@ -28,7 +28,7 @@ import (
 const collectionTimeout = 3 * time.Second
 
 type Options struct {
-	Config v1.DesiredConfig
+	Config v1.RuntimeSettings
 }
 
 type diskSample struct {
@@ -47,7 +47,7 @@ type networkSample struct {
 // baselines. All elapsed times come from Go's monotonic time component.
 type Collector struct {
 	mu            sync.Mutex
-	config        v1.DesiredConfig
+	config        v1.RuntimeSettings
 	started       time.Time
 	epoch         string
 	sequence      uint64
@@ -77,21 +77,12 @@ func New(options Options) (*Collector, error) {
 
 // SetConfig changes selection atomically. Missing devices are collection
 // failures, not configuration failures, so other sources can keep working.
-func (c *Collector) SetConfig(config v1.DesiredConfig) error {
-	if config.ReportIntervalSeconds == 0 {
-		config.ReportIntervalSeconds = 10
-	}
-	if config.DiskIntervalSeconds == 0 {
-		config.DiskIntervalSeconds = 60
-	}
-	if config.ReportIntervalSeconds < 5 || config.ReportIntervalSeconds > 60 || config.DiskIntervalSeconds < 60 || config.DiskIntervalSeconds > 3600 {
-		return errors.New("collection interval outside supported bounds")
-	}
-	if err := config.ValidateSelection(); err != nil {
+func (c *Collector) SetConfig(config v1.RuntimeSettings) error {
+	if err := config.Validate(); err != nil {
 		return err
 	}
-	// Preserve owned selections when unchanged; the runtime may pass the same
-	// configuration before every sample.
+	// Preserve owned selections when unchanged; the runtime applies settings
+	// only at initialization and explicit reload boundaries.
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if slices.Equal(c.config.DiskPaths, config.DiskPaths) {

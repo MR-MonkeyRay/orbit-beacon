@@ -10,36 +10,26 @@ import (
 // Raw fields preserve explicit null while keeping the typed service API. Decode
 // with the same unknown-field policy as the HTTP boundary; do not bypass it by
 // delegating to the default permissive json.Unmarshal for the outer object.
-func (p *ConfigPatch) UnmarshalJSON(data []byte) error {
+func (p *TrafficSettingsPatch) UnmarshalJSON(data []byte) error {
 	data = bytes.TrimSpace(data)
 	if len(data) == 0 || data[0] != '{' {
-		return errors.New("configuration patch must be an object")
+		return errors.New("traffic settings patch must be an object")
 	}
 	var wire struct {
-		ReportInterval json.RawMessage `json:"report_interval_seconds"`
-		DiskInterval   json.RawMessage `json:"disk_interval_seconds"`
-		Interfaces     json.RawMessage `json:"interfaces"`
-		DiskPaths      json.RawMessage `json:"disk_paths"`
-		ProbeTargets   json.RawMessage `json:"probe_targets"`
-		BillingDay     json.RawMessage `json:"billing_day"`
-		QuotaBytes     json.RawMessage `json:"quota_bytes"`
+		BillingDay json.RawMessage `json:"billing_day"`
+		QuotaBytes json.RawMessage `json:"quota_bytes"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
 		return err
 	}
-	*p = ConfigPatch{}
+	*p = TrafficSettingsPatch{}
 	for _, field := range [...]struct {
 		name string
 		raw  json.RawMessage
 		dst  any
 	}{
-		{"report_interval_seconds", wire.ReportInterval, &p.ReportIntervalSeconds},
-		{"disk_interval_seconds", wire.DiskInterval, &p.DiskIntervalSeconds},
-		{"interfaces", wire.Interfaces, &p.Interfaces},
-		{"disk_paths", wire.DiskPaths, &p.DiskPaths},
-		{"probe_targets", wire.ProbeTargets, &p.ProbeTargets},
 		{"billing_day", wire.BillingDay, &p.BillingDay},
 		{"quota_bytes", wire.QuotaBytes, &p.QuotaBytes},
 	} {
@@ -54,7 +44,7 @@ func (p *ConfigPatch) UnmarshalJSON(data []byte) error {
 			continue
 		}
 		if err := json.Unmarshal(field.raw, field.dst); err != nil {
-			return fmt.Errorf("invalid configuration field %q: %w", field.name, err)
+			return fmt.Errorf("invalid traffic settings field %q: %w", field.name, err)
 		}
 	}
 	return nil

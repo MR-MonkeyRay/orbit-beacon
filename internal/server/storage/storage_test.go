@@ -61,7 +61,7 @@ func TestOpenInitializesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE name='api_tokens'`).Scan(&obsolete); err != nil || obsolete != 0 {
 		t.Fatalf("obsolete API tokens=%d err=%v", obsolete, err)
 	}
-	for _, field := range []struct{ table, column string }{{"users", "role"}, {"inbox_notifications", "audience"}} {
+	for _, field := range []struct{ table, column string }{{"users", "role"}, {"inbox_notifications", "audience"}, {"groups", "desired_config"}, {"nodes", "desired_revision"}, {"nodes", "applied_revision"}, {"nodes", "config_error"}, {"nodes", "report_interval_seconds"}, {"nodes", "disk_interval_seconds"}, {"nodes", "interfaces"}, {"nodes", "disk_paths"}, {"nodes", "probe_targets"}} {
 		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info(?) WHERE name=?`, field.table, field.column).Scan(&obsolete); err != nil || obsolete != 0 {
 			t.Fatalf("obsolete %s.%s=%d err=%v", field.table, field.column, obsolete, err)
 		}
@@ -269,6 +269,7 @@ func TestOpenRejectsIncompatibleLedgerWithoutChangingData(t *testing.T) {
 		{"empty", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);"},
 		{"old", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(16,'original');"},
 		{"intermediate", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(17,'original');"},
+		{"previous-current", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(18,'original');"},
 		{"mixed", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'original'),(16,'original');"},
 		{"mixed-current", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'original'),(%d,'original');", storage.CurrentSchemaVersion)},
 		{"future", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(%d,'original');", storage.CurrentSchemaVersion+1)},

@@ -44,8 +44,8 @@ func table(name, source, where, definition, primary string) tableSpec {
 var categoryTables = map[Category][]tableSpec{
 	Configuration: {
 		table("users", "main", "", "id TEXT,username TEXT,password_hash TEXT,created_at TEXT", "id"),
-		table("groups", "main", "", "id TEXT,name TEXT,desired_config TEXT", "id"),
-		table("nodes", "main", "", "id TEXT,name TEXT,status TEXT,group_id TEXT,region TEXT,provider TEXT,notes TEXT,created_at TEXT,public_settings TEXT,desired_revision INTEGER,report_interval_seconds INTEGER,disk_interval_seconds INTEGER,interfaces TEXT,disk_paths TEXT,probe_targets TEXT,billing_day INTEGER,quota_bytes TEXT,token_hash BLOB,installation_id TEXT,first_enrolled_at TEXT,run_generation TEXT,report_session_id TEXT", "id"),
+		table("groups", "main", "", "id TEXT,name TEXT", "id"),
+		table("nodes", "main", "", "id TEXT,name TEXT,status TEXT,group_id TEXT,region TEXT,provider TEXT,notes TEXT,created_at TEXT,public_settings TEXT,billing_day INTEGER,quota_bytes TEXT,token_hash BLOB,credential_epoch INTEGER,installation_id TEXT,first_enrolled_at TEXT,run_generation TEXT,report_session_id TEXT", "id"),
 		table("node_tags", "main", "", "node_id TEXT,tag TEXT", "node_id,tag"),
 		table("alert_rules", "main", "", "id TEXT,name TEXT,enabled INTEGER,scope_kind TEXT,scope_id TEXT,metric TEXT,comparator TEXT,threshold REAL,for_seconds INTEGER,severity TEXT,created_at TEXT,updated_at TEXT", "id"),
 		table("notification_channels", "main", "", "id TEXT,name TEXT,kind TEXT,enabled INTEGER,config_json TEXT,secret_ciphertext BLOB,url_ciphertext BLOB,created_at TEXT,updated_at TEXT", "id"),
@@ -53,7 +53,7 @@ var categoryTables = map[Category][]tableSpec{
 		table("backup_plans", "main", "", "id TEXT,name TEXT,enabled INTEGER,kind TEXT,categories_json TEXT,cron TEXT,destination_json TEXT,credentials_ciphertext BLOB,retain_count INTEGER,created_at TEXT,updated_at TEXT", "id"),
 	},
 	Monitoring: {
-		table("node_observations", "main", "", "node_id TEXT,last_seen TEXT,system TEXT,applied_revision INTEGER,config_error TEXT", "node_id"),
+		table("node_observations", "main", "", "node_id TEXT,last_seen TEXT,system TEXT,agent_runtime TEXT", "node_id"),
 		table("traffic_hourly", "main", "", "node_id TEXT,epoch TEXT,period_start TEXT,rx_bytes INTEGER,tx_bytes INTEGER,updated_at TEXT", "node_id,epoch,period_start"),
 		table("traffic_daily", "main", "", "node_id TEXT,day TEXT,rx_bytes INTEGER,tx_bytes INTEGER", "node_id,day"),
 		table("probe_latest", "main", "", "node_id TEXT,target TEXT,ok INTEGER,latency_ms REAL,error TEXT,status_code INTEGER,checked_at TEXT", "node_id,target"),

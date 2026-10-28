@@ -45,7 +45,7 @@ info:
     The data directory must be effective-user-owned and private (0700); SQLite,
     its sidecars and secrets.key must be owned regular 0600 files, never symlinks.
     Linux validates that the backing mount is local and writable.
-    The main database and archives require schema 18 exactly; schemas 16 and 17
+    The main database and archives require schema 19 exactly; previous schemas
     are rejected without migration or automatic removal of existing files.
   license:
     name: GNU General Public License v3.0
@@ -1408,10 +1408,10 @@ paths:
       operationId: revokeNodeCredential
       description: |
         Administrator only; requires the trusted configured Origin and this
-        session's CSRF token. Clears the node credential and installation binding
-        and resets the report identity in one transaction with the
-        node.credential.revoke audit event. Metadata, desired configuration and
-        public settings are kept. The node becomes pending (a disabled node stays
+        session's CSRF token. Clears credential, installation binding, runtime,
+        last_seen, system, report identity and probe observations in one audited
+        transaction. Metadata, traffic billing, accumulated traffic, first enrollment
+        and public settings are kept. The node becomes pending (disabled stays
         disabled) and disappears from the public page; its agent receives 401 on
         the next request. Issue a new single-node enrollment ticket to bind a
         fresh installation. Revoking an already revoked node succeeds.
@@ -1425,21 +1425,42 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
-  /api/v1/nodes/{id}/config:
+  /api/v1/nodes/{id}/runtime:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
-      operationId: getDesiredConfig
+      operationId: getAgentRuntime
+      description: Last accepted runtime for the current credential, never a server desired configuration. Null before a valid report; credential replacement or revocation clears observations. The removed /config route returns 404.
       responses:
         '200':
-          description: Persistent desired configuration, not a claim of agent application.
+          description: Agent-owned runtime observation.
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/DesiredConfig'}
+              schema:
+                type: object
+                additionalProperties: false
+                required: [runtime]
+                properties:
+                  runtime:
+                    oneOf:
+                      - {$ref: '#/components/schemas/RuntimeSettings'}
+                      - {type: 'null'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/traffic-settings:
+    parameters:
+      - $ref: '#/components/parameters/NodeID'
+    get:
+      operationId: getTrafficSettings
+      responses:
+        '200':
+          description: Server-owned billing settings; never sent to the agent.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TrafficSettings'}
         default: {$ref: '#/components/responses/Error'}
     patch:
-      operationId: patchDesiredConfig
-      description: Administrator only. Actual changes increment revision atomically. Omitted fields remain unchanged; explicit null and empty patches are rejected. Unchanged values return the existing revision without another audit event. All invalid supported fields are returned together. Combined interface and disk identifiers must fit a 48 KiB budget for their three JSON-escaped report occurrences, leaving 16 KiB for other fields; partial patches are checked against persisted selections. Probe targets are visible to every console user, so URLs must not contain credentials, tokens or other secrets. Audit details record only the target count, never target values.
+      operationId: patchTrafficSettings
+      description: Omitted fields remain unchanged; null, unknown keys and wrong types are rejected. Changed values and node.traffic_settings.patch audit commit together; unchanged values create no audit event.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -1450,25 +1471,15 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              minProperties: 1
               properties:
-                report_interval_seconds: {type: integer, minimum: 5, maximum: 60}
-                disk_interval_seconds: {type: integer, minimum: 60, maximum: 3600}
-                interfaces: {$ref: '#/components/schemas/InterfaceSelection'}
-                disk_paths:
-                  type: array
-                  maxItems: 8
-                  items: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 1024}
-                probe_targets: {$ref: '#/components/schemas/ProbeTargets'}
                 billing_day: {type: integer, minimum: 1, maximum: 28}
                 quota_bytes: {$ref: '#/components/schemas/DecimalCounter'}
       responses:
         '200':
-          description: Updated desired configuration.
+          description: Saved billing settings.
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/DesiredConfig'}
-        '400': {$ref: '#/components/responses/Error'}
+              schema: {$ref: '#/components/schemas/TrafficSettings'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes/batch:
     post:
@@ -1702,7 +1713,7 @@ paths:
     post:
       operationId: reportAgent
       security: [{nodeBearer: []}]
-      description: POST-only telemetry; credential recovery uses the separate POST /api/agent/v1/recover endpoint and never fabricates a report. Target comes exclusively from Bearer authentication; requests never contain node_id. Maximum 64 KiB; one request/second per node, burst three. Authentication and admission charging precede body reads, so malformed, oversized, unsupported and conflicting authenticated requests all consume capacity. Unauthenticated requests neither read bodies nor charge a node. Processing transactionally rechecks the exact credential. New generations replace the durable session fence; older generations or same-generation different sessions return 409. Duplicate/out-of-order sequence returns the already accepted sequence without updating latest/last_seen. Sequence and latest state are process-local, not durable history. A disabled node receives 403 node_disabled before its body is read. When the reported config_revision is newer than the stored desired revision (for example after a database restore), the server advances the desired revision past it and returns the stored configuration so later changes still apply. Revisions above 9007199254740991 (2^53-1, the server ceiling) are rejected with 400 validation_failed.
+      description: POST-only telemetry; recovery uses /api/agent/v1/recover without a report. Target comes exclusively from Bearer authentication. Maximum 64 KiB; one request/second per node, burst three. Authentication/admission precede body reads. Processing rechecks the exact credential transactionally. New generations replace the durable session fence; older generations or same-generation different sessions return 409. Duplicate/old sequences cannot replace latest, last_seen, runtime or re-add removed probe targets. Latest/sequence state is process-local, not durable history. Runtime is required and agent-owned; target results must belong to this report's runtime. Accepted runtime changes persist with existing identity fences and remove obsolete probe observations. Disabled nodes receive 403 before body reads. No desired settings are returned.
       requestBody:
         required: true
         content:
@@ -1710,7 +1721,7 @@ paths:
             schema: {$ref: '#/components/schemas/Report'}
       responses:
         '200':
-          description: Accepted live sequence, with only newer desired configuration. Traffic acknowledgements cover committed counters and expired entries discarded by the server.
+          description: Accepted live sequence. Traffic acknowledgements cover committed counters and expired entries discarded by the server.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ReportResponse'}
@@ -2374,7 +2385,7 @@ components:
     Node:
       type: object
       additionalProperties: false
-      required: [id, name, status, notes, region, provider, group_id, tags, created_at, last_seen, presence, config, agent_version]
+      required: [id, name, status, notes, region, provider, group_id, tags, created_at, last_seen, presence, agent_version]
       properties:
         id: {type: string, format: uuid}
         name: {type: string}
@@ -2390,29 +2401,12 @@ components:
           description: Sorted tag strings; an untagged node returns [], never null.
           items: {type: string}
         created_at: {type: string, format: date-time, description: UTC RFC3339.}
-        last_seen: {type: [string, 'null'], format: date-time, description: Persisted UTC RFC3339 reception time; null before the first report. Credential revocation may retain an earlier report time; presence still reflects the absent credential. Writes are coalesced so this time and presence may lag by up to about 30 seconds.}
+        last_seen: {type: [string, 'null'], format: date-time, description: Persisted UTC reception time; null before first report and after credential replacement/revocation. Ordinary writes coalesce so this inventory view may lag about 30 seconds.}
         presence:
           type: string
           enum: [online, offline, never, disabled, pending]
           description: Disabled status takes precedence; pending status or absent credential is pending. An enrolled node without last_seen is never. Otherwise online means last_seen is between zero and 180 seconds ago inclusive; older or future times are offline. The legacy status field is retained unchanged.
-        config: {$ref: '#/components/schemas/NodeConfigStatus'}
         agent_version: {type: string, maxLength: 64, pattern: '^[A-Za-z0-9._+\-]*$', description: Agent version from persisted system identity; empty when an older agent did not supply it.}
-    NodeConfigStatus:
-      type: object
-      additionalProperties: false
-      required: [desired_revision, applied_revision, state, error]
-      properties:
-        desired_revision: {type: integer, minimum: 1}
-        applied_revision: {type: integer, minimum: 0}
-        state: {type: string, enum: [applied, pending, error], description: Error when config_error is present; otherwise applied when revisions match and pending when they differ. Saving desired configuration is not an acknowledgment.}
-        error:
-          type: [object, 'null']
-          additionalProperties: false
-          required: [revision, code]
-          properties:
-            revision: {type: integer, minimum: 0}
-            code: {type: string}
-            fields: {type: object, additionalProperties: {type: string}}
     MetricHistory:
       type: object
       additionalProperties: false
@@ -2557,13 +2551,12 @@ components:
         x-minLengthBytes: 1
         x-maxLengthBytes: 1024
         pattern: '^\S+$'
-    DesiredConfig:
+    RuntimeSettings:
       type: object
-      additionalProperties: false
-      required: [revision, report_interval_seconds, disk_interval_seconds, interfaces, disk_paths, probe_targets, billing_day, quota_bytes]
-      description: Shared server/agent selection validation reserves 16 KiB of the 64 KiB report limit for the envelope; three JSON-escaped occurrences of all selected disk paths and interface names together must fit the remaining 48 KiB.
+      additionalProperties: true
+      required: [report_interval_seconds, disk_interval_seconds, interfaces, disk_paths, probe_targets]
+      description: Agent-owned settings. Local JSON is strict and applies defaults 10/60/empty arrays; reports must supply every runtime field without null/default filling. The budget counts four escaped occurrences of paths/interfaces and two of probe targets, reserving 13 KiB for the bounded collector envelope. The final encoded report is still capped at 64 KiB. Empty interfaces use the default route; empty disks use the agent default; empty probes disable probing.
       properties:
-        revision: {type: integer, minimum: 1}
         report_interval_seconds: {type: integer, minimum: 5, maximum: 60}
         disk_interval_seconds: {type: integer, minimum: 60, maximum: 3600}
         interfaces: {$ref: '#/components/schemas/InterfaceSelection'}
@@ -2574,8 +2567,13 @@ components:
           description: Absolute platform-valid paths, each at most 1024 bytes without NUL. Shared server/agent/collector validation.
           items: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 1024, pattern: '^[^\u0000]+$'}
         probe_targets: {$ref: '#/components/schemas/ProbeTargets'}
+    TrafficSettings:
+      type: object
+      additionalProperties: false
+      required: [billing_day, quota_bytes]
+      properties:
         billing_day: {type: integer, minimum: 1, maximum: 28}
-        quota_bytes: {$ref: '#/components/schemas/DecimalCounter'}
+        quota_bytes: {$ref: '#/components/schemas/DecimalCounter', description: Zero means unlimited; server business setting only.}
     Enrollment:
       type: object
       required: [id, expires_at, max_uses, uses]
@@ -2769,26 +2767,18 @@ components:
     Report:
       type: object
       additionalProperties: true
-      required: [protocol_version, run_generation, session_id, seq, sampled_at, config_revision, metrics, traffic]
+      required: [protocol_version, run_generation, session_id, seq, sampled_at, runtime, metrics, traffic]
       properties:
         protocol_version: {const: 1}
         run_generation: {type: integer, minimum: 1, description: Monotonic within the current node credential; changing the credential resets server fencing.}
         session_id: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
         seq: {type: integer, minimum: 1}
         sampled_at: {type: string, format: date-time}
-        config_revision: {type: integer, minimum: 1}
+        runtime: {$ref: '#/components/schemas/RuntimeSettings'}
         system: {$ref: '#/components/schemas/System'}
         metrics: {$ref: '#/components/schemas/Metrics'}
         traffic: {type: array, maxItems: 24, description: Unique epoch/period_start pairs with cumulative per-process hourly byte counters., items: {$ref: '#/components/schemas/Traffic'}}
         probe_results: {type: array, maxItems: 5, description: Latest result for each currently configured target; target values are unique., items: {$ref: '#/components/schemas/ProbeResult'}}
-        config_error:
-          type: object
-          additionalProperties: true
-          required: [revision, code]
-          properties:
-            revision: {type: integer, minimum: 0, description: Rejected revision; zero represents an invalid revision that cannot be reported as a nonnegative identifier.}
-            code: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 64}
-            fields: {type: object, additionalProperties: {type: string}}
     ReportResponse:
       type: object
       additionalProperties: true
@@ -2797,5 +2787,4 @@ components:
         node_id: {type: string, format: uuid, description: Authenticated node identity; never a request target.}
         accepted_seq: {type: integer, minimum: 1}
         server_time: {type: string, format: date-time}
-        desired_config: {$ref: '#/components/schemas/DesiredConfig'}
         traffic_acks: {type: array, maxItems: 24, description: Committed counters for entries in this report; values may lag. Buckets older than 35 days are acknowledged and discarded. Future buckets beyond one hour are neither stored nor acknowledged., items: {$ref: '#/components/schemas/Traffic'}}

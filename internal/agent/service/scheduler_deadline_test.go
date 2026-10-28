@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -20,13 +21,9 @@ func TestSchedulerDeadlineStillReportsCompleteConfiguredMetrics(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		config := desired(1, 10)
+		config := runtimeSettings(10)
 		config.Interfaces = []string{"deadline0", "deadline1"}
 		config.DiskPaths = []string{t.TempDir(), t.TempDir()}
-		cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), config)
-		if err != nil {
-			t.Fatal(err)
-		}
 		collector, err := collect.New(collect.Options{Config: config})
 		if err != nil {
 			t.Fatal(err)
@@ -35,7 +32,7 @@ func TestSchedulerDeadlineStillReportsCompleteConfiguredMetrics(t *testing.T) {
 		defer cancel()
 		reports := make(chan v1.Report, 1)
 		scheduler := service.NewScheduler(service.SchedulerOptions{
-			Identity: state, Config: cfg,
+			Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return config },
 			Collect: func(ctx context.Context) (v1.Metrics, error) {
 				// Exhaust the scheduler's real collection deadline before collection can finish.
 				<-ctx.Done()
@@ -65,8 +62,8 @@ func TestSchedulerDeadlineStillReportsCompleteConfiguredMetrics(t *testing.T) {
 		if err := report.Validate(); err != nil {
 			t.Errorf("deadline report is not protocol-valid: %v", err)
 		}
-		if report.Seq != 1 || report.ConfigRevision != config.Revision {
-			t.Errorf("deadline changed report ownership/revision: %+v", report)
+		if report.Seq != 1 || !reflect.DeepEqual(report.Runtime, config) {
+			t.Errorf("deadline changed report runtime ownership: %+v", report)
 		}
 		for _, field := range []string{"cpu_percent", "load1", "load5", "load15", "memory_total_bytes", "memory_available_bytes", "swap_total_bytes", "swap_used_bytes", "uptime_seconds"} {
 			if report.Metrics.MetricStatus[field] == "" {

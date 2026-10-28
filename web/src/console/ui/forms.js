@@ -78,14 +78,6 @@ export function passwordInput(props) {
   return control;
 }
 
-// Slider and number input bound together; the number input is the form value.
-export function rangeField(label, name, value, {min, max, step, hint}) {
-  const number = input({type: 'number', name, min, max, step: 1, value, required: true, inputMode: 'numeric', id: `field-${name}`});
-  const range = h('input', {type: 'range', min, max, step, value, tabIndex: -1, 'aria-hidden': 'true'});
-  range.addEventListener('input', () => { number.value = range.value; number.dispatchEvent(new Event('input', {bubbles: true})); });
-  number.addEventListener('input', () => { if (number.value !== '') range.value = number.value; });
-  return field(label, number, {inner: h('div', {class: 'range-field'}, range, number), hint});
-}
 
 // Applies validation_failed field messages to controls with matching
 // data-field or name attributes. Returns whether any control matched.
@@ -126,20 +118,20 @@ export function onSubmit(form, submitButton, action, errorBox) {
   });
 }
 
-// Save is enabled only while the form differs from its initial values; the
+// Save is enabled only while the form differs from its last saved values; the
 // router asks before leaving a page with a dirty form.
 export function trackDirty(form, controls) {
   const snapshot = () => JSON.stringify([...form.querySelectorAll('[name],[data-tags]')]
     .map((element) => (element.dataset.tags !== undefined ? element.getValue() : element.type === 'checkbox' ? element.checked : element.value)));
-  const initial = snapshot();
+  let baseline = snapshot();
   form.syncDirty = () => {
-    const dirty = snapshot() !== initial;
+    const dirty = snapshot() !== baseline;
     form.dataset.dirty = String(dirty);
     controls.save.disabled = !dirty;
     controls.discard.hidden = !dirty;
     controls.note.classList.toggle('on', dirty);
   };
-  form.markClean = () => { form.dataset.dirty = 'false'; };
+  form.markClean = () => { baseline = snapshot(); form.syncDirty(); };
   for (const type of ['input', 'change', 'tags']) form.addEventListener(type, form.syncDirty);
   form.syncDirty();
 }

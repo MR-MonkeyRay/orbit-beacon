@@ -69,7 +69,7 @@ type publicPageRows struct {
 }
 
 func (*publicPageRows) Columns() []string {
-	return []string{"id", "public_settings", "last_seen", "token_hash", "run_generation", "report_session_id"}
+	return []string{"id", "public_settings", "last_seen", "token_hash", "credential_epoch", "run_generation", "report_session_id"}
 }
 func (*publicPageRows) Close() error { return nil }
 func (r *publicPageRows) Next(dest []driver.Value) error {
@@ -78,7 +78,7 @@ func (r *publicPageRows) Next(dest []driver.Value) error {
 	}
 	r.remaining--
 	r.index++
-	values := []driver.Value{fmt.Sprintf("public-%d", r.index), `{"enabled":true,"name":"Public"}`, timekey.Format(r.now), make([]byte, 32), "1", "session"}
+	values := []driver.Value{fmt.Sprintf("public-%d", r.index), `{"enabled":true,"name":"Public"}`, timekey.Format(r.now), make([]byte, 32), int64(0), "1", "session"}
 	copy(dest, values)
 	return nil
 }
@@ -177,12 +177,14 @@ func TestProjectPublicRecordChecksEveryFenceWithoutCreatingState(t *testing.T) {
 	if out.CPUPercent == nil || *out.CPUPercent != 25 {
 		t.Fatalf("matching fence: %+v", out)
 	}
-	for _, fence := range []string{"credential", "generation", "session", "received_at"} {
+	for _, fence := range []string{"credential", "credential_epoch", "generation", "session", "received_at"} {
 		t.Run(fence, func(t *testing.T) {
 			changed := record
 			switch fence {
 			case "credential":
 				changed.Credential[0]++
+			case "credential_epoch":
+				changed.CredentialEpoch++
 			case "generation":
 				changed.Generation++
 			case "session":

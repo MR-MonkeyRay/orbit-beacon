@@ -72,7 +72,7 @@ func TestAdministrativeMutationsAndAuditInsertCommitOrRollbackTogether(t *testin
 		{"create node", http.MethodPost, "/api/v1/nodes", `{"name":"created with audit"}`, "", http.StatusCreated, false},
 		{"patch public settings", http.MethodPatch, "/api/v1/nodes/" + nodeID + "/public-settings", `{"enabled":true,"name":"published label","region":"eu","provider":"cloud"}`, nodeID, http.StatusOK, false},
 		{"patch node metadata and tags", http.MethodPatch, "/api/v1/nodes/" + nodeID, `{"notes":"new note","region":"eu","provider":"cloud","group_id":"` + groupID + `","tags":["new"]}`, nodeID, http.StatusOK, false},
-		{"patch desired configuration", http.MethodPatch, "/api/v1/nodes/" + nodeID + "/config", `{"report_interval_seconds":30}`, nodeID, http.StatusOK, false},
+		{"patch traffic settings", http.MethodPatch, "/api/v1/nodes/" + nodeID + "/traffic-settings", `{"billing_day":2}`, nodeID, http.StatusOK, false},
 		{"delete node and revoke identity", http.MethodDelete, "/api/v1/nodes/" + nodeID + "?confirm=true", "", nodeID, http.StatusNoContent, false},
 		{"batch disable node", http.MethodPost, "/api/v1/nodes/batch", `{"node_ids":["` + nodeID + `"],"action":"disable"}`, nodeID, http.StatusOK, true},
 		{"create group", http.MethodPost, "/api/v1/groups", `{"name":"created with audit"}`, "", http.StatusCreated, false},

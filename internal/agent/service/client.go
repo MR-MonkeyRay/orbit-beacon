@@ -26,7 +26,6 @@ type ClientOptions struct {
 	CAFile     string
 	HTTPClient *http.Client
 	Identity   *identity.Store
-	Config     *ConfigStore
 	System     v1.System
 	// AllowInsecureLoopback is for explicit local integration tests only.
 	AllowInsecureLoopback bool
@@ -36,7 +35,6 @@ type Client struct {
 	baseURL  string
 	http     *http.Client
 	identity *identity.Store
-	config   *ConfigStore
 	system   v1.System
 }
 
@@ -63,8 +61,8 @@ var (
 )
 
 func NewClient(options ClientOptions) (*Client, error) {
-	if options.Identity == nil || options.Config == nil {
-		return nil, errors.New("agent identity and config are required")
+	if options.Identity == nil {
+		return nil, errors.New("agent identity is required")
 	}
 	parsed, parseErr := url.Parse(options.ServerURL)
 	if parseErr != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawPath != "" {
@@ -116,7 +114,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 	copy := *client
 	copy.Timeout = 5 * time.Second
 	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Client{baseURL: origin, http: &copy, identity: options.Identity, config: options.Config, system: options.System}, nil
+	return &Client{baseURL: origin, http: &copy, identity: options.Identity, system: options.System}, nil
 }
 
 func (c *Client) Close() { c.http.CloseIdleConnections() }
@@ -230,10 +228,6 @@ func (c *Client) recoverEnrollment(ctx context.Context, state identity.Identity)
 // Report authenticates using the durable node secret even after a lost enrollment response.
 func (c *Client) Report(ctx context.Context, report v1.Report) (v1.ReportResponse, error) {
 	var response v1.ReportResponse
-	if report.ConfigRevision == 0 {
-		report.ConfigRevision, _ = c.config.settings()
-	}
-	report.ConfigError = c.config.ConfigError()
 	state := c.identity.Current()
 	credential := state.NodeToken
 	err := c.post(ctx, "/api/agent/v1/report", credential, report, &response)
@@ -263,11 +257,6 @@ func (c *Client) Report(ctx context.Context, report v1.Report) (v1.ReportRespons
 		if err := c.identity.ConfirmEnrollment(ctx, credential, response.NodeID); err != nil {
 			return v1.ReportResponse{}, err
 		}
-	}
-	if response.DesiredConfig != nil {
-		// The server accepted the sample. A rejected setting is reported on the next
-		// sample, without converting acceptance into a network retry.
-		_ = c.config.Apply(ctx, *response.DesiredConfig)
 	}
 	return response, nil
 }

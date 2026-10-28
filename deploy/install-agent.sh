@@ -62,6 +62,7 @@ bin_dir=$root/usr/local/bin
 binary=$bin_dir/orbitbeacon-agent
 config_dir=$root/etc/orbitbeacon
 policy=$config_dir/install-policy.json
+runtime_config=$config_dir/agent.json
 ca_copy=$config_dir/ca.pem
 state=$root/var/lib/orbitbeacon-agent
 token_file=$state/enrollment.token
@@ -87,7 +88,7 @@ safe_path() {
         [ -n "$checked" ] || checked=/
     done
 }
-for path in "$binary" "$policy" "$ca_copy" "$token_file" "$state/identity.json" "$unit"; do
+for path in "$binary" "$policy" "$runtime_config" "$ca_copy" "$token_file" "$state/identity.json" "$unit"; do
     safe_path "$path"
 done
 has_systemd() {
@@ -97,7 +98,7 @@ has_systemd() {
 if [ "$uninstall" = 1 ]; then
     [ -z "$server$version$ca_source$token_source$local_binary" ] || die 'Do not combine install options with --uninstall.'
     say 'Revoke this node credential in the console first; local deletion does not revoke it.'
-    say 'Uninstall removes the service, binary, policy, CA copy and ALL agent state. Stop any foreground agent first.'
+    say 'Uninstall removes the service, binary, policy, local configuration, CA copy and ALL agent state. Stop any foreground agent first.'
     if [ "$yes" != 1 ]; then
         printf 'Type yes to permanently remove this installation: ' >&2
         answer=
@@ -109,13 +110,14 @@ if [ "$uninstall" = 1 ]; then
         # A missing unit is harmless; continue removing local files.
         systemctl disable --now orbitbeacon-agent >/dev/null 2>&1 || :
     fi
-    rm -f -- "$unit" "$binary" "$policy" "$ca_copy"
+    rm -f -- "$unit" "$binary" "$policy" "$runtime_config" "$ca_copy"
     rm -rf -- "$state"
     if has_systemd; then systemctl daemon-reload; fi
     say 'Uninstalled. The system account is retained; revoke the server credential if not already done.'
     exit 0
 fi
 [ "$yes" = 0 ] || die '--yes is only valid with --uninstall.'
+[ ! -e "$runtime_config" ] || [ -f "$runtime_config" ] || die 'Local agent configuration must be a regular file.'
 [ -n "$server" ] || die '--server is required.'
 # A conservative ASCII origin grammar also guarantees JSON and shell safety.
 # Permit a single root slash and normalize it away. No userinfo, path, query,
@@ -282,6 +284,17 @@ chown root:root "$policy_tmp"
 chmod 0644 "$policy_tmp"
 mv -f -- "$policy_tmp" "$policy"
 policy_tmp=
+# Keep administrator edits on reinstall; the root-owned directory prevents the
+# agent from replacing this file or planting a symlink during creation.
+safe_path "$runtime_config"
+if [ ! -e "$runtime_config" ]; then
+    policy_tmp=$(mktemp "$config_dir/.agent.XXXXXXXX")
+    printf '%s\n' '{}' > "$policy_tmp"
+    chown "root:$agent_gid" "$policy_tmp"
+    chmod 0640 "$policy_tmp"
+    mv -fT -- "$policy_tmp" "$runtime_config"
+    policy_tmp=
+fi
 
 # Read secrets using shell builtins/redirection only; never put one in argv.
 if [ -n "$token_source" ]; then
@@ -313,20 +326,20 @@ if [ -s "$tmp/token" ]; then
     # Quiet the child: even a failed/malicious endpoint must not echo a token.
     # Do not redirect diagnostics to a log that could retain the token either.
     if [ "$use_runuser" = 1 ]; then
-        if runuser -u "$account" -- "$binary" enroll --install-policy "$policy" --token-file "$token_file" >/dev/null 2>&1; then
+        if runuser -u "$account" -- "$binary" enroll --install-policy "$policy" --config "$runtime_config" --token-file "$token_file" >/dev/null 2>&1; then
             enrolled=1
         else enrolled=0
         fi
     else
         # All interpolated paths are fixed, or guarded ASCII test-root paths.
-        if su -s /bin/sh "$account" -c "exec '$binary' enroll --install-policy '$policy' --token-file '$token_file'" >/dev/null 2>&1; then
+        if su -s /bin/sh "$account" -c "exec '$binary' enroll --install-policy '$policy' --config '$runtime_config' --token-file '$token_file'" >/dev/null 2>&1; then
             enrolled=1
         else enrolled=0
         fi
     fi
     if [ "$enrolled" != 1 ]; then
         say "Enrollment failed. Keep $token_file; do not delete it before retrying."
-        say "Retry as $account: $binary enroll --install-policy $policy --token-file $token_file"
+        say "Retry as $account: $binary enroll --install-policy $policy --config $runtime_config --token-file $token_file"
         die 'Check the server URL, CA, network and token expiry. Service was not enabled.'
     fi
     say 'Enrollment succeeded (the agent removes the token on success).'
@@ -355,7 +368,8 @@ User=orbitbeacon-agent
 Group=orbitbeacon-agent
 StateDirectory=orbitbeacon-agent
 StateDirectoryMode=0700
-ExecStart=/usr/local/bin/orbitbeacon-agent run --install-policy /etc/orbitbeacon/install-policy.json
+ExecStart=/usr/local/bin/orbitbeacon-agent run --install-policy /etc/orbitbeacon/install-policy.json --config /etc/orbitbeacon/agent.json
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10s
 # A clone must be enrolled separately instead of reclaiming the same identity.
@@ -402,8 +416,8 @@ if has_systemd; then
 else
     say 'systemd is not running. Run in the foreground as the agent user:'
     if [ "$use_runuser" = 1 ]; then
-        say "runuser -u $account -- $binary run --install-policy $policy"
+        say "runuser -u $account -- $binary run --install-policy $policy --config $runtime_config"
     else
-        say "su -s /bin/sh $account -c \"exec '$binary' run --install-policy '$policy'\""
+        say "su -s /bin/sh $account -c \"exec '$binary' run --install-policy '$policy' --config '$runtime_config'\""
     fi
 fi

@@ -64,13 +64,9 @@ func TestLateConcurrentRotationCannotRollBackNewCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := service.OpenConfigStore(t.Context(), filepath.Join(dir, "desired.json"), v1.DesiredConfig{Revision: 1, ReportIntervalSeconds: 5, DiskIntervalSeconds: 60, BillingDay: 1, QuotaBytes: "0"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	newClient := func(state *identity.Store) *service.Client {
 		t.Helper()
-		client, err := service.NewClient(service.ClientOptions{ServerURL: https.URL, HTTPClient: https.Client(), Identity: state, Config: cfg})
+		client, err := service.NewClient(service.ClientOptions{ServerURL: https.URL, HTTPClient: https.Client(), Identity: state})
 		if err != nil {
 			t.Fatal(err)
 		}

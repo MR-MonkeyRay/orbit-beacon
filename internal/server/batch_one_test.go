@@ -4,12 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -78,28 +75,6 @@ func TestRevokedCredentialKeepsAssetAndAllowsReenrollment(t *testing.T) {
 	}
 }
 
-func TestRestoredDatabaseAdvancesPastAgentRevision(t *testing.T) {
-	f := newAgentHTTP(t, 1)
-	id, token, _ := enrollHTTP(t, f, "a", 1)
-	// The agent persisted revision 7 before the database was restored to revision 1.
-	body := strings.Replace(reportBody(1, 1, "a", 10), `"config_revision":1`, `"config_revision":7`, 1)
-	response := accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, body), 1)
-	if response.DesiredConfig == nil || response.DesiredConfig.Revision != 8 {
-		t.Fatalf("restored configuration was not resent past the agent revision: %+v", response.DesiredConfig)
-	}
-	interval := 30
-	config, err := f.nodes.PatchConfig(context.Background(), id, nodes.ConfigPatch{ReportIntervalSeconds: &interval})
-	if err != nil || config.Revision != 9 {
-		t.Fatalf("later change revision=%d err=%v", config.Revision, err)
-	}
-	f.now = f.now.Add(time.Second)
-	body = strings.Replace(reportBody(1, 2, "a", 10), `"config_revision":1`, `"config_revision":8`, 1)
-	response = accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, body), 2)
-	if response.DesiredConfig == nil || response.DesiredConfig.Revision != 9 || response.DesiredConfig.ReportIntervalSeconds != 30 {
-		t.Fatalf("later change was not delivered: %+v", response.DesiredConfig)
-	}
-}
-
 func TestEnrollmentClaimAndSessionsAreAudited(t *testing.T) {
 	f := newAgentHTTP(t, 1)
 	id, _, ticketID := enrollHTTP(t, f, "a", 1)
@@ -162,27 +137,5 @@ func apiErrorAgent(t *testing.T, response interface {
 	_ = json.NewDecoder(result.Body).Decode(&body)
 	if result.StatusCode != status || body.Code != code {
 		t.Fatalf("status=%d code=%q, want %d %q", result.StatusCode, body.Code, status, code)
-	}
-}
-
-func TestRevisionAdvanceStopsAtCeiling(t *testing.T) {
-	f := newAgentHTTP(t, 1)
-	id, token, _ := enrollHTTP(t, f, "a", 1)
-	body := strings.Replace(reportBody(1, 1, "a", 10), `"config_revision":1`, fmt.Sprintf(`"config_revision":%d`, nodes.MaxConfigRevision-1), 1)
-	response := accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, body), 1)
-	if response.DesiredConfig == nil || response.DesiredConfig.Revision != nodes.MaxConfigRevision {
-		t.Fatalf("advance to ceiling = %+v", response.DesiredConfig)
-	}
-	interval := 30
-	var validation *nodes.ValidationError
-	if _, err := f.nodes.PatchConfig(context.Background(), id, nodes.ConfigPatch{ReportIntervalSeconds: &interval}); !errors.As(err, &validation) {
-		t.Fatalf("patch beyond ceiling = %v", err)
-	}
-	f.now = f.now.Add(time.Second)
-	body = strings.Replace(reportBody(1, 2, "a", 10), `"config_revision":1`, fmt.Sprintf(`"config_revision":%d`, int64(math.MaxInt64)), 1)
-	apiErrorAgent(t, agentRequest(t, f, "/api/agent/v1/report", token, body), http.StatusBadRequest, "validation_failed")
-	config, err := f.nodes.GetConfig(context.Background(), id)
-	if err != nil || config.Revision != nodes.MaxConfigRevision {
-		t.Fatalf("stored revision=%d err=%v", config.Revision, err)
 	}
 }

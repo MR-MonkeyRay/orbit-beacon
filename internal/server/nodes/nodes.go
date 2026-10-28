@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,27 +37,18 @@ const (
 )
 
 type Node struct {
-	ID           string       `json:"id"`
-	Name         string       `json:"name"`
-	Status       string       `json:"status"`
-	Notes        string       `json:"notes"`
-	Region       string       `json:"region"`
-	Provider     string       `json:"provider"`
-	GroupID      *string      `json:"group_id"`
-	Tags         []string     `json:"tags"`
-	CreatedAt    time.Time    `json:"created_at"`
-	LastSeen     *time.Time   `json:"last_seen"`
-	Presence     string       `json:"presence"`
-	Config       ConfigStatus `json:"config"`
-	AgentVersion string       `json:"agent_version"`
-}
-
-// ConfigStatus describes the last reported application of desired configuration.
-type ConfigStatus struct {
-	DesiredRevision int64           `json:"desired_revision"`
-	AppliedRevision int64           `json:"applied_revision"`
-	State           string          `json:"state"`
-	Error           *v1.ConfigError `json:"error"`
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	Status       string     `json:"status"`
+	Notes        string     `json:"notes"`
+	Region       string     `json:"region"`
+	Provider     string     `json:"provider"`
+	GroupID      *string    `json:"group_id"`
+	Tags         []string   `json:"tags"`
+	CreatedAt    time.Time  `json:"created_at"`
+	LastSeen     *time.Time `json:"last_seen"`
+	Presence     string     `json:"presence"`
+	AgentVersion string     `json:"agent_version"`
 }
 
 type CreateRequest struct {
@@ -87,24 +77,20 @@ type BatchResult struct {
 	ErrorCode string `json:"error_code,omitempty"`
 }
 
-type ConfigPatch struct {
-	ReportIntervalSeconds *int      `json:"report_interval_seconds,omitempty"`
-	DiskIntervalSeconds   *int      `json:"disk_interval_seconds,omitempty"`
-	Interfaces            *[]string `json:"interfaces,omitempty"`
-	DiskPaths             *[]string `json:"disk_paths,omitempty"`
-	ProbeTargets          *[]string `json:"probe_targets,omitempty"`
-	BillingDay            *int      `json:"billing_day,omitempty"`
-	QuotaBytes            *string   `json:"quota_bytes,omitempty"`
-	invalidFields         map[string]string
+type TrafficSettings struct {
+	BillingDay int    `json:"billing_day"`
+	QuotaBytes string `json:"quota_bytes"`
 }
 
-// MaxConfigRevision bounds desired configuration revisions far below int64
-// overflow and within exact JSON number precision for browser clients.
-const MaxConfigRevision = 1<<53 - 1
+type TrafficSettingsPatch struct {
+	BillingDay    *int    `json:"billing_day,omitempty"`
+	QuotaBytes    *string `json:"quota_bytes,omitempty"`
+	invalidFields map[string]string
+}
 
 type ValidationError struct{ Fields map[string]string }
 
-func (err *ValidationError) Error() string { return "desired configuration validation failed" }
+func (err *ValidationError) Error() string { return "node settings validation failed" }
 
 type Options struct {
 	MaxNodes int
@@ -162,7 +148,7 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 	if err != nil {
 		return Node{}, err
 	}
-	node := Node{ID: id, Name: req.Name, Status: "pending", Presence: "pending", Config: ConfigStatus{DesiredRevision: 1, State: "pending"}, Tags: []string{}, CreatedAt: s.now().UTC()}
+	node := Node{ID: id, Name: req.Name, Status: "pending", Presence: "pending", Tags: []string{}, CreatedAt: s.now().UTC()}
 	// BEGIN IMMEDIATE reserves the writer before checking capacity, including
 	// across independent services using the same persistent database.
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -192,14 +178,14 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 type scanner interface{ Scan(...any) error }
 
 const nodeColumns = `id, name, status, created_at, notes, region, provider, group_id,
-	(SELECT json_group_array(tag) FROM (SELECT tag FROM node_tags WHERE node_id = nodes.id ORDER BY tag)), last_seen, length(token_hash) > 0, desired_revision, applied_revision, config_error, system`
+	(SELECT json_group_array(tag) FROM (SELECT tag FROM node_tags WHERE node_id = nodes.id ORDER BY tag)), last_seen, length(token_hash) > 0, system`
 
 func scanNode(row scanner, now time.Time) (Node, error) {
 	var node Node
-	var created, tags, configError, systemJSON string
+	var created, tags, systemJSON string
 	var lastSeen sql.NullString
 	var hasCredential sql.NullBool
-	if err := row.Scan(&node.ID, &node.Name, &node.Status, &created, &node.Notes, &node.Region, &node.Provider, &node.GroupID, &tags, &lastSeen, &hasCredential, &node.Config.DesiredRevision, &node.Config.AppliedRevision, &configError, &systemJSON); err != nil {
+	if err := row.Scan(&node.ID, &node.Name, &node.Status, &created, &node.Notes, &node.Region, &node.Provider, &node.GroupID, &tags, &lastSeen, &hasCredential, &systemJSON); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Node{}, ErrNotFound
 		}
@@ -235,21 +221,6 @@ func scanNode(row scanner, now time.Time) (Node, error) {
 		node.Presence = "offline"
 	default:
 		node.Presence = "online"
-	}
-	// Stored agent output must not break the inventory: an unreadable error
-	// still reports the error state, and unreadable system data is omitted.
-	if configError != "" {
-		if err := json.Unmarshal([]byte(configError), &node.Config.Error); err != nil || node.Config.Error == nil {
-			node.Config.Error = &v1.ConfigError{Code: "unreadable"}
-		}
-	}
-	switch {
-	case node.Config.Error != nil:
-		node.Config.State = "error"
-	case node.Config.AppliedRevision >= node.Config.DesiredRevision:
-		node.Config.State = "applied"
-	default:
-		node.Config.State = "pending"
 	}
 	var system v1.System
 	if json.Unmarshal([]byte(systemJSON), &system) == nil {
@@ -412,9 +383,16 @@ func (s *Service) RevokeCredential(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE nodes SET token_hash = NULL, installation_id = NULL, run_generation = '0', report_session_id = '', status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'pending' END WHERE id = ?`, id)
+	// Exhaustion must roll back, not let SQLite promote the identity fence to
+	// REAL. The existing NOT NULL constraint rejects only an actual increment.
+	result, err := tx.ExecContext(ctx, `UPDATE nodes SET credential_epoch = CASE WHEN length(token_hash)>0 THEN CASE WHEN credential_epoch < 9223372036854775807 THEN credential_epoch + 1 ELSE NULL END ELSE credential_epoch END, token_hash = NULL, installation_id = NULL, run_generation = '0', report_session_id = '', agent_runtime = '', last_seen = NULL, system = '{}', status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'pending' END WHERE id = ?`, id)
 	if err := affected(result, err); err != nil {
 		return err
+	}
+	for _, table := range []string{"probe_latest", "probe_hourly"} {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE node_id=?", id); err != nil {
+			return err
+		}
 	}
 	if err := audit.Insert(ctx, tx, "node.credential.revoke", id, s.now()); err != nil {
 		return err
@@ -440,27 +418,35 @@ func affected(result sql.Result, err error) error {
 	return nil
 }
 
-func (s *Service) AuthenticateToken(ctx context.Context, token string) (Node, error) {
+// Authentication is the internal credential identity observed by one read.
+// It is not a node DTO and must not be exposed over the API.
+type Authentication struct {
+	ID              string `json:"-"`
+	CredentialEpoch int64  `json:"-"`
+}
+
+func (s *Service) AuthenticateToken(ctx context.Context, token string) (Authentication, error) {
 	if len(token) < 32 || len(token) > 256 {
-		return Node{}, ErrUnauthenticated
+		return Authentication{}, ErrUnauthenticated
 	}
 	digest := sha256.Sum256([]byte(token))
-	var id, status string
+	var identity Authentication
+	var status string
 	var stored []byte
-	err := s.db.QueryRowContext(ctx, "SELECT id, token_hash, status FROM nodes WHERE token_hash = ?", digest[:]).Scan(&id, &stored, &status)
+	err := s.db.QueryRowContext(ctx, "SELECT id, credential_epoch, token_hash, status FROM nodes WHERE token_hash = ?", digest[:]).Scan(&identity.ID, &identity.CredentialEpoch, &stored, &status)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Node{}, ErrUnauthenticated
+		return Authentication{}, ErrUnauthenticated
 	}
 	if err != nil {
-		return Node{}, err
+		return Authentication{}, err
 	}
 	if subtle.ConstantTimeCompare(stored, digest[:]) != 1 {
-		return Node{}, ErrUnauthenticated
+		return Authentication{}, ErrUnauthenticated
 	}
 	if status == "disabled" {
-		return Node{}, ErrDisabled
+		return Authentication{}, ErrDisabled
 	}
-	return s.Get(ctx, id)
+	return identity, nil
 }
 
 // Delete revokes identity and cancels pending work in the same transaction as
@@ -538,47 +524,47 @@ func (s *Service) Batch(ctx context.Context, req BatchRequest) ([]BatchResult, e
 	return results, nil
 }
 
-func readConfig(ctx context.Context, query interface {
+// GetRuntime returns the current identity's last observed agent settings.
+func (s *Service) GetRuntime(ctx context.Context, id string) (*v1.RuntimeSettings, error) {
+	var raw string
+	if err := s.db.QueryRowContext(ctx, "SELECT CASE WHEN length(token_hash)>0 AND run_generation!='0' AND report_session_id!='' THEN agent_runtime ELSE '' END FROM nodes WHERE id=?", id).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if raw == "" {
+		return nil, nil
+	}
+	var runtime v1.RuntimeSettings
+	if err := json.Unmarshal([]byte(raw), &runtime); err != nil {
+		return nil, err
+	}
+	if err := runtime.Validate(); err != nil {
+		return nil, err
+	}
+	return &runtime, nil
+}
+
+func readTrafficSettings(ctx context.Context, q interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, id string) (v1.DesiredConfig, error) {
-	var cfg v1.DesiredConfig
-	var interfaces, disks, probes string
-	err := query.QueryRowContext(ctx, `SELECT desired_revision, report_interval_seconds, disk_interval_seconds, interfaces, disk_paths, probe_targets, billing_day, quota_bytes FROM nodes WHERE id = ?`, id).Scan(&cfg.Revision, &cfg.ReportIntervalSeconds, &cfg.DiskIntervalSeconds, &interfaces, &disks, &probes, &cfg.BillingDay, &cfg.QuotaBytes)
+}, id string) (TrafficSettings, error) {
+	var settings TrafficSettings
+	err := q.QueryRowContext(ctx, "SELECT billing_day, quota_bytes FROM nodes WHERE id=?", id).Scan(&settings.BillingDay, &settings.QuotaBytes)
 	if errors.Is(err, sql.ErrNoRows) {
-		return v1.DesiredConfig{}, ErrNotFound
+		return TrafficSettings{}, ErrNotFound
 	}
-	if err != nil {
-		return v1.DesiredConfig{}, err
-	}
-	if err := json.Unmarshal([]byte(interfaces), &cfg.Interfaces); err != nil {
-		return v1.DesiredConfig{}, err
-	}
-	if err := json.Unmarshal([]byte(disks), &cfg.DiskPaths); err != nil {
-		return v1.DesiredConfig{}, err
-	}
-	if err := json.Unmarshal([]byte(probes), &cfg.ProbeTargets); err != nil {
-		return v1.DesiredConfig{}, err
-	}
-	return cfg, nil
+	return settings, err
 }
 
-func (s *Service) GetConfig(ctx context.Context, id string) (v1.DesiredConfig, error) {
-	return readConfig(ctx, s.db, id)
+func (s *Service) GetTrafficSettings(ctx context.Context, id string) (TrafficSettings, error) {
+	return readTrafficSettings(ctx, s.db, id)
 }
 
-func (s *Service) PatchConfig(ctx context.Context, id string, patch ConfigPatch) (v1.DesiredConfig, error) {
+func (s *Service) PatchTrafficSettings(ctx context.Context, id string, patch TrafficSettingsPatch) (TrafficSettings, error) {
 	fields := make(map[string]string)
-	for field, message := range patch.invalidFields {
-		fields[field] = message
-	}
-	if len(fields) == 0 && patch.ReportIntervalSeconds == nil && patch.DiskIntervalSeconds == nil && patch.Interfaces == nil && patch.DiskPaths == nil && patch.ProbeTargets == nil && patch.BillingDay == nil && patch.QuotaBytes == nil {
-		fields["config"] = "at least one supported field is required"
-	}
-	if p := patch.ReportIntervalSeconds; p != nil && (*p < 5 || *p > 60) {
-		fields["report_interval_seconds"] = "must be between 5 and 60"
-	}
-	if p := patch.DiskIntervalSeconds; p != nil && (*p < 60 || *p > 3600) {
-		fields["disk_interval_seconds"] = "must be between 60 and 3600"
+	for field, reason := range patch.invalidFields {
+		fields[field] = reason
 	}
 	if p := patch.BillingDay; p != nil && (*p < 1 || *p > 28) {
 		fields["billing_day"] = "must be between 1 and 28"
@@ -588,144 +574,36 @@ func (s *Service) PatchConfig(ctx context.Context, id string, patch ConfigPatch)
 			fields["quota_bytes"] = "must be a canonical unsigned decimal byte count"
 		}
 	}
-	if p := patch.ProbeTargets; p != nil {
-		if len(*p) > 5 {
-			fields["probe_targets"] = "must contain at most 5 entries"
-		} else {
-			seen := make(map[string]struct{}, len(*p))
-			for _, target := range *p {
-				if err := v1.ValidateProbeTarget(target); err != nil {
-					fields["probe_targets"] = err.Error()
-					break
-				}
-				if _, exists := seen[target]; exists {
-					fields["probe_targets"] = "entries must be unique"
-					break
-				}
-				seen[target] = struct{}{}
-			}
-		}
-	}
-	var selection v1.DesiredConfig
-	if patch.Interfaces != nil {
-		selection.Interfaces = *patch.Interfaces
-	}
-	if patch.DiskPaths != nil {
-		selection.DiskPaths = *patch.DiskPaths
-	}
-	if patch.ProbeTargets != nil {
-		selection.ProbeTargets = *patch.ProbeTargets
-	}
-	if err := selection.ValidateSelection(); err != nil {
-		for field, message := range err.(*v1.ValidationError).Fields {
-			fields[field] = message
-		}
-	}
 	if len(fields) != 0 {
-		return v1.DesiredConfig{}, &ValidationError{Fields: fields}
+		return TrafficSettings{}, &ValidationError{Fields: fields}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return v1.DesiredConfig{}, err
+		return TrafficSettings{}, err
 	}
 	defer tx.Rollback()
-	cfg, err := readConfig(ctx, tx, id)
+	settings, err := readTrafficSettings(ctx, tx, id)
 	if err != nil {
-		return v1.DesiredConfig{}, err
+		return TrafficSettings{}, err
 	}
-	oldProbeTargets := slices.Clone(cfg.ProbeTargets)
-	changed := false
-	if patch.ReportIntervalSeconds != nil {
-		changed = changed || cfg.ReportIntervalSeconds != *patch.ReportIntervalSeconds
-		cfg.ReportIntervalSeconds = *patch.ReportIntervalSeconds
-	}
-	if patch.DiskIntervalSeconds != nil {
-		changed = changed || cfg.DiskIntervalSeconds != *patch.DiskIntervalSeconds
-		cfg.DiskIntervalSeconds = *patch.DiskIntervalSeconds
-	}
+	before := settings
 	if patch.BillingDay != nil {
-		changed = changed || cfg.BillingDay != *patch.BillingDay
-		cfg.BillingDay = *patch.BillingDay
-	}
-	if patch.Interfaces != nil {
-		changed = changed || !slices.Equal(cfg.Interfaces, *patch.Interfaces)
-		cfg.Interfaces = *patch.Interfaces
-		if cfg.Interfaces == nil {
-			cfg.Interfaces = []string{}
-		}
-	}
-	if patch.DiskPaths != nil {
-		changed = changed || !slices.Equal(cfg.DiskPaths, *patch.DiskPaths)
-		cfg.DiskPaths = *patch.DiskPaths
-		if cfg.DiskPaths == nil {
-			cfg.DiskPaths = []string{}
-		}
-	}
-	probeTargetsChanged := false
-	if patch.ProbeTargets != nil {
-		probeTargetsChanged = !slices.Equal(cfg.ProbeTargets, *patch.ProbeTargets)
-		changed = changed || probeTargetsChanged
-		cfg.ProbeTargets = *patch.ProbeTargets
-		if cfg.ProbeTargets == nil {
-			cfg.ProbeTargets = []string{}
-		}
+		settings.BillingDay = *patch.BillingDay
 	}
 	if patch.QuotaBytes != nil {
-		changed = changed || cfg.QuotaBytes != *patch.QuotaBytes
-		cfg.QuotaBytes = *patch.QuotaBytes
+		settings.QuotaBytes = *patch.QuotaBytes
 	}
-	// A partial PATCH must also fit together with the persisted other selection.
-	if err := (v1.DesiredConfig{Interfaces: cfg.Interfaces, DiskPaths: cfg.DiskPaths, ProbeTargets: cfg.ProbeTargets}).ValidateSelection(); err != nil {
-		return v1.DesiredConfig{}, &ValidationError{Fields: err.(*v1.ValidationError).Fields}
+	if settings == before {
+		return settings, nil
 	}
-	if !changed {
-		return cfg, nil
+	if _, err := tx.ExecContext(ctx, "UPDATE nodes SET billing_day=?, quota_bytes=? WHERE id=?", settings.BillingDay, settings.QuotaBytes, id); err != nil {
+		return TrafficSettings{}, err
 	}
-	interfaces, err := json.Marshal(cfg.Interfaces)
-	if err != nil {
-		return v1.DesiredConfig{}, err
-	}
-	disks, err := json.Marshal(cfg.DiskPaths)
-	if err != nil {
-		return v1.DesiredConfig{}, err
-	}
-	probes, err := json.Marshal(cfg.ProbeTargets)
-	if err != nil {
-		return v1.DesiredConfig{}, err
-	}
-	if cfg.Revision >= MaxConfigRevision {
-		return v1.DesiredConfig{}, &ValidationError{Fields: map[string]string{"config": "revision limit reached"}}
-	}
-	cfg.Revision++
-	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET desired_revision = ?, report_interval_seconds = ?, disk_interval_seconds = ?, interfaces = ?, disk_paths = ?, probe_targets = ?, billing_day = ?, quota_bytes = ? WHERE id = ?`, cfg.Revision, cfg.ReportIntervalSeconds, cfg.DiskIntervalSeconds, string(interfaces), string(disks), string(probes), cfg.BillingDay, cfg.QuotaBytes, id); err != nil {
-		return v1.DesiredConfig{}, err
-	}
-	if probeTargetsChanged {
-		retained := make(map[string]struct{}, len(cfg.ProbeTargets))
-		for _, target := range cfg.ProbeTargets {
-			retained[target] = struct{}{}
-		}
-		for _, target := range oldProbeTargets {
-			if _, keep := retained[target]; keep {
-				continue
-			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM probe_latest WHERE node_id=? AND target=?`, id, target); err != nil {
-				return v1.DesiredConfig{}, err
-			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM probe_hourly WHERE node_id=? AND target=?`, id, target); err != nil {
-				return v1.DesiredConfig{}, err
-			}
-		}
-	}
-	details := audit.Details(nil)
-	if probeTargetsChanged {
-		details = audit.Details{"probe_targets": map[string]int{"count": len(cfg.ProbeTargets)}}
-	}
-	if err := audit.InsertDetails(ctx, tx, "node.config.patch", id, s.now(), details); err != nil {
-		return v1.DesiredConfig{}, err
+	if err := audit.Insert(ctx, tx, "node.traffic_settings.patch", id, s.now()); err != nil {
+		return TrafficSettings{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return v1.DesiredConfig{}, err
+		return TrafficSettings{}, err
 	}
-	return cfg, nil
+	return settings, nil
 }

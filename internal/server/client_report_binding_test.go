@@ -14,7 +14,7 @@ import (
 
 func TestDirectReportConfirmsLostEnrollmentBindingBeforeRotation(t *testing.T) {
 	f := newAgentHTTP(t, 1)
-	state, cfg, path := clientState(t)
+	state, path := clientState(t)
 	ctx := context.Background()
 	node, err := f.nodes.CreatePending(ctx, nodes.CreateRequest{Name: "lost enrollment response"})
 	if err != nil {
@@ -34,7 +34,7 @@ func TestDirectReportConfirmsLostEnrollmentBindingBeforeRotation(t *testing.T) {
 	}
 	server := httptest.NewTLSServer(f.handler)
 	defer server.Close()
-	client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state, Config: cfg})
+	client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state})
 	if err != nil {
 		t.Fatal(err)
 	}

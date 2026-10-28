@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"orbitbeacon/internal/agent/identity"
-	v1 "orbitbeacon/internal/protocol/v1"
 )
 
 // Trust fixtures must not live beneath the world-writable system temporary
@@ -188,11 +187,7 @@ func TestProductionClientDoesNotUseRuntimeOwnedOrWritableTrust(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cfg, err := OpenConfigStore(t.Context(), filepath.Join(t.TempDir(), "desired.json"), v1.DesiredConfig{Revision: 1, ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{}, Interfaces: []string{}, ProbeTargets: []string{}, BillingDay: 1, QuotaBytes: "0"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			client, err := NewClient(ClientOptions{ServerURL: "https://beacon.example.test", CAFile: path, Identity: state, Config: cfg})
+			client, err := NewClient(ClientOptions{ServerURL: "https://beacon.example.test", CAFile: path, Identity: state})
 			if err == nil {
 				client.Close()
 				t.Fatal("production client accepted mutable/non-administrator trust before making a request")

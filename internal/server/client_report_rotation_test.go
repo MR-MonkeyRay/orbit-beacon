@@ -22,7 +22,7 @@ func TestNormalReportRecoversDurableRotationAfterUnauthorized(t *testing.T) {
 		t.Run(outcome, func(t *testing.T) {
 			ctx := context.Background()
 			f := newAgentHTTP(t, 1)
-			state, cfg, path := clientState(t)
+			state, path := clientState(t)
 			run, err := state.BeginRun(t.Context())
 			if err != nil {
 				t.Fatal(err)
@@ -105,7 +105,7 @@ func TestNormalReportRecoversDurableRotationAfterUnauthorized(t *testing.T) {
 			}))
 			defer server.Close()
 			dropper := &enrollmentResponseDropper{base: server.Client().Transport}
-			rotator, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: &http.Client{Transport: dropper}, Identity: state, Config: cfg})
+			rotator, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: &http.Client{Transport: dropper}, Identity: state})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,7 +121,7 @@ func TestNormalReportRecoversDurableRotationAfterUnauthorized(t *testing.T) {
 			if outcome == "same-process pending success" {
 				stale = state
 			}
-			client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: stale, Config: cfg})
+			client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: stale})
 			if err != nil {
 				t.Fatal(err)
 			}

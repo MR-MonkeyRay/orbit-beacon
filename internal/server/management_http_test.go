@@ -34,7 +34,7 @@ func assertNoCredentialDTO(t *testing.T, value any) {
 	case map[string]any:
 		for key, child := range value {
 			switch strings.ToLower(key) {
-			case "password", "old_password", "new_password", "password_hash", "token", "token_hash", "node_token", "enrollment_token", "csrf_hash", "secrets_key":
+			case "password", "old_password", "new_password", "password_hash", "token", "token_hash", "credential_epoch", "node_token", "enrollment_token", "csrf_hash", "secrets_key":
 				t.Errorf("management DTO exposes credential member %q", key)
 			}
 			assertNoCredentialDTO(t, child)

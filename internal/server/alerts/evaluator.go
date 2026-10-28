@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -63,6 +64,7 @@ type openEvent struct {
 }
 type evaluationNode struct {
 	identity           []byte
+	credentialEpoch    int64
 	generation         string
 	session            string
 	id, name, status   string
@@ -160,7 +162,7 @@ func definition(r Rule) string {
 	return string(raw)
 }
 func (e *Evaluator) readNodes(ctx context.Context) ([]evaluationNode, error) {
-	rows, err := e.service.db.QueryContext(ctx, "SELECT id,name,status,group_id,first_enrolled_at,last_seen,token_hash IS NOT NULL,token_hash,run_generation,report_session_id FROM nodes")
+	rows, err := e.service.db.QueryContext(ctx, "SELECT id,name,status,group_id,first_enrolled_at,last_seen,token_hash IS NOT NULL,token_hash,credential_epoch,run_generation,report_session_id FROM nodes")
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +171,7 @@ func (e *Evaluator) readNodes(ctx context.Context) ([]evaluationNode, error) {
 	for rows.Next() {
 		var n evaluationNode
 		var enrolled, last *string
-		if err := rows.Scan(&n.id, &n.name, &n.status, &n.group, &enrolled, &last, &n.credential, &n.identity, &n.generation, &n.session); err != nil {
+		if err := rows.Scan(&n.id, &n.name, &n.status, &n.group, &enrolled, &last, &n.credential, &n.identity, &n.credentialEpoch, &n.generation, &n.session); err != nil {
 			return nil, err
 		}
 		for _, p := range []struct {
@@ -214,7 +216,7 @@ func (e *Evaluator) readOpen(ctx context.Context) (map[pair]openEvent, error) {
 	return result, rows.Err()
 }
 func pendingDefinition(r Rule, n evaluationNode, latest ingest.LatestReport) string {
-	return definition(r) + "|" + hex.EncodeToString(n.identity) + "|" + timekey.Format(*n.enrolled) + "|" + n.generation + "|" + n.session + "|" + latest.SessionID
+	return definition(r) + "|" + hex.EncodeToString(n.identity) + "|" + strconv.FormatInt(n.credentialEpoch, 10) + "|" + timekey.Format(*n.enrolled) + "|" + n.generation + "|" + n.session + "|" + latest.SessionID
 }
 
 func matches(r Rule, n evaluationNode) bool {
@@ -403,9 +405,9 @@ func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *f
 	result, err := tx.ExecContext(ctx, `INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,rule_name,node_name,rule_snapshot)
  SELECT ?,r.id,n.id,'firing',?,?,r.name,n.name,? FROM alert_rules r,nodes n
  WHERE r.id=? AND r.updated_at=? AND r.enabled=1 AND n.id=? AND n.status!='disabled'
- AND n.token_hash=? AND n.run_generation=? AND n.report_session_id=? AND n.first_enrolled_at=?
+ AND n.token_hash=? AND n.credential_epoch=? AND n.run_generation=? AND n.report_session_id=? AND n.first_enrolled_at=?
  AND (r.scope_kind='all' OR (r.scope_kind='node' AND r.scope_id=n.id) OR (r.scope_kind='group' AND r.scope_id=n.group_id))
- AND NOT EXISTS(SELECT 1 FROM alert_events WHERE rule_id=r.id AND node_id=n.id AND state='firing')`, id, value, timekey.Format(since), string(raw), r.ID, timekey.Format(r.UpdatedAt), n.id, n.identity, n.generation, n.session, timekey.Format(*n.enrolled))
+ AND NOT EXISTS(SELECT 1 FROM alert_events WHERE rule_id=r.id AND node_id=n.id AND state='firing')`, id, value, timekey.Format(since), string(raw), r.ID, timekey.Format(r.UpdatedAt), n.id, n.identity, n.credentialEpoch, n.generation, n.session, timekey.Format(*n.enrolled))
 	if err != nil {
 		return err
 	}

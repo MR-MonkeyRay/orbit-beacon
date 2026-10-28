@@ -51,6 +51,9 @@ export class TestElement extends EventTarget {
       if (nav) return element.dataset.nav === nav[1];
       if (part === '[data-autofocus]') return element.dataset.autofocus !== undefined;
       if (part === '[data-tags]') return element.dataset.tags !== undefined;
+      if (part === '[name]') return element.name !== '';
+      const dirtyForm = part.match(/^form\[data-dirty="(true|false)"\]$/);
+      if (dirtyForm) return element.tagName === 'form' && element.dataset.dirty === dirtyForm[1];
       if (part.startsWith('.')) return element.classList.contains(part.slice(1));
       if (part.startsWith('#')) return element.id === part.slice(1);
       const dataField = part.match(/^\[data-field="(.+)"\]$/);

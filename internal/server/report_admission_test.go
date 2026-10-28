@@ -1,11 +1,14 @@
 package server_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	v1 "orbitbeacon/internal/protocol/v1"
 )
 
 func TestReportAdmissionChargesAuthenticatedRejectedAttemptsBeforeDecode(t *testing.T) {
@@ -76,4 +79,50 @@ func TestReportAdmissionAuthenticatesBeforeReadingOrChargingBody(t *testing.T) {
 		accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, reportBody(1, seq, "owner", 10)), seq)
 	}
 	assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/report", token, reportBody(1, 4, "owner", 10)), http.StatusTooManyRequests)
+}
+
+type resettingReportBody struct {
+	reader *strings.Reader
+	reset  func()
+}
+
+func (b *resettingReportBody) Read(p []byte) (int, error) {
+	if b.reset != nil {
+		reset := b.reset
+		b.reset = nil
+		reset()
+	}
+	return b.reader.Read(p)
+}
+
+func TestReportAdmissionRejectsExactABAResetDuringBodyRead(t *testing.T) {
+	f := newAgentHTTP(t, 1)
+	id, token, _ := enrollHTTP(t, f, "admission-epoch", 1)
+	body := &resettingReportBody{reader: strings.NewReader(reportBody(1, 1, "old-admission", 10))}
+	body.reset = func() {
+		if err := f.nodes.RevokeCredential(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+		ticket, err := f.enrollments.CreateSingle(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.enrollments.Enroll(context.Background(), ticket.Token, v1.EnrollmentRequest{ProtocolVersion: 1, InstallationID: "installation-admission-epoch", NodeToken: token, System: v1.System{Hostname: "rebound", OS: "linux", Arch: "amd64"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, publicURL+"/api/agent/v1/report", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	r := httptest.NewRecorder()
+	f.handler.ServeHTTP(r, req)
+	if r.Code != http.StatusUnauthorized && r.Code != http.StatusConflict {
+		t.Fatalf("pre-reset admission accepted after body read: status=%d body=%s", r.Code, r.Body.String())
+	}
+	var runtime string
+	var seen any
+	if err := f.db.QueryRow(`SELECT agent_runtime,last_seen FROM nodes WHERE id=?`, id).Scan(&runtime, &seen); err != nil || runtime != "" || seen != nil {
+		t.Fatalf("pre-reset request restored runtime=%q last_seen=%v err=%v", runtime, seen, err)
+	}
+	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, reportBody(1, 1, "fresh-admission", 10)), 1)
 }

@@ -225,7 +225,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 		}
 		return auth.ValidatePasswordHash(r.text("password_hash"))
 	case "groups":
-		if !validText(r.text("name"), 255) || !jsonObject(r.text("desired_config")) {
+		if !validText(r.text("name"), 255) {
 			return invalidRow()
 		}
 	case "nodes":
@@ -248,7 +248,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 	case "backup_plans":
 		return validatePlanRow(r, backupBox)
 	case "node_observations":
-		if r.text("node_id") == "" || r.integer("applied_revision") < 0 {
+		if r.text("node_id") == "" {
 			return invalidRow()
 		}
 		var system v1.System
@@ -258,12 +258,12 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 		if err := system.Validate(); err != nil {
 			return err
 		}
-		if r.text("config_error") != "" {
-			var e v1.ConfigError
-			if objectJSON(r.text("config_error"), &e) != nil {
+		if r.text("agent_runtime") != "" {
+			var runtime v1.RuntimeSettings
+			if objectJSON(r.text("agent_runtime"), &runtime) != nil {
 				return invalidRow()
 			}
-			return e.Validate()
+			return runtime.Validate()
 		}
 	case "traffic_hourly":
 		if r.text("node_id") == "" || !canonicalTime(r.text("period_start")) || r.integer("rx_bytes") < 0 || r.integer("tx_bytes") < 0 {
@@ -339,7 +339,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 }
 
 func validateNode(r payloadRow) error {
-	if !validText(r.text("name"), 255) || !oneOf(r.text("status"), "disabled", "unknown", "pending") || (r["group_id"] != nil && !identity.ValidUUID(r.text("group_id"))) {
+	if !validText(r.text("name"), 255) || !oneOf(r.text("status"), "disabled", "unknown", "pending") || (r["group_id"] != nil && !identity.ValidUUID(r.text("group_id"))) || r.integer("credential_epoch") < 0 {
 		return invalidRow()
 	}
 	if err := v1.DecimalUint64(r.text("run_generation")).Validate(); err != nil {
@@ -361,16 +361,10 @@ func validateNode(r payloadRow) error {
 	if err := public.Validate(); err != nil {
 		return err
 	}
-	cfg := v1.DesiredConfig{Revision: r.integer("desired_revision"), ReportIntervalSeconds: int(r.integer("report_interval_seconds")), DiskIntervalSeconds: int(r.integer("disk_interval_seconds")), BillingDay: int(r.integer("billing_day")), QuotaBytes: r.text("quota_bytes")}
-	for _, pair := range []struct {
-		key string
-		dst *[]string
-	}{{"interfaces", &cfg.Interfaces}, {"disk_paths", &cfg.DiskPaths}, {"probe_targets", &cfg.ProbeTargets}} {
-		if json.Unmarshal([]byte(r.text(pair.key)), pair.dst) != nil {
-			return invalidRow()
-		}
+	if r.integer("billing_day") < 1 || r.integer("billing_day") > 28 {
+		return invalidRow()
 	}
-	return cfg.Validate()
+	return v1.DecimalUint64(r.text("quota_bytes")).Validate()
 }
 
 func validateChannel(r payloadRow, box *secretbox.Box) error {

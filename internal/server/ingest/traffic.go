@@ -20,6 +20,7 @@ type trafficKey struct{ epoch, period string }
 type trafficCounters struct{ rx, tx int64 }
 type trafficBuffer struct {
 	credential         [sha256.Size]byte
+	credentialEpoch    int64
 	generation         uint64
 	session            string
 	observedGeneration uint64
@@ -69,40 +70,40 @@ func validateTraffic(entries []v1.Traffic) error {
 	return nil
 }
 
-func (b *trafficBuffer) matchesRun(credential []byte, generation uint64, session string) bool {
-	return subtle.ConstantTimeCompare(b.credential[:], credential) == 1 && b.generation == generation && b.session == session
+func (b *trafficBuffer) matchesRun(credential []byte, credentialEpoch int64, generation uint64, session string) bool {
+	return subtle.ConstantTimeCompare(b.credential[:], credential) == 1 && b.credentialEpoch == credentialEpoch && b.generation == generation && b.session == session
 }
 
 // The node accept gate serializes buffer changes with persistence. mu also
 // protects inspection and shutdown snapshots; no database I/O holds mu.
-func (state *nodeState) bufferTraffic(credential []byte, report v1.Report, generation uint64, session string, now time.Time) {
+func (state *nodeState) bufferTraffic(credential []byte, credentialEpoch int64, report v1.Report, generation uint64, session string, now time.Time) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	state.stagedTraffic = nil
-	state.traffic.buffer(credential, report, generation, session, now)
+	state.traffic.buffer(credential, credentialEpoch, report, generation, session, now)
 }
 
 // Keep accepted counters from the current run until the incoming run's first
 // durable transaction commits. At most two runs are buffered, each with the
 // same fixed capacity; a failed incoming run never replaces the accepted run.
-func (state *nodeState) stageTraffic(credential []byte, report v1.Report, generation uint64, session string, now time.Time) {
+func (state *nodeState) stageTraffic(credential []byte, credentialEpoch int64, report v1.Report, generation uint64, session string, now time.Time) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.traffic.pending == nil && state.stagedTraffic == nil || state.traffic.matchesRun(credential, report.RunGeneration, report.SessionID) {
+	if state.traffic.pending == nil && state.stagedTraffic == nil || state.traffic.matchesRun(credential, credentialEpoch, report.RunGeneration, report.SessionID) {
 		state.stagedTraffic = nil
-		state.traffic.buffer(credential, report, generation, session, now)
+		state.traffic.buffer(credential, credentialEpoch, report, generation, session, now)
 		return
 	}
 	if state.stagedTraffic == nil {
 		state.stagedTraffic = &trafficBuffer{}
 	}
-	state.stagedTraffic.buffer(credential, report, generation, session, now)
+	state.stagedTraffic.buffer(credential, credentialEpoch, report, generation, session, now)
 }
 
 // buffer requires the owning nodeState.mu to be held.
-func (b *trafficBuffer) buffer(credential []byte, report v1.Report, generation uint64, session string, now time.Time) {
-	if !b.matchesRun(credential, report.RunGeneration, report.SessionID) {
-		*b = trafficBuffer{generation: report.RunGeneration, session: report.SessionID, observedGeneration: generation, observedSession: session, pending: make(map[trafficKey]trafficCounters), committed: make(map[trafficKey]trafficCounters)}
+func (b *trafficBuffer) buffer(credential []byte, credentialEpoch int64, report v1.Report, generation uint64, session string, now time.Time) {
+	if !b.matchesRun(credential, credentialEpoch, report.RunGeneration, report.SessionID) {
+		*b = trafficBuffer{credentialEpoch: credentialEpoch, generation: report.RunGeneration, session: report.SessionID, observedGeneration: generation, observedSession: session, pending: make(map[trafficKey]trafficCounters), committed: make(map[trafficKey]trafficCounters)}
 		copy(b.credential[:], credential)
 	}
 	for key := range b.pending {
@@ -204,18 +205,18 @@ func persistTrafficPending(ctx context.Context, tx *sql.Tx, nodeID string, pendi
 }
 
 // Called with state.mu held whenever a durable node identity is observed.
-func (state *nodeState) fenceTraffic(credential []byte, generation uint64, session string) {
+func (state *nodeState) fenceTraffic(credential []byte, credentialEpoch int64, generation uint64, session string) {
 	b := &state.traffic
-	if b.pending != nil && !b.matchesObservedIdentity(credential, generation, session) {
+	if b.pending != nil && !b.matchesObservedIdentity(credential, credentialEpoch, generation, session) {
 		*b = trafficBuffer{}
 	}
-	if state.stagedTraffic != nil && !state.stagedTraffic.matchesObservedIdentity(credential, generation, session) {
+	if state.stagedTraffic != nil && !state.stagedTraffic.matchesObservedIdentity(credential, credentialEpoch, generation, session) {
 		state.stagedTraffic = nil
 	}
 }
 
-func (b *trafficBuffer) matchesObservedIdentity(credential []byte, generation uint64, session string) bool {
-	return subtle.ConstantTimeCompare(b.credential[:], credential) == 1 && b.observedGeneration == generation && b.observedSession == session
+func (b *trafficBuffer) matchesObservedIdentity(credential []byte, credentialEpoch int64, generation uint64, session string) bool {
+	return subtle.ConstantTimeCompare(b.credential[:], credential) == 1 && b.credentialEpoch == credentialEpoch && b.observedGeneration == generation && b.observedSession == session
 }
 
 func (state *nodeState) commitTraffic(committed map[trafficKey]trafficCounters, now time.Time) {
@@ -277,12 +278,13 @@ func (s *Service) drainNodeTraffic(ctx context.Context, id string, state *nodeSt
 	}
 	defer tx.Rollback()
 	var credential []byte
-	var generation, session, status string
-	err = tx.QueryRowContext(ctx, `SELECT token_hash,run_generation,report_session_id,status FROM nodes WHERE id=?`, id).Scan(&credential, &generation, &session, &status)
+	var credentialEpoch int64
+	var generation, session, status, runtimeJSON string
+	err = tx.QueryRowContext(ctx, `SELECT token_hash,credential_epoch,run_generation,report_session_id,status,agent_runtime FROM nodes WHERE id=?`, id).Scan(&credential, &credentialEpoch, &generation, &session, &status, &runtimeJSON)
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
-	if err == sql.ErrNoRows || status == "disabled" {
+	if err == sql.ErrNoRows || len(credential) == 0 || status == "disabled" {
 		state.mu.Lock()
 		state.traffic = trafficBuffer{}
 		state.stagedTraffic = nil
@@ -295,15 +297,20 @@ func (s *Service) drainNodeTraffic(ctx context.Context, id string, state *nodeSt
 		return err
 	}
 	state.mu.Lock()
-	state.fenceTraffic(credential, observedGeneration, session)
-	state.fenceProbes(credential, observedGeneration, session)
+	state.fenceTraffic(credential, credentialEpoch, observedGeneration, session)
+	state.fenceProbes(credential, credentialEpoch, observedGeneration, session)
 	state.mu.Unlock()
 	now := s.now().UTC()
 	committed, err := state.persistTraffic(ctx, tx, id, now)
 	if err != nil {
 		return err
 	}
-	probes := state.copyProbes(credential, observedGeneration, session)
+	probes := state.copyProbes(credential, credentialEpoch, observedGeneration, session)
+	runtime, err := decodeRuntime(runtimeJSON)
+	if err != nil {
+		return err
+	}
+	probes.retainTargets(runtime.ProbeTargets)
 	if err := probes.persist(ctx, tx, id, now); err != nil {
 		return err
 	}

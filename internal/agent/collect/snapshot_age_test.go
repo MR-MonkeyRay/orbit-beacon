@@ -13,7 +13,7 @@ import (
 
 func TestSnapshotSourceAgesUseOneFinalBoundary(t *testing.T) {
 	path := t.TempDir()
-	config := v1.DesiredConfig{Revision: 1, ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{path}, Interfaces: []string{"lo"}, BillingDay: 1, QuotaBytes: "0"}
+	config := v1.RuntimeSettings{ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{path}, Interfaces: []string{"lo"}}
 	collector, err := New(Options{Config: config})
 	if err != nil {
 		t.Fatal(err)

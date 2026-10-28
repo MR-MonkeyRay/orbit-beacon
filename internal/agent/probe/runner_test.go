@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -18,15 +17,15 @@ func successful(target string) v1.ProbeResult {
 	return v1.ProbeResult{Target: target, OK: true, LatencyMS: &latency, CheckedAt: time.Now().UTC()}
 }
 
-func TestRunnerIntervalConfigPollingAndLatest(t *testing.T) {
+func TestRunnerIntervalExplicitSelectionAndLatest(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		var mu sync.Mutex
-		targets := []string{"tcp://first:80"}
 		var checks atomic.Int64
 		runner := NewRunner(Options{
-			Targets: func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), targets...) },
-			Check:   func(_ context.Context, target string) v1.ProbeResult { checks.Add(1); return successful(target) },
+			Check: func(_ context.Context, target string) v1.ProbeResult { checks.Add(1); return successful(target) },
 		})
+		if err := runner.SetTargets([]string{"tcp://first:80"}); err != nil {
+			t.Fatal(err)
+		}
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		done := make(chan error, 1)
@@ -53,22 +52,25 @@ func TestRunnerIntervalConfigPollingAndLatest(t *testing.T) {
 		if checks.Load() != 2 || !latest[0].CheckedAt.After(first[0].CheckedAt) {
 			t.Fatal("60s check did not run")
 		}
-		mu.Lock()
-		targets = []string{"tcp://second:443"}
-		mu.Unlock()
-		time.Sleep(time.Second)
+		if err := runner.SetTargets([]string{"tcp://second:443"}); err != nil {
+			t.Fatal(err)
+		}
 		synctest.Wait()
 		latest = runner.Results([]string{"tcp://second:443"})
 		if checks.Load() != 3 || len(latest) != 1 || latest[0].Target != "tcp://second:443" {
 			t.Fatalf("config update not prompt: %+v", latest)
 		}
-		mu.Lock()
-		targets = nil
-		mu.Unlock()
-		time.Sleep(time.Second)
+		if err := runner.SetTargets(nil); err != nil {
+			t.Fatal(err)
+		}
+		// Reading an older report's target set must not resurrect removed work.
+		runner.Results([]string{"tcp://second:443"})
 		synctest.Wait()
 		if latest := runner.Results(nil); len(latest) != 0 {
 			t.Fatalf("removed results: %+v", latest)
+		}
+		if checks.Load() != 3 {
+			t.Fatal("reading results re-added a removed target")
 		}
 		cancel()
 		synctest.Wait()
