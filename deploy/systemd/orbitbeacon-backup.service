@@ -1,7 +1,0 @@
-[Unit]
-Description=Back up OrbitBeacon database and secrets key
-After=local-fs.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/orbitbeacon-backup

@@ -46,7 +46,7 @@ sudo systemctl enable --now orbitbeacon-server
 sudo journalctl -u orbitbeacon-server -n 100 --no-pager
 ```
 
-按提示输入管理员密码；已有管理员时不能重复初始化。初始化、备份和恢复使用服务账号，除 `backup --online` 外均应在停服后操作同一数据目录。
+按提示输入管理员密码；已有管理员时不能重复初始化。初始化和恢复使用服务账号并先停服；导出及计划备份由运行中的 Server 执行。
 
 ## Docker Compose
 
@@ -124,82 +124,64 @@ readiness 仅证明 Server 可用，不证明 Agent 已上报。明文健康检�
 
 管理员可在控制台管理通知通道、测试投递并查看日志。回环 HTTP webhook 必须同时开启两项通知选项；HTTPS 和 SMTP 校验证书，SMTP 的非 465 端口要求 STARTTLS。探测目标与通知通道不是同一出站策略，Agent 探测限制见 [Agent 指南](../docs/agent.md#服务探测)。
 
-## 备份
+## 导出与备份计划
 
-备份必须同时保存 **数据库和匹配的 `secrets.key`**：
+管理员进入 **Settings → Data operations**：Export 发起后台导出，Backup plans 管理计划，Task history 查看结果。受理后可以离开页面；铃铛会显示完成或失败，下载必须手动点击，不会自动下载。管理员共享任务、下载和密码；viewer 的铃铛仅显示告警，各用户已读状态独立。备份结果不通过 Webhook、Telegram 或邮件外发。
 
-- `backup` / `backup --online` 只备份主 SQLite 数据库，输出文件不能已存在；配置、TLS 证书和密钥需另存。
-- `secrets.key` 为 32 字节，包含通知凭据解密所需密钥；缺失或换错后，数据库中的加密凭据无法解密。数据库与密钥文件保持 `0600`，备份目录 `0700`，另做受保护的异机副本。
-- 历史图表使用独立 `metrics.db`，不在上述备份中。1 分钟/5 分钟/1 小时数据分别保留 48 小时/14 天/90 天；恢复主库不会恢复或替换历史。历史库打不开时仅禁用历史，不阻止主服务启动。
-- 在线备份无需停服；离线备份省略 `--online`，但必须先停止 Server。不要直接复制运行中的 SQLite 主文件，也不要删除 WAL/SHM 绕过锁错误。
+### 归档与密码
 
-### systemd 在线备份
+- Configuration、Monitoring、Events 三类独立勾选，至少一类，默认仅 Configuration。
+- 配置含用户密码哈希、Agent 持久身份、通知/对象存储凭据及匹配的 `secrets.key`；不含机器部署配置、TLS 证书或可执行文件，请另存这些文件。
+- 监控含已落库的节点观测、流量、探测和指标历史；事件含审计、告警、已结束投递、站内通知及已结束任务历史，不带历史备份密码。登录会话、接入票据、待执行任务、待发送通知和旧下载产物不归档。
+- 每包为 `.tar.gz.age`，有独立的 16 位随机大小写字母/数字密码。管理员仅在详情中主动 Reveal、Copy 或 Download recovery info 时获取密码；须把每包凭据另存到安全位置，密码不会随远程包上传，也没有主密码托管。
+- 手动导出文件有效 24 小时；任务、站内通知及密码保留 90 天，任务和密码从任务完成时计期。原机丢失或密码过期且未另存时无法恢复。计划包只显示本地路径或对象位置，不提供网页下载副本。
+- 只备份已落库数据，不暂停采集或强制冲刷内存；主库与指标库各自一致，不保证跨库同一时刻。选择 Monitoring 时历史库不可读会使任务失败，不以空历史冒充成功。
 
-```sh
-BACKUP="/var/backups/orbitbeacon/$(date -u +%Y%m%dT%H%M%SZ)"
-sudo install -d -o orbitbeacon -g orbitbeacon -m 0700 /var/backups/orbitbeacon "$BACKUP"
-sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server backup --online \
-  --config /etc/orbitbeacon/server.json --output "$BACKUP/orbitbeacon.db"
-sudo install -o orbitbeacon -g orbitbeacon -m 0600 \
-  /var/lib/orbitbeacon/secrets.key "$BACKUP/secrets.key"
-```
+### 计划、时区与本地目录
 
-每日备份可安装仓库的脚本和 timer：
+每条计划使用一个本地或对象存储目标，支持多个计划；新建默认停用。Cron 为五段，默认 `0 3 * * *`，不接受秒字段、`@daily`、时区前缀或命令。按 **Server 进程的 `time.Local`** 执行，不是浏览器时区；页面展示 Server 时区和各次执行的当地时间。修改系统/容器时区后需重启 Server，容器不自动继承宿主时区。错过多个周期只补一次；同计划已有任务时不堆积。任务活动期间不能编辑、停用或删除计划。
 
-```sh
-sudo install -D -o root -g root -m 0755 \
-  deploy/systemd/orbitbeacon-backup /usr/local/sbin/orbitbeacon-backup
-sudo install -D -o root -g root -m 0644 \
-  deploy/systemd/orbitbeacon-backup.service /etc/systemd/system/orbitbeacon-backup.service
-sudo install -D -o root -g root -m 0644 \
-  deploy/systemd/orbitbeacon-backup.timer /etc/systemd/system/orbitbeacon-backup.timer
-sudo systemctl daemon-reload
-sudo systemctl enable --now orbitbeacon-backup.timer
-sudo systemctl start orbitbeacon-backup.service
-sudo journalctl -u orbitbeacon-backup.service -n 100 --no-pager
-```
+本地路径须为预先创建的绝对路径，由服务运行用户所有、`0700`、无符号链接且可写；Server 不自动改权限。每个计划写入自己的 `orbitbeacon-<plan_id>/`，默认保留最近 7 份，可设 1–1000；仅成功后清理该计划的旧包。删除计划不删除已保存备份，清理失败会单独警告。
 
-timer 在主机本地时间 03:30 后随机延迟最多 15 分钟执行；脚本以 UTC 命名目录，删除 `/var/backups/orbitbeacon` 下超过 14 天的时间戳目录。按恢复目标调整保留期，并检查实际生成文件。
+- systemd 默认仅允许写入 `/var/lib/orbitbeacon`。使用其他路径时，先准备目录所有权/权限，再用 unit drop-in 为该路径增加精确的 `ReadWritePaths=`；不要放宽为全盘可写。
+- Compose 使用现有数据卷内的路径，或显式挂载额外可写目录并设为 `65532:65532` 所有、`0700`。不修改只读根文件系统或依赖小容量 tmpfs；staging 使用 data-dir。
 
-### Compose 在线备份
+### 对象存储
 
-以下使用新的空目录，操作机需有 sudo；`compose cp` 要求主容器存在：
+统一使用 AWS S3 SDK 和显式填写的静态凭据，不读取主机默认凭据链；支持以下配置，远程只上传，保留期由云端生命周期管理：
 
-```sh
-mkdir -m 700 ./orbitbeacon-backup
-sudo chown 65532:65532 ./orbitbeacon-backup
-docker compose -f deploy/docker/compose.yaml run --rm --no-deps \
-  --volume "${PWD}/orbitbeacon-backup:/backup" \
-  --entrypoint /usr/local/bin/orbitbeacon-server orbitbeacon \
-  backup --online --config /etc/orbitbeacon/server.json --output /backup/orbitbeacon.db
-sudo chown -R "$(id -u):$(id -g)" ./orbitbeacon-backup
-docker compose -f deploy/docker/compose.yaml cp \
-  orbitbeacon:/var/lib/orbitbeacon/secrets.key ./orbitbeacon-backup/secrets.key
-chmod 600 ./orbitbeacon-backup/orbitbeacon.db ./orbitbeacon-backup/secrets.key
-```
+| Provider | Endpoint / Region / 寻址 |
+| --- | --- |
+| COS | `https://cos.<region>.myqcloud.com`；region 必填，bucket 含 APPID，virtual-host |
+| OSS | 推荐 `https://s3.oss-<region>.aliyuncs.com`，region 必填，virtual-host；自定义域须已绑定 bucket 且配置 TLS，按该域直接寻址 |
+| R2 | `https://<account>.r2.cloudflarestorage.com`；region 为 `auto`，path-style |
+| AWS S3 | 默认 `https://s3.<region>.amazonaws.com`，region 必填，virtual-host |
+| S3 compatible | endpoint、region、bucket 必填，默认 path-style |
 
-任何一步失败都不算完整备份；保留成功的数据库与对应密钥，再转移到受保护存储，不要提交到仓库。
+Endpoint 只允许 HTTPS 源站（可带端口），不能含路径、用户信息、查询或片段；prefix 使用安全相对路径。TLS 至少 1.2 并校验证书，不使用 HTTP 代理、不跟随重定向。默认拒绝私网；显式允许私网仍禁止回环、链路本地、非全局单播和元数据地址，最终 bucket 域名也执行 DNS/IP 校验。凭据仅加密保存，编辑时不回填；更换 provider 须提交匹配 endpoint、region 及完整新凭据。
+
+已进行 profile 协议测试和真实 MinIO S3 兼容存储 smoke；COS、OSS、R2、AWS S3 四家实云尚未实测，不据此承诺全部自定义域或供应商特性可用。没有连接测试、任务取消或重试按钮；失败后可重新发起导出，计划等待下一周期。存储结果未知时先核对详情中的位置、大小与哈希，不要把它当作确定未写入。
 
 ## 恢复
 
-先停止 Server，使用运行服务的同一用户执行。只接受新版 `.tar.gz.age` 包，密码文件必须归该用户所有、为 `0600` 普通文件，内容为该包的 16 位密码，可带一个换行。也可省略 `--password-file` 从终端无回显输入；不支持命令行明文密码或环境变量密码。
+先停止 Server，使用运行服务的同一用户执行。只接受格式及 schema 版本精确匹配的新版 `.tar.gz.age` 包，不接收裸 SQLite，也不转换旧格式。密码文件必须归该用户所有、为 `0600` 普通文件，内容为该包的 16 位密码，可带一个换行。也可省略 `--password-file` 从终端无回显输入；不支持命令行明文密码或环境变量密码。
 
 ```sh
 orbitbeacon-server restore --data-dir /var/lib/orbitbeacon \
-  --input /backup/orbitbeacon-....tar.gz.age --password-file /backup/password.txt \
-  --replace
+  --input /backup/orbitbeacon-....tar.gz.age \
+  --replace --password-file /backup/password.txt
 ```
 
-目标已有业务数据时必须显式 `--replace`；真正空目录可省略，但包内须包含 Configuration。包内类别整体替换，未含类别保留；缺失稳定 ID 依赖时整次拒绝，不按名称匹配或自动创建节点。配置包自带匹配密钥，恢复后计划全部停用；登录会话及接入票据不从包导入。
+语法仅为 `restore --data-dir PATH --input ARCHIVE [--replace] [--password-file FILE]`。目标已有业务数据时必须显式 `--replace`；真正空目录可省略，但包内须包含 Configuration。包内所选类别整体替换，未含类别保留，不逐条合并；缺失稳定 ID 依赖时整次拒绝，不按名称匹配或自动创建节点。配置包自带匹配密钥，恢复配置后计划全部停用；登录会话及接入票据不从包导入。恢复事件不重放任务或外发投递；保留目标事件时，原活动任务/待发送投递会标为恢复中断。
 
-多文件恢复保持目录与锁 inode 不变；成功后输出 `.restore-<id>/old/` 回滚副本位置，不自动删除。失败或启动发现未完成事务时先恢复完整旧文件组；回滚副本缺失、损坏或 journal 无效会阻止启动。不要删除锁、journal 或 SQLite sidecar 强行继续。
+多文件恢复保持 data-dir 与 `server.lock` inode 不变，使用 `restore-journal.json` 安装主库、指标库和密钥。失败或下次启动发现 prepared 状态时，验证回滚副本后恢复完整旧文件组；committed 状态仅清理 journal，不回滚。成功后输出 `.restore-<id>/old/` 原文件组位置，不自动删除；自行确认恢复正常后妥善保管或处理。回滚副本缺失、损坏或 journal 无效会阻止启动。不要删除锁、journal 或 SQLite sidecar 强行继续。
 
 成功后再启动，检查 HTTPS readiness、登录、节点上报和通知凭据。Compose 先停服务，再通过一次性 `compose run` 将包及密码文件只读挂载到容器，使用相同数据卷和运行身份执行上述命令。
 
 ## 升级
 
-1. 先完成数据库、匹配密钥及配置备份，再停止 Server。
+1. 先完成所需三类数据的加密备份，另存恢复密码、部署配置和证书，再停止 Server。
 2. systemd 替换 `/usr/local/bin/orbitbeacon-server`；Compose 设置已发布的 `ORBITBEACON_IMAGE_TAG`，执行 `pull orbitbeacon` 和 `up -d orbitbeacon`。
 3. 启动并检查 readiness，确认数据库迁移完成，再升级 Agent。
 
-Server 严格拒绝未知上报字段，新 Agent 对旧 Server 可能得到 `400`，不能假设旧 Server 会忽略 `traffic`、`probe_results` 或 `system.agent_version`。启用新配置前先完成 Server 升级。降级前确认目标版本支持当前数据库格式；Server 不会打开更高版本数据库，必要时停服恢复升级前的完整备份。
+Server 严格拒绝未知上报字段，新 Agent 对旧 Server 可能得到 `400`，不能假设旧 Server 会忽略 `traffic`、`probe_results` 或 `system.agent_version`。启用新配置前先完成 Server 升级。降级前确认目标版本支持当前数据库格式；Server 不会打开更高版本数据库，加密归档也要求格式及 schema 版本精确匹配，不提供跨 schema 转换。

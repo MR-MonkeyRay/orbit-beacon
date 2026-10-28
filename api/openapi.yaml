@@ -4,11 +4,16 @@ info:
   version: 0.1.0
   description: |
     The control plane supports enrollment, agent telemetry, metric history,
-    alert rules and encrypted notification channels. Agent upgrades are not available.
+    alert rules, encrypted notification channels, encrypted data exports, backup
+    plans and a shared notification inbox. Agent upgrades are not available.
     Browser reads require a session unless explicitly marked otherwise; agent
     routes use separate Bearer credentials and never accept browser sessions.
-    Browser mutations require an administrator (except logout/password), the
+    Browser mutations require an administrator except logout, own-password changes
+    and the two own-inbox read-state routes. All browser mutations require the
     configured HTTPS Origin and a session-bound CSRF token; login requires Origin.
+    Backup plans, tasks, downloads and password reads are administrator-only,
+    including GET requests. Viewers can read alert notifications and mark only
+    their own visible notifications read; they cannot read backup notifications.
     Canonical origins lowercase DNS names, normalize IPv6 and omit default port 443;
     request Host and forwarded headers do not establish Origin trust. Client IP
     policies use X-Forwarded-For only when the direct peer matches trusted_proxies
@@ -677,6 +682,441 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/AlertSummary'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/alerts/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    get:
+      operationId: getAlertEvent
+      description: Administrators and viewers can read one episode directly, without searching history pages. Uses the same current-name joins and deleted-source snapshot fallbacks as listAlerts. Query parameters are rejected. Reading does not mark any inbox notification read.
+      responses:
+        '200':
+          description: Alert episode.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AlertEvent'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/backups/exports:
+    post:
+      operationId: createBackupExport
+      description: |
+        Administrator only; requires Origin and CSRF. Accepts a background export
+        of one or more independent categories. Configuration is never implicitly
+        added. The committed task survives disconnects and page navigation.
+        A single worker executes tasks; at most 32 queued/running tasks exist.
+        No automatic download, cancellation or task-retry endpoint is provided.
+        Query parameters are rejected. The resulting archive is .tar.gz.age;
+        its independent recovery password must be saved separately by an admin.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [categories]
+              properties:
+                categories: {$ref: '#/components/schemas/BackupCategories'}
+      responses:
+        '202':
+          description: Queued export accepted; no plaintext password is returned.
+          headers:
+            Location:
+              schema: {type: string, examples: [/api/v1/tasks/00000000-0000-4000-8000-000000000001]}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BackupTask'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '429':
+          description: backup_queue_full; wait for an active task to finish before submitting another export.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/backup-plans:
+    get:
+      operationId: listBackupPlans
+      description: Administrator only, including reads. Credential-free plans ordered by created_at DESC, id DESC. Only limit and before are accepted; unknown, repeated, empty or malformed query parameters return 400 invalid_input. Timezone metadata describes the Server process, not the browser.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/EventBefore'
+      responses:
+        '200':
+          description: Paginated backup plans and Server timezone metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BackupPlanPage'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createBackupPlan
+      description: |
+        Administrator only; requires Origin and CSRF. New plans default to disabled,
+        configuration only, Cron 0 3 * * *, and local retain_count 7. Object plans
+        require complete credentials. Local paths must already exist, be writable,
+        owned by the running user, mode 0700 and contain no symlinks; the Server
+        does not create or chmod the selected directory. Object retention belongs
+        to the provider; do not send retain_count. Saving does not test a connection.
+        Query parameters and explicit null fields are rejected. Enabling schedules
+        the next future run, without immediately replaying historical cycles.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BackupPlanCreate'}
+      responses:
+        '201':
+          description: Saved plan without credential material.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BackupPlan'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/backup-plans/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    get:
+      operationId: getBackupPlan
+      description: Administrator only. Returns no credentials or ciphertext. Query parameters are rejected. A missing plan returns 404 backup_plan_not_found; unreadable stored credentials return 409 secret_unreadable.
+      responses:
+        '200':
+          description: Backup plan with next-run preview and latest task summary.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BackupPlan'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: updateBackupPlan
+      description: |
+        Administrator only; requires Origin and CSRF. Omitted fields, including
+        individual destination fields, retain their values; explicit null is rejected.
+        Kind cannot change. Omitted credentials retain the encrypted credentials.
+        Replacement requires access_key_id and secret_access_key together; omitted
+        session_token clears the old token. Never submit masked placeholders.
+        Changing provider additionally requires endpoint, region and full replacement
+        credentials. Enabling or changing Cron schedules the next future run;
+        other edits preserve the existing next_run_at. Queued/running plan tasks
+        cause 409 backup_plan_busy, including when disabling. Query parameters
+        are rejected. Field validation returns 400 validation_failed with fields.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BackupPlanPatch'}
+      responses:
+        '200':
+          description: Updated credential-free plan.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BackupPlan'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteBackupPlan
+      description: Administrator only; requires Origin and CSRF. Does not delete history or any saved archives. A queued/running task causes 409 backup_plan_busy; missing plans return 404 backup_plan_not_found. Query parameters are rejected.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204': {description: Plan deleted; archives and task history remain.}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/backup-plans/preview:
+    post:
+      operationId: previewBackupCron
+      description: Administrator only; requires Origin and CSRF despite being pure computation. Returns three runs in the Server process timezone; no network access or persistence. Invalid Cron returns 400 validation_failed with fields.cron. Query parameters are rejected.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [cron]
+              properties:
+                cron: {$ref: '#/components/schemas/BackupCron'}
+      responses:
+        '200':
+          description: Next three runs and timezone metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BackupCronPreview'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/tasks:
+    get:
+      operationId: listBackupTasks
+      description: Administrator only. Lists only backup/export tasks, ordered by created_at DESC, id DESC. Terminal tasks are visible for 90 days after completion; active tasks do not expire. Only limit and before are accepted; unknown, repeated, empty or malformed query parameters return 400 invalid_input. No passwords, credential material or internal staging paths are returned or decrypted.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/EventBefore'
+      responses:
+        '200':
+          description: Safe task page.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BackupTaskPage'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/tasks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    get:
+      operationId: getBackupTask
+      description: Administrator only. Direct safe detail even when absent from the current list page; no password decryption. Missing or no-longer-visible tasks return 404 task_not_found. Query parameters are rejected. Availability is evaluated at read time, independently of retention cleanup.
+      responses:
+        '200':
+          description: Safe task detail with current download/password availability.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BackupTask'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/tasks/{id}/download:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    get:
+      operationId: downloadBackupExport
+      description: |
+        Administrator session required; ordinary same-origin attachment download,
+        not JSON or a public/presigned link. Only succeeded, non-restored manual
+        exports have downloadable artifacts, valid until completion plus 24 hours.
+        Local/object plan archives are not copied into the download area. The task
+        UUID selects the file; result_location is display-only. Range and conditional
+        requests use ServeContent. This route alone permits up to 30 minutes for
+        writing; client cancellation stops reading. Query parameters are rejected.
+      parameters:
+        - name: Range
+          in: header
+          schema: {type: string}
+          description: Optional HTTP byte-range request.
+      responses:
+        '200':
+          $ref: '#/components/responses/BackupArchive'
+        '206':
+          $ref: '#/components/responses/BackupArchive'
+        '304': {description: Not modified according to conditional request headers.}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409':
+          description: artifact_not_ready; manual export has not succeeded or has no artifact expiry yet.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '410':
+          description: artifact_expired or artifact_missing; also returned for scheduled-plan or restored-history tasks that have no local export artifact.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '416': {description: Requested byte range is unsatisfiable; standard ServeContent response, not a JSON API error.}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/tasks/{id}/password:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    post:
+      operationId: revealBackupPassword
+      description: |
+        Administrator only; requires Origin and CSRF. Explicit audited plaintext
+        password read; no request body is needed. GET/list/detail never decrypt it.
+        Eligible only for non-restored succeeded tasks or failed tasks with
+        storage_outcome_unknown, with complete archive name/hash/location and an
+        unexpired stored password. An unknown storage result remains failed, not
+        successful. Passwords expire 90 days after completion; save each separately.
+        Passwords are not uploaded beside archives and cannot be recovered after
+        loss of the original Server secrets unless independently saved. Query
+        parameters are rejected. Audit records the task ID, never the password.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '200':
+          description: Explicit recovery password response.
+          headers:
+            Cache-Control:
+              schema: {type: string, const: no-store}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BackupPassword'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404':
+          description: task_not_found or password_unavailable; includes prepublication failures and restored history.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '409':
+          description: secret_unreadable; the current Server key cannot decrypt the stored password.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '410':
+          description: password_expired; a task outside its history retention instead returns 404 task_not_found.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/notifications:
+    get:
+      operationId: listInboxNotifications
+      description: |
+        Administrators see shared task and alert notifications; viewers see only
+        authenticated-audience alert notifications. Each user's read state is
+        independent; new users can read retained shared events. Notifications are
+        retained for 90 days. Ordered by created_at DESC, id DESC, with keyset
+        pagination. Unknown, repeated, empty or malformed query parameters return
+        400 validation_failed. GET never marks read and never returns passwords,
+        credentials or internal sequence numbers. read_through covers ALL visible
+        notifications in the same read transaction, not just this page or unread
+        filter, and is the UUID at the greatest insertion sequence, not the greatest
+        created_at or UUID. Use it unchanged for read-all.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/EventBefore'
+        - name: unread
+          in: query
+          schema: {type: boolean, default: false}
+          description: Only literal true and false are accepted; true filters to the current user's unread visible notifications.
+      responses:
+        '200':
+          description: Visible inbox page and read-all watermark.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InboxPage'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/notifications/summary:
+    get:
+      operationId: getInboxSummary
+      description: Session required for admins and viewers. Returns the current user's visible unread count and greatest insertion-sequence notification UUID in one read transaction, without marking read. This is inbox unread state, not a firing-alert count. Query parameters are rejected. Viewer results never include task notifications.
+      responses:
+        '200':
+          description: Consistent visible unread summary.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InboxSummary'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/notifications/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    get:
+      operationId: getInboxNotification
+      description: Session required for admins and viewers, with the same visibility as the list. Missing and invisible notifications both return 404 not_found. Returns an immutable safe snapshot even when its source task/alert has expired or been deleted; snapshot availability flags are historical, so fetch task detail for current availability. GET never marks read. Query parameters are rejected.
+      responses:
+        '200':
+          description: Visible notification snapshot and current user's read flag.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InboxNotification'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/notifications/{id}/read:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    patch:
+      operationId: markInboxNotificationRead
+      description: Admins and viewers may mark only their own visible notification read. Requires Origin and CSRF; no client-supplied user identity is accepted. Idempotent; missing and invisible notifications both return 404 not_found. Only read true is supported. Query parameters are rejected.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [read]
+              properties:
+                read: {type: boolean, const: true}
+      responses:
+        '204': {description: Read state recorded for the current user only.}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/notifications/read-all:
+    post:
+      operationId: markInboxNotificationsRead
+      description: |
+        Admins and viewers may mark their own visible notifications read; requires
+        Origin and CSRF. through must be a non-null read_through UUID previously
+        returned by the list. The Server resolves that currently visible record's
+        insertion sequence and marks only visible records at or below it. Newer
+        insertions remain unread even with identical timestamps, smaller UUIDs or
+        a backwards-moving clock. Missing, cleaned-up or invisible watermarks return
+        404 not_found without marking anything. Invalid UUID returns 400 with
+        fields.through. No client user ID is accepted. Query parameters are rejected.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [through]
+              properties:
+                through: {type: string, format: uuid}
+      responses:
+        '204': {description: Current user's visible notifications through the watermark marked read.}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/audit:
     get:
       operationId: listAuditEvents
@@ -1319,6 +1759,11 @@ components:
       name: limit
       in: query
       schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+    EventBefore:
+      name: before
+      in: query
+      description: Opaque next_cursor from the previous page; canonical created_at/UUID keyset position. Returns records strictly older in created_at DESC, id DESC order. Must be supplied once and nonempty; invalid cursors return 400.
+      schema: {type: string, minLength: 90, maxLength: 90}
     Offset:
       name: offset
       in: query
@@ -1335,8 +1780,26 @@ components:
             properties:
               name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
   responses:
+    BackupArchive:
+      description: Encrypted .tar.gz.age attachment, or a requested byte range of it. No recovery password is included.
+      headers:
+        Content-Disposition:
+          schema: {type: string}
+          description: attachment with the task's archive filename.
+        Cache-Control:
+          schema: {type: string, const: no-store}
+        X-Content-Type-Options:
+          schema: {type: string, const: nosniff}
+        Accept-Ranges:
+          schema: {type: string, const: bytes}
+        Content-Range:
+          schema: {type: string}
+          description: Present on partial responses.
+      content:
+        application/octet-stream:
+          schema: {type: string, format: binary}
     Error:
-      description: Structured failure. Invalid JSON/input returns 400, invalid credentials 401, role/Origin/CSRF failures 403, missing resources 404, capacity/enrollment/identity/username conflicts 409, bodies above 64 KiB 413, unsupported agent protocol 426, rate limiting 429, and retryable SQLite contention 503 storage_busy. Unsupported methods return 405 with Allow before authentication; unknown API routes return 404. No API error returns the SPA shell.
+      description: Structured failure. Invalid JSON/input returns 400, invalid credentials 401, role/Origin/CSRF failures 403, missing resources 404, plan-busy/secret/enrollment/identity/username conflicts 409, expired or missing backup artifacts/passwords 410, bodies above 64 KiB 413, unsupported agent protocol 426, rate limiting or backup queue capacity 429, and retryable SQLite contention 503 storage_busy. Unsupported methods return 405 with Allow before authentication; unknown API routes return 404. No API error returns the SPA shell.
       headers:
         X-Request-ID:
           schema: {type: string, format: uuid}
@@ -1344,12 +1807,342 @@ components:
           description: Present on 405; lists supported methods for the route.
           schema: {type: string}
         Retry-After:
-          description: Present on 429 and retryable storage 503; delay in seconds.
+          description: Present on rate-limiting 429 and retryable storage 503; delay in seconds. backup_queue_full does not include this header.
           schema: {type: string, pattern: '^[1-9][0-9]*$'}
       content:
         application/json:
           schema: {$ref: '#/components/schemas/Error'}
   schemas:
+    BackupCategories:
+      type: array
+      minItems: 1
+      maxItems: 3
+      uniqueItems: true
+      description: Independent categories; configuration is never added implicitly. Responses use configuration, monitoring, events order. Configuration contains password hashes, persistent Agent identity, credentials and the matching secrets.key, but not deployment configuration, TLS certificates or executables. Monitoring includes persisted observations and metric history, not in-memory reports. Events exclude historical backup passwords, pending deliveries/tasks and download artifacts. Only committed data is snapshotted; main and metrics databases are individually consistent, not one cross-database instant.
+      items: {type: string, enum: [configuration, monitoring, events]}
+    BackupCron:
+      type: string
+      default: '0 3 * * *'
+      description: Exactly five crontab fields (minute hour day-of-month month day-of-week), interpreted in the Server process timezone captured at startup. Supports lists, ranges, steps and English month/weekday names; Sunday is 0 or 7. Preserves crontab day-of-month/day-of-week OR semantics. No seconds, ?, @ aliases, TZ/CRON_TZ prefix or shell commands. DST gaps are skipped and repeated local times can produce distinct UTC runs. Missed cycles coalesce into one task, not a replay queue.
+    BackupTimezone:
+      type: object
+      required: [timezone_name, utc_offset_seconds, server_time]
+      properties:
+        timezone_name: {type: string, description: 'Server timezone display label; may be an IANA name or current zone abbreviation, not necessarily an IANA identifier. Never the browser timezone.'}
+        utc_offset_seconds: {type: integer, description: Server timezone's current offset at server_time; do not use it to infer offsets for future dates.}
+        server_time: {type: string, format: date-time, description: Current Server time in UTC.}
+    BackupNextRun:
+      type: object
+      additionalProperties: false
+      required: [at, local]
+      properties:
+        at: {type: string, format: date-time, description: Run instant in UTC.}
+        local: {type: string, format: date-time, description: Server-local RFC3339 representation with the actual offset for this run; display directly rather than converting to browser timezone.}
+    BackupCronPreview:
+      allOf:
+        - $ref: '#/components/schemas/BackupTimezone'
+        - type: object
+          required: [next_runs]
+          properties:
+            next_runs: {type: array, minItems: 3, maxItems: 3, items: {$ref: '#/components/schemas/BackupNextRun'}}
+      unevaluatedProperties: false
+    BackupLocalDestinationPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        path: {type: string, minLength: 1, description: 'Existing absolute private writable directory, owned by the Server user and mode 0700, without symlinks. Archives use an independent orbitbeacon-<plan_id> subdirectory. Custom systemd paths require an administrator-managed writable unit drop-in; containers require a writable mounted path.'}
+    BackupLocalDestination:
+      allOf:
+        - $ref: '#/components/schemas/BackupLocalDestinationPatch'
+        - required: [path]
+    BackupObjectDestinationPatch:
+      type: object
+      additionalProperties: false
+      description: |
+        One S3-protocol target. COS/OSS/S3 use virtual-host addressing; R2 uses
+        region auto and path-style; s3_compatible defaults to path-style.
+        Default endpoints for nonempty region are https://cos.<region>.myqcloud.com,
+        https://s3.oss-<region>.aliyuncs.com and https://s3.<region>.amazonaws.com.
+        R2 requires its account endpoint. Official OSS s3.oss-* endpoints use
+        virtual-host addressing; custom OSS endpoints must already be bucket-bound
+        CNAMEs with valid TLS and are used without adding bucket to host or path.
+        Provider profiles do not imply verification against a real cloud account.
+      properties:
+        provider: {type: string, enum: [cos, oss, r2, s3, s3_compatible]}
+        endpoint: {type: string, format: uri, description: 'HTTPS origin only, with optional port 1–65535; no path (including trailing slash), userinfo, query or fragment. TLS certificate verification is required; no proxy or redirects.'}
+        region: {type: string, minLength: 1, description: 'Required nonblank region; defaults to auto for R2, which requires exactly auto.'}
+        bucket: {type: string, minLength: 1, description: 'Nonblank bucket; no slash, backslash, CR, LF or NUL. COS bucket includes APPID.'}
+        prefix: {type: string, default: '', description: 'Empty or safe relative slash-separated path; no empty/dot/dot-dot components, backslashes or control characters. Object key is <prefix>/orbitbeacon/<plan_id>/<archive_name>, without a leading slash for empty prefix.'}
+        path_style: {type: boolean, description: 'Must be false for cos/oss/s3 and true for r2; defaults true for s3_compatible and r2, false otherwise.'}
+        allow_private_networks: {type: boolean, default: false, description: 'Explicitly permits private global-unicast addresses; still rejects loopback, link-local, metadata, non-global-unicast and mixed permitted/forbidden DNS answers. Applies to the final virtual-host hostname too.'}
+    BackupObjectDestination:
+      allOf:
+        - $ref: '#/components/schemas/BackupObjectDestinationPatch'
+        - required: [provider, endpoint, region, bucket, prefix, path_style, allow_private_networks]
+    BackupObjectCredentials:
+      type: object
+      additionalProperties: false
+      required: [access_key_id, secret_access_key]
+      description: Write-only full replacement, encrypted at rest. Both keys must be nonblank and unmasked; CR, LF and NUL are rejected. No default cloud credential chain is consulted. Never included in a destination, task or inbox response.
+      properties:
+        access_key_id: {type: string, minLength: 1, writeOnly: true}
+        secret_access_key: {type: string, minLength: 1, writeOnly: true}
+        session_token: {type: string, writeOnly: true, description: Optional; omission during a credential replacement clears the previous token.}
+    BackupPlanPatch:
+      type: object
+      additionalProperties: false
+      description: Omission preserves existing values; explicit null is rejected. Destination fields merge individually. The final merged plan must satisfy its kind/provider constraints; local plans cannot have credentials and object plans cannot have retain_count.
+      properties:
+        name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 100, description: 'Nonblank valid UTF-8 text, without control characters.'}
+        enabled: {type: boolean, default: false}
+        kind: {type: string, enum: [local, object], description: Immutable after creation.}
+        categories: {$ref: '#/components/schemas/BackupCategories'}
+        cron: {$ref: '#/components/schemas/BackupCron'}
+        destination:
+          anyOf:
+            - $ref: '#/components/schemas/BackupLocalDestinationPatch'
+            - $ref: '#/components/schemas/BackupObjectDestinationPatch'
+        retain_count: {type: integer, minimum: 1, maximum: 1000, default: 7, description: 'Local only; remove oldest own archives only after successful publication. Remote retention is managed by provider lifecycle rules.'}
+        credentials: {$ref: '#/components/schemas/BackupObjectCredentials'}
+    BackupPlanCreate:
+      allOf:
+        - $ref: '#/components/schemas/BackupPlanPatch'
+        - required: [name, kind, destination]
+        - oneOf:
+            - properties:
+                kind: {const: local}
+                destination: {$ref: '#/components/schemas/BackupLocalDestination'}
+              not: {required: [credentials]}
+            - required: [credentials]
+              properties:
+                kind: {const: object}
+                destination:
+                  allOf:
+                    - $ref: '#/components/schemas/BackupObjectDestinationPatch'
+                    - required: [provider, bucket]
+                    - if:
+                        properties:
+                          provider: {const: r2}
+                      then:
+                        required: [endpoint]
+                        properties:
+                          region: {const: auto}
+                          path_style: {const: true}
+                      else:
+                        required: [region]
+                    - if:
+                        properties:
+                          provider: {const: s3_compatible}
+                      then:
+                        required: [endpoint]
+                    - if:
+                        properties:
+                          provider: {enum: [cos, oss, s3]}
+                      then:
+                        properties:
+                          path_style: {const: false}
+              not: {required: [retain_count]}
+    BackupPlanTaskSummary:
+      type: object
+      additionalProperties: false
+      required: [id, state, created_at, finished_at, error_code, warning_code]
+      properties:
+        id: {type: string, format: uuid}
+        state: {$ref: '#/components/schemas/BackupTaskState'}
+        created_at: {type: string, format: date-time}
+        finished_at: {type: [string, 'null'], format: date-time}
+        error_code: {$ref: '#/components/schemas/BackupTaskErrorCode'}
+        warning_code: {$ref: '#/components/schemas/BackupTaskWarningCode'}
+    BackupPlan:
+      type: object
+      additionalProperties: false
+      required: [id, name, enabled, kind, categories, cron, destination, retain_count, next_run_at, created_at, updated_at, credentials_set, session_token_set, next_runs, last_task]
+      description: Safe plan projection; never contains access keys, secret tokens or ciphertext. Restoring configuration disables all restored plans. Edits/deletion do not change already captured task destinations or credentials.
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        enabled: {type: boolean}
+        kind: {type: string, enum: [local, object]}
+        categories: {$ref: '#/components/schemas/BackupCategories'}
+        cron: {$ref: '#/components/schemas/BackupCron'}
+        destination:
+          oneOf:
+            - $ref: '#/components/schemas/BackupLocalDestination'
+            - $ref: '#/components/schemas/BackupObjectDestination'
+        retain_count: {type: [integer, 'null'], minimum: 1, maximum: 1000, description: Local retention count; null for object storage.}
+        next_run_at: {type: [string, 'null'], format: date-time, description: Persisted UTC due time; null when disabled. An overdue time remains until coalesced work can be queued.}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        credentials_set: {type: boolean}
+        session_token_set: {type: boolean}
+        next_runs: {type: array, minItems: 3, maxItems: 3, description: 'Enabled plans start at persisted next_run_at, including overdue work. Disabled plans show a prospective Cron preview.', items: {$ref: '#/components/schemas/BackupNextRun'}}
+        last_task:
+          oneOf:
+            - $ref: '#/components/schemas/BackupPlanTaskSummary'
+            - type: 'null'
+    BackupPlanPage:
+      allOf:
+        - $ref: '#/components/schemas/BackupTimezone'
+        - type: object
+          required: [plans, has_more, next_cursor]
+          properties:
+            plans: {type: array, items: {$ref: '#/components/schemas/BackupPlan'}}
+            has_more: {type: boolean}
+            next_cursor: {type: [string, 'null'], description: 'Continuation cursor, or null on the last page.'}
+      unevaluatedProperties: false
+    BackupTaskKind:
+      type: string
+      enum: [backup_export, backup_local, backup_remote]
+    BackupTaskState:
+      type: string
+      enum: [queued, running, succeeded, failed]
+      description: interrupted and restore_interrupted are failed error codes, never additional states.
+    BackupTaskErrorCode:
+      type: string
+      description: Safe machine code, empty without failure. Never raw SQL/filesystem/SDK errors or credential-bearing URLs. Clients should tolerate future codes.
+      examples: ['', snapshot_failed, history_unavailable, archive_too_large, disk_full, storage_permission_denied, storage_unreachable, storage_auth_failed, storage_upload_failed, secret_unreadable, interrupted, restore_interrupted, internal_error]
+    BackupTaskWarningCode:
+      type: string
+      description: Empty without warning. storage_outcome_unknown means publication may have occurred but could not be confirmed; task remains failed and the archive metadata/password may allow recovery. retention_cleanup_failed means successful local publication but retention deletion needs attention.
+      examples: ['', storage_outcome_unknown, retention_cleanup_failed]
+    BackupTaskDestination:
+      type: object
+      additionalProperties: false
+      required: [plan_name, actor_name, target]
+      description: Safe immutable source/target snapshot, independent of later plan or user edits/deletion.
+      properties:
+        plan_name: {type: string, description: Empty for manual exports.}
+        actor_name: {type: string, description: Empty for scheduled plans.}
+        target:
+          oneOf:
+            - type: 'null'
+            - type: object
+              additionalProperties: false
+              required: [path, retain_count]
+              properties:
+                path: {type: string}
+                retain_count: {type: integer, minimum: 1, maximum: 1000}
+            - $ref: '#/components/schemas/BackupObjectDestination'
+    BackupTaskFields:
+      type: object
+      properties:
+        id: {type: string, format: uuid, description: Also the archive manifest archive_id and recovery-info archive_id; no second archive identifier.}
+        kind: {$ref: '#/components/schemas/BackupTaskKind'}
+        state: {$ref: '#/components/schemas/BackupTaskState'}
+        phase: {type: string, enum: ['', snapshot, packaging, storing], description: Packaging streams compression and encryption together; no estimated percentage.}
+        plan_id: {type: [string, 'null'], format: uuid}
+        actor_id: {type: [string, 'null'], format: uuid}
+        categories: {$ref: '#/components/schemas/BackupCategories'}
+        destination: {$ref: '#/components/schemas/BackupTaskDestination'}
+        scheduled_at: {type: [string, 'null'], format: date-time}
+        created_at: {type: string, format: date-time}
+        started_at: {type: [string, 'null'], format: date-time}
+        finished_at: {type: [string, 'null'], format: date-time}
+        artifact_name: {type: [string, 'null'], description: orbitbeacon-<UTC YYYYMMDDTHHMMSSZ>-<task UUID>.tar.gz.age.}
+        artifact_bytes: {type: [string, 'null'], pattern: '^(0|[1-9][0-9]*)$', description: 'Final encrypted archive size as a decimal string, never a JSON number.'}
+        artifact_sha256: {type: [string, 'null'], pattern: '^[a-f0-9]{64}$', description: SHA-256 of the final encrypted archive.}
+        artifact_expires_at: {type: [string, 'null'], format: date-time, description: 'Manual download expiry, normally completion plus 24 hours; null for scheduled/restored history.'}
+        result_location: {type: [string, 'null'], description: 'Display-only local archive path or object location; not credentials, an internal staging path, a browser download URL or a presigned link.'}
+        password_expires_at: {type: [string, 'null'], format: date-time, description: Completion plus 90 days; active tasks have no expiry. Restored event history has no recoverable password.}
+        error_code: {$ref: '#/components/schemas/BackupTaskErrorCode'}
+        warning_code: {$ref: '#/components/schemas/BackupTaskWarningCode'}
+        restored: {type: boolean, description: Restored history retains archive metadata but has neither downloadable artifact nor recovery password.}
+        download_available: {type: boolean, description: 'True only for a succeeded, non-restored, unexpired manual export whose private artifact can safely be opened now.'}
+        password_available: {type: boolean, description: 'True only for a non-restored succeeded task or failed task with storage_outcome_unknown, with complete archive name/hash/location, unexpired encrypted password and password expiry. Does not prove the current key can decrypt it; explicit POST can still return secret_unreadable.'}
+    BackupTask:
+      allOf:
+        - $ref: '#/components/schemas/BackupTaskFields'
+        - required: [id, kind, state, phase, plan_id, actor_id, categories, destination, scheduled_at, created_at, started_at, finished_at, artifact_name, artifact_bytes, artifact_sha256, artifact_expires_at, result_location, password_expires_at, error_code, warning_code, restored, download_available, password_available]
+      unevaluatedProperties: false
+      description: Credential-free task projection. Never includes password plaintext/ciphertext, input credentials, artifact cleanup bookkeeping or internal work directories. Ordinary GET has no secret-read side effect.
+    BackupTaskPage:
+      type: object
+      additionalProperties: false
+      required: [tasks, has_more, next_cursor]
+      properties:
+        tasks: {type: array, items: {$ref: '#/components/schemas/BackupTask'}}
+        has_more: {type: boolean}
+        next_cursor: {type: [string, 'null'], description: 'Continuation cursor, or null on the last page.'}
+    BackupPassword:
+      type: object
+      additionalProperties: false
+      required: [password, archive_name, archive_sha256, password_expires_at]
+      properties:
+        password: {type: string, pattern: '^[A-Za-z0-9]{16}$', description: Independently generated high-entropy archive password; returned only by an explicit authorized POST.}
+        archive_name: {type: string}
+        archive_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        password_expires_at: {type: string, format: date-time}
+    InboxTaskSnapshot:
+      allOf:
+        - $ref: '#/components/schemas/BackupTaskFields'
+        - type: object
+          required: [id, kind, state, phase, plan_id, actor_id, categories, destination, scheduled_at, created_at, started_at, finished_at, artifact_name, artifact_bytes, artifact_sha256, artifact_expires_at, result_location, password_expires_at, error_code, warning_code, restored, download_available, password_available, has_password]
+          properties:
+            has_password: {type: boolean, description: Historical availability-only indication captured at completion; never the password.}
+      unevaluatedProperties: false
+      description: Immutable safe completion snapshot; availability fields are not recomputed on inbox reads.
+    InboxRestoreInterruptedSnapshot:
+      type: object
+      additionalProperties: false
+      required: [kind, categories, state, phase, error_code, warning_code, finished_at]
+      description: Minimal safe notification produced when offline restore interrupts retained queued/running work. Resolve its task using the outer source_id if still available.
+      properties:
+        kind: {$ref: '#/components/schemas/BackupTaskKind'}
+        categories: {$ref: '#/components/schemas/BackupCategories'}
+        state: {type: string, const: failed}
+        phase: {type: string, enum: ['', snapshot, packaging, storing]}
+        error_code: {type: string, const: restore_interrupted}
+        warning_code: {$ref: '#/components/schemas/BackupTaskWarningCode'}
+        finished_at: {type: string, format: date-time}
+    InboxAlertSnapshot:
+      type: object
+      additionalProperties: false
+      required: [rule_id, rule_name, node_id, node_name, metric, severity, transition, value, started_at, resolved_at]
+      description: Immutable projection at the firing/resolved transition; survives deleted source entities. Created independently of external notification delivery and contains no channel credentials.
+      properties:
+        rule_id: {type: string, format: uuid}
+        rule_name: {type: string}
+        node_id: {type: string, format: uuid}
+        node_name: {type: string}
+        metric: {type: string}
+        severity: {type: string}
+        transition: {type: string, enum: [firing, resolved]}
+        value: {type: [number, 'null']}
+        started_at: {type: string, format: date-time}
+        resolved_at: {type: [string, 'null'], format: date-time}
+    InboxNotification:
+      type: object
+      additionalProperties: false
+      required: [id, kind, source_id, transition, severity, created_at, details, read]
+      properties:
+        id: {type: string, format: uuid}
+        kind: {type: string, enum: [task, alert]}
+        source_id: {type: string, description: Source task or alert episode identifier; may no longer resolve.}
+        transition: {type: string, enum: [succeeded, failed, firing, resolved]}
+        severity: {type: string}
+        created_at: {type: string, format: date-time, description: 'Actual notification creation time, not the beginning of an alert condition.'}
+        details:
+          oneOf:
+            - $ref: '#/components/schemas/InboxTaskSnapshot'
+            - $ref: '#/components/schemas/InboxRestoreInterruptedSnapshot'
+            - $ref: '#/components/schemas/InboxAlertSnapshot'
+        read: {type: boolean, description: Read flag for the authenticated user only.}
+    InboxPage:
+      type: object
+      additionalProperties: false
+      required: [notifications, has_more, read_through]
+      properties:
+        notifications: {type: array, items: {$ref: '#/components/schemas/InboxNotification'}}
+        has_more: {type: boolean}
+        next_cursor: {type: string, description: Present only when has_more is true; pass as before.}
+        read_through: {type: [string, 'null'], format: uuid, description: 'UUID of the maximum insertion-sequence record among ALL visible notifications in the same read transaction, regardless of page or unread filter. Null only when no visible records exist. Not a sortable UUID or timestamp; insertion sequence is never exposed.'}
+    InboxSummary:
+      type: object
+      additionalProperties: false
+      required: [unread_count, latest_id]
+      properties:
+        unread_count: {type: integer, format: int64, minimum: 0, description: 'Count of the current user''s visible unread notifications, not firing episodes.'}
+        latest_id: {type: [string, 'null'], format: uuid, description: 'Greatest insertion-sequence visible notification UUID, including read records; null when no visible notifications exist. Read in the same transaction as unread_count.'}
     NotificationChannelConfig:
       oneOf:
         - type: object
@@ -1521,7 +2314,7 @@ components:
         code:
           type: string
           description: Machine-readable failure code; validation_failed may include per-field messages. Clients must tolerate new error codes.
-          examples: [unauthenticated, forbidden, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, username_conflict, invalid_json, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, storage_busy, not_available, internal_error]
+          examples: [unauthenticated, forbidden, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, username_conflict, invalid_json, invalid_input, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, backup_queue_full, backup_plan_busy, backup_plan_not_found, task_not_found, artifact_not_ready, artifact_expired, artifact_missing, password_unavailable, password_expired, secret_unreadable, storage_busy, not_available, internal_error]
         message: {type: string, minLength: 1}
         request_id: {type: string, format: uuid, description: Correlates the response with safe server diagnostic metadata for internal service failures.}
         fields:

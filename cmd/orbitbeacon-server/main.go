@@ -47,19 +47,19 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("expected subcommand: serve, bootstrap, backup, restore, version, health or verify-bundle")
+		return errors.New("expected subcommand: serve, bootstrap, restore, version, health or verify-bundle")
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stdout, "Usage: orbitbeacon-server {serve|bootstrap|backup|restore|version|health|verify-bundle} --help")
+		fmt.Fprintln(os.Stdout, "Usage: orbitbeacon-server {serve|bootstrap|restore|version|health|verify-bundle} --help")
 		return nil
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
-	var configPath, dataDir, output, input, username string
+	var configPath, dataDir, input, username string
 	var bundleDir, publicKey string
 	var healthURL, healthCA string
 	var passwordFile string
 	var replace bool
-	var asJSON, onlineBackup bool
+	var asJSON bool
 	if args[0] != "version" && args[0] != "health" && args[0] != "verify-bundle" {
 		if args[0] != "restore" {
 			fs.StringVar(&configPath, "config", "", "JSON configuration file")
@@ -80,9 +80,6 @@ func run(args []string) error {
 		fs.String("trusted-proxies", "", "comma-separated trusted proxy IP addresses or CIDR prefixes")
 	case "bootstrap":
 		fs.StringVar(&username, "username", "", "first administrator username; prompted if omitted")
-	case "backup":
-		fs.StringVar(&output, "output", "", "destination backup archive")
-		fs.BoolVar(&onlineBackup, "online", false, "back up the running server without locking or migrating its database")
 	case "restore":
 		fs.StringVar(&input, "input", "", "source restore archive")
 		fs.BoolVar(&replace, "replace", false, "replace selected categories in an existing data directory")
@@ -96,7 +93,7 @@ func run(args []string) error {
 		fs.StringVar(&bundleDir, "directory", "", "signed bundle directory")
 		fs.StringVar(&publicKey, "public-key", "", "Ed25519 public key PEM or raw file")
 	default:
-		return fmt.Errorf("unknown subcommand %q; expected serve, bootstrap, backup, restore, version, health or verify-bundle", args[0])
+		return fmt.Errorf("unknown subcommand %q; expected serve, bootstrap, restore, version, health or verify-bundle", args[0])
 	}
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -125,25 +122,6 @@ func run(args []string) error {
 		}
 		fmt.Fprintf(os.Stdout, "verified bundle %s with %d artifacts\n", manifest.Version, len(manifest.Artifacts))
 		return nil
-	}
-	if args[0] == "backup" {
-		if output == "" {
-			return errors.New("backup requires --output")
-		}
-		toolFlags := make(map[string]string)
-		fs.Visit(func(f *flag.Flag) {
-			if f.Name == "data-dir" {
-				toolFlags["data_dir"] = f.Value.String()
-			}
-		})
-		cfg, err := config.LoadServer(config.LoadOptions{File: configPath, Flags: toolFlags})
-		if err != nil {
-			return err
-		}
-		if onlineBackup {
-			return backupDatabaseOnline(cfg.DataDir, output)
-		}
-		return backupDatabase(cfg.DataDir, output)
 	}
 	if args[0] == "restore" {
 		if dataDir == "" || input == "" {
