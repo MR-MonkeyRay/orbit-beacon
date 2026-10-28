@@ -90,6 +90,7 @@ var allowedInternalImports = map[string]map[string]bool{
 		"orbitbeacon/internal/timekey":      true,
 	},
 	"orbitbeacon/internal/server/nodes": {
+		"orbitbeacon/internal/server/change":  true,
 		"orbitbeacon/internal/identity":       true,
 		"orbitbeacon/internal/protocol/v1":    true,
 		"orbitbeacon/internal/server/audit":   true,

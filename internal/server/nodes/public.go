@@ -21,6 +21,9 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
+// OnlineWindow is the shared management and public recent-report window.
+const OnlineWindow = 180 * time.Second
+
 // PublicSettings contains only text explicitly selected for anonymous publication.
 type PublicSettings struct {
 	Enabled  bool   `json:"enabled"`
@@ -162,6 +165,7 @@ func (s *Service) PatchPublicSettings(ctx context.Context, id string, patch Publ
 	if err := tx.Commit(); err != nil {
 		return PublicSettings{}, err
 	}
+	s.InvalidatePublic()
 	return p, nil
 }
 
@@ -189,31 +193,56 @@ func visibleSettings(raw string) (PublicSettings, bool) {
 	return p, err == nil && p.Enabled && p.validate() == nil
 }
 
-func (s *Service) ListPublicIDs(ctx context.Context, limit, offset int) ([]string, bool, error) {
+// PublicVisibilityVersion changes after a committed mutation of public data.
+func (s *Service) PublicVisibilityVersion() uint64 { return s.publicVersion.Load() }
+
+// SetPublicReader selects the isolated pool used only by anonymous page queries.
+// A nil reader restores the main pool used by existing constructors.
+func (s *Service) SetPublicReader(db *sql.DB) { s.publicReader.Store(db) }
+
+func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int) ([]PublicRecord, bool, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, false, ErrInvalidInput
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT id FROM nodes WHERE "+publicVisibility+" ORDER BY created_at,id LIMIT ? OFFSET ?", limit+1, offset)
+	db := s.publicReader.Load()
+	if db == nil {
+		db = s.db
+	}
+	rows, err := db.QueryContext(ctx, "SELECT id,public_settings,last_seen,token_hash,run_generation,report_session_id FROM nodes WHERE "+publicVisibility+" ORDER BY created_at,id LIMIT ? OFFSET ?", limit+1, offset)
 	if err != nil {
 		return nil, false, err
 	}
 	defer rows.Close()
-	ids := make([]string, 0, limit)
+	records := make([]PublicRecord, 0, limit)
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		// The extra row only establishes has_more, as in ListPublicIDs.
+		if len(records) == limit {
+			return records, true, nil
+		}
+		record, err := scanPublicRecord(rows)
+		if err != nil {
 			return nil, false, err
 		}
-		if len(ids) == limit {
-			return ids, true, nil
-		}
-		ids = append(ids, id)
+		records = append(records, record)
 	}
-	return ids, false, rows.Err()
+	return records, false, rows.Err()
+}
+
+func (s *Service) ListPublicIDs(ctx context.Context, limit, offset int) ([]string, bool, error) {
+	records, more, err := s.ListPublicRecords(ctx, limit, offset)
+	if err != nil {
+		return nil, false, err
+	}
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		ids = append(ids, record.ID)
+	}
+	return ids, more, nil
 }
 
 // PublicRecord is an internal identity fence, never an HTTP representation.
 type PublicRecord struct {
+	ID         string         `json:"-"`
 	Settings   PublicSettings `json:"-"`
 	LastSeen   time.Time      `json:"-"`
 	Credential [32]byte       `json:"-"`
@@ -221,12 +250,25 @@ type PublicRecord struct {
 	Session    string         `json:"-"`
 }
 
+// LatestSeen includes reports coalesced in memory after the durable last_seen.
+// The caller must first match the record's credential and process identity.
+func (p PublicRecord) LatestSeen(receivedAt time.Time) time.Time {
+	if receivedAt.After(p.LastSeen) {
+		return receivedAt
+	}
+	return p.LastSeen
+}
+
 func ReadPublicRecord(ctx context.Context, db *sql.DB, id string) (PublicRecord, error) {
+	return scanPublicRecord(db.QueryRowContext(ctx, "SELECT id,public_settings,last_seen,token_hash,run_generation,report_session_id FROM nodes WHERE id = ? AND "+publicVisibility, id))
+}
+
+func scanPublicRecord(row interface{ Scan(...any) error }) (PublicRecord, error) {
 	var p PublicRecord
 	var raw, generation string
 	var seen sql.NullString
 	var credential []byte
-	err := db.QueryRowContext(ctx, "SELECT public_settings,last_seen,token_hash,run_generation,report_session_id FROM nodes WHERE id = ? AND "+publicVisibility, id).Scan(&raw, &seen, &credential, &generation, &p.Session)
+	err := row.Scan(&p.ID, &raw, &seen, &credential, &generation, &p.Session)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}

@@ -20,6 +20,7 @@ func (p *ConfigPatch) UnmarshalJSON(data []byte) error {
 		DiskInterval   json.RawMessage `json:"disk_interval_seconds"`
 		Interfaces     json.RawMessage `json:"interfaces"`
 		DiskPaths      json.RawMessage `json:"disk_paths"`
+		ProbeTargets   json.RawMessage `json:"probe_targets"`
 		BillingDay     json.RawMessage `json:"billing_day"`
 		QuotaBytes     json.RawMessage `json:"quota_bytes"`
 	}
@@ -38,6 +39,7 @@ func (p *ConfigPatch) UnmarshalJSON(data []byte) error {
 		{"disk_interval_seconds", wire.DiskInterval, &p.DiskIntervalSeconds},
 		{"interfaces", wire.Interfaces, &p.Interfaces},
 		{"disk_paths", wire.DiskPaths, &p.DiskPaths},
+		{"probe_targets", wire.ProbeTargets, &p.ProbeTargets},
 		{"billing_day", wire.BillingDay, &p.BillingDay},
 		{"quota_bytes", wire.QuotaBytes, &p.QuotaBytes},
 	} {

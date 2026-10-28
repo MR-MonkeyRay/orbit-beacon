@@ -12,11 +12,13 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"orbitbeacon/internal/identity"
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/change"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
@@ -30,18 +32,33 @@ const (
 	ErrNotFound        serviceError = "node not found"
 	ErrUnauthenticated serviceError = "node authentication required"
 	ErrInvalidInput    serviceError = "invalid node request"
+	// ErrDisabled rejects agent traffic for a disabled node without treating
+	// its still-valid credential as unknown.
+	ErrDisabled serviceError = "node is disabled"
 )
 
 type Node struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Status    string    `json:"status"`
-	Notes     string    `json:"notes"`
-	Region    string    `json:"region"`
-	Provider  string    `json:"provider"`
-	GroupID   *string   `json:"group_id"`
-	Tags      []string  `json:"tags"`
-	CreatedAt time.Time `json:"created_at"`
+	ID           string       `json:"id"`
+	Name         string       `json:"name"`
+	Status       string       `json:"status"`
+	Notes        string       `json:"notes"`
+	Region       string       `json:"region"`
+	Provider     string       `json:"provider"`
+	GroupID      *string      `json:"group_id"`
+	Tags         []string     `json:"tags"`
+	CreatedAt    time.Time    `json:"created_at"`
+	LastSeen     *time.Time   `json:"last_seen"`
+	Presence     string       `json:"presence"`
+	Config       ConfigStatus `json:"config"`
+	AgentVersion string       `json:"agent_version"`
+}
+
+// ConfigStatus describes the last reported application of desired configuration.
+type ConfigStatus struct {
+	DesiredRevision int64           `json:"desired_revision"`
+	AppliedRevision int64           `json:"applied_revision"`
+	State           string          `json:"state"`
+	Error           *v1.ConfigError `json:"error"`
 }
 
 type CreateRequest struct {
@@ -75,10 +92,15 @@ type ConfigPatch struct {
 	DiskIntervalSeconds   *int      `json:"disk_interval_seconds,omitempty"`
 	Interfaces            *[]string `json:"interfaces,omitempty"`
 	DiskPaths             *[]string `json:"disk_paths,omitempty"`
+	ProbeTargets          *[]string `json:"probe_targets,omitempty"`
 	BillingDay            *int      `json:"billing_day,omitempty"`
 	QuotaBytes            *string   `json:"quota_bytes,omitempty"`
 	invalidFields         map[string]string
 }
+
+// MaxConfigRevision bounds desired configuration revisions far below int64
+// overflow and within exact JSON number precision for browser clients.
+const MaxConfigRevision = 1<<53 - 1
 
 type ValidationError struct{ Fields map[string]string }
 
@@ -91,11 +113,14 @@ type Options struct {
 }
 
 type Service struct {
-	db       *sql.DB
-	maxNodes int
-	now      func() time.Time
-	random   io.Reader
-	randomMu sync.Mutex
+	publicVersion atomic.Uint64
+	publicChanges change.Notifier
+	publicReader  atomic.Pointer[sql.DB]
+	db            *sql.DB
+	maxNodes      int
+	now           func() time.Time
+	random        io.Reader
+	randomMu      sync.Mutex
 }
 
 func NewService(db *sql.DB, opts Options) *Service {
@@ -116,6 +141,17 @@ func (s *Service) Database() *sql.DB { return s.db }
 
 func (s *Service) Capacity() int { return s.maxNodes }
 
+// InvalidatePublic expires anonymous projections after an external committed
+// identity change, such as enrollment rotating a credential.
+func (s *Service) InvalidatePublic() {
+	s.publicVersion.Add(1)
+	s.publicChanges.Notify()
+}
+
+func (s *Service) PublicChanges() (uint64, <-chan struct{}) {
+	return s.publicChanges.Snapshot()
+}
+
 func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, error) {
 	if strings.TrimSpace(req.Name) == "" || len(req.Name) > 255 {
 		return Node{}, ErrInvalidInput
@@ -126,7 +162,7 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 	if err != nil {
 		return Node{}, err
 	}
-	node := Node{ID: id, Name: req.Name, Status: "pending", Tags: []string{}, CreatedAt: s.now().UTC()}
+	node := Node{ID: id, Name: req.Name, Status: "pending", Presence: "pending", Config: ConfigStatus{DesiredRevision: 1, State: "pending"}, Tags: []string{}, CreatedAt: s.now().UTC()}
 	// BEGIN IMMEDIATE reserves the writer before checking capacity, including
 	// across independent services using the same persistent database.
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -156,12 +192,14 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 type scanner interface{ Scan(...any) error }
 
 const nodeColumns = `id, name, status, created_at, notes, region, provider, group_id,
-	(SELECT json_group_array(tag) FROM (SELECT tag FROM node_tags WHERE node_id = nodes.id ORDER BY tag))`
+	(SELECT json_group_array(tag) FROM (SELECT tag FROM node_tags WHERE node_id = nodes.id ORDER BY tag)), last_seen, length(token_hash) > 0, desired_revision, applied_revision, config_error, system`
 
-func scanNode(row scanner) (Node, error) {
+func scanNode(row scanner, now time.Time) (Node, error) {
 	var node Node
-	var created, tags string
-	if err := row.Scan(&node.ID, &node.Name, &node.Status, &created, &node.Notes, &node.Region, &node.Provider, &node.GroupID, &tags); err != nil {
+	var created, tags, configError, systemJSON string
+	var lastSeen sql.NullString
+	var hasCredential sql.NullBool
+	if err := row.Scan(&node.ID, &node.Name, &node.Status, &created, &node.Notes, &node.Region, &node.Provider, &node.GroupID, &tags, &lastSeen, &hasCredential, &node.Config.DesiredRevision, &node.Config.AppliedRevision, &configError, &systemJSON); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Node{}, ErrNotFound
 		}
@@ -178,25 +216,86 @@ func scanNode(row scanner) (Node, error) {
 	if node.Tags == nil {
 		node.Tags = []string{}
 	}
-	return node, err
+	if lastSeen.Valid {
+		seen, err := timekey.Parse(lastSeen.String)
+		if err != nil {
+			return Node{}, err
+		}
+		node.LastSeen = &seen
+	}
+	// Ingest coalesces durable last_seen writes, so presence may lag by ~30s.
+	switch {
+	case node.Status == "disabled":
+		node.Presence = "disabled"
+	case node.Status == "pending" || !hasCredential.Bool:
+		node.Presence = "pending"
+	case node.LastSeen == nil:
+		node.Presence = "never"
+	case node.LastSeen.After(now) || now.Sub(*node.LastSeen) > OnlineWindow:
+		node.Presence = "offline"
+	default:
+		node.Presence = "online"
+	}
+	// Stored agent output must not break the inventory: an unreadable error
+	// still reports the error state, and unreadable system data is omitted.
+	if configError != "" {
+		if err := json.Unmarshal([]byte(configError), &node.Config.Error); err != nil || node.Config.Error == nil {
+			node.Config.Error = &v1.ConfigError{Code: "unreadable"}
+		}
+	}
+	switch {
+	case node.Config.Error != nil:
+		node.Config.State = "error"
+	case node.Config.AppliedRevision >= node.Config.DesiredRevision:
+		node.Config.State = "applied"
+	default:
+		node.Config.State = "pending"
+	}
+	var system v1.System
+	if json.Unmarshal([]byte(systemJSON), &system) == nil {
+		node.AgentVersion = system.AgentVersion
+	}
+	return node, nil
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Node, error) {
-	return scanNode(s.db.QueryRowContext(ctx, "SELECT "+nodeColumns+" FROM nodes WHERE id = ?", id))
+	return scanNode(s.db.QueryRowContext(ctx, "SELECT "+nodeColumns+" FROM nodes WHERE id = ?", id), s.now())
 }
 
+// List retains the bounded inventory API for existing callers.
 func (s *Service) List(ctx context.Context, limit, offset int) ([]Node, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, ErrInvalidInput
 	}
+	return s.list(ctx, limit, offset)
+}
+
+// ListPage fetches one lookahead row in the same query as the requested page.
+func (s *Service) ListPage(ctx context.Context, limit, offset int) ([]Node, bool, error) {
+	if limit < 1 || limit > 100 || offset < 0 {
+		return nil, false, ErrInvalidInput
+	}
+	result, err := s.list(ctx, limit+1, offset)
+	if err != nil {
+		return nil, false, err
+	}
+	hasMore := len(result) > limit
+	if hasMore {
+		result = result[:limit]
+	}
+	return result, hasMore, nil
+}
+
+func (s *Service) list(ctx context.Context, limit, offset int) ([]Node, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT "+nodeColumns+" FROM nodes ORDER BY created_at, id LIMIT ? OFFSET ?", limit, offset)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	result := make([]Node, 0)
+	now := s.now()
 	for rows.Next() {
-		node, err := scanNode(rows)
+		node, err := scanNode(rows, now)
 		if err != nil {
 			return nil, err
 		}
@@ -263,7 +362,7 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 			}
 		}
 	}
-	node, err := scanNode(tx.QueryRowContext(ctx, "SELECT "+nodeColumns+" FROM nodes WHERE id = ?", id))
+	node, err := scanNode(tx.QueryRowContext(ctx, "SELECT "+nodeColumns+" FROM nodes WHERE id = ?", id), s.now())
 	if err != nil {
 		return Node{}, err
 	}
@@ -294,7 +393,37 @@ func (s *Service) SetDisabled(ctx context.Context, id string, disabled bool) err
 	if err := audit.Insert(ctx, tx, action, id, s.now()); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.InvalidatePublic()
+	return nil
+}
+
+// RevokeCredential detaches the agent identity but keeps the asset, so a leaked
+// credential can be cut off without losing metadata or public settings. A new
+// single-node enrollment ticket can bind a fresh installation afterwards.
+func (s *Service) RevokeCredential(ctx context.Context, id string) error {
+	if !identity.ValidUUID(id) {
+		return ErrInvalidInput
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE nodes SET token_hash = NULL, installation_id = NULL, run_generation = '0', report_session_id = '', status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'pending' END WHERE id = ?`, id)
+	if err := affected(result, err); err != nil {
+		return err
+	}
+	if err := audit.Insert(ctx, tx, "node.credential.revoke", id, s.now()); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.InvalidatePublic()
+	return nil
 }
 
 func affected(result sql.Result, err error) error {
@@ -316,9 +445,9 @@ func (s *Service) AuthenticateToken(ctx context.Context, token string) (Node, er
 		return Node{}, ErrUnauthenticated
 	}
 	digest := sha256.Sum256([]byte(token))
-	var id string
+	var id, status string
 	var stored []byte
-	err := s.db.QueryRowContext(ctx, "SELECT id, token_hash FROM nodes WHERE token_hash = ?", digest[:]).Scan(&id, &stored)
+	err := s.db.QueryRowContext(ctx, "SELECT id, token_hash, status FROM nodes WHERE token_hash = ?", digest[:]).Scan(&id, &stored, &status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Node{}, ErrUnauthenticated
 	}
@@ -327,6 +456,9 @@ func (s *Service) AuthenticateToken(ctx context.Context, token string) (Node, er
 	}
 	if subtle.ConstantTimeCompare(stored, digest[:]) != 1 {
 		return Node{}, ErrUnauthenticated
+	}
+	if status == "disabled" {
+		return Node{}, ErrDisabled
 	}
 	return s.Get(ctx, id)
 }
@@ -348,6 +480,9 @@ func (s *Service) Delete(ctx context.Context, id string, confirm bool) error {
 	if _, err := tx.ExecContext(ctx, "UPDATE update_job_nodes SET status = ? WHERE node_id = ? AND status IN ('queued','downloading','verifying','restarting','awaiting_report')", "cancelled", id); err != nil {
 		return err
 	}
+	if err := audit.ScopedAlertRuleDeletes(ctx, tx, "node", id, s.now()); err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, "DELETE FROM nodes WHERE id = ?", id)
 	if err := affected(result, err); err != nil {
 		return err
@@ -355,7 +490,11 @@ func (s *Service) Delete(ctx context.Context, id string, confirm bool) error {
 	if err := audit.Insert(ctx, tx, "node.delete", id, s.now()); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.InvalidatePublic()
+	return nil
 }
 
 func (s *Service) Batch(ctx context.Context, req BatchRequest) ([]BatchResult, error) {
@@ -432,7 +571,7 @@ func (s *Service) PatchConfig(ctx context.Context, id string, patch ConfigPatch)
 	for field, message := range patch.invalidFields {
 		fields[field] = message
 	}
-	if len(fields) == 0 && patch.ReportIntervalSeconds == nil && patch.DiskIntervalSeconds == nil && patch.Interfaces == nil && patch.DiskPaths == nil && patch.BillingDay == nil && patch.QuotaBytes == nil {
+	if len(fields) == 0 && patch.ReportIntervalSeconds == nil && patch.DiskIntervalSeconds == nil && patch.Interfaces == nil && patch.DiskPaths == nil && patch.ProbeTargets == nil && patch.BillingDay == nil && patch.QuotaBytes == nil {
 		fields["config"] = "at least one supported field is required"
 	}
 	if p := patch.ReportIntervalSeconds; p != nil && (*p < 5 || *p > 60) {
@@ -449,12 +588,33 @@ func (s *Service) PatchConfig(ctx context.Context, id string, patch ConfigPatch)
 			fields["quota_bytes"] = "must be a canonical unsigned decimal byte count"
 		}
 	}
+	if p := patch.ProbeTargets; p != nil {
+		if len(*p) > 5 {
+			fields["probe_targets"] = "must contain at most 5 entries"
+		} else {
+			seen := make(map[string]struct{}, len(*p))
+			for _, target := range *p {
+				if err := v1.ValidateProbeTarget(target); err != nil {
+					fields["probe_targets"] = err.Error()
+					break
+				}
+				if _, exists := seen[target]; exists {
+					fields["probe_targets"] = "entries must be unique"
+					break
+				}
+				seen[target] = struct{}{}
+			}
+		}
+	}
 	var selection v1.DesiredConfig
 	if patch.Interfaces != nil {
 		selection.Interfaces = *patch.Interfaces
 	}
 	if patch.DiskPaths != nil {
 		selection.DiskPaths = *patch.DiskPaths
+	}
+	if patch.ProbeTargets != nil {
+		selection.ProbeTargets = *patch.ProbeTargets
 	}
 	if err := selection.ValidateSelection(); err != nil {
 		for field, message := range err.(*v1.ValidationError).Fields {
@@ -473,6 +633,7 @@ func (s *Service) PatchConfig(ctx context.Context, id string, patch ConfigPatch)
 	if err != nil {
 		return v1.DesiredConfig{}, err
 	}
+	oldProbeTargets := slices.Clone(cfg.ProbeTargets)
 	changed := false
 	if patch.ReportIntervalSeconds != nil {
 		changed = changed || cfg.ReportIntervalSeconds != *patch.ReportIntervalSeconds
@@ -500,12 +661,21 @@ func (s *Service) PatchConfig(ctx context.Context, id string, patch ConfigPatch)
 			cfg.DiskPaths = []string{}
 		}
 	}
+	probeTargetsChanged := false
+	if patch.ProbeTargets != nil {
+		probeTargetsChanged = !slices.Equal(cfg.ProbeTargets, *patch.ProbeTargets)
+		changed = changed || probeTargetsChanged
+		cfg.ProbeTargets = *patch.ProbeTargets
+		if cfg.ProbeTargets == nil {
+			cfg.ProbeTargets = []string{}
+		}
+	}
 	if patch.QuotaBytes != nil {
 		changed = changed || cfg.QuotaBytes != *patch.QuotaBytes
 		cfg.QuotaBytes = *patch.QuotaBytes
 	}
 	// A partial PATCH must also fit together with the persisted other selection.
-	if err := (v1.DesiredConfig{Interfaces: cfg.Interfaces, DiskPaths: cfg.DiskPaths}).ValidateSelection(); err != nil {
+	if err := (v1.DesiredConfig{Interfaces: cfg.Interfaces, DiskPaths: cfg.DiskPaths, ProbeTargets: cfg.ProbeTargets}).ValidateSelection(); err != nil {
 		return v1.DesiredConfig{}, &ValidationError{Fields: err.(*v1.ValidationError).Fields}
 	}
 	if !changed {
@@ -519,11 +689,39 @@ func (s *Service) PatchConfig(ctx context.Context, id string, patch ConfigPatch)
 	if err != nil {
 		return v1.DesiredConfig{}, err
 	}
-	cfg.Revision++
-	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET desired_revision = ?, report_interval_seconds = ?, disk_interval_seconds = ?, interfaces = ?, disk_paths = ?, billing_day = ?, quota_bytes = ? WHERE id = ?`, cfg.Revision, cfg.ReportIntervalSeconds, cfg.DiskIntervalSeconds, string(interfaces), string(disks), cfg.BillingDay, cfg.QuotaBytes, id); err != nil {
+	probes, err := json.Marshal(cfg.ProbeTargets)
+	if err != nil {
 		return v1.DesiredConfig{}, err
 	}
-	if err := audit.Insert(ctx, tx, "node.config.patch", id, s.now()); err != nil {
+	if cfg.Revision >= MaxConfigRevision {
+		return v1.DesiredConfig{}, &ValidationError{Fields: map[string]string{"config": "revision limit reached"}}
+	}
+	cfg.Revision++
+	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET desired_revision = ?, report_interval_seconds = ?, disk_interval_seconds = ?, interfaces = ?, disk_paths = ?, probe_targets = ?, billing_day = ?, quota_bytes = ? WHERE id = ?`, cfg.Revision, cfg.ReportIntervalSeconds, cfg.DiskIntervalSeconds, string(interfaces), string(disks), string(probes), cfg.BillingDay, cfg.QuotaBytes, id); err != nil {
+		return v1.DesiredConfig{}, err
+	}
+	if probeTargetsChanged {
+		retained := make(map[string]struct{}, len(cfg.ProbeTargets))
+		for _, target := range cfg.ProbeTargets {
+			retained[target] = struct{}{}
+		}
+		for _, target := range oldProbeTargets {
+			if _, keep := retained[target]; keep {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM probe_latest WHERE node_id=? AND target=?`, id, target); err != nil {
+				return v1.DesiredConfig{}, err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM probe_hourly WHERE node_id=? AND target=?`, id, target); err != nil {
+				return v1.DesiredConfig{}, err
+			}
+		}
+	}
+	details := audit.Details(nil)
+	if probeTargetsChanged {
+		details = audit.Details{"probe_targets": map[string]int{"count": len(cfg.ProbeTargets)}}
+	}
+	if err := audit.InsertDetails(ctx, tx, "node.config.patch", id, s.now(), details); err != nil {
 		return v1.DesiredConfig{}, err
 	}
 	if err := tx.Commit(); err != nil {
