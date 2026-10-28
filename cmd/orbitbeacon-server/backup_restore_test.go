@@ -363,6 +363,135 @@ func TestRestoreRejectsSchemaLedgerWithoutTables(t *testing.T) {
 	}
 }
 
+func TestRestoreRejectsBackupMissingOneMigratedTable(t *testing.T) {
+	for _, table := range []string{"alert_events", "notification_channels", "notification_rate_limits", "notification_deliveries", "api_tokens"} {
+		t.Run(table, func(t *testing.T) {
+			inputDir, dataDir := t.TempDir(), t.TempDir()
+			for _, dir := range []string{inputDir, dataDir} {
+				if err := os.Chmod(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			input := filepath.Join(inputDir, "partial.db")
+			db, err := storage.Open(context.Background(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The ledger still claims every migration, so restore would skip
+			// recreating the table and fail later at runtime.
+			_, err = db.Exec(`PRAGMA foreign_keys=OFF; DROP TABLE ` + table)
+			if closeErr := db.Close(); err != nil || closeErr != nil {
+				t.Fatal(err, closeErr)
+			}
+			if err := restoreDatabase(dataDir, input); err == nil {
+				t.Fatalf("restore accepted a backup without %s", table)
+			}
+		})
+	}
+}
+
+func TestRestoreRejectsBackupMissingOrAlteredMigratedIndex(t *testing.T) {
+	for name, statement := range map[string]string{
+		"alert_events_active":               "DROP INDEX alert_events_active",
+		"alert_events_active_predicate":     "DROP INDEX alert_events_active; CREATE UNIQUE INDEX alert_events_active ON alert_events(rule_id,node_id) WHERE state='resolved'",
+		"alert_events_active_literal_case":  "DROP INDEX alert_events_active; CREATE UNIQUE INDEX alert_events_active ON alert_events(rule_id,node_id) WHERE state='FIRING'",
+		"alert_events_history":              "DROP INDEX alert_events_history",
+		"alert_events_state_history":        "DROP INDEX alert_events_state_history",
+		"alert_events_retention":            "DROP INDEX alert_events_retention",
+		"notification_deliveries_due":       "DROP INDEX notification_deliveries_due",
+		"notification_deliveries_channel":   "DROP INDEX notification_deliveries_channel",
+		"notification_deliveries_retention": "DROP INDEX notification_deliveries_retention",
+		"notification_deliveries_history":   "DROP INDEX notification_deliveries_history",
+		"api_tokens_creator":                "DROP INDEX api_tokens_creator",
+		"api_tokens_revoked":                "DROP INDEX api_tokens_revoked",
+		"api_tokens_expired":                "DROP INDEX api_tokens_expired",
+	} {
+		t.Run(name, func(t *testing.T) {
+			inputDir, dataDir := t.TempDir(), t.TempDir()
+			for _, dir := range []string{inputDir, dataDir} {
+				if err := os.Chmod(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			input := filepath.Join(inputDir, "altered.db")
+			db, err := storage.Open(context.Background(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Recorded migrations skip recreation, so a missing unique index
+			// would let duplicate firing events through.
+			_, err = db.Exec(statement)
+			if closeErr := db.Close(); err != nil || closeErr != nil {
+				t.Fatal(err, closeErr)
+			}
+			if err := restoreDatabase(dataDir, input); err == nil {
+				t.Fatalf("restore accepted a backup after %s", statement)
+			}
+		})
+	}
+}
+
+func TestBackupSchemaContractIncludesProbeAndAlertRuleSchemas(t *testing.T) {
+	for table, columns := range map[string][]string{
+		"probe_latest":        {"node_id", "target", "ok", "latency_ms", "error", "status_code", "checked_at"},
+		"probe_hourly":        {"node_id", "target", "hour", "checks", "failures", "latency_sum_ms"},
+		"alert_rules":         {"id", "name", "enabled", "scope_kind", "scope_id", "scope_group_id", "scope_node_id", "metric", "comparator", "threshold", "for_seconds", "severity", "created_at", "updated_at"},
+		"alert_rule_channels": {"rule_id", "channel_id"},
+	} {
+		if !containsString(requiredOrbitBeaconTables[:], table) {
+			t.Errorf("required table %q is missing", table)
+		}
+		for _, column := range columns {
+			if !containsString(requiredOrbitBeaconColumns[table], column) {
+				t.Errorf("required column %q.%s is missing", table, column)
+			}
+		}
+	}
+	wantIndexes := map[string]struct {
+		table   string
+		columns []string
+	}{
+		"probe_hourly_retention":      {table: "probe_hourly", columns: []string{"hour"}},
+		"alert_rules_group":           {table: "alert_rules", columns: []string{"scope_group_id"}},
+		"alert_rules_node":            {table: "alert_rules", columns: []string{"scope_node_id"}},
+		"alert_rule_channels_channel": {table: "alert_rule_channels", columns: []string{"channel_id"}},
+	}
+	for _, contract := range requiredOrbitBeaconIndexes {
+		want, ok := wantIndexes[contract.name]
+		if ok && contract.table == want.table && equalStrings(contract.columns, want.columns) {
+			delete(wantIndexes, contract.name)
+		}
+	}
+	for name := range wantIndexes {
+		t.Errorf("%s backup schema contract is missing", name)
+	}
+
+}
+
+func TestBackupSchemaValidationIncludesGeneratedAlertScopeColumns(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(context.Background(), filepath.Join(dir, "schema.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := validateDatabase(context.Background(), db); err != nil {
+		t.Fatalf("migration schema rejected by backup validation: %v", err)
+	}
+	columns, err := tableColumns(context.Background(), db, "alert_rules")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, generated := range []string{"scope_group_id", "scope_node_id"} {
+		if !containsString(columns, generated) {
+			t.Errorf("tableColumns omitted generated column alert_rules.%s", generated)
+		}
+	}
+}
+
 func TestRestoreRejectsFutureSchemaVersion(t *testing.T) {
 	inputDir := t.TempDir()
 	if err := os.Chmod(inputDir, 0700); err != nil {
@@ -434,5 +563,16 @@ func TestRestoreRejectsMalformedIdentityIndex(t *testing.T) {
 				t.Fatalf("malformed index installed a live database: %v", err)
 			}
 		})
+	}
+}
+
+func TestNormalizeSQLKeepsLiteralsVerbatim(t *testing.T) {
+	if normalizeSQL("CREATE  INDEX x ON t ( a )\n WHERE s = 'A  b';") != normalizeSQL("create index x on t(a) where s = 'A  b'") {
+		t.Fatal("case or spacing outside literals changed the comparison")
+	}
+	for _, pair := range [][2]string{{"WHERE s='A'", "WHERE s='a'"}, {"WHERE s='a b'", "WHERE s='a  b'"}} {
+		if normalizeSQL(pair[0]) == normalizeSQL(pair[1]) {
+			t.Fatalf("%q compared equal to %q", pair[0], pair[1])
+		}
 	}
 }

@@ -73,27 +73,32 @@ func prepareDataDirWithDatabaseValidation(path string, validateDatabaseFiles boo
 }
 
 func validateSecretsKey(path string) error {
+	key, err := loadSecretsKey(path)
+	clear(key)
+	return err
+}
+func loadSecretsKey(path string) ([]byte, error) {
 	file, err := securefs.OpenFile(path, os.O_RDONLY, 0)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if info.Size() != 32 {
-		return errors.New("secrets.key must contain exactly 32 bytes")
+		return nil, errors.New("secrets.key must contain exactly 32 bytes")
 	}
 	var key [32]byte
 	defer clear(key[:])
 	if _, err := io.ReadFull(file, key[:]); err != nil {
-		return fmt.Errorf("read secrets.key: %w", err)
+		return nil, fmt.Errorf("read secrets.key: %w", err)
 	}
 	if key == [32]byte{} {
-		return errors.New("secrets.key must not be all zero")
+		return nil, errors.New("secrets.key must not be all zero")
 	}
-	return nil
+	return append([]byte(nil), key[:]...), nil
 }
 
 func ensureSecretsKey(path string) error {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"orbitbeacon/internal/config"
 	"orbitbeacon/internal/server/securefs"
@@ -30,21 +31,43 @@ var requiredOrbitBeaconTables = [...]string{
 	"update_jobs",
 	"update_job_nodes",
 	"schema_migrations",
+	"traffic_hourly",
+	"traffic_daily",
+	"probe_latest",
+	"probe_hourly",
+	"alert_rules",
+	"alert_rule_channels",
+	"alert_events",
+	"notification_channels",
+	"notification_rate_limits",
+	"notification_deliveries",
+	"api_tokens",
 }
 
 var requiredOrbitBeaconColumns = map[string][]string{
-	"users":             {"id", "username", "password_hash", "role", "created_at"},
-	"sessions":          {"token_hash", "user_id", "expires_at"},
-	"groups":            {"id", "name", "desired_config"},
-	"nodes":             {"id", "name", "status", "group_id", "region", "provider", "notes", "token_hash", "installation_id", "first_enrolled_at", "last_seen", "system", "desired_revision", "applied_revision", "public_settings", "report_interval_seconds", "disk_interval_seconds", "interfaces", "disk_paths", "probe_targets", "billing_day", "quota_bytes", "created_at", "run_generation", "report_session_id", "config_error"},
-	"node_tags":         {"node_id", "tag"},
-	"enrollment_tokens": {"id", "token_hash", "node_id", "group_id", "expires_at", "max_uses", "uses", "revoked_at"},
-	"enrollment_claims": {"enrollment_id", "installation_id", "node_id", "token_hash", "claimed_at"},
-	"settings":          {"key", "value"},
-	"audit_events":      {"id", "actor_id", "action", "target_id", "created_at", "details"},
-	"update_jobs":       {"id", "release_seq", "created_at"},
-	"update_job_nodes":  {"job_id", "node_id", "status"},
-	"schema_migrations": {"version", "applied_at"},
+	"users":                    {"id", "username", "password_hash", "role", "created_at"},
+	"sessions":                 {"token_hash", "user_id", "expires_at"},
+	"groups":                   {"id", "name", "desired_config"},
+	"nodes":                    {"id", "name", "status", "group_id", "region", "provider", "notes", "token_hash", "installation_id", "first_enrolled_at", "last_seen", "system", "desired_revision", "applied_revision", "public_settings", "report_interval_seconds", "disk_interval_seconds", "interfaces", "disk_paths", "probe_targets", "billing_day", "quota_bytes", "created_at", "run_generation", "report_session_id", "config_error"},
+	"node_tags":                {"node_id", "tag"},
+	"enrollment_tokens":        {"id", "token_hash", "node_id", "group_id", "expires_at", "max_uses", "uses", "revoked_at"},
+	"enrollment_claims":        {"enrollment_id", "installation_id", "node_id", "token_hash", "claimed_at"},
+	"settings":                 {"key", "value"},
+	"audit_events":             {"id", "actor_id", "action", "target_id", "created_at", "details"},
+	"update_jobs":              {"id", "release_seq", "created_at"},
+	"update_job_nodes":         {"job_id", "node_id", "status"},
+	"schema_migrations":        {"version", "applied_at"},
+	"traffic_hourly":           {"node_id", "epoch", "period_start", "rx_bytes", "tx_bytes", "updated_at"},
+	"traffic_daily":            {"node_id", "day", "rx_bytes", "tx_bytes"},
+	"probe_latest":             {"node_id", "target", "ok", "latency_ms", "error", "status_code", "checked_at"},
+	"probe_hourly":             {"node_id", "target", "hour", "checks", "failures", "latency_sum_ms"},
+	"alert_rules":              {"id", "name", "enabled", "scope_kind", "scope_id", "scope_group_id", "scope_node_id", "metric", "comparator", "threshold", "for_seconds", "severity", "created_at", "updated_at"},
+	"alert_rule_channels":      {"rule_id", "channel_id"},
+	"alert_events":             {"id", "rule_id", "node_id", "state", "value", "started_at", "resolved_at", "last_notified_at", "rule_name", "node_name", "rule_snapshot"},
+	"notification_channels":    {"id", "name", "kind", "enabled", "config_json", "secret_ciphertext", "url_ciphertext", "created_at", "updated_at"},
+	"notification_rate_limits": {"channel_id", "window_start", "count"},
+	"notification_deliveries":  {"id", "channel_id", "event_id", "state", "attempts", "next_attempt_at", "last_error_code", "lease_until", "payload_json", "coalesced_count", "created_at", "updated_at"},
+	"api_tokens":               {"id", "name", "token_hash", "prefix", "created_by", "created_at", "expires_at", "last_used_at", "revoked_at"},
 }
 
 type orbitBeaconIndexContract struct {
@@ -57,6 +80,23 @@ type orbitBeaconIndexContract struct {
 }
 
 var requiredOrbitBeaconIndexes = []orbitBeaconIndexContract{
+	{name: "traffic_hourly_retention", table: "traffic_hourly", columns: []string{"period_start"}},
+	{name: "traffic_daily_retention", table: "traffic_daily", columns: []string{"day"}},
+	{name: "probe_hourly_retention", table: "probe_hourly", columns: []string{"hour"}},
+	{name: "alert_rules_group", table: "alert_rules", columns: []string{"scope_group_id"}},
+	{name: "alert_rules_node", table: "alert_rules", columns: []string{"scope_node_id"}},
+	{name: "alert_rule_channels_channel", table: "alert_rule_channels", columns: []string{"channel_id"}},
+	{name: "alert_events_active", table: "alert_events", columns: []string{"rule_id", "node_id"}, unique: true, partial: true, definition: "CREATE UNIQUE INDEX alert_events_active ON alert_events(rule_id,node_id) WHERE state='firing'"},
+	{name: "alert_events_history", table: "alert_events", columns: []string{"started_at", "id"}},
+	{name: "alert_events_state_history", table: "alert_events", columns: []string{"state", "started_at", "id"}},
+	{name: "alert_events_retention", table: "alert_events", columns: []string{"resolved_at", "id"}, partial: true, definition: "CREATE INDEX alert_events_retention ON alert_events(resolved_at,id) WHERE state='resolved'"},
+	{name: "notification_deliveries_due", table: "notification_deliveries", columns: []string{"next_attempt_at", "id"}, partial: true, definition: "CREATE INDEX notification_deliveries_due ON notification_deliveries(next_attempt_at,id) WHERE state='pending'"},
+	{name: "notification_deliveries_channel", table: "notification_deliveries", columns: []string{"channel_id", "state", "next_attempt_at"}},
+	{name: "notification_deliveries_retention", table: "notification_deliveries", columns: []string{"updated_at", "id"}, partial: true, definition: "CREATE INDEX notification_deliveries_retention ON notification_deliveries(updated_at,id) WHERE state IN ('sent','failed')"},
+	{name: "notification_deliveries_history", table: "notification_deliveries", columns: []string{"created_at", "id"}},
+	{name: "api_tokens_creator", table: "api_tokens", columns: []string{"created_by"}},
+	{name: "api_tokens_revoked", table: "api_tokens", columns: []string{"revoked_at", "id"}, partial: true, definition: "CREATE INDEX api_tokens_revoked ON api_tokens(revoked_at,id) WHERE revoked_at IS NOT NULL"},
+	{name: "api_tokens_expired", table: "api_tokens", columns: []string{"expires_at", "id"}, partial: true, definition: "CREATE INDEX api_tokens_expired ON api_tokens(expires_at,id) WHERE expires_at IS NOT NULL"},
 	{name: "sessions_user", table: "sessions", columns: []string{"user_id"}},
 	{name: "sessions_expiry", table: "sessions", columns: []string{"expires_at"}},
 	{name: "nodes_installation_identity", table: "nodes", columns: []string{"installation_id"}, unique: true, partial: true, definition: "CREATE UNIQUE INDEX nodes_installation_identity ON nodes(installation_id) WHERE installation_id IS NOT NULL"},
@@ -69,7 +109,15 @@ var requiredOrbitBeaconIndexes = []orbitBeaconIndexContract{
 	{name: "update_job_nodes_node", table: "update_job_nodes", columns: []string{"node_id"}},
 }
 
-func backupDatabase(dataDir, output string) (retErr error) {
+func backupDatabase(dataDir, output string) error {
+	return backupDatabaseWithMode(dataDir, output, false)
+}
+
+func backupDatabaseOnline(dataDir, output string) error {
+	return backupDatabaseWithMode(dataDir, output, true)
+}
+
+func backupDatabaseWithMode(dataDir, output string, online bool) (retErr error) {
 	if err := config.ValidatePath(output); err != nil {
 		return fmt.Errorf("output: %w", err)
 	}
@@ -87,6 +135,14 @@ func backupDatabase(dataDir, output string) (retErr error) {
 		return err
 	}
 	sourcePath := filepath.Join(dataDir, "orbitbeacon.db")
+	if online {
+		if err := securefs.ValidateDirectory(dataDir); err != nil {
+			return fmt.Errorf("data directory: %w", err)
+		}
+		if err := validateLiveSidecars(sourcePath); err != nil {
+			return fmt.Errorf("source database sidecars: %w", err)
+		}
+	}
 	validated, err := securefs.ValidateFile(sourcePath)
 	if err != nil {
 		return fmt.Errorf("source database: %w", err)
@@ -113,6 +169,9 @@ func backupDatabase(dataDir, output string) (retErr error) {
 	outputCreated := false
 	defer func() {
 		cleanupErr := removeIfExists(tempPath)
+		if online {
+			cleanupErr = errors.Join(cleanupErr, removeSQLiteSidecars(tempPath))
+		}
 		if !committed && outputCreated {
 			if info, statErr := os.Stat(output); statErr == nil {
 				if os.SameFile(tempInfo, info) {
@@ -131,24 +190,37 @@ func backupDatabase(dataDir, output string) (retErr error) {
 			retErr = errors.Join(retErr, fmt.Errorf("cleanup backup: %w", cleanupErr))
 		}
 	}()
-	lock, err := lockDataDir(dataDir)
+	var db *sql.DB
+	if online {
+		db, err = openOnlineBackupSource(sourcePath)
+	} else {
+		lock, lockErr := lockDataDir(dataDir)
+		if lockErr != nil {
+			return lockErr
+		}
+		defer lock.Close()
+		if err := prepareDataDir(dataDir); err != nil {
+			return err
+		}
+		db, err = storage.Open(context.Background(), sourcePath)
+	}
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
-	if err := prepareDataDir(dataDir); err != nil {
-		return err
-	}
-	db, err := storage.Open(context.Background(), sourcePath)
-	if err != nil {
-		return err
-	}
-	if _, err := db.ExecContext(context.Background(), "VACUUM INTO ?", tempPath); err != nil {
-		_ = db.Close()
-		return fmt.Errorf("create consistent backup: %w", err)
+	if err := vacuumBackup(db, tempPath, online); err != nil {
+		return errors.Join(err, db.Close())
 	}
 	if err := db.Close(); err != nil {
 		return err
+	}
+	if online {
+		if err := validateSQLiteInput(tempPath); err != nil {
+			return err
+		}
+		// Migrations and checkpointing are confined to the private snapshot.
+		if err := validateAndCheckpointDatabase(tempPath); err != nil {
+			return fmt.Errorf("validate backup database: %w", err)
+		}
 	}
 	if err := os.Chmod(tempPath, 0600); err != nil {
 		return err
@@ -181,6 +253,47 @@ func backupDatabase(dataDir, output string) (retErr error) {
 		return errors.New("backup file disappeared after installation")
 	}
 	committed = true
+	return nil
+}
+
+func openOnlineBackupSource(path string) (*sql.DB, error) {
+	ctx := context.Background()
+	db, err := storage.OpenReader(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	var version sql.NullInt64
+	err = db.QueryRowContext(ctx, "SELECT max(version) FROM schema_migrations").Scan(&version)
+	if err != nil {
+		err = fmt.Errorf("source schema version: %w", err)
+	} else if !version.Valid || version.Int64 < 1 {
+		err = errors.New("source schema migration ledger is empty or invalid")
+	} else if version.Int64 > storage.CurrentSchemaVersion {
+		err = fmt.Errorf("%w: database schema version %d is newer than supported version %d", storage.ErrSchemaTooNew, version.Int64, storage.CurrentSchemaVersion)
+	}
+	if err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
+	return db, nil
+}
+
+func vacuumBackup(db *sql.DB, output string, online bool) error {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if online {
+		// query_only also prohibits writes to VACUUM's attached output. The
+		// source remains protected by mode=ro for this connection's lifetime.
+		if _, err := conn.ExecContext(ctx, "PRAGMA query_only=OFF"); err != nil {
+			return err
+		}
+	}
+	if _, err := conn.ExecContext(ctx, "VACUUM INTO ?", output); err != nil {
+		return fmt.Errorf("create consistent backup: %w", err)
+	}
 	return nil
 }
 
@@ -465,26 +578,48 @@ func indexDefinition(ctx context.Context, db *sql.DB, table, index string) (stri
 	return definition.String, nil
 }
 
+// normalizeSQL ignores case and spacing outside string literals. Literals stay
+// verbatim: a predicate such as state='FIRING' differs from state='firing'.
 func normalizeSQL(definition string) string {
-	normalized := strings.ToLower(strings.Join(strings.Fields(definition), " "))
-	normalized = strings.ReplaceAll(normalized, " (", "(")
-	normalized = strings.ReplaceAll(normalized, "( ", "(")
-	normalized = strings.ReplaceAll(normalized, " )", ")")
-	return strings.TrimSuffix(normalized, ";")
+	var normalized strings.Builder
+	quoted, space := false, false
+	for _, r := range strings.TrimSpace(definition) {
+		switch {
+		case r == '\'':
+			quoted = !quoted
+		case quoted:
+		case unicode.IsSpace(r):
+			space = true
+			continue
+		}
+		if space {
+			normalized.WriteByte(' ')
+			space = false
+		}
+		if !quoted && r != '\'' {
+			r = unicode.ToLower(r)
+		}
+		normalized.WriteRune(r)
+	}
+	result := normalized.String()
+	result = strings.ReplaceAll(result, " (", "(")
+	result = strings.ReplaceAll(result, "( ", "(")
+	result = strings.ReplaceAll(result, " )", ")")
+	return strings.TrimSuffix(result, ";")
 }
 
 func tableColumns(ctx context.Context, db *sql.DB, table string) ([]string, error) {
-	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	rows, err := db.QueryContext(ctx, "PRAGMA table_xinfo("+table+")")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var columns []string
 	for rows.Next() {
-		var cid, notNull, primaryKey int
+		var cid, notNull, primaryKey, hidden int
 		var name, columnType string
 		var defaultValue any
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey, &hidden); err != nil {
 			return nil, err
 		}
 		columns = append(columns, name)
