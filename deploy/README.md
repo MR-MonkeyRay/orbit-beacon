@@ -101,7 +101,7 @@ Server 默认不信任转发头。原生同机代理可设置：
 
 容器中需填写 **Server 实际看到的代理源 IP** 或最小必要 CIDR，不能照抄宿主机回环地址，也不要信任整个共享网络。环境变量 `ORBITBEACON_TRUSTED_PROXIES` / CLI `--trusted-proxies` 接受逗号分隔列表；禁止 `/0`。Server 只对可信直连代理解析 `X-Forwarded-For`，从右向左跳过可信代理，取第一个不可信地址；无有效结果则回退直连 IP。入口代理必须覆盖或正确追加真实客户端地址。
 
-公开页的 `/api/public/v1/stream` 使用 SSE，连接最长 15 分钟，按客户端 IP 最多 4 条、全局最多 200 条；建流失败时页面退回 10 秒轮询。Server 发送 `X-Accel-Buffering: no`，nginx 不要忽略或覆盖它；也可为该路径显式设置 `proxy_buffering off`。Caddy 无需额外关闭 SSE 缓冲。不配置可信代理会让访客共用代理 IP 的流数和限流额度。nginx 示例另有登录限流，Caddy 示例没有，需由边缘服务或额外模块补充。
+公开页按 WS → SSE → HTTP 自动回退，SSE/HTTP 每 300 秒重新优选 WS；一次只有一个活动通道。`/api/public/v1/ws` 与 `/stream` 共享每 IP 4 条、全局 200 条及 15 分钟寿命。WS Origin 必须与 `public_url` 精确一致。nginx 示例已转发 Upgrade/Connection 并关闭缓冲，30 秒读超时可容纳 10 秒心跳；不要覆盖 Server 的 `X-Accel-Buffering: no`。[Caddy 原生支持 WS 与 SSE](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#streaming)，无需另写升级头。不信任代理会让访客共用代理 IP 的流数/限流额度；nginx 另有登录限流，Caddy 需在边缘另配。
 
 ## 检查与日常观测
 
@@ -123,6 +123,7 @@ Agent 失联不移除资产或清空当前进程的最后有效样本；指标�
 | `metrics_listen` | `""` | 独立 HTTP 监听器的 `/metrics`，例如 `127.0.0.1:9464`；主监听器不提供该接口 |
 | `allow_insecure_webhooks` | `false` | 允许字面回环地址的 HTTP webhook |
 | `notification_allow_private_networks` | `false` | 允许通知访问内网 SMTP / webhook；元数据地址始终拒绝 |
+| `web_update_interval_seconds` | `10` | 推送合并与 HTTP 轮询周期，整数 2–60，重启生效；env `ORBITBEACON_WEB_UPDATE_INTERVAL_SECONDS` / CLI `--web-update-interval-seconds` |
 
 以上键均有对应的大写 `ORBITBEACON_*` 环境变量和连字符形式 CLI flag。指标监听器不使用主服务的 TLS，须绑定回环或受保护的运维网络；Compose 还需自行配置采集可达的网络或端口。
 

@@ -1,184 +1,182 @@
 package server
 
 import (
+	"bufio"
 	"context"
-	"encoding/json"
-	"errors"
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
-	"sync"
+	"strconv"
 	"time"
 
+	"github.com/coder/websocket"
 	"orbitbeacon/internal/server/nodes"
 )
 
-type publicStreams struct {
-	mu      sync.Mutex
-	total   int
-	byIP    map[string]int
-	ctx     context.Context
-	cancel  context.CancelFunc
-	closing bool
+// Capture only the accepted socket so the HTTP handshake deadline can be
+// cleared after the registry takes ownership. RFC 6455 remains the library's.
+type liveUpgradeWriter struct {
+	http.ResponseWriter
+	connection net.Conn
+	stream     *liveStream
 }
 
-func (s *publicStreams) acquire(ip string) (context.Context, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing || s.total >= 200 || s.byIP[ip] >= 4 {
-		return nil, false
+func (w *liveUpgradeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w *liveUpgradeWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	connection, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
+	if err == nil {
+		w.connection = connection
+		w.stream.setWriter(nil, func() { _ = connection.Close() })
 	}
-	if s.ctx == nil {
-		s.ctx, s.cancel = context.WithCancel(context.Background())
-		s.byIP = make(map[string]int)
-	}
-	s.total++
-	s.byIP[ip]++
-	return s.ctx, true
+	return connection, rw, err
 }
 
-func (s *publicStreams) release(ip string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.total--
-	s.byIP[ip]--
-	if s.byIP[ip] == 0 {
-		delete(s.byIP, ip)
-	}
-}
-
-// ClosePublicStreams wakes active streams and rejects new ones during shutdown.
-func (h *handler) ClosePublicStreams() {
-	h.streams.mu.Lock()
-	defer h.streams.mu.Unlock()
-	h.streams.closing = true
-	if h.streams.cancel != nil {
-		h.streams.cancel()
-	}
-}
-
-func (h *handler) publicStreamIP(r *http.Request) string {
-	address := h.clientAddr(r)
-	if host, _, err := net.SplitHostPort(address); err == nil {
-		address = host
-	}
-	if ip, err := netip.ParseAddr(address); err == nil {
-		return ip.WithZone("").Unmap().String()
-	}
-	return address
-}
-
-func streamDuration(value, fallback time.Duration) time.Duration {
-	if value > 0 {
-		return value
-	}
-	return fallback
-}
-
-func (h *handler) publicStream(w http.ResponseWriter, r *http.Request, requestID string) {
+func (h *handler) admitPublicStream(w http.ResponseWriter, r *http.Request, requestID string) (*liveStream, int, int, bool) {
 	limit, offset, err := pagination(r)
 	if err != nil {
 		h.serviceError(w, nodes.ErrInvalidInput, requestID)
-		return
+		return nil, 0, 0, false
 	}
-	ip := h.publicStreamIP(r)
-	shutdown, ok := h.streams.acquire(ip)
+	stream, ok := h.streams.acquire(h.publicStreamIP(r))
 	if !ok {
-		w.Header().Set("Retry-After", "10")
+		w.Header().Set("Retry-After", strconv.Itoa(h.liveSeconds()))
 		fail(w, http.StatusServiceUnavailable, "stream_busy", "Public stream capacity is unavailable", requestID)
-		return
+		return nil, 0, 0, false
 	}
-	defer h.streams.release(ip)
 	if h.metrics != nil {
 		h.metrics.publicStreams.Add(1)
-		defer h.metrics.publicStreams.Add(-1)
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), streamDuration(h.streamLifetime, 15*time.Minute))
-	defer cancel()
-	stop := context.AfterFunc(shutdown, cancel)
-	defer stop()
+	return stream, limit, offset, true
+}
 
+func (h *handler) releasePublicStream(stream *liveStream) {
+	if h.metrics != nil {
+		h.metrics.publicStreams.Add(-1)
+	}
+	stream.release()
+}
+
+func (h *handler) publicStreamContext(r *http.Request, stream *liveStream) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(stream.ctx, streamDuration(h.streamLifetime, 15*time.Minute))
+	stop := context.AfterFunc(r.Context(), cancel)
+	return ctx, func() { stop(); cancel() }
+}
+
+func (h *handler) publicStream(w http.ResponseWriter, r *http.Request, requestID string) {
+	stream, limit, offset, ok := h.admitPublicStream(w, r, requestID)
+	if !ok {
+		return
+	}
+	defer h.releasePublicStream(stream)
+	ctx, cancel := h.publicStreamContext(r, stream)
+	defer cancel()
+	controller := http.NewResponseController(w)
+	stream.setWriter(func() error { return controller.SetWriteDeadline(time.Now().Add(10 * time.Second)) }, func() { _ = controller.SetWriteDeadline(time.Now()) })
+	writeInterrupted := make(chan struct{})
+	stopWrite := context.AfterFunc(ctx, func() { stream.interruptDataWrite(); close(writeInterrupted) })
+	defer func() {
+		if !stopWrite() {
+			<-writeInterrupted
+		}
+	}()
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
-	interval := streamDuration(h.streamInterval, 2*time.Second)
-	heartbeat := streamDuration(h.streamHeartbeat, 10*time.Second)
-	var sentNodes, sentReports uint64
-	var last time.Time
-	requeries := 0
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-	for {
-		if ctx.Err() != nil {
-			if r.Context().Err() == nil {
-				_ = writePublicFrame(w, "close", []byte("{}"))
-			}
-			return
-		}
-		versionNodes, changedNodes := h.nodes.PublicChanges()
-		versionReports, changedReports := h.ingest.PublicChanges()
-		due := last.Add(heartbeat)
-		if versionNodes != sentNodes || versionReports != sentReports {
-			due = last.Add(min(interval, heartbeat))
-		}
-		if last.IsZero() || !time.Now().Before(due) {
-			page, err := h.ingest.PublicPage(ctx, h.nodes, limit, offset, h.now)
-			if err != nil {
-				if cause := ctx.Err(); cause != nil && errors.Is(err, cause) && r.Context().Err() == nil {
-					_ = writePublicFrame(w, "close", []byte("{}"))
-				}
-				return
-			}
-			// A visibility change during the query may have hidden a node in this
-			// page; requery so unpublishing never leaks into a later frame.
-			if current, _ := h.nodes.PublicChanges(); current != versionNodes {
-				// Never emit a known-stale page; persistent churn ends the stream
-				// without close, so the client clears its data and retries.
-				if requeries >= 3 {
-					return
-				}
-				requeries++
-				continue
-			}
-			requeries = 0
-			body, err := json.Marshal(page)
-			if err != nil || writePublicFrame(w, "nodes", body) != nil {
-				return
-			}
-			last = time.Now()
-			// Changes during the query remain pending for the next frame.
-			sentNodes, sentReports = versionNodes, versionReports
-			continue
-		}
-		timer.Reset(time.Until(due))
-		select {
-		case <-ctx.Done():
-		case <-changedNodes:
-		case <-changedReports:
-		case <-timer.C:
-		}
-	}
+	h.runPublicLive(ctx, r.Context(), stream, limit, offset, func(_ context.Context, body []byte) error {
+		return writePublicFrame(w, body)
+	})
 }
 
-func writePublicFrame(w http.ResponseWriter, event string, body []byte) error {
+func (h *handler) publicWebSocket(w http.ResponseWriter, r *http.Request, requestID string) {
+	// Compare the raw browser Origin with the configured canonical origin. Do
+	// not trust Host, normalize attacker input or accept an absent Origin.
+	if h.origin == "" || len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != h.origin {
+		fail(w, http.StatusForbidden, "forbidden", "A trusted Origin is required", requestID)
+		return
+	}
+	stream, limit, offset, ok := h.admitPublicStream(w, r, requestID)
+	if !ok {
+		return
+	}
+	defer h.releasePublicStream(stream)
 	controller := http.NewResponseController(w)
-	if err := controller.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+	stream.setWriter(func() error { return controller.SetWriteDeadline(time.Now().Add(10 * time.Second)) }, func() { _ = controller.SetWriteDeadline(time.Now()) })
+	upgradeWriter := &liveUpgradeWriter{ResponseWriter: w, stream: stream}
+	var connection *websocket.Conn
+	err := stream.write(stream.ctx, false, func() error {
+		var acceptErr error
+		connection, acceptErr = websocket.Accept(upgradeWriter, r, &websocket.AcceptOptions{
+			OriginPatterns:  []string{h.origin},
+			CompressionMode: websocket.CompressionDisabled,
+		})
+		return acceptErr
+	})
+	if err != nil {
+		return
+	}
+	var stopRead context.CancelFunc
+	var readDone chan struct{}
+	defer func() {
+		if stopRead != nil {
+			stopRead()
+		}
+		_ = connection.CloseNow()
+		if readDone != nil {
+			<-readDone
+		}
+	}()
+	connection.SetReadLimit(1024)
+	stream.setWriter(nil, func() { _ = connection.CloseNow() })
+	// A bounded HTTP handshake must not leave an idle WS with a ten-second
+	// socket deadline. Subsequent library writes use individual contexts.
+	if err := upgradeWriter.connection.SetDeadline(time.Time{}); err != nil {
+		return
+	}
+	ctx, cancel := h.publicStreamContext(r, stream)
+	defer cancel()
+	// v1.8.15 CloseRead waits for its own goroutine on unexpected data.
+	// Use the library reader once: any application message ends this readonly
+	// channel without draining an untrusted payload or waiting for a handshake.
+	readCtx, stopRead := context.WithCancel(context.Background())
+	readDone = make(chan struct{})
+	go func() {
+		defer close(readDone)
+		_, _, _ = connection.Reader(readCtx)
+		stopRead()
+		cancel()
+	}()
+	h.runPublicLive(ctx, readCtx, stream, limit, offset, func(writeCtx context.Context, body []byte) error {
+		return connection.Write(writeCtx, websocket.MessageText, body)
+	})
+}
+
+func writePublicFrame(w http.ResponseWriter, body []byte) error {
+	controller := http.NewResponseController(w)
+	// Write framing separately instead of allocating and copying a second
+	// full page just to prepend the SSE event name.
+	if n, err := io.WriteString(w, "event: message\ndata: "); err != nil || n != len("event: message\ndata: ") {
+		if err == nil {
+			err = io.ErrShortWrite
+		}
 		return err
 	}
-	frame := append([]byte("event: "+event+"\ndata: "), body...)
-	frame = append(frame, '\n', '\n')
-	n, err := w.Write(frame)
+	n, err := w.Write(body)
 	if err != nil {
 		return err
 	}
-	if n != len(frame) {
+	if n != len(body) {
 		return io.ErrShortWrite
+	}
+	if n, err := io.WriteString(w, "\n\n"); err != nil || n != 2 {
+		if err == nil {
+			err = io.ErrShortWrite
+		}
+		return err
 	}
 	if err := controller.Flush(); err != nil {
 		return err
 	}
-	// HTTP/2 resets a stream when its deadline fires even while idle, so the
-	// deadline covers only this write; the next frame arms a fresh one.
+	// HTTP/2 also applies deadlines while idle. Each frame gets its own
+	// deadline; heartbeats must not inherit the preceding frame's deadline.
 	return controller.SetWriteDeadline(time.Time{})
 }

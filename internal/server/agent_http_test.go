@@ -52,7 +52,7 @@ func newAgentHTTP(t *testing.T, capacity int) *agentFixture {
 	f.enrollments = enrollment.NewService(db, enrollment.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{22})})
 	f.ingest = ingest.NewService(db, ingest.Options{Now: clock})
 	f.auth = auth.NewService(db, auth.Options{Now: clock})
-	f.handler, err = server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: clock})
+	f.handler, err = server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: clock, WebUpdateIntervalSeconds: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

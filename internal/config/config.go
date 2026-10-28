@@ -34,6 +34,7 @@ type Server struct {
 	TLSCertFile                      string         `json:"tls_cert_file"`
 	TLSKeyFile                       string         `json:"tls_key_file"`
 	MaxNodes                         int            `json:"max_nodes"`
+	WebUpdateIntervalSeconds         int            `json:"web_update_interval_seconds"`
 	TrustedProxies                   []netip.Prefix `json:"-"`
 }
 
@@ -107,7 +108,7 @@ func sources(opts LoadOptions, keys []string) ([]map[string]json.RawMessage, err
 
 func encodeValue(key, value string) (json.RawMessage, error) {
 	switch key {
-	case "max_nodes", "expected_uid", "expected_gid", "report_interval_seconds", "disk_interval_seconds":
+	case "max_nodes", "expected_uid", "expected_gid", "report_interval_seconds", "disk_interval_seconds", "web_update_interval_seconds":
 		n, err := strconv.Atoi(value)
 		if err != nil {
 			// Keep malformed values typed as strings until source precedence is
@@ -143,8 +144,8 @@ func encodeValue(key, value string) (json.RawMessage, error) {
 }
 
 func LoadServer(opts LoadOptions) (Server, error) {
-	cfg := Server{ListenAddr: "127.0.0.1:8080", DataDir: "./data", PublicURL: "https://localhost", MaxNodes: 500}
-	layers, err := sources(opts, []string{"allow_insecure_webhooks", "notification_allow_private_networks", "listen_addr", "metrics_listen", "access_log", "data_dir", "public_url", "tls_cert_file", "tls_key_file", "max_nodes", "trusted_proxies"})
+	cfg := Server{ListenAddr: "127.0.0.1:8080", DataDir: "./data", PublicURL: "https://localhost", MaxNodes: 500, WebUpdateIntervalSeconds: 10}
+	layers, err := sources(opts, []string{"allow_insecure_webhooks", "notification_allow_private_networks", "listen_addr", "metrics_listen", "access_log", "data_dir", "public_url", "tls_cert_file", "tls_key_file", "max_nodes", "web_update_interval_seconds", "trusted_proxies"})
 	if err != nil {
 		return Server{}, err
 	}
@@ -318,6 +319,9 @@ func (cfg Server) Validate() error {
 	}
 	if cfg.MaxNodes < 1 {
 		return errors.New("max_nodes must be positive")
+	}
+	if cfg.WebUpdateIntervalSeconds < 2 || cfg.WebUpdateIntervalSeconds > 60 {
+		return errors.New("web_update_interval_seconds must be between 2 and 60")
 	}
 	if (cfg.TLSCertFile == "") != (cfg.TLSKeyFile == "") {
 		return errors.New("tls_cert_file and tls_key_file must be supplied together")

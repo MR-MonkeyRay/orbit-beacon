@@ -14,7 +14,7 @@ Linux Agent ── HTTPS：注册 / 指标上报 ──> Server
                                         ├─ 告警评估 ──> 事件 / 站内通知 / 外发投递
                                         ├─ 备份计划 / 手动导出 ──> 加密归档 / 站内通知
                                         ├─ 管理 API <── 管理会话
-                                        └─ 公开投影 ──> 匿名 API / SSE
+                                        └─ 公开投影 ──> 匿名 HTTP / SSE / WS
 ```
 
 - **Agent**：`cmd/orbitbeacon-agent` 校验安装策略及运行账户；`internal/agent/collect` 采集指标，`probe` 执行服务探测，`service` 管理注册、配置及上报，`identity` 持久化安装身份和凭据。
@@ -40,6 +40,17 @@ Agent 本地掌握采集/正常上报周期（同一周期）、磁盘周期、�
 来源超过 `max(3×source_interval,45s)` 才标旧（等号仍新鲜）；离线与指标过期独立。当前报告中原状态 ok/stale 且数值合法的公开指标保留，即使超过 180 秒离线；原 error/unsupported 或缺值为 unavailable/null，不从更早报告拼补。uptime 固定为报告值。公开 DTO 只新增接收时间与四键 freshness，不公开 runtime 或原始 sources。完整样本只保留当前进程，重启后资产及持久化 last_seen 保留、数字可空；告警和历史继续排除旧值。
 
 私有 latest 响应提供 server_time，浏览器用它与 performance.now 的单调增量计算来源截止时刻；到期只改状态/样式，不改数字。隐藏、离开或会话失效停止 timer，恢复重新计算。连接故障保留最后有效快照并标旧，不伪造节点离线；成功快照按当前公开集合收敛。
+
+### 浏览器只读实时传输
+
+公开 HTTP `/api/public/v1/nodes`、SSE `/stream` 与 WS `/ws` 使用同一白名单和 `snapshot / heartbeat / close / error` frame。`server_time` 是消息时钟，`data.generated_at` 是可缓存的投影时钟。首份立即返回；普通变化按 Server 周期合并，静默每 10 秒 heartbeat，不重复发送未变的全量数据。周期默认 10 秒、范围 2–60，由 Server JSON/env/CLI 配置，重启生效，不覆盖 Agent runtime。
+
+公开 cache TTL 跟随该周期，最多 128 页，同页 miss 合并。出口最多三次核对全数据版本，并在序列化后再次核对；持续变化时 HTTP 返回 `503 snapshot_busy` 与 Retry-After，流丢弃已知旧页。普通文字修改、发布增加、首次/撤销后绑定留在周期内；撤回、禁用、撤销或活跃凭据替换使用独立安全通知立即 close:renew。安全 watcher 在首查询前启动，能取消阻塞中的投影；不能召回已交付或断网保留的旧卡片。
+
+浏览器共用 WS → SSE → HTTP 状态机：首份快照/每次 HTTP 请求限时 8 秒，流 30 秒无有效 snapshot/heartbeat 则回退；HTTP 等待按服务端周期，不受流 watchdog 约束。SSE/HTTP 每 300 秒重新优选 WS；隐藏/pagehide 停止通道和 timer，旧 generation/abort 回调不得写回。只有有效快照恢复数据，心跳只校时。
+
+WS 精确校验配置 Origin，关闭压缩，1 KiB 读限制，不接受应用写消息；写限时 10 秒。WS/SSE 共享每 IP 4、全局 200、最长 15 分钟的 admission。关闭时先停止准入、取消查询并中断写入，等待实际退出后才排空 ingest/关闭数据库。`coder/websocket v1.8.15` 的 CloseRead 拒绝消息会自等待；使用其 Reader 结束只读通道，并在释放容量前 cancel、CloseNow、join reader，不自行实现帧解析。
+
 
 ### 流量与服务探测
 

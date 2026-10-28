@@ -160,12 +160,12 @@ type PublicPage struct {
 	GeneratedAt time.Time    `json:"generated_at"`
 }
 
-const publicPageTTL = 2 * time.Second
 const publicPageCacheLimit = 128
 
 type publicPageKey struct {
 	service       *nodes.Service
 	limit, offset int
+	ttl           time.Duration
 }
 
 type publicPageEntry struct {
@@ -187,8 +187,8 @@ type publicPageCache struct {
 // PublicPage coalesces concurrent misses and bounds cached pages. The visibility
 // version is captured before querying: a racing mutation cannot bless old data
 // with a new version. Returned pages are immutable while cached.
-func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offset int, clock func() time.Time) (PublicPage, error) {
-	key := publicPageKey{service: ns, limit: limit, offset: offset}
+func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offset int, ttl time.Duration, clock func() time.Time) (PublicPage, error) {
+	key := publicPageKey{service: ns, limit: limit, offset: offset, ttl: ttl}
 	cache := &s.publicPages
 	for {
 		if err := ctx.Err(); err != nil {
@@ -198,7 +198,7 @@ func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offs
 		version := ns.PublicVisibilityVersion()
 		now := clock().UTC()
 		entry, ok := cache.entries[key]
-		if age := now.Sub(entry.page.GeneratedAt); ok && entry.version == version && age >= 0 && age < publicPageTTL {
+		if age := now.Sub(entry.page.GeneratedAt); ok && entry.version == version && age >= 0 && age < ttl {
 			cache.mu.Unlock()
 			return entry.page, nil
 		}
@@ -231,6 +231,9 @@ func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offs
 		}
 		for _, record := range records {
 			page.Nodes = append(page.Nodes, s.ProjectPublicRecord(record, now))
+		}
+		if err == nil {
+			err = ctx.Err()
 		}
 		cache.mu.Lock()
 		if err == nil {

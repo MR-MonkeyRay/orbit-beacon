@@ -22,11 +22,15 @@ import (
 )
 
 type publicStreamStore struct {
-	mu        sync.Mutex
-	visible   bool
-	queries   int
-	queryErr  error
-	queryWait <-chan struct{}
+	mu            sync.Mutex
+	visible       bool
+	queries       int
+	queryErr      error
+	queryWait     <-chan struct{}
+	onQuery       func()
+	name          string
+	queryExitGate <-chan struct{}
+	queryCanceled chan<- struct{}
 }
 
 type publicStreamConnector struct{ store *publicStreamStore }
@@ -55,22 +59,38 @@ func (c publicStreamConn) QueryContext(ctx context.Context, _ string, _ []driver
 	visible := c.store.visible
 	err := c.store.queryErr
 	wait := c.store.queryWait
+	onQuery := c.store.onQuery
+	name := c.store.name
+	exitGate, canceled := c.store.queryExitGate, c.store.queryCanceled
 	c.store.mu.Unlock()
+	if onQuery != nil {
+		onQuery()
+	}
 	if wait != nil {
 		select {
 		case <-wait:
 		case <-ctx.Done():
+			if canceled != nil {
+				canceled <- struct{}{}
+			}
+			if exitGate != nil {
+				<-exitGate
+			}
 			return nil, ctx.Err()
 		}
 	}
 	if err != nil {
 		return nil, err
 	}
+	if name == "" {
+		name = "Public node"
+	}
+	settings, _ := json.Marshal(nodes.PublicSettings{Enabled: true, Name: name, Region: "Earth", Provider: "Test"})
 	rows := &publicStreamRows{}
 	if visible {
 		rows.values = [][]driver.Value{{
 			"00000000-0000-4000-8000-000000000001",
-			`{"enabled":true,"name":"Public node","region":"Earth","provider":"Test"}`,
+			string(settings),
 			nil,
 			bytes.Repeat([]byte{1}, 32),
 			int64(0),
@@ -205,7 +225,7 @@ func newStreamFixture(t *testing.T, visible bool) *streamFixture {
 		now:             func() time.Time { return now },
 		streamInterval:  20 * time.Millisecond,
 		streamHeartbeat: time.Second,
-		streamLifetime:  time.Second,
+		streamLifetime:  30 * time.Second,
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return &streamFixture{h: h, store: store, db: db}
@@ -243,7 +263,7 @@ func waitStreamDone(t *testing.T, done <-chan struct{}) {
 	}
 }
 
-func TestPublicStreamFirstFrameImmediateAndExact(t *testing.T) {
+func TestPublicStreamFirstFrameImmediate(t *testing.T) {
 	f := newStreamFixture(t, false)
 	recorder := newStreamRecorder()
 	cancel, done := startPublicStream(t, f.h, recorder)
@@ -252,10 +272,8 @@ func TestPublicStreamFirstFrameImmediateAndExact(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
 		t.Fatalf("first frame took %v", elapsed)
 	}
-	want := "event: nodes\ndata: {\"nodes\":[],\"has_more\":false,\"next_offset\":null,\"generated_at\":\"2026-03-04T05:06:07Z\"}\n\n"
-	if frame != want {
-		t.Fatalf("first frame = %q, want %q", frame, want)
-	}
+	object := lastLiveTestFrame(t, frame)
+	decodeTransportSnapshot(t, objectJSON(t, object))
 	for name, want := range map[string]string{
 		"Content-Type":              "text/event-stream; charset=utf-8",
 		"Cache-Control":             "no-store",
@@ -283,7 +301,7 @@ func TestPublicStreamFirstFrameImmediateAndExact(t *testing.T) {
 	}
 	cancel()
 	waitStreamDone(t, done)
-	if strings.Contains(recorder.Body(), "event: close") {
+	if strings.Contains(recorder.Body(), `"type":"close"`) {
 		t.Fatal("client cancellation emitted a close frame")
 	}
 }
@@ -295,37 +313,25 @@ func TestPublicStreamHeartbeat(t *testing.T) {
 	recorder := newStreamRecorder()
 	cancel, done := startPublicStream(t, f.h, recorder)
 	defer func() { cancel(); waitStreamDone(t, done) }()
-	first := nextFlush(t, recorder)
-	second := nextFlush(t, recorder)
-	if second != first+first {
-		t.Fatalf("heartbeat did not repeat nodes frame: %q", second)
+	_ = nextFlush(t, recorder)
+	second := lastLiveTestFrame(t, nextFlush(t, recorder))
+	if string(second["type"]) != `"heartbeat"` || second["data"] != nil || second["code"] != nil {
+		t.Fatalf("heartbeat repeated a snapshot: %s", recorder.Body())
 	}
 }
 
-func TestPublicStreamCoalescesChangeNotifications(t *testing.T) {
+func TestPublicStreamVisibilityChangeClosesImmediately(t *testing.T) {
 	f := newStreamFixture(t, false)
-	f.h.streamInterval = 60 * time.Millisecond
+	f.h.streamInterval = time.Minute
 	recorder := newStreamRecorder()
-	cancel, done := startPublicStream(t, f.h, recorder)
-	defer func() { cancel(); waitStreamDone(t, done) }()
-	first := nextFlush(t, recorder)
-	for range 5 {
-		f.h.nodes.InvalidatePublic()
+	_, done := startPublicStream(t, f.h, recorder)
+	_ = nextFlush(t, recorder)
+	f.h.nodes.InvalidatePublicSafety()
+	second := lastLiveTestFrame(t, nextFlush(t, recorder))
+	if string(second["type"]) != `"close"` || string(second["code"]) != `"renew"` || second["data"] != nil {
+		t.Fatalf("visibility update did not immediately renew: %s", recorder.Body())
 	}
-	select {
-	case <-recorder.flushed:
-		t.Fatal("change frame bypassed coalescing interval")
-	case <-time.After(25 * time.Millisecond):
-	}
-	second := nextFlush(t, recorder)
-	if strings.Count(second, "event: nodes\n") != 2 || !strings.HasPrefix(second, first) {
-		t.Fatalf("coalesced stream = %q", second)
-	}
-	select {
-	case extra := <-recorder.flushed:
-		t.Fatalf("notifications produced an extra frame: %q", extra)
-	case <-time.After(80 * time.Millisecond):
-	}
+	waitStreamDone(t, done)
 }
 
 func TestPublicStreamDiscardsPageInvalidatedDuringQuery(t *testing.T) {
@@ -353,9 +359,9 @@ func TestPublicStreamDiscardsPageInvalidatedDuringQuery(t *testing.T) {
 	f.store.visible = false
 	f.store.queryWait = nil
 	f.store.mu.Unlock()
-	f.h.nodes.InvalidatePublic()
+	f.h.nodes.InvalidatePublicSafety()
 	close(blocked)
-	if first := nextFlush(t, recorder); strings.Contains(first, "Public node") || !strings.Contains(first, `data: {"nodes":[]`) {
+	if first := nextFlush(t, recorder); strings.Contains(first, "Public node") || strings.Contains(first, `"type":"snapshot"`) {
 		t.Fatalf("frame emitted a page invalidated during its query: %q", first)
 	}
 }
@@ -372,17 +378,16 @@ func TestPublicStreamUnpublishInvalidatesCachedPage(t *testing.T) {
 	f.store.mu.Lock()
 	f.store.visible = false
 	f.store.mu.Unlock()
-	f.h.nodes.InvalidatePublic()
-	second := nextFlush(t, recorder)
-	frames := strings.Split(second, "\n\nevent: nodes\n")
-	if len(frames) != 2 || strings.Contains(frames[1], "Public node") || !strings.Contains(frames[1], `data: {"nodes":[]`) {
-		t.Fatalf("unpublish not visible in next cached PublicPage frame: %q", second)
+	f.h.nodes.InvalidatePublicSafety()
+	second := lastLiveTestFrame(t, nextFlush(t, recorder))
+	if string(second["type"]) != `"close"` || string(second["code"]) != `"renew"` {
+		t.Fatalf("unpublish did not invalidate live view: %s", recorder.Body())
 	}
 	f.store.mu.Lock()
 	queries := f.store.queries
 	f.store.mu.Unlock()
-	if queries != 2 {
-		t.Fatalf("public page queries = %d, want one initial query and one version-invalidated query", queries)
+	if queries != 1 {
+		t.Fatalf("withdrawal issued another projection instead of closing: queries=%d", queries)
 	}
 }
 
@@ -390,15 +395,8 @@ func TestPublicStreamCapacityLimits(t *testing.T) {
 	t.Run("per IP", func(t *testing.T) {
 		f := newStreamFixture(t, false)
 		for range 4 {
-			if _, ok := f.h.streams.acquire("192.0.2.1"); !ok {
-				t.Fatal("failed to seed per-IP streams")
-			}
+			reserveLiveTestStream(t, f.h, "192.0.2.1")
 		}
-		defer func() {
-			for range 4 {
-				f.h.streams.release("192.0.2.1")
-			}
-		}()
 		response := httptest.NewRecorder()
 		f.h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/public/v1/stream", nil))
 		assertStreamBusy(t, response)
@@ -407,10 +405,7 @@ func TestPublicStreamCapacityLimits(t *testing.T) {
 		f := newStreamFixture(t, false)
 		for i := range 200 {
 			ip := "client-" + string(rune(i))
-			if _, ok := f.h.streams.acquire(ip); !ok {
-				t.Fatalf("failed to seed global stream %d", i)
-			}
-			defer f.h.streams.release(ip)
+			reserveLiveTestStream(t, f.h, ip)
 		}
 		request := httptest.NewRequest(http.MethodGet, "/api/public/v1/stream", nil)
 		request.RemoteAddr = "198.51.100.2:1234"
@@ -424,15 +419,8 @@ func TestPublicStreamPerIPUsesCanonicalTrustedClientAddress(t *testing.T) {
 	f := newStreamFixture(t, false)
 	f.h.trustedProxies = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
 	for range 4 {
-		if _, ok := f.h.streams.acquire("2001:db8::1"); !ok {
-			t.Fatal("failed to seed canonical client IP")
-		}
+		reserveLiveTestStream(t, f.h, "2001:db8::1")
 	}
-	defer func() {
-		for range 4 {
-			f.h.streams.release("2001:db8::1")
-		}
-	}()
 	request := httptest.NewRequest(http.MethodGet, "/api/public/v1/stream", nil)
 	request.RemoteAddr = "10.1.2.3:54321"
 	request.Header.Set("X-Forwarded-For", "2001:0db8:0:0:0:0:0:1")
@@ -443,15 +431,8 @@ func TestPublicStreamPerIPUsesCanonicalTrustedClientAddress(t *testing.T) {
 	// Remote source ports never create distinct per-IP buckets.
 	f.h.trustedProxies = nil
 	for range 4 {
-		if _, ok := f.h.streams.acquire("192.0.2.1"); !ok {
-			t.Fatal("failed to seed remote client IP")
-		}
+		reserveLiveTestStream(t, f.h, "192.0.2.1")
 	}
-	defer func() {
-		for range 4 {
-			f.h.streams.release("192.0.2.1")
-		}
-	}()
 	request = httptest.NewRequest(http.MethodGet, "/api/public/v1/stream", nil)
 	request.RemoteAddr = "192.0.2.1:65535"
 	response = httptest.NewRecorder()
@@ -479,7 +460,7 @@ func TestPublicStreamLifetimeAndShutdownClose(t *testing.T) {
 		_ = nextFlush(t, recorder)
 		closed := nextFlush(t, recorder)
 		waitStreamDone(t, done)
-		if !strings.HasSuffix(closed, "event: close\ndata: {}\n\n") {
+		if object := lastLiveTestFrame(t, closed); string(object["type"]) != `"close"` || string(object["code"]) != `"renew"` {
 			t.Fatalf("lifetime close = %q", closed)
 		}
 		if recorder.DeadlineCount() != 2 {
@@ -494,10 +475,10 @@ func TestPublicStreamLifetimeAndShutdownClose(t *testing.T) {
 		recorder := newStreamRecorder()
 		_, done := startPublicStream(t, f.h, recorder)
 		_ = nextFlush(t, recorder)
-		f.h.ClosePublicStreams()
+		f.h.CloseLiveStreams()
 		closed := nextFlush(t, recorder)
 		waitStreamDone(t, done)
-		if !strings.HasSuffix(closed, "event: close\ndata: {}\n\n") {
+		if object := lastLiveTestFrame(t, closed); string(object["type"]) != `"close"` || string(object["code"]) != `"shutdown"` {
 			t.Fatalf("shutdown close = %q", closed)
 		}
 		response := httptest.NewRecorder()
@@ -522,7 +503,7 @@ func TestPublicStreamWriteFailuresEndWithoutClose(t *testing.T) {
 			test.configure(recorder)
 			_, done := startPublicStream(t, f.h, recorder)
 			waitStreamDone(t, done)
-			if strings.Contains(recorder.Body(), "event: close") {
+			if strings.Contains(recorder.Body(), `"type":"close"`) {
 				t.Fatalf("write failure emitted close: %q", recorder.Body())
 			}
 		})
@@ -534,7 +515,7 @@ func TestPublicStreamShutdownCancelsBlockedPublicPage(t *testing.T) {
 		name string
 		stop func(*handler)
 	}{
-		{"shutdown", func(h *handler) { h.ClosePublicStreams() }},
+		{"shutdown", func(h *handler) { h.CloseLiveStreams() }},
 		{"lifetime", func(h *handler) {}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -565,8 +546,9 @@ func TestPublicStreamShutdownCancelsBlockedPublicPage(t *testing.T) {
 			}
 			test.stop(f.h)
 			waitStreamDone(t, done)
-			if got, want := recorder.Body(), "event: close\ndata: {}\n\n"; got != want {
-				t.Fatalf("cancelled PublicPage frame = %q, want %q", got, want)
+			object := lastLiveTestFrame(t, recorder.Body())
+			if string(object["type"]) != `"close"` || object["data"] != nil {
+				t.Fatalf("cancelled PublicPage frame = %q", recorder.Body())
 			}
 		})
 	}
@@ -586,13 +568,20 @@ func TestPublicStreamPublicPageFailureEndsWithoutFrame(t *testing.T) {
 }
 
 func TestPublicStreamResponseControllerUnwrapsServerWriters(t *testing.T) {
+	f := newStreamFixture(t, false)
 	recorder := newStreamRecorder()
 	wrapped := headResponseWriter{&responseLog{ResponseWriter: recorder}}
-	if err := writePublicFrame(wrapped, "nodes", []byte(`{"nodes":[]}`)); err != nil {
-		t.Fatal(err)
-	}
-	if recorder.DeadlineCount() != 1 {
-		t.Fatalf("nested wrappers hid SetWriteDeadline: count=%d", recorder.DeadlineCount())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.h.publicStream(wrapped, httptest.NewRequest(http.MethodGet, "/api/public/v1/stream", nil).WithContext(ctx), "unwrap-test")
+	}()
+	_ = nextFlush(t, recorder)
+	cancel()
+	waitStreamDone(t, done)
+	if recorder.DeadlineCount() < 1 || recorder.ClearedCount() < 1 {
+		t.Fatalf("nested wrappers hid frame deadlines: armed=%d cleared=%d", recorder.DeadlineCount(), recorder.ClearedCount())
 	}
 }
 

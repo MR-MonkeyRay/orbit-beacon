@@ -28,7 +28,7 @@ func routeMethods(p string) []string {
 	switch p {
 	case "/api/v1/session":
 		return sessionMethods
-	case "/api/v1/me", "/api/v1/audit", "/api/v1/alerts", "/api/v1/alerts/summary", "/api/v1/notification-deliveries", "/api/public/v1/nodes", "/api/public/v1/stream":
+	case "/api/v1/me", "/api/v1/audit", "/api/v1/alerts", "/api/v1/alerts/summary", "/api/v1/notification-deliveries", "/api/public/v1/nodes", "/api/public/v1/stream", "/api/public/v1/ws":
 		return readMethods
 	case "/api/v1/me/password":
 		return patchMethods

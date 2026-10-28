@@ -77,6 +77,7 @@ func run(args []string) error {
 		fs.String("tls-cert-file", "", "optional TLS certificate PEM")
 		fs.String("tls-key-file", "", "optional TLS private key PEM")
 		fs.Int("max-nodes", 500, "positive node capacity, including pending and disabled nodes")
+		fs.Int("web-update-interval-seconds", 10, "browser update cadence in seconds (2-60, restart to apply)")
 		fs.String("trusted-proxies", "", "comma-separated trusted proxy IP addresses or CIDR prefixes")
 	case "bootstrap":
 		fs.StringVar(&username, "username", "", "first administrator username; prompted if omitted")
@@ -246,12 +247,12 @@ func run(args []string) error {
 	notifications := notify.New(db, box, notify.Options{AllowInsecureWebhooks: cfg.AllowInsecureWebhooks, AllowPrivateNetworks: cfg.NotificationAllowPrivateNetworks})
 	alertService := alerts.NewService(db, nil)
 	evaluator := alerts.NewEvaluator(alertService, ingestService, alerts.EvaluatorOptions{Logger: logger, Notifier: notifications})
-	handler, err := server.NewHandler(server.Options{Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: buildinfo.Current().Version})
+	handler, err := server.NewHandler(server.Options{Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, WebUpdateIntervalSeconds: cfg.WebUpdateIntervalSeconds, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: buildinfo.Current().Version})
 	if err != nil {
 		return err
 	}
 	httpServer := newHTTPServer(cfg.ListenAddr, handler, logger)
-	httpServer.RegisterOnShutdown(handler.ClosePublicStreams)
+	httpServer.RegisterOnShutdown(handler.CloseLiveStreams)
 	var metricsServer *http.Server
 	if cfg.MetricsListen != "" {
 		metricsServer = newHTTPServer(cfg.MetricsListen, handler.MetricsHandler(), logger)
@@ -308,7 +309,15 @@ func run(args []string) error {
 		handler.MarkNotReady()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		handler.CloseLiveStreams()
 		var shutdown sync.WaitGroup
+		shutdown.Add(1)
+		go func() {
+			defer shutdown.Done()
+			if err := handler.WaitLiveStreams(shutdownCtx); err != nil {
+				logger.Warn("live streams did not drain before HTTP shutdown", "error_kind", fmt.Sprintf("%T", err))
+			}
+		}()
 		for _, current := range []*http.Server{httpServer, metricsServer} {
 			if current == nil {
 				continue
@@ -340,15 +349,15 @@ func run(args []string) error {
 	}()
 	err = <-serveErrors
 	// ListenAndServe returns as soon as Shutdown starts, or on a listen error.
-	// Stop both listeners and wait for HTTP handlers, then drain ingestion with
-	// its own deadline and stop retention before the deferred database close.
+	// Stop both listeners and wait for HTTP handlers and tracked live queries,
+	// then drain ingestion before the deferred database close.
 	stop()
 	<-httpStopped
 	for range serverCount - 1 {
 		<-serveErrors
 	}
-	// HTTP shutdown (10s) already waited for report handlers, so draining is
-	// short; the total stays well inside the 30s stop grace in deploy/.
+	// HTTP/live shutdown (10s) already waited for report handlers and streams,
+	// so draining stays inside the 30s stop grace in deploy/.
 	drainCtx, cancelDrain := context.WithTimeout(context.Background(), 5*time.Second)
 	if drainErr := handler.Shutdown(drainCtx); drainErr != nil {
 		logger.Warn("report ingestion did not drain before shutdown", "error_kind", fmt.Sprintf("%T", drainErr))

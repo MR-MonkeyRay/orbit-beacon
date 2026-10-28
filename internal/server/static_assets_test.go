@@ -20,7 +20,7 @@ func TestStaticAssetVariantsAndCaching(t *testing.T) {
 		"public.html":                       {Data: html},
 		"_app/immutable/chunks/app.test.js": {Data: javascript},
 	}
-	policies, err := htmlPolicies(assets)
+	policies, err := htmlPolicies(assets, "https://beacon.test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestStaticAssetVariantsAndCaching(t *testing.T) {
 func TestStaticHTMLPreservesSecurityHeadersForVariants(t *testing.T) {
 	html := []byte("<!doctype html><script>theme()</script><main>" + strings.Repeat("public page ", 100) + "</main>")
 	assets := fstest.MapFS{"200.html": {Data: html}, "public.html": {Data: html}}
-	policies, err := htmlPolicies(assets)
+	policies, err := htmlPolicies(assets, "https://beacon.test")
 	if err != nil {
 		t.Fatal(err)
 	}

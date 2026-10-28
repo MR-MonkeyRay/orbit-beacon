@@ -133,6 +133,7 @@ func (s *Service) PatchPublicSettings(ctx context.Context, id string, patch Publ
 	if err != nil {
 		return PublicSettings{}, err
 	}
+	wasEnabled := p.Enabled
 	if patch.Enabled != nil {
 		p.Enabled = *patch.Enabled
 	}
@@ -166,7 +167,11 @@ func (s *Service) PatchPublicSettings(ctx context.Context, id string, patch Publ
 	if err := tx.Commit(); err != nil {
 		return PublicSettings{}, err
 	}
-	s.InvalidatePublic()
+	if wasEnabled && !p.Enabled {
+		s.InvalidatePublicSafety()
+	} else {
+		s.InvalidatePublic()
+	}
 	return p, nil
 }
 
@@ -195,7 +200,11 @@ func visibleSettings(raw string) (PublicSettings, bool) {
 }
 
 // PublicVisibilityVersion changes after a committed mutation of public data.
-func (s *Service) PublicVisibilityVersion() uint64 { return s.publicVersion.Load() }
+func (s *Service) PublicVisibilityVersion() uint64 {
+	s.publicMu.RLock()
+	defer s.publicMu.RUnlock()
+	return s.publicVersion
+}
 
 // SetPublicReader selects the isolated pool used only by anonymous page queries.
 // A nil reader restores the main pool used by existing constructors.

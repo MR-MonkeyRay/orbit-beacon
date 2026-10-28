@@ -85,7 +85,7 @@ func TestLoginRejectionLogsDerivedClientIP(t *testing.T) {
 func TestHSTSOnlyForDirectTLSOnAllRoutes(t *testing.T) {
 	h := &handler{assets: fstest.MapFS{"public.html": {Data: []byte("<!doctype html><title>public</title>")}, "asset.js": {Data: []byte("export {}")}}}
 	var err error
-	h.htmlPolicies, err = htmlPolicies(h.assets)
+	h.htmlPolicies, err = htmlPolicies(h.assets, "https://beacon.test")
 	if err != nil {
 		t.Fatal(err)
 	}

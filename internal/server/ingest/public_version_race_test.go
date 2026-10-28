@@ -59,7 +59,7 @@ func TestPublicPageCapturesVisibilityVersionBeforeRacingMutation(t *testing.T) {
 	}, 1)
 	clock := func() time.Time { return now }
 	go func() {
-		page, err := s.PublicPage(ctx, ns, 100, 0, clock)
+		page, err := s.PublicPage(ctx, ns, 100, 0, 10*time.Second, clock)
 		result <- struct {
 			page PublicPage
 			err  error
@@ -99,7 +99,7 @@ func TestPublicPageCapturesVisibilityVersionBeforeRacingMutation(t *testing.T) {
 	if first.err != nil || len(first.page.Nodes) != 1 || first.page.Nodes[0].Name != "Published" {
 		t.Fatalf("in-flight page = %+v, err=%v", first.page, first.err)
 	}
-	key := publicPageKey{service: ns, limit: 100, offset: 0}
+	key := publicPageKey{service: ns, limit: 100, offset: 0, ttl: 10 * time.Second}
 	s.publicPages.mu.Lock()
 	entry, ok := s.publicPages.entries[key]
 	s.publicPages.mu.Unlock()
@@ -107,7 +107,7 @@ func TestPublicPageCapturesVisibilityVersionBeforeRacingMutation(t *testing.T) {
 		t.Fatalf("raced cache entry exists=%v version=%d, want captured version 0", ok, entry.version)
 	}
 
-	second, err := s.PublicPage(ctx, ns, 100, 0, clock)
+	second, err := s.PublicPage(ctx, ns, 100, 0, 10*time.Second, clock)
 	if err != nil {
 		t.Fatal(err)
 	}

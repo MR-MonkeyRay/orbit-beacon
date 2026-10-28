@@ -36,10 +36,9 @@ const (
 )
 
 type Options struct {
-	MaxNodes            int
-	Now                 func() time.Time
-	Random              io.Reader
-	AfterIdentityChange func()
+	MaxNodes int
+	Now      func() time.Time
+	Random   io.Reader
 }
 
 type Service struct {
@@ -48,7 +47,7 @@ type Service struct {
 	now           func() time.Time
 	random        io.Reader
 	hookMu        sync.Mutex
-	identityHooks []func()
+	identityHooks []func(bool)
 	randomMu      sync.Mutex
 	admissionMu   sync.Mutex
 	invalidPeers  map[string]invalidBucket
@@ -65,15 +64,13 @@ func NewService(db *sql.DB, opts Options) *Service {
 	if opts.Random == nil {
 		opts.Random = rand.Reader
 	}
-	s := &Service{db: db, maxNodes: opts.MaxNodes, now: opts.Now, random: opts.Random, invalidPeers: make(map[string]invalidBucket)}
-	s.OnIdentityChange(opts.AfterIdentityChange)
-	return s
+	return &Service{db: db, maxNodes: opts.MaxNodes, now: opts.Now, random: opts.Random, invalidPeers: make(map[string]invalidBucket)}
 }
 
-// OnIdentityChange registers a hook that runs after a claim commits a new
-// credential. The HTTP handler uses it to invalidate cached public metrics,
-// including for services the caller constructed itself.
-func (s *Service) OnIdentityChange(hook func()) {
+// OnIdentityChange runs after a credential claim commits. Its argument is true
+// only when an active credential was replaced; first or post-revocation binds
+// are ordinary additions, not safety withdrawals.
+func (s *Service) OnIdentityChange(hook func(replacedActiveCredential bool)) {
 	if hook == nil {
 		return
 	}
@@ -439,7 +436,7 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 		hooks := s.identityHooks
 		s.hookMu.Unlock()
 		for _, hook := range hooks {
-			hook()
+			hook(rotation)
 		}
 	}
 	return v1.EnrollmentResponse{NodeID: nodeID, ServerTime: now}, nil

@@ -44,53 +44,55 @@ import (
 const sessionCookie = "__Host-orbitbeacon_session"
 
 type Options struct {
-	Backups        *backup.Service
-	Inbox          *inbox.Service
-	Notifications  *notify.Service
-	Alerts         *alerts.Service
-	History        *history.Service
-	Auth           *auth.Service
-	Nodes          *nodes.Service
-	Management     *management.Service
-	Enrollments    *enrollment.Service
-	Ingest         *ingest.Service
-	Traffic        *traffic.Service
-	TrustedProxies []netip.Prefix
-	PublicURL      string
-	Assets         fs.FS
-	Logger         *slog.Logger
-	AccessLog      bool
-	BuildVersion   string
-	Now            func() time.Time
+	Backups                  *backup.Service
+	Inbox                    *inbox.Service
+	Notifications            *notify.Service
+	Alerts                   *alerts.Service
+	History                  *history.Service
+	Auth                     *auth.Service
+	Nodes                    *nodes.Service
+	Management               *management.Service
+	Enrollments              *enrollment.Service
+	Ingest                   *ingest.Service
+	Traffic                  *traffic.Service
+	TrustedProxies           []netip.Prefix
+	PublicURL                string
+	WebUpdateIntervalSeconds int
+	Assets                   fs.FS
+	Logger                   *slog.Logger
+	AccessLog                bool
+	BuildVersion             string
+	Now                      func() time.Time
 }
 
 type handler struct {
-	backups         *backup.Service
-	inbox           *inbox.Service
-	notifications   *notify.Service
-	alerts          *alerts.Service
-	history         *history.Service
-	auth            *auth.Service
-	nodes           *nodes.Service
-	management      *management.Service
-	enrollments     *enrollment.Service
-	ingest          *ingest.Service
-	traffic         *traffic.Service
-	trustedProxies  []netip.Prefix
-	htmlPolicies    map[string]string
-	staticAssets    map[string]staticAsset
-	accessLog       bool
-	metrics         *httpMetrics
-	origin          string
-	assets          fs.FS
-	logger          *slog.Logger
-	now             func() time.Time
-	lifecycleMu     sync.RWMutex
-	ready           bool
-	streams         publicStreams
-	streamInterval  time.Duration
-	streamHeartbeat time.Duration
-	streamLifetime  time.Duration
+	backups                  *backup.Service
+	inbox                    *inbox.Service
+	notifications            *notify.Service
+	alerts                   *alerts.Service
+	history                  *history.Service
+	auth                     *auth.Service
+	nodes                    *nodes.Service
+	management               *management.Service
+	enrollments              *enrollment.Service
+	ingest                   *ingest.Service
+	traffic                  *traffic.Service
+	trustedProxies           []netip.Prefix
+	htmlPolicies             map[string]string
+	staticAssets             map[string]staticAsset
+	accessLog                bool
+	metrics                  *httpMetrics
+	origin                   string
+	assets                   fs.FS
+	logger                   *slog.Logger
+	now                      func() time.Time
+	lifecycleMu              sync.RWMutex
+	ready                    bool
+	streams                  liveStreams
+	streamInterval           time.Duration
+	streamHeartbeat          time.Duration
+	streamLifetime           time.Duration
+	webUpdateIntervalSeconds int
 }
 
 type apiError struct {
@@ -108,6 +110,12 @@ func NewHandler(opts Options) (*handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("public_url: %w", err)
 	}
+	if opts.WebUpdateIntervalSeconds == 0 {
+		opts.WebUpdateIntervalSeconds = 10
+	}
+	if opts.WebUpdateIntervalSeconds < 2 || opts.WebUpdateIntervalSeconds > 60 {
+		return nil, errors.New("web_update_interval_seconds must be between 2 and 60")
+	}
 	if opts.Management == nil {
 		opts.Management = opts.Auth.Management()
 	}
@@ -115,7 +123,14 @@ func NewHandler(opts Options) (*handler, error) {
 		opts.Enrollments = enrollment.NewService(opts.Nodes.Database(), enrollment.Options{MaxNodes: opts.Nodes.Capacity()})
 	}
 	// Wire invalidation here so injected services cannot serve stale public metrics.
-	opts.Enrollments.OnIdentityChange(opts.Nodes.InvalidatePublic)
+	nodeService := opts.Nodes
+	opts.Enrollments.OnIdentityChange(func(replacedActiveCredential bool) {
+		if replacedActiveCredential {
+			nodeService.InvalidatePublicSafety()
+		} else {
+			nodeService.InvalidatePublic()
+		}
+	})
 	if opts.Ingest == nil {
 		ingestOptions := ingest.Options{Now: opts.Now}
 		if opts.History != nil {
@@ -147,7 +162,7 @@ func NewHandler(opts Options) (*handler, error) {
 	if _, err := fs.Stat(opts.Assets, "public.html"); err != nil {
 		return nil, fmt.Errorf("public UI shell: %w", err)
 	}
-	policies, err := htmlPolicies(opts.Assets)
+	policies, err := htmlPolicies(opts.Assets, origin)
 	if err != nil {
 		return nil, fmt.Errorf("UI policies: %w", err)
 	}
@@ -157,6 +172,7 @@ func NewHandler(opts Options) (*handler, error) {
 	}
 	h := &handler{notifications: opts.Notifications, alerts: opts.Alerts, history: opts.History, staticAssets: staticAssets, accessLog: opts.AccessLog, metrics: newHTTPMetrics(opts.BuildVersion), trustedProxies: append([]netip.Prefix(nil), opts.TrustedProxies...), htmlPolicies: policies, auth: opts.Auth, nodes: opts.Nodes, management: opts.Management, enrollments: opts.Enrollments, ingest: opts.Ingest, traffic: opts.Traffic, origin: origin, assets: opts.Assets, logger: opts.Logger, now: opts.Now, ready: true}
 	h.backups, h.inbox = opts.Backups, opts.Inbox
+	h.webUpdateIntervalSeconds = opts.WebUpdateIntervalSeconds
 	return h, nil
 }
 
@@ -169,10 +185,13 @@ func (h *handler) MarkNotReady() {
 }
 
 func (h *handler) Shutdown(ctx context.Context) error {
-	h.ClosePublicStreams()
+	h.CloseLiveStreams()
 	h.lifecycleMu.Lock()
 	h.ready = false
 	h.lifecycleMu.Unlock()
+	if err := h.WaitLiveStreams(ctx); err != nil {
+		return err
+	}
 	if h.ingest == nil {
 		return nil
 	}
@@ -185,6 +204,10 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 		status = http.StatusInternalServerError
 		body, _ = json.Marshal(apiError{Code: "internal_error", Message: "The operation could not be completed", RequestID: w.Header().Get("X-Request-ID")})
 	}
+	writeJSONBody(w, status, body)
+}
+
+func writeJSONBody(w http.ResponseWriter, status int, body []byte) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
@@ -322,6 +345,10 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 	}
 	if p == "/api/public/v1/stream" {
 		h.publicStream(w, r, requestID)
+		return
+	}
+	if p == "/api/public/v1/ws" {
+		h.publicWebSocket(w, r, requestID)
 		return
 	}
 	if strings.HasPrefix(p, "/api/agent/v1/") {
@@ -661,8 +688,9 @@ func (h *handler) static(w http.ResponseWriter, r *http.Request) {
 var scriptElement = regexp.MustCompile(`(?is)<script\b([^>]*)>(.*?)</script\s*>`)
 var scriptSource = regexp.MustCompile(`(?i)(?:^|\s)src\s*=`)
 
-func htmlPolicies(assets fs.FS) (map[string]string, error) {
+func htmlPolicies(assets fs.FS, origin string) (map[string]string, error) {
 	policies := make(map[string]string)
+	websocketOrigin := "ws" + strings.TrimPrefix(origin, "http")
 	err := fs.WalkDir(assets, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -687,7 +715,7 @@ func htmlPolicies(assets fs.FS) (map[string]string, error) {
 				seen[hash] = true
 			}
 		}
-		policies[name] = policy + "; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+		policies[name] = policy + "; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' " + websocketOrigin + "; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 		return nil
 	})
 	return policies, err

@@ -2,5 +2,6 @@
   "listen_addr": "127.0.0.1:8080",
   "data_dir": "/var/lib/orbitbeacon",
   "public_url": "https://beacon.example.test",
-  "max_nodes": 500
+  "max_nodes": 500,
+  "web_update_interval_seconds": 10
 }

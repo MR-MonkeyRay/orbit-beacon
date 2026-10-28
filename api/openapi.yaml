@@ -62,9 +62,9 @@ paths:
       description: |
         Anonymous read of explicitly published nodes, identical with absent, valid
         or invalid session cookies. No session, Origin or CSRF token is required;
-        no session is created or cleaned up and no CORS access is granted. Only
-        this exact public path bypasses browser authentication. All responses,
-        including errors, use Cache-Control: no-store.
+        no session is created or cleaned up and no CORS access is granted. The
+        three exact /api/public/v1 endpoints bypass browser authentication.
+        All responses, including errors, use Cache-Control: no-store.
 
         Includes only nodes with valid enabled public settings, a nonempty public
         name, internal status unknown, an active node credential and completed
@@ -90,20 +90,36 @@ paths:
         source metadata, disk paths and network names are never projected.
         Administrators remain responsible for secrets they enter into public text.
         generated_at is the projection clock for status and source freshness.
+
+        Returns a snapshot frame. server_time is the response clock;
+        data.generated_at is the projection clock, which may be cached for the
+        effective web_update_interval_seconds (default 10, range 2–60).
+        Visibility changes invalidate the cache immediately. Every outbound
+        projection checks visibility before and after querying, up to three
+        attempts; persistent churn returns 503 snapshot_busy, not an old page.
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
       responses:
         '200':
-          description: Public page; an empty collection is nodes [], never null.
+          description: Snapshot frame; an empty successful collection is data.nodes [], never null.
           headers:
             Cache-Control:
               schema: {type: string, const: no-store}
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/PublicNodeList'}
+              schema: {$ref: '#/components/schemas/PublicSnapshotFrame'}
         '400': {$ref: '#/components/responses/Error'}
         '405': {$ref: '#/components/responses/Error'}
+        '503':
+          description: Public visibility changed through all three projection attempts; code is snapshot_busy.
+          headers:
+            Retry-After:
+              description: Effective browser update interval in seconds.
+              schema: {type: string, pattern: '^[1-9][0-9]*$'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/public/v1/stream:
     get:
@@ -115,31 +131,35 @@ paths:
         parameters have identical defaults and validation. No session, Origin or
         CSRF token is required, and the response is not cacheable.
 
-        The first nodes event is sent immediately. Later nodes events are emitted
-        when accepted agent reports or public-visibility changes occur, coalesced
-        to at most one event every two seconds, and at least every ten seconds so
-        presence and generated_at advance. Every nodes event invokes the same
-        PublicNodeList projection as GET /api/public/v1/nodes; frames are never
-        reused across events. The projection's two-second cache remains active,
-        while publication changes invalidate its visibility version immediately,
-        so an unpublished, disabled or deleted node is absent from the next frame.
+        Every event is `message`; its data is one PublicLiveFrame JSON object.
+        The first snapshot is immediate. Later semantic changes are coalesced to
+        web_update_interval_seconds (default 10, range 2–60). Projection and
+        response clocks alone do not produce another full snapshot. Quiet streams
+        send heartbeat frames every ten seconds; heartbeats do not alter sample
+        or reception timestamps. Periodic projections still detect source expiry
+        and the 180-second offline boundary.
 
-        Frames contain exactly one event and one compact, single-line data value:
-        `event: nodes\ndata: <PublicNodeList JSON>\n\n`. A graceful server-side
-        close sends `event: close\ndata: {}\n\n` immediately before ending the
-        response. Streams close gracefully after 15 minutes and when server shutdown
-        starts. Database, projection or write failures, and client cancellation end
-        the response without a close event. No other event types are sent.
+        Public text edits, publication additions, and first or post-revocation
+        credential bindings remain on the ordinary update cadence.
 
-        At most 200 streams may be open globally and four per resolved client IP.
-        Excess streams receive 503 stream_busy with Retry-After. Only GET is
-        supported; other methods return 405 with Allow: GET.
+        A committed withdrawal, disable, revoke or active credential replacement
+        sends close:renew and ends the stream so the browser rereads the collection.
+        Known-stale projections are never sent; persistent visibility churn or
+        projection/write failure terminates the stream without an obsolete payload.
+        Streams renew after 15 minutes. Shutdown attempts close:shutdown, then
+        interrupts blocked writes and waits for tracked streams before draining
+        ingestion. A disconnected or forcibly closed peer may receive no close frame.
+
+        WebSocket and SSE share a global limit of 200 and four per resolved client
+        IP; capacity is released once on exit. Excess streams receive 503
+        stream_busy with Retry-After. Only GET is supported; other methods return
+        405 with Allow: GET.
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
       responses:
         '200':
-          description: Server-sent stream of public node snapshots.
+          description: UTF-8 message events carrying typed snapshots or control frames.
           headers:
             Cache-Control:
               schema: {type: string, const: no-store}
@@ -149,18 +169,21 @@ paths:
             text/event-stream; charset=utf-8:
               schema:
                 type: string
-                description: UTF-8 SSE frames. Nodes data is compact JSON matching PublicNodeList; close data is exactly {}.
+                description: Each event is message; its compact JSON data matches PublicLiveFrame.
               examples:
-                nodes:
-                  summary: Public node snapshot
-                  value: "event: nodes\ndata: {\"nodes\":[],\"has_more\":false,\"next_offset\":null,\"generated_at\":\"2026-01-01T00:00:00Z\"}\n\n"
+                snapshot:
+                  summary: Public snapshot frame
+                  value: "event: message\ndata: {\"type\":\"snapshot\",\"server_time\":\"2026-01-01T00:00:00Z\",\"update_interval_seconds\":10,\"data\":{\"nodes\":[],\"has_more\":false,\"next_offset\":null,\"generated_at\":\"2026-01-01T00:00:00Z\"}}\n\n"
+                heartbeat:
+                  summary: Connection clock without new node data
+                  value: "event: message\ndata: {\"type\":\"heartbeat\",\"server_time\":\"2026-01-01T00:00:10Z\",\"update_interval_seconds\":10}\n\n"
                 close:
-                  summary: Graceful server-side close
-                  value: "event: close\ndata: {}\n\n"
+                  summary: Immediate renewal
+                  value: "event: message\ndata: {\"type\":\"close\",\"server_time\":\"2026-01-01T00:15:00Z\",\"update_interval_seconds\":10,\"code\":\"renew\"}\n\n"
         '400': {$ref: '#/components/responses/Error'}
         '405': {$ref: '#/components/responses/Error'}
         '503':
-          description: Stream concurrency limit reached; error code is stream_busy.
+          description: Shared WebSocket/SSE concurrency limit reached; code is stream_busy.
           headers:
             Retry-After:
               description: Delay in seconds before opening another stream.
@@ -172,6 +195,42 @@ paths:
                 code: stream_busy
                 message: Too many public streams.
                 request_id: 00000000-0000-4000-8000-000000000001
+        default: {$ref: '#/components/responses/Error'}
+  /api/public/v1/ws:
+    get:
+      operationId: websocketPublicNodes
+      security: []
+      description: |
+        Read-only WebSocket for the same public page and PublicLiveFrame messages
+        as HTTP/SSE. Pagination, pacing, visibility renewal, capacity and shutdown
+        are shared. The raw Origin must exactly equal the configured canonical
+        public_url; absent, multiple or different Origins are rejected before
+        upgrade. Cookies are ignored and never select a private projection.
+
+        Browser WebSocket APIs may automatically attach same-origin cookies;
+        anonymous HTTP/SSE use credentials omit. Compression is disabled, the
+        read limit is 1 KiB, application writes are rejected and every write has
+        a ten-second deadline. No subscription commands, replay or delta protocol.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '101':
+          description: HTTP/1.1 upgrade accepted; subsequent text messages match PublicLiveFrame.
+          x-websocket-message-schema:
+            $ref: '#/components/schemas/PublicLiveFrame'
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '405': {$ref: '#/components/responses/Error'}
+        '503':
+          description: Shared stream capacity unavailable; code is stream_busy.
+          headers:
+            Retry-After:
+              schema: {type: string, pattern: '^[1-9][0-9]*$'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/session:
     post:
@@ -2524,6 +2583,53 @@ components:
     PublicMetricStatus:
       type: string
       enum: [ok, stale, unavailable]
+    LiveFrameClock:
+      type: object
+      required: [type, server_time, update_interval_seconds]
+      properties:
+        type: {type: string, enum: [snapshot, heartbeat, close, error]}
+        server_time: {type: string, format: date-time, description: UTC message clock; never a new sample or reception timestamp.}
+        update_interval_seconds: {type: integer, minimum: 2, maximum: 60, description: Effective Server browser cadence; restart to apply configuration changes.}
+    PublicSnapshotFrame:
+      allOf:
+        - {$ref: '#/components/schemas/LiveFrameClock'}
+        - type: object
+          required: [data]
+          properties:
+            type: {const: snapshot}
+            data: {$ref: '#/components/schemas/PublicNodeList'}
+      unevaluatedProperties: false
+    LiveHeartbeatFrame:
+      allOf:
+        - {$ref: '#/components/schemas/LiveFrameClock'}
+        - type: object
+          properties:
+            type: {const: heartbeat}
+      unevaluatedProperties: false
+    LiveCloseFrame:
+      allOf:
+        - {$ref: '#/components/schemas/LiveFrameClock'}
+        - type: object
+          required: [code]
+          properties:
+            type: {const: close}
+            code: {type: string, enum: [renew, shutdown]}
+      unevaluatedProperties: false
+    LiveErrorFrame:
+      allOf:
+        - {$ref: '#/components/schemas/LiveFrameClock'}
+        - type: object
+          required: [code]
+          properties:
+            type: {const: error}
+            code: {type: string, const: unauthenticated}
+      unevaluatedProperties: false
+    PublicLiveFrame:
+      oneOf:
+        - {$ref: '#/components/schemas/PublicSnapshotFrame'}
+        - {$ref: '#/components/schemas/LiveHeartbeatFrame'}
+        - {$ref: '#/components/schemas/LiveCloseFrame'}
+        - {$ref: '#/components/schemas/LiveErrorFrame'}
     PublicNodeList:
       type: object
       additionalProperties: false
@@ -2536,7 +2642,7 @@ components:
           description: Published projections in candidate order; empty is [], never null. Concurrent withdrawal can reduce the returned count without changing candidate pagination.
         has_more: {type: boolean, description: Whether another candidate page exists; not a total or a promise that the next page will remain published.}
         next_offset: {type: [integer, 'null'], minimum: 0, description: When has_more is true, request offset plus candidate IDs consumed before any concurrent-withdrawal skips; otherwise null. Never derived from the number of returned nodes.}
-        generated_at: {type: string, format: date-time, description: UTC RFC3339Nano server time shared by all status and freshness decisions in this response.}
+        generated_at: {type: string, format: date-time, description: UTC projection time shared by status and freshness decisions; may be cached for the effective Server interval and is not refreshed by heartbeats.}
       allOf:
         - if:
             properties:

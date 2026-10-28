@@ -99,14 +99,15 @@ type Options struct {
 }
 
 type Service struct {
-	publicVersion atomic.Uint64
-	publicChanges change.Notifier
-	publicReader  atomic.Pointer[sql.DB]
-	db            *sql.DB
-	maxNodes      int
-	now           func() time.Time
-	random        io.Reader
-	randomMu      sync.Mutex
+	publicMu            sync.RWMutex
+	publicVersion       uint64
+	publicSafetyChanges change.Notifier
+	publicReader        atomic.Pointer[sql.DB]
+	db                  *sql.DB
+	maxNodes            int
+	now                 func() time.Time
+	random              io.Reader
+	randomMu            sync.Mutex
 }
 
 func NewService(db *sql.DB, opts Options) *Service {
@@ -127,15 +128,34 @@ func (s *Service) Database() *sql.DB { return s.db }
 
 func (s *Service) Capacity() int { return s.maxNodes }
 
-// InvalidatePublic expires anonymous projections after an external committed
-// identity change, such as enrollment rotating a credential.
+// InvalidatePublic expires projections after an ordinary committed data change.
+// Additions and text edits stay on the browser's configured update cadence.
 func (s *Service) InvalidatePublic() {
-	s.publicVersion.Add(1)
-	s.publicChanges.Notify()
+	s.publicMu.Lock()
+	s.publicVersion++
+	s.publicMu.Unlock()
 }
 
-func (s *Service) PublicChanges() (uint64, <-chan struct{}) {
-	return s.publicChanges.Snapshot()
+// InvalidatePublicSafety expires data and immediately renews active streams.
+// Publish both versions under one lock so cache and egress cannot disagree.
+func (s *Service) InvalidatePublicSafety() {
+	s.publicMu.Lock()
+	s.publicVersion++
+	s.publicSafetyChanges.Notify()
+	s.publicMu.Unlock()
+}
+
+func (s *Service) PublicSafetyChanges() (uint64, <-chan struct{}) {
+	s.publicMu.RLock()
+	defer s.publicMu.RUnlock()
+	return s.publicSafetyChanges.Snapshot()
+}
+
+func (s *Service) PublicSafetyVersion() uint64 {
+	s.publicMu.RLock()
+	defer s.publicMu.RUnlock()
+	version, _ := s.publicSafetyChanges.Snapshot()
+	return version
 }
 
 func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, error) {
@@ -367,7 +387,11 @@ func (s *Service) SetDisabled(ctx context.Context, id string, disabled bool) err
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	s.InvalidatePublic()
+	if disabled {
+		s.InvalidatePublicSafety()
+	} else {
+		s.InvalidatePublic()
+	}
 	return nil
 }
 
@@ -400,7 +424,7 @@ func (s *Service) RevokeCredential(ctx context.Context, id string) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	s.InvalidatePublic()
+	s.InvalidatePublicSafety()
 	return nil
 }
 
@@ -479,7 +503,7 @@ func (s *Service) Delete(ctx context.Context, id string, confirm bool) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	s.InvalidatePublic()
+	s.InvalidatePublicSafety()
 	return nil
 }
 

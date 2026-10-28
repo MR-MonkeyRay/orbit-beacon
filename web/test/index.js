@@ -6,6 +6,7 @@ import './format.test.js';
 import './theme.test.js';
 import './validate.test.js';
 import './stream.test.js';
+import './live.test.js';
 import './public-main.test.js';
 import './audit-actions.test.js';
 import './confirmation.test.js';

@@ -14,20 +14,20 @@
 .live{display:inline-flex;align-items:center;gap:12px;margin-top:28px;padding:8px 8px 8px 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel);box-shadow:var(--shadow)}
 .live-text{min-width:0;padding-right:6px;line-height:1.35}
 .live-text p:first-child{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
-.live-text .muted{font-size:12.5px}
+.live-text .update-time,.live-text .update-mode{display:inline-block;white-space:nowrap}
 .countdown{width:34px;height:34px;flex:none;transform:rotate(-90deg)}
 .countdown circle{fill:none;stroke-width:3}
 .countdown .track{stroke:var(--line)}
 .countdown .arc{stroke:var(--beacon);stroke-linecap:round;stroke-dasharray:100;stroke-dashoffset:100}
-.countdown.running .arc{animation:countdown 10s linear forwards}
+.countdown.running .arc{animation:countdown var(--refresh-duration) linear forwards}
 .countdown .dot{fill:var(--idle);stroke:none;transition:fill .3s}
 .countdown[data-state="ok"] .dot{fill:var(--ok)}
-.countdown[data-state="error"] .dot{fill:var(--bad)}
+.countdown[data-state="stale"] .dot{fill:var(--beacon)}
 .countdown[data-state="live"] .arc{stroke-dashoffset:0}
 .countdown[data-state="live"] .dot{fill:var(--ok);animation:live-pulse 4s ease-in-out infinite}
 @keyframes live-pulse{50%{opacity:.45}}
 @keyframes countdown{from{stroke-dashoffset:0}to{stroke-dashoffset:100}}
-@media (prefers-reduced-motion:reduce){.countdown[data-state="live"] .dot{animation:none}}
+@media (prefers-reduced-motion:reduce){.countdown[data-state="live"] .dot,.countdown.running .arc{animation:none}}
 .refresh,.retry,.pagination button,.filters button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:38px;padding:0 15px;border:1px solid var(--line-2);border-radius:999px;background:var(--panel-2);color:var(--ink);font-size:14px;font-weight:600;cursor:pointer;transition:background-color .15s,border-color .15s,color .15s,opacity .15s}
 .refresh:hover,.retry:hover,.pagination button:hover:not(:disabled),.filters button:hover{border-color:var(--orbit);background:var(--orbit-soft)}
 .refresh .icon{width:16px;height:16px}

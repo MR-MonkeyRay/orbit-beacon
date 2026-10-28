@@ -92,7 +92,7 @@ func TestPublicPageQueryCountDoesNotScaleWithPageSize(t *testing.T) {
 			t.Cleanup(func() { db.Close() })
 			s := NewService(db, Options{})
 			ns := nodes.NewService(db, nodes.Options{})
-			out, err := s.PublicPage(context.Background(), ns, limit, 0, func() time.Time { return now })
+			out, err := s.PublicPage(context.Background(), ns, limit, 0, 10*time.Second, func() time.Time { return now })
 			if err != nil || len(out.Nodes) != limit || !out.HasMore || out.NextOffset == nil || *out.NextOffset != limit {
 				t.Fatalf("page: %+v err=%v", out, err)
 			}
@@ -124,7 +124,7 @@ func TestPublicPageCoalescesMissesAndAllowsWaiterCancellation(t *testing.T) {
 	results := make(chan error, requests)
 	for range requests {
 		go func() {
-			page, err := s.PublicPage(ctx, ns, 100, 0, clock)
+			page, err := s.PublicPage(ctx, ns, 100, 0, 10*time.Second, clock)
 			if err == nil && len(page.Nodes) != 100 {
 				err = errors.New("incomplete page")
 			}
@@ -140,7 +140,7 @@ func TestPublicPageCoalescesMissesAndAllowsWaiterCancellation(t *testing.T) {
 	}
 	waitCtx, cancelWait := context.WithCancel(ctx)
 	waitResult := make(chan error, 1)
-	go func() { _, err := s.PublicPage(waitCtx, ns, 100, 0, clock); waitResult <- err }()
+	go func() { _, err := s.PublicPage(waitCtx, ns, 100, 0, 10*time.Second, clock); waitResult <- err }()
 	select {
 	case <-entered:
 	case <-ctx.Done():
@@ -223,5 +223,42 @@ func TestPublicNodeQueriesBeforeTakingStateLock(t *testing.T) {
 	unlock.Do(state.mu.Unlock)
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPublicPageCacheUsesEffectiveWebIntervalAndStaysBounded(t *testing.T) {
+	for _, seconds := range []int{2, 10, 30, 60} {
+		t.Run(fmt.Sprint(seconds), func(t *testing.T) {
+			now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
+			connector := &publicPageConnector{now: now}
+			db := sql.OpenDB(connector)
+			defer db.Close()
+			s := NewService(db, Options{})
+			ns := nodes.NewService(db, nodes.Options{})
+			ttl := time.Duration(seconds) * time.Second
+			clock := func() time.Time { return now }
+			first, err := s.PublicPage(context.Background(), ns, 1, 0, ttl, clock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			now = now.Add(ttl - time.Nanosecond)
+			cached, err := s.PublicPage(context.Background(), ns, 1, 0, ttl, clock)
+			if err != nil || !cached.GeneratedAt.Equal(first.GeneratedAt) || connector.queries.Load() != 1 {
+				t.Fatalf("cache expired before %v: err=%v queries=%d", ttl, err, connector.queries.Load())
+			}
+			now = now.Add(time.Nanosecond)
+			expired, err := s.PublicPage(context.Background(), ns, 1, 0, ttl, clock)
+			if err != nil || !expired.GeneratedAt.Equal(now) || connector.queries.Load() != 2 {
+				t.Fatalf("cache did not expire at %v: err=%v queries=%d", ttl, err, connector.queries.Load())
+			}
+			for offset := 1; offset <= 140; offset++ {
+				if _, err := s.PublicPage(context.Background(), ns, 1, offset, ttl, clock); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(s.publicPages.entries) > 128 {
+				t.Fatalf("unbounded pages: %d", len(s.publicPages.entries))
+			}
+		})
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"testing"
 	"time"
 
@@ -35,7 +36,7 @@ func TestPublicPageCacheHitAndExpiry(t *testing.T) {
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, reportBody(1, 1, "cache-session", 25)), 1)
 	f.now = f.now.Add(2*time.Second - time.Nanosecond)
 	hit, hitBytes := read()
-	if !bytes.Equal(initialBytes, hitBytes) || hit.GeneratedAt != initial.GeneratedAt {
+	if !reflect.DeepEqual(initial, hit) {
 		t.Fatalf("cache did not preserve computed response: %s vs %s", initialBytes, hitBytes)
 	}
 	f.now = f.now.Add(time.Nanosecond)
@@ -159,7 +160,7 @@ func TestPublicPageCacheLivenessBoundaryLagsByAtMostTTL(t *testing.T) {
 	// durable 180-second boundary, including its original generated_at.
 	f.now = f.now.Add(2*time.Second - time.Nanosecond)
 	cached, cachedBytes := publicList(t, f, "/api/public/v1/nodes", nil)
-	if string(cached.Nodes[0]["status"]) != `"online"` || !bytes.Equal(cachedBytes, boundaryBytes) {
+	if !reflect.DeepEqual(cached, boundary) {
 		t.Fatalf("page did not retain its computed status within TTL: %s", cachedBytes)
 	}
 	f.now = f.now.Add(time.Nanosecond)

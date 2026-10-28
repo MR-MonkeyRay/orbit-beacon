@@ -56,10 +56,27 @@ func TestHTMLCSPMatchesServedInlineScripts(t *testing.T) {
 					if strings.Contains(policy, "'unsafe-inline'") {
 						t.Fatal("CSP permits unsafe-inline")
 					}
-					for _, directive := range []string{"default-src 'self'", "style-src 'self'", "img-src 'self' data:", "font-src 'self'", "connect-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'"} {
+					for _, directive := range []string{"default-src 'self'", "style-src 'self'", "img-src 'self' data:", "font-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'"} {
 						if !strings.Contains("; "+policy+";", "; "+directive+";") {
 							t.Errorf("missing exact directive %q in %q", directive, policy)
 						}
+					}
+					var connectSources []string
+					for _, directive := range strings.Split(policy, ";") {
+						fields := strings.Fields(directive)
+						if len(fields) > 0 && fields[0] == "connect-src" {
+							connectSources = fields[1:]
+						}
+					}
+					allowedConnect := map[string]bool{"'self'": true, "wss://beacon.example.test": true}
+					for _, source := range connectSources {
+						if !allowedConnect[source] {
+							t.Errorf("CSP permits an unrelated connection source %q", source)
+						}
+						delete(allowedConnect, source)
+					}
+					if len(allowedConnect) != 0 {
+						t.Errorf("CSP blocks a required same-origin connection: %v", allowedConnect)
 					}
 					expected := map[string]bool{}
 					for _, script := range regexp.MustCompile(`(?is)<script\s*([^>]*)>(.*?)</script\s*>`).FindAllStringSubmatch(get.Body.String(), -1) {

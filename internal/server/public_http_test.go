@@ -80,26 +80,23 @@ func publicList(t *testing.T, f *agentFixture, path string, cookie *http.Cookie)
 	t.Helper()
 	response := agentHTTPCall(t, f, http.MethodGet, path, "", cookie, "", "")
 	assertHTTPStatus(t, response, http.StatusOK)
-	var result publicListFixture
-	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+	var frame struct {
+		Type                  string            `json:"type"`
+		ServerTime            time.Time         `json:"server_time"`
+		UpdateIntervalSeconds int               `json:"update_interval_seconds"`
+		Data                  publicListFixture `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &frame); err != nil {
 		t.Fatal(err)
 	}
-	var envelope map[string]json.RawMessage
-	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
-		t.Fatal(err)
+	if frame.Type != "snapshot" || frame.ServerTime.IsZero() || frame.UpdateIntervalSeconds < 2 || frame.UpdateIntervalSeconds > 60 {
+		t.Fatalf("invalid public snapshot: %s", response.Body)
 	}
-	keys := make([]string, 0, len(envelope))
-	for key := range envelope {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	if !reflect.DeepEqual(keys, []string{"generated_at", "has_more", "next_offset", "nodes"}) {
-		t.Fatalf("public envelope keys: %v", keys)
-	}
+	result := frame.Data
 	if result.Nodes == nil {
 		t.Fatal("public collection is null")
 	}
-	if generated, err := time.Parse(time.RFC3339Nano, result.GeneratedAt); err != nil || generated.After(f.now) || f.now.Sub(generated) >= 2*time.Second {
+	if generated, err := time.Parse(time.RFC3339Nano, result.GeneratedAt); err != nil || generated.After(f.now) || f.now.Sub(generated) >= time.Duration(frame.UpdateIntervalSeconds)*time.Second {
 		t.Fatalf("generated_at=%q err=%v", result.GeneratedAt, err)
 	}
 	if response.Header().Get("Set-Cookie") != "" || response.Header().Get("Cache-Control") != "no-store" {
@@ -377,7 +374,7 @@ func TestPublicHTTPRotationRestartPaginationAndWithdrawal(t *testing.T) {
 	// Reconstructing ingest loses only the in-memory resource snapshot; durable
 	// last_seen still supplies liveness.
 	f.ingest = ingest.NewService(f.db, ingest.Options{Now: func() time.Time { return f.now }})
-	f.handler, err = server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return f.now }})
+	f.handler, err = server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return f.now }, WebUpdateIntervalSeconds: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
-	"orbitbeacon/internal/server/change"
 	"orbitbeacon/internal/server/history"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/timekey"
@@ -84,7 +83,6 @@ func (state *nodeState) invalidateIdentity(credential []byte, credentialEpoch in
 type Service struct {
 	samples         chan<- history.Sample
 	samplesDropped  atomic.Uint64
-	publicChanges   change.Notifier
 	publicPages     publicPageCache
 	db              *sql.DB
 	now             func() time.Time
@@ -115,10 +113,6 @@ func NewService(db *sql.DB, opts Options) *Service {
 		opts.PersistInterval = 30 * time.Second
 	}
 	return &Service{samples: opts.Samples, db: db, now: opts.Now, persistInterval: opts.PersistInterval, states: make(map[string]*nodeState), writerQueue: make(chan struct{}, writerQueueCapacity), writer: make(chan struct{}, 1), done: make(chan struct{})}
-}
-
-func (s *Service) PublicChanges() (uint64, <-chan struct{}) {
-	return s.publicChanges.Snapshot()
 }
 
 func (s *Service) beginWrite(ctx context.Context) (func(), error) {
@@ -462,14 +456,12 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 		response.TrafficAcks = state.trafficAcks(report.Traffic, now)
 		if duplicate {
 			response.AcceptedSeq = cachedSeq
-			s.publicChanges.Notify()
 			return response, nil
 		}
 		state.mu.Lock()
 		state.seq, state.latest, state.receivedAt = report.Seq, body, now
 		state.public = snapshotPublic(report.Metrics, now)
 		state.mu.Unlock()
-		s.publicChanges.Notify()
 		s.recordSample(nodeID, now, report.Metrics)
 		return response, nil
 	}
@@ -564,7 +556,6 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 		state.commitTraffic(committed, now)
 		state.commitProbes(probes, generation, txSession)
 		response.TrafficAcks = state.trafficAcks(report.Traffic, now)
-		s.publicChanges.Notify()
 		return response, nil
 	}
 	// The transaction's identity read fenced both traffic buffers above. Flush
@@ -590,7 +581,6 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	state.session = report.SessionID
 	state.lastSeenPersisted = now
 	state.mu.Unlock()
-	s.publicChanges.Notify()
 	s.recordSample(nodeID, now, report.Metrics)
 	return response, nil
 }

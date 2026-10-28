@@ -20,7 +20,7 @@ export function createSSEParser() {
         const end = newline.exec(text)?.index ?? text.length;
         const part = text.slice(index, end);
         size += encoder.encode(part).length;
-        if (size > MAX_BUFFER) throw new Error('public stream buffer exceeded');
+        if (size > MAX_BUFFER) throw new Error('SSE buffer exceeded');
         line += part;
         index = end;
         if (index === text.length) break;
@@ -32,7 +32,7 @@ export function createSSEParser() {
           size = 0;
         } else {
           size += 1;
-          if (size > MAX_BUFFER) throw new Error('public stream buffer exceeded');
+          if (size > MAX_BUFFER) throw new Error('SSE buffer exceeded');
           const colon = line.indexOf(':');
           const field = colon < 0 ? line : line.slice(0, colon);
           let value = colon < 0 ? '' : line.slice(colon + 1);
@@ -47,18 +47,23 @@ export function createSSEParser() {
   };
 }
 
-export class StreamSetupError extends Error {}
+export class StreamSetupError extends Error {
+  constructor(message, {response, cause} = {}) {
+    super(message, {cause});
+    this.response = response;
+  }
+}
 
-export async function openStream({offset, limit, signal, onFrame}) {
+export async function openSSE({url, credentials, signal, onFrame}) {
   signal?.throwIfAborted();
   let response;
   try {
-    response = await fetch(`/api/public/v1/stream?limit=${limit}&offset=${offset}`, {
-      credentials: 'omit', cache: 'no-store', signal, headers: {Accept: 'text/event-stream'}
+    response = await fetch(url, {
+      credentials, cache: 'no-store', signal, headers: {Accept: 'text/event-stream'}
     });
   } catch (cause) {
     signal?.throwIfAborted();
-    throw new StreamSetupError('public stream request failed', {cause});
+    throw new StreamSetupError('SSE request failed', {cause});
   }
   const discard = () => { if (response.body) void response.body.cancel().catch(() => {}); };
   if (signal?.aborted) {
@@ -67,7 +72,7 @@ export async function openStream({offset, limit, signal, onFrame}) {
   }
   if (!response.ok || response.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase() !== 'text/event-stream' || !response.body) {
     discard();
-    throw new StreamSetupError('public stream unavailable');
+    throw new StreamSetupError('SSE unavailable', {response});
   }
   const reader = response.body.getReader();
   const parser = createSSEParser();
@@ -77,8 +82,7 @@ export async function openStream({offset, limit, signal, onFrame}) {
   const dispatch = (text) => {
     for (const frame of parser.feed(text)) {
       signal?.throwIfAborted();
-      onFrame(frame);
-      if (frame.event === 'close') return true;
+      if (onFrame(frame) === false) return true;
     }
     return false;
   };
@@ -88,7 +92,7 @@ export async function openStream({offset, limit, signal, onFrame}) {
       const {done, value} = await reader.read();
       signal?.throwIfAborted();
       if (dispatch(done ? decoder.decode() : decoder.decode(value, {stream: true}))) return;
-      if (done) throw new Error('public stream ended without close');
+      if (done) throw new Error('SSE ended');
     }
   } finally {
     signal?.removeEventListener('abort', cancel);

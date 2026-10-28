@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {flush, installDOM, TestElement} from './console-dom.js';
+import {flush, TestElement} from './console-dom.js';
+import {frame, liveHarness, response, stream} from './live-harness.js';
 
 const entry = new URL('../src/public/main.js', import.meta.url);
 const source = (await readFile(entry, 'utf8')).replace("import './public.css';", '')
@@ -13,346 +14,153 @@ const payload = (name = 'edge', extra = {}) => ({
     metric_status: {cpu_percent: 'ok', memory_percent: 'unavailable', load1: 'unavailable', uptime_seconds: 'ok'}}],
   generated_at: '2026-10-27T12:34:56Z', has_more: false, next_offset: null, ...extra
 });
-
+const snapshot = (data = payload(), interval = 10) => frame('snapshot', {data, update_interval_seconds: interval});
 class PublicElement extends TestElement {
-  constructor(tag) { super(tag); this.style.setProperty = () => {}; }
+  constructor(tag) { super(tag); this.style.setProperty = (key, value) => { this.style[key] = value; }; }
   get lastChild() { return this.children.at(-1); }
   getBoundingClientRect() { return {}; }
 }
-
 async function setup(t, respond) {
-  const dom = installDOM();
-  dom.document.createElement = (tag) => new PublicElement(tag);
-  dom.document.createElementNS = (_namespace, tag) => new PublicElement(tag);
+  const env = liveHarness(t, respond);
+  env.document.createElement = (tag) => new PublicElement(tag);
+  env.document.createElementNS = (_namespace, tag) => new PublicElement(tag);
   const ids = ['nodes', 'empty', 'empty-text', 'retry', 'headline', 'summary', 'updated', 'announcement', 'refresh', 'countdown', 'filters', 'pagination', 'previous', 'next', 'page', 'constellation', 'theme'];
   const elements = Object.fromEntries(ids.map((id) => {
-    const element = new PublicElement('div');
-    element.id = id;
-    dom.body.append(element);
-    return [id, element];
+    const element = new PublicElement('div'); element.id = id; env.body.append(element); return [id, element];
   }));
-  const originals = new Map(['window', 'fetch', 'setTimeout', 'clearTimeout'].map((key) => [key, globalThis[key]]));
-  const window = globalThis.window = new EventTarget();
-  const timers = new Map();
-  let timerID = 0;
-  globalThis.setTimeout = (callback, delay) => { timers.set(++timerID, {callback, delay}); return timerID; };
-  globalThis.clearTimeout = (id) => timers.delete(id);
-  const requests = [];
-  globalThis.fetch = async (url, options) => {
-    const request = {url, ...options};
-    requests.push(request);
-    return respond(request, requests.length);
-  };
-  t.after(async () => {
-    window.dispatchEvent(new Event('pagehide'));
-    await flush();
-    for (const [key, value] of originals) {
-      if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
-    }
-    dom.restore();
-  });
-  const tick = async (delay) => {
-    const pending = [...timers].filter(([, timer]) => timer.delay === delay);
-    assert.ok(pending.length, `expected ${delay}ms timer`);
-    for (const [id, timer] of pending) { timers.delete(id); timer.callback(); }
-    await flush();
-  };
   await import(`data:text/javascript;base64,${Buffer.from(`${source}\n// run ${++run}`).toString('base64')}`);
   await flush();
-  return {document: dom.document, window, elements, requests, timers, tick};
+  return {...env, elements};
 }
 
-function stream() {
-  let controller;
-  let cancelled = false;
-  const body = new ReadableStream({start(value) { controller = value; }, cancel() { cancelled = true; }});
-  return {
-    response: new Response(body, {headers: {'Content-Type': 'text/event-stream'}}),
-    frame: (event, data) => controller.enqueue(new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)),
-    text: (value) => controller.enqueue(new TextEncoder().encode(value)),
-    end: () => controller.close(),
-    error: () => controller.error(new Error('connection lost')),
-    get cancelled() { return cancelled; }
-  };
-}
-
-test('public stream renders validated frames, announces only the first and reconnects on close without clearing', async (t) => {
-  const first = stream();
-  const second = stream();
-  const ui = await setup(t, (_request, index) => index === 1 ? first.response : second.response);
-  assert.equal(ui.requests[0].url, '/api/public/v1/stream?limit=50&offset=0');
-  assert.ok([...ui.timers.values()].some(({delay}) => delay === 8000));
-  first.frame('nodes', payload('first'));
-  await flush();
-  assert.equal(ui.elements.countdown.dataset.state, 'live');
-  assert.equal(ui.elements.countdown.classList.contains('running'), false);
+test('public WS snapshots render values; heartbeats and ordinary snapshots do not repeat ARIA announcements', async (t) => {
+  const ui = await setup(t);
+  const socket = ui.sockets[0]; socket.open(); socket.message(snapshot(payload('first')));
   assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'first');
-  assert.match(ui.elements.announcement.textContent, /全部在线/);
-  assert.ok([...ui.timers.values()].some(({delay}) => delay === 18000));
-  assert.equal(ui.timers.size, 1);
-  const deadline = [...ui.timers.keys()][0];
-  first.text(': heartbeat\n\n');
-  await flush();
-  assert.equal([...ui.timers.keys()][0], deadline);
-  first.frame('nodes', payload('second'));
-  await flush();
-  assert.equal(ui.elements.announcement.textContent, '');
-  assert.equal(ui.timers.size, 1);
-  assert.notEqual([...ui.timers.keys()][0], deadline);
-  const displayed = ui.elements.nodes.children[0];
-  first.frame('close', {});
-  await flush();
+  assert.match(ui.elements.updated.textContent, /更新于 .* · 自动更新/);
+  assert.equal(ui.elements.countdown.classList.contains('running'), false);
+  const announced = ui.elements.announcement.textContent;
+  const updated = ui.elements.updated.textContent;
+  socket.message(frame('heartbeat', {server_time: '2026-10-28T00:00:10Z'}));
+  assert.equal(ui.elements.updated.textContent, updated);
+  assert.equal(ui.elements.announcement.textContent, announced);
+  socket.message(snapshot(payload('second')));
+  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'second');
+  assert.equal(ui.elements.announcement.textContent, announced);
+  assert.equal(ui.requests.length, 0);
+});
+
+test('public fallback is transparent and HTTP countdown uses the server interval without heartbeat announcements', async (t) => {
+  const ui = await setup(t, (request) => request.url.includes('/stream?') ? response({}, {status: 503}) : response(snapshot(payload('polled'), 60)));
+  ui.sockets[0].fail(); await flush();
+  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'polled');
+  assert.equal(ui.elements.countdown.classList.contains('running'), true);
+  assert.match(ui.elements.updated.textContent, /60 秒后刷新/);
+  const announced = ui.elements.announcement.textContent;
+  ui.shiftWall(3600000);
+  await ui.advance(30000);
   assert.equal(ui.requests.length, 2);
-  assert.equal(first.cancelled, true);
-  assert.equal(ui.elements.nodes.children[0], displayed);
-  assert.equal(ui.elements.countdown.dataset.state, 'live');
-  second.frame('nodes', payload('third'));
-  await flush();
-  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'third');
-  assert.equal(ui.elements.announcement.textContent, '');
-});
-
-for (const failure of ['status', 'content-type', 'fetch']) {
-  test(`public stream ${failure} setup failure falls back to polling until manual refresh`, async (t) => {
-    const live = stream();
-    let attempts = 0;
-    const ui = await setup(t, (request) => {
-      if (request.url.includes('/nodes?')) return new Response(JSON.stringify(payload('polled')));
-      if (++attempts > 1) return live.response;
-      if (failure === 'fetch') throw new Error('offline');
-      return new Response('{}', {status: failure === 'status' ? 503 : 200, headers: {'Content-Type': 'application/json'}});
-    });
-    assert.equal(ui.requests.length, 2);
-    assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'polled');
-    assert.equal(ui.elements.countdown.dataset.state, 'ok');
-    assert.equal(ui.elements.countdown.classList.contains('running'), true);
-    await ui.tick(10000);
-    assert.equal(ui.requests.length, 3);
-    assert.ok(ui.requests[2].url.includes('/nodes?'));
-    ui.elements.refresh.click();
-    await flush();
-    assert.equal(attempts, 2);
-    live.frame('nodes', payload('live again'));
-    await flush();
-    assert.equal(ui.elements.countdown.dataset.state, 'live');
-  });
-}
-
-for (const failure of ['invalid payload', 'invalid JSON', 'unknown event', 'invalid close', 'EOF', 'read error', 'timeout']) {
-  test(`public stream ${failure} retains last good values as stale and retries the stream after ten seconds`, async (t) => {
-    const first = stream();
-    const second = stream();
-    const ui = await setup(t, (_request, index) => index === 1 ? first.response : second.response);
-    first.frame('nodes', payload('visible'));
-    await flush();
-    const card = ui.elements.nodes.children[0];
-    const cpu = card.querySelector('.gauge-value');
-    const uptime = card.querySelectorAll('dd')[1];
-    const values = [cpu.textContent, uptime.textContent];
-    if (failure === 'invalid payload') first.frame('nodes', payload('secret', {has_more: true, next_offset: 0}));
-    else if (failure === 'invalid JSON') first.text('event: nodes\ndata: {\n\n');
-    else if (failure === 'unknown event') first.frame('other', {});
-    else if (failure === 'invalid close') first.frame('close', {unexpected: true});
-    else if (failure === 'EOF') first.end();
-    else if (failure === 'read error') first.error();
-    else await ui.tick(18000);
-    await flush();
-    assert.equal(ui.elements.nodes.children[0], card);
-    assert.deepEqual([cpu.textContent, uptime.textContent], values);
-    assert.equal(card.dataset.status, 'online');
-    assert.equal(cpu.parentElement.parentElement.classList.contains('metric-stale'), true);
-    assert.equal(card.querySelector('.last-report').hidden, false);
-    assert.equal(ui.elements.countdown.dataset.state, 'error');
-    assert.match(ui.elements.summary.textContent, /最后一次数据/);
-    assert.equal(ui.requests.length, 1);
-    await ui.tick(10000);
-    assert.equal(ui.requests.length, 2);
-    assert.ok(ui.requests[1].url.includes('/stream?'));
-  });
-}
-
-test('public stream first-frame timeout is a failure, and comments do not renew liveness', async (t) => {
-  const first = stream();
-  const ui = await setup(t, () => first.response);
-  first.text(': heartbeat\n\n');
-  await flush();
-  await ui.tick(8000);
-  assert.equal(first.cancelled, true);
-  assert.equal(ui.elements.countdown.dataset.state, 'error');
-  assert.equal(ui.requests.length, 1);
-});
-
-test('public stream setup timeout shows failure without falling back to polling', async (t) => {
-  const ui = await setup(t, (request) => new Promise((_resolve, reject) => {
-    request.signal.addEventListener('abort', () => reject(request.signal.reason), {once: true});
-  }));
-  await ui.tick(8000);
-  assert.equal(ui.requests[0].signal.aborted, true);
-  assert.equal(ui.elements.countdown.dataset.state, 'error');
-  assert.equal(ui.elements.retry.hidden, false);
-  assert.equal(ui.requests.length, 1);
-  assert.ok([...ui.timers.values()].some(({delay}) => delay === 10000));
-});
-
-for (const failure of ['invalid payload', 'EOF', 'read error']) {
-  test(`public stream ${failure} before the first nodes frame is a failure without polling fallback`, async (t) => {
-    const first = stream();
-    const second = stream();
-    const ui = await setup(t, (_request, index) => index === 1 ? first.response : second.response);
-    if (failure === 'invalid payload') first.frame('nodes', {});
-    else if (failure === 'EOF') first.end();
-    else first.error();
-    await flush();
-    assert.equal(ui.elements.countdown.dataset.state, 'error');
-    assert.equal(ui.requests.length, 1);
-    ui.elements.retry.click();
-    await flush();
-    assert.ok(ui.requests[1].url.includes('/stream?'));
-    second.frame('nodes', payload('recovered'));
-    await flush();
-    assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'recovered');
-    assert.match(ui.elements.announcement.textContent, /全部在线/);
-  });
-}
-
-test('public stream refresh ignores a late response from the cancelled setup request', async (t) => {
-  const old = stream();
-  const current = stream();
-  let resolve;
-  const pending = new Promise((done) => { resolve = done; });
-  const ui = await setup(t, (_request, index) => index === 1 ? pending : current.response);
-  ui.elements.refresh.click();
-  await flush();
-  current.frame('nodes', payload('current'));
-  await flush();
-  resolve(old.response);
-  await flush();
-  assert.equal(ui.requests[0].signal.aborted, true);
-  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'current');
-  assert.equal(ui.elements.countdown.dataset.state, 'live');
-  assert.equal(ui.requests.length, 2);
-});
-
-test('public stream page changes abort the old reader and validate the new offset', async (t) => {
-  const first = stream();
-  const second = stream();
-  const ui = await setup(t, (_request, index) => index === 1 ? first.response : second.response);
-  first.frame('nodes', payload('page one', {has_more: true, next_offset: 50}));
-  await flush();
-  first.frame('nodes', payload('late page one'));
-  ui.elements.next.click();
-  await flush();
-  assert.equal(ui.requests[0].signal.aborted, true);
-  assert.equal(first.cancelled, true);
-  assert.equal(ui.requests[1].url, '/api/public/v1/stream?limit=50&offset=50');
-  assert.equal(ui.elements.nodes.querySelector('h2'), null);
-  second.frame('nodes', payload('bad cursor', {has_more: true, next_offset: 50}));
-  await flush();
-  assert.equal(ui.elements.nodes.children.length, 0);
-  assert.equal(ui.elements.countdown.dataset.state, 'error');
-});
-
-test('public stream pauses but retains stale cards on hidden/pagehide and resumes on visibility and persisted pageshow', async (t) => {
-  const streams = [stream(), stream(), stream()];
-  const ui = await setup(t, (_request, index) => streams[index - 1].response);
-  streams[0].frame('nodes', payload('visible'));
-  await flush();
-  streams[0].frame('nodes', payload('late update'));
-  ui.document.hidden = true;
-  ui.document.dispatchEvent(new Event('visibilitychange'));
-  await flush();
-  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'visible');
-  assert.equal(ui.requests[0].signal.aborted, true);
-  assert.equal(ui.timers.size, 0);
-  assert.equal(ui.elements.refresh.hasAttribute('aria-busy'), false);
-  ui.document.hidden = false;
-  ui.document.dispatchEvent(new Event('visibilitychange'));
-  await flush();
-  streams[1].frame('nodes', payload('visible again'));
-  await flush();
-  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'visible again');
-  ui.window.dispatchEvent(new Event('pagehide'));
-  await flush();
-  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'visible again');
-  assert.equal(ui.requests[1].signal.aborted, true);
-  assert.equal(ui.timers.size, 0);
-  ui.window.dispatchEvent(Object.assign(new Event('pageshow'), {persisted: true}));
-  await flush();
+  assert.equal(ui.elements.announcement.textContent, announced);
+  assert.match(ui.elements.updated.textContent, /30 秒后刷新/);
+  await ui.advance(30000);
   assert.equal(ui.requests.length, 3);
-  streams[2].frame('nodes', payload('restored'));
-  await flush();
-  assert.equal(ui.elements.countdown.dataset.state, 'live');
+  assert.doesNotMatch(ui.elements.updated.textContent, /WS|SSE|HTTP/);
 });
 
-test('public snapshot withdrawal removes a retained card on the next successful response', async (t) => {
-  const first = stream();
-  const second = stream();
-  const ui = await setup(t, (_request, index) => index === 1 ? first.response : second.response);
-  first.frame('nodes', payload('withdrawn while disconnected'));
-  await flush();
-  first.error();
-  await flush();
-  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'withdrawn while disconnected');
-  await ui.tick(10000);
-  second.frame('nodes', payload('', {nodes: []}));
-  await flush();
-  assert.equal(ui.elements.nodes.children.length, 0);
-  assert.equal(ui.elements.countdown.dataset.state, 'live');
-  assert.equal(ui.elements.empty.hidden, false);
-});
-
-test('public stale and offline cards retain source values and never advance uptime', async (t) => {
-  const active = stream();
-  const ui = await setup(t, () => active.response);
-  const result = payload('last sample');
-  result.nodes[0].status = 'offline';
-  result.nodes[0].metric_status.cpu_percent = 'stale';
-  result.nodes[0].metric_status.uptime_seconds = 'stale';
-  active.frame('nodes', result);
-  await flush();
-  const card = ui.elements.nodes.children[0];
-  assert.equal(card.hidden, false);
-  assert.equal(card.querySelector('.gauge-value').textContent, '25.0%');
+test('public broken channel retains values and online presence until the next validated withdrawal snapshot', async (t) => {
+  const sse = stream(); const ui = await setup(t, () => sse.response);
+  ui.sockets[0].open(); ui.sockets[0].message(snapshot(payload('retained')));
+  const card = ui.elements.nodes.children[0]; const cpu = card.querySelector('.gauge-value');
+  ui.sockets[0].end(); await flush();
+  assert.equal(ui.elements.nodes.children[0], card);
+  assert.equal(cpu.textContent, '25.0%'); assert.equal(card.dataset.status, 'online');
   assert.equal(card.querySelectorAll('dd')[1].textContent, '1小时 0分钟');
   assert.equal(card.querySelector('.gauge').classList.contains('metric-stale'), true);
-  assert.equal(card.querySelectorAll('dd')[1].classList.contains('metric-stale'), true);
-  assert.match(card.querySelector('.last-report').textContent, /最后数据 ·/);
-  assert.equal(card.querySelector('time').getAttribute('datetime'), result.nodes[0].last_seen);
-  assert.equal(card.querySelectorAll('.gauge-value')[1].textContent, '—');
-  result.nodes[0].last_seen = null;
-  result.nodes[0].cpu_percent = null;
-  result.nodes[0].uptime_seconds = null;
-  result.nodes[0].metric_status.cpu_percent = 'unavailable';
-  result.nodes[0].metric_status.uptime_seconds = 'unavailable';
-  active.frame('nodes', result);
-  await flush();
-  assert.equal(card.querySelector('.last-report').hidden, true);
-  assert.equal(card.querySelector('.gauge-value').textContent, '—');
+  assert.match(ui.elements.summary.textContent, /连接中断，正在重连；当前显示最后一次数据。/);
+  sse.frame(snapshot(payload('', {nodes: []}))); await flush();
+  assert.equal(ui.elements.nodes.children.length, 0);
+  assert.equal(ui.elements['empty-text'].textContent, '暂无公开的节点。');
+  assert.equal(ui.elements.empty.hidden, false);
 });
 
-test('public polling keeps its validated collection and online presence on faults', async (t) => {
-  let polls = 0;
-  const ui = await setup(t, (request) => {
-    if (request.url.includes('/stream?')) return new Response('{}', {status: 503});
-    if (++polls === 1) return new Response(JSON.stringify(payload('last polled sample')));
-    throw new Error('offline');
-  });
-  const card = ui.elements.nodes.children[0];
-  const cpu = card.querySelector('.gauge-value');
-  await ui.tick(10000);
-  assert.equal(ui.elements.nodes.children[0], card);
-  assert.equal(cpu.textContent, '25.0%');
-  assert.equal(card.dataset.status, 'online');
-  assert.equal(card.querySelector('.gauge').classList.contains('metric-stale'), true);
-  assert.match(ui.elements.summary.textContent, /最后一次数据/);
-  assert.equal(ui.elements.empty.hidden, true);
+test('public invalid snapshot cannot clear an accepted collection or change its values', async (t) => {
+  const sse = stream(); const ui = await setup(t, () => sse.response);
+  ui.sockets[0].open(); ui.sockets[0].message(snapshot(payload('accepted')));
+  ui.sockets[0].message(snapshot(payload('invalid', {has_more: true, next_offset: 0}))); await flush();
+  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'accepted');
+  assert.equal(ui.elements.nodes.querySelector('.gauge-value').textContent, '25.0%');
+  assert.equal(ui.elements.nodes.children[0].dataset.status, 'online');
 });
 
-test('public initial failure displays a real loading error with no synthetic empty collection', async (t) => {
+test('public initial failure is a real loading error, never a fabricated empty collection', async (t) => {
   const ui = await setup(t, () => { throw new Error('offline'); });
+  ui.sockets[0].fail(); await flush();
   assert.equal(ui.elements.nodes.children.length, 0);
   assert.equal(ui.elements.empty.hidden, false);
-  assert.match(ui.elements['empty-text'].textContent, /加载失败/);
-  assert.doesNotMatch(ui.elements.headline.textContent, /暂无公开节点/);
-  assert.equal(ui.elements.countdown.dataset.state, 'error');
+  assert.equal(ui.elements['empty-text'].textContent, '加载失败，请检查网络后重试。');
+  assert.doesNotMatch(ui.elements.headline.textContent, /暂无公开/);
+});
+
+test('public refresh ignores late callbacks and starts WS again, not a second subscription', async (t) => {
+  const ui = await setup(t);
+  ui.sockets[0].open(); ui.sockets[0].message(snapshot(payload('first')));
+  ui.elements.refresh.click();
+  assert.equal(ui.sockets[0].closed, true); assert.equal(ui.sockets.length, 2);
+  ui.sockets[0].message(snapshot(payload('obsolete')));
+  ui.sockets[1].open(); ui.sockets[1].message(snapshot(payload('current')));
+  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'current');
+});
+
+test('public page changes close the old scope and validate the new pagination cursor', async (t) => {
+  const ui = await setup(t, () => new Promise(() => {}));
+  ui.sockets[0].open(); ui.sockets[0].message(snapshot(payload('page one', {has_more: true, next_offset: 50})));
+  ui.elements.next.click();
+  assert.equal(ui.sockets[0].closed, true);
+  assert.match(ui.sockets[1].url, /offset=50/);
+  ui.sockets[0].message(snapshot(payload('obsolete')));
+  ui.sockets[1].open(); ui.sockets[1].message(snapshot(payload('bad cursor', {has_more: true, next_offset: 50})));
+  await flush();
+  assert.equal(ui.elements.nodes.querySelector('h2'), null);
+  assert.equal(ui.elements['empty-text'].textContent, '加载失败，请检查网络后重试。');
+});
+
+test('public filters survive valid patches and keep filtering the current page', async (t) => {
+  const ui = await setup(t); ui.sockets[0].open();
+  const data = payload('online'); const offline = {...data.nodes[0], name: 'offline', status: 'offline'}; data.nodes.push(offline);
+  ui.sockets[0].message(snapshot(data));
+  ui.elements.filters.children[2].click();
+  assert.equal(ui.elements.nodes.children[0].hidden, true); assert.equal(ui.elements.nodes.children[1].hidden, false);
+  ui.sockets[0].message(snapshot(data));
+  assert.equal(ui.elements.filters.children[2].getAttribute('aria-pressed'), 'true');
+  assert.equal(ui.elements.nodes.children[0].hidden, true);
+});
+
+test('public hide and BFCache preserve stale values and resume with a fresh WS scope', async (t) => {
+  const ui = await setup(t); ui.sockets[0].open(); ui.sockets[0].message(snapshot(payload('visible')));
+  ui.document.hidden = true; ui.document.dispatchEvent(new Event('visibilitychange'));
+  ui.sockets[0].message(snapshot(payload('late')));
+  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'visible'); assert.equal(ui.timers.size, 0);
+  ui.document.hidden = false; ui.document.dispatchEvent(new Event('visibilitychange'));
+  assert.equal(ui.sockets.length, 2);
+  ui.window.dispatchEvent(new Event('pagehide')); assert.equal(ui.timers.size, 0);
+  ui.window.dispatchEvent(Object.assign(new Event('pageshow'), {persisted: true}));
+  assert.equal(ui.sockets.length, 3);
+  ui.sockets[2].open(); ui.sockets[2].message(snapshot(payload('restored')));
+  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'restored');
+});
+
+test('public stale/offline cards retain last values and null last_seen hides the entire time line', async (t) => {
+  const ui = await setup(t); const socket = ui.sockets[0]; socket.open();
+  const data = payload('offline'); data.nodes[0].status = 'offline';
+  data.nodes[0].metric_status.cpu_percent = 'stale'; data.nodes[0].metric_status.uptime_seconds = 'stale';
+  socket.message(snapshot(data));
+  const card = ui.elements.nodes.children[0];
+  assert.equal(card.hidden, false); assert.equal(card.querySelector('.gauge-value').textContent, '25.0%');
+  assert.equal(card.querySelectorAll('dd')[1].textContent, '1小时 0分钟');
+  assert.equal(card.querySelector('.gauge').classList.contains('metric-stale'), true);
+  assert.match(card.querySelector('.last-report').textContent, /最后数据 ·/);
+  assert.equal(card.querySelector('time').getAttribute('datetime'), data.nodes[0].last_seen);
+  assert.equal(card.querySelectorAll('.gauge-value')[1].textContent, '—');
+  data.nodes[0].last_seen = null; socket.message(snapshot(data));
+  assert.equal(card.querySelector('.last-report').hidden, true);
 });
