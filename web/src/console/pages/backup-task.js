@@ -38,7 +38,7 @@ export function taskDetails(task, {signal} = {}) {
     ['Phase', task.state === 'running' ? phaseNames[task.phase] || 'Starting' : null],
     ['Queued', when(task.created_at)], ['Scheduled', task.scheduled_at ? when(task.scheduled_at) : null], ['Started', task.started_at ? when(task.started_at) : null], ['Finished', task.finished_at ? when(task.finished_at) : null],
     ['Archive filename', task.artifact_name], ['Ciphertext size', task.artifact_bytes == null ? null : `${task.artifact_bytes} bytes`],
-    ['Ciphertext SHA-256', task.artifact_sha256 ? h('code', {class: 'backup-hash'}, task.artifact_sha256) : null], ['Location', task.result_location],
+    ['Ciphertext SHA-256', task.artifact_sha256 ? h('code', {class: 'backup-hash'}, task.artifact_sha256) : null], [task.kind === 'backup_remote' ? 'Object key' : 'Location', task.result_location],
     ['Download expires', task.artifact_expires_at ? when(task.artifact_expires_at) : null], ['Password expires', task.password_expires_at ? when(task.password_expires_at) : null]
   ]));
   if (task.kind === 'backup_export' && task.state === 'succeeded') {

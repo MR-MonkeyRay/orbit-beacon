@@ -2042,7 +2042,7 @@ components:
         artifact_bytes: {type: [string, 'null'], pattern: '^(0|[1-9][0-9]*)$', description: 'Final encrypted archive size as a decimal string, never a JSON number.'}
         artifact_sha256: {type: [string, 'null'], pattern: '^[a-f0-9]{64}$', description: SHA-256 of the final encrypted archive.}
         artifact_expires_at: {type: [string, 'null'], format: date-time, description: 'Manual download expiry, normally completion plus 24 hours; null for scheduled/restored history.'}
-        result_location: {type: [string, 'null'], description: 'Display-only local archive path or object location; not credentials, an internal staging path, a browser download URL or a presigned link.'}
+        result_location: {type: [string, 'null'], description: 'Display-only local archive path or exact remote object key within destination.target.bucket; not credentials, an internal staging path, a browser download URL or a presigned link.'}
         password_expires_at: {type: [string, 'null'], format: date-time, description: Completion plus 90 days; active tasks have no expiry. Restored event history has no recoverable password.}
         error_code: {$ref: '#/components/schemas/BackupTaskErrorCode'}
         warning_code: {$ref: '#/components/schemas/BackupTaskWarningCode'}

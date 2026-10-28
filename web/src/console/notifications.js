@@ -140,7 +140,7 @@ function snapshot(notification) {
     ['Source', sourceName(details)], ['Categories', categories(details.categories)], ['Phase', details.phase || null],
     ['File', details.artifact_name], ['Size', details.artifact_bytes != null ? formatBytes(details.artifact_bytes) : null],
     ['SHA-256', details.artifact_sha256 ? h('span', {class: 'mono'}, details.artifact_sha256) : null],
-    ['Location', details.result_location], ['Failure code', details.error_code || null], ['Warning code', details.warning_code || null]);
+    [details.kind === 'backup_remote' ? 'Object key' : 'Location', details.result_location], ['Failure code', details.error_code || null], ['Warning code', details.warning_code || null]);
   return h('section', {class: 'notification-snapshot'}, h('h3', null, 'Notification snapshot'), facts(rows),
     details.warning_code === 'storage_outcome_unknown' ? h('p', {class: 'callout'}, 'The storage outcome is unknown. A file or object may have been saved; this is not a confirmed success.') : null,
     details.warning_code === 'retention_cleanup_failed' ? h('p', {class: 'callout'}, 'The backup succeeded, but older local archives could not all be removed.') : null);

@@ -312,7 +312,7 @@ func (s *Service) execute(ctx context.Context, task Task) {
 	}
 	location := filepath.Join(outputDir, name)
 	if task.Kind == "backup_remote" {
-		location = destination.Endpoint + "/" + destination.Bucket + "/" + objectKey
+		location = objectKey
 	}
 	if _, err = s.db.ExecContext(ctx, `UPDATE backup_tasks SET phase='storing',artifact_name=?,artifact_bytes=?,artifact_sha256=?,result_location=? WHERE id=? AND state='running'`, name, info.Bytes, info.SHA256, location, task.ID); err != nil {
 		fail(err, "internal_error")

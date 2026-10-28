@@ -254,6 +254,42 @@ func TestWorkerRemoteFIFOAndFailureClassification(t *testing.T) {
 	}
 }
 
+func TestWorkerRemoteResultIdentifiesObjectKeyWithoutInventingURL(t *testing.T) {
+	db, opts := workerFixture(t)
+	opts.Uploader = &recordingUploader{}
+	s, err := New(db, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "10000000-0000-4000-8000-000000000099"
+	enqueueRemote(t, s, id, time.Now())
+	destination := `{"plan_name":"OSS custom domain","actor_name":"","target":{"provider":"oss","endpoint":"https://bound.example.com","region":"cn-hangzhou","bucket":"test","prefix":"daily","path_style":false,"allow_private_networks":false}}`
+	if _, err = db.Exec(`UPDATE backup_tasks SET destination_json=? WHERE id=?`, destination, id); err != nil {
+		t.Fatal(err)
+	}
+	runWorker(t, s)
+	waitWorkerTask(t, db, id, "succeeded")
+	task, err := s.Task(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "daily/orbitbeacon/" + id + "/" + *task.ArtifactName
+	if task.ResultLocation == nil || *task.ResultLocation != want {
+		t.Fatalf("object key = %v, want %q", task.ResultLocation, want)
+	}
+	var snapshot string
+	if err = db.QueryRow(`SELECT details_json FROM inbox_notifications WHERE source_id=?`, id).Scan(&snapshot); err != nil {
+		t.Fatal(err)
+	}
+	var notification Task
+	if err = json.Unmarshal([]byte(snapshot), &notification); err != nil {
+		t.Fatal(err)
+	}
+	if notification.ResultLocation == nil || *notification.ResultLocation != want {
+		t.Fatalf("notification object key = %v, want %q", notification.ResultLocation, want)
+	}
+}
+
 func TestWorkerStartupCleansOnlyInactiveOwnedStaging(t *testing.T) {
 	db, opts := workerFixture(t)
 	s, err := New(db, opts)
