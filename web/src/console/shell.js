@@ -3,7 +3,7 @@ import {themeButton} from '../shared/theme.js';
 import {onSession, session, signOut} from './api.js';
 import {busy, button} from './ui/components.js';
 import {toastError} from './ui/feedback.js';
-import {initNotifications} from './notifications.js';
+import {initNotifications, syncNotifications} from './notifications.js';
 
 // Sidebar navigation, account block and the mobile drawer. The markup is static
 // in index.html so navigation paints before the script loads.
@@ -42,6 +42,7 @@ export function setActiveNav(nav) {
     } else anchor.removeAttribute('aria-current');
   }
   if (!nav && pill) pill.remove();
+  syncNotifications();
 }
 
 function openMenu() {

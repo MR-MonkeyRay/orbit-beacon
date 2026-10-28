@@ -56,7 +56,7 @@ function stopPolling() {
   inbox?.pause();
 }
 
-function syncPolling() {
+export function syncNotifications() {
   if (!foreground()) { stopPolling(); return; }
   if (!timer) {
     timer = setInterval(refreshNotifications, 15000);
@@ -109,16 +109,16 @@ export function initNotifications() {
       stale = false;
       renderEntries();
     }
-    syncPolling();
+    syncNotifications();
   });
-  document.addEventListener('visibilitychange', syncPolling);
+  document.addEventListener('visibilitychange', syncNotifications);
   window.addEventListener('pagehide', () => { pageActive = false; stopPolling(); });
-  window.addEventListener('pageshow', () => { pageActive = true; syncPolling(); });
+  window.addEventListener('pageshow', () => { pageActive = true; syncNotifications(); });
   window.addEventListener('online', () => { if (foreground()) refreshNotifications(); });
   window.addEventListener('offline', () => { if (foreground()) { stale = true; renderEntries(); inbox?.setStale(true); } });
   identity = session.user ? `${session.user.id}:${session.csrf}` : '';
   renderEntries();
-  syncPolling();
+  syncNotifications();
 }
 
 function notificationTitle(notification) {
