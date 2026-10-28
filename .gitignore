@@ -1,4 +1,4 @@
-/.omx/
+.omx/
 /dist/
 /build/*
 !/build/server.Dockerfile
@@ -16,3 +16,4 @@
 .env
 *.key
 # The minimal embedded UI distribution is intentionally tracked.
+*.test
