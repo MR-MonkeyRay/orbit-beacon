@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	v1 "orbitbeacon/internal/protocol/v1"
-	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/enrollment"
 	"orbitbeacon/internal/server/ingest"
 )
@@ -127,13 +126,9 @@ func (h *handler) agentError(w http.ResponseWriter, err error, requestID string)
 	}
 }
 
-func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, requestID string, user auth.User) bool {
+func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, requestID string) bool {
 	if r.URL.Path != "/api/v1/enrollments" && !strings.HasPrefix(r.URL.Path, "/api/v1/enrollments/") {
 		return false
-	}
-	if user.Role != auth.RoleAdmin {
-		fail(w, http.StatusForbidden, "forbidden", "Administrator role is required", requestID)
-		return true
 	}
 	if r.URL.Path != "/api/v1/enrollments" {
 		id := strings.TrimPrefix(r.URL.Path, "/api/v1/enrollments/")

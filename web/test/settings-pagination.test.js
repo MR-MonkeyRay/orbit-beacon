@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {invalidate, setSession} from '../src/console/api.js';
+import {invalidate, session, setNavigationSignal, setSession} from '../src/console/api.js';
+import {elements, flush, installDOM} from './console-dom.js';
 
 class TestNode extends EventTarget {
   constructor(tagName = '') {
@@ -79,7 +80,7 @@ test('audit load more uses the cursor and hides after a full final page', async 
     return new Response(JSON.stringify(body), {headers: {'Content-Type': 'application/json'}});
   };
   invalidate('nodes', 'groups', 'users');
-  setSession({csrf_token: 'csrf', user: {id: 'user', username: 'admin', role: 'admin', created_at: '2026-10-27T12:00:00Z'}, expires_at: ''});
+  setSession({csrf_token: 'csrf', user: {id: 'user', username: 'admin', created_at: '2026-10-27T12:00:00Z'}, expires_at: ''});
   try {
     const {settingsPage} = await import('../src/console/pages/settings.js');
     const page = await settingsPage();
@@ -100,5 +101,109 @@ test('audit load more uses the cursor and hides after a full final page', async 
     delete globalThis.document;
     delete globalThis.Node;
     delete globalThis.MutationObserver;
+  }
+});
+
+test('Users forms send only administrator credentials and keep conflicts in the dialog', async () => {
+  const dom = installDOM();
+  const originals = new Map(['fetch', 'window', 'matchMedia', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
+  const self = {id: 'user-one', username: 'admin-one', created_at: '2026-10-27T12:00:00Z'};
+  const requests = [];
+  Object.assign(globalThis, {window: new EventTarget(), matchMedia: () => ({matches: true, addEventListener() {}}),
+    history: {state: null, replaceState() {}}, requestAnimationFrame: () => 0});
+  Object.assign(location, {pathname: '/settings', hash: '#users', assign: (path) => assert.fail(`Unexpected navigation: ${path}`)});
+  setNavigationSignal(null);
+  setSession({user: self, csrf_token: 'csrf', expires_at: ''});
+  invalidate('nodes', 'groups', 'users');
+  globalThis.fetch = async (path, options) => {
+    if (options.method !== 'GET') {
+      requests.push({path, method: options.method, body: JSON.parse(options.body)});
+      return new Response(JSON.stringify({code: 'username_conflict', message: 'Username already exists.'}), {status: 409});
+    }
+    const body = path === '/api/v1/users' ? {users: [self]}
+      : path === '/api/v1/groups' ? {groups: []}
+        : path.startsWith('/api/v1/nodes?') ? {nodes: [], has_more: false}
+          : {events: [], has_more: false};
+    return new Response(JSON.stringify(body));
+  };
+  const {closeDialogs} = await import('../src/console/ui/dialogs.js');
+  try {
+    const {settingsPage} = await import('../src/console/pages/settings.js');
+    const page = await settingsPage();
+    dom.body.append(page);
+    assert.match(page.textContent, /Data operations/);
+    assert.ok(!elements(page).some((element) => element.tagName === 'th' && element.textContent === 'Role'));
+    elements(page).find((element) => element.tagName === 'button' && element.textContent === 'Add user').click();
+    let dialog = dom.body.querySelector('dialog');
+    let controls = elements(dialog);
+    assert.equal(controls.filter((element) => element.name === 'role').length, 0);
+    controls.find((element) => element.name === 'username').value = 'admin-two';
+    const password = controls.find((element) => element.name === 'password');
+    password.value = 'regression password two';
+    dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true}));
+    await flush();
+    assert.deepEqual(requests[0], {path: '/api/v1/users', method: 'POST', body: {username: 'admin-two', password: 'regression password two'}});
+    assert.equal(password.value, '');
+    assert.match(dialog.textContent, /Username already exists/);
+    closeDialogs();
+    elements(page).find((element) => element.getAttribute('aria-label') === 'Edit admin-one').click();
+    dialog = dom.body.querySelector('dialog');
+    controls = elements(dialog);
+    assert.deepEqual(controls.filter((element) => element.name).map((element) => element.name), ['username']);
+    controls.find((element) => element.name === 'username').value = 'admin-two';
+    dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true}));
+    await flush();
+    assert.deepEqual(requests[1], {path: '/api/v1/users/user-one', method: 'PATCH', body: {username: 'admin-two'}});
+    assert.match(dialog.textContent, /Username already exists/);
+    assert.equal(session.user.username, 'admin-one');
+    assert.equal(session.csrf, 'csrf');
+  } finally {
+    closeDialogs();
+    invalidate('nodes', 'groups', 'users');
+    dom.restore();
+    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+  }
+});
+
+test('self deletion redirects immediately without fetching the administrator list again', async () => {
+  const dom = installDOM();
+  const originals = new Map(['fetch', 'window', 'matchMedia', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
+  const self = {id: 'user-one', username: 'admin-one', created_at: '2026-10-27T12:00:00Z'};
+  const requests = [];
+  const redirects = [];
+  Object.assign(globalThis, {window: new EventTarget(), matchMedia: () => ({matches: true, addEventListener() {}}),
+    history: {state: null, replaceState() {}}, requestAnimationFrame: () => 0});
+  Object.assign(location, {pathname: '/settings', hash: '#users', assign: (path) => redirects.push(path)});
+  setNavigationSignal(null);
+  setSession({user: self, csrf_token: 'csrf', expires_at: ''});
+  invalidate('nodes', 'groups', 'users');
+  globalThis.fetch = async (path, options) => {
+    requests.push({path, method: options.method});
+    if (options.method === 'DELETE') return new Response(null, {status: 204});
+    const body = path === '/api/v1/users' ? {users: [self, {...self, id: 'user-two', username: 'admin-two'}]}
+      : path === '/api/v1/groups' ? {groups: []}
+        : path.startsWith('/api/v1/nodes?') ? {nodes: [], has_more: false}
+          : {events: [], has_more: false};
+    return new Response(JSON.stringify(body));
+  };
+  const {closeDialogs} = await import('../src/console/ui/dialogs.js');
+  try {
+    const {settingsPage} = await import('../src/console/pages/settings.js');
+    const page = await settingsPage();
+    dom.body.append(page);
+    elements(page).find((element) => element.getAttribute('aria-label') === 'Delete admin-one').click();
+    const dialog = dom.body.querySelector('dialog');
+    assert.match(dialog.textContent, /deleting your own account/);
+    elements(dialog).find((element) => element.tagName === 'button' && element.textContent === 'Delete user').click();
+    dialog.dispatchEvent(new Event('animationend'));
+    await flush();
+    assert.deepEqual(redirects, ['/login']);
+    assert.deepEqual(requests.at(-1), {path: '/api/v1/users/user-one', method: 'DELETE'});
+    assert.equal(requests.filter((request) => request.path === '/api/v1/users').length, 1);
+  } finally {
+    closeDialogs();
+    invalidate('nodes', 'groups', 'users');
+    dom.restore();
+    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
   }
 });

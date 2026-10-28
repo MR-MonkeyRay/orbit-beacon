@@ -362,10 +362,6 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 	}
 	mutation := r.Method != http.MethodGet && r.Method != http.MethodHead
 	if mutation {
-		if p != "/api/v1/session" && p != "/api/v1/me/password" && !ownInboxMutation(r) && user.Role != auth.RoleAdmin {
-			fail(w, http.StatusForbidden, "forbidden", "Administrator role is required", requestID)
-			return
-		}
 		if r.Header.Get("Origin") != h.origin {
 			fail(w, http.StatusForbidden, "forbidden", "A trusted Origin is required", requestID)
 			return
@@ -393,7 +389,7 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 	if h.managementRoute(w, r, requestID, user) {
 		return
 	}
-	if h.enrollmentRoute(w, r, requestID, user) {
+	if h.enrollmentRoute(w, r, requestID) {
 		return
 	}
 	switch p {

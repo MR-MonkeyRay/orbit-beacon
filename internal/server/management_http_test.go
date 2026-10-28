@@ -85,7 +85,7 @@ func createHTTPGroup(t *testing.T, f fixture, cookie *http.Cookie, csrf, name st
 func TestManagementUsesOnlyCookieSessions(t *testing.T) {
 	f := newHTTP(t, 5)
 	admin, adminCSRF := login(t, f, "admin")
-	viewer, viewerCSRF := login(t, f, "viewer")
+	second, secondCSRF := login(t, f, "admin-two")
 	serve := func(method, path, body string, cookie *http.Cookie, csrf string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, publicURL+path, strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer obt_legacy-management-credential")
@@ -102,13 +102,13 @@ func TestManagementUsesOnlyCookieSessions(t *testing.T) {
 		return response
 	}
 	apiError(t, serve(http.MethodGet, "/api/v1/nodes", "", nil, ""), http.StatusUnauthorized, "unauthenticated")
-	assertHTTPStatus(t, serve(http.MethodGet, "/api/v1/nodes", "", viewer, ""), http.StatusOK)
-	apiError(t, serve(http.MethodPost, "/api/v1/groups", `{"name":"forbidden group"}`, viewer, viewerCSRF), http.StatusForbidden, "forbidden")
+	assertHTTPStatus(t, serve(http.MethodGet, "/api/v1/nodes", "", second, ""), http.StatusOK)
+	assertHTTPStatus(t, serve(http.MethodPost, "/api/v1/groups", `{"name":"second administrator group"}`, second, secondCSRF), http.StatusCreated)
 	apiError(t, serve(http.MethodPost, "/api/v1/groups", `{"name":"missing csrf"}`, admin, ""), http.StatusForbidden, "forbidden")
 	response := serve(http.MethodPost, "/api/v1/groups", `{"name":"session group"}`, admin, adminCSRF)
 	assertHTTPStatus(t, response, http.StatusCreated)
 	id := objectID(t, decodeObject(t, response))
-	collectionContains(t, request(t, f.handler, http.MethodGet, "/api/v1/groups", "", viewer, "", ""), "groups", id)
+	collectionContains(t, request(t, f.handler, http.MethodGet, "/api/v1/groups", "", second, "", ""), "groups", id)
 }
 
 func TestRemovedManagementTokenEndpointsReturnNotFound(t *testing.T) {
@@ -131,14 +131,14 @@ func TestRemovedManagementTokenEndpointsReturnNotFound(t *testing.T) {
 	}
 }
 
-func TestGroupHTTPCRUDPersistsAndRemainsReadableToViewer(t *testing.T) {
+func TestGroupHTTPCRUDPersistsAndRemainsReadableToBothAdministrators(t *testing.T) {
 	f := newHTTP(t, 5)
 	admin, csrf := login(t, f, "admin")
-	viewer, _ := login(t, f, "viewer")
+	second, _ := login(t, f, "admin-two")
 	id := createHTTPGroup(t, f, admin, csrf, "initial group")
 	path := "/api/v1/groups/" + id
-	collectionContains(t, request(t, f.handler, http.MethodGet, "/api/v1/groups", "", viewer, "", ""), "groups", id)
-	response := request(t, f.handler, http.MethodGet, path, "", viewer, "", "")
+	collectionContains(t, request(t, f.handler, http.MethodGet, "/api/v1/groups", "", second, "", ""), "groups", id)
+	response := request(t, f.handler, http.MethodGet, path, "", second, "", "")
 	assertHTTPStatus(t, response, http.StatusOK)
 	if got := decodeObject(t, response)["name"]; got != "initial group" {
 		t.Errorf("group name = %v", got)
@@ -154,7 +154,7 @@ func TestGroupHTTPCRUDPersistsAndRemainsReadableToViewer(t *testing.T) {
 	}
 	response = request(t, f.handler, http.MethodDelete, path, "", admin, csrf, publicURL)
 	assertHTTPStatus(t, response, http.StatusNoContent)
-	assertHTTPStatus(t, request(t, f.handler, http.MethodGet, path, "", viewer, "", ""), http.StatusNotFound)
+	assertHTTPStatus(t, request(t, f.handler, http.MethodGet, path, "", second, "", ""), http.StatusNotFound)
 	var count int
 	if err := f.db.QueryRow("SELECT count(*) FROM groups WHERE id = ?", id).Scan(&count); err != nil || count != 0 {
 		t.Errorf("deleted group persisted: count=%d err=%v", count, err)
@@ -164,26 +164,26 @@ func TestGroupHTTPCRUDPersistsAndRemainsReadableToViewer(t *testing.T) {
 func TestUserHTTPCollectionAndItemMethodsPersistWithoutCredentials(t *testing.T) {
 	f := newHTTP(t, 5)
 	admin, csrf := login(t, f, "admin")
-	viewer, _ := login(t, f, "viewer")
-	response := request(t, f.handler, http.MethodPost, "/api/v1/users", `{"username":"managed","password":"`+password+`","role":"viewer"}`, admin, csrf, publicURL)
+	second, _ := login(t, f, "admin-two")
+	response := request(t, f.handler, http.MethodPost, "/api/v1/users", `{"username":"managed","password":"`+password+`"}`, admin, csrf, publicURL)
 	assertHTTPStatus(t, response, http.StatusCreated)
 	id := objectID(t, decodeObject(t, response))
 	path := "/api/v1/users/" + id
-	collectionContains(t, request(t, f.handler, http.MethodGet, "/api/v1/users", "", viewer, "", ""), "users", id)
-	response = request(t, f.handler, http.MethodGet, path, "", viewer, "", "")
+	collectionContains(t, request(t, f.handler, http.MethodGet, "/api/v1/users", "", second, "", ""), "users", id)
+	response = request(t, f.handler, http.MethodGet, path, "", second, "", "")
 	assertHTTPStatus(t, response, http.StatusOK)
 	if got := decodeObject(t, response)["username"]; got != "managed" {
 		t.Errorf("GET user username = %v", got)
 	}
-	response = request(t, f.handler, http.MethodPatch, path, `{"username":"renamed","role":"admin"}`, admin, csrf, publicURL)
+	response = request(t, f.handler, http.MethodPatch, path, `{"username":"renamed"}`, admin, csrf, publicURL)
 	assertHTTPStatus(t, response, http.StatusOK)
 	object := decodeObject(t, response)
-	if object["username"] != "renamed" || object["role"] != "admin" {
+	if object["username"] != "renamed" {
 		t.Errorf("updated user DTO = %+v", object)
 	}
-	var username, role string
-	if err := f.db.QueryRow("SELECT username,role FROM users WHERE id = ?", id).Scan(&username, &role); err != nil || username != "renamed" || role != "admin" {
-		t.Errorf("user update not persisted: username=%q role=%q err=%v", username, role, err)
+	var username string
+	if err := f.db.QueryRow("SELECT username FROM users WHERE id = ?", id).Scan(&username); err != nil || username != "renamed" {
+		t.Errorf("user update not persisted: username=%q err=%v", username, err)
 	}
 	managed, _ := login(t, f, "renamed")
 	response = request(t, f.handler, http.MethodDelete, path, "", admin, csrf, publicURL)
@@ -197,7 +197,7 @@ func TestUserHTTPCollectionAndItemMethodsPersistWithoutCredentials(t *testing.T)
 }
 
 func TestHTTPPasswordChangeRevokesEverySessionAndRequiresOldPassword(t *testing.T) {
-	for _, username := range []string{"admin", "viewer"} {
+	for _, username := range []string{"admin", "admin-two"} {
 		t.Run(username, func(t *testing.T) {
 			f := newHTTP(t, 2)
 			first, csrf := login(t, f, username)
@@ -234,7 +234,7 @@ func TestHTTPPasswordChangeRevokesEverySessionAndRequiresOldPassword(t *testing.
 func TestNodeMetadataPatchPersistsGroupAndTagsWithoutExposingCredentials(t *testing.T) {
 	f := newHTTP(t, 5)
 	admin, csrf := login(t, f, "admin")
-	viewer, _ := login(t, f, "viewer")
+	second, _ := login(t, f, "admin-two")
 	groupID := createHTTPGroup(t, f, admin, csrf, "metadata group")
 	node, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: "original node"})
 	if err != nil {
@@ -249,10 +249,10 @@ func TestNodeMetadataPatchPersistsGroupAndTagsWithoutExposingCredentials(t *test
 	response := request(t, f.handler, http.MethodPatch, path, body, admin, csrf, publicURL)
 	assertHTTPStatus(t, response, http.StatusOK)
 	assertNodeMetadata(t, decodeObject(t, response), groupID, []string{"database", "production"})
-	response = request(t, f.handler, http.MethodGet, path, "", viewer, "", "")
+	response = request(t, f.handler, http.MethodGet, path, "", second, "", "")
 	assertHTTPStatus(t, response, http.StatusOK)
 	assertNodeMetadata(t, decodeObject(t, response), groupID, []string{"database", "production"})
-	collectionContains(t, request(t, f.handler, http.MethodGet, "/api/v1/nodes", "", viewer, "", ""), "nodes", node.ID)
+	collectionContains(t, request(t, f.handler, http.MethodGet, "/api/v1/nodes", "", second, "", ""), "nodes", node.ID)
 	var name, notes, region, provider, storedGroup string
 	var storedToken []byte
 	if err := f.db.QueryRow("SELECT name,notes,region,provider,group_id,token_hash FROM nodes WHERE id = ?", node.ID).Scan(&name, &notes, &region, &provider, &storedGroup, &storedToken); err != nil {
@@ -270,7 +270,7 @@ func TestNodeMetadataPatchPersistsGroupAndTagsWithoutExposingCredentials(t *test
 	if response.Code != http.StatusBadRequest && response.Code != http.StatusNotFound {
 		t.Errorf("unknown group returned %d", response.Code)
 	}
-	response = request(t, f.handler, http.MethodGet, path, "", viewer, "", "")
+	response = request(t, f.handler, http.MethodGet, path, "", second, "", "")
 	assertHTTPStatus(t, response, http.StatusOK)
 	assertNodeMetadata(t, decodeObject(t, response), groupID, []string{"database", "production"})
 	response = request(t, f.handler, http.MethodPatch, path, `{"group_id":null,"tags":[]}`, admin, csrf, publicURL)
@@ -312,29 +312,33 @@ func assertNodeMetadata(t *testing.T, object map[string]any, groupID string, tag
 	}
 }
 
-func TestViewerCannotMutateStepOneManagementResources(t *testing.T) {
+func TestSecondAdministratorCanManageGroupsUsersAndMetadata(t *testing.T) {
 	f := newHTTP(t, 5)
-	viewer, csrf := login(t, f, "viewer")
-	const id = "00000000-0000-4000-8000-000000000123"
-	for _, tt := range []struct{ method, path, body string }{
-		{http.MethodPost, "/api/v1/groups", `{"name":"forbidden"}`},
-		{http.MethodPatch, "/api/v1/groups/" + id, `{"name":"forbidden"}`},
-		{http.MethodDelete, "/api/v1/groups/" + id, ""},
-		{http.MethodPost, "/api/v1/users", `{"username":"forbidden","password":"` + password + `","role":"admin"}`},
-		{http.MethodPatch, "/api/v1/users/" + id, `{"role":"admin"}`},
-		{http.MethodDelete, "/api/v1/users/" + id, ""},
-		{http.MethodPatch, "/api/v1/nodes/" + id, `{"notes":"forbidden","tags":["forbidden"]}`},
-	} {
-		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
-			apiError(t, request(t, f.handler, tt.method, tt.path, tt.body, viewer, csrf, publicURL), http.StatusForbidden, "forbidden")
-		})
+	second, csrf := login(t, f, "admin-two")
+	groupID := createHTTPGroup(t, f, second, csrf, "second administrator group")
+	groupPath := "/api/v1/groups/" + groupID
+	assertHTTPStatus(t, request(t, f.handler, http.MethodPatch, groupPath, `{"name":"renamed group"}`, second, csrf, publicURL), http.StatusOK)
+	assertHTTPStatus(t, request(t, f.handler, http.MethodDelete, groupPath, "", second, csrf, publicURL), http.StatusNoContent)
+	created := request(t, f.handler, http.MethodPost, "/api/v1/users", `{"username":"managed-by-second","password":"`+password+`"}`, second, csrf, publicURL)
+	assertHTTPStatus(t, created, http.StatusCreated)
+	userPath := "/api/v1/users/" + objectID(t, decodeObject(t, created))
+	assertHTTPStatus(t, request(t, f.handler, http.MethodPatch, userPath, `{"username":"renamed-by-second"}`, second, csrf, publicURL), http.StatusOK)
+	assertHTTPStatus(t, request(t, f.handler, http.MethodDelete, userPath, "", second, csrf, publicURL), http.StatusNoContent)
+	node, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: "managed node"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched := request(t, f.handler, http.MethodPatch, "/api/v1/nodes/"+node.ID, `{"notes":"managed by second","tags":["managed"]}`, second, csrf, publicURL)
+	assertHTTPStatus(t, patched, http.StatusOK)
+	if got := decodeObject(t, patched)["notes"]; got != "managed by second" {
+		t.Fatalf("second administrator metadata mutation not persisted: %v", got)
 	}
 }
 
-func TestNodeCreationWritesAuditEventReadableToBothRoles(t *testing.T) {
+func TestNodeCreationWritesAuditEventReadableToBothAdministrators(t *testing.T) {
 	f := newHTTP(t, 5)
 	admin, csrf := login(t, f, "admin")
-	viewer, _ := login(t, f, "viewer")
+	second, _ := login(t, f, "admin-two")
 	response := request(t, f.handler, http.MethodPost, "/api/v1/nodes", `{"name":"audited node"}`, admin, csrf, publicURL)
 	assertHTTPStatus(t, response, http.StatusCreated)
 	nodeID := objectID(t, decodeObject(t, response))
@@ -349,7 +353,7 @@ func TestNodeCreationWritesAuditEventReadableToBothRoles(t *testing.T) {
 	if count == 0 {
 		t.Error("administrator mutation did not persist an attributed audit event")
 	}
-	for _, cookie := range []*http.Cookie{admin, viewer} {
+	for _, cookie := range []*http.Cookie{admin, second} {
 		response := request(t, f.handler, http.MethodGet, "/api/v1/audit", "", cookie, "", "")
 		assertHTTPStatus(t, response, http.StatusOK)
 		object := decodeObject(t, response)
@@ -386,4 +390,121 @@ func TestNodeCreationWritesAuditEventReadableToBothRoles(t *testing.T) {
 		}
 	}
 	apiError(t, request(t, f.handler, http.MethodGet, "/api/v1/audit", "", nil, "", ""), http.StatusUnauthorized, "unauthenticated")
+}
+
+func TestAdministratorHTTPSelfRenameDeletionAndLastAccountProtection(t *testing.T) {
+	f := newHTTP(t, 5)
+	first, firstCSRF := login(t, f, "admin")
+	second, secondCSRF := login(t, f, "admin-two")
+	secondTab, _ := login(t, f, "admin-two")
+	me := request(t, f.handler, http.MethodGet, "/api/v1/me", "", second, "", "")
+	assertHTTPStatus(t, me, http.StatusOK)
+	secondID := objectID(t, decodeObject(t, me)["user"].(map[string]any))
+	path := "/api/v1/users/" + secondID
+	renamed := request(t, f.handler, http.MethodPatch, path, `{"username":"admin-two-renamed"}`, second, secondCSRF, publicURL)
+	assertHTTPStatus(t, renamed, http.StatusOK)
+	if got := decodeObject(t, renamed)["username"]; got != "admin-two-renamed" {
+		t.Fatalf("self rename returned %v", got)
+	}
+	for _, cookie := range []*http.Cookie{second, secondTab} {
+		current := request(t, f.handler, http.MethodGet, "/api/v1/me", "", cookie, "", "")
+		assertHTTPStatus(t, current, http.StatusOK)
+		if got := decodeObject(t, current)["user"].(map[string]any)["username"]; got != "admin-two-renamed" {
+			t.Fatalf("rename not reflected in retained session: %v", got)
+		}
+	}
+	assertHTTPStatus(t, request(t, f.handler, http.MethodDelete, path, "", second, secondCSRF, publicURL), http.StatusNoContent)
+	for _, cookie := range []*http.Cookie{second, secondTab} {
+		apiError(t, request(t, f.handler, http.MethodGet, "/api/v1/me", "", cookie, "", ""), http.StatusUnauthorized, "unauthenticated")
+	}
+	me = request(t, f.handler, http.MethodGet, "/api/v1/me", "", first, "", "")
+	assertHTTPStatus(t, me, http.StatusOK)
+	firstID := objectID(t, decodeObject(t, me)["user"].(map[string]any))
+	var sessionsBefore, auditsBefore int
+	if err := f.db.QueryRow("SELECT count(*) FROM sessions").Scan(&sessionsBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.QueryRow("SELECT count(*) FROM audit_events").Scan(&auditsBefore); err != nil {
+		t.Fatal(err)
+	}
+	apiError(t, request(t, f.handler, http.MethodDelete, "/api/v1/users/"+firstID, "", first, firstCSRF, publicURL), http.StatusConflict, "last_administrator")
+	var usersAfter, sessionsAfter, auditsAfter int
+	if err := f.db.QueryRow("SELECT count(*) FROM users").Scan(&usersAfter); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.QueryRow("SELECT count(*) FROM sessions").Scan(&sessionsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.QueryRow("SELECT count(*) FROM audit_events").Scan(&auditsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if usersAfter != 1 || sessionsAfter != sessionsBefore || auditsAfter != auditsBefore {
+		t.Fatalf("last-administrator rejection changed state: users=%d sessions=%d/%d audits=%d/%d", usersAfter, sessionsBefore, sessionsAfter, auditsBefore, auditsAfter)
+	}
+	assertHTTPStatus(t, request(t, f.handler, http.MethodGet, "/api/v1/me", "", first, "", ""), http.StatusOK)
+}
+
+func TestAdministratorHTTPContract(t *testing.T) {
+	f := newHTTP(t, 5)
+	admin, csrf := login(t, f, "admin")
+	response := request(t, f.handler, http.MethodPost, "/api/v1/users", `{"username":"admin-contract","password":"`+password+`"}`, admin, csrf, publicURL)
+	assertHTTPStatus(t, response, http.StatusCreated)
+	object := decodeObject(t, response)
+	id := objectID(t, object)
+	assertUser := func(object map[string]any) {
+		t.Helper()
+		if len(object) != 3 || object["id"] == nil || object["username"] == nil || object["created_at"] == nil {
+			t.Errorf("user DTO must contain only id, username and created_at: %+v", object)
+		}
+		assertNoCredentialDTO(t, object)
+	}
+	assertUser(object)
+	loginResponse := request(t, f.handler, http.MethodPost, "/api/v1/session", `{"username":"admin-contract","password":"`+password+`"}`, nil, "", publicURL)
+	assertHTTPStatus(t, loginResponse, http.StatusOK)
+	assertUser(decodeObject(t, loginResponse)["user"].(map[string]any))
+	second, secondCSRF := login(t, f, "admin-contract")
+	for _, path := range []string{"/api/v1/users/" + id, "/api/v1/me"} {
+		response := request(t, f.handler, http.MethodGet, path, "", second, "", "")
+		assertHTTPStatus(t, response, http.StatusOK)
+		value := decodeObject(t, response)
+		if path == "/api/v1/me" {
+			value = value["user"].(map[string]any)
+		}
+		assertUser(value)
+	}
+	listResponse := request(t, f.handler, http.MethodGet, "/api/v1/users", "", second, "", "")
+	assertHTTPStatus(t, listResponse, http.StatusOK)
+	for _, value := range decodeObject(t, listResponse)["users"].([]any) {
+		assertUser(value.(map[string]any))
+	}
+	var usersBefore, auditBefore int
+	if err := f.db.QueryRow("SELECT count(*) FROM users").Scan(&usersBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.QueryRow("SELECT count(*) FROM audit_events").Scan(&auditBefore); err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []struct{ method, path, body string }{
+		{"POST", "/api/v1/users", `{"username":"old-role","password":"` + password + `","role":"admin"}`},
+		{"PATCH", "/api/v1/users/" + id, `{"username":"old-role","role":"admin"}`},
+	} {
+		apiError(t, request(t, f.handler, route.method, route.path, route.body, second, secondCSRF, publicURL), 400, "invalid_json")
+	}
+	var usersAfter, auditAfter int
+	if err := f.db.QueryRow("SELECT count(*) FROM users").Scan(&usersAfter); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.QueryRow("SELECT count(*) FROM audit_events").Scan(&auditAfter); err != nil {
+		t.Fatal(err)
+	}
+	if usersAfter != usersBefore || auditAfter != auditBefore {
+		t.Fatalf("old fields changed users/audit: %d/%d -> %d/%d", usersBefore, auditBefore, usersAfter, auditAfter)
+	}
+	current := request(t, f.handler, http.MethodGet, "/api/v1/users/"+id, "", second, "", "")
+	assertHTTPStatus(t, current, http.StatusOK)
+	if got := decodeObject(t, current)["username"]; got != "admin-contract" {
+		t.Fatalf("rejected old field renamed account: %v", got)
+	}
+	assertHTTPStatus(t, request(t, f.handler, "POST", "/api/v1/users", `{"username":"admin-third","password":"`+password+`"}`, second, secondCSRF, publicURL), 201)
+	assertHTTPStatus(t, request(t, f.handler, "POST", "/api/v1/nodes", `{"name":"second-admin-node"}`, second, secondCSRF, publicURL), 201)
 }

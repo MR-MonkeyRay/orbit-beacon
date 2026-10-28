@@ -48,6 +48,8 @@ sudo journalctl -u orbitbeacon-server -n 100 --no-pager
 
 按提示输入管理员密码；已有管理员时不能重复初始化。初始化和恢复使用服务账号并先停服；导出及计划备份由运行中的 Server 执行。
 
+控制台 **Settings → Users** 管理多个等权管理员，至少保留一名；有其他管理员时可自删并立即退出。更名保留会话；删除结束目标全部会话。**Account** 仅支持验证旧密码后修改本人密码，成功后结束本人全部会话；没有代改密或密码找回，丢失密码须由另一管理员删除重建。
+
 ## Docker Compose
 
 Compose 使用 GHCR 镜像，不在部署机编译。当前 Compose 的回退标签为 `0.1.0`，**不随 `VERSION` 自动更新**；请显式选择实际已发布的版本并持久保存环境变量，不依赖 `latest`。
@@ -126,7 +128,7 @@ readiness 仅证明 Server 可用，不证明 Agent 已上报。明文健康检�
 
 ## 导出与备份计划
 
-管理员进入 **Settings → Data operations**：Export 发起后台导出，Backup plans 管理计划，Task history 查看结果。受理后可以离开页面；铃铛会显示完成或失败，下载必须手动点击，不会自动下载。管理员共享任务、下载和密码；viewer 的铃铛仅显示告警，各用户已读状态独立。备份结果不通过 Webhook、Telegram 或邮件外发。
+管理员进入 **Settings → Data operations**：Export 发起后台导出，Backup plans 管理计划，Task history 查看结果。受理后可以离开页面；铃铛会显示完成或失败，下载必须手动点击，不会自动下载。所有管理员共享任务、下载和密码；铃铛同时显示备份和告警，各账户已读状态独立。备份结果不通过 Webhook、Telegram 或邮件外发。
 
 ### 归档与密码
 
@@ -164,7 +166,7 @@ Endpoint 只允许 HTTPS 源站（可带端口），不能含路径、用户信�
 
 ## 恢复
 
-先停止 Server，使用运行服务的同一用户执行。只接受归档格式 v1、主库 schema 17、指标库 schema 1 精确匹配的 `.tar.gz.age` 包；旧 schema 包（包括仅 Monitoring 的包）也拒绝，不接收裸 SQLite 或转换旧格式。密码文件必须归该用户所有、为 `0600` 普通文件，内容为该包的 16 位密码，可带一个换行。也可省略 `--password-file` 从终端无回显输入；不支持命令行明文密码或环境变量密码。
+先停止 Server，使用运行服务的同一用户执行。只接受归档格式 v1、主库 schema 18、指标库 schema 1 精确匹配的 `.tar.gz.age` 包；旧 schema 16/17 包（包括仅 Monitoring 的包）也拒绝，不接收裸 SQLite 或转换旧格式。密码文件必须归该用户所有、为 `0600` 普通文件，内容为该包的 16 位密码，可带一个换行。也可省略 `--password-file` 从终端无回显输入；不支持命令行明文密码或环境变量密码。
 
 ```sh
 orbitbeacon-server restore --data-dir /var/lib/orbitbeacon \
@@ -180,7 +182,7 @@ orbitbeacon-server restore --data-dir /var/lib/orbitbeacon \
 
 ## 升级
 
-当前主库为 schema 17：仅空库直接初始化，已有库必须只有一条匹配的版本记录；旧库、缺失/混合版本记录或更高版本库均拒绝，不运行迁移，也不自动清理原文件。旧 schema 16 及其他旧格式不能通过备份恢复转换为当前格式，需使用新的私有数据目录；保留旧目录、旧包及原版本程序。
+当前主库为 schema 18：仅空库直接初始化，已有库必须只有一条匹配的版本记录；旧库、缺失/混合版本记录或更高版本库均拒绝，不运行迁移，也不自动清理原文件。旧 schema 16/17 及其他旧格式不能通过备份恢复转换为当前格式，需使用新的私有数据目录；保留旧目录、旧包及原版本程序。
 
 以下替换步骤仅适用于数据库 schema 不变的版本：
 

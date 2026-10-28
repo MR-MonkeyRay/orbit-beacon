@@ -34,7 +34,7 @@ func validationDB(t *testing.T, category Category) *sql.DB {
 		}
 	}
 	if category == Configuration {
-		if _, err := db.Exec("INSERT INTO users(id,username,password_hash,role,created_at) VALUES(?,?,?,?,?)", validationID, "admin", validationHash, "admin", validationTime); err != nil {
+		if _, err := db.Exec("INSERT INTO users(id,username,password_hash,created_at) VALUES(?,?,?,?)", validationID, "admin", validationHash, validationTime); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -62,11 +62,39 @@ func TestPayloadPasswordHashBounds(t *testing.T) {
 	}
 }
 
-func TestPayloadRequiresAdministrator(t *testing.T) {
+func TestPayloadRequiresAtLeastOneAdministrator(t *testing.T) {
 	db := validationDB(t, Configuration)
-	db.Exec("UPDATE users SET role='viewer'")
+	if _, err := db.Exec("DELETE FROM users"); err != nil {
+		t.Fatal(err)
+	}
 	if err := ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err == nil {
-		t.Fatal("accepted no admin")
+		t.Fatal("accepted configuration without administrators")
+	}
+	if _, err := db.Exec("INSERT INTO users(id,username,password_hash,created_at) VALUES(?,?,?,?),(?,?,?,?)", validationID, "admin-one", validationHash, validationTime, "00000000-0000-4000-8000-000000000002", "admin-two", validationHash, validationTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err != nil {
+		t.Fatalf("two administrators rejected: %v", err)
+	}
+}
+
+func TestPayloadPreservesExactUsernameContract(t *testing.T) {
+	db := validationDB(t, Configuration)
+	for _, username := range []string{" ", " admin ", "管理员", strings.Repeat("a", 128)} {
+		if _, err := db.Exec("UPDATE users SET username=?", username); err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err != nil {
+			t.Fatalf("valid username %q rejected: %v", username, err)
+		}
+	}
+	for _, username := range []string{"", strings.Repeat("a", 129), string([]byte{0xff})} {
+		if _, err := db.Exec("UPDATE users SET username=?", username); err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err == nil {
+			t.Fatalf("invalid username %q accepted", username)
+		}
 	}
 }
 

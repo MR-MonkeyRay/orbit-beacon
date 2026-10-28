@@ -138,13 +138,13 @@ func TestRetentionDrainsInboxAndBackupHistoryPreservingActivePasswords(t *testin
 	}
 	defer tx.Rollback()
 	var userID string
-	if err := tx.QueryRow("SELECT id FROM users WHERE username='viewer'").Scan(&userID); err != nil {
+	if err := tx.QueryRow("SELECT id FROM users WHERE username='admin-two'").Scan(&userID); err != nil {
 		t.Fatal(err)
 	}
 	const backlog = 1201
 	for i := range backlog {
 		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
-		if err := inbox.Insert(context.Background(), tx, inbox.Event{ID: id, Kind: "task", SourceID: id, Transition: "succeeded", Audience: "admin", Severity: "info", CreatedAt: old}); err != nil {
+		if err := inbox.Insert(context.Background(), tx, inbox.Event{ID: id, Kind: "task", SourceID: id, Transition: "succeeded", Severity: "info", CreatedAt: old}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := tx.Exec("INSERT INTO inbox_reads(user_id,notification_id,read_at) VALUES(?,?,?)", userID, id, timekey.Format(old)); err != nil {
@@ -159,7 +159,7 @@ func TestRetentionDrainsInboxAndBackupHistoryPreservingActivePasswords(t *testin
 			t.Fatal(err)
 		}
 	}
-	if err := inbox.Insert(context.Background(), tx, inbox.Event{ID: inboxAlertID, Kind: "alert", SourceID: inboxAlertID, Transition: "firing", Audience: "authenticated", Severity: "warning", CreatedAt: now.Add(-90 * 24 * time.Hour)}); err != nil {
+	if err := inbox.Insert(context.Background(), tx, inbox.Event{ID: inboxAlertID, Kind: "alert", SourceID: inboxAlertID, Transition: "firing", Severity: "warning", CreatedAt: now.Add(-90 * 24 * time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

@@ -61,6 +61,17 @@ func TestOpenInitializesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE name='api_tokens'`).Scan(&obsolete); err != nil || obsolete != 0 {
 		t.Fatalf("obsolete API tokens=%d err=%v", obsolete, err)
 	}
+	for _, field := range []struct{ table, column string }{{"users", "role"}, {"inbox_notifications", "audience"}} {
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info(?) WHERE name=?`, field.table, field.column).Scan(&obsolete); err != nil || obsolete != 0 {
+			t.Fatalf("obsolete %s.%s=%d err=%v", field.table, field.column, obsolete, err)
+		}
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE name='inbox_notifications_audience'`).Scan(&obsolete); err != nil || obsolete != 0 {
+		t.Fatalf("obsolete audience index=%d err=%v", obsolete, err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,username,password_hash,created_at) VALUES('roleless','roleless','hash','now')`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.ExecContext(ctx, "CREATE TABLE regression_sentinel (value TEXT NOT NULL)"); err != nil {
 		t.Fatal(err)
 	}
@@ -257,6 +268,7 @@ func TestOpenRejectsIncompatibleLedgerWithoutChangingData(t *testing.T) {
 		{"missing", ""},
 		{"empty", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);"},
 		{"old", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(16,'original');"},
+		{"intermediate", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(17,'original');"},
 		{"mixed", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'original'),(16,'original');"},
 		{"mixed-current", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'original'),(%d,'original');", storage.CurrentSchemaVersion)},
 		{"future", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(%d,'original');", storage.CurrentSchemaVersion+1)},
@@ -272,6 +284,11 @@ func TestOpenRejectsIncompatibleLedgerWithoutChangingData(t *testing.T) {
 			}
 			if _, err = db.Exec(`CREATE TABLE sentinel(value TEXT NOT NULL); INSERT INTO sentinel VALUES('untouched');` + fixture.ledger); err != nil {
 				t.Fatal(err)
+			}
+			if fixture.name == "old" || fixture.name == "intermediate" {
+				if _, err := db.Exec(`CREATE TABLE users(id TEXT PRIMARY KEY,username TEXT,password_hash TEXT,role TEXT,created_at TEXT); INSERT INTO users VALUES('original','original','hash','viewer','original')`); err != nil {
+					t.Fatal(err)
+				}
 			}
 			var before int
 			if err = db.QueryRow(`SELECT count(*) FROM sqlite_schema`).Scan(&before); err != nil {
@@ -306,6 +323,12 @@ func TestOpenRejectsIncompatibleLedgerWithoutChangingData(t *testing.T) {
 			var after int
 			if err = db.QueryRow(`SELECT value FROM sentinel`).Scan(&value); err != nil || value != "untouched" {
 				t.Fatalf("sentinel=%q err=%v", value, err)
+			}
+			if fixture.name == "old" || fixture.name == "intermediate" {
+				var role string
+				if err := db.QueryRow(`SELECT role FROM users WHERE id='original'`).Scan(&role); err != nil || role != "viewer" {
+					t.Fatalf("old account changed: role=%q err=%v", role, err)
+				}
 			}
 			if err = db.QueryRow(`SELECT count(*) FROM sqlite_schema`).Scan(&after); err != nil || after != before {
 				t.Fatalf("schema changed: before=%d after=%d err=%v", before, after, err)

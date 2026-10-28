@@ -100,7 +100,7 @@ export function initNotifications() {
   initialized = true;
   for (const entry of document.querySelectorAll('.notification-entry')) entry.addEventListener('click', openInbox);
   onSession(() => {
-    const next = session.user ? `${session.user.id}:${session.user.role}:${session.csrf}` : '';
+    const next = session.user ? `${session.user.id}:${session.csrf}` : '';
     if (next !== identity) {
       stopPolling();
       inbox?.close();
@@ -116,7 +116,7 @@ export function initNotifications() {
   window.addEventListener('pageshow', () => { pageActive = true; syncPolling(); });
   window.addEventListener('online', () => { if (foreground()) refreshNotifications(); });
   window.addEventListener('offline', () => { if (foreground()) { stale = true; renderEntries(); inbox?.setStale(true); } });
-  identity = session.user ? `${session.user.id}:${session.user.role}:${session.csrf}` : '';
+  identity = session.user ? `${session.user.id}:${session.csrf}` : '';
   renderEntries();
   syncPolling();
 }
@@ -335,7 +335,6 @@ function openInbox() {
       }
       if (!current()) return;
       const task = notification.kind === 'task';
-      if (task && session.user?.role !== 'admin') { source.replaceChildren(h('p', null, 'Backup task details require administrator access.')); return; }
       try {
         const value = await api(`/${task ? 'tasks' : 'alerts'}/${encodeURIComponent(notification.source_id)}`, requestOptions(controller.signal));
         if (!current()) return;
@@ -354,7 +353,7 @@ function openInbox() {
       }
     } catch (error) {
       if (!current() || error.name === 'AbortError') return;
-      body.replaceChildren(h('p', {class: 'notification-error', role: 'alert'}, error.status === 404 ? 'Notification not found. It may have expired or is no longer visible to this account.' : 'Could not load this notification. Its read status was not changed. Go back and try again.'));
+      body.replaceChildren(h('p', {class: 'notification-error', role: 'alert'}, error.status === 404 ? 'Notification not found. It may have expired.' : 'Could not load this notification. Its read status was not changed. Go back and try again.'));
     }
   }
   renderList();

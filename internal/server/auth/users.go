@@ -12,13 +12,12 @@ import (
 // UserPatch updates only public user metadata; passwords have a separate flow.
 type UserPatch struct {
 	Username *string `json:"username"`
-	Role     *string `json:"role"`
 }
 
 func scanUser(row interface{ Scan(...any) error }) (User, error) {
 	var user User
 	var created string
-	if err := row.Scan(&user.ID, &user.Username, &user.Role, &created); err != nil {
+	if err := row.Scan(&user.ID, &user.Username, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return User{}, ErrNotFound
 		}
@@ -33,7 +32,7 @@ func scanUser(row interface{ Scan(...any) error }) (User, error) {
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id, username, role, created_at FROM users ORDER BY username, id")
+	rows, err := s.db.QueryContext(ctx, "SELECT id, username, created_at FROM users ORDER BY username, id")
 	if err != nil {
 		return nil, err
 	}
@@ -53,14 +52,11 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 }
 
 func (s *Service) GetUser(ctx context.Context, id string) (User, error) {
-	return scanUser(s.db.QueryRowContext(ctx, "SELECT id, username, role, created_at FROM users WHERE id = ?", id))
+	return scanUser(s.db.QueryRowContext(ctx, "SELECT id, username, created_at FROM users WHERE id = ?", id))
 }
 
 func (s *Service) PatchUser(ctx context.Context, id string, patch UserPatch) (User, error) {
 	if patch.Username != nil && !validUsername(*patch.Username) {
-		return User{}, ErrInvalidInput
-	}
-	if patch.Role != nil && *patch.Role != RoleAdmin && *patch.Role != RoleViewer {
 		return User{}, ErrInvalidInput
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -68,15 +64,9 @@ func (s *Service) PatchUser(ctx context.Context, id string, patch UserPatch) (Us
 		return User{}, err
 	}
 	defer tx.Rollback()
-	user, err := scanUser(tx.QueryRowContext(ctx, "SELECT id, username, role, created_at FROM users WHERE id = ?", id))
+	user, err := scanUser(tx.QueryRowContext(ctx, "SELECT id, username, created_at FROM users WHERE id = ?", id))
 	if err != nil {
 		return User{}, err
-	}
-	roleChanged := patch.Role != nil && *patch.Role != user.Role
-	if roleChanged && user.Role == RoleAdmin {
-		if err := preserveAdministrator(ctx, tx); err != nil {
-			return User{}, err
-		}
 	}
 	if patch.Username != nil {
 		if *patch.Username != user.Username {
@@ -86,16 +76,8 @@ func (s *Service) PatchUser(ctx context.Context, id string, patch UserPatch) (Us
 		}
 		user.Username = *patch.Username
 	}
-	if patch.Role != nil {
-		user.Role = *patch.Role
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE users SET username = ?, role = ? WHERE id = ?", user.Username, user.Role, id); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE users SET username = ? WHERE id = ?", user.Username, id); err != nil {
 		return User{}, err
-	}
-	if roleChanged {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ?", id); err != nil {
-			return User{}, err
-		}
 	}
 	if err := audit.Insert(ctx, tx, "user.patch", id, s.now()); err != nil {
 		return User{}, err
@@ -112,14 +94,12 @@ func (s *Service) DeleteUser(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	user, err := scanUser(tx.QueryRowContext(ctx, "SELECT id, username, role, created_at FROM users WHERE id = ?", id))
+	_, err = scanUser(tx.QueryRowContext(ctx, "SELECT id, username, created_at FROM users WHERE id = ?", id))
 	if err != nil {
 		return err
 	}
-	if user.Role == RoleAdmin {
-		if err := preserveAdministrator(ctx, tx); err != nil {
-			return err
-		}
+	if err := preserveAdministrator(ctx, tx); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ?", id); err != nil {
 		return err
@@ -133,11 +113,11 @@ func (s *Service) DeleteUser(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
-// The immediate write transaction keeps concurrent demotions/deletions from
+// The immediate write transaction keeps concurrent deletions from
 // independently deciding that they can remove the final administrators.
 func preserveAdministrator(ctx context.Context, tx *sql.Tx) error {
 	var count int
-	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM users WHERE role = ?", RoleAdmin).Scan(&count); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM users").Scan(&count); err != nil {
 		return err
 	}
 	if count <= 1 {

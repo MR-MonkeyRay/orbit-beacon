@@ -78,8 +78,8 @@ func TestAdministrativeMutationsAndAuditInsertCommitOrRollbackTogether(t *testin
 		{"create group", http.MethodPost, "/api/v1/groups", `{"name":"created with audit"}`, "", http.StatusCreated, false},
 		{"patch group", http.MethodPatch, "/api/v1/groups/" + groupID, `{"name":"renamed with audit"}`, groupID, http.StatusOK, false},
 		{"delete group and detach nodes", http.MethodDelete, "/api/v1/groups/" + groupID, "", groupID, http.StatusNoContent, false},
-		{"create user", http.MethodPost, "/api/v1/users", `{"username":"created-with-audit","password":"` + password + `","role":"viewer"}`, "", http.StatusCreated, false},
-		{"patch user", http.MethodPatch, "/api/v1/users/" + userID, `{"username":"renamed-with-audit","role":"admin"}`, userID, http.StatusOK, false},
+		{"create user", http.MethodPost, "/api/v1/users", `{"username":"created-with-audit","password":"` + password + `"}`, "", http.StatusCreated, false},
+		{"patch user", http.MethodPatch, "/api/v1/users/" + userID, `{"username":"renamed-with-audit"}`, userID, http.StatusOK, false},
 		{"delete user and revoke sessions", http.MethodDelete, "/api/v1/users/" + userID, "", userID, http.StatusNoContent, false},
 		{"change password and revoke sessions", http.MethodPatch, "/api/v1/me/password", `{"old_password":"` + password + `","new_password":"replacement regression password"}`, "", http.StatusNoContent, false},
 	} {
@@ -104,7 +104,7 @@ func TestAdministrativeMutationsAndAuditInsertCommitOrRollbackTogether(t *testin
 						args  []any
 					}{
 						{"INSERT INTO groups(id,name) VALUES (?,?)", []any{groupID, "original group"}},
-						{"INSERT INTO users(id,username,password_hash,role,created_at) VALUES (?,?,?,?,?)", []any{userID, "target-user", hash, "viewer", now.Format(time.RFC3339Nano)}},
+						{"INSERT INTO users(id,username,password_hash,created_at) VALUES (?,?,?,?)", []any{userID, "target-user", hash, now.Format(time.RFC3339Nano)}},
 						{"INSERT INTO nodes(id,name,group_id,notes,created_at) VALUES (?,?,?,?,?)", []any{nodeID, "original node", groupID, "original notes", now.Format(time.RFC3339Nano)}},
 						{"INSERT INTO node_tags(node_id,tag) VALUES (?,?)", []any{nodeID, "original"}},
 						{"INSERT INTO update_jobs(id,release_seq,created_at) VALUES (?,?,?)", []any{jobID, 1, now.Format(time.RFC3339Nano)}},

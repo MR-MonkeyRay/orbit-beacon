@@ -14,7 +14,7 @@ import (
 
 func TestTrafficAPIEnvelopeValidationAccessAndMethods(t *testing.T) {
 	f := newHTTP(t, 2)
-	viewer, _ := login(t, f, "viewer")
+	second, _ := login(t, f, "admin-two")
 	node, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: "traffic"})
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +50,7 @@ func TestTrafficAPIEnvelopeValidationAccessAndMethods(t *testing.T) {
 	}
 
 	route := "/api/v1/nodes/" + node.ID + "/traffic"
-	response := request(t, f.handler, http.MethodGet, route+"?days=400", "", viewer, "", "")
+	response := request(t, f.handler, http.MethodGet, route+"?days=400", "", second, "", "")
 	assertHTTPStatus(t, response, http.StatusOK)
 	var envelope struct {
 		BillingDay *int    `json:"billing_day"`
@@ -94,10 +94,10 @@ func TestTrafficAPIEnvelopeValidationAccessAndMethods(t *testing.T) {
 	}
 
 	for _, query := range []string{"?days=0", "?days=401", "?days=nope", "?days=1&days=2", "?other=1", "?days=%zz"} {
-		apiError(t, request(t, f.handler, http.MethodGet, route+query, "", viewer, "", ""), http.StatusBadRequest, "validation_failed")
+		apiError(t, request(t, f.handler, http.MethodGet, route+query, "", second, "", ""), http.StatusBadRequest, "validation_failed")
 	}
-	apiError(t, request(t, f.handler, http.MethodGet, "/api/v1/nodes/00000000-0000-4000-8000-000000000001/traffic", "", viewer, "", ""), http.StatusNotFound, "node_not_found")
-	methodResponse := request(t, f.handler, http.MethodPost, route, "", viewer, "", "")
+	apiError(t, request(t, f.handler, http.MethodGet, "/api/v1/nodes/00000000-0000-4000-8000-000000000001/traffic", "", second, "", ""), http.StatusNotFound, "node_not_found")
+	methodResponse := request(t, f.handler, http.MethodPost, route, "", second, "", "")
 	apiError(t, methodResponse, http.StatusMethodNotAllowed, "method_not_allowed")
 	if methodResponse.Header().Get("Allow") != http.MethodGet {
 		t.Fatalf("Allow=%q", methodResponse.Header().Get("Allow"))

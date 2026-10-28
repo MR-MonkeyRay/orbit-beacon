@@ -37,6 +37,36 @@ func workerFixture(t *testing.T) (*sql.DB, Options) {
 	return db, Options{DataDir: dir, SecretBox: box, ServerVersion: "test"}
 }
 
+func TestEveryExistingAdministratorCanCreateExport(t *testing.T) {
+	db, opts := workerFixture(t)
+	second := "20000000-0000-4000-8000-000000000002"
+	if _, err := db.Exec(`INSERT INTO users(id,username,password_hash,created_at) VALUES(?,'admin-two',?,?)`, second, validationHash, validationTime); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(db, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, actor := range []struct{ id, name string }{{restoreUser, "worker"}, {second, "admin-two"}} {
+		task, err := s.CreateExport(context.Background(), actor.id, []Category{Configuration})
+		if err != nil || task.ActorID == nil || *task.ActorID != actor.id || task.Destination.ActorName != actor.name {
+			t.Fatalf("administrator %s export=%+v err=%v", actor.id, task, err)
+		}
+	}
+	_, err = s.CreateExport(context.Background(), "20000000-0000-4000-8000-000000000003", []Category{Configuration})
+	var coded *Error
+	if !errors.As(err, &coded) || coded.Code != "invalid_actor" {
+		t.Fatalf("nonexistent actor: %v", err)
+	}
+	var tasks, audits int
+	if err = db.QueryRow(`SELECT count(*) FROM backup_tasks WHERE kind='backup_export'`).Scan(&tasks); err != nil || tasks != 2 {
+		t.Fatalf("export tasks=%d err=%v", tasks, err)
+	}
+	if err = db.QueryRow(`SELECT count(*) FROM audit_events WHERE action='backup.export'`).Scan(&audits); err != nil || audits != 2 {
+		t.Fatalf("export audits=%d err=%v", audits, err)
+	}
+}
+
 func TestExportAcceptancePersistsAfterRequestCancellationAndBoundsQueue(t *testing.T) {
 	db, opts := workerFixture(t)
 	s, err := New(db, opts)

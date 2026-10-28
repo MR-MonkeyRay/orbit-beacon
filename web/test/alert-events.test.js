@@ -34,7 +34,7 @@ test('overview requests one alert summary and uses aggregate counts with only th
   globalThis.matchMedia = () => ({matches: false, addEventListener() {}});
   const requests = [];
   setNavigationSignal(null);
-  setSession({user: {username: 'Viewer', role: 'viewer'}, csrf_token: '', expires_at: ''});
+  setSession({user: {id: 'admin-two', username: 'admin-two'}, csrf_token: 'csrf', expires_at: ''});
   invalidate('nodes', 'groups', 'users');
   globalThis.fetch = async (path) => {
     requests.push(path);

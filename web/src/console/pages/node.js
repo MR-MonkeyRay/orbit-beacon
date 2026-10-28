@@ -1,5 +1,5 @@
 import {h, icon} from '../../shared/dom.js';
-import {api, ensureSession, getNavigationSignal, groupsList, invalidate, isAdmin} from '../api.js';
+import {api, ensureSession, getNavigationSignal, groupsList, invalidate} from '../api.js';
 import {formatDuration, formatPercent, shortID, when} from '../format.js';
 import {refresh} from '../router.js';
 import {callout, facts, iconButton, link, note, panel, statusBadge} from '../ui/components.js';
@@ -28,7 +28,6 @@ export async function nodePage() {
       throw error;
     })
   ]);
-  const editable = isAdmin();
   const idText = h('span', {class: 'mono'}, node.id);
   const showCopied = () => {
     copy.replaceChildren(icon('check'));
@@ -62,14 +61,14 @@ export async function nodePage() {
   return h('div', null,
     h('header', {class: 'page-head'}, h('div', null, back,
       h('div', {class: 'detail-head'}, h('h1', {tabindex: '-1'}, node.name), statusBadge(node.presence)),
-      h('div', {class: 'id-chip'}, idText, copy)), editable ? lifecycleActions(node) : null),
+      h('div', {class: 'id-chip'}, idText, copy)), lifecycleActions(node)),
     tabSet([
-      {id: 'details', label: 'Details', icon: 'server', build: () => detailsTab(node, groups, latest, editable,
+      {id: 'details', label: 'Details', icon: 'server', build: () => detailsTab(node, groups, latest,
         history ||= historyPanel(id, signal), traffic ||= trafficPanel(id, signal),
-        probes ||= probesPanel(id, signal, editable ? () => document.getElementById('tab-config')?.click() : null))},
-      {id: 'public', label: 'Public page', icon: 'globe', build: () => publicTab(node, publicSettings, editable)},
-      {id: 'config', label: 'Agent configuration', icon: 'sliders', build: () => configTab(node, config, editable)},
-      {id: 'enrollment', label: 'Enroll agent', icon: 'server', build: () => enrollmentTab(node, editable)}
+        probes ||= probesPanel(id, signal, () => document.getElementById('tab-config')?.click()))},
+      {id: 'public', label: 'Public page', icon: 'globe', build: () => publicTab(node, publicSettings)},
+      {id: 'config', label: 'Agent configuration', icon: 'sliders', build: () => configTab(node, config)},
+      {id: 'enrollment', label: 'Enroll agent', icon: 'server', build: () => enrollmentTab(node)}
     ], 'Node sections'));
 }
 
@@ -101,7 +100,7 @@ function latestPanel(node, latest) {
   ]));
 }
 
-function detailsTab(node, groups, latest, editable, history, traffic, probes) {
+function detailsTab(node, groups, latest, history, traffic, probes) {
   const group = groups.find((item) => item.id === node.group_id);
   const summary = panel('Summary', {}, facts([
     ['Presence', statusBadge(node.presence)],
@@ -113,7 +112,6 @@ function detailsTab(node, groups, latest, editable, history, traffic, probes) {
     ['Notes', node.notes]
   ]), note('Presence may lag an accepted report by about 30 seconds.'));
   const sample = latestPanel(node, latest);
-  if (!editable) return h('div', {class: 'stack'}, summary, sample, history, traffic, probes, note('Only administrators can edit node details.'));
 
   const name = input({name: 'name', required: true, value: node.name, id: 'node-name'});
   validateBytes(name, 1, 255, 'Node name');
@@ -157,18 +155,13 @@ function publicPreview() {
   return element;
 }
 
-function publicTab(node, settings, editable) {
+function publicTab(node, settings) {
   const hidden = node.status === 'pending' || node.status === 'disabled'
     ? callout(`This node is ${node.status}. It is not shown on the public page until it is enrolled and enabled.`) : null;
   const privacy = callout('Publishing shows the public name, region and provider, plus online status, CPU, memory, load and uptime. Internal details are never copied. Do not enter IP addresses, hostnames, domains or credentials.', 'info');
   const preview = publicPreview();
   const previewPanel = panel('Preview', {action: h('a', {class: 'btn btn-sm', href: '/'}, icon('external'), 'View public page')}, preview);
 
-  if (!editable) {
-    preview.paint(settings);
-    return h('div', {class: 'split'}, panel('Public page', {}, h('div', {class: 'stack'},
-      facts([['Published', settings.enabled ? 'Yes' : 'No'], ['Public name', settings.name], ['Public region', settings.region], ['Public provider', settings.provider]]), hidden, privacy)), previewPanel);
-  }
 
   const enabled = h('input', {type: 'checkbox', name: 'enabled', id: 'public-enabled', checked: settings.enabled});
   const name = input({name: 'public_name', value: settings.name, id: 'public-name', autocomplete: 'off', dataset: {field: 'name'}});

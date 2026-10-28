@@ -43,7 +43,7 @@ func table(name, source, where, definition, primary string) tableSpec {
 
 var categoryTables = map[Category][]tableSpec{
 	Configuration: {
-		table("users", "main", "", "id TEXT,username TEXT,password_hash TEXT,role TEXT,created_at TEXT", "id"),
+		table("users", "main", "", "id TEXT,username TEXT,password_hash TEXT,created_at TEXT", "id"),
 		table("groups", "main", "", "id TEXT,name TEXT,desired_config TEXT", "id"),
 		table("nodes", "main", "", "id TEXT,name TEXT,status TEXT,group_id TEXT,region TEXT,provider TEXT,notes TEXT,created_at TEXT,public_settings TEXT,desired_revision INTEGER,report_interval_seconds INTEGER,disk_interval_seconds INTEGER,interfaces TEXT,disk_paths TEXT,probe_targets TEXT,billing_day INTEGER,quota_bytes TEXT,token_hash BLOB,installation_id TEXT,first_enrolled_at TEXT,run_generation TEXT,report_session_id TEXT", "id"),
 		table("node_tags", "main", "", "node_id TEXT,tag TEXT", "node_id,tag"),
@@ -64,7 +64,7 @@ var categoryTables = map[Category][]tableSpec{
 		table("audit_events", "main", "", "id TEXT,actor_id TEXT,action TEXT,target_id TEXT,created_at TEXT,details TEXT", "id"),
 		table("alert_events", "main", "", "id TEXT,rule_id TEXT,node_id TEXT,state TEXT,value REAL,started_at TEXT,resolved_at TEXT,last_notified_at TEXT,rule_name TEXT,node_name TEXT,rule_snapshot TEXT", "id"),
 		table("notification_deliveries", "main", "state IN ('sent','failed')", "id TEXT,channel_id TEXT,event_id TEXT,state TEXT,attempts INTEGER,next_attempt_at TEXT,last_error_code TEXT,lease_until TEXT,payload_json TEXT,coalesced_count INTEGER,created_at TEXT,updated_at TEXT", "id"),
-		table("inbox_notifications", "main", "", "id TEXT,kind TEXT,source_id TEXT,transition TEXT,audience TEXT,severity TEXT,created_at TEXT,details_json TEXT", "id"),
+		table("inbox_notifications", "main", "", "id TEXT,kind TEXT,source_id TEXT,transition TEXT,severity TEXT,created_at TEXT,details_json TEXT", "id"),
 		table("inbox_reads", "main", "", "user_id TEXT,notification_id TEXT,read_at TEXT", "user_id,notification_id"),
 		table("backup_tasks", "main", "state IN ('succeeded','failed')", "id TEXT,kind TEXT,state TEXT,phase TEXT,plan_id TEXT,actor_id TEXT,categories_json TEXT,destination_json TEXT,scheduled_at TEXT,created_at TEXT,started_at TEXT,finished_at TEXT,artifact_name TEXT,artifact_bytes INTEGER,artifact_sha256 TEXT,result_location TEXT,error_code TEXT,warning_code TEXT,restored INTEGER", "id"),
 	},

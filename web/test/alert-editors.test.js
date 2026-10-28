@@ -4,11 +4,11 @@ import {setNavigationSignal, setSession} from '../src/console/api.js';
 import {elements, flush, installDOM} from './console-dom.js';
 
 const id = '00000000-0000-4000-8000-000000000001';
-const admin = (role = 'admin') => setSession({csrf_token: 'csrf', user: {role, username: 'User'}, expires_at: ''});
+const admin = () => setSession({csrf_token: 'csrf', user: {id, username: 'admin-two'}, expires_at: ''});
 const change = (element, value) => { element.value = value; element.dispatchEvent(new Event('change')); };
 const control = (root, name) => elements(root).find((element) => element.name === name);
 
-test('rule editor toggles offline fields, scopes and channel routing; viewers have no editor', async () => {
+test('rule editor toggles offline fields, scopes and channel routing for every administrator', async () => {
   const dom = installDOM();
   setNavigationSignal(null);
   try {
@@ -39,11 +39,14 @@ test('rule editor toggles offline fields, scopes and channel routing; viewers ha
     assert.equal(control(root, 'scope_id').value, id);
     assert.equal(control(root, 'enabled').checked, false);
     existing.close('done'); await existing.closed;
-    admin('viewer');
-    assert.equal(ruleEditor(null, context), undefined);
     const panel = rulesPanel({...context, rules: []});
-    assert.doesNotMatch(panel.textContent, /Add rule/);
-    assert.match(panel.textContent, /read-only/);
+    assert.match(panel.textContent, /Add rule/);
+    setSession({user: null, csrf_token: '', expires_at: ''});
+    assert.equal(ruleEditor(null, context), undefined);
+    admin();
+    const aborted = new AbortController();
+    aborted.abort();
+    assert.equal(ruleEditor(null, {...context, signal: aborted.signal}), undefined);
   } finally { dom.restore(); }
 });
 test('channel editor starts with redacted URL and no secret, supports replacement, and maps config validation', async () => {
@@ -86,10 +89,15 @@ test('channel editor starts with redacted URL and no secret, supports replacemen
     assert.match(root.textContent, /re-enter every affected credential/);
     dialog.close('done');
     await dialog.closed;
-    admin('viewer');
     const panel = channelsPanel({...context, channels: [item]});
-    assert.doesNotMatch(panel.textContent, /Send test|Add channel/);
+    assert.match(panel.textContent, /Send test/);
+    assert.match(panel.textContent, /Add channel/);
+    setSession({user: null, csrf_token: '', expires_at: ''});
     assert.equal(channelEditor(item, context), undefined);
+    admin();
+    const aborted = new AbortController();
+    aborted.abort();
+    assert.equal(channelEditor(item, {...context, signal: aborted.signal}), undefined);
   } finally { globalThis.fetch = originalFetch; dom.restore(); }
 });
 

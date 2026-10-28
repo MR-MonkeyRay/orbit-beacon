@@ -17,9 +17,9 @@ func TestPayloadSchemaRejectsExecutableAndExtraObjects(t *testing.T) {
 		`CREATE TABLE unexpected(secret TEXT)`,
 		`CREATE INDEX unexpected ON users(username)`,
 		`ALTER TABLE users ADD COLUMN extra TEXT`,
-		`DROP TABLE users; CREATE TABLE users (id TEXT,username TEXT,password_hash TEXT,role TEXT,created_at TEXT,PRIMARY KEY(id),CHECK(length(username)<100))`,
-		`DROP TABLE users; CREATE TABLE users (id TEXT,username TEXT COLLATE NOCASE,password_hash TEXT,role TEXT,created_at TEXT,PRIMARY KEY(id))`,
-		`DROP TABLE users; CREATE TABLE users (id TEXT,username TEXT,password_hash TEXT,role TEXT,created_at TEXT,PRIMARY KEY(id)) WITHOUT ROWID`,
+		`DROP TABLE users; CREATE TABLE users (id TEXT,username TEXT,password_hash TEXT,created_at TEXT,PRIMARY KEY(id),CHECK(length(username)<100))`,
+		`DROP TABLE users; CREATE TABLE users (id TEXT,username TEXT COLLATE NOCASE,password_hash TEXT,created_at TEXT,PRIMARY KEY(id))`,
+		`DROP TABLE users; CREATE TABLE users (id TEXT,username TEXT,password_hash TEXT,created_at TEXT,PRIMARY KEY(id)) WITHOUT ROWID`,
 	} {
 		t.Run(mutation, func(t *testing.T) {
 			dir := t.TempDir()
@@ -94,8 +94,8 @@ func TestSnapshotIncludesCommittedWALWithoutOwningServerLock(t *testing.T) {
 
 func TestPayloadRejectsGeneratedAndVirtualTables(t *testing.T) {
 	for _, ddl := range []string{
-		`CREATE TABLE users(id TEXT PRIMARY KEY,username TEXT,password_hash TEXT,role TEXT,created_at TEXT,extra TEXT GENERATED ALWAYS AS(username) VIRTUAL)`,
-		`CREATE VIRTUAL TABLE users USING fts5(id,username,password_hash,role,created_at)`,
+		`CREATE TABLE users(id TEXT PRIMARY KEY,username TEXT,password_hash TEXT,created_at TEXT,extra TEXT GENERATED ALWAYS AS(username) VIRTUAL)`,
+		`CREATE VIRTUAL TABLE users USING fts5(id,username,password_hash,created_at)`,
 	} {
 		dir := t.TempDir()
 		if err := os.Chmod(dir, 0700); err != nil {

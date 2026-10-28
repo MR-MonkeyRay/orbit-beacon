@@ -48,10 +48,14 @@ func TestInboxSourceTransitionAndReadIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err = db.Exec(`INSERT INTO users(id,username,password_hash,role,created_at) VALUES('a','a','hash','admin','now'),('b','b','hash','viewer','now')`); err != nil {
+	if _, err = db.Exec(`INSERT INTO users(id,username,password_hash,created_at) VALUES('a','a','hash','now'),('b','b','hash','now')`); err != nil {
 		t.Fatal(err)
 	}
-	insert := `INSERT INTO inbox_notifications(id,kind,source_id,transition,audience,severity,created_at,details_json) VALUES(?,'alert','episode','firing','authenticated','warning','now','{}')`
+	var indexes int
+	if err = db.QueryRow(`SELECT count(*) FROM sqlite_schema WHERE type='index' AND name='inbox_reads_notification'`).Scan(&indexes); err != nil || indexes != 1 {
+		t.Fatalf("notification read index=%d err=%v", indexes, err)
+	}
+	insert := `INSERT INTO inbox_notifications(id,kind,source_id,transition,severity,created_at,details_json) VALUES(?,'alert','episode','firing','warning','now','{}')`
 	if _, err = db.Exec(insert, "one"); err != nil {
 		t.Fatal(err)
 	}

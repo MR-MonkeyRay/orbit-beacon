@@ -129,15 +129,12 @@ func (s *Service) CreateExport(ctx context.Context, actorID string, categories [
 	if count >= 32 {
 		return Task{}, &Error{Code: "backup_queue_full"}
 	}
-	var actorName, role string
-	if err = tx.QueryRowContext(ctx, `SELECT username,role FROM users WHERE id=?`, actorID).Scan(&actorName, &role); err != nil {
+	var actorName string
+	if err = tx.QueryRowContext(ctx, `SELECT username FROM users WHERE id=?`, actorID).Scan(&actorName); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Task{}, &Error{Code: "invalid_actor"}
 		}
 		return Task{}, err
-	}
-	if role != "admin" {
-		return Task{}, &Error{Code: "forbidden"}
 	}
 	destination := TaskDestination{ActorName: actorName, Target: json.RawMessage(`null`)}
 	encoded, _ := json.Marshal(destination)

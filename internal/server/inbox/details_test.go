@@ -81,7 +81,7 @@ func TestInsertValidatesDetailsShapes(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tx.Rollback()
-			err = inbox.Insert(ctx, tx, inbox.Event{Kind: tc.kind, SourceID: "historical-source", Transition: "snapshot", Audience: "admin", Severity: "info", CreatedAt: time.Now(), Details: json.RawMessage(tc.details)})
+			err = inbox.Insert(ctx, tx, inbox.Event{Kind: tc.kind, SourceID: "historical-source", Transition: "snapshot", Severity: "info", CreatedAt: time.Now(), Details: json.RawMessage(tc.details)})
 			if tc.valid && err != nil {
 				t.Fatalf("valid details rejected: %v", err)
 			}

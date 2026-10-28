@@ -1,5 +1,5 @@
 import {h} from '../../shared/dom.js';
-import {api, getNavigationSignal, isAdmin} from '../api.js';
+import {api, getNavigationSignal} from '../api.js';
 import {when} from '../format.js';
 import {onNotificationTick} from '../notifications.js';
 import {button, callout, panel} from '../ui/components.js';
@@ -9,7 +9,7 @@ import {field, input, onSubmit, select, validateBytes} from '../ui/forms.js';
 import {showTask} from './backup-task.js';
 
 const CATEGORIES = [
-  ['configuration', 'Configuration', 'Users, Agent identities, rules, plans and stored credentials.'],
+  ['configuration', 'Configuration', 'Administrators, Agent identities, rules, plans and stored credentials.'],
   ['monitoring', 'Monitoring', 'Recorded metrics, traffic and probe history.'],
   ['events', 'Events', 'Audit, alert and completed task history; no historical backup passwords.']
 ];
@@ -59,7 +59,6 @@ function planLocation(plan) {
 // tabSet owns mounting. A detached tab has no requests or summary subscription.
 export function dataOperationsTab() {
   const navigation = getNavigationSignal();
-  if (!isAdmin()) return {element: callout('Access denied. Data operations are available to administrators only.'), attach() {}, detach() {}};
   let controller = null;
   let unsubscribe = null;
   let taskPage = 0;

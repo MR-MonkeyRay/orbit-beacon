@@ -1,5 +1,5 @@
 import {h} from '../../shared/dom.js';
-import {api, isAdmin} from '../api.js';
+import {api, session} from '../api.js';
 import {button, iconButton, panel} from '../ui/components.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
@@ -8,7 +8,7 @@ import {durationSeconds, errorCodeMessage, formatMetricValue, formatRuleDuration
 import {severityPill} from './alert-events.js';
 
 export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
-  if (!isAdmin() || signal?.aborted) return;
+  if (!session.user || !session.csrf || signal?.aborted) return;
   const controls = {};
   return formDialog({
     title: item ? `Edit ${item.name}` : 'Add alert rule', submit: 'Save rule',
@@ -61,7 +61,7 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
         field('Notification channels', routing, {hint: channels.length ? 'Select any channels to notify. Use Ctrl or Command to select multiple; disabled channels do not deliver.' : 'No channels configured. Rules can fire without sending notifications.'}));
     },
     action: async () => {
-      if (!isAdmin() || signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+      if (!session.user || !session.csrf || signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
       const c = controls;
       const offline = c.metric.value === 'offline';
       const body = {name: c.name.value, enabled: c.enabled.checked, metric: c.metric.value,
@@ -84,10 +84,9 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
 }
 
 export function rulesPanel({rules, groups, nodes, channels, signal, saved}) {
-  const editable = isAdmin();
   const edit = (rule) => ruleEditor(rule, {groups, nodes, channels, signal, saved});
   const remove = async (rule) => {
-    if (!isAdmin() || signal?.aborted) return;
+    if (!session.user || !session.csrf || signal?.aborted) return;
     if (!(await confirmDialog({title: `Delete ${rule.name}?`, message: 'Event history is kept. Firing episodes resolve on the next evaluation.', confirm: 'Delete rule', danger: true}))) return;
     if (signal?.aborted) return;
     try {
@@ -96,16 +95,16 @@ export function rulesPanel({rules, groups, nodes, channels, signal, saved}) {
       toast('Alert rule deleted.');
     } catch (error) { if (!signal?.aborted) toastError(error); }
   };
-  return panel('Rules', {action: editable ? button('Add rule', {small: true, variant: 'primary', onClick: () => edit(null)}) : null},
-    h('p', {class: 'lede'}, editable ? 'Rules are evaluated every 30 seconds. Metric conditions must hold for the full duration.' : 'Rules are read-only. An administrator can add or change them.'),
+  return panel('Rules', {action: button('Add rule', {small: true, variant: 'primary', onClick: () => edit(null)})},
+    h('p', {class: 'lede'}, 'Rules are evaluated every 30 seconds. Metric conditions must hold for the full duration.'),
     rules.length ? h('div', {class: 'table-wrap'}, h('table', {class: 'table'},
       h('caption', {class: 'sr'}, 'Alert rules'),
-      h('thead', null, h('tr', null, ['Name', 'Condition', 'Scope', 'Severity', 'State', 'Channels', ...(editable ? ['Actions'] : [])].map((label) => h('th', {scope: 'col'}, label)))),
+      h('thead', null, h('tr', null, ['Name', 'Condition', 'Scope', 'Severity', 'State', 'Channels', 'Actions'].map((label) => h('th', {scope: 'col'}, label)))),
       h('tbody', null, rules.map((rule) => h('tr', null,
         h('td', null, rule.name),
         h('td', null, metricLabel(rule.metric), rule.metric === 'offline' ? '' : ` ${rule.comparator} ${formatMetricValue(rule.metric, rule.threshold)}`, ` for ${formatRuleDuration(rule.for_seconds)}`),
         h('td', null, scopeLabel(rule, groups, nodes)), h('td', null, severityPill(rule.severity)), h('td', null, rule.enabled ? 'Enabled' : 'Disabled'),
         h('td', null, rule.channel_ids.map((id) => channels.find((channel) => channel.id === id)?.name || id).join(', ') || 'None'),
-        editable ? h('td', {class: 'actions'}, iconButton('edit', `Edit ${rule.name}`, () => edit(rule)), iconButton('trash', `Delete ${rule.name}`, () => remove(rule))) : null)))))
+        h('td', {class: 'actions'}, iconButton('edit', `Edit ${rule.name}`, () => edit(rule)), iconButton('trash', `Delete ${rule.name}`, () => remove(rule))))))))
       : h('p', {class: 'muted'}, 'No alert rules yet.'));
 }

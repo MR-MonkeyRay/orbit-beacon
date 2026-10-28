@@ -1,5 +1,5 @@
 import {h, icon} from '../../shared/dom.js';
-import {api, invalidate, isAdmin} from '../api.js';
+import {api, invalidate} from '../api.js';
 import {describeAction, shortID, when} from '../format.js';
 import {go} from '../router.js';
 import {button} from '../ui/components.js';
@@ -27,7 +27,7 @@ export function createNodeDialog() {
   });
 }
 
-export const addNodeButton = () => (isAdmin() ? button('Add node', {icon: 'plus', variant: 'primary', onClick: createNodeDialog}) : null);
+export const addNodeButton = () => button('Add node', {icon: 'plus', variant: 'primary', onClick: createNodeDialog});
 
 // One audit event in a timeline; `names` maps user, node and group IDs to names.
 export function auditItem(event, names, withDetails) {

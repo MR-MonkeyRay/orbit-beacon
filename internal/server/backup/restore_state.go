@@ -309,7 +309,7 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 						if e != nil {
 							return invalidPayload("backup_tasks", id)
 						}
-						return inbox.Insert(ctx, tx, inbox.Event{Kind: "task", SourceID: id, Transition: "failed", Audience: "admin", Severity: "warning", CreatedAt: now, Details: details})
+						return inbox.Insert(ctx, tx, inbox.Event{Kind: "task", SourceID: id, Transition: "failed", Severity: "warning", CreatedAt: now, Details: details})
 					}
 				}
 			}

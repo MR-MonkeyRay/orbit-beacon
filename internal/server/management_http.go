@@ -23,7 +23,7 @@ var (
 )
 
 // routeMethods establishes route existence and method support before session
-// authentication, role, Origin or CSRF checks.
+// authentication, Origin or CSRF checks.
 func routeMethods(p string) []string {
 	switch p {
 	case "/api/v1/session":
@@ -92,15 +92,6 @@ func routeMethods(p string) []string {
 		return deleteMethods
 	}
 	return nil
-}
-
-// Only these two validated routes mutate the current user's own read state.
-func ownInboxMutation(r *http.Request) bool {
-	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/notifications/read-all" {
-		return true
-	}
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/"), "/")
-	return r.Method == http.MethodPatch && len(parts) == 3 && parts[0] == "notifications" && identity.ValidUUID(parts[1]) && parts[2] == "read"
 }
 
 func (h *handler) managementRoute(w http.ResponseWriter, r *http.Request, requestID string, user auth.User) bool {
@@ -183,12 +174,11 @@ func (h *handler) users(w http.ResponseWriter, r *http.Request, requestID string
 		var input struct {
 			Username string `json:"username"`
 			Password string `json:"password"`
-			Role     string `json:"role"`
 		}
 		if !decode(w, r, &input, requestID) {
 			return
 		}
-		user, err := h.auth.CreateUser(r.Context(), input.Username, input.Password, input.Role)
+		user, err := h.auth.CreateUser(r.Context(), input.Username, input.Password)
 		if err != nil {
 			h.serviceError(w, err, requestID)
 			return

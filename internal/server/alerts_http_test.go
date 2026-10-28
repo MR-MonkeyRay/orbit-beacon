@@ -19,15 +19,15 @@ const validAlertRule = `{"name":"CPU hot","enabled":true,"scope_kind":"all","sco
 func TestAlertHTTPCRUDValidationAndAuthz(t *testing.T) {
 	f := newHTTP(t, 3)
 	admin, csrf := login(t, f, "admin")
-	viewer, vcsrf := login(t, f, "viewer")
-	response := request(t, f.handler, "POST", "/api/v1/alert-rules", validAlertRule, admin, csrf, publicURL)
+	second, secondCSRF := login(t, f, "admin-two")
+	response := request(t, f.handler, "POST", "/api/v1/alert-rules", validAlertRule, second, secondCSRF, publicURL)
 	assertHTTPStatus(t, response, http.StatusCreated)
 	object := decodeObject(t, response)
 	id := objectID(t, object)
 	path := "/api/v1/alert-rules/" + id
-	collectionContains(t, request(t, f.handler, "GET", "/api/v1/alert-rules", "", viewer, "", ""), "rules", id)
-	assertHTTPStatus(t, request(t, f.handler, "GET", path, "", viewer, "", ""), 200)
-	assertHTTPStatus(t, request(t, f.handler, "PATCH", path, `{"name":"renamed","threshold":85}`, admin, csrf, publicURL), 200)
+	collectionContains(t, request(t, f.handler, "GET", "/api/v1/alert-rules", "", second, "", ""), "rules", id)
+	assertHTTPStatus(t, request(t, f.handler, "GET", path, "", second, "", ""), 200)
+	assertHTTPStatus(t, request(t, f.handler, "PATCH", path, `{"name":"renamed","threshold":85}`, second, secondCSRF, publicURL), 200)
 	for _, body := range []string{`{}`, `{"name":null}`, `{"extra":1}`, strings.Replace(validAlertRule, `"threshold":80`, `"threshold":101`, 1), strings.Replace(validAlertRule, `"threshold":80`, `"threshold":1e999`, 1), strings.Replace(validAlertRule, `"for_seconds":60`, `"for_seconds":86401`, 1), strings.Replace(validAlertRule, `"scope_kind":"all","scope_id":null`, `"scope_kind":"node","scope_id":"00000000-0000-4000-8000-000000000099"`, 1)} {
 		assertHTTPStatus(t, request(t, f.handler, "POST", "/api/v1/alert-rules", body, admin, csrf, publicURL), 400)
 	}
@@ -35,17 +35,17 @@ func TestAlertHTTPCRUDValidationAndAuthz(t *testing.T) {
 		assertHTTPStatus(t, request(t, f.handler, "PATCH", path, body, admin, csrf, publicURL), 400)
 	}
 	for _, test := range []struct{ method, path, body string }{{"POST", "/api/v1/alert-rules", validAlertRule}, {"PATCH", path, `{"enabled":false}`}, {"DELETE", path, ""}} {
-		assertHTTPStatus(t, request(t, f.handler, test.method, test.path, test.body, viewer, vcsrf, publicURL), 403)
+		assertHTTPStatus(t, request(t, f.handler, test.method, test.path, test.body, second, csrf, publicURL), 403)
 		assertHTTPStatus(t, request(t, f.handler, test.method, test.path, test.body, admin, "", publicURL), 403)
 		assertHTTPStatus(t, request(t, f.handler, test.method, test.path, test.body, admin, csrf, "https://foreign.test"), 403)
 	}
-	assertHTTPStatus(t, request(t, f.handler, "PATCH", path, `{"metric":"offline","threshold":null,"comparator":null,"for_seconds":180}`, admin, csrf, publicURL), 200)
-	assertHTTPStatus(t, request(t, f.handler, "GET", "/api/v1/alerts", "", viewer, "", ""), 200)
+	assertHTTPStatus(t, request(t, f.handler, "PATCH", path, `{"metric":"offline","threshold":null,"comparator":null,"for_seconds":180}`, second, secondCSRF, publicURL), 200)
+	assertHTTPStatus(t, request(t, f.handler, "GET", "/api/v1/alerts", "", second, "", ""), 200)
 	assertHTTPStatus(t, request(t, f.handler, "GET", "/api/v1/alerts", "", nil, "", ""), 401)
-	assertHTTPStatus(t, request(t, f.handler, "GET", "/api/v1/alerts/summary", "", viewer, "", ""), 200)
+	assertHTTPStatus(t, request(t, f.handler, "GET", "/api/v1/alerts/summary", "", second, "", ""), 200)
 	assertHTTPStatus(t, request(t, f.handler, "GET", "/api/v1/alerts/summary", "", nil, "", ""), 401)
-	assertHTTPStatus(t, request(t, f.handler, "DELETE", path, "", admin, csrf, publicURL), 204)
-	assertHTTPStatus(t, request(t, f.handler, "GET", path, "", viewer, "", ""), 404)
+	assertHTTPStatus(t, request(t, f.handler, "DELETE", path, "", second, secondCSRF, publicURL), 204)
+	assertHTTPStatus(t, request(t, f.handler, "GET", path, "", second, "", ""), 404)
 	var count int
 	if err := f.db.QueryRow("SELECT count(*) FROM audit_events WHERE target_id=?", id).Scan(&count); err != nil || count != 4 {
 		t.Fatalf("rule audits=%d err=%v", count, err)
@@ -53,7 +53,7 @@ func TestAlertHTTPCRUDValidationAndAuthz(t *testing.T) {
 }
 func TestAlertHTTP405AndQueryValidation(t *testing.T) {
 	f := newHTTP(t, 1)
-	viewer, _ := login(t, f, "viewer")
+	second, _ := login(t, f, "admin-two")
 	for _, tt := range []struct{ path, method, allow string }{{"/api/v1/alert-rules", "PUT", "GET, POST"}, {"/api/v1/alert-rules/00000000-0000-4000-8000-000000000001", "POST", "GET, PATCH, DELETE"}, {"/api/v1/alerts", "POST", "GET"}, {"/api/v1/alerts/summary", "POST", "GET"}} {
 		r := request(t, f.handler, tt.method, tt.path, "", nil, "", "")
 		assertHTTPStatus(t, r, 405)
@@ -62,20 +62,20 @@ func TestAlertHTTP405AndQueryValidation(t *testing.T) {
 		}
 	}
 	for _, query := range []string{"state=bad", "state=", "state=all&state=firing", "limit=0", "limit=101", "limit=no", "limit=", "before=bad", "before=", "offset=0", "unknown=x", "%zz=x"} {
-		assertHTTPStatus(t, request(t, f.handler, "GET", "/api/v1/alerts?"+query, "", viewer, "", ""), 400)
+		assertHTTPStatus(t, request(t, f.handler, "GET", "/api/v1/alerts?"+query, "", second, "", ""), 400)
 	}
-	assertHTTPStatus(t, request(t, f.handler, "GET", "/api/v1/alert-rules/not-a-uuid", "", viewer, "", ""), 404)
+	assertHTTPStatus(t, request(t, f.handler, "GET", "/api/v1/alert-rules/not-a-uuid", "", second, "", ""), 404)
 }
 
 func TestAlertHTTPSummaryEnvelope(t *testing.T) {
 	f := newHTTP(t, 1)
-	viewer, _ := login(t, f, "viewer")
+	second, _ := login(t, f, "admin-two")
 	stamp := timekey.Format(time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC))
 	if _, err := f.db.Exec(`INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,rule_name,node_name,rule_snapshot)
  VALUES('00000000-0000-4000-8000-000000000001','deleted-rule','deleted-node','firing',90,?,'retained rule','retained node','{"metric":"cpu_percent","severity":"critical"}')`, stamp); err != nil {
 		t.Fatal(err)
 	}
-	response := request(t, f.handler, "GET", "/api/v1/alerts/summary", "", viewer, "", "")
+	response := request(t, f.handler, "GET", "/api/v1/alerts/summary", "", second, "", "")
 	assertHTTPStatus(t, response, http.StatusOK)
 	var summary alerts.AlertSummary
 	if err := json.Unmarshal(response.Body.Bytes(), &summary); err != nil {
@@ -88,7 +88,7 @@ func TestAlertHTTPSummaryEnvelope(t *testing.T) {
 
 func TestAlertHTTPHistoryEnvelopeAndRetentionLoop(t *testing.T) {
 	f := newHTTP(t, 1)
-	viewer, _ := login(t, f, "viewer")
+	second, _ := login(t, f, "admin-two")
 	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 	for i, id := range []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003"} {
 		_, err := f.db.Exec(`INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,resolved_at,rule_name,node_name,rule_snapshot) VALUES(?,'deleted-rule','deleted-node','resolved',NULL,?,?,'retained rule','retained node','{}')`, id, timekey.Format(now.Add(time.Duration(i)*time.Second)), timekey.Format(now.Add(-100*24*time.Hour)))
@@ -96,7 +96,7 @@ func TestAlertHTTPHistoryEnvelopeAndRetentionLoop(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	response := request(t, f.handler, "GET", "/api/v1/alerts?state=resolved&limit=2", "", viewer, "", "")
+	response := request(t, f.handler, "GET", "/api/v1/alerts?state=resolved&limit=2", "", second, "", "")
 	assertHTTPStatus(t, response, 200)
 	var page alerts.EventPage
 	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
@@ -105,7 +105,7 @@ func TestAlertHTTPHistoryEnvelopeAndRetentionLoop(t *testing.T) {
 	if len(page.Events) != 2 || !page.HasMore || page.NextCursor == "" || page.Events[0].RuleName != "retained rule" || page.Events[0].NodeName != "retained node" {
 		t.Fatalf("page=%+v", page)
 	}
-	response = request(t, f.handler, "GET", "/api/v1/alerts?state=resolved&limit=2&before="+page.NextCursor, "", viewer, "", "")
+	response = request(t, f.handler, "GET", "/api/v1/alerts?state=resolved&limit=2&before="+page.NextCursor, "", second, "", "")
 	assertHTTPStatus(t, response, 200)
 	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
 		t.Fatal(err)

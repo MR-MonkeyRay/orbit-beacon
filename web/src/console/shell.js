@@ -1,7 +1,6 @@
 import {h} from '../shared/dom.js';
 import {themeButton} from '../shared/theme.js';
 import {onSession, session, signOut} from './api.js';
-import {ROLE} from './format.js';
 import {busy, button} from './ui/components.js';
 import {toastError} from './ui/feedback.js';
 import {initNotifications} from './notifications.js';
@@ -24,10 +23,10 @@ function renderAccount() {
     busy(exit, true);
     try { await signOut(); } catch (error) { busy(exit, false); toastError(error); }
   }});
-  const {username, role} = session.user;
+  const {username} = session.user;
   account.replaceChildren(
     h('div', {class: 'who'}, h('span', {class: 'avatar', 'aria-hidden': 'true'}, username.slice(0, 1)),
-      h('div', {class: 'who-text'}, h('div', {class: 'who-name', title: username}, username), h('div', {class: 'who-role'}, ROLE[role]))),
+      h('div', {class: 'who-text'}, h('div', {class: 'who-name', title: username}, username))),
     h('div', {class: 'account-actions'}, themeButton(themeNames, (now, next) => `Theme: ${now}. Switch to ${next}.`), exit));
 }
 

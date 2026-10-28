@@ -1,5 +1,5 @@
 import {h} from '../../shared/dom.js';
-import {api, isAdmin} from '../api.js';
+import {api, session} from '../api.js';
 import {busy, button, iconButton, panel} from '../ui/components.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
@@ -10,7 +10,7 @@ import {eventTime} from './alert-events.js';
 const KINDS = [['webhook', 'Webhook'], ['telegram', 'Telegram'], ['email', 'Email']];
 
 export function channelEditor(item, {signal, saved}) {
-  if (!isAdmin() || signal?.aborted) return;
+  if (!session.user || !session.csrf || signal?.aborted) return;
   const controls = {};
   const dialog = formDialog({
     title: item ? `Edit ${item.name}` : 'Add notification channel', submit: 'Save channel',
@@ -86,7 +86,7 @@ export function channelEditor(item, {signal, saved}) {
       form.append(nameField, field('Kind', kind), field('Enabled', enabled), configGroup, secretState, ...(item ? [replaceSecretField] : []), secretField);
     },
     action: async () => {
-      if (!isAdmin() || signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+      if (!session.user || !session.csrf || signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
       const values = Object.fromEntries(['name', 'kind', 'url', 'chat_id', 'host', 'port', 'username', 'from', 'to', 'secret'].map((key) => [key, controls[key].value]));
       values.enabled = controls.enabled.checked;
       const body = buildChannelPayload(values, {editing: Boolean(item), replaceURL: controls.replaceURL.checked, replaceSecret: controls.replaceSecret.checked});
@@ -109,10 +109,9 @@ export function channelEditor(item, {signal, saved}) {
 }
 
 export function channelsPanel({channels, signal, saved}) {
-  const editable = isAdmin();
   const edit = (channel) => channelEditor(channel, {signal, saved});
   const remove = async (channel) => {
-    if (!isAdmin() || signal?.aborted) return;
+    if (!session.user || !session.csrf || signal?.aborted) return;
     if (!(await confirmDialog({title: `Delete ${channel.name}?`, message: 'This removes the channel, its rule routing and its delivery records.', confirm: 'Delete channel', danger: true}))) return;
     if (signal?.aborted) return;
     try {
@@ -123,8 +122,8 @@ export function channelsPanel({channels, signal, saved}) {
   };
   const row = (channel) => {
     const status = h('p', {class: 'hint', role: 'status'});
-    const test = editable ? button('Send test', {small: true, onClick: async () => {
-      if (!isAdmin() || signal?.aborted) return;
+    const test = button('Send test', {small: true, onClick: async () => {
+      if (!session.user || !session.csrf || signal?.aborted) return;
       busy(test, true);
       status.textContent = 'Sending test…';
       try {
@@ -133,19 +132,19 @@ export function channelsPanel({channels, signal, saved}) {
       } catch (error) {
         if (!signal?.aborted) status.textContent = error.code === 'secret_unreadable' ? SECRET_GUIDANCE : `Test failed: ${error.code ? `${errorCodeMessage(error.code)} (${error.code})` : error.message}`;
       } finally { busy(test, false); }
-    }}) : null;
+    }});
     const destination = channel.kind === 'webhook' ? channel.config.url_redacted || 'URL not set'
       : channel.kind === 'telegram' ? channel.config.chat_id : `${channel.config.host}:${channel.config.port} → ${channel.config.to.join(', ')}`;
     return h('tr', null, h('td', null, channel.name), h('td', null, KINDS.find(([kind]) => kind === channel.kind)?.[1] || channel.kind),
       h('td', {class: 'alert-destination'}, destination, h('div', {class: 'hint'}, channel.secret_set ? 'Secret set' : 'Secret not set'), status),
       h('td', null, channel.enabled ? 'Enabled' : 'Disabled'),
-      editable ? h('td', {class: 'actions'}, test, iconButton('edit', `Edit ${channel.name}`, () => edit(channel)), iconButton('trash', `Delete ${channel.name}`, () => remove(channel))) : null);
+      h('td', {class: 'actions'}, test, iconButton('edit', `Edit ${channel.name}`, () => edit(channel)), iconButton('trash', `Delete ${channel.name}`, () => remove(channel))));
   };
-  return panel('Channels', {action: editable ? button('Add channel', {small: true, variant: 'primary', onClick: () => edit(null)}) : null},
-    h('p', {class: 'lede'}, editable ? 'Credentials and full webhook URLs are write-only. Test a channel after saving it.' : 'Channels are read-only. An administrator can edit or test them.'),
+  return panel('Channels', {action: button('Add channel', {small: true, variant: 'primary', onClick: () => edit(null)})},
+    h('p', {class: 'lede'}, 'Credentials and full webhook URLs are write-only. Test a channel after saving it.'),
     channels.length ? h('div', {class: 'table-wrap'}, h('table', {class: 'table'},
       h('caption', {class: 'sr'}, 'Notification channels'),
-      h('thead', null, h('tr', null, ['Name', 'Kind', 'Destination / secret', 'State', ...(editable ? ['Actions'] : [])].map((label) => h('th', {scope: 'col'}, label)))),
+      h('thead', null, h('tr', null, ['Name', 'Kind', 'Destination / secret', 'State', 'Actions'].map((label) => h('th', {scope: 'col'}, label)))),
       h('tbody', null, channels.map(row)))) : h('p', {class: 'muted'}, 'No notification channels yet.'));
 }
 

@@ -1,5 +1,5 @@
 import {h, icon, reducedMotion} from '../../shared/dom.js';
-import {allNodes, api, ensureSession, groupsList, invalidate, isAdmin} from '../api.js';
+import {allNodes, api, ensureSession, groupsList, invalidate} from '../api.js';
 import {STATUS, STATUS_ORDER, when} from '../format.js';
 import {busy, button, emptyState, link, pageHead, statusBadge} from '../ui/components.js';
 import {confirmDialog, modal} from '../ui/dialogs.js';
@@ -45,7 +45,6 @@ function highlight(value, query) {
 export async function nodesPage() {
   await ensureSession();
   const [nodes, groups] = await Promise.all([allNodes(), groupsList()]);
-  const editable = isAdmin();
   const head = pageHead('Nodes', 'Every node in inventory, including pending and disabled ones. Select a node to edit its details, public page and agent configuration.', addNodeButton());
   if (nodes.length === 0) {
     return h('div', null, head, h('div', {class: 'panel'}, emptyState('No nodes yet', 'Add a node, then use its Enroll agent tab to issue a credential for the agent.', addNodeButton())));
@@ -77,7 +76,7 @@ export async function nodesPage() {
     update();
   }}, label, icon('up')));
   const selectAll = h('input', {type: 'checkbox', 'aria-label': 'Select all nodes on this page'});
-  const headers = [editable ? h('th', {scope: 'col', class: 'selection-cell'}, selectAll) : null,
+  const headers = [h('th', {scope: 'col', class: 'selection-cell'}, selectAll),
     sortable('name', 'Name'), sortable('status', 'Presence'), h('th', {scope: 'col', class: 'hide-sm'}, 'Last seen'), h('th', {scope: 'col', class: 'hide-sm'}, 'Group'),
     h('th', {scope: 'col', class: 'hide-sm'}, 'Location'), h('th', {scope: 'col', class: 'hide-sm'}, 'Tags'), sortable('created', 'Added')];
 
@@ -130,12 +129,12 @@ export async function nodesPage() {
   });
 
   const row = (node, query) => h('tr', null,
-    editable ? h('td', {class: 'selection-cell'}, h('input', {type: 'checkbox', checked: selected.has(node.id),
+    h('td', {class: 'selection-cell'}, h('input', {type: 'checkbox', checked: selected.has(node.id),
       dataset: {nodeId: node.id}, 'aria-label': `Select ${node.name}`, onchange: (event) => {
         if (event.currentTarget.checked) selected.add(node.id);
         else selected.delete(node.id);
         updateSelection();
-      }})) : null,
+      }})),
     h('td', {class: 'name'}, link(`/nodes/${node.id}`, highlight(node.name, query))),
     h('td', null, statusBadge(node.presence)),
     h('td', {class: 'hide-sm muted'}, node.last_seen ? when(node.last_seen) : 'Never'),
@@ -162,7 +161,7 @@ export async function nodesPage() {
           : a.created_at.localeCompare(b.created_at);
       return order * sign || a.id.localeCompare(b.id);
     });
-    for (const th of headers.filter(Boolean)) {
+    for (const th of headers) {
       if (th.dataset.sort === filter.sort) th.setAttribute('aria-sort', sign === 1 ? 'ascending' : 'descending');
       else th.removeAttribute('aria-sort');
     }
@@ -173,7 +172,7 @@ export async function nodesPage() {
     visibleIDs = new Set(visible.map((node) => node.id));
     for (const id of selected) if (!visibleIDs.has(id)) selected.delete(id);
     body.replaceChildren(...(visible.length ? visible.map((node) => row(node, query))
-      : [h('tr', null, h('td', {colspan: editable ? 8 : 7}, emptyState('No nodes match these filters', 'Try a different search, presence or group.', button('Clear filters', {onClick: clear}))))]));
+      : [h('tr', null, h('td', {colspan: 8}, emptyState('No nodes match these filters', 'Try a different search, presence or group.', button('Clear filters', {onClick: clear}))))]));
     updateSelection();
     const summaryText = rows.length === 0 ? 'No matching nodes'
       : `Showing ${start + 1}–${start + visible.length} of ${rows.length}${rows.length !== nodes.length ? ` (filtered from ${nodes.length})` : ''}`;
@@ -252,8 +251,8 @@ export async function nodesPage() {
       h('div', {class: 'search'}, icon('search'), search, h('kbd', null, '/')),
       h('div', {class: 'segmented', role: 'group', 'aria-label': 'Filter by presence'}, [...statusButtons.values()]),
       groupSelect),
-    h('div', {class: 'table-wrap'}, h('table', {class: 'table'}, h('caption', {class: 'sr'}, 'Nodes'), h('thead', null, h('tr', null, headers.filter(Boolean))), body)),
-    h('div', {class: 'table-foot'}, summary, pager), editable ? actionBar : null);
+    h('div', {class: 'table-wrap'}, h('table', {class: 'table'}, h('caption', {class: 'sr'}, 'Nodes'), h('thead', null, h('tr', null, headers)), body)),
+    h('div', {class: 'table-foot'}, summary, pager), actionBar);
   update();
   return h('div', null, head, table);
 }

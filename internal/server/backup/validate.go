@@ -38,7 +38,7 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 	if len(specs) == 0 {
 		return invalidPayload("category", "")
 	}
-	admins := 0
+	users := 0
 	var notificationBox, backupBox *secretbox.Box
 	if category == Configuration {
 		var err error
@@ -110,8 +110,8 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 				rows.Close()
 				return invalidPayload(table.Name, row.text("id"))
 			}
-			if table.Name == "users" && row.text("role") == auth.RoleAdmin {
-				admins++
+			if table.Name == "users" {
+				users++
 			}
 		}
 		err = errors.Join(rows.Err(), rows.Close())
@@ -122,7 +122,7 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 			return invalidPayload(table.Name, "")
 		}
 	}
-	if category == Configuration && admins == 0 {
+	if category == Configuration && users == 0 {
 		return invalidPayload("users", "")
 	}
 	return nil
@@ -220,7 +220,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 	}
 	switch table {
 	case "users":
-		if !validText(r.text("username"), 128) || !oneOf(r.text("role"), auth.RoleAdmin, auth.RoleViewer) {
+		if username := r.text("username"); len(username) < 1 || len(username) > 128 || !utf8.ValidString(username) {
 			return invalidRow()
 		}
 		return auth.ValidatePasswordHash(r.text("password_hash"))
@@ -323,7 +323,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 		_, err := notify.ParsePayload([]byte(r.text("payload_json")))
 		return err
 	case "inbox_notifications":
-		if !oneOf(r.text("kind"), "task", "alert") || !oneOf(r.text("audience"), "admin", "authenticated") || r.text("source_id") == "" || r.text("transition") == "" || inbox.ValidateDetails(r.text("kind"), json.RawMessage(r.text("details_json"))) != nil {
+		if !oneOf(r.text("kind"), "task", "alert") || r.text("source_id") == "" || r.text("transition") == "" || inbox.ValidateDetails(r.text("kind"), json.RawMessage(r.text("details_json"))) != nil {
 			return invalidRow()
 		}
 	case "inbox_reads":

@@ -42,7 +42,7 @@ func TestRestoreRejectsMalformedInboxDetailsBeforeInstall(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = db.Exec(`INSERT INTO inbox_notifications(id,kind,source_id,transition,audience,severity,created_at,details_json) VALUES(?,?, 'historical-source','snapshot','admin','info',?,?)`, validationID, tc.kind, validationTime, tc.details)
+			_, err = db.Exec(`INSERT INTO inbox_notifications(id,kind,source_id,transition,severity,created_at,details_json) VALUES(?,?, 'historical-source','snapshot','info',?,?)`, validationID, tc.kind, validationTime, tc.details)
 			if err != nil {
 				db.Close()
 				t.Fatal(err)

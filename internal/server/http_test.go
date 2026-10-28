@@ -51,7 +51,7 @@ func newHTTP(t *testing.T, capacity int) fixture {
 	if _, err := authService.BootstrapAdministrator(context.Background(), "admin", password); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := authService.CreateUser(context.Background(), "viewer", password, auth.RoleViewer); err != nil {
+	if _, err := authService.CreateUser(context.Background(), "admin-two", password); err != nil {
 		t.Fatal(err)
 	}
 	handler, err := server.NewHandler(server.Options{
@@ -162,13 +162,13 @@ func apiError(t *testing.T, response *httptest.ResponseRecorder, status int, cod
 	return object
 }
 
-func TestRoleAuthorizationProtectsMutationsAndSecrets(t *testing.T) {
+func TestSecondAdministratorCanMutateWithoutExposingStoredCredentials(t *testing.T) {
 	f := newHTTP(t, 5)
-	cookie, csrf := login(t, f, "viewer")
+	cookie, csrf := login(t, f, "admin-two")
 	for _, path := range []string{"/api/v1/me", "/api/v1/nodes"} {
 		response := request(t, f.handler, http.MethodGet, path, "", cookie, "", "")
 		if response.Code != http.StatusOK {
-			t.Errorf("viewer cannot read %s: %d", path, response.Code)
+			t.Errorf("second administrator cannot read %s: %d", path, response.Code)
 		}
 	}
 	node, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: "private node"})
@@ -179,21 +179,22 @@ func TestRoleAuthorizationProtectsMutationsAndSecrets(t *testing.T) {
 		method string
 		path   string
 		body   string
+		status int
 	}{
-		{http.MethodPost, "/api/v1/nodes", `{"name":"not allowed"}`},
-		{http.MethodPost, "/api/v1/users", `{"username":"intruder","password":"not allowed","role":"admin"}`},
-		{http.MethodPost, "/api/v1/enrollments", `{"node_id":"` + node.ID + `"}`},
-		{http.MethodPatch, "/api/v1/nodes/" + node.ID + "/config", `{"report_interval_seconds":30}`},
-		{http.MethodPost, "/api/v1/nodes/batch", `{"node_ids":["` + node.ID + `"],"action":"disable"}`},
+		{http.MethodPost, "/api/v1/nodes", `{"name":"second-admin-created"}`, http.StatusCreated},
+		{http.MethodPost, "/api/v1/users", `{"username":"managed-admin","password":"` + password + `"}`, http.StatusCreated},
+		{http.MethodPost, "/api/v1/enrollments", `{"node_id":"` + node.ID + `"}`, http.StatusCreated},
+		{http.MethodPatch, "/api/v1/nodes/" + node.ID + "/config", `{"report_interval_seconds":30}`, http.StatusOK},
+		{http.MethodPost, "/api/v1/nodes/batch", `{"node_ids":["` + node.ID + `"],"action":"disable"}`, http.StatusOK},
 	} {
 		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
 			response := request(t, f.handler, tt.method, tt.path, tt.body, cookie, csrf, publicURL)
-			apiError(t, response, http.StatusForbidden, "forbidden")
+			assertHTTPStatus(t, response, tt.status)
 		})
 	}
 	response := request(t, f.handler, http.MethodGet, "/api/v1/nodes/"+node.ID, "", cookie, "", "")
 	if response.Code != http.StatusOK {
-		t.Fatalf("viewer node read = %d", response.Code)
+		t.Fatalf("second administrator node read = %d", response.Code)
 	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(response.Body.Bytes(), &object); err != nil {
@@ -209,7 +210,7 @@ func TestRoleAuthorizationProtectsMutationsAndSecrets(t *testing.T) {
 func TestMutationsRequireBothTrustedOriginAndSessionBoundCSRF(t *testing.T) {
 	f := newHTTP(t, 20)
 	cookie, csrf := login(t, f, "admin")
-	_, otherCSRF := login(t, f, "viewer")
+	_, otherCSRF := login(t, f, "admin-two")
 	for _, tt := range []struct {
 		name   string
 		origin string

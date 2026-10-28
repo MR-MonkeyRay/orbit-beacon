@@ -21,15 +21,11 @@ import (
 )
 
 // backupsRoute is reached only after route existence, method, session and CSRF
-// checks. Backup reads require the same administrator role as backup mutations.
+// checks. All console accounts have the same access to backup operations.
 func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID string, user auth.User) bool {
 	p := r.URL.Path
 	if p != "/api/v1/backups/exports" && p != "/api/v1/backup-plans" && !strings.HasPrefix(p, "/api/v1/backup-plans/") && p != "/api/v1/tasks" && !strings.HasPrefix(p, "/api/v1/tasks/") {
 		return false
-	}
-	if user.Role != auth.RoleAdmin {
-		fail(w, http.StatusForbidden, "forbidden", "Administrator access is required", requestID)
-		return true
 	}
 	list := r.Method == http.MethodGet && (p == "/api/v1/tasks" || p == "/api/v1/backup-plans")
 	limit, before, err := backupQuery(r, list)

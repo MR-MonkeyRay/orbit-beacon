@@ -2,7 +2,6 @@ import {h} from '../shared/dom.js';
 
 export const STATUS = {online: 'Online', offline: 'Offline', never: 'Never seen', unknown: 'Unknown', pending: 'Pending', disabled: 'Disabled'};
 export const STATUS_ORDER = ['online', 'offline', 'never', 'pending', 'disabled'];
-export const ROLE = {admin: 'Administrator', viewer: 'Viewer'};
 
 const ACTIONS = {
   'node.create': 'Node created', 'node.delete': 'Node deleted', 'node.disable': 'Node disabled', 'node.enable': 'Node enabled',

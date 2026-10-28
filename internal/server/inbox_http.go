@@ -27,7 +27,7 @@ func (h *handler) inboxRoute(w http.ResponseWriter, r *http.Request, requestID s
 		h.serviceError(w, err, requestID)
 		return true
 	}
-	who := inbox.Identity{UserID: user.ID, Admin: user.Role == auth.RoleAdmin}
+	who := inbox.Identity{UserID: user.ID}
 	switch path {
 	case collection:
 		page, err := h.inbox.List(r.Context(), who, filter)

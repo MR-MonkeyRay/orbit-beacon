@@ -27,8 +27,6 @@ export function updateUser(patch) {
   for (const listener of sessionListeners) listener(session);
 }
 
-export const isAdmin = () => Boolean(session.user && session.user.role === 'admin' && session.csrf);
-
 const cache = new Map();
 let navigationSignal = null;
 

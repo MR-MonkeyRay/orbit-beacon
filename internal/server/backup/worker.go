@@ -428,7 +428,7 @@ func (s *Service) finishTransaction(ctx context.Context, task Task, state, code,
 	if state == "failed" || warning != "" {
 		severity = "warning"
 	}
-	if err = inbox.Insert(ctx, tx, inbox.Event{Kind: "task", SourceID: task.ID, Transition: state, Audience: "admin", Severity: severity, CreatedAt: finished, Details: details}); err != nil {
+	if err = inbox.Insert(ctx, tx, inbox.Event{Kind: "task", SourceID: task.ID, Transition: state, Severity: severity, CreatedAt: finished, Details: details}); err != nil {
 		return err
 	}
 	if s.opts.beforeTerminal != nil {

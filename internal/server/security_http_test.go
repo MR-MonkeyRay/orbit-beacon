@@ -72,7 +72,7 @@ func TestBrowserCanonicalOriginInteroperatesOrConfigurationIsRejected(t *testing
 func TestUnsupportedMethodsPrecedeAuthenticationAuthorizationAndCSRF(t *testing.T) {
 	f := newHTTP(t, 5)
 	admin, adminCSRF := login(t, f, "admin")
-	viewer, viewerCSRF := login(t, f, "viewer")
+	second, secondCSRF := login(t, f, "admin-two")
 	const id = "00000000-0000-4000-8000-000000000123"
 	for _, route := range []struct {
 		path  string
@@ -102,7 +102,7 @@ func TestUnsupportedMethodsPrecedeAuthenticationAuthorizationAndCSRF(t *testing.
 			}{
 				{"anonymous", nil, "", ""},
 				{"invalid session", &http.Cookie{Name: admin.Name, Value: "invalid"}, "", ""},
-				{"viewer", viewer, viewerCSRF, publicURL},
+				{"admin-two", second, secondCSRF, publicURL},
 				{"admin without Origin or CSRF", admin, "", ""},
 				{"admin with valid protection", admin, adminCSRF, publicURL},
 			} {

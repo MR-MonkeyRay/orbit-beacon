@@ -66,9 +66,9 @@ func newBackupHTTP(t *testing.T) backupHTTPFixture {
 
 const backupHTTPMissingID = "00000000-0000-4000-8000-000000000009"
 
-func TestBackupsHTTPPermissionsAndRoutePrecedence(t *testing.T) {
+func TestBackupsHTTPAuthenticationProtectionAndRoutePrecedence(t *testing.T) {
 	f := newBackupHTTP(t)
-	viewer, csrf := login(t, f.fixture, "viewer")
+	second, csrf := login(t, f.fixture, "admin-two")
 	for _, route := range []struct{ method, path string }{
 		{"POST", "/backups/exports"}, {"GET", "/backup-plans"}, {"POST", "/backup-plans"}, {"POST", "/backup-plans/preview"},
 		{"GET", "/backup-plans/" + backupHTTPMissingID}, {"PATCH", "/backup-plans/" + backupHTTPMissingID}, {"DELETE", "/backup-plans/" + backupHTTPMissingID},
@@ -76,7 +76,10 @@ func TestBackupsHTTPPermissionsAndRoutePrecedence(t *testing.T) {
 	} {
 		t.Run(route.method+route.path, func(t *testing.T) {
 			apiError(t, request(t, f.handler, route.method, "/api/v1"+route.path, `{}`, nil, "", publicURL), 401, "unauthenticated")
-			apiError(t, request(t, f.handler, route.method, "/api/v1"+route.path, `{}`, viewer, csrf, publicURL), 403, "forbidden")
+			if route.method != "GET" {
+				apiError(t, request(t, f.handler, route.method, "/api/v1"+route.path, `{}`, second, "", publicURL), 403, "forbidden")
+				apiError(t, request(t, f.handler, route.method, "/api/v1"+route.path, `{}`, second, csrf, "https://foreign.test"), 403, "forbidden")
+			}
 		})
 	}
 	assertHTTPStatus(t, request(t, f.handler, "GET", "/api/v1/backups/exports", "", nil, "", ""), 405)
@@ -87,7 +90,7 @@ func TestBackupsHTTPPermissionsAndRoutePrecedence(t *testing.T) {
 
 func TestBackupsHTTPExportAcceptanceAndStrictInput(t *testing.T) {
 	f := newBackupHTTP(t)
-	admin, csrf := login(t, f.fixture, "admin")
+	admin, csrf := login(t, f.fixture, "admin-two")
 	for _, body := range []string{`{}`, `{"categories":null}`, `{"categories":[]}`, `{"categories":["configuration","configuration"]}`, `{"categories":["unknown"]}`} {
 		r := request(t, f.handler, "POST", "/api/v1/backups/exports", body, admin, csrf, publicURL)
 		object := apiError(t, r, 400, "validation_failed")
@@ -130,6 +133,8 @@ func TestBackupsHTTPExportAcceptanceAndStrictInput(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	collectionContains(t, request(t, f.handler, "GET", "/api/v1/tasks", "", admin, "", ""), "tasks", id)
+	first, _ := login(t, f.fixture, "admin")
+	assertHTTPStatus(t, request(t, f.handler, "GET", "/api/v1/tasks/"+id, "", first, "", ""), 200)
 	stop()
 	<-done
 	for range 32 {
@@ -251,7 +256,7 @@ func TestBackupsHTTPArtifactRangeExpiryPasswordAndAudit(t *testing.T) {
 
 func TestBackupsHTTPPlanCRUDPreviewPaginationAndBusy(t *testing.T) {
 	f := newBackupHTTP(t)
-	admin, csrf := login(t, f.fixture, "admin")
+	admin, csrf := login(t, f.fixture, "admin-two")
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -262,6 +267,8 @@ func TestBackupsHTTPPlanCRUDPreviewPaginationAndBusy(t *testing.T) {
 	id := objectID(t, decodeObject(t, response))
 	base := "/api/v1/backup-plans/" + id
 	assertHTTPStatus(t, request(t, f.handler, "GET", base, "", admin, "", ""), 200)
+	first, _ := login(t, f.fixture, "admin")
+	assertHTTPStatus(t, request(t, f.handler, "GET", base, "", first, "", ""), 200)
 	response = request(t, f.handler, "POST", "/api/v1/backup-plans/preview", `{"cron":"0 3 * * *"}`, admin, csrf, publicURL)
 	assertHTTPStatus(t, response, 200)
 	preview := decodeObject(t, response)

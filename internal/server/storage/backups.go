@@ -37,12 +37,11 @@ CREATE INDEX backup_tasks_artifact_cleanup ON backup_tasks(artifact_cleanup_afte
 CREATE TABLE inbox_notifications (
  sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL,
  kind TEXT NOT NULL CHECK(kind IN ('task','alert')), source_id TEXT NOT NULL,
- transition TEXT NOT NULL, audience TEXT NOT NULL CHECK(audience IN ('admin','authenticated')),
+ transition TEXT NOT NULL,
  severity TEXT NOT NULL, created_at TEXT NOT NULL, details_json TEXT NOT NULL,
  UNIQUE(kind,source_id,transition)
 );
 CREATE INDEX inbox_notifications_history ON inbox_notifications(created_at DESC,id DESC);
-CREATE INDEX inbox_notifications_audience ON inbox_notifications(audience,created_at,id);
 CREATE TABLE inbox_reads (
  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
  notification_id TEXT NOT NULL REFERENCES inbox_notifications(id) ON DELETE CASCADE,

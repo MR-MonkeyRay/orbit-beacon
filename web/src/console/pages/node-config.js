@@ -55,7 +55,7 @@ function valuesFor(config) {
   ]);
 }
 
-export function configTab(node, config, editable) {
+export function configTab(node, config) {
   const values = valuesFor(config);
   const raw = h('details', {class: 'json-toggle'}, h('summary', null, 'Raw configuration'), h('pre', {class: 'code'}, JSON.stringify(config, null, 2)));
   const revision = h('span', {class: 'revision'}, `Revision ${config.revision}`);
@@ -67,7 +67,6 @@ export function configTab(node, config, editable) {
     ['Error fields', application?.error?.fields && Object.keys(application.error.fields).length ? JSON.stringify(application.error.fields) : null]
   ]);
   const lede = h('p', {class: 'lede'}, 'The agent receives saved values with its next report. Application state updates when the agent reports again.');
-  if (!editable) return panel('Desired configuration', {action: revision}, h('div', {class: 'stack'}, applicationFacts, lede, values, raw));
 
   const interfaces = selectionEditor(config.interfaces, 'interfaces');
   const diskPaths = selectionEditor(config.disk_paths, 'disk_paths');

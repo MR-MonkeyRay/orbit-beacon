@@ -14,9 +14,9 @@ import (
 	"orbitbeacon/internal/server/nodes"
 )
 
-func TestHistoryAPIValidationViewerAndDisabledHistory(t *testing.T) {
+func TestHistoryAPIValidationSecondAdministratorAndDisabledHistory(t *testing.T) {
 	f := newHTTP(t, 5)
-	viewer, _ := login(t, f, "viewer")
+	second, _ := login(t, f, "admin-two")
 	node, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: "history"})
 	if err != nil {
 		t.Fatal(err)
@@ -26,16 +26,16 @@ func TestHistoryAPIValidationViewerAndDisabledHistory(t *testing.T) {
 	apiError(t, request(t, f.handler, http.MethodGet, route+valid, "", nil, "", ""), 401, "unauthenticated")
 	for _, query := range []string{"", "?metric=cpu_percent", "?range=1h", "?metric=unknown&range=1h", "?metric=cpu_percent&range=48h", "?metric=cpu_percent&range=1H", "?metric=cpu_percent&metric=load1&range=1h", "?metric=cpu_percent&range=1h&range=6h", "?metric=cpu_percent&range=1h&extra=x", "?metric=cpu_percent&range=%zz"} {
 		t.Run(query, func(t *testing.T) {
-			apiError(t, request(t, f.handler, http.MethodGet, route+query, "", viewer, "", ""), 400, "validation_failed")
+			apiError(t, request(t, f.handler, http.MethodGet, route+query, "", second, "", ""), 400, "validation_failed")
 		})
 	}
-	apiError(t, request(t, f.handler, http.MethodGet, "/api/v1/nodes/00000000-0000-4000-8000-000000000001/history"+valid, "", viewer, "", ""), 404, "node_not_found")
-	response := request(t, f.handler, http.MethodGet, route+valid, "", viewer, "", "")
+	apiError(t, request(t, f.handler, http.MethodGet, "/api/v1/nodes/00000000-0000-4000-8000-000000000001/history"+valid, "", second, "", ""), 404, "node_not_found")
+	response := request(t, f.handler, http.MethodGet, route+valid, "", second, "", "")
 	assertHTTPStatus(t, response, 200)
 	if !strings.Contains(response.Body.String(), `"points":[]`) {
 		t.Fatalf("response=%s", response.Body)
 	}
-	assertHTTPStatus(t, request(t, f.handler, http.MethodPost, route+valid, "", viewer, "", ""), 405)
+	assertHTTPStatus(t, request(t, f.handler, http.MethodPost, route+valid, "", second, "", ""), 405)
 }
 
 func TestHistoryHTTPIngestFlushTiersAndDeleteVisibility(t *testing.T) {

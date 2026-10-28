@@ -248,7 +248,7 @@ func TestArchiveRejectsOtherMainSchemas(t *testing.T) {
 		for _, version := range []struct {
 			name  string
 			value int
-		}{{"schema16", 16}, {"future", storage.CurrentSchemaVersion + 1}} {
+		}{{"schema16", 16}, {"schema17", 17}, {"future", storage.CurrentSchemaVersion + 1}} {
 			t.Run(string(category)+"/"+version.name, func(t *testing.T) {
 				m := framingManifest([]Category{category})
 				for _, name := range archiveNames(m.Categories) {

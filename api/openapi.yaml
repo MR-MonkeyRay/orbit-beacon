@@ -8,12 +8,11 @@ info:
     plans and a shared notification inbox. Agent upgrades are not available.
     Browser reads require a session unless explicitly marked otherwise; agent
     routes use separate Bearer credentials and never accept browser sessions.
-    Browser mutations require an administrator except logout, own-password changes
-    and the two own-inbox read-state routes. All browser mutations require the
-    configured HTTPS Origin and a session-bound CSRF token; login requires Origin.
-    Backup plans, tasks, downloads and password reads are administrator-only,
-    including GET requests. Viewers can read alert notifications and mark only
-    their own visible notifications read; they cannot read backup notifications.
+    Every console account is an equal administrator with full management access.
+    All browser mutations require the configured HTTPS Origin and a session-bound
+    CSRF token; login requires Origin. Backup plans, tasks, downloads, recovery
+    passwords and shared task/alert notifications are available to every signed-in
+    administrator. Notification read state is independent for each account.
     Canonical origins lowercase DNS names, normalize IPv6 and omit default port 443;
     request Host and forwarded headers do not establish Origin trust. Client IP
     policies use X-Forwarded-For only when the direct peer matches trusted_proxies
@@ -35,7 +34,7 @@ info:
     public reads, never trigger cleanup. Login (session.create) and logout
     (session.delete) are audited; agent enrollment claims are audited without an
     actor_id and with details.actor_kind "agent". Password changes revoke every
-    session of the affected user; user role changes also revoke that user's sessions.
+    session of the affected user; renaming an account preserves its sessions.
     HTML responses use a self-only CSP with per-file SHA-256 hashes for inline
     scripts, data images, no inline styles, no objects or base URI, same-origin
     forms, frame-ancestors 'none' and X-Frame-Options DENY. HSTS max-age=31536000
@@ -43,6 +42,8 @@ info:
     The data directory must be effective-user-owned and private (0700); SQLite,
     its sidecars and secrets.key must be owned regular 0600 files, never symlinks.
     Linux validates that the backing mount is local and writable.
+    The main database and archives require schema 18 exactly; schemas 16 and 17
+    are rejected without migration or automatic removal of existing files.
   license:
     name: GNU General Public License v3.0
     identifier: GPL-3.0
@@ -218,7 +219,7 @@ paths:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
       responses:
-        '204': {description: Session revoked and cookie expired. Available to either role.}
+        '204': {description: Session revoked and cookie expired.}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/me:
     get:
@@ -234,7 +235,7 @@ paths:
     patch:
       operationId: changeOwnPassword
       description: |
-        Available to either role. The current password proves ownership. Attempts
+        Only the current account can change its password; the current password proves ownership. Attempts
         are limited per user with burst 5 and one token per 60 seconds, charged
         before Argon2. An incorrect current password returns 400
         invalid_old_password and leaves the authenticated session valid. A missing
@@ -265,7 +266,7 @@ paths:
   /api/v1/users:
     get:
       operationId: listUsers
-      description: Available to authenticated administrators and viewers; credential fields are never returned. Returns the complete, unpaginated user list.
+      description: Available to every authenticated administrator; credential fields are never returned. Returns the complete, unpaginated user list.
       responses:
         '200':
           description: User collection.
@@ -282,7 +283,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createUser
-      description: Administrator only. An existing exact username returns 409 username_conflict without creating a user.
+      description: Creates another equal administrator. Usernames are matched exactly without trimming or case folding. An existing username returns 409 username_conflict without creating an account. Unknown request fields return 400 invalid_json.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -293,17 +294,19 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [username, password, role]
+              required: [username, password]
               properties:
                 username: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 128}
                 password: {type: string, x-minLengthBytes: 8, x-maxLengthBytes: 1024}
-                role: {type: string, enum: [admin, viewer]}
       responses:
         '201':
           description: User created.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/User'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/users/{id}:
@@ -311,7 +314,7 @@ paths:
       - $ref: '#/components/parameters/ResourceID'
     get:
       operationId: getUser
-      description: Available to authenticated administrators and viewers; no credential fields.
+      description: Available to every authenticated administrator; no credential fields.
       responses:
         '200':
           description: User found.
@@ -322,7 +325,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     patch:
       operationId: updateUser
-      description: Administrator only. Username and role are optional; omitted fields remain unchanged. An existing exact username returns 409 username_conflict without changing the user or sessions. Changing role revokes all sessions of the affected user. The last administrator cannot be demoted.
+      description: Renames an administrator. Username is optional; omission leaves it unchanged. An existing exact username returns 409 username_conflict without changing the account or sessions. Renaming preserves all sessions, including the current one. Unknown request fields return 400 invalid_json. Password changes are available only at /api/v1/me/password with the current password.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -335,7 +338,6 @@ paths:
               additionalProperties: false
               properties:
                 username: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 128}
-                role: {type: string, enum: [admin, viewer]}
       responses:
         '200':
           description: Updated credential-free user.
@@ -343,24 +345,28 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/User'}
         '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
     delete:
       operationId: deleteUser
-      description: Administrator only. Revokes the user's sessions and deletes the user atomically. The last administrator cannot be deleted.
+      description: Deletes an administrator and revokes all their sessions atomically. The last administrator cannot be deleted and returns 409 last_administrator without changing the account, sessions or audit history. Self deletion is allowed when another administrator remains; after 204 the current session is invalid.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
       responses:
         '204': {description: User deleted and sessions revoked.}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/groups:
     get:
       operationId: listGroups
-      description: Available to authenticated administrators and viewers. Returns the complete, unpaginated group list.
+      description: Available to every authenticated administrator. Returns the complete, unpaginated group list.
       responses:
         '200':
           description: Group collection.
@@ -396,7 +402,7 @@ paths:
       - $ref: '#/components/parameters/ResourceID'
     get:
       operationId: getGroup
-      description: Available to authenticated administrators and viewers.
+      description: Available to every authenticated administrator.
       responses:
         '200':
           description: Group found.
@@ -435,7 +441,7 @@ paths:
   /api/v1/notification-channels:
     get:
       operationId: listNotificationChannels
-      description: Administrators and viewers may list channels. Secrets and full webhook URLs are never returned; secret_set and config.url_set indicate encrypted material is present.
+      description: Administrators may list channels. Secrets and full webhook URLs are never returned; secret_set and config.url_set indicate encrypted material is present.
       responses:
         '200':
           description: Channels ordered by creation time then ID; at most 20.
@@ -473,7 +479,7 @@ paths:
       - $ref: '#/components/parameters/ResourceID'
     get:
       operationId: getNotificationChannel
-      description: Administrators and viewers may read channel metadata without revealing notification credentials.
+      description: Administrators may read channel metadata without revealing notification credentials.
       responses:
         '200':
           description: Channel without secret material.
@@ -533,7 +539,7 @@ paths:
   /api/v1/notification-deliveries:
     get:
       operationId: listNotificationDeliveries
-      description: Administrators and viewers may read recent deliveries without payloads, credentials or remote response bodies. Ordered by created_at and ID descending; terminal rows retained for 30 days. Floods retain a summary row with coalesced_count.
+      description: Administrators may read recent deliveries without payloads, credentials or remote response bodies. Ordered by created_at and ID descending; terminal rows retained for 30 days. Floods retain a summary row with coalesced_count.
       parameters:
         - name: limit
           in: query
@@ -558,7 +564,7 @@ paths:
   /api/v1/alert-rules:
     get:
       operationId: listAlertRules
-      description: Administrators and viewers can read all rules. At most 200 rules exist, including disabled rules. Ordered by creation time then UUID.
+      description: Administrators can read all rules. At most 200 rules exist, including disabled rules. Ordered by creation time then UUID.
       responses:
         '200':
           description: Rule collection.
@@ -595,7 +601,7 @@ paths:
       - $ref: '#/components/parameters/ResourceID'
     get:
       operationId: getAlertRule
-      description: Administrators and viewers can read a rule. Missing rules return 404.
+      description: Administrators can read a rule. Missing rules return 404.
       responses:
         '200':
           description: Rule.
@@ -641,7 +647,7 @@ paths:
     get:
       operationId: listAlerts
       description: |
-        Administrators and viewers can read alert episodes. Ordered by started_at
+        Administrators can read alert episodes. Ordered by started_at
         DESC, id DESC with keyset pagination. Names are joined from current rules
         and nodes, falling back to event snapshots after deletion. Unknown,
         repeated or empty query parameters return 400. Resolved events are kept
@@ -674,7 +680,7 @@ paths:
   /api/v1/alerts/summary:
     get:
       operationId: getAlertSummary
-      description: Administrators and viewers can read firing counts and up to five newest firing episodes from one consistent read snapshot. Severity comes from the stored rule snapshot; missing or unrecognized severity counts as unknown. Newest episodes use the same fields as listAlerts, ordered by started_at DESC, id DESC.
+      description: Administrators can read firing counts and up to five newest firing episodes from one consistent read snapshot. Severity comes from the stored rule snapshot; missing or unrecognized severity counts as unknown. Newest episodes use the same fields as listAlerts, ordered by started_at DESC, id DESC.
       responses:
         '200':
           description: Firing alert summary.
@@ -687,7 +693,7 @@ paths:
       - $ref: '#/components/parameters/ResourceID'
     get:
       operationId: getAlertEvent
-      description: Administrators and viewers can read one episode directly, without searching history pages. Uses the same current-name joins and deleted-source snapshot fallbacks as listAlerts. Query parameters are rejected. Reading does not mark any inbox notification read.
+      description: Administrators can read one episode directly, without searching history pages. Uses the same current-name joins and deleted-source snapshot fallbacks as listAlerts. Query parameters are rejected. Reading does not mark any inbox notification read.
       responses:
         '200':
           description: Alert episode.
@@ -743,7 +749,7 @@ paths:
   /api/v1/backup-plans:
     get:
       operationId: listBackupPlans
-      description: Administrator only, including reads. Credential-free plans ordered by created_at DESC, id DESC. Only limit and before are accepted; unknown, repeated, empty or malformed query parameters return 400 invalid_input. Timezone metadata describes the Server process, not the browser.
+      description: Available to every authenticated administrator. Credential-free plans ordered by created_at DESC, id DESC. Only limit and before are accepted; unknown, repeated, empty or malformed query parameters return 400 invalid_input. Timezone metadata describes the Server process, not the browser.
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/EventBefore'
@@ -755,7 +761,6 @@ paths:
               schema: {$ref: '#/components/schemas/BackupPlanPage'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
-        '403': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
     post:
@@ -802,7 +807,6 @@ paths:
               schema: {$ref: '#/components/schemas/BackupPlan'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
-        '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
@@ -895,7 +899,6 @@ paths:
               schema: {$ref: '#/components/schemas/BackupTaskPage'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
-        '403': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/tasks/{id}:
     parameters:
@@ -911,7 +914,6 @@ paths:
               schema: {$ref: '#/components/schemas/BackupTask'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
-        '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/tasks/{id}/download:
@@ -940,7 +942,6 @@ paths:
         '304': {description: Not modified according to conditional request headers.}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
-        '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         '409':
           description: artifact_not_ready; manual export has not succeeded or has no artifact expiry yet.
@@ -1004,13 +1005,12 @@ paths:
     get:
       operationId: listInboxNotifications
       description: |
-        Administrators see shared task and alert notifications; viewers see only
-        authenticated-audience alert notifications. Each user's read state is
-        independent; new users can read retained shared events. Notifications are
+        All administrators see shared task and alert notifications. Each account's
+        read state is independent; new accounts can read retained shared events. Notifications are
         retained for 90 days. Ordered by created_at DESC, id DESC, with keyset
         pagination. Unknown, repeated, empty or malformed query parameters return
         400 validation_failed. GET never marks read and never returns passwords,
-        credentials or internal sequence numbers. read_through covers ALL visible
+        credentials or internal sequence numbers. read_through covers ALL retained
         notifications in the same read transaction, not just this page or unread
         filter, and is the UUID at the greatest insertion sequence, not the greatest
         created_at or UUID. Use it unchanged for read-all.
@@ -1020,10 +1020,10 @@ paths:
         - name: unread
           in: query
           schema: {type: boolean, default: false}
-          description: Only literal true and false are accepted; true filters to the current user's unread visible notifications.
+          description: Only literal true and false are accepted; true filters to the current account's unread notifications.
       responses:
         '200':
-          description: Visible inbox page and read-all watermark.
+          description: Inbox page and read-all watermark.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/InboxPage'}
@@ -1033,10 +1033,10 @@ paths:
   /api/v1/notifications/summary:
     get:
       operationId: getInboxSummary
-      description: Session required for admins and viewers. Returns the current user's visible unread count and greatest insertion-sequence notification UUID in one read transaction, without marking read. This is inbox unread state, not a firing-alert count. Query parameters are rejected. Viewer results never include task notifications.
+      description: Session required. Returns the current account's unread count and greatest insertion-sequence notification UUID in one read transaction, without marking read. This is inbox unread state, not a firing-alert count. Query parameters are rejected.
       responses:
         '200':
-          description: Consistent visible unread summary.
+          description: Consistent unread summary.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/InboxSummary'}
@@ -1048,10 +1048,10 @@ paths:
       - $ref: '#/components/parameters/ResourceID'
     get:
       operationId: getInboxNotification
-      description: Session required for admins and viewers, with the same visibility as the list. Missing and invisible notifications both return 404 not_found. Returns an immutable safe snapshot even when its source task/alert has expired or been deleted; snapshot availability flags are historical, so fetch task detail for current availability. GET never marks read. Query parameters are rejected.
+      description: Session required. Missing notifications return 404 not_found. Returns an immutable safe snapshot even when its source task/alert has expired or been deleted; snapshot availability flags are historical, so fetch task detail for current availability. GET never marks read. Query parameters are rejected.
       responses:
         '200':
-          description: Visible notification snapshot and current user's read flag.
+          description: Notification snapshot and current account's read flag.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/InboxNotification'}
@@ -1064,7 +1064,7 @@ paths:
       - $ref: '#/components/parameters/ResourceID'
     patch:
       operationId: markInboxNotificationRead
-      description: Admins and viewers may mark only their own visible notification read. Requires Origin and CSRF; no client-supplied user identity is accepted. Idempotent; missing and invisible notifications both return 404 not_found. Only read true is supported. Query parameters are rejected.
+      description: Administrators may mark only their own notification read. Requires Origin and CSRF; no client-supplied user identity is accepted. Idempotent; missing notifications return 404 not_found. Only read true is supported. Query parameters are rejected.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -1089,12 +1089,12 @@ paths:
     post:
       operationId: markInboxNotificationsRead
       description: |
-        Admins and viewers may mark their own visible notifications read; requires
+        Administrators may mark their own notifications read; requires
         Origin and CSRF. through must be a non-null read_through UUID previously
-        returned by the list. The Server resolves that currently visible record's
-        insertion sequence and marks only visible records at or below it. Newer
+        returned by the list. The Server resolves that retained record's
+        insertion sequence and marks only records at or below it. Newer
         insertions remain unread even with identical timestamps, smaller UUIDs or
-        a backwards-moving clock. Missing, cleaned-up or invisible watermarks return
+        a backwards-moving clock. Missing or cleaned-up watermarks return
         404 not_found without marking anything. Invalid UUID returns 400 with
         fields.through. No client user ID is accepted. Query parameters are rejected.
       parameters:
@@ -1111,7 +1111,7 @@ paths:
               properties:
                 through: {type: string, format: uuid}
       responses:
-        '204': {description: Current user's visible notifications through the watermark marked read.}
+        '204': {description: Current account's notifications through the watermark marked read.}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -1120,7 +1120,7 @@ paths:
   /api/v1/audit:
     get:
       operationId: listAuditEvents
-      description: Available to authenticated administrators and viewers. Returns persisted events ordered by created_at DESC, id DESC. Use next_cursor as before for stable traversal when newer events arrive; before ignores offset after limit/offset validation. Details are JSON objects and contain no credentials.
+      description: Available to every authenticated administrator. Returns persisted events ordered by created_at DESC, id DESC. Use next_cursor as before for stable traversal when newer events arrive; before ignores offset after limit/offset validation. Details are JSON objects and contain no credentials.
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
@@ -1261,7 +1261,7 @@ paths:
       - $ref: '#/components/parameters/NodeID'
     get:
       operationId: getNodeHistory
-      description: Viewer or administrator. Best-effort history, flushed about once per minute. Missing or failed measurements and gaps produce no points. Network rates sum successful interfaces. Disk percentage uses total used bytes divided by total capacity across successful selected disks. Both query parameters are required exactly once; unknown parameters are rejected. Ranges 1h and 6h use 1-minute buckets, 24h and 7d use 5-minute buckets, and 30d uses 1-hour buckets. Rollup averages are weighted by measurement count. A disabled history store returns an empty points array. Unknown nodes return node_not_found.
+      description: Available to every authenticated administrator. Best-effort history, flushed about once per minute. Missing or failed measurements and gaps produce no points. Network rates sum successful interfaces. Disk percentage uses total used bytes divided by total capacity across successful selected disks. Both query parameters are required exactly once; unknown parameters are rejected. Ranges 1h and 6h use 1-minute buckets, 24h and 7d use 5-minute buckets, and 30d uses 1-hour buckets. Rollup averages are weighted by measurement count. A disabled history store returns an empty points array. Unknown nodes return node_not_found.
       parameters:
         - name: metric
           in: query
@@ -1291,7 +1291,7 @@ paths:
       - $ref: '#/components/parameters/NodeID'
     get:
       operationId: getNodeTraffic
-      description: Viewer or administrator. Returns UTC daily traffic for the last N days including today and totals for the current UTC billing cycle. The optional days parameter defaults to 30 and must be supplied exactly once as an integer from 1 through 400; unknown parameters are rejected. Daily results merge retained daily rollups with hourly data and include only days with traffic. Unknown nodes return node_not_found.
+      description: Available to every authenticated administrator. Returns UTC daily traffic for the last N days including today and totals for the current UTC billing cycle. The optional days parameter defaults to 30 and must be supplied exactly once as an integer from 1 through 400; unknown parameters are rejected. Daily results merge retained daily rollups with hourly data and include only days with traffic. Unknown nodes return node_not_found.
       parameters:
         - name: days
           in: query
@@ -1315,7 +1315,7 @@ paths:
       - $ref: '#/components/parameters/NodeID'
     get:
       operationId: getNodeProbes
-      description: Viewer or administrator. Returns one entry per currently configured probe target in desired-config order; results for targets removed from configuration are not returned. Latest results and hourly counters are persisted on the coalesced ingest transaction cadence, so responses may lag reports by up to about 30 seconds. The 24-hour window includes UTC hours greater than or equal to the current UTC hour minus 23 hours, with no separate upper cutoff. Unknown nodes return node_not_found.
+      description: Available to every authenticated administrator. Returns one entry per currently configured probe target in desired-config order; results for targets removed from configuration are not returned. Latest results and hourly counters are persisted on the coalesced ingest transaction cadence, so responses may lag reports by up to about 30 seconds. The 24-hour window includes UTC hours greater than or equal to the current UTC hour minus 23 hours, with no separate upper cutoff. Unknown nodes return node_not_found.
       responses:
         '200':
           description: Current service-probe states and 24-hour uptime aggregates.
@@ -1330,7 +1330,7 @@ paths:
       - $ref: '#/components/parameters/NodeID'
     get:
       operationId: getNodeLatest
-      description: Viewer or administrator. Returns the latest accepted in-memory report for the current node identity, without credentials, run_generation or session_id. A missing node, missing report since server startup, disabled node or invalidated identity returns 404 node_not_found. Values are the latest sample and may be stale; received_at is server reception time, not a liveness guarantee. System is null when the report omitted it; agent_version remains available on the persisted node view.
+      description: Available to every authenticated administrator. Returns the latest accepted in-memory report for the current node identity, without credentials, run_generation or session_id. A missing node, missing report since server startup, disabled node or invalidated identity returns 404 node_not_found. Values are the latest sample and may be stale; received_at is server reception time, not a liveness guarantee. System is null when the report omitted it; agent_version remains available on the persisted node view.
       responses:
         '200':
           description: Latest private telemetry sample.
@@ -1344,7 +1344,7 @@ paths:
       - $ref: '#/components/parameters/NodeID'
     get:
       operationId: getNodePublicSettings
-      description: Available to authenticated administrators and viewers. Returns the independent public settings, including for pending or disabled nodes; no values are filled from internal node metadata.
+      description: Available to every authenticated administrator. Returns the independent public settings, including for pending or disabled nodes; no values are filled from internal node metadata.
       responses:
         '200':
           description: Complete public settings; legacy empty settings default to disabled and empty text.
@@ -1799,7 +1799,7 @@ components:
         application/octet-stream:
           schema: {type: string, format: binary}
     Error:
-      description: Structured failure. Invalid JSON/input returns 400, invalid credentials 401, role/Origin/CSRF failures 403, missing resources 404, plan-busy/secret/enrollment/identity/username conflicts 409, expired or missing backup artifacts/passwords 410, bodies above 64 KiB 413, unsupported agent protocol 426, rate limiting or backup queue capacity 429, and retryable SQLite contention 503 storage_busy. Unsupported methods return 405 with Allow before authentication; unknown API routes return 404. No API error returns the SPA shell.
+      description: Structured failure. Invalid JSON/input returns 400, invalid credentials 401, browser Origin/CSRF failures or disabled-node agent requests 403, missing resources 404, plan-busy/secret/enrollment/identity/username or last-administrator conflicts 409, expired or missing backup artifacts/passwords 410, bodies above 64 KiB 413, unsupported agent protocol 426, rate limiting or backup queue capacity 429, and retryable SQLite contention 503 storage_busy. Unsupported methods return 405 with Allow before authentication; unknown API routes return 404. No API error returns the SPA shell.
       headers:
         X-Request-ID:
           schema: {type: string, format: uuid}
@@ -2135,14 +2135,14 @@ components:
         notifications: {type: array, items: {$ref: '#/components/schemas/InboxNotification'}}
         has_more: {type: boolean}
         next_cursor: {type: string, description: Present only when has_more is true; pass as before.}
-        read_through: {type: [string, 'null'], format: uuid, description: 'UUID of the maximum insertion-sequence record among ALL visible notifications in the same read transaction, regardless of page or unread filter. Null only when no visible records exist. Not a sortable UUID or timestamp; insertion sequence is never exposed.'}
+        read_through: {type: [string, 'null'], format: uuid, description: 'UUID of the maximum insertion-sequence record among ALL retained notifications in the same read transaction, regardless of page or unread filter. Null only when no retained records exist. Not a sortable UUID or timestamp; insertion sequence is never exposed.'}
     InboxSummary:
       type: object
       additionalProperties: false
       required: [unread_count, latest_id]
       properties:
-        unread_count: {type: integer, format: int64, minimum: 0, description: 'Count of the current user''s visible unread notifications, not firing episodes.'}
-        latest_id: {type: [string, 'null'], format: uuid, description: 'Greatest insertion-sequence visible notification UUID, including read records; null when no visible notifications exist. Read in the same transaction as unread_count.'}
+        unread_count: {type: integer, format: int64, minimum: 0, description: 'Count of the current account''s unread notifications, not firing episodes.'}
+        latest_id: {type: [string, 'null'], format: uuid, description: 'Greatest insertion-sequence notification UUID, including read records; null when no retained notifications exist. Read in the same transaction as unread_count.'}
     NotificationChannelConfig:
       oneOf:
         - type: object
@@ -2334,11 +2334,10 @@ components:
     User:
       type: object
       additionalProperties: false
-      required: [id, username, role, created_at]
+      required: [id, username, created_at]
       properties:
         id: {type: string, format: uuid}
-        username: {type: string}
-        role: {type: string, enum: [admin, viewer]}
+        username: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 128}
         created_at: {type: string, format: date-time, description: UTC RFC3339.}
     Group:
       type: object

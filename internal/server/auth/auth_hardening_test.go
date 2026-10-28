@@ -138,7 +138,7 @@ func TestPasswordHashingDoesNotHoldSQLiteWriter(t *testing.T) {
 		random := newBlockingReader(52)
 		service := auth.NewService(db, auth.Options{Now: func() time.Time { return *now }, Random: random})
 		assertWriterAvailableDuringEntropy(t, db, random, func() error {
-			_, err := service.CreateUser(context.Background(), "viewer", initialPassword, auth.RoleViewer)
+			_, err := service.CreateUser(context.Background(), "admin-two", initialPassword)
 			return err
 		})
 	})

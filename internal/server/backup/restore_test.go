@@ -15,6 +15,7 @@ import (
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/history"
+	"orbitbeacon/internal/server/inbox"
 	"orbitbeacon/internal/server/secretbox"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
@@ -60,7 +61,7 @@ func restoreFixture(t *testing.T, marker string) string {
 		q string
 		a []any
 	}{
-		{`INSERT INTO users(id,username,password_hash,role,created_at) VALUES(?,?,?,'admin',?)`, []any{restoreUser, marker, hash, at}},
+		{`INSERT INTO users(id,username,password_hash,created_at) VALUES(?,?,?,?)`, []any{restoreUser, marker, hash, at}},
 		{`INSERT INTO nodes(id,name,status,token_hash,installation_id,first_enrolled_at,last_seen,system,run_generation,report_session_id,desired_revision,created_at) VALUES(?,?,'online',?,'restore-installation',?,?,?,'17','55555555-5555-4555-8555-555555555555',19,?)`, []any{restoreNode, marker, bytes.Repeat([]byte{3}, 32), at, at, fmt.Sprintf(`{"hostname":%q}`, marker), at}},
 		{`INSERT INTO audit_events(id,actor_id,action,target_id,created_at,details) VALUES('66666666-6666-4666-8666-666666666666',NULL,'fixture',NULL,?,?)`, []any{at, fmt.Sprintf(`{"marker":%q}`, marker)}},
 		{`INSERT INTO backup_plans(id,name,enabled,kind,categories_json,cron,destination_json,retain_count,next_run_at,created_at,updated_at) VALUES(?, 'plan',1,'local','["configuration"]','0 3 * * *','{"path":"/does/not/exist/on/new/machine"}',7,?,?,?)`, []any{restorePlan, at, at, at}},
@@ -230,6 +231,77 @@ func TestRestoreSevenCategoryCombinations(t *testing.T) {
 				t.Fatal("authentication/config fence lost")
 			}
 		})
+	}
+}
+
+func TestRestorePreservesAdministratorLoginsAndIndividualInboxReads(t *testing.T) {
+	ctx := context.Background()
+	source := restoreFixture(t, "admin-one")
+	db, err := storage.Open(ctx, filepath.Join(source, "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	accounts := auth.NewService(db, auth.Options{})
+	second, err := accounts.CreateUser(ctx, "admin-two", "second administrator password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstSession, err := accounts.Login(ctx, "admin-one", "restore-fixture-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSession, err := accounts.Login(ctx, second.Username, "second administrator password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	alert := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	at := timekey.Format(time.Now().UTC())
+	if _, err = db.Exec(`INSERT INTO inbox_notifications(id,kind,source_id,transition,severity,created_at,details_json) VALUES(?,'task','historical-task','succeeded','info',?,'{}'),(?,'alert','historical-alert','firing','warning',?,'{}')`, task, at, alert, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO inbox_reads(user_id,notification_id,read_at) VALUES(?,?,?),(?,?,?)`, restoreUser, task, at, second.ID, alert, at); err != nil {
+		t.Fatal(err)
+	}
+	archive, password := restoreArchive(t, source, []Category{Configuration, Events})
+	target := framingTempDir(t)
+	if _, err = Restore(ctx, target, archive, password, false); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := storage.Open(ctx, filepath.Join(target, "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	restoredAccounts := auth.NewService(restored, auth.Options{})
+	for _, session := range []auth.Session{firstSession, secondSession} {
+		if _, err = restoredAccounts.Authenticate(ctx, session.Token); !errors.Is(err, auth.ErrUnauthenticated) {
+			t.Fatalf("restored original session for %s: %v", session.User.ID, err)
+		}
+	}
+	for _, account := range []struct{ username, password, id, readID, unreadID string }{
+		{"admin-one", "restore-fixture-password", restoreUser, task, alert},
+		{second.Username, "second administrator password", second.ID, alert, task},
+	} {
+		session, err := restoredAccounts.Login(ctx, account.username, account.password)
+		if err != nil || session.User.ID != account.id {
+			t.Fatalf("restored administrator %s login=%+v err=%v", account.username, session.User, err)
+		}
+		notifications := inbox.New(restored)
+		who := inbox.Identity{UserID: account.id}
+		summary, err := notifications.Summary(ctx, who)
+		if err != nil || summary.UnreadCount != 1 {
+			t.Fatalf("restored administrator %s summary=%+v err=%v", account.username, summary, err)
+		}
+		read, err := notifications.Detail(ctx, who, account.readID)
+		if err != nil || !read.Read {
+			t.Fatalf("restored administrator %s read=%+v err=%v", account.username, read, err)
+		}
+		unread, err := notifications.Detail(ctx, who, account.unreadID)
+		if err != nil || unread.Read {
+			t.Fatalf("restored administrator %s unread=%+v err=%v", account.username, unread, err)
+		}
 	}
 }
 
@@ -459,7 +531,7 @@ func TestRestoreImportedEventsNeverOwnSecretsOrArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := timekey.Format(time.Now().UTC())
-	if _, err = db.Exec(`INSERT INTO inbox_notifications(id,kind,source_id,transition,audience,severity,created_at,details_json) VALUES('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','task',?,'succeeded','admin','info',?,'{}'),('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','alert','removed-event','resolved','authenticated','info',?,'{}')`, restoreTask, at, at); err != nil {
+	if _, err = db.Exec(`INSERT INTO inbox_notifications(id,kind,source_id,transition,severity,created_at,details_json) VALUES('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','task',?,'succeeded','info',?,'{}'),('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','alert','removed-event','resolved','info',?,'{}')`, restoreTask, at, at); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = db.Exec(`INSERT INTO inbox_reads(user_id,notification_id,read_at) VALUES(?,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',?)`, restoreUser, at); err != nil {

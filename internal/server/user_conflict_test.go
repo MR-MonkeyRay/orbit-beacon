@@ -8,19 +8,19 @@ import (
 func TestDuplicateUsernamesReturnConflictWithoutPartialChanges(t *testing.T) {
 	f := newHTTP(t, 5)
 	admin, csrf := login(t, f, "admin")
-	duplicate := request(t, f.handler, http.MethodPost, "/api/v1/users", `{"username":"admin","password":"`+password+`","role":"viewer"}`, admin, csrf, publicURL)
+	duplicate := request(t, f.handler, http.MethodPost, "/api/v1/users", `{"username":"admin","password":"`+password+`"}`, admin, csrf, publicURL)
 	apiError(t, duplicate, http.StatusConflict, "username_conflict")
-	created := request(t, f.handler, http.MethodPost, "/api/v1/users", `{"username":"managed-conflict","password":"`+password+`","role":"viewer"}`, admin, csrf, publicURL)
+	created := request(t, f.handler, http.MethodPost, "/api/v1/users", `{"username":"managed-conflict","password":"`+password+`"}`, admin, csrf, publicURL)
 	assertHTTPStatus(t, created, http.StatusCreated)
 	id := objectID(t, decodeObject(t, created))
 	managed, _ := login(t, f, "managed-conflict")
 	path := "/api/v1/users/" + id
-	conflict := request(t, f.handler, http.MethodPatch, path, `{"username":"admin","role":"admin"}`, admin, csrf, publicURL)
+	conflict := request(t, f.handler, http.MethodPatch, path, `{"username":"admin"}`, admin, csrf, publicURL)
 	apiError(t, conflict, http.StatusConflict, "username_conflict")
 	read := request(t, f.handler, http.MethodGet, path, "", admin, "", "")
 	assertHTTPStatus(t, read, http.StatusOK)
 	user := decodeObject(t, read)
-	if user["username"] != "managed-conflict" || user["role"] != "viewer" {
+	if user["username"] != "managed-conflict" {
 		t.Fatalf("conflict partially updated user: %+v", user)
 	}
 	assertHTTPStatus(t, request(t, f.handler, http.MethodGet, "/api/v1/me", "", managed, "", ""), http.StatusOK)

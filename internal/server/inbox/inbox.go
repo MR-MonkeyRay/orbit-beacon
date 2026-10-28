@@ -24,7 +24,6 @@ type Event struct {
 	Kind       string
 	SourceID   string
 	Transition string
-	Audience   string
 	Severity   string
 	CreatedAt  time.Time
 	Details    json.RawMessage
@@ -43,7 +42,6 @@ type Notification struct {
 
 type Identity struct {
 	UserID string
-	Admin  bool
 }
 type Filter struct {
 	Limit  int
@@ -67,7 +65,7 @@ func New(db *sql.DB) *Service { return &Service{db: db} }
 // Insert participates in its source transaction. Re-evaluating a source
 // transition is idempotent; other constraint violations still abort the caller.
 func Insert(ctx context.Context, tx *sql.Tx, event Event) error {
-	if (event.Kind != "task" && event.Kind != "alert") || (event.Audience != "admin" && event.Audience != "authenticated") || event.SourceID == "" || event.Transition == "" || event.CreatedAt.IsZero() {
+	if (event.Kind != "task" && event.Kind != "alert") || event.SourceID == "" || event.Transition == "" || event.CreatedAt.IsZero() {
 		return ErrInvalidInput
 	}
 	if len(event.Details) == 0 {
@@ -86,12 +84,11 @@ func Insert(ctx context.Context, tx *sql.Tx, event Event) error {
 	if !identity.ValidUUID(event.ID) {
 		return ErrInvalidInput
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO inbox_notifications(id,kind,source_id,transition,audience,severity,created_at,details_json) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(kind,source_id,transition) DO NOTHING`, event.ID, event.Kind, event.SourceID, event.Transition, event.Audience, event.Severity, timekey.Format(event.CreatedAt), string(event.Details))
+	_, err := tx.ExecContext(ctx, `INSERT INTO inbox_notifications(id,kind,source_id,transition,severity,created_at,details_json) VALUES(?,?,?,?,?,?,?) ON CONFLICT(kind,source_id,transition) DO NOTHING`, event.ID, event.Kind, event.SourceID, event.Transition, event.Severity, timekey.Format(event.CreatedAt), string(event.Details))
 	return err
 }
 
-const visible = `(n.audience='authenticated' OR (? AND n.audience='admin'))`
-const selectNotification = `SELECT n.id,n.kind,n.source_id,n.transition,n.severity,n.created_at,n.details_json,EXISTS(SELECT 1 FROM inbox_reads r WHERE r.user_id=? AND r.notification_id=n.id) FROM inbox_notifications n WHERE ` + visible
+const selectNotification = `SELECT n.id,n.kind,n.source_id,n.transition,n.severity,n.created_at,n.details_json,EXISTS(SELECT 1 FROM inbox_reads r WHERE r.user_id=? AND r.notification_id=n.id) FROM inbox_notifications n`
 
 type scanner interface{ Scan(...any) error }
 
@@ -110,9 +107,9 @@ func scan(row scanner) (Notification, error) {
 	return n, err
 }
 
-func latest(ctx context.Context, tx *sql.Tx, who Identity) (*string, error) {
+func latest(ctx context.Context, tx *sql.Tx) (*string, error) {
 	var id string
-	err := tx.QueryRowContext(ctx, `SELECT n.id FROM inbox_notifications n WHERE `+visible+` ORDER BY n.sequence DESC LIMIT 1`, who.Admin).Scan(&id)
+	err := tx.QueryRowContext(ctx, `SELECT n.id FROM inbox_notifications n ORDER BY n.sequence DESC LIMIT 1`).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -127,9 +124,11 @@ func (s *Service) List(ctx context.Context, who Identity, filter Filter) (Page, 
 		return Page{}, ErrInvalidInput
 	}
 	query := selectNotification
-	args := []any{who.UserID, who.Admin}
+	args := []any{who.UserID}
+	condition := ` WHERE `
 	if filter.Unread {
-		query += ` AND NOT EXISTS(SELECT 1 FROM inbox_reads r WHERE r.user_id=? AND r.notification_id=n.id)`
+		query += condition + `NOT EXISTS(SELECT 1 FROM inbox_reads r WHERE r.user_id=? AND r.notification_id=n.id)`
+		condition = ` AND `
 		args = append(args, who.UserID)
 	}
 	if filter.Before != "" {
@@ -137,7 +136,7 @@ func (s *Service) List(ctx context.Context, who Identity, filter Filter) (Page, 
 		if err != nil {
 			return Page{}, ErrInvalidInput
 		}
-		query += ` AND (n.created_at,n.id)<(?,?)`
+		query += condition + `(n.created_at,n.id)<(?,?)`
 		args = append(args, at, id)
 	}
 	query += ` ORDER BY n.created_at DESC,n.id DESC LIMIT ?`
@@ -147,7 +146,7 @@ func (s *Service) List(ctx context.Context, who Identity, filter Filter) (Page, 
 		return Page{}, err
 	}
 	defer tx.Rollback()
-	through, err := latest(ctx, tx, who)
+	through, err := latest(ctx, tx)
 	if err != nil {
 		return Page{}, err
 	}
@@ -190,11 +189,11 @@ func (s *Service) Summary(ctx context.Context, who Identity) (Summary, error) {
 	}
 	defer tx.Rollback()
 	var sum Summary
-	sum.LatestID, err = latest(ctx, tx, who)
+	sum.LatestID, err = latest(ctx, tx)
 	if err != nil {
 		return Summary{}, err
 	}
-	err = tx.QueryRowContext(ctx, `SELECT count(*) FROM inbox_notifications n WHERE `+visible+` AND NOT EXISTS(SELECT 1 FROM inbox_reads r WHERE r.user_id=? AND r.notification_id=n.id)`, who.Admin, who.UserID).Scan(&sum.UnreadCount)
+	err = tx.QueryRowContext(ctx, `SELECT count(*) FROM inbox_notifications n WHERE NOT EXISTS(SELECT 1 FROM inbox_reads r WHERE r.user_id=? AND r.notification_id=n.id)`, who.UserID).Scan(&sum.UnreadCount)
 	if err != nil {
 		return Summary{}, err
 	}
@@ -208,7 +207,7 @@ func (s *Service) Detail(ctx context.Context, who Identity, id string) (Notifica
 	if who.UserID == "" {
 		return Notification{}, ErrInvalidInput
 	}
-	return scan(s.db.QueryRowContext(ctx, selectNotification+` AND n.id=?`, who.UserID, who.Admin, id))
+	return scan(s.db.QueryRowContext(ctx, selectNotification+` WHERE n.id=?`, who.UserID, id))
 }
 
 func (s *Service) MarkRead(ctx context.Context, who Identity, id string, now time.Time) error {
@@ -221,7 +220,7 @@ func (s *Service) MarkRead(ctx context.Context, who Identity, id string, now tim
 	}
 	defer tx.Rollback()
 	var found string
-	if err = tx.QueryRowContext(ctx, `SELECT n.id FROM inbox_notifications n WHERE `+visible+` AND n.id=?`, who.Admin, id).Scan(&found); errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRowContext(ctx, `SELECT n.id FROM inbox_notifications n WHERE n.id=?`, id).Scan(&found); errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
 		return err
@@ -242,12 +241,12 @@ func (s *Service) MarkAllRead(ctx context.Context, who Identity, through string,
 	}
 	defer tx.Rollback()
 	var sequence int64
-	if err = tx.QueryRowContext(ctx, `SELECT n.sequence FROM inbox_notifications n WHERE `+visible+` AND n.id=?`, who.Admin, through).Scan(&sequence); errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRowContext(ctx, `SELECT n.sequence FROM inbox_notifications n WHERE n.id=?`, through).Scan(&sequence); errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO inbox_reads(user_id,notification_id,read_at) SELECT ?,n.id,? FROM inbox_notifications n WHERE `+visible+` AND n.sequence<=? ON CONFLICT(user_id,notification_id) DO NOTHING`, who.UserID, timekey.Format(now), who.Admin, sequence)
+	_, err = tx.ExecContext(ctx, `INSERT INTO inbox_reads(user_id,notification_id,read_at) SELECT ?,n.id,? FROM inbox_notifications n WHERE n.sequence<=? ON CONFLICT(user_id,notification_id) DO NOTHING`, who.UserID, timekey.Format(now), sequence)
 	if err != nil {
 		return err
 	}

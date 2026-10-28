@@ -23,7 +23,7 @@ func TestUTF8ByteBoundsAllowShortUnicodePasswordsAndRejectByteOverflow(t *testin
 		{"maximum-unicode-password", strings.Repeat("😀", 256), http.StatusCreated},
 		{"overflow-unicode-password", strings.Repeat("😀", 257), http.StatusBadRequest},
 	} {
-		body, err := json.Marshal(map[string]string{"username": input.username, "password": input.password, "role": "viewer"})
+		body, err := json.Marshal(map[string]string{"username": input.username, "password": input.password})
 		if err != nil {
 			t.Fatal(err)
 		}

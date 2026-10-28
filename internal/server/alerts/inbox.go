@@ -25,5 +25,5 @@ func insertInbox(ctx context.Context, tx *sql.Tx, n Notification, created time.T
 	if err != nil {
 		return err
 	}
-	return inbox.Insert(ctx, tx, inbox.Event{Kind: "alert", SourceID: n.EventID, Transition: n.State, Audience: "authenticated", Severity: n.Rule.Severity, CreatedAt: created, Details: details})
+	return inbox.Insert(ctx, tx, inbox.Event{Kind: "alert", SourceID: n.EventID, Transition: n.State, Severity: n.Rule.Severity, CreatedAt: created, Details: details})
 }

@@ -30,8 +30,6 @@ type serviceError string
 func (err serviceError) Error() string { return string(err) }
 
 const (
-	RoleAdmin                        = "admin"
-	RoleViewer                       = "viewer"
 	ErrAdminExists      serviceError = "administrator already exists"
 	ErrUnauthenticated  serviceError = "authentication required"
 	ErrWrongPassword    serviceError = "current password is incorrect"
@@ -54,7 +52,6 @@ var csrfEncoding = base64.RawURLEncoding.Strict()
 type User struct {
 	ID        string    `json:"id"`
 	Username  string    `json:"username"`
-	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -226,8 +223,8 @@ func validUsername(username string) bool {
 	return len(username) > 0 && len(username) <= 128 && strings.TrimSpace(username) != ""
 }
 
-func validUser(username, password, role string) bool {
-	return validUsername(username) && len(password) >= 8 && len(password) <= 1024 && (role == RoleAdmin || role == RoleViewer)
+func validUser(username, password string) bool {
+	return validUsername(username) && len(password) >= 8 && len(password) <= 1024
 }
 
 func (s *Service) BootstrapAdministrator(ctx context.Context, username, password string) (User, error) {
@@ -235,10 +232,10 @@ func (s *Service) BootstrapAdministrator(ctx context.Context, username, password
 		return User{}, err
 	}
 	defer func() { <-s.gate }()
-	if !validUser(username, password, RoleAdmin) {
+	if !validUser(username, password) {
 		return User{}, ErrInvalidInput
 	}
-	user, hash, err := s.prepareUser(username, password, RoleAdmin)
+	user, hash, err := s.prepareUser(username, password)
 	if err != nil {
 		return User{}, err
 	}
@@ -248,7 +245,7 @@ func (s *Service) BootstrapAdministrator(ctx context.Context, username, password
 	}
 	defer tx.Rollback()
 	var count int
-	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM users WHERE role = ?", RoleAdmin).Scan(&count); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM users").Scan(&count); err != nil {
 		return User{}, err
 	}
 	if count != 0 {
@@ -263,15 +260,15 @@ func (s *Service) BootstrapAdministrator(ctx context.Context, username, password
 	return user, nil
 }
 
-func (s *Service) CreateUser(ctx context.Context, username, password, role string) (User, error) {
-	if !validUser(username, password, role) {
+func (s *Service) CreateUser(ctx context.Context, username, password string) (User, error) {
+	if !validUser(username, password) {
 		return User{}, ErrInvalidInput
 	}
 	if err := s.acquire(ctx); err != nil {
 		return User{}, err
 	}
 	defer func() { <-s.gate }()
-	user, hash, err := s.prepareUser(username, password, role)
+	user, hash, err := s.prepareUser(username, password)
 	if err != nil {
 		return User{}, err
 	}
@@ -292,7 +289,7 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 	return user, nil
 }
 
-func (s *Service) prepareUser(username, password, role string) (User, string, error) {
+func (s *Service) prepareUser(username, password string) (User, string, error) {
 	hash, err := HashPassword(password, s.random)
 	if err != nil {
 		return User{}, "", err
@@ -301,14 +298,14 @@ func (s *Service) prepareUser(username, password, role string) (User, string, er
 	if err != nil {
 		return User{}, "", err
 	}
-	return User{ID: id, Username: username, Role: role, CreatedAt: s.now().UTC()}, hash, nil
+	return User{ID: id, Username: username, CreatedAt: s.now().UTC()}, hash, nil
 }
 
 func (s *Service) insertUser(ctx context.Context, tx *sql.Tx, user User, hash string) error {
 	if err := requireAvailableUsername(ctx, tx, user.Username, ""); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, "INSERT INTO users(id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)", user.ID, user.Username, hash, user.Role, timekey.Format(user.CreatedAt))
+	_, err := tx.ExecContext(ctx, "INSERT INTO users(id, username, password_hash, created_at) VALUES (?, ?, ?, ?)", user.ID, user.Username, hash, timekey.Format(user.CreatedAt))
 	return err
 }
 
@@ -332,7 +329,7 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 	}
 	var user User
 	var hash, created string
-	err := s.db.QueryRowContext(ctx, "SELECT id, username, role, created_at, password_hash FROM users WHERE username = ?", username).Scan(&user.ID, &user.Username, &user.Role, &created, &hash)
+	err := s.db.QueryRowContext(ctx, "SELECT id, username, created_at, password_hash FROM users WHERE username = ?", username).Scan(&user.ID, &user.Username, &created, &hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Unknown usernames consume the same Argon2 work as incorrect passwords.
 		var salt [16]byte
@@ -372,7 +369,7 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 	}
 	defer tx.Rollback()
 	if newHash != hash {
-		result, err := tx.ExecContext(ctx, "UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ? AND role = ?", newHash, user.ID, hash, user.Role)
+		result, err := tx.ExecContext(ctx, "UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?", newHash, user.ID, hash)
 		if err != nil {
 			return Session{}, err
 		}
@@ -384,9 +381,9 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 			return Session{}, ErrUnauthenticated
 		}
 	}
-	// A password or role change from another service must not race stale
+	// A password change or deletion from another service must not race stale
 	// verified credentials into a new session after revocation has committed.
-	result, err := tx.ExecContext(ctx, "INSERT INTO sessions(token_hash, user_id, expires_at) SELECT ?, id, ? FROM users WHERE id = ? AND password_hash = ? AND role = ?", digest[:], session.ExpiresAt.UnixNano(), user.ID, newHash, user.Role)
+	result, err := tx.ExecContext(ctx, "INSERT INTO sessions(token_hash, user_id, expires_at) SELECT ?, id, ? FROM users WHERE id = ? AND password_hash = ?", digest[:], session.ExpiresAt.UnixNano(), user.ID, newHash)
 	if err != nil {
 		return Session{}, err
 	}
@@ -446,8 +443,8 @@ func (s *Service) lookupSession(ctx context.Context, token string) (User, int64,
 	var user User
 	var created string
 	var expiry int64
-	err := s.db.QueryRowContext(ctx, `SELECT u.id, u.username, u.role, u.created_at, s.expires_at
- FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`, digest[:]).Scan(&user.ID, &user.Username, &user.Role, &created, &expiry)
+	err := s.db.QueryRowContext(ctx, `SELECT u.id, u.username, u.created_at, s.expires_at
+ FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`, digest[:]).Scan(&user.ID, &user.Username, &created, &expiry)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, 0, ErrUnauthenticated
 	}

@@ -74,7 +74,7 @@ test('probe target list validation enforces uniqueness, count, and UTF-8 byte li
   assert.match(validateProbeTargets('tcp://db:5432'), /list/);
 });
 
-test('node configuration renders service probes read-only and in the editable tag editor', async () => {
+test('node configuration exposes service probe editing and current values to administrators', async () => {
   const dom = installDOM();
   try {
     globalThis.window = new EventTarget();
@@ -83,10 +83,9 @@ test('node configuration renders service probes read-only and in the editable ta
     const config = {revision: 3, report_interval_seconds: 30, disk_interval_seconds: 60, billing_day: 1,
       interfaces: [], disk_paths: [], probe_targets: ['https://example.com/health,ready'], quota_bytes: '0'};
     const node = {id: 'node-1', config: {desired_revision: 3, applied_revision: 3}};
-    const readOnly = configTab(node, config, false);
-    assert.match(readOnly.textContent, /Service probes/);
-    assert.match(readOnly.textContent, /https:\/\/example\.com\/health,ready/);
-    const editable = configTab(node, config, true);
+    const editable = configTab(node, config);
+    assert.match(editable.textContent, /Current values/);
+    assert.match(editable.textContent, /Raw configuration/);
     const probes = editable.querySelector('[data-field="probe_targets"]');
     assert.deepEqual(probes.getValue(), ['https://example.com/health,ready']);
     assert.match(editable.textContent, /Up to 5 targets/);

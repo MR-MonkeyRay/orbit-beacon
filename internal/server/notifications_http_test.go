@@ -26,8 +26,8 @@ func TestNotificationHTTPCRUDRoutingAuthzAndSecretSafety(t *testing.T) {
 	}
 	f.handler = h
 	admin, csrf := login(t, f, "admin")
-	viewer, vcsrf := login(t, f, "viewer")
-	r := request(t, h, "POST", "/api/v1/notification-channels", validChannel, admin, csrf, publicURL)
+	second, secondCSRF := login(t, f, "admin-two")
+	r := request(t, h, "POST", "/api/v1/notification-channels", validChannel, second, secondCSRF, publicURL)
 	assertHTTPStatus(t, r, 201)
 	obj := decodeObject(t, r)
 	id := objectID(t, obj)
@@ -35,10 +35,10 @@ func TestNotificationHTTPCRUDRoutingAuthzAndSecretSafety(t *testing.T) {
 	if obj["secret_set"] != true || strings.Contains(r.Body.String(), "NEVER-EXPOSE") {
 		t.Fatal("secret projection incorrect")
 	}
-	collectionContains(t, request(t, h, "GET", "/api/v1/notification-channels", "", viewer, "", ""), "channels", id)
-	assertHTTPStatus(t, request(t, h, "GET", path, "", viewer, "", ""), 200)
+	collectionContains(t, request(t, h, "GET", "/api/v1/notification-channels", "", second, "", ""), "channels", id)
+	assertHTTPStatus(t, request(t, h, "GET", path, "", second, "", ""), 200)
 	for _, tt := range []struct{ method, path, body string }{{"POST", "/api/v1/notification-channels", validChannel}, {"PATCH", path, `{"name":"changed"}`}, {"DELETE", path, ""}, {"POST", path + "/test", ""}} {
-		assertHTTPStatus(t, request(t, h, tt.method, tt.path, tt.body, viewer, vcsrf, publicURL), 403)
+		assertHTTPStatus(t, request(t, h, tt.method, tt.path, tt.body, second, csrf, publicURL), 403)
 		assertHTTPStatus(t, request(t, h, tt.method, tt.path, tt.body, admin, "", publicURL), 403)
 		assertHTTPStatus(t, request(t, h, tt.method, tt.path, tt.body, admin, csrf, "https://foreign.test"), 403)
 	}
@@ -58,21 +58,21 @@ func TestNotificationHTTPCRUDRoutingAuthzAndSecretSafety(t *testing.T) {
 	if !strings.Contains(r.Body.String(), id) {
 		t.Fatal("routing dropped on omitted channel_ids")
 	}
-	assertHTTPStatus(t, request(t, h, "GET", "/api/v1/notification-deliveries", "", viewer, "", ""), 200)
+	assertHTTPStatus(t, request(t, h, "GET", "/api/v1/notification-deliveries", "", second, "", ""), 200)
 	for _, query := range []string{"limit=0", "limit=101", "limit=x", "limit=", "limit=2&limit=3", "before=bad", "before=", "offset=0", "%zz=x"} {
-		assertHTTPStatus(t, request(t, h, "GET", "/api/v1/notification-deliveries?"+query, "", viewer, "", ""), 400)
+		assertHTTPStatus(t, request(t, h, "GET", "/api/v1/notification-deliveries?"+query, "", second, "", ""), 400)
 	}
 	// A test against a private address is denied before network I/O and audited.
-	assertHTTPStatus(t, request(t, h, "PATCH", path, `{"config":{"url":"https://127.0.0.1"}}`, admin, csrf, publicURL), 200)
-	r = request(t, h, "POST", path+"/test", "", admin, csrf, publicURL)
+	assertHTTPStatus(t, request(t, h, "PATCH", path, `{"config":{"url":"https://127.0.0.1"}}`, second, secondCSRF, publicURL), 200)
+	r = request(t, h, "POST", path+"/test", "", second, secondCSRF, publicURL)
 	assertHTTPStatus(t, r, 200)
 	var result notify.Result
 	if json.Unmarshal(r.Body.Bytes(), &result) != nil || result.OK || result.ErrorCode != "destination_denied" {
 		t.Fatalf("test=%s", r.Body)
 	}
-	assertHTTPStatus(t, request(t, h, "PATCH", path, `{"secret":""}`, admin, csrf, publicURL), 200)
-	assertHTTPStatus(t, request(t, h, "DELETE", path, "", admin, csrf, publicURL), 204)
-	assertHTTPStatus(t, request(t, h, "GET", path, "", viewer, "", ""), 404)
+	assertHTTPStatus(t, request(t, h, "PATCH", path, `{"secret":""}`, second, secondCSRF, publicURL), 200)
+	assertHTTPStatus(t, request(t, h, "DELETE", path, "", second, secondCSRF, publicURL), 204)
+	assertHTTPStatus(t, request(t, h, "GET", path, "", second, "", ""), 404)
 	var routes int
 	f.db.QueryRow("SELECT count(*) FROM alert_rule_channels WHERE rule_id=?", ruleID).Scan(&routes)
 	if routes != 0 {
@@ -142,7 +142,7 @@ func TestWebhookURLPrivacyAndKeyMismatchRepairHTTP(t *testing.T) {
 	}
 	makeHandler(ns)
 	admin, csrf := login(t, f, "admin")
-	viewer, _ := login(t, f, "viewer")
+	second, _ := login(t, f, "admin-two")
 	const pathMarker = "PATH-MUST-STAY-PRIVATE"
 	const queryMarker = "QUERY-MUST-STAY-PRIVATE"
 	body := `{"name":"Private webhook","kind":"webhook","enabled":true,"config":{"url":"https://hooks.example.com/` + pathMarker + `?token=` + queryMarker + `"},"secret":"OLD-SIGNING-SECRET"}`
@@ -160,7 +160,7 @@ func TestWebhookURLPrivacyAndKeyMismatchRepairHTTP(t *testing.T) {
 	}
 	check(r.Body.String())
 	for _, p := range []string{path, "/api/v1/notification-channels"} {
-		r = request(t, f.handler, "GET", p, "", viewer, "", "")
+		r = request(t, f.handler, "GET", p, "", second, "", "")
 		assertHTTPStatus(t, r, 200)
 		check(r.Body.String())
 		if !strings.Contains(r.Body.String(), `"url_redacted":"https://hooks.example.com/…"`) || !strings.Contains(r.Body.String(), `"url_set":true`) || strings.Contains(r.Body.String(), `"url":`) {

@@ -23,7 +23,6 @@
 .avatar{display:grid;place-items:center;width:34px;height:34px;flex:none;border-radius:50%;background:var(--orbit-soft);color:var(--orbit);font-weight:700;text-transform:uppercase}
 .who-text{min-width:0}
 .who-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.who-role{font-size:12.5px;color:var(--ink-3)}
 .account-actions{display:flex;gap:6px}
 .account-actions .btn{flex:1}
 .topbar,.scrim{display:none}

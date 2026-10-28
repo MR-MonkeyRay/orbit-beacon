@@ -391,3 +391,32 @@ func TestNodeTokenCollisionIsConflictAndRotationRevokesOldCredential(t *testing.
 	assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/report", oldToken, reportBody(1, 1, "a", 10)), http.StatusUnauthorized)
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", newToken, reportBody(1, 1, "a", 10)), 1)
 }
+
+func TestSecondAdministratorCanIssueReadAndRevokeEnrollment(t *testing.T) {
+	f := newAgentHTTP(t, 2)
+	second, csrf := loginAgent(t, f, "admin-two")
+	created := agentHTTPCall(t, f, http.MethodPost, "/api/v1/nodes", `{"name":"second administrator node"}`, second, csrf, publicURL)
+	assertHTTPStatus(t, created, http.StatusCreated)
+	nodeID := objectID(t, decodeObject(t, created))
+	body := `{"node_id":"` + nodeID + `"}`
+	apiError(t, agentHTTPCall(t, f, http.MethodPost, "/api/v1/enrollments", body, nil, "", publicURL), http.StatusUnauthorized, "unauthenticated")
+	apiError(t, agentHTTPCall(t, f, http.MethodPost, "/api/v1/enrollments", body, second, "", publicURL), http.StatusForbidden, "forbidden")
+	apiError(t, agentHTTPCall(t, f, http.MethodPost, "/api/v1/enrollments", body, second, csrf, "https://foreign.test"), http.StatusForbidden, "forbidden")
+	response := agentHTTPCall(t, f, http.MethodPost, "/api/v1/enrollments", body, second, csrf, publicURL)
+	assertHTTPStatus(t, response, http.StatusCreated)
+	var ticket enrollment.CreatedTicket
+	if err := json.Unmarshal(response.Body.Bytes(), &ticket); err != nil || ticket.Token == "" || !uuidPattern.MatchString(ticket.ID) {
+		t.Fatalf("enrollment creation=%s err=%v", response.Body, err)
+	}
+	path := "/api/v1/enrollments/" + ticket.ID
+	read := agentHTTPCall(t, f, http.MethodGet, path, "", second, "", "")
+	assertHTTPStatus(t, read, http.StatusOK)
+	if objectID(t, decodeObject(t, read)) != ticket.ID {
+		t.Fatal("second administrator cannot read its issued enrollment")
+	}
+	collectionContains(t, agentHTTPCall(t, f, http.MethodGet, "/api/v1/enrollments", "", second, "", ""), "enrollments", ticket.ID)
+	first, _ := loginAgent(t, f, "admin")
+	assertHTTPStatus(t, agentHTTPCall(t, f, http.MethodGet, path, "", first, "", ""), http.StatusOK)
+	assertHTTPStatus(t, agentHTTPCall(t, f, http.MethodDelete, path, "", second, csrf, publicURL), http.StatusNoContent)
+	apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, enrollBody("revoked-installation", agentSecret(90))), http.StatusUnauthorized, "unauthenticated")
+}

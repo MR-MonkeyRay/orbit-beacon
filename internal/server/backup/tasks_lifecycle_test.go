@@ -107,7 +107,7 @@ func TestTaskLifecyclePasswordVisibilityAndAudit(t *testing.T) {
 		t.Fatal("unsafe task JSON")
 	}
 	actor := "20000000-0000-4000-8000-000000000001"
-	if _, err = s.db.Exec(`INSERT INTO users(id,username,password_hash,role,created_at) VALUES (?,'reader','hash','admin',?)`, actor, timekey.Format(now)); err != nil {
+	if _, err = s.db.Exec(`INSERT INTO users(id,username,password_hash,created_at) VALUES (?,'reader','hash',?)`, actor, timekey.Format(now)); err != nil {
 		t.Fatal(err)
 	}
 	result, err := s.Password(audit.WithActor(ctx, actor), lifecycleID)

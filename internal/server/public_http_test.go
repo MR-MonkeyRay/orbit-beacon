@@ -55,7 +55,7 @@ func loginAgent(t *testing.T, f *agentFixture, username string) (*http.Cookie, s
 		if _, err := f.auth.BootstrapAdministrator(context.Background(), "admin", password); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := f.auth.CreateUser(context.Background(), "viewer", password, "viewer"); err != nil {
+		if _, err := f.auth.CreateUser(context.Background(), "admin-two", password); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -148,12 +148,12 @@ func TestPublicSettingsHTTPAuthorizationValidationAndIsolation(t *testing.T) {
 	f := newAgentHTTP(t, 5)
 	id, _, _ := enrollHTTP(t, f, "private-203.0.113.7", 1)
 	admin, csrf := loginAgent(t, f, "admin")
-	viewer, _ := loginAgent(t, f, "viewer")
+	second, secondCSRF := loginAgent(t, f, "admin-two")
 	path := "/api/v1/nodes/" + id + "/public-settings"
 
 	apiError(t, agentHTTPCall(t, f, http.MethodGet, path, "", nil, "", ""), http.StatusUnauthorized, "unauthenticated")
-	publicSettingsObject(t, agentHTTPCall(t, f, http.MethodGet, path, "", viewer, "", ""))
-	apiError(t, publicSettingsPatch(t, f, id, `{"enabled":true,"name":"viewer"}`, viewer, "", publicURL), http.StatusForbidden, "forbidden")
+	publicSettingsObject(t, agentHTTPCall(t, f, http.MethodGet, path, "", second, "", ""))
+	apiError(t, publicSettingsPatch(t, f, id, `{"enabled":true,"name":"missing-csrf-second"}`, second, "", publicURL), http.StatusForbidden, "forbidden")
 	apiError(t, publicSettingsPatch(t, f, id, `{"enabled":true,"name":"wrong-origin"}`, admin, csrf, "https://attacker.example.test"), http.StatusForbidden, "forbidden")
 	apiError(t, publicSettingsPatch(t, f, id, `{"enabled":true,"name":"missing-csrf"}`, admin, "", publicURL), http.StatusForbidden, "forbidden")
 
@@ -179,7 +179,7 @@ func TestPublicSettingsHTTPAuthorizationValidationAndIsolation(t *testing.T) {
 	}
 	apiError(t, publicSettingsPatch(t, f, id, `{"enabled":true,"name":"ok","unexpected":true}`, admin, csrf, publicURL), http.StatusBadRequest, "invalid_json")
 
-	settings := publicSettingsPatch(t, f, id, `{"enabled":true,"name":"  Tokyo public  ","region":"  Tokyo ","provider":" Example Cloud "}`, admin, csrf, publicURL)
+	settings := publicSettingsPatch(t, f, id, `{"enabled":true,"name":"  Tokyo public  ","region":"  Tokyo ","provider":" Example Cloud "}`, second, secondCSRF, publicURL)
 	object := publicSettingsObject(t, settings)
 	for key, want := range map[string]string{"name": "Tokyo public", "region": "Tokyo", "provider": "Example Cloud"} {
 		var got string
@@ -222,7 +222,7 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 	f := newAgentHTTP(t, 4)
 	id, token, _ := enrollHTTP(t, f, "private-2001:db8::7", 2)
 	admin, csrf := loginAgent(t, f, "admin")
-	viewer, _ := loginAgent(t, f, "viewer")
+	second, _ := loginAgent(t, f, "admin-two")
 	if _, err := f.db.Exec(`UPDATE nodes SET notes='private-note-203.0.113.8', region='private-region', provider='private-provider' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}
@@ -249,12 +249,12 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 	f.now = f.now.Add(2 * time.Second) // Expire the pre-report rendered page.
 	anonymous, anonymousBytes := publicList(t, f, "/api/public/v1/nodes", nil)
 	adminResult, adminBytes := publicList(t, f, "/api/public/v1/nodes", admin)
-	viewerResult, viewerBytes := publicList(t, f, "/api/public/v1/nodes", viewer)
+	secondResult, secondBytes := publicList(t, f, "/api/public/v1/nodes", second)
 	forgedResult, forgedBytes := publicList(t, f, "/api/public/v1/nodes", &http.Cookie{Name: "__Host-orbitbeacon_session", Value: "forged"})
-	if len(anonymous.Nodes) != 1 || len(adminResult.Nodes) != 1 || len(viewerResult.Nodes) != 1 || len(forgedResult.Nodes) != 1 {
-		t.Fatalf("public visibility differs by session: anonymous=%d admin=%d viewer=%d forged=%d", len(anonymous.Nodes), len(adminResult.Nodes), len(viewerResult.Nodes), len(forgedResult.Nodes))
+	if len(anonymous.Nodes) != 1 || len(adminResult.Nodes) != 1 || len(secondResult.Nodes) != 1 || len(forgedResult.Nodes) != 1 {
+		t.Fatalf("public visibility differs by session: anonymous=%d admin=%d admin-two=%d forged=%d", len(anonymous.Nodes), len(adminResult.Nodes), len(secondResult.Nodes), len(forgedResult.Nodes))
 	}
-	for _, got := range [][]byte{adminBytes, viewerBytes, forgedBytes} {
+	for _, got := range [][]byte{adminBytes, secondBytes, forgedBytes} {
 		if !reflect.DeepEqual(got, anonymousBytes) {
 			t.Fatalf("authenticated public response differs from anonymous: %s vs %s", got, anonymousBytes)
 		}

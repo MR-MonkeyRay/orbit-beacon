@@ -1,7 +1,7 @@
 import {h} from '../../shared/dom.js';
 import {api} from '../api.js';
 import {shortID, when} from '../format.js';
-import {busy, button, callout, emptyState, note, panel} from '../ui/components.js';
+import {busy, button, callout, emptyState, panel} from '../ui/components.js';
 import {confirmDialog, modal} from '../ui/dialogs.js';
 import {toastError} from '../ui/feedback.js';
 import {enrollmentCommand, enrollmentCountdown, installerCommand, enrollmentState, nodeEnrollments} from './enrollment-utils.js';
@@ -61,10 +61,7 @@ export async function issueEnrollment(target, title) {
   }
 }
 
-export function enrollmentTab(node, editable) {
-  if (!editable) return panel('Enroll agent', {},
-    note('Only administrators can issue or view enrollment tickets. Enrollment does not change the node’s desired configuration.'),
-    h('p', {class: 'lede'}, 'Agent state: ', node.status, '.'));
+export function enrollmentTab(node) {
 
   const list = h('div', {'aria-live': 'polite'});
   const error = h('div', {class: 'callout', role: 'alert', hidden: true});

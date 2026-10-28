@@ -22,7 +22,7 @@ func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 	}
 	f.handler = handler
 	admin, csrf := login(t, f, "admin")
-	viewer, _ := login(t, f, "viewer")
+	second, _ := login(t, f, "admin-two")
 	node, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: "probe api"})
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 		t.Fatal(err)
 	}
 	route := "/api/v1/nodes/" + node.ID + "/probes"
-	response := request(t, f.handler, http.MethodGet, route, "", viewer, "", "")
+	response := request(t, f.handler, http.MethodGet, route, "", second, "", "")
 	assertHTTPStatus(t, response, http.StatusOK)
 	var envelope struct {
 		Probes []struct {
@@ -91,8 +91,8 @@ func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 	if p := envelope.Probes[2]; p.Status != "down" || p.Error != "timeout" || p.LatencyMS != nil || p.Uptime24H == nil || *p.Uptime24H != 0 || p.Checks24H != 2 {
 		t.Fatalf("down=%+v", p)
 	}
-	apiError(t, request(t, f.handler, http.MethodGet, "/api/v1/nodes/00000000-0000-4000-8000-000000000001/probes", "", viewer, "", ""), http.StatusNotFound, "node_not_found")
-	methodResponse := request(t, f.handler, http.MethodPost, route, "", viewer, "", "")
+	apiError(t, request(t, f.handler, http.MethodGet, "/api/v1/nodes/00000000-0000-4000-8000-000000000001/probes", "", second, "", ""), http.StatusNotFound, "node_not_found")
+	methodResponse := request(t, f.handler, http.MethodPost, route, "", second, "", "")
 	apiError(t, methodResponse, http.StatusMethodNotAllowed, "method_not_allowed")
 	if methodResponse.Header().Get("Allow") != http.MethodGet {
 		t.Fatalf("Allow=%q", methodResponse.Header().Get("Allow"))
@@ -101,7 +101,7 @@ func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	emptyResponse := request(t, f.handler, http.MethodGet, "/api/v1/nodes/"+empty.ID+"/probes", "", viewer, "", "")
+	emptyResponse := request(t, f.handler, http.MethodGet, "/api/v1/nodes/"+empty.ID+"/probes", "", second, "", "")
 	assertHTTPStatus(t, emptyResponse, http.StatusOK)
 	if emptyResponse.Body.String() != "{\"probes\":[]}\n" {
 		t.Fatalf("empty probe envelope=%s", emptyResponse.Body)
