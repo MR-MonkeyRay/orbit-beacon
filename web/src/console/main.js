@@ -23,7 +23,8 @@ startRouter(routes);
 
 // "/" jumps to the node search, as in many list-heavy tools.
 document.addEventListener('keydown', (event) => {
-  if (event.key !== '/' || event.target.closest('input,textarea,select,[contenteditable]') || document.querySelector('dialog[open]')) return;
+  const editing = event.target instanceof Element && event.target.closest('input,textarea,select,[contenteditable]');
+  if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || editing || document.querySelector('dialog[open]')) return;
   const search = document.getElementById('node-search');
   if (!search) return;
   event.preventDefault();

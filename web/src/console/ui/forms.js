@@ -155,9 +155,14 @@ export function saveBar(label, id) {
 // last tag, pasted lists are split and trimmed. Tags are 1–255 bytes and unique.
 export function tagEditor(values) {
   let tags = [...values];
-  const entry = h('input', {type: 'text', 'aria-label': 'Add tag', enterkeyhint: 'done', id: 'tag-entry'});
+  const entryID = uid('tag-entry');
+  const labelID = `${entryID}-label`;
+  const hintID = `${entryID}-hint`;
+  const errorID = `${entryID}-error`;
+  const entry = h('input', {type: 'text', enterkeyhint: 'done', id: entryID,
+    'aria-labelledby': labelID, 'aria-describedby': `${hintID} ${errorID}`});
   const box = h('div', {class: 'tags', dataset: {tags: '', field: 'tags'}, onclick: (event) => { if (event.target === box) entry.focus(); }});
-  const error = h('span', {class: 'field-error', hidden: true, role: 'alert'});
+  const error = h('span', {class: 'field-error', id: errorID, hidden: true, role: 'alert'});
   const changed = () => { render(); box.dispatchEvent(new Event('tags', {bubbles: true})); };
   const add = (raw) => {
     const value = raw.trim();
@@ -169,7 +174,12 @@ export function tagEditor(values) {
     return true;
   };
   box.getValue = () => tags;
-  box.showError = (message) => { error.textContent = message; error.hidden = !message; };
+  box.showError = (message) => {
+    error.textContent = message;
+    error.hidden = !message;
+    if (message) entry.setAttribute('aria-invalid', 'true');
+    else entry.removeAttribute('aria-invalid');
+  };
   box.focus = () => entry.focus();
   box.commit = () => {
     const rejected = entry.value.split(/[\n,]/).filter((part) => !add(part));
@@ -192,7 +202,7 @@ export function tagEditor(values) {
     entry.placeholder = tags.length ? 'Add tag' : 'Type a tag and press Enter';
   }
   render();
-  return h('div', {class: 'field'}, h('label', {for: entry.id, class: 'field-label'}, 'Tags'), box,
-    h('span', {class: 'hint'}, 'Press Enter or comma to add a tag. Each tag is 1–255 UTF-8 bytes.'), error);
+  return h('div', {class: 'field'}, h('label', {for: entry.id, class: 'field-label', id: labelID}, 'Tags'), box,
+    h('span', {class: 'hint', id: hintID}, 'Press Enter or comma to add a tag. Each tag is 1–255 UTF-8 bytes.'), error);
 }
 

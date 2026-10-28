@@ -23,7 +23,7 @@ const mode = process.argv[2] || '';
 
 function iconSprite() {
   const symbols = Object.entries(ICONS).map(([name, body]) => `<symbol id="i-${name}" viewBox="0 0 24 24">${body}</symbol>`).join('');
-  return `<svg width="0" height="0" style="position:absolute" aria-hidden="true">${symbols}</svg>`;
+  return `<svg width="0" height="0" class="icon-sprite" aria-hidden="true">${symbols}</svg>`;
 }
 
 async function build(outDir) {

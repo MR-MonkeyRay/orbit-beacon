@@ -1,6 +1,12 @@
 // Minimal element factory shared by the console and the public page.
 export const SVG = 'http://www.w3.org/2000/svg';
-export const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+let motionQuery;
+export const reducedMotion = {
+  get matches() {
+    motionQuery ||= typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : {matches: false};
+    return motionQuery.matches;
+  }
+};
 
 // h('button', {type: 'button', onclick}, 'Label'): known DOM properties are
 // assigned directly, everything else (aria-*, data via `dataset`) as attributes.

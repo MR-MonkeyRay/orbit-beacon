@@ -27,7 +27,7 @@ select.input{appearance:none;padding-right:36px;background-image:linear-gradient
 .switch-track::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .25s var(--ease)}
 .switch input:checked+.switch-track{background:var(--ok)}
 .switch input:checked+.switch-track::after{transform:translateX(16px)}
-.switch input:focus-visible+.switch-track{outline:2px solid var(--beacon);outline-offset:2px}
+.switch input:focus-visible+.switch-track{outline:2px solid var(--focus);outline-offset:2px}
 .switch-text strong{display:block;font-weight:600}
 .switch-text span{font-size:13px;color:var(--ink-3)}
 .callout{display:flex;gap:12px;padding:12px 14px;border-radius:var(--r-md);background:var(--warn-bg);color:var(--ink);font-size:13.5px}

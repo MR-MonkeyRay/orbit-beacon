@@ -12,12 +12,12 @@ export const linkButton = (href, label) => h('a', {class: 'btn', href, dataset: 
 
 export function button(label, options = {}) {
   const classes = ['btn', options.variant && `btn-${options.variant}`, options.small && 'btn-sm', options.className].filter(Boolean).join(' ');
-  return h('button', {type: options.type || 'button', class: classes, onclick: options.onClick, disabled: options.disabled, id: options.id},
+  return h('button', {type: options.type || 'button', class: classes, onclick: options.onClick, disabled: options.disabled, id: options.id || uid('button')},
     options.icon ? icon(options.icon) : null, label, options.trailingIcon ? icon(options.trailingIcon) : null);
 }
 
 export function iconButton(name, label, onClick) {
-  return h('button', {type: 'button', class: 'icon-button sm', 'aria-label': label, title: label, onclick: onClick}, icon(name));
+  return h('button', {type: 'button', class: 'icon-button sm', 'aria-label': label, title: label, onclick: onClick, id: uid('button')}, icon(name));
 }
 
 export function busy(element, on) {
