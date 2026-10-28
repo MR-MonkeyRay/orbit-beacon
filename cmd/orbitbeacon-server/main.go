@@ -268,7 +268,7 @@ func run(args []string) error {
 	notifications := notify.New(db, box, notify.Options{AllowInsecureWebhooks: cfg.AllowInsecureWebhooks, AllowPrivateNetworks: cfg.NotificationAllowPrivateNetworks})
 	alertService := alerts.NewService(db, nil)
 	evaluator := alerts.NewEvaluator(alertService, ingestService, alerts.EvaluatorOptions{Logger: logger, Notifier: notifications})
-	handler, err := server.NewHandler(server.Options{Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: buildinfo.Current().Version})
+	handler, err := server.NewHandler(server.Options{Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: buildinfo.Current().Version})
 	if err != nil {
 		return err
 	}

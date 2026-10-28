@@ -32,3 +32,24 @@ func TestRetentionBacklogBudgetCancelsSlowBatch(t *testing.T) {
 		t.Fatal("caller cancellation was reported as a budget stop")
 	}
 }
+
+func TestRetentionBacklogUsesShortBatchesAndContinuesAfterDeferredFailure(t *testing.T) {
+	remaining, calls := 1201, 0
+	removed, err := cleanupRetentionBacklog(context.Background(), time.Now(), func(ctx context.Context, _ time.Time, limit int) (int64, error) {
+		calls++
+		if limit != 500 {
+			t.Fatalf("batch limit=%d, want 500", limit)
+		}
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("batch has no shared deadline")
+		}
+		// Backup cleanup counts a deferred unlink as processed and moves its
+		// next attempt forward, allowing the remaining backlog to progress.
+		n := min(remaining, limit)
+		remaining -= n
+		return int64(n), nil
+	})
+	if err != nil || removed != 1201 || remaining != 0 || calls != 4 {
+		t.Fatalf("removed=%d remaining=%d calls=%d err=%v", removed, remaining, calls, err)
+	}
+}

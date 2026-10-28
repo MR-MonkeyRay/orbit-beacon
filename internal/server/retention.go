@@ -24,13 +24,19 @@ const (
 
 type RetentionResult struct {
 	NotificationDeliveries int64
-	AlertEvents            int64
-	HistoryBuckets         int64
-	AuditEvents            int64
-	EnrollmentTickets      int64
-	Sessions               int64
-	TrafficRows            int64
-	ProbeRows              int64
+	InboxNotifications     int64
+	// BackupTasks counts processed task cleanup mutations, including secrets
+	// cleared and deferred artifact unlinks as well as deleted task rows.
+	BackupTasks       int64
+	BackupOrphanFiles int64
+	BackupLocalTemps  int64
+	AlertEvents       int64
+	HistoryBuckets    int64
+	AuditEvents       int64
+	EnrollmentTickets int64
+	Sessions          int64
+	TrafficRows       int64
+	ProbeRows         int64
 }
 
 func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (RetentionResult, error) {
@@ -57,6 +63,30 @@ func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (Retentio
 		result.NotificationDeliveries, err = cleanupRetentionBacklog(ctx, now, h.notifications.Cleanup)
 		if err != nil {
 			return result, fmt.Errorf("cleanup notification deliveries: %w", err)
+		}
+	}
+	if h.inbox != nil {
+		result.InboxNotifications, err = cleanupRetentionBacklog(ctx, now.Add(-90*24*time.Hour), h.inbox.Cleanup)
+		if err != nil {
+			return result, fmt.Errorf("cleanup inbox notifications: %w", err)
+		}
+	}
+	if h.backups != nil {
+		// The hourly retention pass also runs on startup. Sweeps resume their
+		// cursors, visit at most 500 entries each, and never traverse arbitrary
+		// destinations from restored task history. Sweep before expiring tasks
+		// so recorded local temporary files can still be located.
+		result.BackupOrphanFiles, err = cleanupRetentionSweep(ctx, h.backups.CleanupOrphans)
+		if err != nil {
+			return result, fmt.Errorf("cleanup orphan exports: %w", err)
+		}
+		result.BackupLocalTemps, err = cleanupRetentionSweep(ctx, h.backups.CleanupLocalTemps)
+		if err != nil {
+			return result, fmt.Errorf("cleanup local backup temporary files: %w", err)
+		}
+		result.BackupTasks, err = cleanupRetentionBacklog(ctx, now, h.backups.Cleanup)
+		if err != nil {
+			return result, fmt.Errorf("cleanup backup tasks: %w", err)
 		}
 	}
 	// Sessions expire after 12 hours; a few bounded batches per hour keep up
@@ -127,4 +157,14 @@ func cleanupRetentionBacklog(ctx context.Context, cutoff time.Time, cleanup func
 			return total, nil
 		}
 	}
+}
+
+func cleanupRetentionSweep(ctx context.Context, cleanup func(context.Context, int) (int64, error)) (int64, error) {
+	budget, cancel := context.WithTimeout(ctx, retentionCatchupBudget)
+	defer cancel()
+	removed, err := cleanup(budget, retentionCatchupBatchSize)
+	if err != nil && budget.Err() != nil && ctx.Err() == nil {
+		return removed, nil
+	}
+	return removed, err
 }

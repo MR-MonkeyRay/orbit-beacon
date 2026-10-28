@@ -21,6 +21,19 @@ func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID 
 		}
 		return true
 	}
+	if strings.HasPrefix(p, "/api/v1/alerts/") {
+		if r.URL.RawQuery != "" {
+			h.serviceError(w, &nodes.ValidationError{Fields: map[string]string{"query": "unknown parameter"}}, requestID)
+			return true
+		}
+		event, err := h.alerts.Event(r.Context(), strings.TrimPrefix(p, "/api/v1/alerts/"))
+		if err != nil {
+			h.serviceError(w, err, requestID)
+		} else {
+			writeJSON(w, http.StatusOK, event)
+		}
+		return true
+	}
 	if p == "/api/v1/alerts" {
 		query, err := url.ParseQuery(r.URL.RawQuery)
 		fields := map[string]string{}

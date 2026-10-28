@@ -93,6 +93,20 @@ func requestRoute(p string) string {
 				if parts[4] != "batch" {
 					parts[4] = "{id}"
 				}
+			case "backup-plans":
+				if parts[4] != "preview" {
+					parts[4] = "{id}"
+				}
+			case "notifications":
+				if parts[4] != "summary" && parts[4] != "read-all" {
+					parts[4] = "{id}"
+				}
+			case "alerts":
+				if parts[4] != "summary" {
+					parts[4] = "{id}"
+				}
+			case "tasks":
+				parts[4] = "{id}"
 			}
 		}
 		return strings.Join(parts, "/")

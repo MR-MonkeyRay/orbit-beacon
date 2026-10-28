@@ -38,6 +38,12 @@ func routeMethods(p string) []string {
 		return postMethods
 	case "/api/v1/enrollments":
 		return createMethods
+	case "/api/v1/backups/exports", "/api/v1/backup-plans/preview", "/api/v1/notifications/read-all":
+		return postMethods
+	case "/api/v1/backup-plans":
+		return createMethods
+	case "/api/v1/tasks", "/api/v1/notifications", "/api/v1/notifications/summary":
+		return readMethods
 	}
 	if !strings.HasPrefix(p, "/api/v1/") {
 		return nil
@@ -45,6 +51,27 @@ func routeMethods(p string) []string {
 	parts := strings.Split(strings.TrimPrefix(p, "/api/v1/"), "/")
 	if len(parts) < 2 || !identity.ValidUUID(parts[1]) {
 		return nil
+	}
+	if len(parts) == 2 {
+		switch parts[0] {
+		case "backup-plans":
+			return itemMethods
+		case "tasks", "notifications", "alerts":
+			return readMethods
+		}
+	}
+	if len(parts) == 3 {
+		if parts[0] == "tasks" {
+			switch parts[2] {
+			case "download":
+				return readMethods
+			case "password":
+				return postMethods
+			}
+		}
+		if parts[0] == "notifications" && parts[2] == "read" {
+			return patchMethods
+		}
 	}
 	if len(parts) == 2 && parts[0] == "enrollments" {
 		return enrollmentItemMethods
@@ -65,6 +92,15 @@ func routeMethods(p string) []string {
 		return deleteMethods
 	}
 	return nil
+}
+
+// Only these two validated routes mutate the current user's own read state.
+func ownInboxMutation(r *http.Request) bool {
+	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/notifications/read-all" {
+		return true
+	}
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/"), "/")
+	return r.Method == http.MethodPatch && len(parts) == 3 && parts[0] == "notifications" && identity.ValidUUID(parts[1]) && parts[2] == "read"
 }
 
 func (h *handler) managementRoute(w http.ResponseWriter, r *http.Request, requestID string, user auth.User) bool {

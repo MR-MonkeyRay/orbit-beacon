@@ -28,8 +28,10 @@ import (
 	"orbitbeacon/internal/server/alerts"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/auth"
+	"orbitbeacon/internal/server/backup"
 	"orbitbeacon/internal/server/enrollment"
 	"orbitbeacon/internal/server/history"
+	"orbitbeacon/internal/server/inbox"
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/server/nodes"
@@ -42,6 +44,8 @@ import (
 const sessionCookie = "__Host-orbitbeacon_session"
 
 type Options struct {
+	Backups        *backup.Service
+	Inbox          *inbox.Service
 	Notifications  *notify.Service
 	Alerts         *alerts.Service
 	History        *history.Service
@@ -61,6 +65,8 @@ type Options struct {
 }
 
 type handler struct {
+	backups         *backup.Service
+	inbox           *inbox.Service
 	notifications   *notify.Service
 	alerts          *alerts.Service
 	history         *history.Service
@@ -123,6 +129,9 @@ func NewHandler(opts Options) (*handler, error) {
 	if opts.Traffic == nil {
 		opts.Traffic = traffic.NewService(opts.Nodes.Database())
 	}
+	if opts.Inbox == nil {
+		opts.Inbox = inbox.New(opts.Nodes.Database())
+	}
 	if opts.Assets == nil {
 		opts.Assets = webui.Assets()
 	}
@@ -147,6 +156,7 @@ func NewHandler(opts Options) (*handler, error) {
 		return nil, fmt.Errorf("UI assets: %w", err)
 	}
 	h := &handler{notifications: opts.Notifications, alerts: opts.Alerts, history: opts.History, staticAssets: staticAssets, accessLog: opts.AccessLog, metrics: newHTTPMetrics(opts.BuildVersion), trustedProxies: append([]netip.Prefix(nil), opts.TrustedProxies...), htmlPolicies: policies, auth: opts.Auth, nodes: opts.Nodes, management: opts.Management, enrollments: opts.Enrollments, ingest: opts.Ingest, traffic: opts.Traffic, origin: origin, assets: opts.Assets, logger: opts.Logger, now: opts.Now, ready: true}
+	h.backups, h.inbox = opts.Backups, opts.Inbox
 	return h, nil
 }
 
@@ -352,7 +362,7 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 	}
 	mutation := r.Method != http.MethodGet && r.Method != http.MethodHead
 	if mutation {
-		if p != "/api/v1/session" && p != "/api/v1/me/password" && user.Role != auth.RoleAdmin {
+		if p != "/api/v1/session" && p != "/api/v1/me/password" && !ownInboxMutation(r) && user.Role != auth.RoleAdmin {
 			fail(w, http.StatusForbidden, "forbidden", "Administrator role is required", requestID)
 			return
 		}
@@ -371,6 +381,9 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 		}
 	}
 	r = r.WithContext(audit.WithActor(r.Context(), user.ID))
+	if h.backupsRoute(w, r, requestID, user) || h.inboxRoute(w, r, requestID, user) {
+		return
+	}
 	if h.notificationsRoute(w, r, requestID) {
 		return
 	}
@@ -567,13 +580,13 @@ func (h *handler) serviceError(w http.ResponseWriter, err error, requestID strin
 		fail(w, http.StatusServiceUnavailable, "not_available", "Notification secrets unavailable", requestID)
 	case errors.Is(err, alerts.ErrCapacity):
 		fail(w, http.StatusConflict, "alert_rule_capacity_reached", "Maximum of 200 alert rules reached", requestID)
-	case errors.Is(err, notify.ErrNotFound), errors.Is(err, alerts.ErrNotFound), errors.Is(err, auth.ErrNotFound), errors.Is(err, management.ErrNotFound):
+	case errors.Is(err, notify.ErrNotFound), errors.Is(err, alerts.ErrNotFound), errors.Is(err, auth.ErrNotFound), errors.Is(err, management.ErrNotFound), errors.Is(err, inbox.ErrNotFound):
 		fail(w, http.StatusNotFound, "not_found", "Resource not found", requestID)
 	case errors.Is(err, auth.ErrLastAdmin):
 		fail(w, http.StatusConflict, "last_administrator", "At least one administrator must remain", requestID)
 	case errors.Is(err, auth.ErrUsernameConflict):
 		fail(w, http.StatusConflict, "username_conflict", "Username is already in use", requestID)
-	case errors.Is(err, nodes.ErrInvalidInput), errors.Is(err, auth.ErrInvalidInput), errors.Is(err, management.ErrInvalidInput):
+	case errors.Is(err, nodes.ErrInvalidInput), errors.Is(err, auth.ErrInvalidInput), errors.Is(err, management.ErrInvalidInput), errors.Is(err, inbox.ErrInvalidInput):
 		fail(w, http.StatusBadRequest, "validation_failed", "Request values are invalid", requestID)
 	default:
 		h.logInternalError(err, requestID)
