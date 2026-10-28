@@ -14,9 +14,14 @@ var ErrReportBudget = errors.New("selection exceeds report encoding budget")
 
 // The collector repeats each selected path/name in its series and two metadata
 // keys. Reserve 16 KiB for the bounded scalar metrics, metadata, system identity,
-// configuration errors and envelope. This is a configuration admission bound,
-// not permission for clients to omit the final encoded-message size check.
+// configuration errors, up to MaxTrafficEntries traffic buckets, and envelope.
+// This is a configuration admission bound, not permission for clients to omit
+// the final encoded-message size check.
 const reportEnvelopeBytes = 16 * 1024
+
+// Reserve the fixed fields around each encoded probe target. The target itself
+// is accounted for below with encoding/json-compatible escaping.
+const probeResultEnvelopeBytes = 160
 
 func selectionFitsReport(c DesiredConfig) bool {
 	bytes := 0
@@ -26,7 +31,11 @@ func selectionFitsReport(c DesiredConfig) bool {
 	for _, name := range c.Interfaces {
 		bytes += jsonStringBytes(name)
 	}
-	return 3*bytes+reportEnvelopeBytes <= MaxMessageBytes
+	probeBytes := 0
+	for _, target := range c.ProbeTargets {
+		probeBytes += jsonStringBytes(target) + probeResultEnvelopeBytes
+	}
+	return 3*bytes+probeBytes+reportEnvelopeBytes <= MaxMessageBytes
 }
 
 // jsonStringBytes matches encoding/json's default HTML-safe string escaping

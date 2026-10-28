@@ -8,13 +8,18 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const ProtocolVersion = 1
+
+const MaxTrafficEntries = 24
 
 var ErrProtocolUnsupported = errors.New("protocol unsupported")
 
@@ -63,9 +68,10 @@ func (n *DecimalUint64) UnmarshalJSON(data []byte) error {
 }
 
 type System struct {
-	Hostname string `json:"hostname"`
-	OS       string `json:"os"`
-	Arch     string `json:"arch"`
+	Hostname     string `json:"hostname"`
+	OS           string `json:"os"`
+	Arch         string `json:"arch"`
+	AgentVersion string `json:"agent_version,omitempty"`
 }
 
 type EnrollmentRequest struct {
@@ -92,6 +98,18 @@ func (r EnrollmentRequest) Validate() error {
 func (s System) Validate() error {
 	if len(s.Hostname) > 255 || len(s.OS) > 64 || len(s.Arch) > 64 {
 		return errors.New("system identity exceeds field limits")
+	}
+	if len(s.AgentVersion) > 64 {
+		return errors.New("agent version exceeds field limit")
+	}
+	for i := range len(s.AgentVersion) {
+		character := s.AgentVersion[i]
+		if (character < 'a' || character > 'z') &&
+			(character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') &&
+			character != '.' && character != '_' && character != '+' && character != '-' {
+			return errors.New("agent version contains invalid characters")
+		}
 	}
 	return nil
 }
@@ -334,16 +352,79 @@ type Traffic struct {
 }
 
 func (t Traffic) Validate() error {
-	if t.Epoch == "" || len(t.Epoch) > 255 || t.PeriodStart.IsZero() {
+	if len(t.Epoch) < 1 || len(t.Epoch) > 64 {
 		return errors.New("invalid traffic identity")
+	}
+	for i := range len(t.Epoch) {
+		if (t.Epoch[i] < '0' || t.Epoch[i] > '9') && (t.Epoch[i] < 'a' || t.Epoch[i] > 'f') {
+			return errors.New("traffic epoch must contain lowercase hexadecimal characters")
+		}
+	}
+	if t.PeriodStart.IsZero() || t.PeriodStart.Location() != time.UTC ||
+		t.PeriodStart.Minute() != 0 || t.PeriodStart.Second() != 0 || t.PeriodStart.Nanosecond() != 0 {
+		return errors.New("traffic period start must be a UTC hour")
 	}
 	if err := t.RxBytes.Validate(); err != nil {
 		return err
 	}
-	return t.TxBytes.Validate()
+	if err := t.TxBytes.Validate(); err != nil {
+		return err
+	}
+	for _, value := range []DecimalUint64{t.RxBytes, t.TxBytes} {
+		parsed, _ := strconv.ParseUint(string(value), 10, 64)
+		if parsed > math.MaxInt64 {
+			return errors.New("traffic counter exceeds int64 range")
+		}
+	}
+	return nil
 }
 
-type ProbeResult = json.RawMessage
+type ProbeResult struct {
+	Target     string    `json:"target"`
+	OK         bool      `json:"ok"`
+	LatencyMS  *float64  `json:"latency_ms"`
+	Error      string    `json:"error"`
+	StatusCode *int      `json:"status_code"`
+	CheckedAt  time.Time `json:"checked_at"`
+}
+
+func (p ProbeResult) Validate() error {
+	if err := ValidateProbeTarget(p.Target); err != nil {
+		return err
+	}
+	if p.OK != (p.Error == "") {
+		return errors.New("probe result status and error disagree")
+	}
+	if p.OK && p.LatencyMS == nil {
+		return errors.New("successful probe result requires latency")
+	}
+	if !p.OK && p.LatencyMS != nil {
+		return errors.New("failed probe result must not include latency")
+	}
+	if p.LatencyMS != nil && (math.IsNaN(*p.LatencyMS) || math.IsInf(*p.LatencyMS, 0) || *p.LatencyMS < 0 || *p.LatencyMS > 60000) {
+		return errors.New("probe result latency must be finite and between 0 and 60000 milliseconds")
+	}
+	validError := p.Error == "" || p.Error == "timeout" || p.Error == "refused" || p.Error == "dns" ||
+		p.Error == "tls" || p.Error == "http_status" || p.Error == "unreachable" || p.Error == "unsupported" || p.Error == "error"
+	if !validError {
+		return errors.New("invalid probe result error")
+	}
+	if p.Error == "http_status" && p.StatusCode == nil {
+		return errors.New("HTTP status probe result requires status code")
+	}
+	if p.StatusCode != nil {
+		if !strings.HasPrefix(p.Target, "http://") && !strings.HasPrefix(p.Target, "https://") {
+			return errors.New("non-HTTP probe result must not include status code")
+		}
+		if *p.StatusCode < 100 || *p.StatusCode > 599 {
+			return errors.New("probe result status code must be between 100 and 599")
+		}
+	}
+	if p.CheckedAt.IsZero() {
+		return errors.New("probe result checked time is required")
+	}
+	return nil
+}
 
 type UpdateStatus struct {
 	JobID      string `json:"job_id"`
@@ -385,9 +466,6 @@ func (r Report) Validate() error {
 	if r.RunGeneration == 0 || r.Seq == 0 || strings.TrimSpace(r.SessionID) == "" || len(r.SessionID) > 255 || r.SampledAt.IsZero() || r.ConfigRevision < 1 {
 		return errors.New("invalid report identity, time or revision")
 	}
-	if len(r.ProbeResults) != 0 {
-		return errors.New("probe results are not supported by this protocol slice")
-	}
 	if r.System != nil {
 		if err := r.System.Validate(); err != nil {
 			return err
@@ -399,10 +477,38 @@ func (r Report) Validate() error {
 	if err := r.Metrics.Validate(); err != nil {
 		return err
 	}
+	if len(r.Traffic) > MaxTrafficEntries {
+		return errors.New("too many traffic entries")
+	}
+	trafficIdentities := make(map[struct {
+		epoch           string
+		periodStartUnix int64
+	}]struct{}, len(r.Traffic))
 	for _, traffic := range r.Traffic {
 		if err := traffic.Validate(); err != nil {
 			return err
 		}
+		identity := struct {
+			epoch           string
+			periodStartUnix int64
+		}{traffic.Epoch, traffic.PeriodStart.Unix()}
+		if _, exists := trafficIdentities[identity]; exists {
+			return errors.New("duplicate traffic entry")
+		}
+		trafficIdentities[identity] = struct{}{}
+	}
+	if len(r.ProbeResults) > 5 {
+		return errors.New("too many probe results")
+	}
+	probeTargets := make(map[string]struct{}, len(r.ProbeResults))
+	for _, result := range r.ProbeResults {
+		if err := result.Validate(); err != nil {
+			return err
+		}
+		if _, exists := probeTargets[result.Target]; exists {
+			return errors.New("duplicate probe result target")
+		}
+		probeTargets[result.Target] = struct{}{}
 	}
 	return nil
 }
@@ -457,16 +563,192 @@ func (c DesiredConfig) Validate() error {
 	}
 	if len(c.ProbeTargets) > 5 {
 		fields["probe_targets"] = "must contain at most 5 entries"
-	}
-	for _, target := range c.ProbeTargets {
-		if strings.TrimSpace(target) == "" || len(target) > 1024 {
-			fields["probe_targets"] = "entries must be nonempty and at most 1024 bytes"
+	} else {
+		seen := make(map[string]struct{}, len(c.ProbeTargets))
+		for _, target := range c.ProbeTargets {
+			if err := ValidateProbeTarget(target); err != nil {
+				fields["probe_targets"] = err.Error()
+				break
+			}
+			if _, exists := seen[target]; exists {
+				fields["probe_targets"] = "entries must be unique"
+				break
+			}
+			seen[target] = struct{}{}
 		}
 	}
 	if len(fields) != 0 {
 		return &ValidationError{Fields: fields, reportBudget: reportBudget && len(fields) == reportBudgetFields}
 	}
 	return nil
+}
+
+// ValidateProbeTarget validates one service probe target in its wire format.
+func ValidateProbeTarget(target string) error {
+	if target == "" {
+		return errors.New("entries must be nonempty")
+	}
+	if len(target) > 1024 {
+		return errors.New("entries must be at most 1024 bytes")
+	}
+	for _, character := range target {
+		if unicode.IsSpace(character) || character == '\ufeff' {
+			return errors.New("entries must not contain whitespace")
+		}
+	}
+
+	if address, ok := strings.CutPrefix(target, "tcp://"); ok {
+		host, portText, err := net.SplitHostPort(address)
+		if err != nil || host == "" || !validProbeHost(addressHost(address, host)) {
+			return errors.New("TCP targets must use tcp://host:port with a valid host")
+		}
+		if portText == "" || !onlyDigits(portText) {
+			return errors.New("TCP target port must be between 1 and 65535")
+		}
+		port, err := strconv.Atoi(portText)
+		if err != nil || port < 1 || port > 65535 {
+			return errors.New("TCP target port must be between 1 and 65535")
+		}
+		return nil
+	}
+
+	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+		if strings.ContainsAny(target, "#\\") {
+			return errors.New("HTTP targets must not contain fragments or backslashes")
+		}
+		parsed, err := url.Parse(target)
+		if err != nil || !parsed.IsAbs() || parsed.Host == "" || parsed.Hostname() == "" {
+			return errors.New("HTTP targets must be absolute URLs with a host")
+		}
+		if parsed.User != nil {
+			return errors.New("HTTP targets must not contain user information")
+		}
+		if strings.HasPrefix(parsed.Host, "[") && net.ParseIP(parsed.Hostname()) == nil {
+			return errors.New("HTTP targets must use a valid bracketed IPv6 address")
+		}
+		// Validate the host as written: URL parsers decode or rewrite hosts
+		// (percent escapes, IPv4 shorthand, IDNA) differently across Go and browsers.
+		if !validProbeHost(rawURLHost(target)) {
+			return errors.New("HTTP targets need a valid DNS name, IPv4 address, or bracketed IPv6 address")
+		}
+		if port := parsed.Port(); port != "" {
+			value, err := strconv.Atoi(port)
+			if err != nil || value > 65535 {
+				return errors.New("HTTP target port must be between 0 and 65535")
+			}
+		}
+		return nil
+	}
+
+	if host, ok := strings.CutPrefix(target, "icmp://"); ok {
+		if host == "" || !validProbeHost(host) {
+			return errors.New("ICMP targets must use icmp://host with a valid host")
+		}
+		return nil
+	}
+	return errors.New("targets must use tcp://, http://, https://, or icmp://")
+}
+
+// rawURLHost returns the authority's host exactly as written, without port.
+func rawURLHost(target string) string {
+	rest := target[strings.Index(target, "//")+2:]
+	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+		rest = rest[:i]
+	}
+	if strings.HasPrefix(rest, "[") {
+		if i := strings.Index(rest, "]"); i >= 0 {
+			return rest[:i+1]
+		}
+		return rest
+	}
+	if i := strings.LastIndex(rest, ":"); i >= 0 {
+		return rest[:i]
+	}
+	return rest
+}
+
+func addressHost(address, splitHost string) string {
+	if strings.HasPrefix(address, "[") {
+		return "[" + splitHost + "]"
+	}
+	return splitHost
+}
+
+func validProbeHost(host string) bool {
+	if strings.HasPrefix(host, "[") {
+		if !strings.HasSuffix(host, "]") || !strings.Contains(host, ":") {
+			return false
+		}
+		return net.ParseIP(host[1:len(host)-1]) != nil
+	}
+	if strings.ContainsAny(host, ":[]") {
+		return false
+	}
+	if onlyDigitsAndDots(host) {
+		return validProbeIPv4(host)
+	}
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	name := strings.TrimSuffix(host, ".")
+	if name == "" {
+		return false
+	}
+	labels := strings.Split(name, ".")
+	// A numeric final label makes browsers parse the host as IPv4 (e.g. 0x7f.1).
+	if last := strings.ToLower(labels[len(labels)-1]); onlyDigitsAndDots(last) || strings.HasPrefix(last, "0x") && strings.Trim(last[2:], "0123456789abcdef") == "" {
+		return false
+	}
+	for _, label := range labels {
+		if len(label) < 1 || len(label) > 63 || !asciiAlphaNumeric(label[0]) || !asciiAlphaNumeric(label[len(label)-1]) {
+			return false
+		}
+		for i := 1; i < len(label)-1; i++ {
+			if !asciiAlphaNumeric(label[i]) && label[i] != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func onlyDigitsAndDots(value string) bool {
+	for i := range len(value) {
+		if (value[i] < '0' || value[i] > '9') && value[i] != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+func onlyDigits(value string) bool {
+	for i := range len(value) {
+		if value[i] < '0' || value[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func validProbeIPv4(host string) bool {
+	parts := strings.Split(host, ".")
+	if len(parts) != 4 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" || (len(part) > 1 && part[0] == '0') {
+			return false
+		}
+		value, err := strconv.Atoi(part)
+		if err != nil || value > 255 {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiAlphaNumeric(character byte) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9'
 }
 
 // ValidateSelection applies the same bounded device selection contract at
@@ -516,6 +798,9 @@ func (c DesiredConfig) ValidateSelection() error {
 		}
 		if len(c.Interfaces) != 0 {
 			fields["interfaces"] = "combined JSON-escaped selections exceed the report size budget"
+		}
+		if len(c.ProbeTargets) != 0 {
+			fields["probe_targets"] = "combined JSON-escaped selections exceed the report size budget"
 		}
 		return &ValidationError{Fields: fields, reportBudget: true}
 	}
