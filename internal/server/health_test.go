@@ -47,6 +47,13 @@ func TestHealthEndpointsExposeLivenessAndReadinessWithoutAuthentication(t *testi
 ` {
 		t.Fatalf("readiness response=%d %q", response.Code, response.Body.String())
 	}
+	handler.MarkNotReady()
+	if response := request("/healthz/ready"); response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readiness after MarkNotReady=%d", response.Code)
+	}
+	if response := request("/healthz/live"); response.Code != http.StatusOK {
+		t.Fatalf("liveness after MarkNotReady=%d", response.Code)
+	}
 	statuses := make(chan int, 20)
 	var wait sync.WaitGroup
 	for range 20 {

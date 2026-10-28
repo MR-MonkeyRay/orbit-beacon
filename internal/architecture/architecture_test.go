@@ -45,6 +45,8 @@ var allowedInternalImports = map[string]map[string]bool{
 	"orbitbeacon/internal/buildinfo":   {},
 	"orbitbeacon/internal/bundle":      {},
 	"orbitbeacon/internal/server": {
+		"orbitbeacon/internal/server/notify":     true,
+		"orbitbeacon/internal/server/alerts":     true,
 		"orbitbeacon/internal/config":            true,
 		"orbitbeacon/internal/identity":          true,
 		"orbitbeacon/internal/protocol/v1":       true,
@@ -52,10 +54,13 @@ var allowedInternalImports = map[string]map[string]bool{
 		"orbitbeacon/internal/server/auth":       true,
 		"orbitbeacon/internal/server/enrollment": true,
 		"orbitbeacon/internal/server/ingest":     true,
+		"orbitbeacon/internal/server/history":    true,
+		"orbitbeacon/internal/server/traffic":    true,
 		"orbitbeacon/internal/server/management": true,
 		"orbitbeacon/internal/server/nodes":      true,
 		"orbitbeacon/internal/server/storage":    true,
 		"orbitbeacon/internal/server/webui":      true,
+		"orbitbeacon/internal/timekey":           true,
 	},
 	"orbitbeacon/internal/server/alerts": {
 		"orbitbeacon/internal/identity":          true,

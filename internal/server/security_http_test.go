@@ -1,12 +1,14 @@
 package server_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"orbitbeacon/internal/config"
 	"orbitbeacon/internal/server"
@@ -157,7 +159,7 @@ func TestUIDocumentsDisallowFramingWithCSP(t *testing.T) {
 	}
 }
 
-func TestAuthenticatedCurrentSessionReclaimsExpiredSessions(t *testing.T) {
+func TestRequestsLeaveExpiredSessionsToRetention(t *testing.T) {
 	f := newHTTP(t, 2)
 	cookie, _ := login(t, f, "admin")
 	for i := range 2 {
@@ -169,18 +171,29 @@ func TestAuthenticatedCurrentSessionReclaimsExpiredSessions(t *testing.T) {
 	for _, path := range []string{"/", "/api/public/v1/nodes", "/api/v1/me"} {
 		_ = request(t, f.handler, http.MethodGet, path, "", nil, "", "")
 	}
-	var before int
-	if err := f.db.QueryRow("SELECT count(*) FROM sessions WHERE expires_at <= 0").Scan(&before); err != nil || before != 2 {
-		t.Fatalf("anonymous traffic cleaned sessions: %d %v", before, err)
-	}
+	// Reads, even authenticated ones, must not take the SQLite writer.
 	response := request(t, f.handler, http.MethodGet, "/api/v1/me", "", cookie, "", "")
 	assertHTTPStatus(t, response, http.StatusOK)
+	var before int
+	if err := f.db.QueryRow("SELECT count(*) FROM sessions WHERE expires_at <= 0").Scan(&before); err != nil || before != 2 {
+		t.Fatalf("request handling cleaned sessions: %d %v", before, err)
+	}
+	retention, ok := f.handler.(interface {
+		CleanupRetention(context.Context, time.Time) (server.RetentionResult, error)
+	})
+	if !ok {
+		t.Fatal("handler does not expose retention cleanup")
+	}
+	result, err := retention.CleanupRetention(context.Background(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
 	var expired int
 	if err := f.db.QueryRow("SELECT count(*) FROM sessions WHERE expires_at <= 0").Scan(&expired); err != nil {
 		t.Fatal(err)
 	}
-	if expired != 0 {
-		t.Errorf("authenticated current-session access left %d expired sessions", expired)
+	if expired != 0 || result.Sessions != 2 {
+		t.Errorf("retention left %d expired sessions and reported %d removed", expired, result.Sessions)
 	}
 }
 

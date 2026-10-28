@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -27,12 +28,18 @@ func TestPasswordQueueRejectsOverflowAndCancelsWaiters(t *testing.T) {
 			}()
 		}
 		synctest.Wait()
+		peers, names := maps.Clone(s.loginPeers), maps.Clone(s.loginNames)
+		peerOverflow, nameOverflow := s.loginPeerOverflow, s.loginNameOverflow
 		started := time.Now()
 		if _, err := s.Login(context.Background(), "admin", "a valid length password"); !errors.Is(err, ErrRateLimited) {
 			t.Fatalf("overflow login admission=%v", err)
 		}
 		if time.Since(started) != 0 {
 			t.Fatal("overflow work was queued instead of immediately rejected")
+		}
+		if !maps.Equal(peers, s.loginPeers) || !maps.Equal(names, s.loginNames) ||
+			peerOverflow != s.loginPeerOverflow || nameOverflow != s.loginNameOverflow || len(s.loginFailures) != 0 || len(s.loginSuccesses) != 0 {
+			t.Fatal("gate-rejected login changed limiter state")
 		}
 		cancel()
 		wg.Wait()
@@ -64,7 +71,7 @@ func TestLoginAdmissionRefillsAndBoundsIdentityChurn(t *testing.T) {
 	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 	s := NewService(nil, Options{Now: func() time.Time { return now }})
 	ctx := WithLoginPeer(context.Background(), "192.0.2.1:1234")
-	for range 16 {
+	for range 10 {
 		if err := s.admitLogin(ctx, "admin"); err != nil {
 			t.Fatal(err)
 		}
@@ -72,7 +79,7 @@ func TestLoginAdmissionRefillsAndBoundsIdentityChurn(t *testing.T) {
 	if err := s.admitLogin(ctx, "admin"); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("exhausted computation budget=%v", err)
 	}
-	now = now.Add(time.Second)
+	now = now.Add(30 * time.Second)
 	if err := s.admitLogin(ctx, "admin"); err != nil {
 		t.Fatalf("budget did not refill: %v", err)
 	}
@@ -81,7 +88,7 @@ func TestLoginAdmissionRefillsAndBoundsIdentityChurn(t *testing.T) {
 	}
 	for i := range 2048 {
 		peer := WithLoginPeer(context.Background(), fmt.Sprintf("198.18.%d.%d:1234", i/256, i%256))
-		if err := s.admitLogin(peer, fmt.Sprint(i)); err != nil {
+		if err := s.admitLogin(peer, fmt.Sprint(i)); err != nil && !errors.Is(err, ErrRateLimited) {
 			t.Fatal(err)
 		}
 	}
@@ -94,13 +101,13 @@ func TestRejectedPeerCannotEvictExhaustedIdentityHistory(t *testing.T) {
 	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 	s := NewService(nil, Options{Now: func() time.Time { return now }})
 	ctx := WithLoginPeer(context.Background(), "192.0.2.1:1234")
-	for range 16 {
+	for range 10 {
 		if err := s.admitLogin(ctx, "target"); err != nil {
 			t.Fatal(err)
 		}
 	}
 	now = now.Add(time.Nanosecond)
-	for i := range 16 {
+	for i := range 22 {
 		if err := s.admitLogin(ctx, fmt.Sprintf("admitted-%d", i)); err != nil {
 			t.Fatal(err)
 		}
@@ -118,4 +125,26 @@ func TestRejectedPeerCannotEvictExhaustedIdentityHistory(t *testing.T) {
 	if err := s.admitLogin(ctx, "target"); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("rejected churn reset the exhausted target budget: %v", err)
 	}
+}
+
+func TestGateRejectedPasswordChangesDoNotSpendBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := NewService(nil, Options{})
+		s.gate <- struct{}{}
+		overflow := s.passwordChangeOverflow
+		for range 6 {
+			if err := s.ChangePassword(context.Background(), "user", "old password", "a valid new password"); !errors.Is(err, ErrRateLimited) {
+				t.Fatalf("busy password change=%v", err)
+			}
+		}
+		cancelled, stop := context.WithCancel(context.Background())
+		stop()
+		if err := s.ChangePassword(cancelled, "user", "old password", "a valid new password"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled password change=%v", err)
+		}
+		if len(s.passwordChanges) != 0 || s.passwordChangeOverflow != overflow {
+			t.Fatal("rejected password changes spent the user's budget")
+		}
+		<-s.gate
+	})
 }

@@ -36,9 +36,10 @@ const (
 )
 
 type Options struct {
-	MaxNodes int
-	Now      func() time.Time
-	Random   io.Reader
+	MaxNodes            int
+	Now                 func() time.Time
+	Random              io.Reader
+	AfterIdentityChange func()
 }
 
 type Service struct {
@@ -46,6 +47,8 @@ type Service struct {
 	maxNodes      int
 	now           func() time.Time
 	random        io.Reader
+	hookMu        sync.Mutex
+	identityHooks []func()
 	randomMu      sync.Mutex
 	admissionMu   sync.Mutex
 	invalidPeers  map[string]invalidBucket
@@ -62,7 +65,21 @@ func NewService(db *sql.DB, opts Options) *Service {
 	if opts.Random == nil {
 		opts.Random = rand.Reader
 	}
-	return &Service{db: db, maxNodes: opts.MaxNodes, now: opts.Now, random: opts.Random, invalidPeers: make(map[string]invalidBucket)}
+	s := &Service{db: db, maxNodes: opts.MaxNodes, now: opts.Now, random: opts.Random, invalidPeers: make(map[string]invalidBucket)}
+	s.OnIdentityChange(opts.AfterIdentityChange)
+	return s
+}
+
+// OnIdentityChange registers a hook that runs after a claim commits a new
+// credential. The HTTP handler uses it to invalidate cached public metrics,
+// including for services the caller constructed itself.
+func (s *Service) OnIdentityChange(hook func()) {
+	if hook == nil {
+		return
+	}
+	s.hookMu.Lock()
+	defer s.hookMu.Unlock()
+	s.identityHooks = append(s.identityHooks, hook)
 }
 
 // Ticket deliberately contains neither the enrollment secret nor its hash.
@@ -173,7 +190,8 @@ func (s *Service) Get(ctx context.Context, id string) (Ticket, error) {
 }
 
 func (s *Service) List(ctx context.Context, limit, offset int) ([]Ticket, error) {
-	if limit < 1 || limit > 100 || offset < 0 {
+	// The HTTP page limit is 100; allow one extra row for its lookahead.
+	if limit < 1 || limit > 101 || offset < 0 {
 		return nil, ErrInvalidInput
 	}
 	rows, err := s.db.QueryContext(ctx, "SELECT "+ticketColumns+" FROM enrollment_tokens ORDER BY expires_at DESC, id LIMIT ? OFFSET ?", limit, offset)
@@ -246,13 +264,16 @@ func (s *Service) Recover(ctx context.Context, token string, req v1.RecoveryRequ
 		return v1.EnrollmentResponse{}, ErrUnauthenticated
 	}
 	digest := sha256.Sum256([]byte(token))
-	var nodeID string
-	err := s.db.QueryRowContext(ctx, "SELECT id FROM nodes WHERE token_hash = ? AND installation_id = ?", digest[:], req.InstallationID).Scan(&nodeID)
+	var nodeID, status string
+	err := s.db.QueryRowContext(ctx, "SELECT id, status FROM nodes WHERE token_hash = ? AND installation_id = ?", digest[:], req.InstallationID).Scan(&nodeID, &status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v1.EnrollmentResponse{}, ErrUnauthenticated
 	}
 	if err != nil {
 		return v1.EnrollmentResponse{}, err
+	}
+	if status == "disabled" {
+		return v1.EnrollmentResponse{}, nodes.ErrDisabled
 	}
 	return v1.EnrollmentResponse{NodeID: nodeID, ServerTime: s.now().UTC()}, nil
 }
@@ -321,6 +342,7 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 	}
 
 	var nodeID string
+	rotation := false
 	if ticket.NodeID != nil {
 		nodeID = *ticket.NodeID
 		var installation sql.NullString
@@ -336,7 +358,8 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 		}
 		// A ticket authorizes a change, not a stale overwrite. Concurrent
 		// candidates may share a parent, but only the current parent can win.
-		if len(currentHash) != 0 && subtle.ConstantTimeCompare(currentHash, nodeHash[:]) != 1 {
+		rotation = len(currentHash) != 0 && subtle.ConstantTimeCompare(currentHash, nodeHash[:]) != 1
+		if rotation {
 			if req.PreviousNodeToken == "" {
 				return v1.EnrollmentResponse{}, ErrConflict
 			}
@@ -392,11 +415,19 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 	if _, err := tx.ExecContext(ctx, "UPDATE enrollment_tokens SET uses = uses + 1 WHERE id = ?", ticket.ID); err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
-	if err := audit.Insert(ctx, tx, "enrollment.claim", nodeID, now); err != nil {
+	// Agents have no session, so the claim is attributed to the ticket.
+	details := audit.Details{"enrollment_id": ticket.ID, "new_node": ticket.NodeID == nil, "rotation": rotation}
+	if err := audit.InsertDetails(audit.WithSystemActor(ctx, "agent"), tx, "enrollment.claim", nodeID, now, details); err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return v1.EnrollmentResponse{}, err
+	}
+	s.hookMu.Lock()
+	hooks := s.identityHooks
+	s.hookMu.Unlock()
+	for _, hook := range hooks {
+		hook()
 	}
 	return v1.EnrollmentResponse{NodeID: nodeID, ServerTime: now}, nil
 }

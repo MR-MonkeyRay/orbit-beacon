@@ -19,23 +19,24 @@ var (
 	patchMethods          = []string{http.MethodPatch}
 	sessionMethods        = []string{http.MethodPost, http.MethodDelete}
 	enrollmentItemMethods = []string{http.MethodGet, http.MethodDelete}
+	deleteMethods         = []string{http.MethodDelete}
 )
 
-// routeMethods establishes route existence and method support before any
-// authentication, role, Origin or CSRF checks.
+// routeMethods establishes route existence and method support before session
+// authentication, role, Origin or CSRF checks. Bearer restrictions run first.
 func routeMethods(p string) []string {
 	switch p {
 	case "/api/v1/session":
 		return sessionMethods
-	case "/api/v1/me", "/api/v1/audit", "/api/public/v1/nodes":
+	case "/api/v1/me", "/api/v1/audit", "/api/v1/alerts", "/api/v1/alerts/summary", "/api/v1/notification-deliveries", "/api/public/v1/nodes", "/api/public/v1/stream":
 		return readMethods
 	case "/api/v1/me/password":
 		return patchMethods
-	case "/api/v1/users", "/api/v1/groups", "/api/v1/nodes":
+	case "/api/v1/users", "/api/v1/groups", "/api/v1/nodes", "/api/v1/alert-rules", "/api/v1/notification-channels":
 		return createMethods
 	case "/api/v1/nodes/batch", "/api/agent/v1/enroll", "/api/agent/v1/enroll/check", "/api/agent/v1/report", "/api/agent/v1/recover":
 		return postMethods
-	case "/api/v1/enrollments":
+	case "/api/v1/api-tokens", "/api/v1/enrollments":
 		return createMethods
 	}
 	if !strings.HasPrefix(p, "/api/v1/") {
@@ -45,14 +46,26 @@ func routeMethods(p string) []string {
 	if len(parts) < 2 || !identity.ValidUUID(parts[1]) {
 		return nil
 	}
+	if len(parts) == 2 && parts[0] == "api-tokens" {
+		return deleteMethods
+	}
 	if len(parts) == 2 && parts[0] == "enrollments" {
 		return enrollmentItemMethods
 	}
-	if len(parts) == 2 && (parts[0] == "users" || parts[0] == "groups" || parts[0] == "nodes") {
+	if len(parts) == 2 && (parts[0] == "notification-channels" || parts[0] == "alert-rules" || parts[0] == "users" || parts[0] == "groups" || parts[0] == "nodes") {
 		return itemMethods
+	}
+	if len(parts) == 3 && parts[0] == "notification-channels" && parts[2] == "test" {
+		return postMethods
 	}
 	if len(parts) == 3 && parts[0] == "nodes" && (parts[2] == "config" || parts[2] == "public-settings") {
 		return configMethods
+	}
+	if len(parts) == 3 && parts[0] == "nodes" && (parts[2] == "latest" || parts[2] == "history" || parts[2] == "traffic" || parts[2] == "probes") {
+		return readMethods
+	}
+	if len(parts) == 3 && parts[0] == "nodes" && parts[2] == "credential" {
+		return deleteMethods
 	}
 	return nil
 }
@@ -84,12 +97,17 @@ func (h *handler) managementRoute(w http.ResponseWriter, r *http.Request, reques
 			h.serviceError(w, auth.ErrInvalidInput, requestID)
 			return true
 		}
-		events, err := h.management.Events(r.Context(), limit, offset)
+		before := r.URL.Query().Get("before")
+		if r.URL.Query().Has("before") && before == "" {
+			h.serviceError(w, auth.ErrInvalidInput, requestID)
+			return true
+		}
+		page, err := h.management.Events(r.Context(), limit, offset, before)
 		if err != nil {
 			h.serviceError(w, err, requestID)
 			return true
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"events": events})
+		writeJSON(w, http.StatusOK, page)
 	default:
 		return false
 	}

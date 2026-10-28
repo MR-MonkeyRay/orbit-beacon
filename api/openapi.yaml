@@ -4,29 +4,49 @@ info:
   version: 0.1.0
   description: |
     Steps 1–2 implement the control plane, enrollment and live agent telemetry.
-    Alerts, durable telemetry history, backups and upgrades are not implemented.
+    Alert rules, evaluation, event history and encrypted notification channels
+    with durable delivery are available. Durable metric history and backups are available; upgrades are pending.
+    Read-only automation tokens use Authorization: Bearer obt_<base64url secret>.
+    Allowed management GET operations (and their HEAD equivalents) accept bearerAuth
+    as an alternative to a session. All token writes return 403 token_read_only,
+    including requests with session cookies; tokens never set cookies or use CSRF.
+    Tokens cannot read /api/v1/me (or descendants), /api/v1/session, /api/v1/users*,
+    /api/v1/api-tokens*, /api/v1/enrollments*, or /notification-channels*/test.
+    Channel reads omit secrets. Query-string tokens return 400 token_in_query.
+    Expired/revoked/malformed tokens return 401 invalid_token. Rate limiting returns
+    429 with Retry-After: 1 (10 requests/second, burst 30 per token; invalid-token
+    peer budget burst 30, refill 1/second). Revocation is checked on every request.
+    Token HEAD requests execute the allowed GET operation without a response body.
     Browser reads require a session unless explicitly marked otherwise; agent
     routes use separate Bearer credentials and never accept browser sessions.
     Browser mutations require an administrator (except logout/password), the
     configured HTTPS Origin and a session-bound CSRF token; login requires Origin.
     Canonical origins lowercase DNS names, normalize IPv6 and omit default port 443;
-    request Host and forwarded headers do not establish trust.
+    request Host and forwarded headers do not establish Origin trust. Client IP
+    policies use X-Forwarded-For only when the direct peer matches trusted_proxies
+    (default empty), scanning right to left past trusted hops. Missing, malformed
+    or all-trusted chains fall back to the direct peer. X-Forwarded-Proto is ignored.
     JSON requests must contain one object, reject unknown fields and are limited to
     64 KiB. String limits enforced by the server are UTF-8 byte limits.
     Byte-constrained strings use x-minLengthBytes/x-maxLengthBytes, not JSON Schema
     character-count bounds. Validators must opt into these extensions; the Server
     remains authoritative. For example, four CJK characters can satisfy an
     eight-byte password minimum.
-    Unsupported methods return 405 with Allow before authentication is checked;
+    Session/anonymous unsupported methods return 405 with Allow before authentication is checked;
     unknown API routes return structured 404, never the UI shell.
     State changes and actor-attributed audit insertion share one transaction;
     failed audit insertion rolls back the change. Batch nodes use one transaction
     per node and report individual failures rather than committing unaudited changes.
-    Sessions expire after 12 hours. Successful login and successful authenticated
-    GET /api/v1/me perform bounded expired-session cleanup; anonymous public reads
-    neither create sessions nor trigger cleanup. Password changes revoke every
+    Sessions expire after 12 hours. Successful login and an hourly retention task
+    perform bounded expired-session cleanup; other requests, including anonymous
+    public reads, never trigger cleanup. Login (session.create) and logout
+    (session.delete) are audited; agent enrollment claims are audited without an
+    actor_id and with details.actor_kind "agent". Password changes revoke every
     session of the affected user; user role changes also revoke that user's sessions.
-    UI responses deny framing with CSP frame-ancestors 'none' and X-Frame-Options DENY.
+    HTML responses use a self-only CSP with per-file SHA-256 hashes for inline
+    scripts, data images, no inline styles, no objects or base URI, same-origin
+    forms, frame-ancestors 'none' and X-Frame-Options DENY. HSTS max-age=31536000
+    is sent only when the Server itself terminates TLS; TLS proxies must set HSTS.
     The data directory must be effective-user-owned and private (0700); SQLite,
     its sidecars and secrets.key must be owned regular 0600 files, never symlinks.
     Linux validates that the backing mount is local and writable.
@@ -89,11 +109,156 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '405': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
+  /api/public/v1/stream:
+    get:
+      operationId: streamPublicNodes
+      security: []
+      description: |
+        Anonymous server-sent-events stream of the same paginated public node
+        projection returned by GET /api/public/v1/nodes. The limit and offset
+        parameters have identical defaults and validation. No session, Origin or
+        CSRF token is required, and the response is not cacheable.
+
+        The first nodes event is sent immediately. Later nodes events are emitted
+        when accepted agent reports or public-visibility changes occur, coalesced
+        to at most one event every two seconds, and at least every ten seconds so
+        presence and generated_at advance. Every nodes event invokes the same
+        PublicNodeList projection as GET /api/public/v1/nodes; frames are never
+        reused across events. The projection's two-second cache remains active,
+        while publication changes invalidate its visibility version immediately,
+        so an unpublished, disabled or deleted node is absent from the next frame.
+
+        Frames contain exactly one event and one compact, single-line data value:
+        `event: nodes\ndata: <PublicNodeList JSON>\n\n`. A graceful server-side
+        close sends `event: close\ndata: {}\n\n` immediately before ending the
+        response. Streams close gracefully after 15 minutes and when server shutdown
+        starts. Database, projection or write failures, and client cancellation end
+        the response without a close event. No other event types are sent.
+
+        At most 200 streams may be open globally and four per resolved client IP.
+        Excess streams receive 503 stream_busy with Retry-After. Only GET is
+        supported; other methods return 405 with Allow: GET.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Server-sent stream of public node snapshots.
+          headers:
+            Cache-Control:
+              schema: {type: string, const: no-store}
+            X-Accel-Buffering:
+              schema: {type: string, const: no}
+          content:
+            text/event-stream; charset=utf-8:
+              schema:
+                type: string
+                description: UTF-8 SSE frames. Nodes data is compact JSON matching PublicNodeList; close data is exactly {}.
+              examples:
+                nodes:
+                  summary: Public node snapshot
+                  value: "event: nodes\ndata: {\"nodes\":[],\"has_more\":false,\"next_offset\":null,\"generated_at\":\"2026-01-01T00:00:00Z\"}\n\n"
+                close:
+                  summary: Graceful server-side close
+                  value: "event: close\ndata: {}\n\n"
+        '400': {$ref: '#/components/responses/Error'}
+        '405': {$ref: '#/components/responses/Error'}
+        '503':
+          description: Stream concurrency limit reached; error code is stream_busy.
+          headers:
+            Retry-After:
+              description: Delay in seconds before opening another stream.
+              schema: {type: string, pattern: '^[1-9][0-9]*$'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+              example:
+                code: stream_busy
+                message: Too many public streams.
+                request_id: 00000000-0000-4000-8000-000000000001
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/api-tokens:
+    get:
+      operationId: listAPITokens
+      description: Administrator session only. Lists retained token metadata, never plaintext or hashes. Prefix is the first eight characters of the public UUID, not secret material.
+      responses:
+        '200':
+          description: API tokens, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [api_tokens]
+                properties:
+                  api_tokens:
+                    type: array
+                    items: {$ref: '#/components/schemas/APIToken'}
+        '403': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createAPIToken
+      description: Administrator session, Origin and CSRF required. At most 50 active tokens globally. Plaintext is returned once; api_token.create is audited in the same transaction without secrets.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 100, description: Trimmed nonempty UTF-8 name.}
+                expires_in_days: {type: [integer, 'null'], minimum: 1, maximum: 365, default: null, description: Omitted or null means no expiration.}
+      responses:
+        '201':
+          description: Created token. Copy the token now; it cannot be retrieved again.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/APIToken'
+                  - type: object
+                    required: [token]
+                    properties:
+                      token: {type: string, pattern: '^obt_[A-Za-z0-9_-]{43}$', description: Returned only in this creation response.}
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/api-tokens/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    delete:
+      operationId: revokeAPIToken
+      description: Administrator session, Origin and CSRF required. Idempotent 204 even if absent or already revoked. Revocation is effective on the next request; api_token.revoke is audited once in the mutation transaction. Revoked or expired rows are deleted in bounded batches after 30 days.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204': {description: Token revoked or already absent/revoked.}
+        '403': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/session:
     post:
       operationId: login
       security: []
-      description: Requires the configured public Origin. Before database lookup and Argon2, direct-peer and peer/username token budgets bound computation; ports and forwarded headers do not change identity. Password work is serialized with at most eight waiters and a one-second queue deadline. Admission overload returns 429 with Retry-After of one second. There is no global failed-password lockout; users sharing a reverse proxy also share its direct-peer budget.
+      description: |
+        Requires the configured public Origin. Before database lookup and Argon2,
+        direct-peer and peer/username token budgets bound computation; both must
+        allow an attempt before either is charged. IPv4 peers are keyed by address
+        and IPv6 peers by /64 prefix. Ports and forwarded headers do not change
+        identity. The peer/username budget has burst 10 and refills one token per
+        30 seconds. Failed password verification, including for unknown usernames,
+        also charges a source-independent username-hash budget with burst 20 and
+        one token per 60 seconds. That budget is deleted after successful login.
+        Exhaustion rejects before Argon2, except that a peer which successfully
+        logged into that username during the previous 24 hours may continue trying,
+        preventing a remote attacker from locking out a user's usual network.
+        Password work is serialized with at most eight waiters and a one-second
+        queue deadline. Admission overload returns 429 with Retry-After of one second.
       parameters:
         - $ref: '#/components/parameters/Origin'
       requestBody:
@@ -131,7 +296,7 @@ paths:
       operationId: currentSession
       responses:
         '200':
-          description: Current authenticated session and stable CSRF token, recoverable in a new tab without rotating another tab's token. No session bearer credential is exposed. Successful authentication performs best-effort bounded expired-session cleanup; unauthenticated requests do not.
+          description: Current authenticated session and stable CSRF token, recoverable in a new tab without rotating another tab's token. No session bearer credential is exposed. This read never writes; expired sessions are reclaimed by login and the hourly retention task.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/BrowserSession'}
@@ -139,7 +304,14 @@ paths:
   /api/v1/me/password:
     patch:
       operationId: changeOwnPassword
-      description: Available to either role. The old password proves ownership. A successful change atomically revokes every session of this user, including the current session; log in again.
+      description: |
+        Available to either role. The current password proves ownership. Attempts
+        are limited per user with burst 5 and one token per 60 seconds, charged
+        before Argon2. An incorrect current password returns 400
+        invalid_old_password and leaves the authenticated session valid. A missing
+        or invalid session returns 401 unauthenticated. A successful change
+        atomically revokes every session of this user, including the current
+        session; log in again.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -159,11 +331,12 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/users:
     get:
       operationId: listUsers
-      description: Available to authenticated administrators and viewers; credential fields are never returned.
+      description: Available to authenticated administrators and viewers; credential fields are never returned. Returns the complete, unpaginated user list.
       responses:
         '200':
           description: User collection.
@@ -257,8 +430,11 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /api/v1/groups:
     get:
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: listGroups
-      description: Available to authenticated administrators and viewers.
+      description: Available to authenticated administrators and viewers. Returns the complete, unpaginated group list.
       responses:
         '200':
           description: Group collection.
@@ -293,6 +469,9 @@ paths:
     parameters:
       - $ref: '#/components/parameters/ResourceID'
     get:
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: getGroup
       description: Available to authenticated administrators and viewers.
       responses:
@@ -330,13 +509,291 @@ paths:
         '204': {description: Group removed and nodes detached.}
         '404': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/notification-channels:
+    get:
+      security:
+        - session: []
+        - bearerAuth: []
+      operationId: listNotificationChannels
+      description: Administrators and viewers may list channels. Secrets and full webhook URLs are never returned; secret_set and config.url_set indicate encrypted material is present.
+      responses:
+        '200':
+          description: Channels ordered by creation time then ID; at most 20.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [channels]
+                properties:
+                  channels: {type: array, items: {$ref: '#/components/schemas/NotificationChannel'}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createNotificationChannel
+      description: Administrator only. Insertion and notification_channel.create audit commit together. Capacity returns 409 notification_channel_capacity_reached.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/NotificationChannelPatch'
+                - required: [name, kind, enabled, config]
+      responses:
+        '201':
+          description: Channel created.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationChannel'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/notification-channels/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    get:
+      security:
+        - session: []
+        - bearerAuth: []
+      operationId: getNotificationChannel
+      description: Administrators and viewers may read a channel without credentials.
+      responses:
+        '200':
+          description: Channel without secret material.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationChannel'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: patchNotificationChannel
+      description: Administrator only. Omission retains fields. Webhook config.url is write-only and omission retains the encrypted URL; other config replaces the complete non-secret config. Secret empty string clears credentials; null is rejected. Kind cannot change. Update and notification_channel.update audit commit together.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/NotificationChannelPatch'}
+      responses:
+        '200':
+          description: Channel updated.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationChannel'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteNotificationChannel
+      description: Administrator only. Deletes channel, routing and delivery records with notification_channel.delete audit in the same transaction.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204': {description: Channel deleted.}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/notification-channels/{id}/test:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    post:
+      operationId: testNotificationChannel
+      description: Administrator only. Audits and reserves rate capacity before synchronous delivery (10 seconds maximum). Disabled channels may be tested. Unreadable credentials return 409 secret_unreadable with repair guidance. Transport failures return 200 with ok false and a safe error_code. No credentials or response bodies are returned.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '200':
+          description: Test result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, error_code]
+                additionalProperties: false
+                properties:
+                  ok: {type: boolean}
+                  error_code: {type: string, description: Empty on success; safe category on failure.}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/notification-deliveries:
+    get:
+      security:
+        - session: []
+        - bearerAuth: []
+      operationId: listNotificationDeliveries
+      description: Administrators and viewers may read recent deliveries without payloads, credentials or remote response bodies. Ordered by created_at and ID descending; terminal rows retained for 30 days. Floods retain a summary row with coalesced_count.
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+        - name: before
+          in: query
+          schema: {type: string}
+          description: Opaque next_cursor from the preceding page.
+      responses:
+        '200':
+          description: Delivery log page.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deliveries, has_more]
+                properties:
+                  deliveries: {type: array, items: {$ref: '#/components/schemas/NotificationDelivery'}}
+                  has_more: {type: boolean}
+                  next_cursor: {type: string}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/alert-rules:
+    get:
+      security:
+        - session: []
+        - bearerAuth: []
+      operationId: listAlertRules
+      description: Administrators and viewers can read all rules. At most 200 rules exist, including disabled rules. Ordered by creation time then UUID.
+      responses:
+        '200':
+          description: Rule collection.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rules]
+                properties:
+                  rules: {type: array, items: {$ref: '#/components/schemas/AlertRule'}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createAlertRule
+      description: Administrator only. Rule insertion and alert_rule.create audit insertion commit atomically. A 201 returns the rule; capacity 200 returns 409 alert_rule_capacity_reached.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AlertRuleCreate'}
+      responses:
+        '201':
+          description: Created rule.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AlertRule'}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/alert-rules/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    get:
+      security:
+        - session: []
+        - bearerAuth: []
+      operationId: getAlertRule
+      description: Administrators and viewers can read a rule. Missing rules return 404.
+      responses:
+        '200':
+          description: Rule.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AlertRule'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: patchAlertRule
+      description: |
+        Administrator only. Omitted members retain their previous values. Null is
+        accepted only for scope_id, comparator and threshold. The merged rule must
+        satisfy all create constraints. Changing channel_ids never resets pending timers or open episodes. Changing condition or scope resets pending
+        evaluation and resolves any old episode on the next tick. Disabling also
+        resolves open episodes on the next tick. Updates and alert_rule.update
+        audit insertion commit atomically.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AlertRulePatch'}
+      responses:
+        '200':
+          description: Updated rule.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AlertRule'}
+        '400': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteAlertRule
+      description: Administrator only. Delete and alert_rule.delete audit insertion commit atomically. Event history survives deletion; open episodes resolve on the next tick.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204': {description: Rule deleted.}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/alerts:
+    get:
+      security:
+        - session: []
+        - bearerAuth: []
+      operationId: listAlerts
+      description: |
+        Administrators and viewers can read alert episodes. Ordered by started_at
+        DESC, id DESC with keyset pagination. Names are joined from current rules
+        and nodes, falling back to event snapshots after deletion. Unknown,
+        repeated or empty query parameters return 400. Resolved events are kept
+        for 90 days after resolution with hourly bounded cleanup. Open events are
+        never expired. Notifications are not yet delivered.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - name: state
+          in: query
+          schema: {type: string, enum: [firing, resolved, all], default: all}
+        - name: before
+          in: query
+          description: Opaque next_cursor from the previous page; canonical timestamp/UUID keyset position, strictly older than the last event. Invalid or empty cursors return 400.
+          schema: {type: string, minLength: 90, maxLength: 90}
+      responses:
+        '200':
+          description: Paginated alert episodes.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [events, has_more]
+                properties:
+                  events: {type: array, items: {$ref: '#/components/schemas/AlertEvent'}}
+                  has_more: {type: boolean}
+                  next_cursor: {type: string, description: Present only when has_more is true; pass as before.}
+        '400': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/alerts/summary:
+    get:
+      security:
+        - session: []
+        - bearerAuth: []
+      operationId: getAlertSummary
+      description: Administrators, viewers and read-only API tokens can read firing counts and up to five newest firing episodes from one consistent read snapshot. Severity comes from the stored rule snapshot; missing or unrecognized severity counts as unknown. Newest episodes use the same fields as listAlerts, ordered by started_at DESC, id DESC.
+      responses:
+        '200':
+          description: Firing alert summary.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AlertSummary'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/audit:
     get:
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: listAuditEvents
-      description: Available to authenticated administrators and viewers. Returns persisted events, newest first, with UUID tie-breaking. Details are JSON objects and contain no credentials.
+      description: Available to authenticated administrators and viewers. Returns persisted events ordered by created_at DESC, id DESC. Use next_cursor as before for stable traversal when newer events arrive; before ignores offset after limit/offset validation. Details are JSON objects and contain no credentials.
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
+        - name: before
+          in: query
+          description: Opaque next_cursor from the previous page. Returns events strictly older than that event in the sort order and ignores offset. Invalid or empty cursors return 400 validation_failed.
+          schema: {type: string, minLength: 90, maxLength: 90}
       responses:
         '200':
           description: Paginated audit events.
@@ -345,15 +802,21 @@ paths:
               schema:
                 type: object
                 additionalProperties: false
-                required: [events]
+                required: [events, has_more]
                 properties:
                   events:
                     type: array
                     items: {$ref: '#/components/schemas/AuditEvent'}
+                  has_more: {type: boolean, description: Whether another event exists beyond this page.}
+                  next_offset: {type: integer, minimum: 0, description: Present only when has_more is true. Continuation offset usable only when before is omitted. Cursor requests must continue with next_cursor because before ignores offset.}
+                  next_cursor: {type: string, description: Present only when has_more is true. Opaque cursor for the last returned event; pass as before to fetch older events.}
         '400': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes:
     get:
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: listNodes
       parameters:
         - name: limit
@@ -369,11 +832,13 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [nodes]
+                required: [nodes, has_more]
                 properties:
                   nodes:
                     type: array
                     items: {$ref: '#/components/schemas/Node'}
+                  has_more: {type: boolean, description: Whether another node exists beyond this page.}
+                  next_offset: {type: integer, minimum: 0, description: Present only when has_more is true. Pass as offset for the next page.}
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createPendingNode
@@ -403,6 +868,9 @@ paths:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: getNode
       responses:
         '200':
@@ -460,10 +928,108 @@ paths:
       responses:
         '204': {description: Asset removed and identity revoked.}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/history:
+    parameters:
+      - $ref: '#/components/parameters/NodeID'
+    get:
+      security:
+        - session: []
+        - bearerAuth: []
+      operationId: getNodeHistory
+      description: Viewer or administrator. Best-effort history, flushed about once per minute. Missing or failed measurements and gaps produce no points. Network rates sum successful interfaces. Disk percentage uses total used bytes divided by total capacity across successful selected disks. Both query parameters are required exactly once; unknown parameters are rejected. Ranges 1h and 6h use 1-minute buckets, 24h and 7d use 5-minute buckets, and 30d uses 1-hour buckets. Rollup averages are weighted by measurement count. A disabled history store returns an empty points array. Unknown nodes return node_not_found.
+      parameters:
+        - name: metric
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [cpu_percent, memory_used_percent, swap_used_percent, load1, disk_used_percent, net_rx_bytes_per_second, net_tx_bytes_per_second]
+        - name: range
+          in: query
+          required: true
+          schema: {type: string, enum: [1h, 6h, 24h, 7d, 30d]}
+      responses:
+        '200':
+          description: Ascending UTC bucket timestamps; no null or synthetic gap points. An intersecting bucket at the start of the range may precede the exact cutoff by less than one step.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MetricHistory'}
+        '400':
+          description: validation_failed for invalid or missing query parameters.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/traffic:
+    parameters:
+      - $ref: '#/components/parameters/NodeID'
+    get:
+      security:
+        - session: []
+        - bearerAuth: []
+      operationId: getNodeTraffic
+      description: Viewer or administrator. Returns UTC daily traffic for the last N days including today and totals for the current UTC billing cycle. The optional days parameter defaults to 30 and must be supplied exactly once as an integer from 1 through 400; unknown parameters are rejected. Daily results merge retained daily rollups with hourly data and include only days with traffic. Unknown nodes return node_not_found.
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 400, default: 30}
+      responses:
+        '200':
+          description: Traffic totals. Byte counters are canonical unsigned decimal strings. Cycle end is exclusive.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TrafficSummary'}
+        '400':
+          description: validation_failed for malformed, repeated, unknown or out-of-range query parameters.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/probes:
+    parameters:
+      - $ref: '#/components/parameters/NodeID'
+    get:
+      security:
+        - session: []
+        - bearerAuth: []
+      operationId: getNodeProbes
+      description: Viewer or administrator, including read-only API tokens. Returns one entry per currently configured probe target in desired-config order; results for targets removed from configuration are not returned. Latest results and hourly counters are persisted on the coalesced ingest transaction cadence, so responses may lag reports by up to about 30 seconds. The 24-hour window includes UTC hours greater than or equal to the current UTC hour minus 23 hours, with no separate upper cutoff. Unknown nodes return node_not_found.
+      responses:
+        '200':
+          description: Current service-probe states and 24-hour uptime aggregates.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProbeSummary'}
+        '404': {$ref: '#/components/responses/Error'}
+        '405': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/latest:
+    parameters:
+      - $ref: '#/components/parameters/NodeID'
+    get:
+      security:
+        - session: []
+        - bearerAuth: []
+      operationId: getNodeLatest
+      description: Viewer or administrator. Returns the latest accepted in-memory report for the current node identity, without credentials, run_generation or session_id. A missing node, missing report since server startup, disabled node or invalidated identity returns 404 node_not_found. Values are the latest sample and may be stale; received_at is server reception time, not a liveness guarantee. System is null when the report omitted it; agent_version remains available on the persisted node view.
+      responses:
+        '200':
+          description: Latest private telemetry sample.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LatestSample'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes/{id}/public-settings:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: getNodePublicSettings
       description: Available to authenticated administrators and viewers. Returns the independent public settings, including for pending or disabled nodes; no values are filled from internal node metadata.
       responses:
@@ -519,10 +1085,37 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/credential:
+    parameters:
+      - $ref: '#/components/parameters/NodeID'
+    delete:
+      operationId: revokeNodeCredential
+      description: |
+        Administrator only; requires the trusted configured Origin and this
+        session's CSRF token. Clears the node credential and installation binding
+        and resets the report identity in one transaction with the
+        node.credential.revoke audit event. Metadata, desired configuration and
+        public settings are kept. The node becomes pending (a disabled node stays
+        disabled) and disappears from the public page; its agent receives 401 on
+        the next request. Issue a new single-node enrollment ticket to bind a
+        fresh installation. Revoking an already revoked node succeeds.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204': {description: Credential revoked}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes/{id}/config:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: getDesiredConfig
       responses:
         '200':
@@ -533,7 +1126,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     patch:
       operationId: patchDesiredConfig
-      description: Administrator only. Actual changes increment revision atomically. Omitted fields remain unchanged; explicit null and empty patches are rejected. Unchanged values return the existing revision without another audit event. All invalid supported fields are returned together. Combined interface and disk identifiers must fit a 48 KiB budget for their three JSON-escaped report occurrences, leaving 16 KiB for other fields; partial patches are checked against persisted selections. Probe scheduling is not implemented and probe_targets cannot be changed in this slice.
+      description: Administrator only. Actual changes increment revision atomically. Omitted fields remain unchanged; explicit null and empty patches are rejected. Unchanged values return the existing revision without another audit event. All invalid supported fields are returned together. Combined interface and disk identifiers must fit a 48 KiB budget for their three JSON-escaped report occurrences, leaving 16 KiB for other fields; partial patches are checked against persisted selections. Probe targets are visible to every console user and API token, so URLs must not contain credentials, tokens or other secrets. Audit details record only the target count, never target values.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -553,6 +1146,7 @@ paths:
                   type: array
                   maxItems: 8
                   items: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 1024}
+                probe_targets: {$ref: '#/components/schemas/ProbeTargets'}
                 billing_day: {type: integer, minimum: 1, maximum: 28}
                 quota_bytes: {$ref: '#/components/schemas/DecimalCounter'}
       responses:
@@ -566,7 +1160,7 @@ paths:
   /api/v1/nodes/batch:
     post:
       operationId: batchNodes
-      description: Administrator only. Explicit unique UUIDs required, no implicit all-nodes selection. Each node is a separate transaction and results preserve request order.
+      description: Administrator only. Explicit unique UUIDs required, no implicit all-nodes selection. Each node is a separate transaction and results preserve request order. Disabling keeps the credential but rejects the node's reports and credential recovery with 403 node_disabled until it is enabled again.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -620,8 +1214,11 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [enrollments, has_more]
                 properties:
                   enrollments: {type: array, items: {$ref: '#/components/schemas/Enrollment'}}
+                  has_more: {type: boolean, description: Whether another enrollment exists beyond this page.}
+                  next_offset: {type: integer, minimum: 0, description: Present only when has_more is true. Pass as offset for the next page.}
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createEnrollment
@@ -762,7 +1359,7 @@ paths:
     post:
       operationId: recoverAgentEnrollment
       security: [{nodeBearer: []}]
-      description: Side-effect-free confirmation of a saved node credential and its installation binding, including before the first collection run. Unknown credentials are rejected before body reads. A single read verifies the exact credential and installation together; no liveness, generation, session, report admission, or configuration acknowledgement is updated. Requests never contain a target node_id. Clients try the durable pending credential first and then the active credential only after 401, validate the returned identity, and promote pending only after confirmation. GET and HEAD are unsupported. Maximum body size is 64 KiB.
+      description: Side-effect-free confirmation of a saved node credential and its installation binding, including before the first collection run. Unknown credentials are rejected before body reads. A single read verifies the exact credential and installation together; no liveness, generation, session, report admission, or configuration acknowledgement is updated. A disabled node receives 403 node_disabled. Requests never contain a target node_id. Clients try the durable pending credential first and then the active credential only after 401, validate the returned identity, and promote pending only after confirmation. GET and HEAD are unsupported. Maximum body size is 64 KiB.
       requestBody:
         required: true
         content:
@@ -789,7 +1386,7 @@ paths:
     post:
       operationId: reportAgent
       security: [{nodeBearer: []}]
-      description: POST-only telemetry; credential recovery uses the separate POST /api/agent/v1/recover endpoint and never fabricates a report. Target comes exclusively from Bearer authentication; requests never contain node_id. Maximum 64 KiB; one request/second per node, burst three. Authentication and admission charging precede body reads, so malformed, oversized, unsupported and conflicting authenticated requests all consume capacity. Unauthenticated requests neither read bodies nor charge a node. Processing transactionally rechecks the exact credential. New generations replace the durable session fence; older generations or same-generation different sessions return 409. Duplicate/out-of-order sequence returns the already accepted sequence without updating latest/last_seen. Sequence and latest state are process-local, not durable history.
+      description: POST-only telemetry; credential recovery uses the separate POST /api/agent/v1/recover endpoint and never fabricates a report. Target comes exclusively from Bearer authentication; requests never contain node_id. Maximum 64 KiB; one request/second per node, burst three. Authentication and admission charging precede body reads, so malformed, oversized, unsupported and conflicting authenticated requests all consume capacity. Unauthenticated requests neither read bodies nor charge a node. Processing transactionally rechecks the exact credential. New generations replace the durable session fence; older generations or same-generation different sessions return 409. Duplicate/out-of-order sequence returns the already accepted sequence without updating latest/last_seen. Sequence and latest state are process-local, not durable history. A disabled node receives 403 node_disabled before its body is read. When the reported config_revision is newer than the stored desired revision (for example after a database restore), the server advances the desired revision past it and returns the stored configuration so later changes still apply. Revisions above 9007199254740991 (2^53-1, the server ceiling) are rejected with 400 validation_failed.
       requestBody:
         required: true
         content:
@@ -813,6 +1410,11 @@ paths:
         default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: obt_<base64url-32-random-bytes>
+      description: Read-only management API token. Only allowed GET/HEAD operations; never in URLs. Secret is shown once and only its SHA-256 hash is stored.
     session:
       type: apiKey
       in: cookie
@@ -883,6 +1485,182 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/Error'}
   schemas:
+    APIToken:
+      type: object
+      required: [id, name, prefix, created_by, created_by_username, created_at, expires_at, last_used_at, revoked_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 100}
+        prefix: {type: string, minLength: 8, maxLength: 8, description: First eight characters of the public UUID.}
+        created_by: {type: string, format: uuid}
+        created_by_username: {type: string}
+        created_at: {type: string, format: date-time}
+        expires_at: {type: [string, 'null'], format: date-time}
+        last_used_at: {type: [string, 'null'], format: date-time, description: Best effort; updated at most once per minute and skipped when SQLite is busy.}
+        revoked_at: {type: [string, 'null'], format: date-time}
+    NotificationChannelConfig:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          properties:
+            url: {type: string, format: uri, writeOnly: true, description: Required on webhook creation; encrypted in full and never returned. Omission on PATCH retains URL. HTTPS without userinfo or fragment; HTTP only for literal loopback with allow_insecure_webhooks and notification_allow_private_networks enabled.}
+        - type: object
+          additionalProperties: false
+          required: [chat_id]
+          properties:
+            chat_id: {type: string, pattern: '^(?:-?[0-9]{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$'}
+        - type: object
+          additionalProperties: false
+          required: [host, port, from, to]
+          properties:
+            host: {type: string, maxLength: 253}
+            port: {type: integer, minimum: 1, maximum: 65535}
+            username: {type: string, maxLength: 100}
+            from: {type: string, format: email}
+            to: {type: array, minItems: 1, maxItems: 20, items: {type: string, format: email}}
+    NotificationChannelReadConfig:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [url_redacted, url_set]
+          properties:
+            url_redacted: {type: string, description: Origin followed by /…; no original path or query.}
+            url_set: {type: boolean}
+        - type: object
+          additionalProperties: false
+          required: [chat_id]
+          properties:
+            chat_id: {type: string}
+        - type: object
+          additionalProperties: false
+          required: [host, port, from, to]
+          properties:
+            host: {type: string}
+            port: {type: integer}
+            username: {type: string}
+            from: {type: string, format: email}
+            to: {type: array, items: {type: string, format: email}}
+    NotificationChannelPatch:
+      type: object
+      additionalProperties: false
+      description: Config must match kind. Webhook secret is an optional HMAC signing key, Telegram requires a bot token, email secret is the SMTP password (required with username). Secret and the full webhook URL are independently encrypted, write-only and never returned. Explicit replacements or clears do not decrypt previous values, allowing repair after a key mismatch; restore the matching key or replace all affected values. Other updates requiring unreadable credentials return 409 secret_unreadable. Omit to retain or empty to clear where the kind permits it.
+      properties:
+        name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 100}
+        kind: {type: string, enum: [webhook, telegram, email]}
+        enabled: {type: boolean}
+        config: {$ref: '#/components/schemas/NotificationChannelConfig'}
+        secret: {type: string, writeOnly: true, x-maxLengthBytes: 4096}
+    NotificationChannel:
+      type: object
+      additionalProperties: false
+      required: [id, name, kind, enabled, config, secret_set, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        kind: {type: string, enum: [webhook, telegram, email]}
+        enabled: {type: boolean}
+        config: {$ref: '#/components/schemas/NotificationChannelReadConfig'}
+        secret_set: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    NotificationDelivery:
+      type: object
+      additionalProperties: false
+      required: [id, channel_id, event_id, state, attempts, next_attempt_at, last_error_code, coalesced_count, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        channel_id: {type: string, format: uuid}
+        event_id: {type: string, format: uuid}
+        state: {type: string, enum: [pending, sent, failed]}
+        attempts: {type: integer, minimum: 0, maximum: 5}
+        next_attempt_at: {type: string, format: date-time}
+        last_error_code: {type: string, maxLength: 40}
+        coalesced_count: {type: integer, minimum: 1}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    AlertRulePatch:
+      type: object
+      additionalProperties: false
+      description: |
+        Metric rules require comparator and threshold. Percent thresholds are
+        finite 0..100; load1 thresholds are finite 0..1000000; probes_down is
+        finite 0..5. Offline requires
+        comparator and threshold null/omitted and for_seconds at least 180
+        (nodes.OnlineWindow). All scope requires null/omitted scope_id; node/group
+        scope requires an existing UUID. Scoped rules cascade on scope deletion;
+        each cascade deletion is audited with the parent inventory transaction.
+        Evaluated every 30 seconds using enrolled, enabled nodes and fresh,
+        identity-fenced latest reports. Missing/stale/error metrics reset pending
+        duration and never fire or establish recovery. Disk usage is the maximum
+        across fresh successful disks; zero-total memory/swap/disks are no data.
+        probes_down counts failed results in the latest report; no probe results
+        is the numeric value zero so removing targets can resolve an alert.
+        Metric conditions must hold continuously for for_seconds. Offline uses
+        time since the latest server-received report (or enrollment if no report),
+        with no additional pending delay. Recovery uses 2 percent of threshold
+        hysteresis, with at least 1 percentage point for percent metrics;
+        probes_down uses count hysteresis clamped to 0..5. Pending timers reset after restart;
+        firing episodes reload without duplication.
+      properties: &alertRuleProperties
+        name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 100, description: Nonblank name.}
+        enabled: {type: boolean}
+        scope_kind: {type: string, enum: [all, group, node]}
+        scope_id: {type: [string, 'null'], format: uuid}
+        metric: {type: string, enum: [cpu_percent, memory_used_percent, swap_used_percent, disk_used_percent, load1, probes_down, offline]}
+        comparator: {type: [string, 'null'], enum: ['>', '<', null]}
+        threshold: {type: [number, 'null'], minimum: 0, maximum: 1000000}
+        for_seconds: {type: integer, minimum: 0, maximum: 86400}
+        severity: {type: string, enum: [info, warning, critical]}
+        channel_ids: {type: array, maxItems: 20, uniqueItems: true, items: {type: string, format: uuid}, description: Existing channels; omitted retains routing on PATCH and defaults to empty on POST.}
+    AlertRuleCreate:
+      allOf:
+        - $ref: '#/components/schemas/AlertRulePatch'
+        - required: [name, enabled, scope_kind, metric, for_seconds, severity]
+    AlertRule:
+      type: object
+      additionalProperties: false
+      required: [id, name, enabled, scope_kind, scope_id, metric, comparator, threshold, for_seconds, severity, channel_ids, created_at, updated_at]
+      properties:
+        <<: *alertRuleProperties
+        id: {type: string, format: uuid}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    AlertSummary:
+      type: object
+      additionalProperties: false
+      required: [firing, newest]
+      properties:
+        firing:
+          type: object
+          additionalProperties: false
+          required: [total, info, warning, critical, unknown]
+          properties:
+            total: {type: integer, format: int64, minimum: 0}
+            info: {type: integer, format: int64, minimum: 0}
+            warning: {type: integer, format: int64, minimum: 0}
+            critical: {type: integer, format: int64, minimum: 0}
+            unknown: {type: integer, format: int64, minimum: 0}
+        newest:
+          type: array
+          maxItems: 5
+          items: {$ref: '#/components/schemas/AlertEvent'}
+    AlertEvent:
+      type: object
+      additionalProperties: false
+      required: [id, rule_id, node_id, rule_name, node_name, metric, severity, state, value, started_at, resolved_at, last_notified_at]
+      properties:
+        id: {type: string, format: uuid}
+        rule_id: {type: string, format: uuid}
+        node_id: {type: string, format: uuid}
+        rule_name: {type: string}
+        metric: {type: string, description: Rule metric when the episode fired (from the stored rule snapshot); empty if unavailable.}
+        severity: {type: string, description: Rule severity when the episode fired (from the stored rule snapshot); empty if unavailable.}
+        node_name: {type: string}
+        state: {type: string, enum: [firing, resolved]}
+        value: {type: [number, 'null'], description: Threshold value at firing or recovery; null for offline and lifecycle resolution.}
+        started_at: {type: string, format: date-time, description: Beginning of pending condition, or latest presence for offline episodes.}
+        resolved_at: {type: [string, 'null'], format: date-time}
+        last_notified_at: {type: [string, 'null'], format: date-time, description: Time of the most recent successful notification delivery.}
     Error:
       type: object
       additionalProperties: false
@@ -946,7 +1724,7 @@ components:
     Node:
       type: object
       additionalProperties: false
-      required: [id, name, status, notes, region, provider, group_id, tags, created_at]
+      required: [id, name, status, notes, region, provider, group_id, tags, created_at, last_seen, presence, config, agent_version]
       properties:
         id: {type: string, format: uuid}
         name: {type: string}
@@ -962,6 +1740,61 @@ components:
           description: Sorted tag strings; an untagged node returns [], never null.
           items: {type: string}
         created_at: {type: string, format: date-time, description: UTC RFC3339.}
+        last_seen: {type: [string, 'null'], format: date-time, description: Persisted UTC RFC3339 reception time; null before the first report. Credential revocation may retain an earlier report time; presence still reflects the absent credential. Writes are coalesced so this time and presence may lag by up to about 30 seconds.}
+        presence:
+          type: string
+          enum: [online, offline, never, disabled, pending]
+          description: Disabled status takes precedence; pending status or absent credential is pending. An enrolled node without last_seen is never. Otherwise online means last_seen is between zero and 180 seconds ago inclusive; older or future times are offline. The legacy status field is retained unchanged.
+        config: {$ref: '#/components/schemas/NodeConfigStatus'}
+        agent_version: {type: string, maxLength: 64, pattern: '^[A-Za-z0-9._+\-]*$', description: Agent version from persisted system identity; empty when an older agent did not supply it.}
+    NodeConfigStatus:
+      type: object
+      additionalProperties: false
+      required: [desired_revision, applied_revision, state, error]
+      properties:
+        desired_revision: {type: integer, minimum: 1}
+        applied_revision: {type: integer, minimum: 0}
+        state: {type: string, enum: [applied, pending, error], description: Error when config_error is present; otherwise applied when revisions match and pending when they differ. Saving desired configuration is not an acknowledgment.}
+        error:
+          type: [object, 'null']
+          additionalProperties: false
+          required: [revision, code]
+          properties:
+            revision: {type: integer, minimum: 0}
+            code: {type: string}
+            fields: {type: object, additionalProperties: {type: string}}
+    MetricHistory:
+      type: object
+      additionalProperties: false
+      required: [metric, unit, range, step_seconds, points]
+      properties:
+        metric: {type: string, enum: [cpu_percent, memory_used_percent, swap_used_percent, load1, disk_used_percent, net_rx_bytes_per_second, net_tx_bytes_per_second]}
+        unit: {type: string, enum: [percent, load, bytes_per_second]}
+        range: {type: string, enum: [1h, 6h, 24h, 7d, 30d]}
+        step_seconds: {type: integer, enum: [60, 300, 3600]}
+        points:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [t, avg, max]
+            properties:
+              t: {type: string, format: date-time}
+              avg: {type: number, minimum: 0}
+              max: {type: number, minimum: 0}
+    LatestSample:
+      type: object
+      additionalProperties: false
+      required: [received_at, sampled_at, seq, metrics, system]
+      properties:
+        received_at: {type: string, format: date-time}
+        sampled_at: {type: string, format: date-time}
+        seq: {type: integer, minimum: 1}
+        metrics: {$ref: '#/components/schemas/Metrics'}
+        system:
+          oneOf:
+            - {$ref: '#/components/schemas/System'}
+            - {type: 'null'}
     PublicSettings:
       type: object
       additionalProperties: false
@@ -1064,6 +1897,16 @@ components:
         allOf:
           - {pattern: '^[^\u0000\r\n]+$'}
           - {pattern: '[^\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]'}
+    ProbeTargets:
+      type: array
+      maxItems: 5
+      uniqueItems: true
+      description: Unique service-probe targets. Each target is at most 1024 UTF-8 bytes and contains no whitespace. Supported forms are tcp://host:port, http:// or https:// URLs without userinfo or fragments, and icmp://host. Targets are visible to every console user and API token; never put secrets in a URL, including its query string.
+      items:
+        type: string
+        x-minLengthBytes: 1
+        x-maxLengthBytes: 1024
+        pattern: '^\S+$'
     DesiredConfig:
       type: object
       additionalProperties: false
@@ -1080,10 +1923,7 @@ components:
           uniqueItems: true
           description: Absolute platform-valid paths, each at most 1024 bytes without NUL. Shared server/agent/collector validation.
           items: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 1024, pattern: '^[^\u0000]+$'}
-        probe_targets:
-          type: array
-          maxItems: 0
-          items: {type: string}
+        probe_targets: {$ref: '#/components/schemas/ProbeTargets'}
         billing_day: {type: integer, minimum: 1, maximum: 28}
         quota_bytes: {$ref: '#/components/schemas/DecimalCounter'}
     Enrollment:
@@ -1104,10 +1944,73 @@ components:
         hostname: {type: string, x-maxLengthBytes: 255}
         os: {type: string, x-maxLengthBytes: 64}
         arch: {type: string, x-maxLengthBytes: 64}
+        agent_version: {type: string, maxLength: 64, x-maxLengthBytes: 64, pattern: '^[A-Za-z0-9._+\-]*$', description: Optional agent build version; omitted by older agents.}
     DecimalCounter:
       type: string
       pattern: '^(0|[1-9][0-9]*)$'
       description: Canonical unsigned decimal in 0..18446744073709551615; JSON numbers, signs, exponents and leading zeroes are rejected.
+    TrafficTotal:
+      type: string
+      pattern: '^(0|[1-9][0-9]*)$'
+      description: Exact unsigned decimal traffic aggregate; sums may exceed uint64.
+    TrafficDaily:
+      type: object
+      additionalProperties: false
+      required: [day, rx_bytes, tx_bytes]
+      properties:
+        day: {type: string, format: date, description: UTC calendar day.}
+        rx_bytes: {$ref: '#/components/schemas/TrafficTotal'}
+        tx_bytes: {$ref: '#/components/schemas/TrafficTotal'}
+    TrafficCycle:
+      type: object
+      additionalProperties: false
+      required: [start, end, rx_bytes, tx_bytes, total_bytes]
+      properties:
+        start: {type: string, format: date-time, description: Inclusive UTC billing-cycle start at 00:00.}
+        end: {type: string, format: date-time, description: Exclusive UTC start of the next billing cycle.}
+        rx_bytes: {$ref: '#/components/schemas/TrafficTotal'}
+        tx_bytes: {$ref: '#/components/schemas/TrafficTotal'}
+        total_bytes: {$ref: '#/components/schemas/TrafficTotal'}
+    TrafficSummary:
+      type: object
+      additionalProperties: false
+      required: [billing_day, quota_bytes, cycle, daily, updated_at]
+      properties:
+        billing_day: {type: [integer, 'null'], minimum: 1, maximum: 28}
+        quota_bytes:
+          description: Null when the node has no quota; a configured quota of 0 means unlimited.
+          oneOf:
+            - {$ref: '#/components/schemas/DecimalCounter'}
+            - {type: 'null'}
+        cycle: {$ref: '#/components/schemas/TrafficCycle'}
+        daily:
+          type: array
+          description: Ascending UTC days with data, limited to the requested window including today.
+          items: {$ref: '#/components/schemas/TrafficDaily'}
+        updated_at: {type: [string, 'null'], format: date-time, description: Latest hourly-row update time, or null when no hourly row exists.}
+    ProbeSummary:
+      type: object
+      additionalProperties: false
+      required: [probes]
+      properties:
+        probes:
+          type: array
+          maxItems: 5
+          description: One entry per configured target, preserving desired-config order.
+          items: {$ref: '#/components/schemas/ProbeStatus'}
+    ProbeStatus:
+      type: object
+      additionalProperties: false
+      required: [target, status, latency_ms, error, status_code, checked_at, uptime_24h, checks_24h]
+      properties:
+        target: {type: string, x-maxLengthBytes: 1024}
+        status: {type: string, enum: [up, down, pending], description: Pending means no stored latest result exists.}
+        latency_ms: {type: [number, 'null'], minimum: 0, maximum: 60000}
+        error: {type: string, enum: ['', timeout, refused, dns, tls, http_status, unreachable, unsupported, error]}
+        status_code: {type: [integer, 'null'], minimum: 100, maximum: 599, description: HTTP response status when applicable.}
+        checked_at: {type: [string, 'null'], format: date-time}
+        uptime_24h: {type: [number, 'null'], minimum: 0, maximum: 100, description: 100 * (checks - failures) / checks, or null when checks is zero.}
+        checks_24h: {type: integer, minimum: 0}
     Source:
       type: object
       additionalProperties: false
@@ -1183,10 +2086,21 @@ components:
       additionalProperties: false
       required: [epoch, period_start, rx_bytes, tx_bytes]
       properties:
-        epoch: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
-        period_start: {type: string, format: date-time}
-        rx_bytes: {$ref: '#/components/schemas/DecimalCounter'}
-        tx_bytes: {$ref: '#/components/schemas/DecimalCounter'}
+        epoch: {type: string, minLength: 1, maxLength: 64, pattern: '^[0-9a-f]{1,64}$'}
+        period_start: {type: string, format: date-time, description: Hour-aligned UTC timestamp.}
+        rx_bytes: {$ref: '#/components/schemas/DecimalCounter', description: Cumulative received bytes in 0..9223372036854775807.}
+        tx_bytes: {$ref: '#/components/schemas/DecimalCounter', description: Cumulative sent bytes in 0..9223372036854775807.}
+    ProbeResult:
+      type: object
+      additionalProperties: false
+      required: [target, ok, latency_ms, error, status_code, checked_at]
+      properties:
+        target: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 1024, description: Validated service-probe target.}
+        ok: {type: boolean}
+        latency_ms: {type: [number, 'null'], minimum: 0, maximum: 60000, description: Non-null for a successful result and null for a failure.}
+        error: {type: string, enum: ['', timeout, refused, dns, tls, http_status, unreachable, unsupported, error], description: Empty if and only if ok is true; http_status requires status_code.}
+        status_code: {type: [integer, 'null'], minimum: 100, maximum: 599, description: Present only for HTTP probes; required when error is http_status.}
+        checked_at: {type: string, format: date-time}
     Report:
       type: object
       additionalProperties: false
@@ -1201,8 +2115,8 @@ components:
         system: {$ref: '#/components/schemas/System'}
         metrics: {$ref: '#/components/schemas/Metrics'}
         capabilities: {type: object, properties: {self_update: {type: boolean}}}
-        traffic: {type: array, items: {$ref: '#/components/schemas/Traffic'}}
-        probe_results: {type: array, maxItems: 0, items: {type: object}}
+        traffic: {type: array, maxItems: 24, description: Unique epoch/period_start pairs with cumulative per-process hourly byte counters., items: {$ref: '#/components/schemas/Traffic'}}
+        probe_results: {type: array, maxItems: 5, description: Latest result for each currently configured target; target values are unique., items: {$ref: '#/components/schemas/ProbeResult'}}
         update_status: {type: object, properties: {job_id: {type: string}, status: {type: string}, release_seq: {type: integer}}}
         config_error:
           type: object
@@ -1220,4 +2134,4 @@ components:
         server_time: {type: string, format: date-time}
         desired_config: {$ref: '#/components/schemas/DesiredConfig'}
         update_job: {type: object, properties: {job_id: {type: string}, release_seq: {type: integer}}}
-        traffic_acks: {type: array, items: {$ref: '#/components/schemas/Traffic'}}
+        traffic_acks: {type: array, maxItems: 24, description: Committed counters for entries in this report; values may lag. Buckets older than 35 days are acknowledged and discarded. Future buckets beyond one hour are neither stored nor acknowledged., items: {$ref: '#/components/schemas/Traffic'}}

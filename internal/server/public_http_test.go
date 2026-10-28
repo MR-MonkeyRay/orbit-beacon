@@ -99,7 +99,7 @@ func publicList(t *testing.T, f *agentFixture, path string, cookie *http.Cookie)
 	if result.Nodes == nil {
 		t.Fatal("public collection is null")
 	}
-	if generated, err := time.Parse(time.RFC3339Nano, result.GeneratedAt); err != nil || !generated.Equal(f.now) {
+	if generated, err := time.Parse(time.RFC3339Nano, result.GeneratedAt); err != nil || generated.After(f.now) || f.now.Sub(generated) >= 2*time.Second {
 		t.Fatalf("generated_at=%q err=%v", result.GeneratedAt, err)
 	}
 	if response.Header().Get("Set-Cookie") != "" || response.Header().Get("Cache-Control") != "no-store" {
@@ -244,7 +244,9 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 		}
 	}
 
+	base := f.now
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, reportBody(1, 1, "private-session", 25)), 1)
+	f.now = f.now.Add(2 * time.Second) // Expire the pre-report rendered page.
 	anonymous, anonymousBytes := publicList(t, f, "/api/public/v1/nodes", nil)
 	adminResult, adminBytes := publicList(t, f, "/api/public/v1/nodes", admin)
 	viewerResult, viewerBytes := publicList(t, f, "/api/public/v1/nodes", viewer)
@@ -270,14 +272,13 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 		}
 	}
 
-	base := f.now
 	f.now = base.Add(45 * time.Second)
 	fresh, _ := publicList(t, f, "/api/public/v1/nodes", nil)
 	if fresh.Nodes[0]["status"] == nil || string(fresh.Nodes[0]["status"]) != `"online"` || string(fresh.Nodes[0]["cpu_percent"]) != "25" {
 		t.Fatalf("metric exact freshness boundary: %s", fresh.Nodes[0])
 	}
 	f.now = base.Add(45*time.Second + time.Millisecond)
-	stale, _ := publicList(t, f, "/api/public/v1/nodes", nil)
+	stale, _ := publicList(t, f, "/api/public/v1/nodes?limit=49", nil)
 	if string(stale.Nodes[0]["status"]) != `"online"` || string(stale.Nodes[0]["cpu_percent"]) != "null" {
 		t.Fatalf("source expiry should not make node offline: %s", stale.Nodes[0])
 	}
@@ -287,7 +288,7 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 		t.Fatalf("180-second liveness boundary: %s", boundary.Nodes[0])
 	}
 	f.now = base.Add(180*time.Second + time.Nanosecond)
-	offline, _ := publicList(t, f, "/api/public/v1/nodes", nil)
+	offline, _ := publicList(t, f, "/api/public/v1/nodes?limit=48", nil)
 	if string(offline.Nodes[0]["status"]) != `"offline"` || string(offline.Nodes[0]["cpu_percent"]) != "null" {
 		t.Fatalf("liveness expiry: %s", offline.Nodes[0])
 	}
@@ -299,7 +300,7 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 		t.Fatal("invalid report was accepted")
 	}
 	f.now = base.Add(180*time.Second + time.Nanosecond)
-	afterFailure, _ := publicList(t, f, "/api/public/v1/nodes", nil)
+	afterFailure, _ := publicList(t, f, "/api/public/v1/nodes?limit=48", nil)
 	if string(afterFailure.Nodes[0]["status"]) != `"offline"` {
 		t.Fatalf("failed report refreshed public liveness: %s", afterFailure.Nodes[0])
 	}
@@ -350,6 +351,7 @@ func TestPublicHTTPRotationRestartPaginationAndWithdrawal(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, string(claim)), http.StatusOK)
+	f.now = f.now.Add(2 * time.Second) // Expire the page computed before rotation.
 	rotated, _ := publicList(t, f, "/api/public/v1/nodes?limit=1&offset=0", nil)
 	if string(rotated.Nodes[0]["status"]) != `"unknown"` || string(rotated.Nodes[0]["cpu_percent"]) != "null" {
 		t.Fatalf("rotation retained old public identity: %s", rotated.Nodes[0])

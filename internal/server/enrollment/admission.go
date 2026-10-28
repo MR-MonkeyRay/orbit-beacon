@@ -92,8 +92,8 @@ func refillInvalid(bucket invalidBucket, now time.Time, burst float64) invalidBu
 }
 
 func (s *Service) chargeInvalid(remote string) bool {
-	// Only the connection peer is authoritative. Ports and forwarding headers
-	// must never create new buckets. Malformed peers share one bounded bucket.
+	// The HTTP layer supplies the connection peer, or the client derived through
+	// configured trusted proxies; ports must never create new buckets. Malformed peers share one bounded bucket.
 	peer := "unknown"
 	if host, _, err := net.SplitHostPort(remote); err == nil {
 		if address, err := netip.ParseAddr(host); err == nil {

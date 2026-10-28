@@ -10,10 +10,10 @@ type healthStatus struct {
 	Status string `json:"status"`
 }
 
-func (h *handler) health(w http.ResponseWriter, r *http.Request) {
+func (h *handler) health(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
-		fail(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not supported for this route", "")
+		fail(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not supported for this route", requestID)
 		return
 	}
 	if r.URL.Path == "/healthz/live" {

@@ -174,6 +174,9 @@ func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := audit.ScopedAlertRuleDeletes(ctx, tx, "group", id, time.Now()); err != nil {
+		return err
+	}
 	// ON DELETE SET NULL detaches nodes and enrollment references in this same transaction.
 	result, err := tx.ExecContext(ctx, "DELETE FROM groups WHERE id = ?", id)
 	if err != nil {
@@ -188,13 +191,26 @@ func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
-func (s *Service) Events(ctx context.Context, limit, offset int) ([]Event, error) {
+func (s *Service) Events(ctx context.Context, limit, offset int, before string) (EventPage, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
-		return nil, ErrInvalidInput
+		return EventPage{}, ErrInvalidInput
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT id, actor_id, action, target_id, created_at, details FROM audit_events ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?", limit, offset)
+	query := "SELECT id, actor_id, action, target_id, created_at, details FROM audit_events"
+	var args []any
+	if before != "" {
+		created, id, err := parseEventCursor(before)
+		if err != nil {
+			return EventPage{}, err
+		}
+		query += " WHERE (created_at, id) < (?, ?)"
+		args = append(args, created, id)
+		offset = 0
+	}
+	query += " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
+	args = append(args, limit+1, offset)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return EventPage{}, err
 	}
 	defer rows.Close()
 	events := make([]Event, 0)
@@ -202,17 +218,27 @@ func (s *Service) Events(ctx context.Context, limit, offset int) ([]Event, error
 		var event Event
 		var created, details string
 		if err := rows.Scan(&event.ID, &event.ActorID, &event.Action, &event.TargetID, &created, &details); err != nil {
-			return nil, err
+			return EventPage{}, err
 		}
 		event.CreatedAt, err = timekey.Parse(created)
 		if err != nil {
-			return nil, err
+			return EventPage{}, err
 		}
 		event.CreatedAt = event.CreatedAt.UTC()
 		event.Details = json.RawMessage(details)
 		events = append(events, event)
 	}
-	return events, rows.Err()
+	if err := rows.Err(); err != nil {
+		return EventPage{}, err
+	}
+	page := EventPage{Events: events, HasMore: len(events) > limit}
+	if page.HasMore {
+		page.Events = events[:limit]
+		next := offset + limit
+		page.NextOffset = &next
+		page.NextCursor = eventCursor(page.Events[limit-1])
+	}
+	return page, nil
 }
 
 // CleanupAuditEvents removes at most limit events older than before. The

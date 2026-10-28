@@ -22,7 +22,7 @@ func bearer(r *http.Request) string {
 func (h *handler) agentRoute(w http.ResponseWriter, r *http.Request, requestID string) {
 	token := bearer(r)
 	if r.URL.Path == "/api/agent/v1/enroll" || r.URL.Path == "/api/agent/v1/enroll/check" {
-		if err := h.enrollments.AdmitToken(r.Context(), token, r.RemoteAddr); err != nil {
+		if err := h.enrollments.AdmitToken(r.Context(), token, h.clientAddr(r)); err != nil {
 			h.agentError(w, err, requestID)
 			return
 		}
@@ -159,12 +159,19 @@ func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, reques
 			h.agentError(w, enrollment.ErrInvalidInput, requestID)
 			return true
 		}
-		result, err := h.enrollments.List(r.Context(), limit, offset)
+		result, err := h.enrollments.List(r.Context(), limit+1, offset)
 		if err != nil {
 			h.agentError(w, err, requestID)
 			return true
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"enrollments": result})
+		hasMore := len(result) > limit
+		response := map[string]any{"has_more": hasMore}
+		if hasMore {
+			result = result[:limit]
+			response["next_offset"] = offset + limit
+		}
+		response["enrollments"] = result
+		writeJSON(w, http.StatusOK, response)
 		return true
 	}
 	var input struct {

@@ -12,20 +12,22 @@ import (
 	"orbitbeacon/internal/server/nodes"
 )
 
-func TestInvalidReportRevisionAndUnsupportedProbesDoNotRefreshState(t *testing.T) {
+func TestInvalidReportRevisionAndProbeResultsDoNotRefreshState(t *testing.T) {
 	valid := reportBody(9, 1, "invalid-owner", 25)
 	for _, tc := range []struct {
-		name string
-		body string
+		name     string
+		body     string
+		wantCode string
 	}{
-		{"zero revision", strings.Replace(valid, `"config_revision":1`, `"config_revision":0`, 1)},
-		{"missing revision", strings.Replace(valid, `"config_revision":1,`, "", 1)},
-		{"unimplemented probes", strings.Replace(valid, `"traffic":[]`, `"traffic":[],"probe_results":[{"arbitrary":"ignored-before-fix"}]`, 1)},
+		{"zero revision", strings.Replace(valid, `"config_revision":1`, `"config_revision":0`, 1), "validation_failed"},
+		{"missing revision", strings.Replace(valid, `"config_revision":1,`, "", 1), "validation_failed"},
+		{"invalid probe result", strings.Replace(valid, `"traffic":[]`, `"traffic":[],"probe_results":[{"target":"tcp://host:7","ok":false,"latency_ms":null,"error":"","status_code":null,"checked_at":"2026-03-04T05:06:07Z"}]`, 1), "validation_failed"},
+		{"malformed probe results", strings.Replace(valid, `"traffic":[]`, `"traffic":[],"probe_results":"invalid"`, 1), "invalid_json"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newAgentHTTP(t, 1)
 			id, token, _ := enrollHTTP(t, f, "contract", 1)
-			apiError(t, agentRequest(t, f, "/api/agent/v1/report", token, tc.body), http.StatusBadRequest, "validation_failed")
+			apiError(t, agentRequest(t, f, "/api/agent/v1/report", token, tc.body), http.StatusBadRequest, tc.wantCode)
 			var generation, session string
 			var seen sql.NullString
 			if err := f.db.QueryRow("SELECT run_generation,report_session_id,last_seen FROM nodes WHERE id=?", id).Scan(&generation, &session, &seen); err != nil {

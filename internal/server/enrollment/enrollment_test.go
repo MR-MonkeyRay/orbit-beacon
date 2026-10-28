@@ -60,6 +60,68 @@ func claim(installation string, n int) v1.EnrollmentRequest {
 	return v1.EnrollmentRequest{ProtocolVersion: 1, InstallationID: installation, NodeToken: nodeSecret(n)}
 }
 
+func TestEnrollNotifiesOnlyAfterClaimCommit(t *testing.T) {
+	_, n, db, now := setup(t, 1)
+	ctx := context.Background()
+	notifications := 0
+	s := enrollment.NewService(db, enrollment.Options{
+		MaxNodes:            1,
+		Now:                 func() time.Time { return *now },
+		Random:              rand.NewChaCha8([32]byte{13}),
+		AfterIdentityChange: func() { notifications++ },
+	})
+	pending, err := n.CreatePending(ctx, nodes.CreateRequest{Name: "hooked"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticket, err := s.CreateSingle(ctx, pending.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := claim("hook-installation", 1)
+	if _, err := s.Enroll(ctx, ticket.Token, request); err != nil {
+		t.Fatal(err)
+	}
+	if notifications != 1 {
+		t.Fatalf("notifications after claim = %d, want 1", notifications)
+	}
+	if _, err := s.Enroll(ctx, ticket.Token, request); err != nil {
+		t.Fatal(err)
+	}
+	if notifications != 1 {
+		t.Fatalf("exact retry notifications = %d, want 1", notifications)
+	}
+}
+
+func TestEnrollCommitFailureDoesNotNotifyIdentityChange(t *testing.T) {
+	_, n, db, now := setup(t, 1)
+	ctx := context.Background()
+	notifications := 0
+	s := enrollment.NewService(db, enrollment.Options{
+		MaxNodes:            1,
+		Now:                 func() time.Time { return *now },
+		Random:              rand.NewChaCha8([32]byte{14}),
+		AfterIdentityChange: func() { notifications++ },
+	})
+	pending, err := n.CreatePending(ctx, nodes.CreateRequest{Name: "commit failure"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticket, err := s.CreateSingle(ctx, pending.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TRIGGER reject_enrollment_audit BEFORE INSERT ON audit_events WHEN NEW.action = 'enrollment.claim' BEGIN SELECT RAISE(ABORT, 'reject enrollment'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Enroll(ctx, ticket.Token, claim("failed-commit-installation", 1)); err == nil {
+		t.Fatal("enrollment unexpectedly committed")
+	}
+	if notifications != 0 {
+		t.Fatalf("notifications after failed commit = %d, want 0", notifications)
+	}
+}
+
 func TestSingleTicketBindsPrebuiltNodeAndStoresOnlyHash(t *testing.T) {
 	s, n, db, now := setup(t, 2)
 	ctx := context.Background()
