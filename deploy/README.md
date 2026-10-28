@@ -113,6 +113,8 @@ curl --fail https://beacon.your-domain.com/healthz/ready
 
 readiness 仅证明 Server 可用，不证明 Agent 已上报。明文健康检查只接受 `http://127.0.0.1:8080` 或 `http://[::1]:8080`，不接受 `localhost`；远程检查用 HTTPS。
 
+Agent 失联不移除资产或清空当前进程的最后有效样本；指标过期与超过 180 秒离线分开显示，uptime 不自行增长。Server 重启仅保证资产与已落库 last_seen 保留，未持久化完整报告，数字可空。浏览器连接故障只标旧，不据此改变节点 presence。
+
 可选 Server 配置：
 
 | JSON 键 | 默认值 | 用途 |

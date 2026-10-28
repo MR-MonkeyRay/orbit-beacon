@@ -13,19 +13,33 @@ import (
 
 // PublicNode is a strict anonymous projection, independent of internal inventory.
 type PublicNode struct {
-	Name          string   `json:"name"`
-	Region        string   `json:"region"`
-	Provider      string   `json:"provider"`
-	Status        string   `json:"status"`
-	CPUPercent    *float64 `json:"cpu_percent"`
-	MemoryPercent *float64 `json:"memory_percent"`
-	Load1         *float64 `json:"load1"`
-	UptimeSeconds *float64 `json:"uptime_seconds"`
+	Name          string             `json:"name"`
+	Region        string             `json:"region"`
+	Provider      string             `json:"provider"`
+	Status        string             `json:"status"`
+	LastSeen      *time.Time         `json:"last_seen"`
+	CPUPercent    *float64           `json:"cpu_percent"`
+	MemoryPercent *float64           `json:"memory_percent"`
+	Load1         *float64           `json:"load1"`
+	UptimeSeconds *float64           `json:"uptime_seconds"`
+	MetricStatus  PublicMetricStatus `json:"metric_status"`
+}
+
+type PublicMetricStatus struct {
+	CPUPercent    string `json:"cpu_percent"`
+	MemoryPercent string `json:"memory_percent"`
+	Load1         string `json:"load1"`
+	UptimeSeconds string `json:"uptime_seconds"`
+}
+
+func unavailablePublicMetrics() PublicMetricStatus {
+	return PublicMetricStatus{CPUPercent: "unavailable", MemoryPercent: "unavailable", Load1: "unavailable", UptimeSeconds: "unavailable"}
 }
 
 type publicMetric struct {
 	value      float64
 	valid      bool
+	status     string
 	ageMS      int64
 	intervalMS int64
 }
@@ -35,9 +49,9 @@ type publicMetrics struct {
 	receivedAt                time.Time
 }
 
-func metric(value *float64, status string, source v1.SourceMetadata) publicMetric {
-	m := publicMetric{ageMS: source.AgeMS, intervalMS: source.SourceIntervalMS}
-	if value != nil && status == "ok" {
+func metric(value *float64, status string, source v1.SourceMetadata, maximum float64) publicMetric {
+	m := publicMetric{status: status, ageMS: source.AgeMS, intervalMS: source.SourceIntervalMS}
+	if value != nil && (status == "ok" || status == "stale") && !math.IsNaN(*value) && !math.IsInf(*value, 0) && *value >= 0 && *value <= maximum {
 		m.value = *value
 		m.valid = true
 	}
@@ -46,18 +60,23 @@ func metric(value *float64, status string, source v1.SourceMetadata) publicMetri
 
 func snapshotPublic(m v1.Metrics, now time.Time) publicMetrics {
 	p := publicMetrics{receivedAt: now,
-		cpu:    metric(m.CPUPercent, m.MetricStatus[v1.MetricCPUPercent], m.Sources["cpu"]),
-		load:   metric(m.Load1, m.MetricStatus[v1.MetricLoad1], m.Sources["load"]),
-		uptime: metric(m.UptimeSeconds, m.MetricStatus[v1.MetricUptimeSeconds], m.Sources["uptime"])}
-	if m.MemoryTotalBytes != nil && m.MemoryAvailableBytes != nil && *m.MemoryTotalBytes > 0 && m.MetricStatus[v1.MetricMemoryTotalBytes] == "ok" && m.MetricStatus[v1.MetricMemoryAvailableBytes] == "ok" {
+		cpu:    metric(m.CPUPercent, m.MetricStatus[v1.MetricCPUPercent], m.Sources["cpu"], 100),
+		load:   metric(m.Load1, m.MetricStatus[v1.MetricLoad1], m.Sources["load"], math.MaxFloat64),
+		uptime: metric(m.UptimeSeconds, m.MetricStatus[v1.MetricUptimeSeconds], m.Sources["uptime"], math.MaxFloat64)}
+	totalStatus, availableStatus := m.MetricStatus[v1.MetricMemoryTotalBytes], m.MetricStatus[v1.MetricMemoryAvailableBytes]
+	if m.MemoryTotalBytes != nil && m.MemoryAvailableBytes != nil && *m.MemoryTotalBytes > 0 && *m.MemoryAvailableBytes <= *m.MemoryTotalBytes && (totalStatus == "ok" || totalStatus == "stale") && (availableStatus == "ok" || availableStatus == "stale") {
 		percent := 100 * (float64(*m.MemoryTotalBytes-*m.MemoryAvailableBytes) / float64(*m.MemoryTotalBytes))
-		p.memory = metric(&percent, "ok", m.Sources["memory"])
+		status := "ok"
+		if totalStatus == "stale" || availableStatus == "stale" {
+			status = "stale"
+		}
+		p.memory = metric(&percent, status, m.Sources["memory"], 100)
 	}
 	return p
 }
 
 func (m publicMetric) fresh(elapsedMS int64) bool {
-	if !m.valid || m.ageMS < 0 || m.intervalMS <= 0 {
+	if !m.valid || m.status == "stale" || m.ageMS < 0 || m.intervalMS <= 0 {
 		return false
 	}
 	if m.intervalMS > math.MaxInt64/3 {
@@ -68,26 +87,26 @@ func (m publicMetric) fresh(elapsedMS int64) bool {
 }
 
 func (p publicMetrics) project(out *PublicNode, now time.Time) {
+	out.MetricStatus = unavailablePublicMetrics()
 	if p.receivedAt.IsZero() || p.receivedAt.After(now) {
 		return
 	}
 	elapsed := now.Sub(p.receivedAt).Milliseconds()
-	if p.cpu.fresh(elapsed) {
-		value := p.cpu.value
-		out.CPUPercent = &value
+	out.CPUPercent, out.MetricStatus.CPUPercent = p.cpu.project(elapsed)
+	out.MemoryPercent, out.MetricStatus.MemoryPercent = p.memory.project(elapsed)
+	out.Load1, out.MetricStatus.Load1 = p.load.project(elapsed)
+	out.UptimeSeconds, out.MetricStatus.UptimeSeconds = p.uptime.project(elapsed)
+}
+
+func (m publicMetric) project(elapsedMS int64) (*float64, string) {
+	if !m.valid {
+		return nil, "unavailable"
 	}
-	if p.memory.fresh(elapsed) {
-		value := p.memory.value
-		out.MemoryPercent = &value
+	status := "stale"
+	if m.fresh(elapsedMS) {
+		status = "ok"
 	}
-	if p.load.fresh(elapsed) {
-		value := p.load.value
-		out.Load1 = &value
-	}
-	if p.uptime.fresh(elapsed) {
-		value := p.uptime.value
-		out.UptimeSeconds = &value
-	}
+	return new(m.value), status
 }
 
 // PublicNode reads durable identity before taking any ingest state lock.
@@ -103,7 +122,7 @@ func (s *Service) PublicNode(ctx context.Context, nodeID string, now time.Time) 
 // ProjectPublicRecord overlays reception time only for the same durable identity.
 // Metrics are omitted if a durable report committed after the page query.
 func (s *Service) ProjectPublicRecord(record nodes.PublicRecord, now time.Time) PublicNode {
-	out := PublicNode{Name: record.Settings.Name, Region: record.Settings.Region, Provider: record.Settings.Provider, Status: "unknown"}
+	out := PublicNode{Name: record.Settings.Name, Region: record.Settings.Region, Provider: record.Settings.Provider, Status: "unknown", MetricStatus: unavailablePublicMetrics()}
 	if record.Generation == 0 || record.Session == "" || record.LastSeen.IsZero() || record.LastSeen.After(now) {
 		return out
 	}
@@ -124,11 +143,11 @@ func (s *Service) ProjectPublicRecord(record nodes.PublicRecord, now time.Time) 
 	if lastSeen.After(now) {
 		return out
 	}
-	out.Status = "offline"
-	if now.Sub(lastSeen) > nodes.OnlineWindow {
-		return out
-	}
+	out.LastSeen = new(lastSeen.UTC())
 	out.Status = "online"
+	if now.Sub(lastSeen) > nodes.OnlineWindow {
+		out.Status = "offline"
+	}
 	snapshot.project(&out, now)
 	return out
 }

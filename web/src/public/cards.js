@@ -1,4 +1,7 @@
 import {h, icon} from '../shared/dom.js';
+import {timestampMillis} from '../shared/freshness.js';
+
+const reportFormat = new Intl.DateTimeFormat('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
 
 export const STATUS = {online: '在线', offline: '离线', unknown: '状态未知'};
 
@@ -33,8 +36,8 @@ function gauge(label) {
   return element;
 }
 
-// A card is created once and patched on every poll, so bars animate from their
-// previous value instead of being rebuilt.
+// A card is created once and patched for each validated snapshot. A connection
+// fault only changes freshness styling, never the node's presence or values.
 export function createCard() {
   const name = h('h2');
   const badge = h('span', {class: 'status'});
@@ -45,12 +48,27 @@ export function createCard() {
   const memory = gauge('内存');
   const load = h('dd', {class: 'num'});
   const uptime = h('dd', {class: 'num'});
+  const lastReport = h('p', {class: 'last-report', hidden: true});
+  let current;
+  let connectionStale = false;
+  const paintFreshness = () => {
+    if (!current) return;
+    const states = current.metric_status;
+    for (const [key, element] of [['cpu_percent', cpu], ['memory_percent', memory], ['load1', load], ['uptime_seconds', uptime]]) {
+      const stale = current[key] !== null && (states[key] === 'stale' || connectionStale);
+      element.classList.toggle('metric-stale', stale);
+    }
+    const hasTime = Number.isFinite(timestampMillis(current.last_seen));
+    lastReport.hidden = !hasTime || !(connectionStale || current.status === 'offline' || Object.values(states).includes('stale'));
+  };
   const article = h('article', {class: 'card'},
     h('header', {class: 'card-head'}, name, badge), where,
     h('div', {class: 'gauges'}, cpu, memory),
-    h('dl', {class: 'stats'}, h('div', null, h('dt', null, '1分钟负载'), load), h('div', null, h('dt', null, '运行时长'), uptime)));
+    h('dl', {class: 'stats'}, h('div', null, h('dt', null, '1分钟负载'), load), h('div', null, h('dt', null, '运行时长'), uptime)), lastReport);
   const item = h('li', {class: 'node'}, article);
   item.update = (node) => {
+    current = node;
+    connectionStale = false;
     item.dataset.status = node.status;
     name.textContent = node.name;
     badge.className = `status ${node.status}`;
@@ -64,7 +82,12 @@ export function createCard() {
     memory.set(node.memory_percent);
     load.textContent = node.load1 === null ? '—' : node.load1.toFixed(2);
     uptime.textContent = duration(node.uptime_seconds);
+    const received = timestampMillis(node.last_seen);
+    lastReport.replaceChildren(...(Number.isFinite(received)
+      ? ['最后数据 · ', h('time', {datetime: node.last_seen, title: node.last_seen}, reportFormat.format(new Date(received)))] : []));
+    paintFreshness();
   };
+  item.setStale = (stale = true) => { connectionStale = stale; paintFreshness(); };
   return item;
 }
 

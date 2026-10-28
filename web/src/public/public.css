@@ -86,7 +86,9 @@
 .stats{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px;padding-top:14px;border-top:1px solid var(--line);transition:opacity .3s}
 .stats dt{font-size:12px;color:var(--ink-3)}
 .stats dd{margin-top:2px;font-size:15px;font-weight:600;overflow-wrap:anywhere}
-.node[data-status="offline"] .gauges,.node[data-status="offline"] .stats{opacity:.55}
+.metric-stale .gauge-value,.stats .metric-stale{color:var(--ink-3)}
+.gauge.metric-stale .track{opacity:.5}
+.last-report{margin-top:16px;padding-top:12px;border-top:1px solid var(--line);font-size:12px;line-height:1.6;color:var(--ink-2);overflow-wrap:anywhere}
 .placeholder .card{box-shadow:none}
 .sk{display:block;height:12px;margin:12px 0;border-radius:6px}
 .sk.w60{width:60%;height:18px;margin-top:2px}.sk.w40{width:40%}.sk.w80{width:80%;margin-top:26px}.sk.bar{height:6px;margin:26px 0}

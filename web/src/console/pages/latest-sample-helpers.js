@@ -12,11 +12,6 @@ export function memorySummary(metrics) {
   return `${formatBytes(used)} / ${formatBytes(total)} (${formatPercent(total ? used / total * 100 : 0)})`;
 }
 
-export function loadSummary(metrics) {
-  return [metrics.load1, metrics.load5, metrics.load15].every(Number.isFinite)
-    ? `${metrics.load1.toFixed(2)} / ${metrics.load5.toFixed(2)} / ${metrics.load15.toFixed(2)}` : 'Unavailable';
-}
-
 export function diskSummary(disks) {
   if (!Array.isArray(disks) || disks.length === 0) return 'Unavailable';
   return disks.map((disk) => {

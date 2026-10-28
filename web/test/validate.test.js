@@ -13,6 +13,8 @@ function node(overrides = {}) {
     memory_percent: 48,
     load1: 0.75,
     uptime_seconds: 3600,
+    last_seen: '2026-10-27T12:34:56Z',
+    metric_status: {cpu_percent: 'ok', memory_percent: 'ok', load1: 'ok', uptime_seconds: 'ok'},
     ...overrides,
   };
 }
@@ -29,7 +31,8 @@ function response(overrides = {}) {
 
 test('accepts valid payloads, nullable metrics, empty arrays, and extra fields', () => {
   assert.equal(validResponse(response(), 0), true);
-  assert.equal(validResponse(response({nodes: [node({cpu_percent: null, memory_percent: null, load1: null, uptime_seconds: null, extra: true})], extra: true}), 0), true);
+  assert.equal(validResponse(response({nodes: [node({cpu_percent: null, memory_percent: null, load1: null, uptime_seconds: null,
+    last_seen: null, metric_status: {cpu_percent: 'unavailable', memory_percent: 'unavailable', load1: 'unavailable', uptime_seconds: 'unavailable'}, extra: true})], extra: true}), 0), true);
   assert.equal(validResponse(response({nodes: []}), 0), true);
   assert.equal(validResponse(response({has_more: true, next_offset: 50}), 0), true);
   assert.equal(validResponse(response({nodes: Array.from({length: 100}, () => node())}), 0), true);
@@ -90,4 +93,19 @@ test('rejects percentages above 100 while allowing larger load and uptime values
   assert.equal(validResponse(response({nodes: [node({cpu_percent: 100.01})]}), 0), false);
   assert.equal(validResponse(response({nodes: [node({memory_percent: 101})]}), 0), false);
   assert.equal(validResponse(response({nodes: [node({load1: 101, uptime_seconds: 1_000_000})]}), 0), true);
+});
+
+test('requires nullable last_seen and exactly the four public metric states without contradictory values', () => {
+  for (const last_seen of [undefined, '', 'not-a-date', 123, {}]) {
+    assert.equal(validResponse(response({nodes: [node({last_seen})]})), false);
+  }
+  assert.equal(validResponse(response({nodes: [node({status: 'offline', metric_status: {cpu_percent: 'stale', memory_percent: 'stale', load1: 'stale', uptime_seconds: 'stale'}})]})), true);
+  for (const key of ['cpu_percent', 'memory_percent', 'load1', 'uptime_seconds']) {
+    for (const status of [undefined, null, 'error', 'unknown', 0]) {
+      assert.equal(validResponse(response({nodes: [node({metric_status: {...node().metric_status, [key]: status}})]})), false);
+    }
+    assert.equal(validResponse(response({nodes: [node({[key]: null})]})), false);
+    assert.equal(validResponse(response({nodes: [node({metric_status: {...node().metric_status, [key]: 'unavailable'}})]})), false);
+  }
+  assert.equal(validResponse(response({nodes: [node({metric_status: {...node().metric_status, runtime: 'ok'}})]})), false);
 });

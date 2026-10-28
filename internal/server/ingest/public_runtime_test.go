@@ -50,7 +50,7 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 	if err != nil || out.Status != "unknown" || out.CPUPercent != nil {
 		t.Fatalf("before reports: %+v %v", out, err)
 	}
-	cpu, load, uptime := 12.5, .5, 3600.0
+	cpu, load, uptime := 25.0, .5, 3600.0
 	total, available := uint64(8192), uint64(2048)
 	zero := uint64(0)
 	window := int64(10000)
@@ -69,7 +69,7 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err = s.PublicNode(ctx, n.ID, now)
-	if err != nil || out.Status != "online" || out.CPUPercent == nil || *out.CPUPercent != 12.5 || out.MemoryPercent == nil || *out.MemoryPercent != 75 {
+	if err != nil || out.Status != "online" || out.CPUPercent == nil || *out.CPUPercent != 25 || out.MemoryPercent == nil || *out.MemoryPercent != 75 {
 		t.Fatalf("after report: %+v %v", out, err)
 	}
 	committed := now
@@ -77,7 +77,7 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 		delta  time.Duration
 		status string
 		cpu    bool
-	}{{45 * time.Second, "online", true}, {45*time.Second + time.Millisecond, "online", false}, {180 * time.Second, "online", false}, {180*time.Second + time.Nanosecond, "offline", false}, {-time.Nanosecond, "unknown", false}} {
+	}{{45 * time.Second, "online", true}, {45*time.Second + time.Millisecond, "online", true}, {180 * time.Second, "online", true}, {180*time.Second + time.Nanosecond, "offline", true}, {-time.Nanosecond, "unknown", false}} {
 		out, err = s.PublicNode(ctx, n.ID, committed.Add(test.delta))
 		if err != nil || out.Status != test.status || (out.CPUPercent != nil) != test.cpu {
 			t.Fatalf("at %v: %+v %v", test.delta, out, err)
@@ -94,7 +94,7 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err = s.PublicNode(ctx, n.ID, now)
-	if err != nil || out.CPUPercent == nil || *out.CPUPercent != 12.5 {
+	if err != nil || out.CPUPercent == nil || *out.CPUPercent != 25 {
 		t.Fatalf("duplicate replaced snapshot: %+v %v", out, err)
 	}
 	// Cross the coalescing interval to exercise a failed durable write.
@@ -107,7 +107,7 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 		t.Fatal("failed write accepted")
 	}
 	out, err = s.PublicNode(ctx, n.ID, now)
-	if err != nil || out.CPUPercent == nil || *out.CPUPercent != 12.5 {
+	if err != nil || out.CPUPercent == nil || *out.CPUPercent != 25 {
 		t.Fatalf("failed write replaced snapshot: %+v %v", out, err)
 	}
 	if _, err := db.Exec("DROP TRIGGER reject_report"); err != nil {

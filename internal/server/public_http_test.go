@@ -115,7 +115,7 @@ func publicNodeKeys(t *testing.T, node map[string]json.RawMessage) {
 		got = append(got, key)
 	}
 	sort.Strings(got)
-	want := []string{"cpu_percent", "load1", "memory_percent", "name", "provider", "region", "status", "uptime_seconds"}
+	want := []string{"cpu_percent", "last_seen", "load1", "memory_percent", "metric_status", "name", "provider", "region", "status", "uptime_seconds"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("public node keys=%v want=%v", got, want)
 	}
@@ -243,6 +243,10 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 			t.Errorf("unknown %s=%s, want null", key, unknown.Nodes[0][key])
 		}
 	}
+	if string(unknown.Nodes[0]["last_seen"]) != "null" {
+		t.Fatalf("never-reported last_seen=%s", unknown.Nodes[0]["last_seen"])
+	}
+	publicMetricStatuses(t, unknown.Nodes[0], "unavailable")
 
 	base := f.now
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, reportBody(1, 1, "private-session", 25)), 1)
@@ -266,6 +270,11 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 			t.Errorf("public %s=%s want %s", key, node[key], want)
 		}
 	}
+	publicMetricStatuses(t, node, "ok")
+	var lastSeen time.Time
+	if err := json.Unmarshal(node["last_seen"], &lastSeen); err != nil || !lastSeen.Equal(base) {
+		t.Fatalf("last_seen=%s err=%v", node["last_seen"], err)
+	}
 	for _, sentinel := range []string{"private-2001:db8::7", "private-note-203.0.113.8", "private-region", "private-provider", "private-tag-2001:db8::8", "identical-host", "private-session", "cpu-1", "memory-1", "sample_id", "token_hash", "installation-private"} {
 		if strings.Contains(string(anonymousBytes), sentinel) {
 			t.Errorf("anonymous response leaked private sentinel %q: %s", sentinel, anonymousBytes)
@@ -277,11 +286,13 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 	if fresh.Nodes[0]["status"] == nil || string(fresh.Nodes[0]["status"]) != `"online"` || string(fresh.Nodes[0]["cpu_percent"]) != "25" {
 		t.Fatalf("metric exact freshness boundary: %s", fresh.Nodes[0])
 	}
+	publicMetricStatuses(t, fresh.Nodes[0], "ok")
 	f.now = base.Add(45*time.Second + time.Millisecond)
 	stale, _ := publicList(t, f, "/api/public/v1/nodes?limit=49", nil)
-	if string(stale.Nodes[0]["status"]) != `"online"` || string(stale.Nodes[0]["cpu_percent"]) != "null" {
+	if string(stale.Nodes[0]["status"]) != `"online"` || string(stale.Nodes[0]["cpu_percent"]) != "25" || string(stale.Nodes[0]["uptime_seconds"]) != "100" {
 		t.Fatalf("source expiry should not make node offline: %s", stale.Nodes[0])
 	}
+	publicMetricStatuses(t, stale.Nodes[0], "stale")
 	f.now = base.Add(180 * time.Second)
 	boundary, _ := publicList(t, f, "/api/public/v1/nodes", nil)
 	if string(boundary.Nodes[0]["status"]) != `"online"` {
@@ -289,9 +300,10 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 	}
 	f.now = base.Add(180*time.Second + time.Nanosecond)
 	offline, _ := publicList(t, f, "/api/public/v1/nodes?limit=48", nil)
-	if string(offline.Nodes[0]["status"]) != `"offline"` || string(offline.Nodes[0]["cpu_percent"]) != "null" {
+	if string(offline.Nodes[0]["status"]) != `"offline"` || string(offline.Nodes[0]["cpu_percent"]) != "25" || string(offline.Nodes[0]["uptime_seconds"]) != "100" {
 		t.Fatalf("liveness expiry: %s", offline.Nodes[0])
 	}
+	publicMetricStatuses(t, offline.Nodes[0], "stale")
 
 	// A failed report cannot refresh the accepted report's last_seen or snapshot.
 	f.now = base.Add(181 * time.Second)
@@ -356,6 +368,10 @@ func TestPublicHTTPRotationRestartPaginationAndWithdrawal(t *testing.T) {
 	if string(rotated.Nodes[0]["status"]) != `"unknown"` || string(rotated.Nodes[0]["cpu_percent"]) != "null" {
 		t.Fatalf("rotation retained old public identity: %s", rotated.Nodes[0])
 	}
+	publicMetricStatuses(t, rotated.Nodes[0], "unavailable")
+	if string(rotated.Nodes[0]["last_seen"]) != "null" {
+		t.Fatalf("rotation retained last_seen=%s", rotated.Nodes[0]["last_seen"])
+	}
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", newToken, reportBody(1, 1, "new-session", 30)), 1)
 
 	// Reconstructing ingest loses only the in-memory resource snapshot; durable
@@ -369,6 +385,11 @@ func TestPublicHTTPRotationRestartPaginationAndWithdrawal(t *testing.T) {
 	if string(restarted.Nodes[0]["status"]) != `"online"` || string(restarted.Nodes[0]["cpu_percent"]) != "null" {
 		t.Fatalf("restart public projection=%s", restarted.Nodes[0])
 	}
+	publicMetricStatuses(t, restarted.Nodes[0], "unavailable")
+	var persistedSeen time.Time
+	if err := json.Unmarshal(restarted.Nodes[0]["last_seen"], &persistedSeen); err != nil || !persistedSeen.Equal(f.now) {
+		t.Fatalf("restart last_seen=%s err=%v", restarted.Nodes[0]["last_seen"], err)
+	}
 
 	// Withdrawal is immediate and removes the candidate from pagination.
 	assertHTTPStatus(t, publicSettingsPatch(t, f, ids[0], `{"enabled":false}`, admin, csrf, publicURL), http.StatusOK)
@@ -379,6 +400,22 @@ func TestPublicHTTPRotationRestartPaginationAndWithdrawal(t *testing.T) {
 	for _, node := range withdrawn.Nodes {
 		if string(node["name"]) == `"Public 0"` {
 			t.Fatal("withdrawn public node still listed")
+		}
+	}
+}
+
+func publicMetricStatuses(t *testing.T, node map[string]json.RawMessage, want string) {
+	t.Helper()
+	var statuses map[string]string
+	if err := json.Unmarshal(node["metric_status"], &statuses); err != nil {
+		t.Fatal(err)
+	}
+	if len(statuses) != 4 {
+		t.Fatalf("metric_status=%v", statuses)
+	}
+	for _, key := range []string{"cpu_percent", "memory_percent", "load1", "uptime_seconds"} {
+		if statuses[key] != want {
+			t.Fatalf("metric_status[%s]=%q want=%q", key, statuses[key], want)
 		}
 	}
 }

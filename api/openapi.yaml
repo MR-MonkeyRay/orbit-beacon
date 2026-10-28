@@ -84,13 +84,12 @@ paths:
         or a total node count. Invalid pagination parameters return 400. Only GET
         is supported; other methods return 405 with Allow: GET before authentication.
 
-        Only independently configured public text and four resource values are
-        returned. Internal metadata, node IDs, IP addresses, system hostnames,
-        credentials, installation/session IDs, last-seen/report timestamps, raw
-        reports, source metadata, disk paths and network names are not projected.
+        Returns independently configured public text, four resource values, last_seen
+        (server reception time), and four freshness states. Internal metadata, IDs,
+        IPs, hostnames, credentials, installation/session IDs, runtime, raw reports,
+        source metadata, disk paths and network names are never projected.
         Administrators remain responsible for secrets they enter into public text.
-        One server time is shared by generated_at and all node status/freshness
-        decisions in this request; no historical telemetry is returned.
+        generated_at is the projection clock for status and source freshness.
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
@@ -2427,14 +2426,22 @@ components:
               avg: {type: number, minimum: 0}
               max: {type: number, minimum: 0}
     LatestSample:
+      allOf:
+        - {$ref: '#/components/schemas/LatestSampleView'}
+        - type: object
+          required: [server_time]
+          properties:
+            server_time: {type: string, format: date-time, description: UTC response clock; does not change reception or sample time.}
+      unevaluatedProperties: false
+    LatestSampleView:
       type: object
-      additionalProperties: false
-      required: [received_at, sampled_at, seq, metrics, system]
+      required: [received_at, sampled_at, seq, metrics, system, runtime]
       properties:
         received_at: {type: string, format: date-time}
         sampled_at: {type: string, format: date-time}
         seq: {type: integer, minimum: 1}
         metrics: {$ref: '#/components/schemas/Metrics'}
+        runtime: {$ref: '#/components/schemas/RuntimeSettings'}
         system:
           oneOf:
             - {$ref: '#/components/schemas/System'}
@@ -2468,7 +2475,7 @@ components:
     PublicNode:
       type: object
       additionalProperties: false
-      required: [name, region, provider, status, cpu_percent, memory_percent, load1, uptime_seconds]
+      required: [name, region, provider, status, last_seen, metric_status, cpu_percent, memory_percent, load1, uptime_seconds]
       description: |
         A minimal public projection, never the internal node or raw report.
         Public text is explicitly configured, not derived from private metadata.
@@ -2481,31 +2488,42 @@ components:
         This is recent valid reporting, not ping, service health or availability.
         Rejected, duplicate and old-sequence reports do not refresh last_seen.
         Credential rotation resets report ownership and yields unknown until a
-        new report. Server restart retains persisted status but all resources
-        remain null until a new accepted report populates the in-memory snapshot.
+        new report.
 
-        Resources are considered only when online and the snapshot matches the
-        current credential, generation, session and persisted receive time.
-        A missing or future-dated snapshot yields null. Each resource must have
-        a nonnull value and ok metric status; a new unavailable value clears the
-        old value. Source freshness is reevaluated independently on each read.
-        Let elapsed_ms be floor((server_time - received_at) / 1ms). For source
-        interval_ms <= 3074457345618258602 (floor(MaxInt64/3)), the freshness
-        limit is max(3 * interval_ms, 45000) milliseconds; the value is valid
-        only if age_ms <= limit and elapsed_ms <= limit - age_ms, including
-        equality. Larger intervals are treated as not source-expired, matching
-        the ingestion protocol's overflow-safe freshness rule. Thus resources
-        may become null while the node remains online. Offline or unknown
-        nodes always return four null resources, never stale cached values.
+        The current process retains the last accepted snapshot under the exact
+        credential, binding epoch, generation and session. Offline and source expiry
+        do not erase usable numbers or advance uptime. No complete report is
+        persisted; server restart retains the asset and persisted last_seen but
+        may return null resources until another report.
+        Original ok/stale status plus a valid number is usable. Original stale,
+        or elapsed source age beyond max(3*interval_ms,45000), yields stale while
+        keeping the number. Equality remains fresh. Source-interval overflow uses
+        the protocol's overflow-safe freshness rule. Error/unsupported/missing
+        values are unavailable/null, never filled from an earlier successful
+        report. Raw report statuses are not changed, and stale values do not
+        become alert/history observations.
       properties:
         name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255, description: Explicit public name.}
         region: {type: string, x-maxLengthBytes: 128, description: Explicit public region; empty when unset.}
         provider: {type: string, x-maxLengthBytes: 128, description: Explicit public provider; empty when unset.}
         status: {type: string, enum: [online, offline, unknown]}
+        last_seen: {type: [string, 'null'], format: date-time, description: Latest known server reception time for the current identity; may be the coalesced durable observation after restart. Null before reporting or after an identity reset.}
+        metric_status:
+          type: object
+          additionalProperties: false
+          required: [cpu_percent, memory_percent, load1, uptime_seconds]
+          properties:
+            cpu_percent: {$ref: '#/components/schemas/PublicMetricStatus'}
+            memory_percent: {$ref: '#/components/schemas/PublicMetricStatus'}
+            load1: {$ref: '#/components/schemas/PublicMetricStatus'}
+            uptime_seconds: {$ref: '#/components/schemas/PublicMetricStatus'}
         cpu_percent: {type: [number, 'null'], minimum: 0, maximum: 100, description: CPU utilization in percent; a real zero is returned as 0.}
-        memory_percent: {type: [number, 'null'], minimum: 0, maximum: 100, description: 'Memory utilization in percent: 100 * (total - available) / total, calculated without integer overflow; requires both metrics to be nonnull and ok, and total > 0.'}
+        memory_percent: {type: [number, 'null'], minimum: 0, maximum: 100, description: '100 * (total - available) / total, without integer overflow; both values must be usable and total positive.'}
         load1: {type: [number, 'null'], minimum: 0, description: One-minute system load average; unitless, not a percentage.}
         uptime_seconds: {type: [number, 'null'], minimum: 0, description: System uptime in seconds.}
+    PublicMetricStatus:
+      type: string
+      enum: [ok, stale, unavailable]
     PublicNodeList:
       type: object
       additionalProperties: false

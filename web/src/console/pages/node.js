@@ -1,6 +1,6 @@
 import {h, icon} from '../../shared/dom.js';
-import {api, ensureSession, getNavigationSignal, groupsList, invalidate} from '../api.js';
-import {formatDuration, formatPercent, shortID, when} from '../format.js';
+import {api, ensureSession, getNavigationSignal, groupsList, invalidate, onSession, session} from '../api.js';
+import {shortID, when} from '../format.js';
 import {refresh} from '../router.js';
 import {callout, facts, iconButton, link, note, panel, statusBadge} from '../ui/components.js';
 import {toast} from '../ui/feedback.js';
@@ -8,7 +8,7 @@ import {field, input, onSubmit, saveBar, select, tagEditor, textarea, trackDirty
 import {tabSet} from '../ui/tabs.js';
 import {agentSettingsTab} from './node-agent-settings.js';
 import {enrollmentTab} from './enrollments.js';
-import {diskSummary, loadSummary, memorySummary, networkSummary} from './latest-sample-helpers.js';
+import {latestSamplePanel} from './latest-sample.js';
 import {lifecycleActions} from './node-lifecycle.js';
 import {historyPanel} from './node-history.js';
 import {trafficPanel} from './node-traffic.js';
@@ -60,18 +60,31 @@ export async function nodePage() {
   let traffic;
   let billingSettings = trafficSettings;
   let probes;
+  const sample = latestSamplePanel(node, latest, {signal});
+  sample.detach();
+  const userID = session.user?.id;
+  const unsubscribe = onSession((current) => {
+    if (current.user?.id === userID) return;
+    sample?.snapshot(null);
+    sample?.close();
+    unsubscribe();
+  });
+  signal?.addEventListener('abort', unsubscribe, {once: true});
+  if (signal?.aborted) unsubscribe();
   return h('div', null,
     h('header', {class: 'page-head'}, h('div', null, back,
       h('div', {class: 'detail-head'}, h('h1', {tabindex: '-1'}, node.name), statusBadge(node.presence)),
       h('div', {class: 'id-chip'}, idText, copy)), lifecycleActions(node)),
     tabSet([
-      {id: 'details', label: 'Details', icon: 'server', build: () => detailsTab(node, groups, latest,
-        history ||= historyPanel(id, signal), traffic ||= trafficPanel(id, signal),
-        probes ||= probesPanel(id, signal),
-        trafficSettingsPanel(id, billingSettings, (settings) => {
-          billingSettings = settings;
-          return traffic.reload();
-        }, signal))},
+      {id: 'details', label: 'Details', icon: 'server', build: () => {
+        return {element: detailsTab(node, groups, sample.element,
+          history ||= historyPanel(id, signal), traffic ||= trafficPanel(id, signal),
+          probes ||= probesPanel(id, signal),
+          trafficSettingsPanel(id, billingSettings, (settings) => {
+            billingSettings = settings;
+            return traffic.reload();
+          }, signal)), attach: sample.attach, detach: sample.detach};
+      }},
       {id: 'public', label: 'Public page', icon: 'globe', build: () => publicTab(node, publicSettings)},
       {id: 'agent', label: 'Agent settings', icon: 'sliders', build: () => agentSettingsTab(node, runtime.runtime)},
       {id: 'enrollment', label: 'Enroll agent', icon: 'server', build: () => enrollmentTab(node)}
@@ -90,23 +103,7 @@ function editableForm(form, controls, save) {
   });
 }
 
-function latestPanel(node, latest) {
-  if (!latest) return panel('Latest sample', {}, h('p', {class: 'muted'}, 'No current sample. The agent has not reported since the server started, or its credential was revoked or the node disabled.'));
-  const metrics = latest.metrics || {};
-  return panel('Latest sample', {action: h('span', {class: 'revision'}, `Sequence ${latest.seq}`)}, facts([
-    ['CPU', formatPercent(metrics.cpu_percent)],
-    ['Memory', memorySummary(metrics)],
-    ['Load (1 / 5 / 15 min)', loadSummary(metrics)],
-    ['Disk', diskSummary(metrics.disks)],
-    ['Network', networkSummary(metrics.networks)],
-    ['Uptime', formatDuration(metrics.uptime_seconds)],
-    ['Agent version', latest.system?.agent_version || node.agent_version],
-    ['Sampled', latest.sampled_at ? when(latest.sampled_at) : null],
-    ['Received', latest.received_at ? when(latest.received_at) : null]
-  ]));
-}
-
-function detailsTab(node, groups, latest, history, traffic, probes, billing) {
+function detailsTab(node, groups, sample, history, traffic, probes, billing) {
   const group = groups.find((item) => item.id === node.group_id);
   const summary = panel('Summary', {}, facts([
     ['Presence', statusBadge(node.presence)],
@@ -117,7 +114,6 @@ function detailsTab(node, groups, latest, history, traffic, probes, billing) {
     ['Added', when(node.created_at)],
     ['Notes', node.notes]
   ]), note('Presence may lag an accepted report by about 30 seconds.'));
-  const sample = latestPanel(node, latest);
 
   const name = input({name: 'name', required: true, value: node.name, id: 'node-name'});
   validateBytes(name, 1, 255, 'Node name');

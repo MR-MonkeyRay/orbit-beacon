@@ -179,7 +179,7 @@ func TestNoDataBreaksPendingAndNeverFiresOrEstablishesRecovery(t *testing.T) {
 	}
 }
 func TestStaleAndFailedMetricsNeverFire(t *testing.T) {
-	for _, mode := range []string{"old-report", "future-report", "old-source", "failed", "missing-source", "missing-value"} {
+	for _, mode := range []string{"old-report", "future-report", "old-source", "elapsed-source", "reported-stale", "failed", "missing-source", "missing-value"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newFixture(t, 0)
 			switch mode {
@@ -191,6 +191,10 @@ func TestStaleAndFailedMetricsNeverFire(t *testing.T) {
 				s := f.latest.report.Metrics.Sources["cpu"]
 				s.AgeMS = 46000
 				f.latest.report.Metrics.Sources["cpu"] = s
+			case "elapsed-source":
+				f.now = f.now.Add(45*time.Second + time.Millisecond)
+			case "reported-stale":
+				f.latest.report.Metrics.MetricStatus["cpu_percent"] = "stale"
 			case "failed":
 				f.latest.report.Metrics.MetricStatus["cpu_percent"] = "error"
 			case "missing-source":

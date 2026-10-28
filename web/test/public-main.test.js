@@ -8,7 +8,9 @@ const source = (await readFile(entry, 'utf8')).replace("import './public.css';",
   .replace(/from '(\.\.?\/[^']+)'/g, (_match, path) => `from '${new URL(path, entry).href}'`);
 let run = 0;
 const payload = (name = 'edge', extra = {}) => ({
-  nodes: [{name, region: '', provider: '', status: 'online', cpu_percent: null, memory_percent: null, load1: null, uptime_seconds: null}],
+  nodes: [{name, region: '', provider: '', status: 'online', last_seen: '2026-10-27T12:34:56Z',
+    cpu_percent: 25, memory_percent: null, load1: null, uptime_seconds: 3600,
+    metric_status: {cpu_percent: 'ok', memory_percent: 'unavailable', load1: 'unavailable', uptime_seconds: 'ok'}}],
   generated_at: '2026-10-27T12:34:56Z', has_more: false, next_offset: null, ...extra
 });
 
@@ -137,12 +139,16 @@ for (const failure of ['status', 'content-type', 'fetch']) {
 }
 
 for (const failure of ['invalid payload', 'invalid JSON', 'unknown event', 'invalid close', 'EOF', 'read error', 'timeout']) {
-  test(`public stream ${failure} clears displayed data and retries the stream after ten seconds`, async (t) => {
+  test(`public stream ${failure} retains last good values as stale and retries the stream after ten seconds`, async (t) => {
     const first = stream();
     const second = stream();
     const ui = await setup(t, (_request, index) => index === 1 ? first.response : second.response);
     first.frame('nodes', payload('visible'));
     await flush();
+    const card = ui.elements.nodes.children[0];
+    const cpu = card.querySelector('.gauge-value');
+    const uptime = card.querySelectorAll('dd')[1];
+    const values = [cpu.textContent, uptime.textContent];
     if (failure === 'invalid payload') first.frame('nodes', payload('secret', {has_more: true, next_offset: 0}));
     else if (failure === 'invalid JSON') first.text('event: nodes\ndata: {\n\n');
     else if (failure === 'unknown event') first.frame('other', {});
@@ -151,10 +157,13 @@ for (const failure of ['invalid payload', 'invalid JSON', 'unknown event', 'inva
     else if (failure === 'read error') first.error();
     else await ui.tick(18000);
     await flush();
-    assert.equal(ui.elements.nodes.children.length, 0);
+    assert.equal(ui.elements.nodes.children[0], card);
+    assert.deepEqual([cpu.textContent, uptime.textContent], values);
+    assert.equal(card.dataset.status, 'online');
+    assert.equal(cpu.parentElement.parentElement.classList.contains('metric-stale'), true);
+    assert.equal(card.querySelector('.last-report').hidden, false);
     assert.equal(ui.elements.countdown.dataset.state, 'error');
-    assert.equal(ui.elements.retry.hidden, false);
-    assert.match(ui.elements.summary.textContent, /10 秒/);
+    assert.match(ui.elements.summary.textContent, /最后一次数据/);
     assert.equal(ui.requests.length, 1);
     await ui.tick(10000);
     assert.equal(ui.requests.length, 2);
@@ -243,7 +252,7 @@ test('public stream page changes abort the old reader and validate the new offse
   assert.equal(ui.elements.countdown.dataset.state, 'error');
 });
 
-test('public stream pauses and clears on hidden/pagehide, resumes on visibility and persisted pageshow', async (t) => {
+test('public stream pauses but retains stale cards on hidden/pagehide and resumes on visibility and persisted pageshow', async (t) => {
   const streams = [stream(), stream(), stream()];
   const ui = await setup(t, (_request, index) => streams[index - 1].response);
   streams[0].frame('nodes', payload('visible'));
@@ -252,7 +261,7 @@ test('public stream pauses and clears on hidden/pagehide, resumes on visibility 
   ui.document.hidden = true;
   ui.document.dispatchEvent(new Event('visibilitychange'));
   await flush();
-  assert.equal(ui.elements.nodes.children.length, 0);
+  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'visible');
   assert.equal(ui.requests[0].signal.aborted, true);
   assert.equal(ui.timers.size, 0);
   assert.equal(ui.elements.refresh.hasAttribute('aria-busy'), false);
@@ -264,7 +273,7 @@ test('public stream pauses and clears on hidden/pagehide, resumes on visibility 
   assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'visible again');
   ui.window.dispatchEvent(new Event('pagehide'));
   await flush();
-  assert.equal(ui.elements.nodes.children.length, 0);
+  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'visible again');
   assert.equal(ui.requests[1].signal.aborted, true);
   assert.equal(ui.timers.size, 0);
   ui.window.dispatchEvent(Object.assign(new Event('pageshow'), {persisted: true}));
@@ -273,4 +282,77 @@ test('public stream pauses and clears on hidden/pagehide, resumes on visibility 
   streams[2].frame('nodes', payload('restored'));
   await flush();
   assert.equal(ui.elements.countdown.dataset.state, 'live');
+});
+
+test('public snapshot withdrawal removes a retained card on the next successful response', async (t) => {
+  const first = stream();
+  const second = stream();
+  const ui = await setup(t, (_request, index) => index === 1 ? first.response : second.response);
+  first.frame('nodes', payload('withdrawn while disconnected'));
+  await flush();
+  first.error();
+  await flush();
+  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'withdrawn while disconnected');
+  await ui.tick(10000);
+  second.frame('nodes', payload('', {nodes: []}));
+  await flush();
+  assert.equal(ui.elements.nodes.children.length, 0);
+  assert.equal(ui.elements.countdown.dataset.state, 'live');
+  assert.equal(ui.elements.empty.hidden, false);
+});
+
+test('public stale and offline cards retain source values and never advance uptime', async (t) => {
+  const active = stream();
+  const ui = await setup(t, () => active.response);
+  const result = payload('last sample');
+  result.nodes[0].status = 'offline';
+  result.nodes[0].metric_status.cpu_percent = 'stale';
+  result.nodes[0].metric_status.uptime_seconds = 'stale';
+  active.frame('nodes', result);
+  await flush();
+  const card = ui.elements.nodes.children[0];
+  assert.equal(card.hidden, false);
+  assert.equal(card.querySelector('.gauge-value').textContent, '25.0%');
+  assert.equal(card.querySelectorAll('dd')[1].textContent, '1小时 0分钟');
+  assert.equal(card.querySelector('.gauge').classList.contains('metric-stale'), true);
+  assert.equal(card.querySelectorAll('dd')[1].classList.contains('metric-stale'), true);
+  assert.match(card.querySelector('.last-report').textContent, /最后数据 ·/);
+  assert.equal(card.querySelector('time').getAttribute('datetime'), result.nodes[0].last_seen);
+  assert.equal(card.querySelectorAll('.gauge-value')[1].textContent, '—');
+  result.nodes[0].last_seen = null;
+  result.nodes[0].cpu_percent = null;
+  result.nodes[0].uptime_seconds = null;
+  result.nodes[0].metric_status.cpu_percent = 'unavailable';
+  result.nodes[0].metric_status.uptime_seconds = 'unavailable';
+  active.frame('nodes', result);
+  await flush();
+  assert.equal(card.querySelector('.last-report').hidden, true);
+  assert.equal(card.querySelector('.gauge-value').textContent, '—');
+});
+
+test('public polling keeps its validated collection and online presence on faults', async (t) => {
+  let polls = 0;
+  const ui = await setup(t, (request) => {
+    if (request.url.includes('/stream?')) return new Response('{}', {status: 503});
+    if (++polls === 1) return new Response(JSON.stringify(payload('last polled sample')));
+    throw new Error('offline');
+  });
+  const card = ui.elements.nodes.children[0];
+  const cpu = card.querySelector('.gauge-value');
+  await ui.tick(10000);
+  assert.equal(ui.elements.nodes.children[0], card);
+  assert.equal(cpu.textContent, '25.0%');
+  assert.equal(card.dataset.status, 'online');
+  assert.equal(card.querySelector('.gauge').classList.contains('metric-stale'), true);
+  assert.match(ui.elements.summary.textContent, /最后一次数据/);
+  assert.equal(ui.elements.empty.hidden, true);
+});
+
+test('public initial failure displays a real loading error with no synthetic empty collection', async (t) => {
+  const ui = await setup(t, () => { throw new Error('offline'); });
+  assert.equal(ui.elements.nodes.children.length, 0);
+  assert.equal(ui.elements.empty.hidden, false);
+  assert.match(ui.elements['empty-text'].textContent, /加载失败/);
+  assert.doesNotMatch(ui.elements.headline.textContent, /暂无公开节点/);
+  assert.equal(ui.elements.countdown.dataset.state, 'error');
 });

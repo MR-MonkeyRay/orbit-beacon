@@ -474,19 +474,7 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 			return
 		}
 		if len(parts) == 3 && parts[2] == "latest" {
-			latest, err := h.ingest.Latest(r.Context(), id)
-			if err != nil {
-				h.serviceError(w, err, requestID)
-				return
-			}
-			// Explicit projection excludes process identity and credentials.
-			writeJSON(w, http.StatusOK, struct {
-				ReceivedAt time.Time  `json:"received_at"`
-				SampledAt  time.Time  `json:"sampled_at"`
-				Seq        uint64     `json:"seq"`
-				Metrics    v1.Metrics `json:"metrics"`
-				System     *v1.System `json:"system"`
-			}{latest.ReceivedAt, latest.SampledAt, latest.Seq, latest.Metrics, latest.System})
+			h.nodeLatest(w, r, id, requestID)
 			return
 		}
 		if len(parts) == 3 && parts[2] == "public-settings" {

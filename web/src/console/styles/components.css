@@ -18,6 +18,11 @@
 .grid-2>.panel{margin:0}
 .lede{color:var(--ink-2);font-size:14px;max-width:70ch}
 .lede+form,.lede+.lede{margin-top:14px}
+.sample-metric{display:inline-flex;flex-wrap:wrap;align-items:baseline;gap:6px}
+.sample-series{display:grid;gap:5px}
+.sample-value.metric-stale{color:var(--ink-3)}
+.sample-state{font-size:11px;font-weight:600;color:var(--warn)}
+.last-report{margin-top:14px;font-size:12px;line-height:1.6;color:var(--ink-2);overflow-wrap:anywhere}
 /* Buttons */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:38px;padding:0 15px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--panel);color:var(--ink);font-weight:600;font-size:14px;line-height:1;white-space:nowrap;text-decoration:none;cursor:pointer;transition:background-color .15s,border-color .15s,color .15s,transform .1s,box-shadow .15s}
 .btn:hover:not(:disabled){border-color:var(--ink-3);background:var(--panel-2)}

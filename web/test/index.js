@@ -14,6 +14,7 @@ import './node-settings.test.js';
 import './forms.test.js';
 import './node-traffic-settings.test.js';
 import './latest-sample.test.js';
+import './latest-sample-freshness.test.js';
 import './pagination.test.js';
 import './settings-pagination.test.js';
 import './chart.test.js';

@@ -13,7 +13,7 @@ export class ApiError extends Error {
 export const session = {csrf: '', user: null, expires: ''};
 const sessionListeners = new Set();
 
-export function onSession(listener) { sessionListeners.add(listener); }
+export function onSession(listener) { sessionListeners.add(listener); return () => sessionListeners.delete(listener); }
 
 export function setSession(value) {
   session.csrf = value.csrf_token;

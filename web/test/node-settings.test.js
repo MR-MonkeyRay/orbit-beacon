@@ -20,14 +20,18 @@ const edit = (form, name, value) => {
   return input;
 };
 
-async function setup({hash = '#details', observed = runtime, presence = 'online', lastSeen = '2026-10-28T10:00:00Z', patchStatus = 200} = {}) {
+async function setup({hash = '#details', observed = runtime, presence = 'online', lastSeen = '2026-10-28T10:00:00Z', patchStatus = 200, latest = null} = {}) {
   const dom = installDOM();
-  const originals = new Map(['fetch', 'window', 'matchMedia', 'requestAnimationFrame', 'history', 'setTimeout', 'clearTimeout'].map((key) => [key, globalThis[key]]));
+  const originals = new Map(['fetch', 'window', 'matchMedia', 'requestAnimationFrame', 'history', 'performance', 'setTimeout', 'clearTimeout'].map((key) => [key, globalThis[key]]));
   globalThis.window = new EventTarget();
   globalThis.matchMedia = () => ({matches: false, addEventListener() {}});
   globalThis.requestAnimationFrame = () => 0;
-  globalThis.setTimeout = () => 0;
-  globalThis.clearTimeout = () => {};
+  let now = 0;
+  let timerID = 0;
+  const deadlines = new Map();
+  globalThis.performance = {now: () => now};
+  globalThis.setTimeout = (callback, delay) => { deadlines.set(++timerID, {callback, at: now + delay, delay}); return timerID; };
+  globalThis.clearTimeout = (key) => deadlines.delete(key);
   location.pathname = `/nodes/${id}`;
   location.hash = hash;
   globalThis.history = {state: null, replaceState(_state, _unused, url) { location.hash = url.includes('#') ? `#${url.split('#')[1]}` : ''; }};
@@ -53,7 +57,7 @@ async function setup({hash = '#details', observed = runtime, presence = 'online'
         : {message: 'Billing update rejected'};
     } else if (url === '/api/v1/groups') data = {groups: []};
     else if (url === `${path}/public-settings`) data = {enabled: true, name: 'Saved public name', region: '', provider: ''};
-    else if (url === `${path}/latest`) { data = {message: 'No sample'}; status = 404; }
+    else if (url === `${path}/latest`) { data = latest || {message: 'No sample'}; status = latest ? 200 : 404; }
     else if (url === `${path}/traffic?days=30`) data = traffic;
     else if (url === `${path}/probes`) data = {probes: []};
     else if (url.startsWith(`${path}/history?`)) { data = {message: 'No history'}; status = 503; }
@@ -64,8 +68,12 @@ async function setup({hash = '#details', observed = runtime, presence = 'online'
     const {nodePage} = await import('../src/console/pages/node.js');
     const root = await nodePage();
     dom.body.append(root);
+    dom.mutations();
     await flush();
-    return {...dom, root, page, requests, node, cleanup() {
+    return {...dom, root, page, requests, node, deadlines, advance(milliseconds) {
+      now += milliseconds;
+      for (const [key, timer] of [...deadlines]) if (timer.at <= now) { deadlines.delete(key); timer.callback(); }
+    }, cleanup() {
       page.abort();
       setNavigationSignal(null);
       for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
@@ -220,5 +228,35 @@ test('billing revisits use the saved response and honor tab-change discard', asy
     assert.equal(control(billing, 'billing_day').value, '2');
     assert.equal(billing.dataset.dirty, 'false');
     assert.equal(billing.querySelector('#billing-save').disabled, true);
+  } finally { env.cleanup(); }
+});
+
+test('latest deadline patches leave dirty Notes, focus, current tab, and numeric nodes intact', async () => {
+  const received = '2026-10-28T10:00:00Z';
+  const latest = {received_at: received, sampled_at: received, server_time: received, seq: 1,
+    metrics: {cpu_percent: 25, uptime_seconds: 3600, metric_status: {cpu_percent: 'ok', uptime_seconds: 'ok'},
+      sources: {cpu: {age_ms: 0, source_interval_ms: 10000}, uptime: {age_ms: 0, source_interval_ms: 10000}}}};
+  const env = await setup({latest});
+  try {
+    const details = formFor(env.root, 'notes');
+    const notes = edit(details, 'notes', 'Do not replace this draft');
+    notes.focus();
+    const cpu = env.root.querySelectorAll('dt').find((label) => label.textContent === 'CPU').parentElement.querySelector('.sample-value');
+    const before = env.requests.length;
+    env.advance(45000);
+    assert.equal(cpu.classList.contains('metric-stale'), false);
+    env.advance(1);
+    assert.equal(cpu.classList.contains('metric-stale'), true);
+    assert.equal(cpu.textContent, '25%');
+    assert.equal(env.requests.length, before);
+    assert.equal(formFor(env.root, 'notes'), details);
+    assert.equal(control(details, 'notes'), notes);
+    assert.equal(notes.value, 'Do not replace this draft');
+    assert.equal(details.dataset.dirty, 'true');
+    assert.equal(env.document.activeElement, notes);
+    assert.equal(env.root.querySelector('#tab-details').getAttribute('aria-selected'), 'true');
+    setSession({csrf_token: '', user: null, expires_at: ''});
+    assert.equal(env.root.querySelectorAll('.sample-value').length, 0);
+    assert.equal(env.deadlines.size, 0);
   } finally { env.cleanup(); }
 });

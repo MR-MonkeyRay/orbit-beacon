@@ -44,10 +44,10 @@ func TestManagementLatestSample(t *testing.T) {
 	if err := json.Unmarshal(got.Body.Bytes(), &sample); err != nil {
 		t.Fatal(err)
 	}
-	if len(sample) != 5 {
+	if len(sample) != 7 {
 		t.Fatalf("unexpected fields: %s", got.Body)
 	}
-	for _, key := range []string{"received_at", "sampled_at", "seq", "metrics", "system"} {
+	for _, key := range []string{"received_at", "sampled_at", "seq", "metrics", "system", "runtime", "server_time"} {
 		if _, ok := sample[key]; !ok {
 			t.Errorf("missing %s", key)
 		}
@@ -59,11 +59,37 @@ func TestManagementLatestSample(t *testing.T) {
 	if err := json.Unmarshal(sample["received_at"], &received); err != nil || !received.Equal(f.now) {
 		t.Fatalf("received_at=%s err=%v", sample["received_at"], err)
 	}
+	var generated time.Time
+	if err := json.Unmarshal(sample["server_time"], &generated); err != nil || !generated.Equal(f.now) || generated.Location() != time.UTC {
+		t.Fatalf("server_time=%s err=%v", sample["server_time"], err)
+	}
+	var latestRuntime map[string]json.RawMessage
+	if err := json.Unmarshal(sample["runtime"], &latestRuntime); err != nil || len(latestRuntime) != 5 || string(latestRuntime["report_interval_seconds"]) != "10" || string(latestRuntime["probe_targets"]) != "[]" {
+		t.Fatalf("latest runtime=%s err=%v", sample["runtime"], err)
+	}
 	for _, secret := range []string{"run_generation", "session_id", token, "private-session", "token_hash"} {
 		if strings.Contains(got.Body.String(), secret) {
 			t.Fatalf("leaked %q: %s", secret, got.Body)
 		}
 	}
+	for _, elapsed := range []time.Duration{45 * time.Second, 45*time.Second + time.Millisecond, 180 * time.Second, 180*time.Second + time.Nanosecond} {
+		f.now = received.Add(elapsed)
+		retained := request(t, f.handler, http.MethodGet, path, "", second, "", "")
+		assertHTTPStatus(t, retained, http.StatusOK)
+		var current struct {
+			ReceivedAt time.Time `json:"received_at"`
+			ServerTime time.Time `json:"server_time"`
+			Metrics    struct {
+				CPUPercent    float64           `json:"cpu_percent"`
+				UptimeSeconds float64           `json:"uptime_seconds"`
+				Status        map[string]string `json:"metric_status"`
+			} `json:"metrics"`
+		}
+		if err := json.Unmarshal(retained.Body.Bytes(), &current); err != nil || !current.ReceivedAt.Equal(received) || !current.ServerTime.Equal(f.now) || current.Metrics.CPUPercent != 25 || current.Metrics.UptimeSeconds != 100 || current.Metrics.Status["cpu_percent"] != "ok" {
+			t.Fatalf("retained latest=%s err=%v", retained.Body, err)
+		}
+	}
+	f.now = received
 	node := request(t, f.handler, http.MethodGet, "/api/v1/nodes/"+id, "", second, "", "")
 	assertHTTPStatus(t, node, http.StatusOK)
 	if !strings.Contains(node.Body.String(), `"presence":"online"`) || !strings.Contains(node.Body.String(), `"agent_version":"v1.2.3"`) {

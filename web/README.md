@@ -46,5 +46,7 @@ CI 会运行这两项检查。构建目标为 Chrome 111、Firefox 115、Safari 
 - 通知使用现有原生 modal，支持 All/Unread、分页和逐用户已读；详情成功展示后才标已读。保留 Escape、Tab 与关闭后的焦点恢复，来源过期仍展示安全快照；管理员可查看告警与备份结果。
 - 导出受理后可跨页面运行，不自动下载，也不提供取消/重试操作。下载用普通同源附件链接，不加 `data-link`，不经 JSON 客户端或大 Blob。`/settings?task=<uuid>#data` 与 `/alerts?event=<uuid>#history` 直接读取详情，不依赖当前列表页。
 - 密码仅在 Reveal、Copy、Download recovery info 操作后显式 POST 获取，不放入列表、toast、日志或初始 HTML。仅在当前组件内存短暂保存，30 秒无交互重新遮罩，关闭/导航清除；恢复凭据小 txt 在浏览器生成并由用户另存，不上传。Copy 失败提供可选文本，不使用 `execCommand`。
-- 公开页请求不带凭据，优先 SSE；建流失败降级为 10 秒轮询。建流首帧及普通请求超时为 8 秒，收到流帧后以 18 秒检查中断。响应严格校验；页面隐藏、离开或更新失败时清空节点数据，避免继续展示旧公开信息。
+- 公开页请求不带凭据，优先 SSE；建流失败降级为 10 秒轮询。建流首帧及普通请求超时为 8 秒，收到流帧后以 18 秒检查中断。失败或隐藏时保留最后有效集合并标旧，不据此把节点改成离线；无首份快照时显示真实加载失败。恢复后的有效快照立即移除已撤回节点。
+- 公开卡片只消费白名单数值、`last_seen` 与四项 `metric_status`，离线不清空卡片或最后数值；过期数字弱化并显示“最后数据 · 时间”，真正不可用显示“—”。不向匿名页面增加 runtime、原始来源或采样周期。
+- Details 的 Latest sample 只读保留最后报告，错误/缺失指标不显示报告中的残留数字，也不拼补较早成功值。Sampled 与 Last report 使用绝对时间，避免静默时保留“just now”文案。单个页级 deadline timer 使用 `server_time` 加 `performance.now()`，超过来源新鲜度边界才标 Stale；只改标签/样式，不改数字或递增 uptime。隐藏、pagehide、页签分离、导航及会话失效停 timer，恢复重新计算；后续校时不会倒退或刷新原报告时间。
 - 动画遵循 `prefers-reduced-motion`；主题偏好共用 `localStorage` 的 `orbitbeacon-theme`。不加入外部资源或必须联网加载的运行时依赖。

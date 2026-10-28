@@ -40,6 +40,7 @@ let keys = '';
 let filter = '';
 let current = [];
 let loadState = 'initial';
+let hasSnapshot = false;
 
 themeButton({system: '跟随系统', light: '浅色', dark: '深色'}, (now, then) => `主题：${now}，切换为${then}`, $('theme'));
 
@@ -115,6 +116,7 @@ function render(result) {
 }
 
 function clearData() {
+  hasSnapshot = false;
   list.replaceChildren();
   cards = [];
   keys = '';
@@ -171,19 +173,31 @@ function accept(result, announce, state) {
   countdown.dataset.state = state;
   announcement.textContent = announce ? `${headline.textContent}。${summary.textContent}` : '';
   loadState = 'ok';
+  hasSnapshot = true;
+}
+
+function markRetainedStale(message = '连接中断，正在重连；当前显示最后一次数据。') {
+  if (!hasSnapshot) return;
+  cards.forEach((card) => card.setStale());
+  summary.textContent = message;
+  countdown.dataset.state = 'stale';
 }
 
 function fail(announce) {
-  clearData();
+  if (hasSnapshot) {
+    markRetainedStale();
+  } else {
+    clearData();
+    headline.textContent = '暂时无法获取节点信息';
+    summary.textContent = '加载失败，请检查网络后重试。将在 10 秒后自动重试。';
+    empty.hidden = false;
+    emptyText.textContent = '加载失败，请检查网络后重试。';
+    retry.hidden = false;
+    updated.textContent = '更新失败';
+  }
   countdown.dataset.state = 'error';
-  headline.textContent = '暂时无法获取节点信息';
-  summary.textContent = '连接服务器失败或返回的数据无效，将在 10 秒后自动重试。';
-  empty.hidden = false;
-  emptyText.textContent = '暂时无法获取节点信息';
-  retry.hidden = false;
-  if (announce || loadState !== 'error') announcement.textContent = '更新失败，请点击刷新重试。';
+  if (announce || loadState !== 'error') announcement.textContent = hasSnapshot ? '连接中断，当前显示最后一次数据。' : '更新失败，请点击刷新重试。';
   loadState = 'error';
-  updated.textContent = '更新失败';
 }
 
 async function load(announce = false) {
@@ -252,6 +266,7 @@ async function start(announce = false) {
     // Setup failures hand over to polling, which validates and fails on its own.
     fallback = !timedOut && !received && error instanceof StreamSetupError;
     if (!fallback) fail(announce);
+    else markRetainedStale();
   } finally {
     if (number === requestNumber) {
       clearTimeout(timer);
@@ -285,12 +300,12 @@ next.addEventListener('click', () => { if (nextOffset !== null) turnPage(nextOff
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     cancel();
-    clearData();
+    markRetainedStale('更新已暂停；当前显示最后一次数据。');
     restartCountdown(false);
     announcement.textContent = '';
     finish();
-  } else start();
+  } else { markRetainedStale(); start(); }
 });
-window.addEventListener('pagehide', () => { stopped = true; cancel(); clearData(); restartCountdown(false); finish(); });
-window.addEventListener('pageshow', (event) => { if (event.persisted) { stopped = false; start(); } });
+window.addEventListener('pagehide', () => { stopped = true; cancel(); markRetainedStale('更新已暂停；当前显示最后一次数据。'); restartCountdown(false); finish(); });
+window.addEventListener('pageshow', (event) => { if (event.persisted) { stopped = false; markRetainedStale(); start(); } });
 start(true);
