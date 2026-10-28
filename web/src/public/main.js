@@ -3,6 +3,8 @@ import {h} from '../shared/dom.js';
 import {themeButton} from '../shared/theme.js';
 import {createCard, skeletonCards, STATUS} from './cards.js';
 import {createConstellation} from './constellation.js';
+import {validResponse} from './validate.js';
+import {openStream, StreamSetupError} from './stream.js';
 
 const PAGE = 50;
 const POLL_MS = 10000;
@@ -37,6 +39,7 @@ let cards = [];
 let keys = '';
 let filter = '';
 let current = [];
+let loadState = 'initial';
 
 themeButton({system: '跟随系统', light: '浅色', dark: '深色'}, (now, then) => `主题：${now}，切换为${then}`, $('theme'));
 
@@ -135,7 +138,7 @@ function restartCountdown(running) {
   countdown.classList.add('running');
 }
 
-// ------------------------------------------------------------------ polling
+// ------------------------------------------------------------------ updates
 
 function cancel() {
   clearTimeout(timer);
@@ -144,60 +147,124 @@ function cancel() {
   controller = null;
 }
 
-// A malformed response is a failure, never an invitation to display stale data.
-function validResponse(result) {
-  if (!result || !Array.isArray(result.nodes) || result.nodes.length > 100 || typeof result.has_more !== 'boolean' || !Number.isFinite(Date.parse(result.generated_at))) return false;
-  if (result.has_more ? !Number.isSafeInteger(result.next_offset) || result.next_offset <= offset : result.next_offset !== null) return false;
-  return result.nodes.every((node) => node && ['name', 'region', 'provider'].every((key) => typeof node[key] === 'string') && ['online', 'offline', 'unknown'].includes(node.status) && ['cpu_percent', 'memory_percent', 'load1', 'uptime_seconds'].every((key) => node[key] === null || typeof node[key] === 'number' && Number.isFinite(node[key]) && node[key] >= 0 && (!key.endsWith('_percent') || node[key] <= 100)));
+function begin(announce) {
+  refresh.classList.add('loading');
+  refresh.setAttribute('aria-busy', 'true');
+  restartCountdown(false);
+  if (announce) announcement.textContent = '正在加载节点…';
+  list.setAttribute('aria-busy', 'true');
+  if (!cards.length) list.replaceChildren(...skeletonCards(6));
+  previous.disabled = offset === 0;
+  page.textContent = `第 ${Math.floor(offset / PAGE) + 1} 页`;
 }
 
-async function load() {
+function finish() {
+  refresh.classList.remove('loading');
+  refresh.removeAttribute('aria-busy');
+  list.removeAttribute('aria-busy');
+  if (list.querySelector('.placeholder')) list.replaceChildren(...cards);
+}
+
+function accept(result, announce, state) {
+  if (!validResponse(result, offset)) throw new Error('invalid public response');
+  render(result);
+  countdown.dataset.state = state;
+  announcement.textContent = announce ? `${headline.textContent}。${summary.textContent}` : '';
+  loadState = 'ok';
+}
+
+function fail(announce) {
+  clearData();
+  countdown.dataset.state = 'error';
+  headline.textContent = '暂时无法获取节点信息';
+  summary.textContent = '连接服务器失败或返回的数据无效，将在 10 秒后自动重试。';
+  empty.hidden = false;
+  emptyText.textContent = '暂时无法获取节点信息';
+  retry.hidden = false;
+  if (announce || loadState !== 'error') announcement.textContent = '更新失败，请点击刷新重试。';
+  loadState = 'error';
+  updated.textContent = '更新失败';
+}
+
+async function load(announce = false) {
   cancel();
   if (document.hidden || stopped) return;
   const number = requestNumber;
   const active = new AbortController();
   controller = active;
-  const timeout = setTimeout(() => active.abort(), TIMEOUT_MS);
-  refresh.classList.add('loading');
-  refresh.setAttribute('aria-busy', 'true');
-  restartCountdown(false);
-  announcement.textContent = '正在加载节点…';
-  list.setAttribute('aria-busy', 'true');
-  if (!cards.length) list.replaceChildren(...skeletonCards(6));
-  previous.disabled = offset === 0;
-  page.textContent = `第 ${Math.floor(offset / PAGE) + 1} 页`;
+  timer = setTimeout(() => active.abort(), TIMEOUT_MS);
+  begin(announce);
   try {
     const response = await fetch(`/api/public/v1/nodes?limit=${PAGE}&offset=${offset}`, {credentials: 'omit', cache: 'no-store', signal: active.signal});
     if (!response.ok) throw new Error('public request failed');
     const result = await response.json();
     if (number !== requestNumber || document.hidden || stopped) return;
-    if (!validResponse(result)) throw new Error('invalid public response');
-    render(result);
-    countdown.dataset.state = 'ok';
-    // Routine polling does not announce every changing resource value.
-    announcement.textContent = '';
+    active.signal.throwIfAborted();
+    accept(result, announce, 'ok');
   } catch {
     if (number !== requestNumber || document.hidden || stopped) return;
-    clearData();
-    countdown.dataset.state = 'error';
-    headline.textContent = '暂时无法获取节点信息';
-    summary.textContent = '连接服务器失败或返回的数据无效，将在 10 秒后自动重试。';
-    empty.hidden = false;
-    emptyText.textContent = '暂时无法获取节点信息';
-    retry.hidden = false;
-    announcement.textContent = '更新失败，请点击刷新重试。';
-    updated.textContent = '更新失败';
+    fail(announce);
   } finally {
-    clearTimeout(timeout);
     if (number === requestNumber) {
+      clearTimeout(timer);
       controller = null;
-      refresh.classList.remove('loading');
-      refresh.removeAttribute('aria-busy');
-      list.removeAttribute('aria-busy');
-      if (list.querySelector('.placeholder')) list.replaceChildren(...cards);
+      finish();
       if (!document.hidden && !stopped) {
-        timer = setTimeout(load, POLL_MS);
+        timer = setTimeout(() => load(), POLL_MS);
         restartCountdown(true);
+      }
+    }
+  }
+}
+
+async function start(announce = false) {
+  cancel();
+  if (document.hidden || stopped) return;
+  const number = requestNumber;
+  const active = new AbortController();
+  controller = active;
+  let received = false;
+  let closed = false;
+  let fallback = false;
+  let timedOut = false;
+  const watch = (delay) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { timedOut = true; active.abort(); }, delay);
+  };
+  watch(TIMEOUT_MS);
+  begin(announce);
+  try {
+    await openStream({offset, limit: PAGE, signal: active.signal, onFrame: ({event, data}) => {
+      if (number !== requestNumber || document.hidden || stopped || active.signal.aborted) return;
+      const result = JSON.parse(data);
+      if (event === 'nodes') {
+        accept(result, announce, 'live');
+        received = true;
+        announce = false;
+        finish();
+        watch(POLL_MS + TIMEOUT_MS);
+      } else if (event === 'close' && result && typeof result === 'object' && !Array.isArray(result) && Object.keys(result).length === 0) closed = true;
+      else throw new Error('invalid public frame');
+    }});
+  } catch (error) {
+    if (number !== requestNumber || document.hidden || stopped) return;
+    closed = false;
+    // Setup failures hand over to polling, which validates and fails on its own.
+    fallback = !timedOut && !received && error instanceof StreamSetupError;
+    if (!fallback) fail(announce);
+  } finally {
+    if (number === requestNumber) {
+      clearTimeout(timer);
+      active.abort();
+      controller = null;
+      finish();
+      if (!document.hidden && !stopped) {
+        if (fallback) load(announce);
+        else if (closed) start();
+        else {
+          timer = setTimeout(() => start(), POLL_MS);
+          restartCountdown(true);
+        }
       }
     }
   }
@@ -208,11 +275,11 @@ function turnPage(target) {
   filter = '';
   refresh.focus();
   clearData();
-  load();
+  start(true);
 }
 
-refresh.addEventListener('click', load);
-retry.addEventListener('click', () => { refresh.focus(); load(); });
+refresh.addEventListener('click', () => start(true));
+retry.addEventListener('click', () => { refresh.focus(); start(true); });
 previous.addEventListener('click', () => turnPage(Math.max(0, offset - PAGE)));
 next.addEventListener('click', () => { if (nextOffset !== null) turnPage(nextOffset); });
 document.addEventListener('visibilitychange', () => {
@@ -221,9 +288,9 @@ document.addEventListener('visibilitychange', () => {
     clearData();
     restartCountdown(false);
     announcement.textContent = '';
-    list.removeAttribute('aria-busy');
-  } else load();
+    finish();
+  } else start();
 });
-window.addEventListener('pagehide', () => { stopped = true; cancel(); clearData(); });
-window.addEventListener('pageshow', (event) => { if (event.persisted) { stopped = false; load(); } });
-load();
+window.addEventListener('pagehide', () => { stopped = true; cancel(); clearData(); restartCountdown(false); finish(); });
+window.addEventListener('pageshow', (event) => { if (event.persisted) { stopped = false; start(); } });
+start(true);
