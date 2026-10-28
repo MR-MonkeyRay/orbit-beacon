@@ -9,20 +9,35 @@ import (
 	"os"
 	"os/signal"
 	"os/user"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
 
+	"orbitbeacon/internal/agent/filelock"
 	"orbitbeacon/internal/agent/service"
 	"orbitbeacon/internal/buildinfo"
 	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
+const exitIdentityConflict = 3
+
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var failure *service.HTTPError
+	if errors.As(err, &failure) && failure.StatusCode == 409 && failure.Code == "identity_conflict" {
+		return exitIdentityConflict
+	}
+	return 1
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "orbitbeacon-agent:", err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
 }
 
@@ -106,6 +121,16 @@ func run(args []string) error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	if args[0] == "run" {
+		unlock, err := lockRun(ctx, cfg.StateDir)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return err
+		}
+		defer unlock()
+	}
 	agent, err := service.OpenRuntime(ctx, cfg)
 	if err != nil {
 		if args[0] == "run" && errors.Is(err, context.Canceled) {
@@ -145,6 +170,16 @@ func run(args []string) error {
 		return checkErr
 	}
 	return errors.New("unsupported agent command")
+}
+
+func lockRun(ctx context.Context, stateDir string) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(stateDir, 0700); err != nil {
+		return nil, errors.New("cannot prepare agent state directory for run lock")
+	}
+	return filelock.TryAcquire(ctx, filepath.Join(stateDir, "run.lock"))
 }
 
 // runEnrollment preserves the ticket on every unconfirmed outcome. Cleanup errors

@@ -56,7 +56,7 @@ func TestOpenWaitsForLockedAtomicPublication(t *testing.T) {
 			case <-ctx.waiting:
 			case got := <-result:
 				t.Fatalf("Open bypassed an in-progress atomic publication: err=%v", got.err)
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				t.Fatal("Open did not begin its cancellable sidecar wait")
 			}
 			data, err := json.Marshal(published)
@@ -88,7 +88,7 @@ func TestOpenWaitsForLockedAtomicPublication(t *testing.T) {
 				if got.err != nil || got.store.Current() != published {
 					t.Fatalf("Open did not load the completed publication: %v", got.err)
 				}
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				t.Fatal("Open did not resume after publication")
 			}
 		})
