@@ -3,6 +3,7 @@ package alerts
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	"orbitbeacon/internal/server/management"
@@ -71,6 +72,16 @@ func scanEvent(row scanner) (Event, error) {
 
 const eventColumns = "e.id,e.rule_id,e.node_id,COALESCE(r.name,e.rule_name),COALESCE(n.name,e.node_name),e.state,e.value,e.started_at,e.resolved_at,e.last_notified_at"
 const eventSelect = "SELECT " + eventColumns + ",COALESCE(json_extract(e.rule_snapshot,'$.metric'),''),COALESCE(json_extract(e.rule_snapshot,'$.severity'),'') FROM alert_events e LEFT JOIN alert_rules r ON r.id=e.rule_id LEFT JOIN nodes n ON n.id=e.node_id"
+
+// Event preserves the same live-name fallback and immutable snapshot fields as
+// event lists, without searching pages for a deep-linked historical episode.
+func (s *Service) Event(ctx context.Context, id string) (Event, error) {
+	event, err := scanEvent(s.db.QueryRowContext(ctx, eventSelect+" WHERE e.id=?", id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Event{}, ErrNotFound
+	}
+	return event, err
+}
 
 // Summary reads the counts and newest episodes from one consistent snapshot.
 func (s *Service) Summary(ctx context.Context) (AlertSummary, error) {

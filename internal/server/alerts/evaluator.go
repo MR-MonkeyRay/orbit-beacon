@@ -413,6 +413,11 @@ func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *f
 	if err != nil {
 		return err
 	}
+	if count > 0 {
+		if err := insertInbox(ctx, tx, Notification{EventID: id, Rule: r, NodeID: n.id, NodeName: n.name, State: "firing", Value: value, StartedAt: since}, e.opts.Now()); err != nil {
+			return err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return err
 	}
@@ -442,6 +447,11 @@ func (e *Evaluator) resolve(ctx context.Context, o openEvent, value *float64, no
 	count, err := result.RowsAffected()
 	if err != nil {
 		return err
+	}
+	if count > 0 {
+		if err := insertInbox(ctx, tx, Notification{EventID: o.ID, Rule: o.rule, NodeID: o.NodeID, NodeName: o.NodeName, State: "resolved", Value: value, StartedAt: o.StartedAt, ResolvedAt: &now}, e.opts.Now()); err != nil {
+			return err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return err
