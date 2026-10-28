@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 
 	"orbitbeacon/internal/server/securefs"
+	"orbitbeacon/internal/server/storage"
 )
 
 const (
@@ -295,7 +296,7 @@ func WriteArchive(ctx context.Context, output string, manifest Manifest, files [
 }
 
 func validateManifest(m Manifest) error {
-	if m.Format != "orbitbeacon-backup" || m.Version != 1 || m.SchemaVersion != 16 || m.HistorySchemaVersion != 1 {
+	if m.Format != "orbitbeacon-backup" || m.Version != 1 || m.SchemaVersion != storage.CurrentSchemaVersion || m.HistorySchemaVersion != 1 {
 		return invalidArchive(nil)
 	}
 	id, err := uuid.Parse(m.ArchiveID)

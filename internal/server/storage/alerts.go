@@ -9,7 +9,7 @@ CREATE TABLE alert_rules (
  scope_kind TEXT NOT NULL CHECK(scope_kind IN ('all','group','node')), scope_id TEXT,
  scope_group_id TEXT GENERATED ALWAYS AS (CASE WHEN scope_kind='group' THEN scope_id END) VIRTUAL REFERENCES groups(id) ON DELETE CASCADE,
  scope_node_id TEXT GENERATED ALWAYS AS (CASE WHEN scope_kind='node' THEN scope_id END) VIRTUAL REFERENCES nodes(id) ON DELETE CASCADE,
- metric TEXT NOT NULL CHECK(metric IN ('cpu_percent','memory_used_percent','swap_used_percent','disk_used_percent','load1','offline')),
+ metric TEXT NOT NULL CHECK(metric IN ('cpu_percent','memory_used_percent','swap_used_percent','disk_used_percent','load1','offline','probes_down')),
  comparator TEXT, threshold REAL, for_seconds INTEGER NOT NULL CHECK(for_seconds BETWEEN 0 AND 86400),
  severity TEXT NOT NULL CHECK(severity IN ('info','warning','critical')),
  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,

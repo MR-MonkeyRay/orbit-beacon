@@ -8,7 +8,7 @@ import (
 	"orbitbeacon/internal/server/storage"
 )
 
-func TestProbeMigrationCreatesTablesConstraintsAndRetentionIndex(t *testing.T) {
+func TestProbeSchemaCreatesTablesConstraintsAndRetentionIndex(t *testing.T) {
 	db, err := storage.Open(context.Background(), filepath.Join(privateDirectory(t), "probes.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +34,16 @@ func TestProbeMigrationCreatesTablesConstraintsAndRetentionIndex(t *testing.T) {
 		t.Fatalf("fresh schema rejected probes_down: %v", err)
 	}
 	for _, statement := range []string{
+		`INSERT INTO alert_rules(id,name,enabled,scope_kind,metric,comparator,threshold,for_seconds,severity,created_at,updated_at) VALUES('cpu-limit','cpu limit',1,'all','cpu_percent','>',100,0,'warning','now','now')`,
+		`INSERT INTO alert_rules(id,name,enabled,scope_kind,metric,comparator,threshold,for_seconds,severity,created_at,updated_at) VALUES('load-limit','load limit',1,'all','load1','>',1000000,0,'warning','now','now')`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("fresh alert schema rejected valid rule: %v", err)
+		}
+	}
+	for _, statement := range []string{
 		`INSERT INTO alert_rules(id,name,enabled,scope_kind,metric,comparator,threshold,for_seconds,severity,created_at,updated_at) VALUES('cpu-high','cpu high',1,'all','cpu_percent','>',101,0,'warning','now','now')`,
+		`INSERT INTO alert_rules(id,name,enabled,scope_kind,metric,comparator,threshold,for_seconds,severity,created_at,updated_at) VALUES('offline-threshold','offline threshold',1,'all','offline','>',1,180,'warning','now','now')`,
 	} {
 		if _, err := db.Exec(statement); err == nil {
 			t.Fatalf("fresh alert schema accepted invalid rule: %s", statement)

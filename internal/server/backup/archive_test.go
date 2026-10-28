@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"filippo.io/age"
+
+	"orbitbeacon/internal/server/storage"
 )
 
 func framingTempDir(t *testing.T) string {
@@ -31,7 +33,7 @@ func framingTempDir(t *testing.T) string {
 
 func framingManifest(categories []Category) Manifest {
 	now := time.Date(2026, 10, 27, 12, 0, 0, 123, time.UTC)
-	m := Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: "c03eca08-973d-4b86-979f-beb99dbe5e1f", CreatedAt: now, ServerVersion: "test", SchemaVersion: 16, HistorySchemaVersion: 1, Categories: categories, Snapshots: Snapshots{MainAt: now}}
+	m := Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: "c03eca08-973d-4b86-979f-beb99dbe5e1f", CreatedAt: now, ServerVersion: "test", SchemaVersion: storage.CurrentSchemaVersion, HistorySchemaVersion: 1, Categories: categories, Snapshots: Snapshots{MainAt: now}}
 	for _, c := range categories {
 		if c == Monitoring {
 			m.Snapshots.MetricsAt = &now
@@ -239,6 +241,56 @@ func forgedArchive(t *testing.T, raw []byte, secondMember bool) string {
 	return path
 }
 
+func TestArchiveRejectsOtherMainSchemas(t *testing.T) {
+	payload := bytes.Repeat([]byte{7}, 32)
+	sum := sha256.Sum256(payload)
+	for _, category := range []Category{Configuration, Monitoring, Events} {
+		for _, version := range []struct {
+			name  string
+			value int
+		}{{"schema16", 16}, {"future", storage.CurrentSchemaVersion + 1}} {
+			t.Run(string(category)+"/"+version.name, func(t *testing.T) {
+				m := framingManifest([]Category{category})
+				for _, name := range archiveNames(m.Categories) {
+					m.Files = append(m.Files, ManifestFile{Path: name, Bytes: int64(len(payload)), SHA256: hex.EncodeToString(sum[:])})
+				}
+				if err := validateManifest(m); err != nil {
+					t.Fatalf("current manifest rejected: %v", err)
+				}
+				m.SchemaVersion = version.value
+				manifest, err := json.Marshal(m)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var raw bytes.Buffer
+				tw := tar.NewWriter(&raw)
+				add := func(name string, data []byte) {
+					t.Helper()
+					if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0600, Size: int64(len(data)), Typeflag: tar.TypeReg}); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := tw.Write(data); err != nil {
+						t.Fatal(err)
+					}
+				}
+				add("manifest.json", manifest)
+				for _, file := range m.Files {
+					add(file.Path, payload)
+				}
+				if err := tw.Close(); err != nil {
+					t.Fatal(err)
+				}
+				path := forgedArchive(t, raw.Bytes(), false)
+				_, err = ReadArchive(context.Background(), path, "aB0123456789cDef", filepath.Join(framingTempDir(t), "stage"))
+				var archiveErr *Error
+				if !errors.As(err, &archiveErr) || archiveErr.Code != "archive_invalid" {
+					t.Fatalf("schema %d accepted or misclassified: type=%T value=%#v classified=%#v", version.value, err, err, archiveErr)
+				}
+			})
+		}
+	}
+}
+
 func TestArchiveRejectsMaliciousFraming(t *testing.T) {
 	payload := []byte("events")
 	sum := sha256.Sum256(payload)
@@ -255,7 +307,7 @@ func TestArchiveRejectsMaliciousFraming(t *testing.T) {
 			case "categories":
 				m.Categories = []Category{Events, Configuration}
 			case "schema":
-				m.SchemaVersion = 15
+				m.SchemaVersion = storage.CurrentSchemaVersion - 1
 			case "history_schema":
 				m.HistorySchemaVersion = 2
 			case "uuid":

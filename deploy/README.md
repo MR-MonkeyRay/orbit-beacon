@@ -164,7 +164,7 @@ Endpoint 只允许 HTTPS 源站（可带端口），不能含路径、用户信�
 
 ## 恢复
 
-先停止 Server，使用运行服务的同一用户执行。只接受格式及 schema 版本精确匹配的新版 `.tar.gz.age` 包，不接收裸 SQLite，也不转换旧格式。密码文件必须归该用户所有、为 `0600` 普通文件，内容为该包的 16 位密码，可带一个换行。也可省略 `--password-file` 从终端无回显输入；不支持命令行明文密码或环境变量密码。
+先停止 Server，使用运行服务的同一用户执行。只接受归档格式 v1、主库 schema 17、指标库 schema 1 精确匹配的 `.tar.gz.age` 包；旧 schema 包（包括仅 Monitoring 的包）也拒绝，不接收裸 SQLite 或转换旧格式。密码文件必须归该用户所有、为 `0600` 普通文件，内容为该包的 16 位密码，可带一个换行。也可省略 `--password-file` 从终端无回显输入；不支持命令行明文密码或环境变量密码。
 
 ```sh
 orbitbeacon-server restore --data-dir /var/lib/orbitbeacon \
@@ -180,8 +180,12 @@ orbitbeacon-server restore --data-dir /var/lib/orbitbeacon \
 
 ## 升级
 
+当前主库为 schema 17：仅空库直接初始化，已有库必须只有一条匹配的版本记录；旧库、缺失/混合版本记录或更高版本库均拒绝，不运行迁移，也不自动清理原文件。旧 schema 16 及其他旧格式不能通过备份恢复转换为当前格式，需使用新的私有数据目录；保留旧目录、旧包及原版本程序。
+
+以下替换步骤仅适用于数据库 schema 不变的版本：
+
 1. 先完成所需三类数据的加密备份，另存恢复密码、部署配置和证书，再停止 Server。
 2. systemd 替换 `/usr/local/bin/orbitbeacon-server`；Compose 设置已发布的 `ORBITBEACON_IMAGE_TAG`，执行 `pull orbitbeacon` 和 `up -d orbitbeacon`。
-3. 启动并检查 readiness，确认数据库迁移完成，再升级 Agent。
+3. 启动并检查 readiness，确认数据库格式匹配，再升级 Agent。
 
 Server 严格拒绝未知上报字段，新 Agent 对旧 Server 可能得到 `400`，不能假设旧 Server 会忽略 `traffic`、`probe_results` 或 `system.agent_version`。启用新配置前先完成 Server 升级。降级前确认目标版本支持当前数据库格式；Server 不会打开更高版本数据库，加密归档也要求格式及 schema 版本精确匹配，不提供跨 schema 转换。

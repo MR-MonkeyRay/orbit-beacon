@@ -7,35 +7,23 @@ import (
 	"testing"
 )
 
-func TestNotificationMigrationFromTen(t *testing.T) {
+func TestNotificationSchemaRoutesAndChannelCascades(t *testing.T) {
 	dir := t.TempDir()
-	os.Chmod(dir, 0700)
-	path := filepath.Join(dir, "v10.db")
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "notifications.db")
 	ctx := context.Background()
-	migrations := []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}, {Version: 5, Apply: repairReportSelections}, {Version: 6, SQL: recoverableCSRFSchema}, {Version: 7, SQL: auditOrderingSchema}, {Version: 8, SQL: enrollmentOrderingSchema}, {Version: 9, Apply: normalizeTimestampColumns}, {Version: 10, SQL: alertsSchema}}
-	db, e := OpenWithMigrations(ctx, path, migrations)
-	if e != nil {
-		t.Fatal(e)
-	}
-	_, e = db.Exec(`INSERT INTO alert_rules(id,name,enabled,scope_kind,metric,for_seconds,severity,created_at,updated_at) VALUES('rule','retained',1,'all','offline',180,'warning','now','now')`)
-	if e != nil {
-		t.Fatal(e)
-	}
-	db.Close()
-	db, e = Open(ctx, path)
+	db, e := Open(ctx, path)
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer db.Close()
-	var version, count int
-	db.QueryRow("SELECT max(version) FROM schema_migrations").Scan(&version)
-	if version != CurrentSchemaVersion {
-		t.Fatalf("version %d", version)
+	_, e = db.Exec(`INSERT INTO alert_rules(id,name,enabled,scope_kind,metric,for_seconds,severity,created_at,updated_at) VALUES('rule','retained',1,'all','offline',180,'warning','now','now')`)
+	if e != nil {
+		t.Fatal(e)
 	}
-	db.QueryRow("SELECT count(*) FROM alert_rules WHERE id='rule'").Scan(&count)
-	if count != 1 {
-		t.Fatal("old rule lost")
-	}
+	var count int
 	for _, table := range []string{"notification_channels", "notification_deliveries", "alert_rule_channels", "notification_rate_limits"} {
 		if e = db.QueryRow("SELECT count(*) FROM " + table).Scan(&count); e != nil || count != 0 {
 			t.Fatal(table, e)
@@ -44,14 +32,28 @@ func TestNotificationMigrationFromTen(t *testing.T) {
 	if _, e = db.Exec(`INSERT INTO notification_channels(id,name,kind,enabled,config_json,secret_ciphertext,created_at,updated_at) VALUES('channel','webhook','webhook',1,'{}',NULL,'now','now'); INSERT INTO alert_rule_channels VALUES('rule','channel'); DELETE FROM alert_rules WHERE id='rule'`); e != nil {
 		t.Fatal(e)
 	}
-	db.QueryRow("SELECT count(*) FROM alert_rule_channels").Scan(&count)
-	if count != 0 {
-		t.Fatal("rule FK did not cascade")
+	if e = db.QueryRow("SELECT count(*) FROM alert_rule_channels").Scan(&count); e != nil || count != 0 {
+		t.Fatalf("rule FK cascade left %d routes: %v", count, e)
+	}
+	if _, e = db.Exec(`
+INSERT INTO alert_rules(id,name,enabled,scope_kind,metric,for_seconds,severity,created_at,updated_at) VALUES('rule-two','offline',1,'all','offline',180,'warning','now','now');
+INSERT INTO alert_rule_channels(rule_id,channel_id) VALUES('rule-two','channel');
+INSERT INTO notification_rate_limits(channel_id,window_start,count) VALUES('channel','now',1);
+INSERT INTO notification_deliveries(id,channel_id,event_id,state,next_attempt_at,payload_json,created_at,updated_at) VALUES('delivery','channel','event','pending','now','{}','now','now');
+DELETE FROM notification_channels WHERE id='channel';`); e != nil {
+		t.Fatal(e)
+	}
+	for _, table := range []string{"alert_rule_channels", "notification_rate_limits", "notification_deliveries"} {
+		if e = db.QueryRow("SELECT count(*) FROM " + table).Scan(&count); e != nil || count != 0 {
+			t.Fatalf("channel FK cascade left %d %s rows: %v", count, table, e)
+		}
+	}
+	if e = db.QueryRow("SELECT count(*) FROM alert_rules WHERE id='rule-two'").Scan(&count); e != nil || count != 1 {
+		t.Fatalf("channel deletion changed rule: count=%d err=%v", count, e)
 	}
 	for _, index := range []string{"notification_deliveries_due", "notification_deliveries_retention", "notification_deliveries_history"} {
-		db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?", index).Scan(&count)
-		if count != 1 {
-			t.Fatal("missing index", index)
+		if e = db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?", index).Scan(&count); e != nil || count != 1 {
+			t.Fatalf("missing index %s: count=%d err=%v", index, count, e)
 		}
 	}
 }

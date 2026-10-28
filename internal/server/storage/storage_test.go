@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,7 +22,7 @@ func privateDirectory(t *testing.T) string {
 	return dir
 }
 
-func TestOpenMigratesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
+func TestOpenInitializesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(privateDirectory(t), "orbitbeacon.db")
 	db, err := storage.Open(ctx, path)
@@ -46,8 +47,19 @@ func TestOpenMigratesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&applied); err != nil {
 		t.Fatal(err)
 	}
-	if applied == 0 {
-		t.Fatal("no migration was recorded")
+	if applied != 1 {
+		t.Fatalf("ledger rows = %d, want exactly one current version", applied)
+	}
+	var version int
+	if err := db.QueryRowContext(ctx, "SELECT version FROM schema_migrations").Scan(&version); err != nil || version != storage.CurrentSchemaVersion {
+		t.Fatalf("version=%d err=%v", version, err)
+	}
+	var obsolete int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('sessions') WHERE name='csrf_hash'`).Scan(&obsolete); err != nil || obsolete != 0 {
+		t.Fatalf("obsolete session field=%d err=%v", obsolete, err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE name='api_tokens'`).Scan(&obsolete); err != nil || obsolete != 0 {
+		t.Fatalf("obsolete API tokens=%d err=%v", obsolete, err)
 	}
 	if _, err := db.ExecContext(ctx, "CREATE TABLE regression_sentinel (value TEXT NOT NULL)"); err != nil {
 		t.Fatal(err)
@@ -234,5 +246,92 @@ func TestMigrationFailureDoesNotRecordOrPartiallyApplyMigration(t *testing.T) {
 	}
 	if err := storage.Migrate(ctx, db, []storage.Migration{{Version: 1000000, SQL: "CREATE TABLE rollback_sentinel (id INTEGER);"}}); err != nil {
 		t.Fatalf("retrying a repaired, previously failed migration: %v", err)
+	}
+}
+
+func TestOpenRejectsIncompatibleLedgerWithoutChangingData(t *testing.T) {
+	for _, fixture := range []struct {
+		name   string
+		ledger string
+	}{
+		{"missing", ""},
+		{"empty", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);"},
+		{"old", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(16,'original');"},
+		{"mixed", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'original'),(16,'original');"},
+		{"mixed-current", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'original'),(%d,'original');", storage.CurrentSchemaVersion)},
+		{"future", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(%d,'original');", storage.CurrentSchemaVersion+1)},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			path := filepath.Join(privateDirectory(t), "incompatible.db")
+			if err := os.WriteFile(path, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			db, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(`CREATE TABLE sentinel(value TEXT NOT NULL); INSERT INTO sentinel VALUES('untouched');` + fixture.ledger); err != nil {
+				t.Fatal(err)
+			}
+			var before int
+			if err = db.QueryRow(`SELECT count(*) FROM sqlite_schema`).Scan(&before); err != nil {
+				t.Fatal(err)
+			}
+			var ledgerBefore string
+			if fixture.ledger != "" {
+				if err = db.QueryRow(`SELECT coalesce(group_concat(version || ':' || applied_at),'') FROM (SELECT * FROM schema_migrations ORDER BY version)`).Scan(&ledgerBefore); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err = db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			opened, err := storage.Open(context.Background(), path)
+			if opened != nil {
+				opened.Close()
+			}
+			want := storage.ErrSchemaIncompatible
+			if fixture.name == "future" {
+				want = storage.ErrSchemaTooNew
+			}
+			if !errors.Is(err, want) {
+				t.Fatalf("database error=%v, want %v", err, want)
+			}
+			db, err = sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			var value string
+			var after int
+			if err = db.QueryRow(`SELECT value FROM sentinel`).Scan(&value); err != nil || value != "untouched" {
+				t.Fatalf("sentinel=%q err=%v", value, err)
+			}
+			if err = db.QueryRow(`SELECT count(*) FROM sqlite_schema`).Scan(&after); err != nil || after != before {
+				t.Fatalf("schema changed: before=%d after=%d err=%v", before, after, err)
+			}
+			if fixture.ledger != "" {
+				var ledgerAfter string
+				if err = db.QueryRow(`SELECT coalesce(group_concat(version || ':' || applied_at),'') FROM (SELECT * FROM schema_migrations ORDER BY version)`).Scan(&ledgerAfter); err != nil || ledgerAfter != ledgerBefore {
+					t.Fatalf("ledger changed: before=%q after=%q err=%v", ledgerBefore, ledgerAfter, err)
+				}
+			}
+		})
+	}
+}
+
+func TestOpenInitializesEmptyFile(t *testing.T) {
+	path := filepath.Join(privateDirectory(t), "empty.db")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version int
+	if err := db.QueryRow(`SELECT version FROM schema_migrations`).Scan(&version); err != nil || version != storage.CurrentSchemaVersion {
+		t.Fatalf("version=%d err=%v", version, err)
 	}
 }

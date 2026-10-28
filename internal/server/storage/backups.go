@@ -48,4 +48,5 @@ CREATE TABLE inbox_reads (
  notification_id TEXT NOT NULL REFERENCES inbox_notifications(id) ON DELETE CASCADE,
  read_at TEXT NOT NULL, PRIMARY KEY(user_id,notification_id)
 );
+CREATE INDEX inbox_reads_notification ON inbox_reads(notification_id);
 `

@@ -8,34 +8,19 @@ import (
 	"orbitbeacon/internal/server/storage"
 )
 
-func TestExistingClaimsSurviveMigrationAndAssetDeletion(t *testing.T) {
+func TestEnrollmentClaimsSurviveNodeDeletionAndCascadeWithToken(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(privateDirectory(t), "migration.db")
+	path := filepath.Join(privateDirectory(t), "enrollment.db")
 	db, err := storage.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Recreate the installed v3 claim table with an existing successful receipt.
 	_, err = db.Exec(`
-DROP TABLE enrollment_claims;
-CREATE TABLE enrollment_claims (
- enrollment_id TEXT NOT NULL REFERENCES enrollment_tokens(id) ON DELETE CASCADE,
- installation_id TEXT NOT NULL, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
- token_hash BLOB NOT NULL, claimed_at TEXT NOT NULL, PRIMARY KEY(enrollment_id,installation_id)
-);
-DELETE FROM schema_migrations WHERE version = 4;
 INSERT INTO nodes(id,name,created_at) VALUES('n','existing','2026-10-26T12:00:00Z');
 INSERT INTO enrollment_tokens(id,token_hash,expires_at) VALUES('t',x'01','2026-10-26T12:30:00Z');
-INSERT INTO enrollment_claims VALUES('t','installation','n',x'02','2026-10-26T12:00:00Z');`)
+INSERT INTO enrollment_claims(enrollment_id,installation_id,node_id,token_hash,claimed_at) VALUES('t','installation','n',x'02','2026-10-26T12:00:00Z');`)
 	if err != nil {
 		_ = db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	db, err = storage.Open(ctx, path)
-	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()

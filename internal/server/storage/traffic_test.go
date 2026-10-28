@@ -8,7 +8,7 @@ import (
 	"orbitbeacon/internal/server/storage"
 )
 
-func TestTrafficMigrationCreatesTablesConstraintsAndRetentionIndex(t *testing.T) {
+func TestTrafficSchemaCreatesTablesConstraintsAndRetentionIndex(t *testing.T) {
 	db, err := storage.Open(context.Background(), filepath.Join(privateDirectory(t), "traffic.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -41,5 +41,19 @@ func TestTrafficMigrationCreatesTablesConstraintsAndRetentionIndex(t *testing.T)
 	}
 	if _, err := db.Exec(`INSERT INTO traffic_hourly(node_id,epoch,period_start,rx_bytes,tx_bytes,updated_at) VALUES('node','epoch','2026-10-27T00:00:00.000000000Z',0,-1,'now')`); err == nil {
 		t.Fatal("traffic_hourly accepted a negative transmitted counter")
+	}
+	if _, err := db.Exec(`INSERT INTO traffic_hourly(node_id,epoch,period_start,rx_bytes,tx_bytes,updated_at) VALUES('node','epoch','2026-10-27T00:00:00.000000000Z',1,2,'2026-10-27T00:01:00.000000000Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO traffic_daily(node_id,day,rx_bytes,tx_bytes) VALUES('node','2026-10-26',3,4)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM nodes WHERE id='node'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"traffic_hourly", "traffic_daily"} {
+		if err := db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s cascade left %d rows: %v", table, count, err)
+		}
 	}
 }

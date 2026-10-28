@@ -94,6 +94,7 @@ build/orbitbeacon-server health --url https://localhost:8443 \
 - 使用可信 HTTPS 证书，或让客户端显式信任你的私有 CA；不要用跳过 TLS 校验代替信任配置。
 - `public_url` 是浏览器实际访问的 HTTPS 源站，推荐域名根路径。API 与页面同源，不支持子路径前缀。
 - 数据目录放在本地文件系统，由运行用户单独所有并设为 `0700`；数据库、SQLite 辅助文件和 `secrets.key` 必须是同一用户的 `0600` 普通文件，路径不能经过符号链接。
+- 主库使用 schema 17：空库直接建表，不执行历史迁移；旧库、版本记录不匹配的库及旧 schema 归档（含仅 Monitoring 的包）均拒绝，不自动清空或转换数据。请使用新的私有数据目录，保留旧目录供原版本使用。
 - 导出和计划备份由运行中的 Server 执行；恢复或重新 `bootstrap` 前先停服。遇到 `data_dir_in_use` 不要删除 `server.lock`。
 - 默认不信任转发头，代理后的登录限流按代理直连 IP 计算。仅在受控代理下配置 `trusted_proxies`，并确保代理正确设置 `X-Forwarded-For`；详见部署文档。
 
