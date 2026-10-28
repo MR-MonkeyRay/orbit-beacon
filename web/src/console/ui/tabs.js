@@ -62,6 +62,10 @@ export function tabSet(tabs, label) {
   const signal = getNavigationSignal();
   let mounted = false;
   let disposed = false;
+  const revealSelected = () => {
+    const selected = buttons.find((element) => element.getAttribute('aria-selected') === 'true');
+    if (root.isConnected && selected) reveal(selected);
+  };
   const sync = () => {
     if (disposed) return;
     if (root.isConnected) {
@@ -78,10 +82,12 @@ export function tabSet(tabs, label) {
     if (attached) lifecycle?.detach?.();
     attached = false;
     observer.disconnect();
+    window.removeEventListener('resize', revealSelected);
     signal?.removeEventListener('abort', dispose);
   };
   observer.observe(document.body, {childList: true, subtree: true});
   queueMicrotask(sync);
+  window.addEventListener('resize', revealSelected);
   signal?.addEventListener('abort', dispose, {once: true});
   if (signal?.aborted) dispose();
   return root;

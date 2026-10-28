@@ -39,6 +39,7 @@ CI 会运行这两项检查。构建目标为 Chrome 111、Firefox 115、Safari 
 - `/` 返回 `public.html`；控制台路由返回 `200.html`。改路由时同时更新 `src/console/main.js` 与 `internal/server/http.go`，刷新直达链接也必须可用。API 契约见 [OpenAPI](../api/openapi.yaml)。
 - 内容哈希脚本和样式放在 `_app/immutable/`，Server 缓存一年；HTML 为 `no-store`。不要手改产物或去掉 Go 的 `all:dist` 嵌入声明。
 - 只修改 `src` 再构建，不直接编辑 `dist`。Settings 的管理员专属 Data operations 使用 Export、Backup plans、Task history 三块 panel，不增加 pathname 路由或第二套组件体系；viewer 直达 `#data` 显示拒绝访问且不请求备份 API。
+- Settings 页签在哈希直达和窗口缩窄后保持当前标签可见；页面导航移除监听并释放已挂载页签的请求订阅。
 - 桌面侧栏与移动顶栏都提供 Notifications 铃铛，admin/viewer 均可见，由单一 controller 管理。只用一个 15 秒前台 summary timer；隐藏、pagehide、退出时停止并 abort，恢复立即刷新，旧会话结果不得回写。Data 页订阅该 tick 刷新任务，detach 时解除，不另起 timer；失败保留旧计数并标为 stale，不伪装成零。铃铛计数是本人可见未读，不是 firing 告警数。
 - 通知使用现有原生 modal，支持 All/Unread、分页和逐用户已读；详情成功展示后才标已读。保留 Escape、Tab 与关闭后的焦点恢复，来源过期仍展示安全快照；备份结果仅管理员可见，viewer 仍能查看并标记告警。
 - 导出受理后可跨页面运行，不自动下载，也不提供取消/重试操作。下载用普通同源附件链接，不加 `data-link`，不经 JSON 客户端或大 Blob。`/settings?task=<uuid>#data` 与 `/alerts?event=<uuid>#history` 直接读取详情，不依赖当前列表页。
