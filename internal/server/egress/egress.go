@@ -1,4 +1,5 @@
-package notify
+// Package egress validates destinations and pins connections to checked IPs.
+package egress
 
 import (
 	"context"
@@ -8,15 +9,22 @@ import (
 	"strings"
 )
 
-var errEgress = errors.New("notification destination denied")
+var ErrDenied = errors.New("destination denied by egress policy")
 
-type resolver interface {
+type Resolver interface {
 	LookupIPAddr(context.Context, string) ([]net.IPAddr, error)
 }
-type safeDialer struct {
-	resolver     resolver
-	allowPrivate bool
-	dial         func(context.Context, string, string) (net.Conn, error)
+
+// Dialer resolves and checks every answer before dialing only checked literals.
+// Resolver and Dial must be provided by the caller. AllowPrivate preserves the
+// explicit notification opt-in, including loopback. DenyLocal additionally keeps
+// local/non-unicast destinations blocked even with that opt-in (for backups).
+// Metadata endpoints are always denied, including embedded IPv4 destinations.
+type Dialer struct {
+	Resolver     Resolver
+	Dial         func(context.Context, string, string) (net.Conn, error)
+	AllowPrivate bool
+	DenyLocal    bool
 }
 
 func forbiddenIP(ip net.IP) bool {
@@ -26,7 +34,7 @@ func forbiddenIP(ip net.IP) bool {
 	}
 	a = a.Unmap()
 	// Include CGNAT, reserved IPv4, IPv6 transition/mapped mechanisms and
-	// documentation ranges: none are valid public notification destinations.
+	// documentation ranges: none are valid public destinations.
 	if !a.IsGlobalUnicast() || a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsMulticast() || a.IsUnspecified() {
 		return true
 	}
@@ -107,43 +115,52 @@ func embeddedIPv4(ip net.IP) []net.IP {
 	return nil
 }
 
-func (d *safeDialer) denied(ip net.IP) bool {
-	if metadataIP(ip) || !d.allowPrivate && forbiddenIP(ip) {
+func localIP(ip net.IP) bool {
+	a, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return true
+	}
+	a = a.Unmap()
+	return !a.IsGlobalUnicast() || a.IsLoopback() || a.IsLinkLocalUnicast()
+}
+
+func (d *Dialer) denied(ip net.IP) bool {
+	if metadataIP(ip) || !d.AllowPrivate && forbiddenIP(ip) || d.DenyLocal && localIP(ip) {
 		return true
 	}
 	for _, embedded := range embeddedIPv4(ip) {
-		if metadataIP(embedded) || !d.allowPrivate && forbiddenIP(embedded) {
+		if metadataIP(embedded) || !d.AllowPrivate && forbiddenIP(embedded) || d.DenyLocal && localIP(embedded) {
 			return true
 		}
 	}
 	return false
 }
 
-func (d *safeDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	host, port, e := net.SplitHostPort(address)
 	if e != nil {
-		return nil, errEgress
+		return nil, ErrDenied
 	}
 	if strings.Contains(host, "%") {
-		return nil, errEgress
+		return nil, ErrDenied
 	}
-	ips, e := d.resolver.LookupIPAddr(ctx, host)
+	ips, e := d.Resolver.LookupIPAddr(ctx, host)
 	if e != nil {
 		return nil, e
 	}
 	if len(ips) == 0 {
-		return nil, errEgress
+		return nil, ErrDenied
 	}
 	// Reject mixed public/private answers too, before making any connection.
 	for _, ip := range ips {
 		if ip.Zone != "" || d.denied(ip.IP) {
-			return nil, errEgress
+			return nil, ErrDenied
 		}
 	}
 	var last error
 	for _, ip := range ips {
 		// Dial the checked literal, never the hostname: no second DNS resolution.
-		conn, e := d.dial(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+		conn, e := d.Dial(ctx, network, net.JoinHostPort(ip.IP.String(), port))
 		if e == nil {
 			return conn, nil
 		}

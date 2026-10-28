@@ -1,4 +1,4 @@
-package main
+package datadir
 
 import (
 	"errors"
@@ -9,10 +9,12 @@ import (
 	"orbitbeacon/internal/server/securefs"
 )
 
-var errDataDirInUse = errors.New("data_dir_in_use: another server command owns the data directory")
+// ErrInUse reports that another server command owns this data directory.
+var ErrInUse = errors.New("data_dir_in_use: another server command owns the data directory")
 
-// Keep the lock inode across restarts; close releases ownership, never unlink.
-func lockDataDir(path string) (*os.File, error) {
+// Lock holds the data directory's server.lock until the returned file is closed.
+// The lock inode is retained across restarts; closing never unlinks it.
+func Lock(path string) (*os.File, error) {
 	if err := securefs.ValidateParents(path); err != nil {
 		return nil, err
 	}

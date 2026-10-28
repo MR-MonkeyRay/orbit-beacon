@@ -17,7 +17,7 @@ const validChannel = `{"name":"Primary webhook","kind":"webhook","enabled":true,
 
 func TestNotificationHTTPCRUDRoutingAuthzAndSecretSafety(t *testing.T) {
 	f := newHTTP(t, 2)
-	box, _ := secretbox.New(bytes.Repeat([]byte{9}, 32))
+	box, _ := secretbox.New(bytes.Repeat([]byte{9}, 32), "orbitbeacon notification channel v1")
 	notifications := notify.New(f.db, box, notify.Options{})
 	var logs bytes.Buffer
 	h, e := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Notifications: notifications, PublicURL: publicURL, AccessLog: true, Logger: slog.New(slog.NewJSONHandler(&logs, nil))})
@@ -101,7 +101,7 @@ func TestNotificationHTTPCRUDRoutingAuthzAndSecretSafety(t *testing.T) {
 }
 func TestNotificationHTTP405AndCapacity(t *testing.T) {
 	f := newHTTP(t, 1)
-	box, _ := secretbox.New(bytes.Repeat([]byte{1}, 32))
+	box, _ := secretbox.New(bytes.Repeat([]byte{1}, 32), "orbitbeacon notification channel v1")
 	ns := notify.New(f.db, box, notify.Options{})
 	h, e := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Notifications: ns, PublicURL: publicURL})
 	if e != nil {
@@ -129,7 +129,7 @@ func TestNotificationHTTP405AndCapacity(t *testing.T) {
 
 func TestWebhookURLPrivacyAndKeyMismatchRepairHTTP(t *testing.T) {
 	f := newHTTP(t, 1)
-	oldBox, _ := secretbox.New(bytes.Repeat([]byte{3}, 32))
+	oldBox, _ := secretbox.New(bytes.Repeat([]byte{3}, 32), "orbitbeacon notification channel v1")
 	ns := notify.New(f.db, oldBox, notify.Options{})
 	var logs bytes.Buffer
 	makeHandler := func(n *notify.Service) {
@@ -167,7 +167,7 @@ func TestWebhookURLPrivacyAndKeyMismatchRepairHTTP(t *testing.T) {
 			t.Fatal("unsafe URL projection")
 		}
 	}
-	wrongBox, _ := secretbox.New(bytes.Repeat([]byte{4}, 32))
+	wrongBox, _ := secretbox.New(bytes.Repeat([]byte{4}, 32), "orbitbeacon notification channel v1")
 	makeHandler(notify.New(f.db, wrongBox, notify.Options{}))
 	r = request(t, f.handler, "POST", path+"/test", "", admin, csrf, publicURL)
 	assertHTTPStatus(t, r, 409)

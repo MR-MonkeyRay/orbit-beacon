@@ -1,12 +1,14 @@
 //go:build linux
 
-package main
+package datadir_test
 
 import (
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"orbitbeacon/internal/server/datadir"
 )
 
 func TestDataDirectoryLockIsExclusiveAndReleasesOnClose(t *testing.T) {
@@ -15,12 +17,12 @@ func TestDataDirectoryLockIsExclusiveAndReleasesOnClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(base, "data")
-	first, err := lockDataDir(dir)
+	first, err := datadir.Lock(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Close()
-	if second, err := lockDataDir(dir); !errors.Is(err, errDataDirInUse) {
+	if second, err := datadir.Lock(dir); !errors.Is(err, datadir.ErrInUse) {
 		if second != nil {
 			second.Close()
 		}
@@ -29,7 +31,7 @@ func TestDataDirectoryLockIsExclusiveAndReleasesOnClose(t *testing.T) {
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
 	}
-	third, err := lockDataDir(dir)
+	third, err := datadir.Lock(dir)
 	if err != nil {
 		t.Fatalf("released server lock could not be reacquired: %v", err)
 	}
@@ -51,7 +53,7 @@ func TestDataDirectoryLockRejectsSymlinkWithoutTouchingTarget(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(dir, "server.lock")); err != nil {
 		t.Fatal(err)
 	}
-	if file, err := lockDataDir(dir); err == nil {
+	if file, err := datadir.Lock(dir); err == nil {
 		file.Close()
 		t.Fatal("lock followed a symlink")
 	}

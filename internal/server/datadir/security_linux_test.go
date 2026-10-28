@@ -1,6 +1,6 @@
 //go:build linux
 
-package main
+package datadir_test
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+
+	"orbitbeacon/internal/server/datadir"
 )
 
 func TestPrepareDataDirCreatesPrivateDirectoryAndPersistentKey(t *testing.T) {
@@ -17,7 +19,7 @@ func TestPrepareDataDirCreatesPrivateDirectoryAndPersistentKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(base, "new-data")
-	if err := prepareDataDir(dir); err != nil {
+	if err := datadir.Prepare(dir); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Lstat(dir)
@@ -42,7 +44,7 @@ func TestPrepareDataDirCreatesPrivateDirectoryAndPersistentKey(t *testing.T) {
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || int(info.Sys().(*syscall.Stat_t).Uid) != os.Geteuid() {
 		t.Errorf("unsafe secrets key metadata: %+v", info)
 	}
-	if err := prepareDataDir(dir); err != nil {
+	if err := datadir.Prepare(dir); err != nil {
 		t.Fatalf("valid existing installation rejected: %v", err)
 	}
 	after, err := os.ReadFile(keyPath)
@@ -83,7 +85,10 @@ func TestPrepareDataDirRejectsSymlinksAndInsecureModes(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := prepareDataDir(dir); err == nil {
+			if err := datadir.ValidateRestore(dir); err == nil {
+				t.Error("restore validation accepted insecure data directory")
+			}
+			if err := datadir.Prepare(dir); err == nil {
 				t.Error("accepted insecure data directory")
 			}
 			if _, err := os.Lstat(filepath.Join(dir, "secrets.key")); !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
@@ -123,7 +128,12 @@ func TestPrepareDataDirRejectsUnsafeExistingSecretsKey(t *testing.T) {
 					}
 				}
 			}
-			if err := prepareDataDir(dir); err == nil {
+			if kind != "wrong size" {
+				if err := datadir.ValidateRestore(dir); err == nil {
+					t.Error("restore validation accepted unsafe key metadata")
+				}
+			}
+			if err := datadir.Prepare(dir); err == nil {
 				t.Error("accepted unsafe existing secrets key")
 			}
 			after, err := os.ReadFile(path)
@@ -155,7 +165,10 @@ func TestPrepareDataDirRejectsForeignOwnedDirectoryAndKey(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = os.Chown(target, os.Geteuid(), -1) })
-			if err := prepareDataDir(dir); err == nil {
+			if err := datadir.ValidateRestore(dir); err == nil {
+				t.Error("restore validation accepted foreign-owned installation component")
+			}
+			if err := datadir.Prepare(dir); err == nil {
 				t.Error("accepted foreign-owned installation component")
 			}
 		})

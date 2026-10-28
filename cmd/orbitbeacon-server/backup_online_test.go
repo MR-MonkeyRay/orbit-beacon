@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/storage"
 )
 
@@ -34,12 +35,12 @@ func onlineBackupFixture(t *testing.T) (string, string, *sql.DB) {
 
 func TestOnlineBackupWhileLockedAndWritingWALRestores(t *testing.T) {
 	dataDir, output, db := onlineBackupFixture(t)
-	lock, err := lockDataDir(dataDir)
+	lock, err := datadir.Lock(dataDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer lock.Close()
-	if err := backupDatabase(dataDir, output); !errors.Is(err, errDataDirInUse) {
+	if err := backupDatabase(dataDir, output); !errors.Is(err, datadir.ErrInUse) {
 		t.Fatalf("offline backup with held lock: %v", err)
 	}
 	if _, err := db.Exec(`PRAGMA wal_autocheckpoint=0;

@@ -1,4 +1,4 @@
-// Package secretbox encrypts notification credentials with channel-bound AEAD.
+// Package secretbox encrypts purpose-separated credentials with caller-bound AEAD.
 package secretbox
 
 import (
@@ -10,15 +10,17 @@ import (
 	"errors"
 )
 
-var ErrCiphertext = errors.New("invalid notification secret ciphertext")
+var ErrCiphertext = errors.New("invalid secret ciphertext")
 
 type Box struct{ aead cipher.AEAD }
 
-func New(master []byte) (*Box, error) {
+// New derives an encryption key scoped to purpose. Existing ciphertext requires
+// the same purpose and AAD that were used when it was sealed.
+func New(master []byte, purpose string) (*Box, error) {
 	if len(master) != 32 {
-		return nil, errors.New("notification key must contain 32 bytes")
+		return nil, errors.New("secret key must contain 32 bytes")
 	}
-	key, err := hkdf.Key(sha256.New, master, nil, "orbitbeacon notification channel v1", 32)
+	key, err := hkdf.Key(sha256.New, master, nil, purpose, 32)
 	if err != nil {
 		return nil, err
 	}
@@ -35,20 +37,20 @@ func New(master []byte) (*Box, error) {
 }
 
 // Format: version byte (1), random 12-byte nonce, ciphertext and GCM tag.
-func (b *Box) Seal(channelID string, plaintext []byte) ([]byte, error) {
+func (b *Box) Seal(aad string, plaintext []byte) ([]byte, error) {
 	nonce := make([]byte, b.aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
 	}
 	prefix := append([]byte{1}, nonce...)
-	return b.aead.Seal(prefix, nonce, plaintext, []byte(channelID)), nil
+	return b.aead.Seal(prefix, nonce, plaintext, []byte(aad)), nil
 }
-func (b *Box) Open(channelID string, ciphertext []byte) ([]byte, error) {
+func (b *Box) Open(aad string, ciphertext []byte) ([]byte, error) {
 	n := b.aead.NonceSize()
 	if len(ciphertext) < 1+n+b.aead.Overhead() || ciphertext[0] != 1 {
 		return nil, ErrCiphertext
 	}
-	plain, err := b.aead.Open(nil, ciphertext[1:1+n], ciphertext[1+n:], []byte(channelID))
+	plain, err := b.aead.Open(nil, ciphertext[1:1+n], ciphertext[1+n:], []byte(aad))
 	if err != nil {
 		return nil, ErrCiphertext
 	}

@@ -29,6 +29,7 @@ import (
 	"orbitbeacon/internal/server"
 	"orbitbeacon/internal/server/alerts"
 	"orbitbeacon/internal/server/auth"
+	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/notify"
@@ -155,12 +156,12 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	dataLock, err := lockDataDir(cfg.DataDir)
+	dataLock, err := datadir.Lock(cfg.DataDir)
 	if err != nil {
 		return err
 	}
 	defer dataLock.Close()
-	if err := prepareDataDir(cfg.DataDir); err != nil {
+	if err := datadir.Prepare(cfg.DataDir); err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -223,11 +224,11 @@ func run(args []string) error {
 		ingestOptions.Samples = metricHistory.Samples()
 	}
 	ingestService := ingest.NewService(db, ingestOptions)
-	key, err := loadSecretsKey(filepath.Join(cfg.DataDir, "secrets.key"))
+	key, err := datadir.LoadKey(filepath.Join(cfg.DataDir, "secrets.key"))
 	if err != nil {
 		return err
 	}
-	box, err := secretbox.New(key)
+	box, err := secretbox.New(key, "orbitbeacon notification channel v1")
 	clear(key)
 	if err != nil {
 		return err

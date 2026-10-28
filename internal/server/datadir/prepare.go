@@ -1,4 +1,4 @@
-package main
+package datadir
 
 import (
 	"crypto/rand"
@@ -11,35 +11,15 @@ import (
 	"orbitbeacon/internal/server/securefs"
 )
 
-// prepareDataDir rejects unsafe existing components rather than repairing their
-// permissions. All existing files are checked before anything is created.
-func prepareDataDir(path string) error {
-	return prepareDataDirWithDatabaseValidation(path, true)
-}
-
-// prepareRestoreDataDir validates the directory and secrets key but leaves
-// database files for restore to validate, preserve, or replace atomically.
-func prepareRestoreDataDir(path string) error {
-	return prepareDataDirWithDatabaseValidation(path, false)
-}
-
-func prepareDataDirWithDatabaseValidation(path string, validateDatabaseFiles bool) error {
+// Prepare validates all existing managed files before creating the private data
+// directory or its persistent secrets key. Unsafe metadata is never repaired.
+func Prepare(path string) error {
 	dir, err := filepath.Abs(path)
 	if err != nil {
 		return err
 	}
-	if err := securefs.ValidateParents(dir); err != nil {
+	if err := ValidateRestore(dir); err != nil {
 		return err
-	}
-	_, err = os.Lstat(dir)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	exists := err == nil
-	if exists {
-		if err := securefs.ValidateDirectory(dir); err != nil {
-			return err
-		}
 	}
 	keyPath := filepath.Join(dir, "secrets.key")
 	keyExists, err := securefs.ValidateFile(keyPath)
@@ -47,37 +27,59 @@ func prepareDataDirWithDatabaseValidation(path string, validateDatabaseFiles boo
 		return err
 	}
 	if keyExists {
-		if err := validateSecretsKey(keyPath); err != nil {
-			return err
-		}
+		return validateSecretsKey(keyPath)
 	}
-	if validateDatabaseFiles {
-		for _, name := range []string{"orbitbeacon.db", "orbitbeacon.db-wal", "orbitbeacon.db-shm"} {
-			if _, err := securefs.ValidateFile(filepath.Join(dir, name)); err != nil {
-				return err
-			}
-		}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("create data directory: %w", err)
 	}
-	if !exists {
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			return fmt.Errorf("create data directory: %w", err)
-		}
-		if err := securefs.ValidateDirectory(dir); err != nil {
-			return err
-		}
-	}
-	if keyExists {
-		return nil
+	if err := securefs.ValidateDirectory(dir); err != nil {
+		return err
 	}
 	return ensureSecretsKey(keyPath)
 }
 
+// ValidateRestore checks only filesystem metadata, without creating files,
+// changing permissions, or interpreting key or database contents. Missing
+// directories and managed files are allowed for an empty restore target.
+func ValidateRestore(path string) error {
+	dir, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	if err := securefs.ValidateParents(dir); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(dir); err == nil {
+		if err := securefs.ValidateDirectory(dir); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	for _, name := range []string{"secrets.key", "server.lock"} {
+		if _, err := securefs.ValidateFile(filepath.Join(dir, name)); err != nil {
+			return err
+		}
+	}
+	for _, database := range []string{"orbitbeacon.db", "metrics.db"} {
+		for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+			if _, err := securefs.ValidateFile(filepath.Join(dir, database+suffix)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func validateSecretsKey(path string) error {
-	key, err := loadSecretsKey(path)
+	key, err := LoadKey(path)
 	clear(key)
 	return err
 }
-func loadSecretsKey(path string) ([]byte, error) {
+
+// LoadKey reads an owner-only, non-symlink secrets key containing exactly 32
+// bytes that are not all zero. The caller must clear the returned key when done.
+func LoadKey(path string) ([]byte, error) {
 	file, err := securefs.OpenFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err

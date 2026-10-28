@@ -68,7 +68,7 @@ func ptr(s string) *string { return &s }
 func TestSecretReplacementAndClearWithWrongKey(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	wrong, _ := secretbox.New(bytes.Repeat([]byte{8}, 32))
+	wrong, _ := secretbox.New(bytes.Repeat([]byte{8}, 32), "orbitbeacon notification channel v1")
 	f.s.box = wrong
 	// Replacing either credential must not open the other credential.
 	if _, err := f.s.Save(ctx, f.channel.ID, Patch{Secret: json.RawMessage(`"replacement"`)}); err != nil {
@@ -81,7 +81,7 @@ func TestSecretReplacementAndClearWithWrongKey(t *testing.T) {
 	if _, secret, err := f.s.load(ctx, f.channel.ID); err != nil || secret != "replacement" {
 		t.Fatalf("repair failed: %v", err)
 	}
-	old, _ := secretbox.New(bytes.Repeat([]byte{7}, 32))
+	old, _ := secretbox.New(bytes.Repeat([]byte{7}, 32), "orbitbeacon notification channel v1")
 	f.s.box = old
 	if _, err := f.s.Save(ctx, f.channel.ID, Patch{Secret: json.RawMessage(`""`)}); err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestUnreadableDeliveryBackoffAndKeyRestoration(t *testing.T) {
 	f.target(t, ts.URL+"/private-path?token=query-secret")
 	f.s.Notify(context.Background(), f.note("restore-key"))
 	original := f.s.box
-	wrong, _ := secretbox.New(bytes.Repeat([]byte{8}, 32))
+	wrong, _ := secretbox.New(bytes.Repeat([]byte{8}, 32), "orbitbeacon notification channel v1")
 	f.s.box = wrong
 	var logs bytes.Buffer
 	logger := slog.Default()
@@ -162,7 +162,7 @@ func TestUnreadableDeliveryBackoffAndKeyRestoration(t *testing.T) {
 func TestUnreadableDeliveryUsesNormalAttemptLimit(t *testing.T) {
 	f := newFixture(t)
 	f.s.Notify(context.Background(), f.note("exhaust-key"))
-	f.s.box, _ = secretbox.New(bytes.Repeat([]byte{8}, 32))
+	f.s.box, _ = secretbox.New(bytes.Repeat([]byte{8}, 32), "orbitbeacon notification channel v1")
 	for i := range 5 {
 		f.s.process(context.Background())
 		st, attempts, code, next := state(t, f.db)
@@ -192,7 +192,7 @@ func TestEmailPasswordReplacementAndClearWithWrongKey(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	f.s.box, _ = secretbox.New(bytes.Repeat([]byte{8}, 32))
+	f.s.box, _ = secretbox.New(bytes.Repeat([]byte{8}, 32), "orbitbeacon notification channel v1")
 	if _, e = f.s.Save(ctx, c.ID, Patch{Secret: json.RawMessage(`"replacement-password"`)}); e != nil {
 		t.Fatal("replacement decrypted old password", e)
 	}

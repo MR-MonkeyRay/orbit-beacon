@@ -1,6 +1,6 @@
 //go:build linux
 
-package main
+package datadir
 
 import (
 	"errors"
@@ -12,7 +12,7 @@ import (
 func tryDataLock(file *os.File) error {
 	err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 	if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
-		return errDataDirInUse
+		return ErrInUse
 	}
 	return err
 }

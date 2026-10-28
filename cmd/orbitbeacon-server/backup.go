@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"orbitbeacon/internal/config"
+	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/securefs"
 	"orbitbeacon/internal/server/storage"
 )
@@ -189,12 +190,12 @@ func backupDatabaseWithMode(dataDir, output string, online bool) (retErr error) 
 	if online {
 		db, err = openOnlineBackupSource(sourcePath)
 	} else {
-		lock, lockErr := lockDataDir(dataDir)
+		lock, lockErr := datadir.Lock(dataDir)
 		if lockErr != nil {
 			return lockErr
 		}
 		defer lock.Close()
-		if err := prepareDataDir(dataDir); err != nil {
+		if err := datadir.Prepare(dataDir); err != nil {
 			return err
 		}
 		db, err = storage.Open(context.Background(), sourcePath)
@@ -303,12 +304,12 @@ func restoreDatabase(dataDir, input string) (retErr error) {
 	if !validated {
 		return errors.New("input backup file is missing")
 	}
-	lock, err := lockDataDir(dataDir)
+	lock, err := datadir.Lock(dataDir)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
-	if err := prepareRestoreDataDir(dataDir); err != nil {
+	if err := datadir.ValidateRestore(dataDir); err != nil {
 		return err
 	}
 	stage, err := os.CreateTemp(dataDir, ".orbitbeacon-restore-*.db")

@@ -40,7 +40,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	t.Cleanup(func() { db.Close() })
 	f := &fixture{db: db, now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)}
-	box, _ := secretbox.New(bytes.Repeat([]byte{7}, 32))
+	box, _ := secretbox.New(bytes.Repeat([]byte{7}, 32), "orbitbeacon notification channel v1")
 	f.s = New(db, box, Options{Now: func() time.Time { return f.now }, AllowPrivateNetworks: true, AllowInsecureWebhooks: true})
 	var p Patch
 	json.Unmarshal([]byte(`{"name":"webhook","kind":"webhook","enabled":true,"config":{"url":"https://example.com/hook"},"secret":"never-expose-this-secret"}`), &p)
@@ -109,7 +109,7 @@ func TestDurableRetryBackoffAndRestart(t *testing.T) {
 	// Pending work is owned by the database, not an in-memory queue.
 	f.db.Exec("DELETE FROM notification_deliveries")
 	f.s.Notify(context.Background(), f.note("restart"))
-	box, _ := secretbox.New(bytes.Repeat([]byte{7}, 32))
+	box, _ := secretbox.New(bytes.Repeat([]byte{7}, 32), "orbitbeacon notification channel v1")
 	restarted := New(f.db, box, f.s.opts)
 	status = 200
 	restarted.process(context.Background())

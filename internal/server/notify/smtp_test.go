@@ -307,7 +307,7 @@ func TestSMTPImplicitTLSAndUntrustedSTARTTLS(t *testing.T) {
 	defer s.client.CloseIdleConnections()
 	trustTestServer(s, cert)
 	d := net.Dialer{}
-	s.dialer.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+	s.dialer.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
 		if address != "127.0.0.1:465" {
 			t.Error("implicit port lost")
 		}

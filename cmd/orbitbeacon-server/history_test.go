@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/history"
 	"orbitbeacon/internal/server/storage"
 )
@@ -19,7 +20,7 @@ func TestNewerHistorySchemaDisablesHistoryWithoutBlockingRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(parent, "data")
-	if err := prepareDataDir(dir); err != nil {
+	if err := datadir.Prepare(dir); err != nil {
 		t.Fatal(err)
 	}
 	main, err := storage.Open(context.Background(), filepath.Join(dir, "orbitbeacon.db"))

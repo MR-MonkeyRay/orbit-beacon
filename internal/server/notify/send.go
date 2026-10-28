@@ -16,6 +16,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"orbitbeacon/internal/server/egress"
 )
 
 const SendTimeout = 10 * time.Second
@@ -50,7 +52,7 @@ func failure(code string, retry bool) Result { return Result{ErrorCode: code, re
 type sender struct {
 	allowInsecureWebhooks bool
 	client                *http.Client
-	dialer                *safeDialer
+	dialer                *egress.Dialer
 	tlsConfig             *tls.Config
 	// Deliberately unexported: only same-package tests may override Telegram/TLS.
 	telegramBase string
@@ -59,7 +61,7 @@ type sender struct {
 
 func newSender(opts Options) *sender {
 	d := &net.Dialer{Timeout: SendTimeout}
-	safe := &safeDialer{resolver: net.DefaultResolver, allowPrivate: opts.AllowPrivateNetworks, dial: d.DialContext}
+	safe := &egress.Dialer{Resolver: net.DefaultResolver, AllowPrivate: opts.AllowPrivateNetworks, DenyLocal: false, Dial: d.DialContext}
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	// Avoid idle-connection diagnostics in net/http logging unsolicited remote bytes.
 	transport := &http.Transport{DisableKeepAlives: true, Proxy: nil, DialContext: safe.DialContext, TLSClientConfig: tlsCfg, TLSHandshakeTimeout: SendTimeout, ResponseHeaderTimeout: SendTimeout, MaxIdleConns: 8, MaxIdleConnsPerHost: 2, IdleConnTimeout: 30 * time.Second}
@@ -163,7 +165,7 @@ func parseRetryAfter(raw string, now time.Time) time.Duration {
 	return 0
 }
 func networkFailure(e error) Result {
-	if errors.Is(e, errEgress) {
+	if errors.Is(e, egress.ErrDenied) {
 		return failure("destination_denied", false)
 	}
 	if errors.Is(e, context.Canceled) {
