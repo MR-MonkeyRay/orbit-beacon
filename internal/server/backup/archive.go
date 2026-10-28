@@ -458,7 +458,7 @@ func readArchiveHeader(reader io.Reader) (*tar.Header, error) {
 	if err != nil {
 		return nil, invalidArchive(err)
 	}
-	if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+	if header.Typeflag != tar.TypeReg {
 		return nil, invalidArchive(nil)
 	}
 	if header.Size < 0 || header.Linkname != "" || header.PAXRecords != nil || header.Name == "" {

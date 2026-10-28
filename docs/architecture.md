@@ -68,7 +68,7 @@ Server 在读取报告正文前检查 bearer 凭据，再校验协议、节点�
 
 `internal/server/backup` 的归档协议为 `.tar.gz.age`：configuration、monitoring、events 独立选择、至少一类，默认仅配置。仅配置类别带匹配的 `secrets.key`，包含密码哈希、Agent 身份及加密凭据，但不含部署配置、TLS 证书或程序。事件不带历史备份密码；会话、接入票据、待执行任务、待发送通知和旧产物永不归档。主库及指标库分别取只读一致快照，再按固定表/列白名单创建新传输库，避免未选数据留在 freelist。只取已落库数据，不暂停采集或额外冲刷；选择监控时历史库不可读则失败，不保证跨库同一时刻。
 
-每包独立生成 16 位随机大小写字母/数字密码，流式压缩加密，不落盘明文 tar.gz。恢复先验证完整认证、清单、哈希、结构及行值；格式及 schema 版本必须精确匹配，不执行包内 DDL，不接受裸 SQLite、旧格式转换或跨 schema 转换。持同一锁以 prepared/committed journal 安装主库、指标库和密钥，data-dir 与锁 inode 不变；prepared 安全回滚完整旧文件组，committed 仅清 journal。`.restore-<id>/old/` 原始副本不自动删除，损坏副本或无效 journal 会阻止启动。恢复配置会停用所有计划、丢弃旧会话和票据；恢复事件不重放任务或外发投递，保留目标事件时原活动工作标为恢复中断。恢复后按真实状态评估告警，不伪造在线或增加静默期。
+每包独立生成 16 位随机大小写字母/数字密码，流式压缩加密，不落盘明文 tar.gz。恢复先验证完整认证、清单、哈希、结构及行值；格式及 schema 版本必须精确匹配，传输表定义须等于固定 registry DDL，在完整性检查前拒绝额外 CHECK、collation 等表达式，不执行包内 DDL，不接受裸 SQLite、旧格式转换或跨 schema 转换。持同一锁以 prepared/committed journal 安装主库、指标库和密钥，data-dir 与锁 inode 不变；prepared 安全回滚完整旧文件组，committed 仅清 journal。`.restore-<id>/old/` 原始副本不自动删除，损坏副本或无效 journal 会阻止启动。恢复配置会停用所有计划、丢弃旧会话和票据；恢复事件不重放任务或外发投递，保留目标事件时原活动工作标为恢复中断。恢复后按真实状态评估告警，不伪造在线或增加静默期。
 
 导出任务持久排队，全局最多 32 个非终态任务、一个 worker；网页受理事务与后台执行解耦。阶段为 snapshot、packaging、storing，无估算百分比。发布前持久保存密码密文及完整位置/哈希；发布成功后只重试终态与站内通知的同一事务，不重复压缩或上传。重启保留 queued，running 转 failed/interrupted；存储阶段中断明确标记结果未知。
 

@@ -17,6 +17,9 @@ func TestPayloadSchemaRejectsExecutableAndExtraObjects(t *testing.T) {
 		`CREATE TABLE unexpected(secret TEXT)`,
 		`CREATE INDEX unexpected ON users(username)`,
 		`ALTER TABLE users ADD COLUMN extra TEXT`,
+		`DROP TABLE users; CREATE TABLE users (id TEXT,username TEXT,password_hash TEXT,role TEXT,created_at TEXT,PRIMARY KEY(id),CHECK(length(username)<100))`,
+		`DROP TABLE users; CREATE TABLE users (id TEXT,username TEXT COLLATE NOCASE,password_hash TEXT,role TEXT,created_at TEXT,PRIMARY KEY(id))`,
+		`DROP TABLE users; CREATE TABLE users (id TEXT,username TEXT,password_hash TEXT,role TEXT,created_at TEXT,PRIMARY KEY(id)) WITHOUT ROWID`,
 	} {
 		t.Run(mutation, func(t *testing.T) {
 			dir := t.TempDir()

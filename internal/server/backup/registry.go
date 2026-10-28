@@ -79,6 +79,23 @@ func columnNames(spec tableSpec) string {
 	return strings.Join(names, ",")
 }
 
+// The transfer format has one fixed DDL per table. Reject archive-controlled
+// expressions before integrity_check can evaluate CHECK constraints.
+func payloadTableDDL(spec tableSpec) string {
+	columns := make([]string, 0, len(spec.Columns)+1)
+	var keys []string
+	for _, c := range spec.Columns {
+		columns = append(columns, c.Name+" "+c.Type)
+		if c.PK > 0 {
+			keys = append(keys, c.Name)
+		}
+	}
+	if len(keys) > 0 {
+		columns = append(columns, "PRIMARY KEY("+strings.Join(keys, ",")+")")
+	}
+	return "CREATE TABLE " + spec.Name + " (" + strings.Join(columns, ",") + ")"
+}
+
 func createPayload(ctx context.Context, path string, category Category) (*sql.DB, error) {
 	specs := tablesFor(category)
 	if len(specs) == 0 {
@@ -99,18 +116,7 @@ func createPayload(ctx context.Context, path string, category Category) (*sql.DB
 	}
 	db.SetMaxOpenConns(1)
 	for _, spec := range specs {
-		columns := make([]string, 0, len(spec.Columns)+1)
-		var keys []string
-		for _, c := range spec.Columns {
-			columns = append(columns, c.Name+" "+c.Type)
-			if c.PK > 0 {
-				keys = append(keys, c.Name)
-			}
-		}
-		if len(keys) > 0 {
-			columns = append(columns, "PRIMARY KEY("+strings.Join(keys, ",")+")")
-		}
-		if _, err = db.ExecContext(ctx, "CREATE TABLE "+spec.Name+" ("+strings.Join(columns, ",")+")"); err != nil {
+		if _, err = db.ExecContext(ctx, payloadTableDDL(spec)); err != nil {
 			db.Close()
 			return nil, err
 		}
@@ -168,8 +174,8 @@ func ValidatePayloadSchema(ctx context.Context, db *sql.DB, category Category) e
 		}
 		switch kind {
 		case "table":
-			_, ok := expected[name]
-			if !ok || name != owner || !ddl.Valid || !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(ddl.String)), "CREATE TABLE ") {
+			spec, ok := expected[name]
+			if !ok || name != owner || !ddl.Valid || ddl.String != payloadTableDDL(spec) {
 				rows.Close()
 				return errors.New("restore_invalid_data: unexpected payload table")
 			}
