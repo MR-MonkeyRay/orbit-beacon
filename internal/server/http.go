@@ -196,6 +196,14 @@ func fail(w http.ResponseWriter, status int, code, message, requestID string) {
 }
 
 func decode(w http.ResponseWriter, r *http.Request, dst any, requestID string) bool {
+	return decodeJSON(w, r, dst, requestID, true)
+}
+
+func decodeTelemetry(w http.ResponseWriter, r *http.Request, dst any, requestID string) bool {
+	return decodeJSON(w, r, dst, requestID, false)
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any, requestID string, strict bool) bool {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
 		fail(w, http.StatusBadRequest, "invalid_json", "Content-Type must be application/json", requestID)
@@ -223,9 +231,11 @@ func decode(w http.ResponseWriter, r *http.Request, dst any, requestID string) b
 		break
 	}
 	decoder := json.NewDecoder(reader)
-	decoder.DisallowUnknownFields()
+	if strict {
+		decoder.DisallowUnknownFields()
+	}
 	if err := decoder.Decode(dst); err != nil {
-		decodeError(w, err, "Request must contain a valid JSON object with known fields", requestID)
+		decodeError(w, err, "Request must contain a valid JSON object", requestID)
 		return false
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {

@@ -84,7 +84,7 @@ func (h *handler) agentRoute(w http.ResponseWriter, r *http.Request, requestID s
 		return
 	}
 	var input v1.Report
-	if !decode(w, r, &input, requestID) {
+	if !decodeTelemetry(w, r, &input, requestID) {
 		return
 	}
 	result, err := h.ingest.AcceptAdmitted(r.Context(), admission, input)

@@ -181,7 +181,7 @@ func TestReportUsesBearerNodeAndNeverClientTargetOrHostname(t *testing.T) {
 	}
 	for _, target := range []string{`"node_id":"` + b + `",`, `"gid":"` + b + `",`} {
 		f.now = f.now.Add(time.Second)
-		assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/report", tokenA, "{"+target+body[1:]), http.StatusBadRequest)
+		accepted(t, agentRequest(t, f, "/api/agent/v1/report", tokenA, "{"+target+body[1:]), 1)
 	}
 	if lastSeen(t, f, b).Valid {
 		t.Fatal("body target altered another node")

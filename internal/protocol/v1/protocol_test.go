@@ -46,9 +46,8 @@ const reportJSON = `{
   "metric_status":{"cpu_percent":"stale","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok","disk:/":"ok","network:eth0":"stale"},
   "sources":{"cpu":{"sample_id":"cpu-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":0},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000},"disk:/":{"sample_id":"disk-1","age_ms":10000,"source_interval_ms":60000},"network:eth0":{"sample_id":"net-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":0}}
  },
- "capabilities":{"self_update":false},
 	"traffic":[{"epoch":"deadbeef","period_start":"2026-10-01T00:00:00Z","rx_bytes":"9223372036854775807","tx_bytes":"9007199254740993"}],
- "probe_results":[],"update_status":{"job_id":"job-a","status":"healthy","release_seq":42}
+ "probe_results":[]
 }`
 
 func TestReportV1PreservesNullsSourcesAndDecimalCounters(t *testing.T) {
@@ -67,7 +66,7 @@ func TestEnrollmentAndResponseDTOs(t *testing.T) {
 	var enrolled v1.EnrollmentResponse
 	assertJSONRoundTrip(t, `{"node_id":"server-bound-id","server_time":"2026-10-26T12:00:00Z"}`, &enrolled)
 	var response v1.ReportResponse
-	assertJSONRoundTrip(t, `{"accepted_seq":9,"server_time":"2026-10-26T12:00:00Z","desired_config":{"revision":4,"report_interval_seconds":30,"disk_interval_seconds":60,"interfaces":["eth0"],"disk_paths":["/"],"probe_targets":[],"billing_day":1,"quota_bytes":"9007199254740993"},"update_job":{"job_id":"job-a","release_seq":42},"traffic_acks":[{"epoch":"deadbeef","period_start":"2026-10-01T00:00:00Z","rx_bytes":"9223372036854775807","tx_bytes":"9007199254740993"}]}`, &response)
+	assertJSONRoundTrip(t, `{"accepted_seq":9,"server_time":"2026-10-26T12:00:00Z","desired_config":{"revision":4,"report_interval_seconds":30,"disk_interval_seconds":60,"interfaces":["eth0"],"disk_paths":["/"],"probe_targets":[],"billing_day":1,"quota_bytes":"9007199254740993"},"traffic_acks":[{"epoch":"deadbeef","period_start":"2026-10-01T00:00:00Z","rx_bytes":"9223372036854775807","tx_bytes":"9007199254740993"}]}`, &response)
 }
 
 func TestSystemAgentVersionValidation(t *testing.T) {

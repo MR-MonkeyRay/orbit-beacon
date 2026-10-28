@@ -98,7 +98,7 @@ sudo -u orbitbeacon-agent /usr/local/bin/orbitbeacon-agent doctor \
 
 ## 升级与卸载
 
-**先升级 Server，再升级 Agent。** Server 严格拒绝未知字段，新 Agent 上报 `traffic`、`probe_results` 或 `system.agent_version` 时，旧 Server 可能返回 `400`，不能假设它会忽略。先检查 Server readiness，再运行经过检查的新版本安装脚本：
+**先升级 Server，再升级 Agent。** 遥测报告忽略新增未知字段，但仍校验已知指标、来源和正文大小；注册、恢复及管理写入继续严格拒绝未知字段。不支持的协议版本仍会拒绝。先检查 Server readiness，再运行经过检查的新版本安装脚本：
 
 ```sh
 sudo sh ./install-agent.sh --server https://beacon.your-domain.com \

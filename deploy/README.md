@@ -190,4 +190,4 @@ orbitbeacon-server restore --data-dir /var/lib/orbitbeacon \
 2. systemd 替换 `/usr/local/bin/orbitbeacon-server`；Compose 设置已发布的 `ORBITBEACON_IMAGE_TAG`，执行 `pull orbitbeacon` 和 `up -d orbitbeacon`。
 3. 启动并检查 readiness，确认数据库格式匹配，再升级 Agent。
 
-Server 严格拒绝未知上报字段，新 Agent 对旧 Server 可能得到 `400`，不能假设旧 Server 会忽略 `traffic`、`probe_results` 或 `system.agent_version`。启用新配置前先完成 Server 升级。降级前确认目标版本支持当前数据库格式；Server 不会打开更高版本数据库，加密归档也要求格式及 schema 版本精确匹配，不提供跨 schema 转换。
+遥测报告会丢弃新增未知字段，已知指标与来源仍校验；注册、恢复、管理写入和本地配置继续严格。仍应先升级 Server，再升级 Agent：新增必需字段或协议变更不保证兼容旧版。降级前确认数据库格式；Server 拒绝更高版本数据库，加密归档要求格式及 schema 精确匹配，不提供跨 schema 转换。

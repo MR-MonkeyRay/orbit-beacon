@@ -340,10 +340,6 @@ func (m Metrics) Validate() error {
 	return nil
 }
 
-type Capabilities struct {
-	SelfUpdate bool `json:"self_update"`
-}
-
 type Traffic struct {
 	Epoch       string        `json:"epoch"`
 	PeriodStart time.Time     `json:"period_start"`
@@ -426,17 +422,6 @@ func (p ProbeResult) Validate() error {
 	return nil
 }
 
-type UpdateStatus struct {
-	JobID      string `json:"job_id"`
-	Status     string `json:"status"`
-	ReleaseSeq uint64 `json:"release_seq"`
-}
-
-type UpdateJob struct {
-	JobID      string `json:"job_id"`
-	ReleaseSeq uint64 `json:"release_seq"`
-}
-
 type ConfigError struct {
 	Revision int64             `json:"revision"`
 	Code     string            `json:"code"`
@@ -447,78 +432,6 @@ type ConfigError struct {
 func (e ConfigError) Validate() error {
 	if e.Revision < 0 || e.Code == "" || len(e.Code) > 64 {
 		return errors.New("invalid configuration error")
-	}
-	return nil
-}
-
-type Report struct {
-	ProtocolVersion int           `json:"protocol_version"`
-	RunGeneration   uint64        `json:"run_generation"`
-	SessionID       string        `json:"session_id"`
-	Seq             uint64        `json:"seq"`
-	SampledAt       time.Time     `json:"sampled_at"`
-	ConfigRevision  int64         `json:"config_revision"`
-	System          *System       `json:"system,omitempty"`
-	Metrics         Metrics       `json:"metrics"`
-	Capabilities    *Capabilities `json:"capabilities,omitempty"`
-	Traffic         []Traffic     `json:"traffic"`
-	ProbeResults    []ProbeResult `json:"probe_results,omitzero"`
-	UpdateStatus    *UpdateStatus `json:"update_status,omitempty"`
-	ConfigError     *ConfigError  `json:"config_error,omitempty"`
-}
-
-func (r Report) Validate() error {
-	if r.ProtocolVersion != ProtocolVersion {
-		return ErrProtocolUnsupported
-	}
-	if r.RunGeneration == 0 || r.Seq == 0 || strings.TrimSpace(r.SessionID) == "" || len(r.SessionID) > 255 || r.SampledAt.IsZero() || r.ConfigRevision < 1 {
-		return errors.New("invalid report identity, time or revision")
-	}
-	if r.System != nil {
-		if err := r.System.Validate(); err != nil {
-			return err
-		}
-	}
-	if r.ConfigError != nil {
-		if err := r.ConfigError.Validate(); err != nil {
-			return err
-		}
-	}
-	if err := r.Metrics.Validate(); err != nil {
-		return err
-	}
-	if len(r.Traffic) > MaxTrafficEntries {
-		return errors.New("too many traffic entries")
-	}
-	trafficIdentities := make(map[struct {
-		epoch           string
-		periodStartUnix int64
-	}]struct{}, len(r.Traffic))
-	for _, traffic := range r.Traffic {
-		if err := traffic.Validate(); err != nil {
-			return err
-		}
-		identity := struct {
-			epoch           string
-			periodStartUnix int64
-		}{traffic.Epoch, traffic.PeriodStart.Unix()}
-		if _, exists := trafficIdentities[identity]; exists {
-			return errors.New("duplicate traffic entry")
-		}
-		trafficIdentities[identity] = struct{}{}
-	}
-	if len(r.ProbeResults) > 5 {
-		return errors.New("too many probe results")
-	}
-	probeTargets := make(map[string]struct{}, len(r.ProbeResults))
-	for _, result := range r.ProbeResults {
-		if err := result.Validate(); err != nil {
-			return err
-		}
-		if _, exists := probeTargets[result.Target]; exists {
-			return errors.New("duplicate probe result target")
-		}
-		probeTargets[result.Target] = struct{}{}
 	}
 	return nil
 }
@@ -826,13 +739,4 @@ func validDiskPath(path string) bool {
 
 func validInterfaceName(name string) bool {
 	return strings.TrimSpace(name) != "" && len(name) <= 255 && !strings.ContainsAny(name, "\x00\r\n")
-}
-
-type ReportResponse struct {
-	NodeID        string         `json:"node_id,omitempty"`
-	AcceptedSeq   uint64         `json:"accepted_seq"`
-	ServerTime    time.Time      `json:"server_time"`
-	DesiredConfig *DesiredConfig `json:"desired_config,omitempty"`
-	UpdateJob     *UpdateJob     `json:"update_job,omitempty"`
-	TrafficAcks   []Traffic      `json:"traffic_acks,omitzero"`
 }

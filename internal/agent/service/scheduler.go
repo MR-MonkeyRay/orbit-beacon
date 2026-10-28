@@ -93,7 +93,6 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	var seq uint64
-	capabilities := &v1.Capabilities{SelfUpdate: false}
 	for {
 		select {
 		case <-ctx.Done():
@@ -121,7 +120,7 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 			if s.options.CollectedRevision != nil {
 				revision = s.options.CollectedRevision()
 			}
-			snapshot := v1.Report{ProtocolVersion: 1, RunGeneration: state.RunGeneration, SessionID: state.SessionID, Seq: seq, SampledAt: time.Now().UTC(), ConfigRevision: revision, System: s.options.System, Metrics: metrics, Traffic: []v1.Traffic{}, Capabilities: capabilities, ConfigError: s.options.Config.ConfigError()}
+			snapshot := v1.Report{ProtocolVersion: 1, RunGeneration: state.RunGeneration, SessionID: state.SessionID, Seq: seq, SampledAt: time.Now().UTC(), ConfigRevision: revision, System: s.options.System, Metrics: metrics, Traffic: []v1.Traffic{}, ConfigError: s.options.Config.ConfigError()}
 			s.mu.Lock()
 			s.latest = snapshot
 			s.mu.Unlock()

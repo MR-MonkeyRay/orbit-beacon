@@ -18,8 +18,11 @@ info:
     policies use X-Forwarded-For only when the direct peer matches trusted_proxies
     (default empty), scanning right to left past trusted hops. Missing, malformed
     or all-trusted chains fall back to the direct peer. X-Forwarded-Proto is ignored.
-    JSON requests must contain one object, reject unknown fields and are limited to
-    64 KiB. String limits enforced by the server are UTF-8 byte limits.
+    JSON requests must contain one object and are limited to 64 KiB. Telemetry
+    reports discard unknown fields, including unknown metric/status/source keys;
+    known fields and unmatched disk/network metadata remain validated. Enrollment,
+    recovery and management writes reject unknown fields. String limits enforced
+    by the server are UTF-8 byte limits.
     Byte-constrained strings use x-minLengthBytes/x-maxLengthBytes, not JSON Schema
     character-count bounds. Validators must opt into these extensions; the Server
     remains authoritative. For example, four CJK characters can satisfy an
@@ -1612,7 +1615,10 @@ paths:
                   x-minLengthBytes: 32
                   x-maxLengthBytes: 256
                   description: Exact current credential proof, required only when replacing an already-enrolled credential. Never returned or logged.
-                system: {$ref: '#/components/schemas/System'}
+                system:
+                  allOf:
+                    - {$ref: '#/components/schemas/System'}
+                  unevaluatedProperties: false
       responses:
         '200':
           description: Durable server-selected binding.
@@ -2583,7 +2589,6 @@ components:
         revoked_at: {type: [string, 'null'], format: date-time}
     System:
       type: object
-      additionalProperties: false
       properties:
         hostname: {type: string, x-maxLengthBytes: 255}
         os: {type: string, x-maxLengthBytes: 64}
@@ -2657,7 +2662,7 @@ components:
         checks_24h: {type: integer, minimum: 0}
     Source:
       type: object
-      additionalProperties: false
+      additionalProperties: true
       required: [sample_id, age_ms, source_interval_ms]
       properties:
         sample_id: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
@@ -2672,7 +2677,7 @@ components:
       description: CPU and every network source require a nonnegative measurement window for every status, including warm-up and failure; zero is allowed.
     Metrics:
       type: object
-      additionalProperties: false
+      additionalProperties: true
       required: [cpu_percent, load1, load5, load15, memory_total_bytes, memory_available_bytes, swap_total_bytes, swap_used_bytes, uptime_seconds, disks, networks, metric_status, sources]
       properties:
         cpu_percent: {type: [number, 'null'], minimum: 0, maximum: 100}
@@ -2689,7 +2694,7 @@ components:
           maxItems: 8
           items:
             type: object
-            additionalProperties: false
+            additionalProperties: true
             required: [path, total_bytes, used_bytes, sampled_at]
             properties:
               path: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 1024}
@@ -2701,7 +2706,7 @@ components:
           maxItems: 8
           items:
             type: object
-            additionalProperties: false
+            additionalProperties: true
             required: [name, rx_bytes_per_sec, tx_bytes_per_sec]
             properties:
               name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
@@ -2710,24 +2715,40 @@ components:
         metric_status:
           type: object
           required: [cpu_percent, load1, load5, load15, memory_total_bytes, memory_available_bytes, swap_total_bytes, swap_used_bytes, uptime_seconds]
-          description: Exactly the nine scalar field keys and one disk:<path> or network:<name> key for each reported series, even when unavailable. No unmatched series keys.
-          propertyNames:
-            pattern: '^(cpu_percent|load1|load5|load15|memory_total_bytes|memory_available_bytes|swap_total_bytes|swap_used_bytes|uptime_seconds|disk:.+|network:.+)$'
-          additionalProperties: {type: string, enum: [ok, unsupported, permission_denied, disabled, error, stale]}
+          description: 'The nine known scalar keys and each reported disk/network key are validated. Unknown extension keys and values are discarded; unmatched disk:/network: keys are rejected.'
+          properties:
+            cpu_percent: {$ref: '#/components/schemas/MetricStatus'}
+            load1: {$ref: '#/components/schemas/MetricStatus'}
+            load5: {$ref: '#/components/schemas/MetricStatus'}
+            load15: {$ref: '#/components/schemas/MetricStatus'}
+            memory_total_bytes: {$ref: '#/components/schemas/MetricStatus'}
+            memory_available_bytes: {$ref: '#/components/schemas/MetricStatus'}
+            swap_total_bytes: {$ref: '#/components/schemas/MetricStatus'}
+            swap_used_bytes: {$ref: '#/components/schemas/MetricStatus'}
+            uptime_seconds: {$ref: '#/components/schemas/MetricStatus'}
+          patternProperties:
+            '^(disk:|network:)': {$ref: '#/components/schemas/MetricStatus'}
+          additionalProperties: true
         sources:
           type: object
           required: [cpu, load, memory, swap, uptime]
-          description: Exact family keys plus one disk:<path> or network:<name> key per reported series, required even when values are unavailable. cpu covers cpu_percent; load covers load1/load5/load15; memory and swap cover their byte fields; uptime covers uptime_seconds. Unknown or unmatched keys are rejected and all metadata is validated.
-          propertyNames:
-            pattern: '^(cpu|load|memory|swap|uptime|disk:.+|network:.+)$'
+          description: 'Known source families and each reported disk/network source remain required and validated. Unknown family keys and values are discarded; unmatched disk:/network: keys are rejected.'
           properties:
             cpu: {$ref: '#/components/schemas/DifferentialSource'}
+            load: {$ref: '#/components/schemas/Source'}
+            memory: {$ref: '#/components/schemas/Source'}
+            swap: {$ref: '#/components/schemas/Source'}
+            uptime: {$ref: '#/components/schemas/Source'}
           patternProperties:
             '^network:': {$ref: '#/components/schemas/DifferentialSource'}
-          additionalProperties: {$ref: '#/components/schemas/Source'}
+            '^disk:': {$ref: '#/components/schemas/Source'}
+          additionalProperties: true
+    MetricStatus:
+      type: string
+      enum: [ok, unsupported, permission_denied, disabled, error, stale]
     Traffic:
       type: object
-      additionalProperties: false
+      additionalProperties: true
       required: [epoch, period_start, rx_bytes, tx_bytes]
       properties:
         epoch: {type: string, minLength: 1, maxLength: 64, pattern: '^[0-9a-f]{1,64}$'}
@@ -2736,7 +2757,7 @@ components:
         tx_bytes: {$ref: '#/components/schemas/DecimalCounter', description: Cumulative sent bytes in 0..9223372036854775807.}
     ProbeResult:
       type: object
-      additionalProperties: false
+      additionalProperties: true
       required: [target, ok, latency_ms, error, status_code, checked_at]
       properties:
         target: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 1024, description: Validated service-probe target.}
@@ -2747,7 +2768,7 @@ components:
         checked_at: {type: string, format: date-time}
     Report:
       type: object
-      additionalProperties: false
+      additionalProperties: true
       required: [protocol_version, run_generation, session_id, seq, sampled_at, config_revision, metrics, traffic]
       properties:
         protocol_version: {const: 1}
@@ -2758,12 +2779,11 @@ components:
         config_revision: {type: integer, minimum: 1}
         system: {$ref: '#/components/schemas/System'}
         metrics: {$ref: '#/components/schemas/Metrics'}
-        capabilities: {type: object, properties: {self_update: {type: boolean}}}
         traffic: {type: array, maxItems: 24, description: Unique epoch/period_start pairs with cumulative per-process hourly byte counters., items: {$ref: '#/components/schemas/Traffic'}}
         probe_results: {type: array, maxItems: 5, description: Latest result for each currently configured target; target values are unique., items: {$ref: '#/components/schemas/ProbeResult'}}
-        update_status: {type: object, properties: {job_id: {type: string}, status: {type: string}, release_seq: {type: integer}}}
         config_error:
           type: object
+          additionalProperties: true
           required: [revision, code]
           properties:
             revision: {type: integer, minimum: 0, description: Rejected revision; zero represents an invalid revision that cannot be reported as a nonnegative identifier.}
@@ -2771,11 +2791,11 @@ components:
             fields: {type: object, additionalProperties: {type: string}}
     ReportResponse:
       type: object
+      additionalProperties: true
       required: [node_id, accepted_seq, server_time]
       properties:
         node_id: {type: string, format: uuid, description: Authenticated node identity; never a request target.}
         accepted_seq: {type: integer, minimum: 1}
         server_time: {type: string, format: date-time}
         desired_config: {$ref: '#/components/schemas/DesiredConfig'}
-        update_job: {type: object, properties: {job_id: {type: string}, release_seq: {type: integer}}}
         traffic_acks: {type: array, maxItems: 24, description: Committed counters for entries in this report; values may lag. Buckets older than 35 days are acknowledged and discarded. Future buckets beyond one hour are neither stored nor acknowledged., items: {$ref: '#/components/schemas/Traffic'}}
