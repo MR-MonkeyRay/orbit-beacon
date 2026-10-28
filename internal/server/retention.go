@@ -23,7 +23,6 @@ const (
 )
 
 type RetentionResult struct {
-	APITokens              int64
 	NotificationDeliveries int64
 	AlertEvents            int64
 	HistoryBuckets         int64
@@ -48,10 +47,6 @@ func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (Retentio
 		return RetentionResult{AuditEvents: removedAudit}, fmt.Errorf("cleanup enrollment tickets: %w", err)
 	}
 	result := RetentionResult{AuditEvents: removedAudit, EnrollmentTickets: removedTickets}
-	result.APITokens, err = h.auth.CleanupAPITokens(ctx, now.Add(-30*24*time.Hour), retentionBatchSize)
-	if err != nil {
-		return result, fmt.Errorf("cleanup API tokens: %w", err)
-	}
 	if h.alerts != nil {
 		result.AlertEvents, err = cleanupRetentionBacklog(ctx, now.Add(-90*24*time.Hour), h.alerts.Cleanup)
 		if err != nil {

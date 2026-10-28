@@ -21,7 +21,6 @@
 
 - **Nodes**：创建节点，在详情的 **Enroll agent** 签发凭证；上报后查看最新指标、历史、流量与探测结果。修改 **Agent configuration** 后，查看应用状态与版本，保存本身不代表 Agent 已应用。
 - **Alerts**：在 **Channels** 配置并测试通知通道，在 **Rules** 添加规则并绑定通道；在 **Active** 和 **History** 查看事件。规则可覆盖全部节点、分组或单节点，支持 CPU、内存、Swap、磁盘、负载、探测失败和离线。未绑定通道时仍可产生事件，但不会发送通知。
-- **Settings → API tokens**：管理员可创建自动化只读令牌，明文只显示一次；通过 HTTPS 的 `Authorization: Bearer` 使用，不要放入 URL。令牌不支持写操作，也不能访问账户、用户或接入凭证管理接口。具体范围见 [OpenAPI](api/openapi.yaml)。
 
 告警每 30 秒评估一次，通知可能延迟或丢失，不能替代独立的高可靠告警系统。更多数据保留和可靠性边界见[架构说明](docs/architecture.md)。
 
@@ -118,7 +117,7 @@ Server 配置优先级：**CLI 参数 > `ORBITBEACON_` 环境变量 > JSON 文�
 
 接口契约见 [OpenAPI](api/openapi.yaml)。
 
-- 管理端：`/api/v1/`，使用会话 Cookie；写请求校验 `Origin` 和会话 CSRF token。部分只读接口也支持只读 API token，权限及限制见 OpenAPI。
+- 管理端：`/api/v1/`，使用会话 Cookie；写请求校验 `Origin` 和会话 CSRF token。
 - Agent 端：`/api/agent/v1/`，使用接入凭证或节点 Bearer 凭证，不能与浏览器会话互换。
 - 公开端：`GET /api/public/v1/nodes?limit=50&offset=0` 和 `/api/public/v1/stream`，无需会话，仅返回公开白名单字段。公开设置由管理端保护。
 - 健康检查：`GET /healthz/live` 检查进程，`GET /healthz/ready` 检查是否接收流量及 SQLite 是否可用；两者都不需要认证。

@@ -22,4 +22,3 @@ import './node-probes.test.js';
 import './alert-events.test.js';
 import './alert-editors.test.js';
 import './alert-badge.test.js';
-import './api-tokens.test.js';

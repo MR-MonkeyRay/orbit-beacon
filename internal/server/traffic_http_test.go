@@ -102,8 +102,4 @@ func TestTrafficAPIEnvelopeValidationAccessAndMethods(t *testing.T) {
 	if methodResponse.Header().Get("Allow") != http.MethodGet {
 		t.Fatalf("Allow=%q", methodResponse.Header().Get("Allow"))
 	}
-
-	token := createHTTPToken(t, f)
-	response = bearerRequest(t, f, http.MethodGet, route+"?days=1", token.Token)
-	assertHTTPStatus(t, response, http.StatusOK)
 }

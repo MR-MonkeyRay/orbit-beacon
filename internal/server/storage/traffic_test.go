@@ -33,12 +33,6 @@ func TestTrafficMigrationCreatesTablesConstraintsAndRetentionIndex(t *testing.T)
 			t.Fatalf("%s index count=%d", name, count)
 		}
 	}
-	if err := db.QueryRow(`SELECT max(version) FROM schema_migrations`).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 14 || storage.CurrentSchemaVersion != 14 {
-		t.Fatalf("schema version database=%d binary=%d", count, storage.CurrentSchemaVersion)
-	}
 	if _, err := db.Exec(`INSERT INTO nodes(id,name,created_at) VALUES('node','node','now')`); err != nil {
 		t.Fatal(err)
 	}

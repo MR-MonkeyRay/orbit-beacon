@@ -41,7 +41,6 @@ var requiredOrbitBeaconTables = [...]string{
 	"notification_channels",
 	"notification_rate_limits",
 	"notification_deliveries",
-	"api_tokens",
 }
 
 var requiredOrbitBeaconColumns = map[string][]string{
@@ -67,7 +66,6 @@ var requiredOrbitBeaconColumns = map[string][]string{
 	"notification_channels":    {"id", "name", "kind", "enabled", "config_json", "secret_ciphertext", "url_ciphertext", "created_at", "updated_at"},
 	"notification_rate_limits": {"channel_id", "window_start", "count"},
 	"notification_deliveries":  {"id", "channel_id", "event_id", "state", "attempts", "next_attempt_at", "last_error_code", "lease_until", "payload_json", "coalesced_count", "created_at", "updated_at"},
-	"api_tokens":               {"id", "name", "token_hash", "prefix", "created_by", "created_at", "expires_at", "last_used_at", "revoked_at"},
 }
 
 type orbitBeaconIndexContract struct {
@@ -94,9 +92,6 @@ var requiredOrbitBeaconIndexes = []orbitBeaconIndexContract{
 	{name: "notification_deliveries_channel", table: "notification_deliveries", columns: []string{"channel_id", "state", "next_attempt_at"}},
 	{name: "notification_deliveries_retention", table: "notification_deliveries", columns: []string{"updated_at", "id"}, partial: true, definition: "CREATE INDEX notification_deliveries_retention ON notification_deliveries(updated_at,id) WHERE state IN ('sent','failed')"},
 	{name: "notification_deliveries_history", table: "notification_deliveries", columns: []string{"created_at", "id"}},
-	{name: "api_tokens_creator", table: "api_tokens", columns: []string{"created_by"}},
-	{name: "api_tokens_revoked", table: "api_tokens", columns: []string{"revoked_at", "id"}, partial: true, definition: "CREATE INDEX api_tokens_revoked ON api_tokens(revoked_at,id) WHERE revoked_at IS NOT NULL"},
-	{name: "api_tokens_expired", table: "api_tokens", columns: []string{"expires_at", "id"}, partial: true, definition: "CREATE INDEX api_tokens_expired ON api_tokens(expires_at,id) WHERE expires_at IS NOT NULL"},
 	{name: "sessions_user", table: "sessions", columns: []string{"user_id"}},
 	{name: "sessions_expiry", table: "sessions", columns: []string{"expires_at"}},
 	{name: "nodes_installation_identity", table: "nodes", columns: []string{"installation_id"}, unique: true, partial: true, definition: "CREATE UNIQUE INDEX nodes_installation_identity ON nodes(installation_id) WHERE installation_id IS NOT NULL"},

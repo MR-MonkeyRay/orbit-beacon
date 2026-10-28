@@ -89,7 +89,7 @@ func requestRoute(p string) string {
 		parts := strings.Split(p, "/")
 		if len(parts) >= 5 && parts[1] == "api" && parts[2] == "v1" {
 			switch parts[3] {
-			case "api-tokens", "nodes", "users", "groups", "enrollments", "alert-rules", "notification-channels":
+			case "nodes", "users", "groups", "enrollments", "alert-rules", "notification-channels":
 				if parts[4] != "batch" {
 					parts[4] = "{id}"
 				}

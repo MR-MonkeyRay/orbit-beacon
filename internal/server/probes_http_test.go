@@ -91,8 +91,6 @@ func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 	if p := envelope.Probes[2]; p.Status != "down" || p.Error != "timeout" || p.LatencyMS != nil || p.Uptime24H == nil || *p.Uptime24H != 0 || p.Checks24H != 2 {
 		t.Fatalf("down=%+v", p)
 	}
-	token := createHTTPToken(t, f)
-	assertHTTPStatus(t, bearerRequest(t, f, http.MethodGet, route, token.Token), http.StatusOK)
 	apiError(t, request(t, f.handler, http.MethodGet, "/api/v1/nodes/00000000-0000-4000-8000-000000000001/probes", "", viewer, "", ""), http.StatusNotFound, "node_not_found")
 	methodResponse := request(t, f.handler, http.MethodPost, route, "", viewer, "", "")
 	apiError(t, methodResponse, http.StatusMethodNotAllowed, "method_not_allowed")

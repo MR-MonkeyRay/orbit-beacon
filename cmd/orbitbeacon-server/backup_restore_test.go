@@ -364,7 +364,7 @@ func TestRestoreRejectsSchemaLedgerWithoutTables(t *testing.T) {
 }
 
 func TestRestoreRejectsBackupMissingOneMigratedTable(t *testing.T) {
-	for _, table := range []string{"alert_events", "notification_channels", "notification_rate_limits", "notification_deliveries", "api_tokens"} {
+	for _, table := range []string{"alert_events", "notification_channels", "notification_rate_limits", "notification_deliveries"} {
 		t.Run(table, func(t *testing.T) {
 			inputDir, dataDir := t.TempDir(), t.TempDir()
 			for _, dir := range []string{inputDir, dataDir} {
@@ -402,9 +402,6 @@ func TestRestoreRejectsBackupMissingOrAlteredMigratedIndex(t *testing.T) {
 		"notification_deliveries_channel":   "DROP INDEX notification_deliveries_channel",
 		"notification_deliveries_retention": "DROP INDEX notification_deliveries_retention",
 		"notification_deliveries_history":   "DROP INDEX notification_deliveries_history",
-		"api_tokens_creator":                "DROP INDEX api_tokens_creator",
-		"api_tokens_revoked":                "DROP INDEX api_tokens_revoked",
-		"api_tokens_expired":                "DROP INDEX api_tokens_expired",
 	} {
 		t.Run(name, func(t *testing.T) {
 			inputDir, dataDir := t.TempDir(), t.TempDir()

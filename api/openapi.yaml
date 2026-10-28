@@ -5,17 +5,6 @@ info:
   description: |
     The control plane supports enrollment, agent telemetry, metric history,
     alert rules and encrypted notification channels. Agent upgrades are not available.
-    Read-only automation tokens use Authorization: Bearer obt_<base64url secret>.
-    Allowed management GET operations (and their HEAD equivalents) accept bearerAuth
-    as an alternative to a session. All token writes return 403 token_read_only,
-    including requests with session cookies; tokens never set cookies or use CSRF.
-    Tokens cannot read /api/v1/me (or descendants), /api/v1/session, /api/v1/users*,
-    /api/v1/api-tokens*, /api/v1/enrollments*, or /notification-channels*/test.
-    Channel reads omit secrets. Query-string tokens return 400 token_in_query.
-    Expired/revoked/malformed tokens return 401 invalid_token. Rate limiting returns
-    429 with Retry-After: 1 (10 requests/second, burst 30 per token; invalid-token
-    peer budget burst 30, refill 1/second). Revocation is checked on every request.
-    Token HEAD requests execute the allowed GET operation without a response body.
     Browser reads require a session unless explicitly marked otherwise; agent
     routes use separate Bearer credentials and never accept browser sessions.
     Browser mutations require an administrator (except logout/password), the
@@ -31,7 +20,7 @@ info:
     character-count bounds. Validators must opt into these extensions; the Server
     remains authoritative. For example, four CJK characters can satisfy an
     eight-byte password minimum.
-    Session/anonymous unsupported methods return 405 with Allow before authentication is checked;
+    Unsupported methods return 405 with Allow before authentication is checked;
     unknown API routes return structured 404, never the UI shell.
     State changes and actor-attributed audit insertion share one transaction;
     failed audit insertion rolls back the change. Batch nodes use one transaction
@@ -175,70 +164,6 @@ paths:
                 code: stream_busy
                 message: Too many public streams.
                 request_id: 00000000-0000-4000-8000-000000000001
-        default: {$ref: '#/components/responses/Error'}
-  /api/v1/api-tokens:
-    get:
-      operationId: listAPITokens
-      description: Administrator session only. Lists retained token metadata, never plaintext or hashes. Prefix is the first eight characters of the public UUID, not secret material.
-      responses:
-        '200':
-          description: API tokens, newest first.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [api_tokens]
-                properties:
-                  api_tokens:
-                    type: array
-                    items: {$ref: '#/components/schemas/APIToken'}
-        '403': {$ref: '#/components/responses/Error'}
-        default: {$ref: '#/components/responses/Error'}
-    post:
-      operationId: createAPIToken
-      description: Administrator session, Origin and CSRF required. At most 50 active tokens globally. Plaintext is returned once; api_token.create is audited in the same transaction without secrets.
-      parameters:
-        - $ref: '#/components/parameters/Origin'
-        - $ref: '#/components/parameters/CSRF'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [name]
-              properties:
-                name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 100, description: Trimmed nonempty UTF-8 name.}
-                expires_in_days: {type: [integer, 'null'], minimum: 1, maximum: 365, default: null, description: Omitted or null means no expiration.}
-      responses:
-        '201':
-          description: Created token. Copy the token now; it cannot be retrieved again.
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/APIToken'
-                  - type: object
-                    required: [token]
-                    properties:
-                      token: {type: string, pattern: '^obt_[A-Za-z0-9_-]{43}$', description: Returned only in this creation response.}
-        '400': {$ref: '#/components/responses/Error'}
-        '403': {$ref: '#/components/responses/Error'}
-        '409': {$ref: '#/components/responses/Error'}
-        default: {$ref: '#/components/responses/Error'}
-  /api/v1/api-tokens/{id}:
-    parameters:
-      - $ref: '#/components/parameters/ResourceID'
-    delete:
-      operationId: revokeAPIToken
-      description: Administrator session, Origin and CSRF required. Idempotent 204 even if absent or already revoked. Revocation is effective on the next request; api_token.revoke is audited once in the mutation transaction. Revoked or expired rows are deleted in bounded batches after 30 days.
-      parameters:
-        - $ref: '#/components/parameters/Origin'
-        - $ref: '#/components/parameters/CSRF'
-      responses:
-        '204': {description: Token revoked or already absent/revoked.}
-        '403': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/session:
     post:
@@ -429,9 +354,6 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /api/v1/groups:
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: listGroups
       description: Available to authenticated administrators and viewers. Returns the complete, unpaginated group list.
       responses:
@@ -468,9 +390,6 @@ paths:
     parameters:
       - $ref: '#/components/parameters/ResourceID'
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: getGroup
       description: Available to authenticated administrators and viewers.
       responses:
@@ -510,9 +429,6 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /api/v1/notification-channels:
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: listNotificationChannels
       description: Administrators and viewers may list channels. Secrets and full webhook URLs are never returned; secret_set and config.url_set indicate encrypted material is present.
       responses:
@@ -551,11 +467,8 @@ paths:
     parameters:
       - $ref: '#/components/parameters/ResourceID'
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: getNotificationChannel
-      description: Administrators and viewers may read a channel without credentials.
+      description: Administrators and viewers may read channel metadata without revealing notification credentials.
       responses:
         '200':
           description: Channel without secret material.
@@ -614,9 +527,6 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /api/v1/notification-deliveries:
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: listNotificationDeliveries
       description: Administrators and viewers may read recent deliveries without payloads, credentials or remote response bodies. Ordered by created_at and ID descending; terminal rows retained for 30 days. Floods retain a summary row with coalesced_count.
       parameters:
@@ -642,9 +552,6 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /api/v1/alert-rules:
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: listAlertRules
       description: Administrators and viewers can read all rules. At most 200 rules exist, including disabled rules. Ordered by creation time then UUID.
       responses:
@@ -682,9 +589,6 @@ paths:
     parameters:
       - $ref: '#/components/parameters/ResourceID'
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: getAlertRule
       description: Administrators and viewers can read a rule. Missing rules return 404.
       responses:
@@ -730,9 +634,6 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /api/v1/alerts:
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: listAlerts
       description: |
         Administrators and viewers can read alert episodes. Ordered by started_at
@@ -767,11 +668,8 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /api/v1/alerts/summary:
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: getAlertSummary
-      description: Administrators, viewers and read-only API tokens can read firing counts and up to five newest firing episodes from one consistent read snapshot. Severity comes from the stored rule snapshot; missing or unrecognized severity counts as unknown. Newest episodes use the same fields as listAlerts, ordered by started_at DESC, id DESC.
+      description: Administrators and viewers can read firing counts and up to five newest firing episodes from one consistent read snapshot. Severity comes from the stored rule snapshot; missing or unrecognized severity counts as unknown. Newest episodes use the same fields as listAlerts, ordered by started_at DESC, id DESC.
       responses:
         '200':
           description: Firing alert summary.
@@ -781,9 +679,6 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /api/v1/audit:
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: listAuditEvents
       description: Available to authenticated administrators and viewers. Returns persisted events ordered by created_at DESC, id DESC. Use next_cursor as before for stable traversal when newer events arrive; before ignores offset after limit/offset validation. Details are JSON objects and contain no credentials.
       parameters:
@@ -813,9 +708,6 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes:
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: listNodes
       parameters:
         - name: limit
@@ -867,9 +759,6 @@ paths:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: getNode
       responses:
         '200':
@@ -931,9 +820,6 @@ paths:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: getNodeHistory
       description: Viewer or administrator. Best-effort history, flushed about once per minute. Missing or failed measurements and gaps produce no points. Network rates sum successful interfaces. Disk percentage uses total used bytes divided by total capacity across successful selected disks. Both query parameters are required exactly once; unknown parameters are rejected. Ranges 1h and 6h use 1-minute buckets, 24h and 7d use 5-minute buckets, and 30d uses 1-hour buckets. Rollup averages are weighted by measurement count. A disabled history store returns an empty points array. Unknown nodes return node_not_found.
       parameters:
@@ -964,9 +850,6 @@ paths:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: getNodeTraffic
       description: Viewer or administrator. Returns UTC daily traffic for the last N days including today and totals for the current UTC billing cycle. The optional days parameter defaults to 30 and must be supplied exactly once as an integer from 1 through 400; unknown parameters are rejected. Daily results merge retained daily rollups with hourly data and include only days with traffic. Unknown nodes return node_not_found.
       parameters:
@@ -991,11 +874,8 @@ paths:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: getNodeProbes
-      description: Viewer or administrator, including read-only API tokens. Returns one entry per currently configured probe target in desired-config order; results for targets removed from configuration are not returned. Latest results and hourly counters are persisted on the coalesced ingest transaction cadence, so responses may lag reports by up to about 30 seconds. The 24-hour window includes UTC hours greater than or equal to the current UTC hour minus 23 hours, with no separate upper cutoff. Unknown nodes return node_not_found.
+      description: Viewer or administrator. Returns one entry per currently configured probe target in desired-config order; results for targets removed from configuration are not returned. Latest results and hourly counters are persisted on the coalesced ingest transaction cadence, so responses may lag reports by up to about 30 seconds. The 24-hour window includes UTC hours greater than or equal to the current UTC hour minus 23 hours, with no separate upper cutoff. Unknown nodes return node_not_found.
       responses:
         '200':
           description: Current service-probe states and 24-hour uptime aggregates.
@@ -1009,9 +889,6 @@ paths:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: getNodeLatest
       description: Viewer or administrator. Returns the latest accepted in-memory report for the current node identity, without credentials, run_generation or session_id. A missing node, missing report since server startup, disabled node or invalidated identity returns 404 node_not_found. Values are the latest sample and may be stale; received_at is server reception time, not a liveness guarantee. System is null when the report omitted it; agent_version remains available on the persisted node view.
       responses:
@@ -1026,9 +903,6 @@ paths:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: getNodePublicSettings
       description: Available to authenticated administrators and viewers. Returns the independent public settings, including for pending or disabled nodes; no values are filled from internal node metadata.
       responses:
@@ -1112,9 +986,6 @@ paths:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
-      security:
-        - session: []
-        - bearerAuth: []
       operationId: getDesiredConfig
       responses:
         '200':
@@ -1125,7 +996,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     patch:
       operationId: patchDesiredConfig
-      description: Administrator only. Actual changes increment revision atomically. Omitted fields remain unchanged; explicit null and empty patches are rejected. Unchanged values return the existing revision without another audit event. All invalid supported fields are returned together. Combined interface and disk identifiers must fit a 48 KiB budget for their three JSON-escaped report occurrences, leaving 16 KiB for other fields; partial patches are checked against persisted selections. Probe targets are visible to every console user and API token, so URLs must not contain credentials, tokens or other secrets. Audit details record only the target count, never target values.
+      description: Administrator only. Actual changes increment revision atomically. Omitted fields remain unchanged; explicit null and empty patches are rejected. Unchanged values return the existing revision without another audit event. All invalid supported fields are returned together. Combined interface and disk identifiers must fit a 48 KiB budget for their three JSON-escaped report occurrences, leaving 16 KiB for other fields; partial patches are checked against persisted selections. Probe targets are visible to every console user, so URLs must not contain credentials, tokens or other secrets. Audit details record only the target count, never target values.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -1409,11 +1280,6 @@ paths:
         default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: obt_<base64url-32-random-bytes>
-      description: Read-only management API token. Only allowed GET/HEAD operations; never in URLs. Secret is shown once and only its SHA-256 hash is stored.
     session:
       type: apiKey
       in: cookie
@@ -1484,19 +1350,6 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/Error'}
   schemas:
-    APIToken:
-      type: object
-      required: [id, name, prefix, created_by, created_by_username, created_at, expires_at, last_used_at, revoked_at]
-      properties:
-        id: {type: string, format: uuid}
-        name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 100}
-        prefix: {type: string, minLength: 8, maxLength: 8, description: First eight characters of the public UUID.}
-        created_by: {type: string, format: uuid}
-        created_by_username: {type: string}
-        created_at: {type: string, format: date-time}
-        expires_at: {type: [string, 'null'], format: date-time}
-        last_used_at: {type: [string, 'null'], format: date-time, description: Best effort; updated at most once per minute and skipped when SQLite is busy.}
-        revoked_at: {type: [string, 'null'], format: date-time}
     NotificationChannelConfig:
       oneOf:
         - type: object
@@ -1900,7 +1753,7 @@ components:
       type: array
       maxItems: 5
       uniqueItems: true
-      description: Unique service-probe targets. Each target is at most 1024 UTF-8 bytes and contains no whitespace. Supported forms are tcp://host:port, http:// or https:// URLs without userinfo or fragments, and icmp://host. Targets are visible to every console user and API token; never put secrets in a URL, including its query string.
+      description: Unique service-probe targets. Each target is at most 1024 UTF-8 bytes and contains no whitespace. Supported forms are tcp://host:port, http:// or https:// URLs without userinfo or fragments, and icmp://host. Targets are visible to every console user; never put secrets in a URL, including its query string.
       items:
         type: string
         x-minLengthBytes: 1

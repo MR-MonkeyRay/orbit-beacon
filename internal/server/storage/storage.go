@@ -29,12 +29,13 @@ type Migration struct {
 }
 
 // CurrentSchemaVersion is the highest schema version produced by this binary.
-const CurrentSchemaVersion = 14
+const CurrentSchemaVersion = 15
 
 // Open opens a persistent local database. The driver applies connection-local
 // pragmas to every pooled connection, not just the migration connection.
 func Open(ctx context.Context, path string) (*sql.DB, error) {
-	return OpenWithMigrations(ctx, path, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}, {Version: 5, Apply: repairReportSelections}, {Version: 6, SQL: recoverableCSRFSchema}, {Version: 7, SQL: auditOrderingSchema}, {Version: 8, SQL: enrollmentOrderingSchema}, {Version: 9, Apply: normalizeTimestampColumns}, {Version: 10, SQL: alertsSchema}, {Version: 11, SQL: notificationsSchema}, {Version: 12, SQL: apiTokensSchema}, {Version: 13, SQL: trafficSchema}, {Version: 14, SQL: probesSchema, Apply: rebuildProbeAlertRules, DisableForeignKeys: true}})
+	// Keep the retired version 12 slot so existing migration ledgers remain valid.
+	return OpenWithMigrations(ctx, path, []Migration{{Version: 1, SQL: foundationSchema}, {Version: 2, SQL: sessionsExpirySchema}, {Version: 3, SQL: reportIdentitySchema}, {Version: 4, SQL: enrollmentTombstoneSchema}, {Version: 5, Apply: repairReportSelections}, {Version: 6, SQL: recoverableCSRFSchema}, {Version: 7, SQL: auditOrderingSchema}, {Version: 8, SQL: enrollmentOrderingSchema}, {Version: 9, Apply: normalizeTimestampColumns}, {Version: 10, SQL: alertsSchema}, {Version: 11, SQL: notificationsSchema}, {Version: 12}, {Version: 13, SQL: trafficSchema}, {Version: 14, SQL: probesSchema, Apply: rebuildProbeAlertRules, DisableForeignKeys: true}, {Version: 15, SQL: "DROP TABLE IF EXISTS api_tokens;"}})
 }
 
 // OpenWithMigrations applies an independent schema using the same secure file

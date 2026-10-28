@@ -2,14 +2,13 @@ import {h, icon} from '../../shared/dom.js';
 import {allNodes, api, ensureSession, groupsList, invalidate, isAdmin, nameLookup, session, updateUser, usersList} from '../api.js';
 import {ROLE, when} from '../format.js';
 import {refresh} from '../router.js';
-import {busy, button, callout, emptyState, facts, iconButton, link, pageHead, panel} from '../ui/components.js';
-import {confirmDialog, dialogActionStale, formDialog, modal} from '../ui/dialogs.js';
+import {busy, button, emptyState, facts, iconButton, link, pageHead, panel} from '../ui/components.js';
+import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, onSubmit, passwordInput, select, validateBytes} from '../ui/forms.js';
 import {tabSet} from '../ui/tabs.js';
 import {issueEnrollment} from './enrollments.js';
 import {auditItem} from './shared.js';
-import {apiTokenExpiry, apiTokenState} from './api-token-utils.js';
 
 const ROLE_CHOICES = [['viewer', 'Viewer'], ['admin', 'Administrator']];
 const roleBadge = (role) => h('span', {class: `badge ${role}`}, ROLE[role]);
@@ -23,7 +22,6 @@ export async function settingsPage() {
       {id: 'account', label: 'Account', icon: 'user', build: accountTab},
       {id: 'users', label: 'Users', icon: 'users', build: () => usersTab(users)},
       {id: 'groups', label: 'Groups', icon: 'folder', build: () => groupsTab(groups, nodes)},
-      ...(isAdmin() ? [{id: 'api-tokens', label: 'API tokens', icon: 'key', build: apiTokensTab}] : []),
       {id: 'audit', label: 'Audit log', icon: 'list', build: () => auditTab(audit, nameLookup(nodes, users, groups))}
     ], 'Settings sections'));
 }
@@ -247,90 +245,4 @@ function auditTab(page, names) {
   more.hidden = !page.has_more;
   return panel('Audit log', {}, h('p', {class: 'lede'}, 'Newest first. Event details never contain credentials.'),
     events.length ? [list, more] : emptyState('No audit events', 'Changes made in the console or API are recorded here.'));
-}
-
-function apiTokensTab() {
-  const list = h('div', {'aria-live': 'polite'});
-  const error = h('p', {class: 'callout', role: 'alert', hidden: true});
-  let loading = false;
-  const reload = async () => {
-    if (loading) return;
-    loading = true;
-    error.hidden = true;
-    busy(retry, true);
-    try {
-      const {api_tokens: tokens} = await api('/api-tokens');
-      list.replaceChildren(tokens.length ? h('div', {class: 'table-wrap'},
-        h('table', {class: 'table'}, h('caption', {class: 'sr'}, 'API tokens'),
-          h('thead', null, h('tr', null, ['Name', 'Prefix', 'Created by / at', 'Expires', 'Last used', 'State', 'Actions'].map((label) => h('th', {scope: 'col'}, label)))),
-          h('tbody', null, tokens.map((token) => h('tr', null,
-            h('td', null, token.name), h('td', {class: 'mono'}, token.prefix),
-            h('td', null, token.created_by_username || token.created_by, h('div', {class: 'muted'}, when(token.created_at))),
-            h('td', null, token.expires_at ? when(token.expires_at) : 'Never'),
-            h('td', null, token.last_used_at ? when(token.last_used_at) : 'Never'),
-            h('td', null, apiTokenState(token)),
-            h('td', null, apiTokenState(token) === 'Active' ? button('Revoke', {small: true, variant: 'danger', onClick: async (event) => {
-              const control = event.currentTarget;
-              if (!(await confirmDialog({title: `Revoke ${token.name}?`, message: 'Automation using this token will lose access immediately.', confirm: 'Revoke token', danger: true}))) return;
-              busy(control, true);
-              try { await api(`/api-tokens/${encodeURIComponent(token.id)}`, {method: 'DELETE'}); await reload(); }
-              catch (failure) { toastError(failure); }
-              finally { busy(control, false); }
-            }}) : null)))))) : emptyState('No API tokens', 'Create a token for scripts or monitoring tools.'));
-    } catch (failure) {
-      if (failure.name !== 'AbortError') { error.textContent = failure.message; error.hidden = false; }
-    } finally { loading = false; busy(retry, false); }
-  };
-  const retry = button('Refresh tokens', {small: true, icon: 'refresh', onClick: reload});
-  const create = () => {
-    let name, expiry, created;
-    const {closed} = formDialog({
-      title: 'Create API token', submit: 'Create token',
-      intro: 'Read-only access to management data. Account, user, enrollment and token management endpoints are excluded. Maximum 50 active tokens.',
-      build: (form) => {
-        name = input({name: 'name', required: true, autocomplete: 'off'});
-        validateBytes(name, 1, 100, 'Token name');
-        expiry = select([['1', '1 day'], ['7', '7 days'], ['30', '30 days'], ['90', '90 days'], ['365', '365 days'], ['never', 'Never']], '30', {name: 'expiry'});
-        form.append(field('Name', name), field('Expires after', expiry));
-      },
-      action: async () => {
-        created = await api('/api-tokens', {method: 'POST', body: {name: name.value, expires_in_days: apiTokenExpiry(expiry.value)}});
-        if (dialogActionStale()) { delete created.token; created = null; }
-      }
-    });
-    closed.then(async (result) => {
-      if (!created) return;
-      if (result !== 'done') { delete created.token; return; }
-      const secret = h('code', null, created.token);
-      delete created.token;
-      created = null;
-      const status = h('p', {class: 'hint', role: 'status'});
-      const {closed: secretClosed} = modal('API token created', (close) => h('div', null,
-        h('div', {class: 'dialog-body stack'},
-          callout('This token is shown only once. Copy it now; closing this dialog clears it.'),
-          h('pre', {class: 'code enrollment-token'}, secret),
-          button('Copy token', {icon: 'copy', onClick: async () => {
-            try {
-              if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable');
-              await navigator.clipboard.writeText(secret.textContent);
-              status.textContent = 'Copied.';
-            } catch {
-              const range = document.createRange(); range.selectNodeContents(secret);
-              const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
-              let copied = false;
-              try { copied = document.execCommand('copy'); } catch {}
-              status.textContent = copied ? 'Copied using the browser fallback.' : 'The token is selected. Press Ctrl+C or Command+C to copy it.';
-            }
-          }}), status,
-          h('p', {class: 'lede'}, 'Send it as Authorization: Bearer <token> over HTTPS. Never put it in a URL.')),
-        h('div', {class: 'dialog-foot'}, button('Close', {onClick: () => close('done')}))));
-      try { await secretClosed; } finally { secret.textContent = ''; }
-      await reload();
-    }).catch(toastError);
-  };
-  const content = panel('API tokens', {action: button('Create token', {variant: 'primary', icon: 'plus', onClick: create})},
-    h('p', {class: 'lede'}, 'Read-only credentials for automation. Tokens are shown only at creation. Last used updates at most once per minute and may lag while storage is busy.'),
-    retry, error, list);
-  reload();
-  return content;
 }

@@ -239,6 +239,11 @@ func decodeError(w http.ResponseWriter, err error, message, requestID string) {
 	fail(w, http.StatusBadRequest, "invalid_json", message, requestID)
 }
 
+type headResponseWriter struct{ http.ResponseWriter }
+
+func (w headResponseWriter) Write(p []byte) (int, error) { return len(p), nil }
+func (w headResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.observeRequest(w, r, h.serveHTTP)
 }
@@ -283,45 +288,7 @@ func method(w http.ResponseWriter, r *http.Request, requestID string, allowed ..
 
 func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) {
 	p := r.URL.Path
-	tokenRequest := strings.HasPrefix(p, "/api/v1/") && len(r.Header.Values("Authorization")) > 0
-	if strings.HasPrefix(p, "/api/v1/") && tokenInQuery(r) {
-		fail(w, http.StatusBadRequest, "token_in_query", "API tokens must be sent in the Authorization header", requestID)
-		return
-	}
-	var tokenPrincipal auth.APIToken
-	if tokenRequest {
-		headers := r.Header.Values("Authorization")
-		fields := strings.Fields(r.Header.Get("Authorization"))
-		plaintext := ""
-		if len(headers) == 1 && len(fields) == 2 && strings.EqualFold(fields[0], "Bearer") {
-			plaintext = fields[1]
-		}
-		var err error
-		tokenPrincipal, err = h.auth.AuthenticateAPIToken(auth.WithLoginPeer(r.Context(), h.clientAddr(r)), plaintext)
-		if err != nil {
-			if errors.Is(err, auth.ErrInvalidToken) {
-				fail(w, http.StatusUnauthorized, "invalid_token", "API token is invalid or expired", requestID)
-			} else {
-				h.serviceError(w, err, requestID)
-			}
-			return
-		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			fail(w, http.StatusForbidden, "token_read_only", "API tokens only allow GET and HEAD requests", requestID)
-			return
-		}
-		if !apiTokenReadAllowed(p) {
-			fail(w, http.StatusForbidden, "token_forbidden", "API tokens cannot access this resource", requestID)
-			return
-		}
-	}
 	allowed := routeMethods(p)
-	// HEAD shares GET routing only for token-authenticated management reads.
-	if tokenRequest && r.Method == http.MethodHead && containsGET(allowed) {
-		clone := r.Clone(r.Context())
-		clone.Method = http.MethodGet
-		r = clone
-	}
 	if len(allowed) == 0 {
 		fail(w, http.StatusNotFound, "not_found", "Route not found", requestID)
 		return
@@ -364,33 +331,24 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(p, "/api/v1/"), "/")
-	var c *http.Cookie
-	var user auth.User
-	var err error
-	if tokenRequest {
-		user = auth.User{ID: tokenPrincipal.ID, Role: auth.RoleViewer}
-		h.auth.TouchAPIToken(r.Context(), tokenPrincipal.ID)
-	} else {
-		c, err = r.Cookie(sessionCookie)
-		if err != nil {
-			fail(w, http.StatusUnauthorized, "unauthenticated", "A valid session is required", requestID)
-			return
-		}
-		if p == "/api/v1/me" {
-			session, err := h.auth.CurrentSession(r.Context(), c.Value)
-			if err != nil {
-				h.serviceError(w, err, requestID)
-				return
-			}
-			writeJSON(w, http.StatusOK, session)
-			return
-		}
-		user, err = h.auth.Authenticate(r.Context(), c.Value)
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		fail(w, http.StatusUnauthorized, "unauthenticated", "A valid session is required", requestID)
+		return
+	}
+	if p == "/api/v1/me" {
+		session, err := h.auth.CurrentSession(r.Context(), c.Value)
 		if err != nil {
 			h.serviceError(w, err, requestID)
 			return
 		}
-
+		writeJSON(w, http.StatusOK, session)
+		return
+	}
+	user, err := h.auth.Authenticate(r.Context(), c.Value)
+	if err != nil {
+		h.serviceError(w, err, requestID)
+		return
 	}
 	mutation := r.Method != http.MethodGet && r.Method != http.MethodHead
 	if mutation {
@@ -412,12 +370,7 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 			return
 		}
 	}
-	if !tokenRequest {
-		r = r.WithContext(audit.WithActor(r.Context(), user.ID))
-	}
-	if h.apiTokensRoute(w, r, requestID, user) {
-		return
-	}
+	r = r.WithContext(audit.WithActor(r.Context(), user.ID))
 	if h.notificationsRoute(w, r, requestID) {
 		return
 	}
@@ -593,8 +546,6 @@ func (h *handler) serviceError(w http.ResponseWriter, err error, requestID strin
 		fail(w, http.StatusServiceUnavailable, "storage_busy", "Storage is busy; retry later", requestID)
 	case errors.Is(err, auth.ErrUnauthenticated), errors.Is(err, nodes.ErrUnauthenticated):
 		fail(w, http.StatusUnauthorized, "unauthenticated", "Credentials or session are invalid or expired", requestID)
-	case errors.Is(err, auth.ErrTokenCapacity):
-		fail(w, http.StatusConflict, "api_token_capacity_reached", "Maximum of 50 active API tokens reached", requestID)
 	case errors.Is(err, auth.ErrWrongPassword):
 		fail(w, http.StatusBadRequest, "invalid_old_password", "Current password is incorrect", requestID)
 	case errors.Is(err, auth.ErrRateLimited):

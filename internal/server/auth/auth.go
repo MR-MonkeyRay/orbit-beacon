@@ -88,10 +88,6 @@ type Service struct {
 	loginNameOverflow      loginBucket
 	loginFailureOverflow   loginBucket
 	passwordChangeOverflow loginBucket
-	apiTokenBuckets        map[string]loginBucket
-	apiInvalidPeers        map[netip.Addr]loginBucket
-	apiTokenOverflow       loginBucket
-	apiInvalidOverflow     loginBucket
 }
 
 func NewService(db *sql.DB, opts Options) *Service {

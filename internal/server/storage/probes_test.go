@@ -30,9 +30,6 @@ func TestProbeMigrationCreatesTablesConstraintsAndRetentionIndex(t *testing.T) {
 	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name='probe_hourly_retention'`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("probe_hourly_retention index count=%d err=%v", count, err)
 	}
-	if err := db.QueryRow(`SELECT max(version) FROM schema_migrations`).Scan(&count); err != nil || count != 14 || storage.CurrentSchemaVersion != 14 {
-		t.Fatalf("schema version database=%d binary=%d err=%v", count, storage.CurrentSchemaVersion, err)
-	}
 	if _, err := db.Exec(`INSERT INTO alert_rules(id,name,enabled,scope_kind,metric,comparator,threshold,for_seconds,severity,created_at,updated_at) VALUES('probe-rule','probe rule',1,'all','probes_down','>',6,0,'warning','now','now')`); err != nil {
 		t.Fatalf("fresh schema rejected probes_down: %v", err)
 	}

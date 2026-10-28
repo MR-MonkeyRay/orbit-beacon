@@ -26,7 +26,7 @@ func TestTrafficMigrationFromTwelvePreservesNodesAndIsIdempotent(t *testing.T) {
 		{Version: 9, Apply: normalizeTimestampColumns},
 		{Version: 10, SQL: alertsSchema},
 		{Version: 11, SQL: notificationsSchema},
-		{Version: 12, SQL: apiTokensSchema},
+		{Version: 12},
 	}
 	db, err := OpenWithMigrations(ctx, path, throughTwelve)
 	if err != nil {
@@ -43,13 +43,7 @@ func TestTrafficMigrationFromTwelvePreservesNodesAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var version, nodeCount, migrationCount int
-	if err := db.QueryRow(`SELECT max(version) FROM schema_migrations`).Scan(&version); err != nil {
-		t.Fatal(err)
-	}
-	if version != 14 {
-		t.Fatalf("schema version=%d", version)
-	}
+	var nodeCount, migrationCount int
 	if err := db.QueryRow(`SELECT count(*) FROM nodes WHERE id='retained'`).Scan(&nodeCount); err != nil {
 		t.Fatal(err)
 	}

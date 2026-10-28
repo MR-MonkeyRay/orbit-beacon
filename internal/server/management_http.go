@@ -23,7 +23,7 @@ var (
 )
 
 // routeMethods establishes route existence and method support before session
-// authentication, role, Origin or CSRF checks. Bearer restrictions run first.
+// authentication, role, Origin or CSRF checks.
 func routeMethods(p string) []string {
 	switch p {
 	case "/api/v1/session":
@@ -36,7 +36,7 @@ func routeMethods(p string) []string {
 		return createMethods
 	case "/api/v1/nodes/batch", "/api/agent/v1/enroll", "/api/agent/v1/enroll/check", "/api/agent/v1/report", "/api/agent/v1/recover":
 		return postMethods
-	case "/api/v1/api-tokens", "/api/v1/enrollments":
+	case "/api/v1/enrollments":
 		return createMethods
 	}
 	if !strings.HasPrefix(p, "/api/v1/") {
@@ -45,9 +45,6 @@ func routeMethods(p string) []string {
 	parts := strings.Split(strings.TrimPrefix(p, "/api/v1/"), "/")
 	if len(parts) < 2 || !identity.ValidUUID(parts[1]) {
 		return nil
-	}
-	if len(parts) == 2 && parts[0] == "api-tokens" {
-		return deleteMethods
 	}
 	if len(parts) == 2 && parts[0] == "enrollments" {
 		return enrollmentItemMethods

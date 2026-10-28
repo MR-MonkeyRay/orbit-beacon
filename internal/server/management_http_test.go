@@ -82,6 +82,55 @@ func createHTTPGroup(t *testing.T, f fixture, cookie *http.Cookie, csrf, name st
 	return objectID(t, decodeObject(t, response))
 }
 
+func TestManagementUsesOnlyCookieSessions(t *testing.T) {
+	f := newHTTP(t, 5)
+	admin, adminCSRF := login(t, f, "admin")
+	viewer, viewerCSRF := login(t, f, "viewer")
+	serve := func(method, path, body string, cookie *http.Cookie, csrf string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, publicURL+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer obt_legacy-management-credential")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", publicURL)
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+		if csrf != "" {
+			req.Header.Set("X-CSRF-Token", csrf)
+		}
+		response := httptest.NewRecorder()
+		f.handler.ServeHTTP(response, req)
+		return response
+	}
+	apiError(t, serve(http.MethodGet, "/api/v1/nodes", "", nil, ""), http.StatusUnauthorized, "unauthenticated")
+	assertHTTPStatus(t, serve(http.MethodGet, "/api/v1/nodes", "", viewer, ""), http.StatusOK)
+	apiError(t, serve(http.MethodPost, "/api/v1/groups", `{"name":"forbidden group"}`, viewer, viewerCSRF), http.StatusForbidden, "forbidden")
+	apiError(t, serve(http.MethodPost, "/api/v1/groups", `{"name":"missing csrf"}`, admin, ""), http.StatusForbidden, "forbidden")
+	response := serve(http.MethodPost, "/api/v1/groups", `{"name":"session group"}`, admin, adminCSRF)
+	assertHTTPStatus(t, response, http.StatusCreated)
+	id := objectID(t, decodeObject(t, response))
+	collectionContains(t, request(t, f.handler, http.MethodGet, "/api/v1/groups", "", viewer, "", ""), "groups", id)
+}
+
+func TestRemovedManagementTokenEndpointsReturnNotFound(t *testing.T) {
+	f := newHTTP(t, 5)
+	admin, csrf := login(t, f, "admin")
+	for _, tt := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/api/v1/api-tokens", ""},
+		{http.MethodPost, "/api/v1/api-tokens", `{"name":"removed credential"}`},
+		{http.MethodDelete, "/api/v1/api-tokens/00000000-0000-4000-8000-000000000001", ""},
+		{http.MethodHead, "/api/v1/api-tokens", ""},
+	} {
+		t.Run(tt.method, func(t *testing.T) {
+			response := request(t, f.handler, tt.method, tt.path, tt.body, admin, csrf, publicURL)
+			assertHTTPStatus(t, response, http.StatusNotFound)
+		})
+	}
+}
+
 func TestGroupHTTPCRUDPersistsAndRemainsReadableToViewer(t *testing.T) {
 	f := newHTTP(t, 5)
 	admin, csrf := login(t, f, "admin")

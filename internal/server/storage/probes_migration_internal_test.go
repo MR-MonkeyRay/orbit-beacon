@@ -18,7 +18,7 @@ func probeMigrationsThroughThirteen() []Migration {
 		{Version: 5, Apply: repairReportSelections}, {Version: 6, SQL: recoverableCSRFSchema},
 		{Version: 7, SQL: auditOrderingSchema}, {Version: 8, SQL: enrollmentOrderingSchema},
 		{Version: 9, Apply: normalizeTimestampColumns}, {Version: 10, SQL: alertsSchema},
-		{Version: 11, SQL: notificationsSchema}, {Version: 12, SQL: apiTokensSchema},
+		{Version: 11, SQL: notificationsSchema}, {Version: 12},
 		{Version: 13, SQL: trafficSchema},
 	}
 }
