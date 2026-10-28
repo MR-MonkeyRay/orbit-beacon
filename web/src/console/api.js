@@ -42,12 +42,12 @@ export function setNavigationSignal(signal) {
   for (const [key, entry] of cache) if (!entry.settled) cache.delete(key);
 }
 
-function requestSignal(callerSignal) {
+function requestSignal(callerSignal, navigation = true) {
   const timeout = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(15000) : null;
   const timeoutController = timeout ? null : new AbortController();
   let timer = null;
   if (timeoutController) timer = setTimeout(() => timeoutController.abort(new DOMException('Request timed out.', 'TimeoutError')), 15000);
-  const signals = [callerSignal, navigationSignal, timeout || timeoutController.signal].filter(Boolean);
+  const signals = [callerSignal, navigation ? navigationSignal : null, timeout || timeoutController.signal].filter(Boolean);
   if (typeof AbortSignal.any === 'function') {
     return {signal: AbortSignal.any(signals), cleanup: () => { if (timer) clearTimeout(timer); }};
   }
@@ -75,7 +75,7 @@ export async function api(path, options = {}) {
   const method = options.method || 'GET';
   const headers = {'Content-Type': 'application/json'};
   if (method !== 'GET') headers['X-CSRF-Token'] = session.csrf;
-  const request = requestSignal(options.signal);
+  const request = requestSignal(options.signal, options.navigation !== false);
   try {
     const response = await fetch(`/api/v1${path}`, {
       method, headers, credentials: 'same-origin', cache: 'no-store', signal: request.signal,
@@ -105,7 +105,7 @@ export async function api(path, options = {}) {
 
 export async function signOut() {
   await api('/session', {method: 'DELETE'});
-  session.csrf = '';
+  setSession({csrf_token: '', user: null, expires_at: ''});
   location.assign('/login');
 }
 

@@ -6,6 +6,7 @@ import {tabSet} from '../ui/tabs.js';
 import {eventsPanel} from './alert-events.js';
 import {rulesPanel} from './alert-rules.js';
 import {channelsPanel, deliveriesPanel} from './notification-channels.js';
+import {showAlert} from './alert-detail.js';
 
 export async function alertsPage() {
   const signal = getNavigationSignal();
@@ -14,6 +15,8 @@ export async function alertsPage() {
     api('/alert-rules', {signal}), api('/notification-channels', {signal}), groupsList(), allNodes()
   ]);
   const context = {rules, channels, groups, nodes, signal, saved: refresh};
+  const event = new URLSearchParams(location.search).get('event');
+  if (event !== null) requestAnimationFrame(() => { if (!signal?.aborted) showAlert(event, signal); });
   return h('div', null,
     pageHead('Alerts', 'Firing alerts, event history, rules and notification channels.'),
     tabSet([

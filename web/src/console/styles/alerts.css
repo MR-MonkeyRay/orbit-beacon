@@ -7,4 +7,3 @@
 .alert-count{display:inline-flex;align-items:center;gap:8px}
 .alert-destination{max-width:340px;overflow-wrap:anywhere}
 select.alert-multiselect{appearance:auto;background-image:none;padding:8px 12px;min-height:90px}
-.alert-nav-count{margin-left:auto;min-width:24px;padding:1px 7px;border-radius:999px;font-size:12px;text-align:center;font-variant-numeric:tabular-nums;color:var(--bad);background:var(--bad-bg)}

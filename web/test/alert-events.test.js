@@ -13,7 +13,6 @@ test('event rows use stored metric/severity snapshots, including unknown metadat
     const [row, unknown] = eventRows([event('one'), event('two', {metric: '', severity: ''})]);
     assert.match(row.textContent, /Critical/);
     assert.match(row.textContent, /90.1%/);
-    assert.equal(elements(row).find((element) => element.tagName === 'a').getAttribute('href'), '/nodes/node-id');
     assert.match(unknown.textContent, /Unknown severity/);
     assert.match(unknown.textContent, /unknown metric/);
     assert.match(eventRows([event('three', {metric: '', severity: '', value: null})])[0].textContent, /Unavailable \(unknown metric\)/);

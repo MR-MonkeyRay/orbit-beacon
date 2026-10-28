@@ -12,6 +12,8 @@
   .shell{grid-template-columns:minmax(0,1fr)}
   .topbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:6px;height:58px;padding:0 10px;background:color-mix(in srgb,var(--bg) 85%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
   .topbar .brand{padding:0 4px}
+  .nav .notification-desktop{display:none}
+  .topbar .notification-mobile{display:inline-flex;margin-left:auto;flex:none}
   .sidebar{position:fixed;inset:0 auto 0 0;z-index:50;width:min(290px,84vw);transform:translateX(-102%);transition:transform .3s var(--ease);box-shadow:var(--shadow-lg)}
   .sidebar.open{transform:none}
   .scrim{display:block;position:fixed;inset:0;z-index:40;background:rgba(8,14,28,.45);animation:fade-only .25s}

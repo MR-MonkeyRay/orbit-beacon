@@ -1,5 +1,6 @@
 import {h, icon} from '../../shared/dom.js';
 import {confirmDiscard} from './dialogs.js';
+import {getNavigationSignal} from '../api.js';
 
 // ARIA tabs (arrow keys, Home, End) whose selection is mirrored in the URL hash,
 // so reloads, links such as /settings#audit and quiet refreshes keep the tab.
@@ -16,7 +17,15 @@ export function tabSet(tabs, label) {
   const initial = Math.max(0, tabs.findIndex((tab) => `#${tab.id}` === location.hash));
   const holder = h('div');
   const buttons = tabs.map((tab) => h('button', {type: 'button', role: 'tab', id: `tab-${tab.id}`, 'aria-controls': `panel-${tab.id}`}, icon(tab.icon), tab.label));
-  const panelFor = (tab, animate) => h('div', {class: animate ? 'tabpanel' : null, role: 'tabpanel', id: `panel-${tab.id}`, 'aria-labelledby': `tab-${tab.id}`}, tab.build());
+  let lifecycle;
+  let attached = false;
+  const panelFor = (tab, animate) => {
+    if (attached) lifecycle?.detach?.();
+    attached = false;
+    const built = tab.build();
+    lifecycle = built?.element instanceof Node ? built : null;
+    return h('div', {class: animate ? 'tabpanel' : null, role: 'tabpanel', id: `panel-${tab.id}`, 'aria-labelledby': `tab-${tab.id}`}, lifecycle ? lifecycle.element : built);
+  };
   const select = (index) => buttons.forEach((element, position) => {
     element.setAttribute('aria-selected', String(position === index));
     element.tabIndex = position === index ? 0 : -1;
@@ -49,5 +58,31 @@ export function tabSet(tabs, label) {
     else if (frames > 0) requestAnimationFrame(() => revealInitial(frames - 1));
   };
   requestAnimationFrame(() => revealInitial(120));
-  return h('div', null, list, holder);
+  const root = h('div', null, list, holder);
+  const signal = getNavigationSignal();
+  let mounted = false;
+  let disposed = false;
+  const sync = () => {
+    if (disposed) return;
+    if (root.isConnected) {
+      mounted = true;
+      if (!attached) { attached = true; lifecycle?.attach?.(); }
+    } else if (mounted) {
+      dispose();
+    }
+  };
+  const observer = new MutationObserver(sync);
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    if (attached) lifecycle?.detach?.();
+    attached = false;
+    observer.disconnect();
+    signal?.removeEventListener('abort', dispose);
+  };
+  observer.observe(document.body, {childList: true, subtree: true});
+  queueMicrotask(sync);
+  signal?.addEventListener('abort', dispose, {once: true});
+  if (signal?.aborted) dispose();
+  return root;
 }

@@ -11,8 +11,8 @@
 .sidebar{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:6px;padding:20px 14px;background:var(--rail);border-right:1px solid var(--line);overflow-y:auto}
 .brand{display:flex;align-items:center;gap:10px;padding:4px 10px 18px;color:var(--ink);font-weight:680;font-size:17px;letter-spacing:-.02em;text-decoration:none}
 .nav{display:flex;flex-direction:column;gap:2px}
-.nav a,.nav-public{position:relative;isolation:isolate;display:flex;align-items:center;gap:11px;min-height:40px;padding:0 12px;border-radius:var(--r-md);color:var(--ink-2);font-weight:550;text-decoration:none;transition:color .15s,background-color .15s}
-.nav a:hover,.nav-public:hover{color:var(--ink);background:var(--orbit-soft)}
+.nav a,.nav-public,.nav .notification-entry{position:relative;isolation:isolate;display:flex;align-items:center;gap:11px;min-height:44px;padding:0 12px;border-radius:var(--r-md);color:var(--ink-2);font-weight:550;text-decoration:none;transition:color .15s,background-color .15s}
+.nav a:hover,.nav-public:hover,.nav .notification-entry:hover{color:var(--ink);background:var(--orbit-soft)}
 .nav a[aria-current="page"]{color:var(--ink)}
 .nav-pill{position:absolute;inset:0;z-index:-1;border-radius:var(--r-md);background:var(--panel);box-shadow:var(--shadow);border:1px solid var(--line);view-transition-name:nav-pill}
 .nav a[aria-current="page"] .icon{color:var(--beacon-text)}

@@ -1,5 +1,5 @@
 import {h, icon} from '../../shared/dom.js';
-import {allNodes, api, ensureSession, groupsList, invalidate, isAdmin, nameLookup, session, updateUser, usersList} from '../api.js';
+import {allNodes, api, ensureSession, getNavigationSignal, groupsList, invalidate, isAdmin, nameLookup, session, updateUser, usersList} from '../api.js';
 import {ROLE, when} from '../format.js';
 import {refresh} from '../router.js';
 import {busy, button, emptyState, facts, iconButton, link, pageHead, panel} from '../ui/components.js';
@@ -9,6 +9,8 @@ import {field, input, onSubmit, passwordInput, select, validateBytes} from '../u
 import {tabSet} from '../ui/tabs.js';
 import {issueEnrollment} from './enrollments.js';
 import {auditItem} from './shared.js';
+import {dataOperationsTab} from './data-operations.js';
+import {showTask} from './backup-task.js';
 
 const ROLE_CHOICES = [['viewer', 'Viewer'], ['admin', 'Administrator']];
 const roleBadge = (role) => h('span', {class: `badge ${role}`}, ROLE[role]);
@@ -16,13 +18,22 @@ const roleBadge = (role) => h('span', {class: `badge ${role}`}, ROLE[role]);
 export async function settingsPage() {
   await ensureSession();
   const [users, groups, nodes, audit] = await Promise.all([usersList(), groupsList(), allNodes(), api('/audit?limit=50&offset=0')]);
+  const signal = getNavigationSignal();
+  const task = new URLSearchParams(location.search).get('task');
+  if (task !== null && location.hash === '#data' && isAdmin()) {
+    requestAnimationFrame(() => { if (!signal?.aborted) showTask(task, {signal}); });
+  }
+  if (location.hash === '#data' && !isAdmin()) {
+    return h('div', null, pageHead('Settings'), panel('Access denied', {}, h('p', {role: 'alert'}, 'Data operations require administrator access.')));
+  }
   return h('div', null,
     pageHead('Settings', 'Your account, people with console access, node groups and the audit trail.'),
     tabSet([
       {id: 'account', label: 'Account', icon: 'user', build: accountTab},
       {id: 'users', label: 'Users', icon: 'users', build: () => usersTab(users)},
       {id: 'groups', label: 'Groups', icon: 'folder', build: () => groupsTab(groups, nodes)},
-      {id: 'audit', label: 'Audit log', icon: 'list', build: () => auditTab(audit, nameLookup(nodes, users, groups))}
+      {id: 'audit', label: 'Audit log', icon: 'list', build: () => auditTab(audit, nameLookup(nodes, users, groups))},
+      ...(isAdmin() ? [{id: 'data', label: 'Data operations', icon: 'cloud', build: dataOperationsTab}] : [])
     ], 'Settings sections'));
 }
 
@@ -133,7 +144,7 @@ function usersTab(users) {
         validateBytes(password, 8, 1024, 'Password');
         form.append(field('Username', username),
           field('Initial password', password, {inner: password.wrapper, hint: '8–1024 UTF-8 bytes. Share it with the user through a secure channel.'}),
-          field('Role', role, {hint: 'Viewers can read everything; administrators can also make changes.'}));
+          field('Role', role, {hint: 'Viewers can read monitoring and alert data. Backup plans, exports and recovery passwords are administrator-only.'}));
       },
       action: async () => {
         try {
@@ -155,7 +166,7 @@ function usersTab(users) {
 
   return h('section', {class: 'panel', 'aria-labelledby': 'users-title'},
     h('div', {class: 'panel-head'}, h('h2', {id: 'users-title'}, 'Users'), editable ? button('Add user', {icon: 'plus', variant: 'primary', small: true, onClick: createUser}) : null),
-    h('div', {class: 'panel-body flush'}, h('p', {class: 'lede'}, 'Viewers can read everything. Administrators can also make changes. The last administrator cannot be removed or demoted.')),
+    h('div', {class: 'panel-body flush'}, h('p', {class: 'lede'}, 'Viewers can read monitoring and alert data. Backup operations are administrator-only. The last administrator cannot be removed or demoted.')),
     users.length ? h('div', {class: 'table-wrap'}, h('table', {class: 'table'},
       h('thead', null, h('tr', null, h('th', {scope: 'col'}, 'User'), h('th', {scope: 'col'}, 'Role'), h('th', {scope: 'col', class: 'hide-sm'}, 'Created'),
         editable ? h('th', {scope: 'col'}, h('span', {class: 'sr'}, 'Actions')) : null)),

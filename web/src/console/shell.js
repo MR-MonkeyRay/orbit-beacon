@@ -1,9 +1,10 @@
 import {h} from '../shared/dom.js';
 import {themeButton} from '../shared/theme.js';
-import {api, onSession, session, signOut} from './api.js';
+import {onSession, session, signOut} from './api.js';
 import {ROLE} from './format.js';
 import {busy, button} from './ui/components.js';
 import {toastError} from './ui/feedback.js';
+import {initNotifications} from './notifications.js';
 
 // Sidebar navigation, account block and the mobile drawer. The markup is static
 // in index.html so navigation paints before the script loads.
@@ -33,7 +34,6 @@ function renderAccount() {
 // Marks the active section; the pill element carries a view-transition-name so
 // it glides between items during page transitions.
 export function setActiveNav(nav) {
-  syncAlertsBadge();
   let pill = sidebar.querySelector('.nav-pill');
   for (const anchor of sidebar.querySelectorAll('[data-nav]')) {
     if (anchor.dataset.nav === nav) {
@@ -67,61 +67,11 @@ export function brandMark() { return sidebar.querySelector('.mark').cloneNode(tr
 export function initShell() {
   syncMenuInert();
   narrow.addEventListener('change', syncMenuInert);
-  onSession(() => { renderAccount(); syncAlertsBadge(); });
-  document.addEventListener('visibilitychange', syncAlertsBadge);
-  window.addEventListener('pagehide', stopAlertsBadge);
-  window.addEventListener('pageshow', syncAlertsBadge);
-  syncAlertsBadge();
+  onSession(renderAccount);
+  renderAccount();
+  initNotifications();
   menuButton.addEventListener('click', () => (sidebar.classList.contains('open') ? closeMenu(true) : openMenu()));
   scrim.addEventListener('click', () => closeMenu(true));
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeMenu(true); });
 }
 
-// The shell survives page swaps; only poll while the authenticated console is visible.
-let alertTimer;
-let alertRequest;
-let alertLastUpdated = 0;
-function stopAlertsBadge() {
-  clearInterval(alertTimer);
-  alertTimer = undefined;
-  alertRequest?.abort();
-  alertRequest = null;
-}
-function syncAlertsBadge() {
-  const anchor = sidebar.querySelector('[data-nav="/alerts"]');
-  if (!anchor) return;
-  let badge = anchor.querySelector('.alert-nav-count');
-  if (!session.user || document.hidden || location.pathname === '/login') {
-    stopAlertsBadge();
-    if (!session.user) {
-      badge?.remove();
-      anchor.setAttribute('aria-label', 'Alerts');
-      alertLastUpdated = 0;
-    }
-    return;
-  }
-  if (!badge) {
-    badge = h('span', {class: 'alert-nav-count', 'aria-hidden': 'true'}, '…');
-    anchor.append(badge);
-  }
-  const update = async () => {
-    if (alertRequest) return;
-    const request = new AbortController();
-    alertRequest = request;
-    try {
-      const {firing} = await api('/alerts/summary', {signal: request.signal});
-      if (alertRequest !== request || document.hidden) return;
-      badge.textContent = String(firing.total);
-      anchor.setAttribute('aria-label', `Alerts, ${firing.total} firing`);
-      alertLastUpdated = Date.now();
-    } catch (error) {
-      if (alertRequest === request && error.name !== 'AbortError') {
-        badge.textContent = '?';
-        anchor.setAttribute('aria-label', 'Alerts, firing count unavailable');
-      }
-    } finally { if (alertRequest === request) alertRequest = null; }
-  };
-  if (!alertTimer) alertTimer = setInterval(update, 60000);
-  // Refresh on return once the count is half a cadence old, bounding staleness.
-  if (!alertLastUpdated || Date.now() - alertLastUpdated >= 30000) update();
-}
