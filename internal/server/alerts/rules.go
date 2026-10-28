@@ -97,7 +97,22 @@ func apply(r *Rule, p Patch, create bool) error {
 	}
 	return nil
 }
-func validate(ctx context.Context, tx *sql.Tx, r Rule) error {
+
+// ParseRuleSnapshot shares the evaluator's persisted rule representation.
+// Scope IDs are checked syntactically, never against entities deleted since firing.
+func ParseRuleSnapshot(raw []byte) (Rule, error) {
+	var r Rule
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return r, invalid("rule_snapshot", "must be an object")
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return r, err
+	}
+	return r, ValidateRuleSyntax(r)
+}
+
+// ValidateRuleSyntax checks rule values without querying scope dependencies.
+func ValidateRuleSyntax(r Rule) error {
 	if strings.TrimSpace(r.Name) == "" || len(r.Name) > 100 {
 		return invalid("name", "must contain 1..100 UTF-8 bytes")
 	}
@@ -137,17 +152,27 @@ func validate(ctx context.Context, tx *sql.Tx, r Rule) error {
 		}
 		return nil
 	}
-	table := ""
 	switch r.ScopeKind {
-	case "group":
-		table = "groups"
-	case "node":
-		table = "nodes"
+	case "group", "node":
 	default:
 		return invalid("scope_kind", "must be all, group or node")
 	}
 	if r.ScopeID == nil || !identity.ValidUUID(*r.ScopeID) {
 		return invalid("scope_id", "must identify an existing scope")
+	}
+	return nil
+}
+
+func validate(ctx context.Context, tx *sql.Tx, r Rule) error {
+	if err := ValidateRuleSyntax(r); err != nil {
+		return err
+	}
+	if r.ScopeKind == "all" {
+		return nil
+	}
+	table := "nodes"
+	if r.ScopeKind == "group" {
+		table = "groups"
 	}
 	var n int
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM "+table+" WHERE id=?", *r.ScopeID).Scan(&n); err != nil {

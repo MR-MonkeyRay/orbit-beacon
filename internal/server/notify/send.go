@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"orbitbeacon/internal/server/egress"
@@ -40,6 +41,18 @@ type Payload struct {
 	ResolvedAt   *time.Time `json:"resolved_at"`
 	SummaryCount int        `json:"summary_count,omitempty"`
 }
+
+// ParsePayload is the common persisted delivery decoder. Historical entity
+// references are snapshots, not live dependencies or a source of new sends.
+func ParsePayload(raw []byte) (Payload, error) {
+	var p Payload
+	if !strings.HasPrefix(strings.TrimSpace(string(raw)), "{") {
+		return p, errors.New("invalid notification payload")
+	}
+	err := json.Unmarshal(raw, &p)
+	return p, err
+}
+
 type Result struct {
 	OK         bool   `json:"ok"`
 	ErrorCode  string `json:"error_code"`

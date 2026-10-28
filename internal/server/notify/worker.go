@@ -265,8 +265,8 @@ func (s *Service) deliver(ctx context.Context, channel string) {
 		s.warnSecretUnreadable(channel)
 	}
 	if e == nil {
-		var p Payload
-		if json.Unmarshal([]byte(d.raw), &p) != nil {
+		p, parseErr := ParsePayload([]byte(d.raw))
+		if parseErr != nil {
 			result = failure("invalid_payload", false)
 		} else {
 			result = s.sender.Send(ctx, c, secret, p)

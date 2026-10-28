@@ -17,6 +17,9 @@ type Sample struct {
 	Values     map[string]float64
 }
 
+// ValidValue exposes admission bounds for persisted monitoring validation.
+func ValidValue(metric string, value float64) bool { return validValue(metric, value) }
+
 // Bounded nonnegative values keep sums finite even at an int64 sample count.
 // Apply the same limits at admission and aggregation for direct Sample callers.
 func validValue(metric string, value float64) bool {

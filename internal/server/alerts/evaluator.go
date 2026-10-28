@@ -206,7 +206,7 @@ func (e *Evaluator) readOpen(ctx context.Context) (map[pair]openEvent, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err = json.Unmarshal([]byte(raw), &o.rule); err != nil {
+		if o.rule, err = ParseRuleSnapshot([]byte(raw)); err != nil {
 			return nil, err
 		}
 		result[pair{o.RuleID, o.NodeID}] = o

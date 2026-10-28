@@ -443,6 +443,14 @@ type ConfigError struct {
 	Fields   map[string]string `json:"fields,omitempty"`
 }
 
+// Validate checks the persisted/report configuration error without side effects.
+func (e ConfigError) Validate() error {
+	if e.Revision < 0 || e.Code == "" || len(e.Code) > 64 {
+		return errors.New("invalid configuration error")
+	}
+	return nil
+}
+
 type Report struct {
 	ProtocolVersion int           `json:"protocol_version"`
 	RunGeneration   uint64        `json:"run_generation"`
@@ -471,8 +479,10 @@ func (r Report) Validate() error {
 			return err
 		}
 	}
-	if r.ConfigError != nil && (r.ConfigError.Revision < 0 || r.ConfigError.Code == "" || len(r.ConfigError.Code) > 64) {
-		return errors.New("invalid configuration error")
+	if r.ConfigError != nil {
+		if err := r.ConfigError.Validate(); err != nil {
+			return err
+		}
 	}
 	if err := r.Metrics.Validate(); err != nil {
 		return err

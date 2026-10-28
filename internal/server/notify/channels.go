@@ -105,6 +105,11 @@ var chatIDPattern = regexp.MustCompile(`^(?:-?[0-9]{1,20}|@[A-Za-z][A-Za-z0-9_]{
 var tokenPattern = regexp.MustCompile(`^[0-9]+:[A-Za-z0-9_-]+$`)
 
 func (s *Service) validate(c Channel, secret string) error {
+	return ValidateChannel(c, secret, s.opts.AllowInsecureWebhooks)
+}
+
+// ValidateChannel checks channel syntax only; it performs no DNS or I/O.
+func ValidateChannel(c Channel, secret string, allowInsecureWebhooks bool) error {
 	if strings.TrimSpace(c.Name) == "" || len(c.Name) > 100 {
 		return invalid("name", "must contain 1..100 UTF-8 bytes")
 	}
@@ -132,7 +137,7 @@ func (s *Service) validate(c Channel, secret string) error {
 		}
 		if u.Scheme != "https" {
 			ip := net.ParseIP(u.Hostname())
-			if u.Scheme != "http" || !s.opts.AllowInsecureWebhooks || ip == nil || !ip.IsLoopback() {
+			if u.Scheme != "http" || !allowInsecureWebhooks || ip == nil || !ip.IsLoopback() {
 				return invalid("config", "HTTPS required; explicit insecure setting permits literal loopback HTTP only")
 			}
 		}

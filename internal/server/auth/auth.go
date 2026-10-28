@@ -134,39 +134,54 @@ func VerifyPassword(password, encoded string) (bool, error) {
 	return matches, err
 }
 
-// current reports whether a verified encoding needs a parameter upgrade.
-func verifyPassword(password, encoded string) (matches, current bool, err error) {
+// ValidatePasswordHash checks the same encoding and work bounds as login,
+// without allocating Argon2 memory or evaluating a password.
+func ValidatePasswordHash(encoded string) error {
+	_, _, _, _, _, err := parsePasswordHash(encoded)
+	return err
+}
+
+func parsePasswordHash(encoded string) (memory, iterations uint32, parallelism uint8, salt, digest []byte, err error) {
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" || parts[2] != "v=19" {
-		return false, false, errors.New("invalid password encoding")
+		return 0, 0, 0, nil, nil, errors.New("invalid password encoding")
 	}
 	parameters := strings.Split(parts[3], ",")
 	if len(parameters) != 3 {
-		return false, false, errors.New("invalid password parameters")
+		return 0, 0, 0, nil, nil, errors.New("invalid password parameters")
 	}
 	var costs [3]uint64
 	for i, prefix := range []string{"m=", "t=", "p="} {
 		value, found := strings.CutPrefix(parameters[i], prefix)
 		if !found {
-			return false, false, errors.New("invalid password parameters")
+			return 0, 0, 0, nil, nil, errors.New("invalid password parameters")
 		}
 		costs[i], err = strconv.ParseUint(value, 10, 32)
 		if err != nil {
-			return false, false, errors.New("invalid password parameters")
+			return 0, 0, 0, nil, nil, errors.New("invalid password parameters")
 		}
 	}
-	memory, iterations, parallelism := uint32(costs[0]), uint32(costs[1]), uint8(costs[2])
+	memory, iterations, parallelism = uint32(costs[0]), uint32(costs[1]), uint8(costs[2])
 	// Bound work before Argon2 allocates memory or starts worker goroutines.
 	if costs[0] < 19456 || costs[0] > 262144 || costs[1] < 1 || costs[1] > 10 || costs[2] < 1 || costs[2] > 4 {
-		return false, false, errors.New("unsafe password parameters")
+		return 0, 0, 0, nil, nil, errors.New("unsafe password parameters")
 	}
-	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+	salt, err = base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil || len(salt) != 16 {
-		return false, false, errors.New("invalid password salt")
+		return 0, 0, 0, nil, nil, errors.New("invalid password salt")
 	}
-	digest, err := base64.RawStdEncoding.DecodeString(parts[5])
+	digest, err = base64.RawStdEncoding.DecodeString(parts[5])
 	if err != nil || len(digest) != 32 {
-		return false, false, errors.New("invalid password digest")
+		return 0, 0, 0, nil, nil, errors.New("invalid password digest")
+	}
+	return memory, iterations, parallelism, salt, digest, nil
+}
+
+// current reports whether a verified encoding needs a parameter upgrade.
+func verifyPassword(password, encoded string) (matches, current bool, err error) {
+	memory, iterations, parallelism, salt, digest, err := parsePasswordHash(encoded)
+	if err != nil {
+		return false, false, err
 	}
 	actual := argon2.IDKey([]byte(password), salt, iterations, memory, parallelism, 32)
 	return subtle.ConstantTimeCompare(actual, digest) == 1, memory == passwordMemory && iterations == passwordIterations && parallelism == passwordParallelism, nil

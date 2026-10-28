@@ -73,7 +73,8 @@ func (p *PublicSettingsPatch) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (p PublicSettings) validate() error {
+// Validate checks publication fields without changing stored settings.
+func (p PublicSettings) Validate() error {
 	fields := make(map[string]string)
 	for _, field := range []struct {
 		name, value string
@@ -148,7 +149,7 @@ func (s *Service) PatchPublicSettings(ctx context.Context, id string, patch Publ
 			}
 		}
 	}
-	if err := p.validate(); err != nil {
+	if err := p.Validate(); err != nil {
 		return PublicSettings{}, err
 	}
 	encoded, err := json.Marshal(p)
@@ -190,7 +191,7 @@ const publicVisibility = `status = 'unknown' AND token_hash IS NOT NULL AND firs
 
 func visibleSettings(raw string) (PublicSettings, bool) {
 	p, err := decodePublic(raw)
-	return p, err == nil && p.Enabled && p.validate() == nil
+	return p, err == nil && p.Enabled && p.Validate() == nil
 }
 
 // PublicVisibilityVersion changes after a committed mutation of public data.
