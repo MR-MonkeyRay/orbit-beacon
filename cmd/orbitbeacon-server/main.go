@@ -252,7 +252,16 @@ func run(args []string) error {
 		return err
 	}
 	box, err := secretbox.New(key, "orbitbeacon notification channel v1")
+	if err != nil {
+		clear(key)
+		return err
+	}
+	backupBox, err := secretbox.New(key, "orbitbeacon backup secrets v1")
 	clear(key)
+	if err != nil {
+		return err
+	}
+	backups, err := backup.New(db, backup.Options{DataDir: cfg.DataDir, SecretBox: backupBox, ServerVersion: buildinfo.Current().Version})
 	if err != nil {
 		return err
 	}
@@ -284,6 +293,8 @@ func run(args []string) error {
 	}
 	// Background work must finish before run returns and closes the database.
 	var background sync.WaitGroup
+	background.Add(1)
+	go func() { defer background.Done(); backups.Run(ctx) }()
 	background.Add(1)
 	go func() { defer background.Done(); notifications.Run(ctx) }()
 	background.Add(1)
