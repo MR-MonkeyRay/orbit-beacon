@@ -4,5 +4,8 @@
 @import "./components.css";
 @import "./forms.css";
 @import "./pages.css";
+@import "./charts.css";
+@import "./traffic.css";
+@import "./alerts.css";
 @import "./login.css";
 @import "./responsive.css";

@@ -1,0 +1,27 @@
+/* Traffic uses the shared palette in both themes; all geometry stays in SVG. */
+.traffic-body,.traffic-content,.traffic-chart{min-width:0}
+.traffic-content{display:grid;gap:24px}
+.traffic-content h3{font-size:14px;font-weight:650;margin-bottom:8px}
+.traffic-cycle .facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:12px}
+.traffic-cycle .facts>div{display:block;min-width:0;border:0;padding:0}
+.traffic-cycle .facts dd{margin-top:4px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.traffic-quota{--traffic-meter:var(--orbit);display:grid;gap:6px}
+.traffic-quota.warning{--traffic-meter:var(--warn);color:var(--warn)}
+.traffic-quota.over{--traffic-meter:var(--bad);color:var(--bad)}
+.traffic-quota meter{display:block;width:100%;height:16px;appearance:none;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel-2)}
+.traffic-quota meter::-webkit-meter-bar{border:0;border-radius:var(--r-sm);background:var(--panel-2)}
+.traffic-quota meter::-webkit-meter-optimum-value,.traffic-quota meter::-webkit-meter-suboptimum-value,.traffic-quota meter::-webkit-meter-even-less-good-value{border-radius:var(--r-sm);background:var(--traffic-meter)}
+.traffic-quota meter::-moz-meter-bar{border-radius:var(--r-sm);background:var(--traffic-meter)}
+.traffic-chart>.muted{font-size:13px;margin-bottom:10px}
+.traffic-plot{overflow-x:auto}
+.traffic-svg{min-width:480px}
+.traffic-rx{fill:var(--orbit)}
+.traffic-tx{fill:var(--ok);stroke:var(--panel);stroke-width:1;stroke-dasharray:2 2;vector-effect:non-scaling-stroke}
+.traffic-hit{fill:transparent}
+.traffic-day:focus{outline:none}
+.traffic-day:hover .traffic-hit,.traffic-day:focus .traffic-hit{fill:var(--orbit-soft);stroke:var(--focus);stroke-width:1;vector-effect:non-scaling-stroke}
+/* Swatches match the filled bars; the dashed inset mirrors the sent bars' pattern. */
+.chart-key .traffic-rx-key,.chart-key .traffic-tx-key{width:12px;height:12px;border:0;border-radius:2px}
+.chart-key .traffic-rx-key{background:var(--orbit)}
+.chart-key .traffic-tx-key{background:var(--ok);outline:1px dashed var(--panel);outline-offset:-3px}
+@media(max-width:600px){.traffic-svg .chart-axis{font-size:22px}.traffic-cycle .facts{gap:8px}.traffic-cycle .facts dt{font-size:12px}}

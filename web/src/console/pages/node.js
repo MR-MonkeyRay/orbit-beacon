@@ -1,38 +1,75 @@
 import {h, icon} from '../../shared/dom.js';
-import {api, ensureSession, groupsList, invalidate, isAdmin} from '../api.js';
-import {formatBytes, shortID, when} from '../format.js';
+import {api, ensureSession, getNavigationSignal, groupsList, invalidate, isAdmin} from '../api.js';
+import {formatDuration, formatPercent, shortID, when} from '../format.js';
 import {refresh} from '../router.js';
 import {callout, facts, iconButton, link, note, panel, statusBadge} from '../ui/components.js';
 import {toast} from '../ui/feedback.js';
-import {field, input, onSubmit, rangeField, saveBar, select, tagEditor, textarea, trackDirty, validateBytes} from '../ui/forms.js';
+import {field, input, onSubmit, saveBar, select, tagEditor, textarea, trackDirty, validateBytes} from '../ui/forms.js';
 import {tabSet} from '../ui/tabs.js';
+import {configTab} from './node-config.js';
+import {enrollmentTab} from './enrollments.js';
+import {diskSummary, loadSummary, memorySummary, networkSummary} from './latest-sample-helpers.js';
+import {lifecycleActions} from './node-lifecycle.js';
+import {historyPanel} from './node-history.js';
+import {trafficPanel} from './node-traffic.js';
+import {probesPanel} from './node-probes.js';
 
 export const NODE_PATH = /^\/nodes\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
 export async function nodePage() {
+  const signal = getNavigationSignal();
   await ensureSession();
   const id = location.pathname.match(NODE_PATH)[1];
   const path = `/nodes/${encodeURIComponent(id)}`;
-  const [node, config, groups, publicSettings] = await Promise.all([api(path), api(`${path}/config`), groupsList(), api(`${path}/public-settings`)]);
+  const [node, config, groups, publicSettings, latest] = await Promise.all([
+    api(path), api(`${path}/config`), groupsList(), api(`${path}/public-settings`),
+    api(`${path}/latest`).catch((error) => {
+      if (error.status === 404) return null;
+      throw error;
+    })
+  ]);
   const editable = isAdmin();
+  const idText = h('span', {class: 'mono'}, node.id);
+  const showCopied = () => {
+    copy.replaceChildren(icon('check'));
+    setTimeout(() => copy.replaceChildren(icon('copy')), 1600);
+  };
   const copy = iconButton('copy', 'Copy node ID', async () => {
     try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable');
       await navigator.clipboard.writeText(node.id);
-      copy.replaceChildren(icon('check'));
+      showCopied();
       toast('Node ID copied.');
-      setTimeout(() => copy.replaceChildren(icon('copy')), 1600);
-    } catch { toast('The browser blocked copying. Select the ID instead.', {error: true}); }
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(idText);
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      let copied = false;
+      try { copied = document.execCommand('copy'); } catch {}
+      if (copied) {
+        showCopied();
+        toast('Node ID copied using the browser fallback.');
+      } else toast('The node ID is selected. Press Ctrl+C or Command+C to copy it.', {error: true});
+    }
   });
   const back = link('/nodes', icon('left'), 'All nodes');
   back.className = 'back';
+  let history;
+  let traffic;
+  let probes;
   return h('div', null,
     h('header', {class: 'page-head'}, h('div', null, back,
-      h('div', {class: 'detail-head'}, h('h1', {tabindex: '-1'}, node.name), statusBadge(node.status)),
-      h('div', {class: 'id-chip'}, h('span', {class: 'mono'}, node.id), copy))),
+      h('div', {class: 'detail-head'}, h('h1', {tabindex: '-1'}, node.name), statusBadge(node.presence)),
+      h('div', {class: 'id-chip'}, idText, copy)), editable ? lifecycleActions(node) : null),
     tabSet([
-      {id: 'details', label: 'Details', icon: 'server', build: () => detailsTab(node, groups, editable)},
+      {id: 'details', label: 'Details', icon: 'server', build: () => detailsTab(node, groups, latest, editable,
+        history ||= historyPanel(id, signal), traffic ||= trafficPanel(id, signal),
+        probes ||= probesPanel(id, signal, editable ? () => document.getElementById('tab-config')?.click() : null))},
       {id: 'public', label: 'Public page', icon: 'globe', build: () => publicTab(node, publicSettings, editable)},
-      {id: 'config', label: 'Agent configuration', icon: 'sliders', build: () => configTab(node, config, editable)}
+      {id: 'config', label: 'Agent configuration', icon: 'sliders', build: () => configTab(node, config, editable)},
+      {id: 'enrollment', label: 'Enroll agent', icon: 'server', build: () => enrollmentTab(node, editable)}
     ], 'Node sections'));
 }
 
@@ -48,17 +85,35 @@ function editableForm(form, controls, save) {
   });
 }
 
-function detailsTab(node, groups, editable) {
+function latestPanel(node, latest) {
+  if (!latest) return panel('Latest sample', {}, h('p', {class: 'muted'}, 'No current sample. The agent has not reported since the server started, or its credential was revoked or the node disabled.'));
+  const metrics = latest.metrics || {};
+  return panel('Latest sample', {action: h('span', {class: 'revision'}, `Sequence ${latest.seq}`)}, facts([
+    ['CPU', formatPercent(metrics.cpu_percent)],
+    ['Memory', memorySummary(metrics)],
+    ['Load (1 / 5 / 15 min)', loadSummary(metrics)],
+    ['Disk', diskSummary(metrics.disks)],
+    ['Network', networkSummary(metrics.networks)],
+    ['Uptime', formatDuration(metrics.uptime_seconds)],
+    ['Agent version', latest.system?.agent_version || node.agent_version],
+    ['Sampled', latest.sampled_at ? when(latest.sampled_at) : null],
+    ['Received', latest.received_at ? when(latest.received_at) : null]
+  ]));
+}
+
+function detailsTab(node, groups, latest, editable, history, traffic, probes) {
   const group = groups.find((item) => item.id === node.group_id);
   const summary = panel('Summary', {}, facts([
-    ['Status', statusBadge(node.status)],
+    ['Presence', statusBadge(node.presence)],
+    ['Last seen', node.last_seen ? when(node.last_seen) : 'Never'],
     ['Group', group ? group.name : node.group_id ? `Unknown (${shortID(node.group_id)})` : 'Ungrouped'],
     ['Region', node.region], ['Provider', node.provider],
     ['Tags', node.tags.length ? h('div', {class: 'cell-tags'}, node.tags.map((tag) => h('span', {class: 'tag static'}, tag))) : null],
     ['Added', when(node.created_at)],
     ['Notes', node.notes]
-  ]), node.status === 'unknown' ? note('Unknown is the recorded inventory state. It does not mean the agent is offline.') : null);
-  if (!editable) return h('div', null, summary, note('Only administrators can edit node details.'));
+  ]), note('Presence may lag an accepted report by about 30 seconds.'));
+  const sample = latestPanel(node, latest);
+  if (!editable) return h('div', {class: 'stack'}, summary, sample, history, traffic, probes, note('Only administrators can edit node details.'));
 
   const name = input({name: 'name', required: true, value: node.name, id: 'node-name'});
   validateBytes(name, 1, 255, 'Node name');
@@ -83,7 +138,7 @@ function detailsTab(node, groups, editable) {
     invalidate('nodes');
     return `Saved ${result.name}.`;
   });
-  return h('div', {class: 'split'}, summary, panel('Edit details', {}, form));
+  return h('div', {class: 'stack'}, h('div', {class: 'split'}, summary, panel('Edit details', {}, form)), sample, history, traffic, probes);
 }
 
 function publicPreview() {
@@ -144,38 +199,4 @@ function publicTab(node, settings, editable) {
     return enabled.checked ? 'Public settings saved. Online status depends on valid agent reports.' : 'Public settings saved. The node is hidden from the public page.';
   });
   return h('div', {class: 'split'}, panel('Public page', {}, h('div', {class: 'stack'}, hidden, privacy, form)), previewPanel);
-}
-
-function configTab(node, config, editable) {
-  const values = facts([
-    ['Report interval', `${config.report_interval_seconds} seconds`],
-    ['Disk interval', `${config.disk_interval_seconds} seconds`],
-    ['Billing day', `Day ${config.billing_day} of each month`],
-    ['Traffic quota', h('span', {title: `${config.quota_bytes} bytes`}, formatBytes(config.quota_bytes))],
-    ['Network interfaces', config.interfaces.length ? config.interfaces.join('\n') : 'Default route'],
-    ['Disk paths', config.disk_paths.length ? config.disk_paths.join('\n') : 'Agent default']
-  ]);
-  const raw = h('details', {class: 'json-toggle'}, h('summary', null, 'Raw configuration'), h('pre', {class: 'code'}, JSON.stringify(config, null, 2)));
-  const revision = h('span', {class: 'revision'}, `Revision ${config.revision}`);
-  const lede = h('p', {class: 'lede'}, 'The agent receives saved values with its next report. Saving records the desired state; the console does not confirm that the agent applied it.');
-  if (!editable) return panel('Desired configuration', {action: revision}, h('div', {class: 'stack'}, lede, values, raw));
-
-  const controls = saveBar('Save configuration', 'config-save');
-  const billing = input({type: 'number', name: 'billing', min: 1, max: 28, required: true, value: config.billing_day, id: 'field-billing', inputMode: 'numeric'});
-  const form = h('form', {class: 'form'},
-    rangeField('Report interval (seconds)', 'report', config.report_interval_seconds, {min: 5, max: 60, step: 1, hint: 'How often the agent reports metrics, 5–60 seconds.'}),
-    rangeField('Disk interval (seconds)', 'disk', config.disk_interval_seconds, {min: 60, max: 3600, step: 60, hint: 'How often disk usage is collected, 60–3600 seconds.'}),
-    field('Billing day', billing, {hint: 'Day of the month a traffic cycle starts, 1–28.'}),
-    controls.bar);
-  editableForm(form, controls, async () => {
-    const result = await api(`/nodes/${encodeURIComponent(node.id)}/config`, {method: 'PATCH', body: {
-      report_interval_seconds: Number(form.elements.namedItem('report').value),
-      disk_interval_seconds: Number(form.elements.namedItem('disk').value),
-      billing_day: Number(billing.value)
-    }});
-    return `Configuration saved as revision ${result.revision}.`;
-  });
-  return h('div', {class: 'split'},
-    panel('Edit configuration', {action: revision}, h('div', {class: 'stack'}, lede, form)),
-    panel('Current values', {}, values, raw));
 }

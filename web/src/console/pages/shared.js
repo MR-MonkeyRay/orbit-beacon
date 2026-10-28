@@ -33,11 +33,12 @@ export const addNodeButton = () => (isAdmin() ? button('Add node', {icon: 'plus'
 export function auditItem(event, names, withDetails) {
   const verb = event.action.split('.').pop();
   const kind = /create|claim|enable/.test(verb) ? 'create' : /delete|revoke|disable/.test(verb) ? 'delete' : /^user\./.test(event.action) ? 'auth' : '';
-  const actor = event.actor_id ? names.get(event.actor_id) || shortID(event.actor_id) : 'System';
+  const agentActor = !event.actor_id && event.details?.actor_kind === 'agent';
+  const actor = event.actor_id ? names.get(event.actor_id) || shortID(event.actor_id) : agentActor ? 'Agent' : 'System';
   const target = event.target_id ? names.get(event.target_id) || shortID(event.target_id) : null;
   const details = withDetails ? h('details', {class: 'ev-details'}, h('summary', null, icon('right'), 'Details'),
     h('dl', null,
-      [['Action', event.action], ['Event', event.id], ['Actor', event.actor_id || 'None'], ['Target', event.target_id || 'None']]
+      [['Action', event.action], ['Event', event.id], ['Actor', event.actor_id || (agentActor ? 'Agent' : 'None')], ['Target', event.target_id || 'None']]
         .map(([label, value]) => [h('dt', null, label), h('dd', {class: 'mono'}, value)]),
       Object.entries(event.details || {}).map(([key, value]) => [h('dt', null, key), h('dd', null, typeof value === 'string' ? value : JSON.stringify(value))]))) : null;
   return h('li', null, h('span', {class: `dot ${kind}`}),

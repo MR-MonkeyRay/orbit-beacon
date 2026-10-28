@@ -1,7 +1,7 @@
 import {h} from '../shared/dom.js';
 
-export const STATUS = {online: 'Online', offline: 'Offline', unknown: 'Unknown', pending: 'Pending', disabled: 'Disabled'};
-export const STATUS_ORDER = ['online', 'offline', 'unknown', 'pending', 'disabled'];
+export const STATUS = {online: 'Online', offline: 'Offline', never: 'Never seen', unknown: 'Unknown', pending: 'Pending', disabled: 'Disabled'};
+export const STATUS_ORDER = ['online', 'offline', 'never', 'pending', 'disabled'];
 export const ROLE = {admin: 'Administrator', viewer: 'Viewer'};
 
 const ACTIONS = {
@@ -10,7 +10,9 @@ const ACTIONS = {
   'node.public_settings.patch': 'Public page settings saved', 'group.create': 'Group created', 'group.update': 'Group renamed',
   'group.delete': 'Group deleted', 'user.create': 'User created', 'user.patch': 'User updated', 'user.delete': 'User deleted',
   'user.password.change': 'Password changed', 'enrollment.create': 'Enrollment credential issued',
-  'enrollment.claim': 'Agent enrolled', 'enrollment.revoke': 'Enrollment credential revoked'
+  'enrollment.claim': 'Agent enrolled', 'enrollment.revoke': 'Enrollment credential revoked',
+  'session.create': 'Signed in', 'session.delete': 'Signed out',
+  'node.credential.revoke': 'Revoked agent credential'
 };
 
 export function describeAction(action) {
@@ -51,4 +53,38 @@ export function formatBytes(decimal) {
     const fraction = unit ? Number(remainder * 10n / 1024n) : 0;
     return `${value}${fraction ? `.${fraction}` : ''} ${units[unit]}`;
   } catch { return decimal; }
+}
+
+export function formatPercent(value) {
+  return Number.isFinite(value) ? `${Number(value.toFixed(1))}%` : 'Unavailable';
+}
+
+export function formatLoad(value) {
+  return Number.isFinite(value) && value >= 0 ? value.toFixed(2) : 'Unavailable';
+}
+
+export function formatDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return 'Unavailable';
+  const total = Math.floor(seconds);
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor(total % 86400 / 3600);
+  const minutes = Math.floor(total % 3600 / 60);
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m`;
+  return `${total}s`;
+}
+
+export function formatRate(bytesPerSecond) {
+  return Number.isFinite(bytesPerSecond) && bytesPerSecond >= 0 ? `${formatBytes(Math.round(bytesPerSecond))}/s` : 'Unavailable';
+}
+
+export function configStateLabel(config) {
+  if (!config) return 'Unavailable';
+  if (config.state === 'error') {
+    const revision = config.error?.revision ?? config.desired_revision;
+    return `Error: ${config.error?.code || 'unknown'}${revision ? ` (revision ${revision})` : ''}`;
+  }
+  if (config.state === 'pending') return `Pending revision ${config.desired_revision}`;
+  return `Applied revision ${config.applied_revision}`;
 }

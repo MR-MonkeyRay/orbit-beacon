@@ -1,7 +1,9 @@
 import {h, icon, reducedMotion} from '../../shared/dom.js';
-import {allNodes, ensureSession, groupsList} from '../api.js';
+import {allNodes, api, ensureSession, groupsList, invalidate, isAdmin} from '../api.js';
 import {STATUS, STATUS_ORDER, when} from '../format.js';
-import {button, emptyState, link, pageHead, statusBadge} from '../ui/components.js';
+import {busy, button, emptyState, link, pageHead, statusBadge} from '../ui/components.js';
+import {confirmDialog, modal} from '../ui/dialogs.js';
+import {toastError} from '../ui/feedback.js';
 import {input, select} from '../ui/forms.js';
 import {addNodeButton} from './shared.js';
 
@@ -43,9 +45,10 @@ function highlight(value, query) {
 export async function nodesPage() {
   await ensureSession();
   const [nodes, groups] = await Promise.all([allNodes(), groupsList()]);
+  const editable = isAdmin();
   const head = pageHead('Nodes', 'Every node in inventory, including pending and disabled ones. Select a node to edit its details, public page and agent configuration.', addNodeButton());
   if (nodes.length === 0) {
-    return h('div', null, head, h('div', {class: 'panel'}, emptyState('No nodes yet', 'Add a node, then enroll its agent with a credential issued through the management API.', addNodeButton())));
+    return h('div', null, head, h('div', {class: 'panel'}, emptyState('No nodes yet', 'Add a node, then use its Enroll agent tab to issue a credential for the agent.', addNodeButton())));
   }
 
   const filter = readFilter();
@@ -57,7 +60,7 @@ export async function nodesPage() {
   let frame = 0;
   search.addEventListener('input', () => {
     cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(() => { filter.q = search.value; filter.page = 0; update(); });
+    frame = requestAnimationFrame(() => { filter.q = search.value; filter.page = 0; update(true); });
   });
 
   const statusButtons = new Map(['', ...STATUS_ORDER].map((status) => [status, h('button', {type: 'button',
@@ -73,14 +76,20 @@ export async function nodesPage() {
     filter.sort = key;
     update();
   }}, label, icon('up')));
-  const headers = [sortable('name', 'Name'), sortable('status', 'Status'), h('th', {scope: 'col', class: 'hide-sm'}, 'Group'),
+  const selectAll = h('input', {type: 'checkbox', 'aria-label': 'Select all nodes on this page'});
+  const headers = [editable ? h('th', {scope: 'col', class: 'selection-cell'}, selectAll) : null,
+    sortable('name', 'Name'), sortable('status', 'Presence'), h('th', {scope: 'col', class: 'hide-sm'}, 'Last seen'), h('th', {scope: 'col', class: 'hide-sm'}, 'Group'),
     h('th', {scope: 'col', class: 'hide-sm'}, 'Location'), h('th', {scope: 'col', class: 'hide-sm'}, 'Tags'), sortable('created', 'Added')];
 
   const body = h('tbody');
   const summary = h('span', {'aria-live': 'polite'});
+  let summaryTimer;
   const turn = (delta) => {
+    const control = delta < 0 ? previous : next;
+    const restoreFocus = document.activeElement === control;
     filter.page += delta;
     update();
+    if (restoreFocus && control.disabled) (delta < 0 ? next : previous).focus();
     window.scrollTo({top: 0, behavior: reducedMotion.matches ? 'auto' : 'smooth'});
   };
   const previous = button('Previous', {icon: 'left', small: true, onClick: () => turn(-1)});
@@ -94,33 +103,66 @@ export async function nodesPage() {
     search.focus();
   };
 
+  const selected = new Set();
+  let visibleIDs = new Set();
+  let batchBusy = false;
+  const selectionCount = h('span', {class: 'selection-count', 'aria-live': 'polite'});
+  const disableSelected = button('Disable', {small: true, onClick: () => runBatch('disable')});
+  const enableSelected = button('Enable', {small: true, onClick: () => runBatch('enable')});
+  const deleteSelected = button('Delete', {small: true, variant: 'danger', onClick: () => runBatch('delete')});
+  const actionBar = h('div', {class: 'bulk-actions', hidden: true}, selectionCount, disableSelected, enableSelected, deleteSelected);
+
+  const updateSelection = () => {
+    const count = selected.size;
+    selectionCount.textContent = `${count} node${count === 1 ? '' : 's'} selected`;
+    actionBar.hidden = count === 0;
+    const visibleSelected = [...visibleIDs].filter((id) => selected.has(id)).length;
+    selectAll.checked = visibleIDs.size > 0 && visibleSelected === visibleIDs.size;
+    selectAll.indeterminate = visibleSelected > 0 && visibleSelected < visibleIDs.size;
+  };
+  selectAll.addEventListener('change', () => {
+    for (const id of visibleIDs) {
+      if (selectAll.checked) selected.add(id);
+      else selected.delete(id);
+    }
+    for (const checkbox of body.querySelectorAll('input[data-node-id]')) checkbox.checked = selected.has(checkbox.dataset.nodeId);
+    updateSelection();
+  });
+
   const row = (node, query) => h('tr', null,
+    editable ? h('td', {class: 'selection-cell'}, h('input', {type: 'checkbox', checked: selected.has(node.id),
+      dataset: {nodeId: node.id}, 'aria-label': `Select ${node.name}`, onchange: (event) => {
+        if (event.currentTarget.checked) selected.add(node.id);
+        else selected.delete(node.id);
+        updateSelection();
+      }})) : null,
     h('td', {class: 'name'}, link(`/nodes/${node.id}`, highlight(node.name, query))),
-    h('td', null, statusBadge(node.status)),
+    h('td', null, statusBadge(node.presence)),
+    h('td', {class: 'hide-sm muted'}, node.last_seen ? when(node.last_seen) : 'Never'),
     h('td', {class: 'hide-sm'}, node.group_id ? groupNames.get(node.group_id) || h('span', {class: 'muted'}, 'Unknown') : h('span', {class: 'muted'}, 'None')),
     h('td', {class: 'hide-sm'}, [node.region, node.provider].filter(Boolean).join(', ') || h('span', {class: 'muted'}, 'None')),
     h('td', {class: 'hide-sm'}, h('div', {class: 'cell-tags'}, node.tags.slice(0, 3).map((tag) => h('span', {class: 'tag static'}, tag)),
       node.tags.length > 3 ? h('span', {class: 'muted'}, `+${node.tags.length - 3}`) : null)),
     h('td', {class: 'muted'}, when(node.created_at)));
 
-  function update() {
+  function update(debounceSummary = false) {
     const query = filter.q.trim().toLowerCase();
     const scoped = indexed.filter(({node, text}) => (!query || text.includes(query))
       && (!filter.group || (filter.group === 'none' ? !node.group_id : node.group_id === filter.group))).map(({node}) => node);
     for (const [status, control] of statusButtons) {
-      const count = status ? scoped.filter((node) => node.status === status).length : scoped.length;
+      const count = status ? scoped.filter((node) => node.presence === status).length : scoped.length;
       control.lastElementChild.textContent = count;
       control.setAttribute('aria-pressed', String(filter.status === status));
       control.hidden = Boolean(status) && count === 0 && filter.status !== status;
     }
     const sign = direction() === 'asc' ? 1 : -1;
-    const rows = scoped.filter((node) => !filter.status || node.status === filter.status).sort((a, b) => {
+    const rows = scoped.filter((node) => !filter.status || node.presence === filter.status).sort((a, b) => {
       const order = filter.sort === 'name' ? a.name.localeCompare(b.name, undefined, {numeric: true, sensitivity: 'base'})
-        : filter.sort === 'status' ? STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status)
+        : filter.sort === 'status' ? STATUS_ORDER.indexOf(a.presence) - STATUS_ORDER.indexOf(b.presence)
           : a.created_at.localeCompare(b.created_at);
       return order * sign || a.id.localeCompare(b.id);
     });
-    for (const th of headers) {
+    for (const th of headers.filter(Boolean)) {
       if (th.dataset.sort === filter.sort) th.setAttribute('aria-sort', sign === 1 ? 'ascending' : 'descending');
       else th.removeAttribute('aria-sort');
     }
@@ -128,23 +170,90 @@ export async function nodesPage() {
     filter.page = Math.min(filter.page, pages - 1);
     const start = filter.page * PAGE_SIZE;
     const visible = rows.slice(start, start + PAGE_SIZE);
+    visibleIDs = new Set(visible.map((node) => node.id));
+    for (const id of selected) if (!visibleIDs.has(id)) selected.delete(id);
     body.replaceChildren(...(visible.length ? visible.map((node) => row(node, query))
-      : [h('tr', null, h('td', {colspan: 6}, emptyState('No nodes match these filters', 'Try a different search, status or group.', button('Clear filters', {onClick: clear}))))]));
-    summary.textContent = rows.length === 0 ? 'No matching nodes'
+      : [h('tr', null, h('td', {colspan: editable ? 8 : 7}, emptyState('No nodes match these filters', 'Try a different search, presence or group.', button('Clear filters', {onClick: clear}))))]));
+    updateSelection();
+    const summaryText = rows.length === 0 ? 'No matching nodes'
       : `Showing ${start + 1}–${start + visible.length} of ${rows.length}${rows.length !== nodes.length ? ` (filtered from ${nodes.length})` : ''}`;
+    clearTimeout(summaryTimer);
+    if (debounceSummary) summaryTimer = setTimeout(() => { summary.textContent = summaryText; }, 400);
+    else summary.textContent = summaryText;
     previous.disabled = filter.page === 0;
     next.disabled = filter.page >= pages - 1;
     pager.hidden = pages <= 1;
     writeFilter(filter);
   }
 
+  async function typedDelete(count) {
+    const expected = `delete ${count} nodes`;
+    const confirmation = h('input', {class: 'input', autocomplete: 'off', spellcheck: 'false', 'aria-label': `Type ${expected} to confirm`});
+    const confirm = button('Delete nodes', {variant: 'danger', className: 'solid', disabled: true});
+    const {closed} = modal(`Delete ${count} nodes?`, (close) => {
+      confirmation.addEventListener('input', () => { confirm.disabled = confirmation.value !== expected; });
+      confirm.addEventListener('click', () => close('confirm'));
+      return h('div', null,
+        h('div', {class: 'dialog-body'}, h('p', null, 'This permanently deletes the selected nodes and their recorded data.'),
+          h('p', null, 'Type ', h('strong', null, expected), ' to confirm.'), confirmation),
+        h('div', {class: 'dialog-foot'}, button('Cancel', {onClick: () => close('dismiss')}), confirm));
+    });
+    return await closed === 'confirm';
+  }
+
+  function showResults(action, results, names) {
+    const succeeded = results.filter((result) => result.status === 'succeeded').length;
+    const failed = results.length - succeeded;
+    const label = `${action[0].toUpperCase()}${action.slice(1)}`;
+    return modal(`${label} results`, (close) => h('div', null,
+      h('div', {class: 'dialog-body'},
+        h('p', null, `${succeeded} succeeded${failed ? `; ${failed} failed` : '.'}`),
+        h('ul', null, results.map((result) => h('li', null,
+          h('strong', null, names.get(result.node_id) || result.node_id),
+          ` — ${result.status}${result.error_code ? ` (${result.error_code})` : ''}`)))),
+      h('div', {class: 'dialog-foot'}, button('Close', {variant: 'primary', onClick: () => close('done')})))).closed;
+  }
+
+  async function runBatch(action) {
+    if (batchBusy) return;
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    batchBusy = true;
+    const confirmed = action === 'delete' ? await typedDelete(ids.length) : await confirmDialog({
+      title: `${action === 'disable' ? 'Disable' : 'Enable'} ${ids.length} node${ids.length === 1 ? '' : 's'}?`,
+      message: action === 'disable'
+        ? 'Disabled nodes stop accepting agent reports and credential recovery until they are enabled again.'
+        : 'Selected nodes will accept their agents again.',
+      confirm: action === 'disable' ? 'Disable nodes' : 'Enable nodes'
+    });
+    if (!confirmed) { batchBusy = false; return; }
+    const controls = [disableSelected, enableSelected, deleteSelected];
+    controls.forEach((control) => busy(control, true));
+    const names = new Map(nodes.map((node) => [node.id, node.name]));
+    try {
+      const response = await api('/nodes/batch', {method: 'POST', body: {node_ids: ids, action, ...(action === 'delete' ? {confirm: true} : {})}});
+      invalidate('nodes');
+      // Reload the authoritative statuses after per-node transactions complete;
+      // the batch endpoint may preserve a prior status when enabling a node.
+      try {
+        const fresh = await allNodes();
+        nodes.splice(0, nodes.length, ...fresh);
+        indexed.splice(0, indexed.length, ...fresh.map((node) => ({node, text: searchText(node)})));
+      } catch {}
+      selected.clear();
+      update();
+      await showResults(action, response.results, names);
+    } catch (error) { toastError(error); }
+    finally { controls.forEach((control) => busy(control, false)); batchBusy = false; }
+  }
+
   const table = h('div', {class: 'panel'},
     h('div', {class: 'toolbar'},
       h('div', {class: 'search'}, icon('search'), search, h('kbd', null, '/')),
-      h('div', {class: 'segmented', role: 'group', 'aria-label': 'Filter by status'}, [...statusButtons.values()]),
+      h('div', {class: 'segmented', role: 'group', 'aria-label': 'Filter by presence'}, [...statusButtons.values()]),
       groupSelect),
-    h('div', {class: 'table-wrap'}, h('table', {class: 'table'}, h('caption', {class: 'sr'}, 'Nodes'), h('thead', null, h('tr', null, headers)), body)),
-    h('div', {class: 'table-foot'}, summary, pager));
+    h('div', {class: 'table-wrap'}, h('table', {class: 'table'}, h('caption', {class: 'sr'}, 'Nodes'), h('thead', null, h('tr', null, headers.filter(Boolean))), body)),
+    h('div', {class: 'table-foot'}, summary, pager), editable ? actionBar : null);
   update();
   return h('div', null, head, table);
 }

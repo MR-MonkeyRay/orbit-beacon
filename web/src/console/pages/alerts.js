@@ -1,10 +1,25 @@
 import {h} from '../../shared/dom.js';
-import {ensureSession} from '../api.js';
-import {emptyState, linkButton, pageHead} from '../ui/components.js';
+import {allNodes, api, ensureSession, getNavigationSignal, groupsList} from '../api.js';
+import {refresh} from '../router.js';
+import {pageHead} from '../ui/components.js';
+import {tabSet} from '../ui/tabs.js';
+import {eventsPanel} from './alert-events.js';
+import {rulesPanel} from './alert-rules.js';
+import {channelsPanel, deliveriesPanel} from './notification-channels.js';
 
 export async function alertsPage() {
+  const signal = getNavigationSignal();
   await ensureSession();
-  return h('div', null, pageHead('Alerts'), h('div', {class: 'panel'},
-    emptyState('Alerts are not available yet', 'Alert rules and notifications are not part of this release. Node inventory and the public status page are available today.',
-      linkButton('/nodes', 'Go to nodes'))));
+  const [{rules}, {channels}, groups, nodes] = await Promise.all([
+    api('/alert-rules', {signal}), api('/notification-channels', {signal}), groupsList(), allNodes()
+  ]);
+  const context = {rules, channels, groups, nodes, signal, saved: refresh};
+  return h('div', null,
+    pageHead('Alerts', 'Firing alerts, event history, rules and notification channels.'),
+    tabSet([
+      {id: 'active', label: 'Active', icon: 'alert', build: () => eventsPanel('firing', signal)},
+      {id: 'history', label: 'History', icon: 'list', build: () => eventsPanel('all', signal)},
+      {id: 'rules', label: 'Rules', icon: 'sliders', build: () => rulesPanel(context)},
+      {id: 'channels', label: 'Channels', icon: 'bell', build: () => h('div', null, channelsPanel(context), deliveriesPanel(channels, signal))}
+    ], 'Alert sections'));
 }
