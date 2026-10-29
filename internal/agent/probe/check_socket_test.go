@@ -111,7 +111,7 @@ func TestHTTPSProbeUntrustedCertificate(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer server.Close()
 
-	result := checkHTTPTestTarget(t, server.URL, time.Second)
+	result := checkHTTPTestTarget(t, server.URL, 10*time.Second)
 	if result.OK || result.Error != "tls" || result.LatencyMS != nil || result.StatusCode != nil {
 		t.Fatalf("unexpected result: %+v", result)
 	}

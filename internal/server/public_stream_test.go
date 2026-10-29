@@ -167,7 +167,11 @@ func (w *streamRecorder) FlushError() error {
 	err := w.flushErr
 	w.mu.Unlock()
 	if err == nil {
-		w.flushed <- snapshot
+		// The body retains every frame; idle observers must not block the handler.
+		select {
+		case w.flushed <- snapshot:
+		default:
+		}
 	}
 	return err
 }
