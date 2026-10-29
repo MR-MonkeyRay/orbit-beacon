@@ -1,7 +1,7 @@
 import {h, icon} from '../../shared/dom.js';
-import {allNodes, api, ensureSession, getNavigationSignal, groupsList, invalidate, nameLookup, session, updateUser, usersList} from '../api.js';
+import {allNodes, api, ensureSession, getNavigationSignal, groupsList, invalidate, invalidateSession, nameLookup, session, updateUser, usersList} from '../api.js';
 import {when} from '../format.js';
-import {refresh} from '../router.js';
+import {ignoreNavigationCancellation, refresh} from '../router.js';
 import {busy, button, emptyState, facts, iconButton, link, pageHead, panel} from '../ui/components.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
@@ -51,8 +51,7 @@ function accountTab() {
   onSubmit(form, submit, async () => {
     try {
       await api('/me/password', {method: 'PATCH', body: {old_password: oldPassword.value, new_password: newPassword.value}});
-      session.csrf = '';
-      location.assign('/login?password-changed');
+      invalidateSession('password');
     } catch (error) {
       if (error.status === 400 && error.code === 'invalid_old_password') {
         oldPassword.showError('The current password is incorrect.');
@@ -111,7 +110,7 @@ function administratorsTab(users) {
     if (!confirmed) return;
     try {
       await api(`/users/${encodeURIComponent(item.id)}`, {method: 'DELETE'});
-      if (self(item)) { location.assign('/login'); return; }
+      if (self(item)) { invalidateSession('deleted'); return; }
       invalidate('users');
       await refresh();
       toast(`Deleted ${item.username}.`);
@@ -119,7 +118,7 @@ function administratorsTab(users) {
       toastError(error);
       if (error.code === 'last_administrator') {
         invalidate('users');
-        await refresh();
+        await refresh().catch(ignoreNavigationCancellation);
       }
     }
   };

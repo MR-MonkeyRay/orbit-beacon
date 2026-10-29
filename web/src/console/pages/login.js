@@ -1,6 +1,6 @@
 import {h, icon, svg} from '../../shared/dom.js';
-import {api, setSession} from '../api.js';
-import {go} from '../router.js';
+import {api, revalidateSession, setSession} from '../api.js';
+import {go, ignoreNavigationCancellation} from '../router.js';
 import {brandMark} from '../shell.js';
 import {busy, button, callout} from '../ui/components.js';
 import {field, input, passwordInput, validateBytes} from '../ui/forms.js';
@@ -28,7 +28,7 @@ function nextPath() {
 
 export async function loginPage() {
   try {
-    setSession(await api('/me', {noRedirect: true}));
+    await revalidateSession();
     return nextPath();
   } catch { /* not signed in */ }
   const errorBox = h('div', {class: 'form-error', role: 'alert', hidden: true});
@@ -45,8 +45,9 @@ export async function loginPage() {
     busy(submit, true);
     try {
       setSession(await api('/session', {method: 'POST', body: {username: username.value, password: password.value}, noRedirect: true}));
-      go(nextPath(), {replace: true});
+      void go(nextPath(), {replace: true}).catch(ignoreNavigationCancellation);
     } catch (error) {
+      if (!form.isConnected || error.name === 'AbortError') return;
       const message = error.status === 401 ? 'Username or password is incorrect.'
         : error.status === 429 ? 'Too many sign-in attempts. Wait a moment and try again.' : error.message;
       errorBox.replaceChildren(icon('alert'), h('span', null, message));

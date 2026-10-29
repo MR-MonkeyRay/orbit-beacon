@@ -3,6 +3,12 @@
 .page-head h1{font-size:clamp(26px,3vw,32px);line-height:1.15;font-weight:700;letter-spacing:-.03em;outline:none}
 .page-head p{margin-top:6px;color:var(--ink-2);max-width:62ch}
 .head-actions{display:flex;flex-wrap:wrap;gap:8px}
+.live-status{display:inline-flex;align-items:center;gap:7px;min-height:32px;padding:0 10px;border:1px solid var(--line);border-radius:999px;color:var(--ink-2);font-size:12.5px;font-weight:600;white-space:nowrap}
+.live-status::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--warn)}
+.live-status[data-state="live"]::before{background:var(--ok)}
+.live-status[data-state="stale"]::before{background:var(--ink-3)}
+.detail-actions{display:flex;flex-direction:column;align-items:flex-end;gap:10px}
+.detail-actions>.live-status{align-self:flex-end}
 .back{display:inline-flex;align-items:center;gap:4px;margin-bottom:12px;color:var(--ink-3);font-size:14px;text-decoration:none}
 .back:hover{color:var(--ink)}
 .back .icon{width:16px;height:16px}
@@ -47,6 +53,7 @@
 /* Status badges */
 .badge.pending{color:var(--pend);background:var(--pend-bg)}
 .badge.disabled{color:var(--off);background:var(--off-bg)}
+.badge.deleted{color:var(--off);background:var(--off-bg)}
 /* Toolbar + table */
 .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line)}
 .search{position:relative;flex:1 1 260px;max-width:420px}
@@ -71,6 +78,7 @@
 .table td{padding:12px 16px;border-bottom:1px solid var(--line);vertical-align:middle}
 .table tbody tr{transition:background-color .12s}
 .table tbody tr:hover{background:var(--panel-2)}
+.table tbody tr.selected{background:var(--orbit-soft)}
 .table tbody tr:last-child td{border-bottom:0}
 .table .name a{color:var(--ink);font-weight:600;text-decoration:none}
 .table .name a::after{content:"";position:absolute;inset:0}
@@ -82,6 +90,11 @@
 .cell-tags .tag{font-size:12px;padding:1px 8px;animation:none}
 .table-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px;border-top:1px solid var(--line);font-size:13px;color:var(--ink-3)}
 .pager{display:flex;align-items:center;gap:6px}
+.live-changes{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;width:100%;color:var(--ink-2)}
+.live-change{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px}
+.node-deleted .name a{color:var(--ink-3);pointer-events:none}
+.node-deleted .name a::after{content:none}
+.node-deleted td{color:var(--ink-3)}
 mark{background:color-mix(in srgb,var(--beacon) 40%,transparent);color:inherit;border-radius:3px;padding:0 1px}
 /* Empty + error + skeleton */
 .empty{display:grid;justify-items:center;gap:10px;padding:56px 24px;text-align:center;color:var(--ink-2)}

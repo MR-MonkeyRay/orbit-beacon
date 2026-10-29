@@ -41,6 +41,9 @@ export class TestElement extends EventTarget {
   get isConnected() { return this.tagName === 'body' || Boolean(this.parentElement?.isConnected); }
   set textContent(value) { this.replaceChildren(String(value)); }
   get textContent() { return this.children.map((child) => child instanceof TestElement ? child.textContent : child).join(''); }
+  get firstElementChild() { return this.children.find((child) => child instanceof TestElement) || null; }
+  get lastElementChild() { return this.children.findLast((child) => child instanceof TestElement) || null; }
+  setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; }
   contains(target) { return this === target || this.children.some((child) => child instanceof TestElement && child.contains(target)); }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   querySelectorAll(selector) {
@@ -58,6 +61,7 @@ export class TestElement extends EventTarget {
       if (part.startsWith('#')) return element.id === part.slice(1);
       const dataField = part.match(/^\[data-field="(.+)"\]$/);
       if (dataField) return element.dataset.field === dataField[1];
+      if (part === 'input[data-node-id]') return element.tagName === 'input' && element.dataset.nodeId !== undefined;
       return element.tagName === part;
     }));
   }
@@ -84,7 +88,7 @@ export function installDOM() {
   Object.assign(document, {body, hidden: false, activeElement: null,
     createElement: (tag) => new TestElement(tag), createElementNS: (_ns, tag) => new TestElement(tag),
     getElementById: (id) => elements(body).find((element) => element.id === id) || null,
-    querySelector: (selector) => body.querySelector(selector), documentElement: new TestElement('html')});
+    querySelector: (selector) => body.querySelector(selector), querySelectorAll: (selector) => body.querySelectorAll(selector), documentElement: new TestElement('html')});
   const values = {CSS: {escape: (value) => value}, Node: TestElement, document, localStorage: {getItem: () => '24h', setItem() {}},
     location: {pathname: '/alerts', search: '', hash: ''},
     MutationObserver: class {

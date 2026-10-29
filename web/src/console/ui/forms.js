@@ -106,6 +106,7 @@ export function onSubmit(form, submitButton, action, errorBox) {
     try {
       await action();
     } catch (error) {
+      if (!form.isConnected) return;
       applyFieldErrors(form, error);
       if (errorBox) {
         errorBox.replaceChildren(icon('alert'), h('span', null, error.message, error.requestID ? h('small', {class: 'muted'}, ` (request ${shortID(error.requestID)})`) : null));

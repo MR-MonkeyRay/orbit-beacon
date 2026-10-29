@@ -229,19 +229,9 @@ func scanNode(row scanner, now time.Time) (Node, error) {
 		}
 		node.LastSeen = &seen
 	}
-	// Ingest coalesces durable last_seen writes, so presence may lag by ~30s.
-	switch {
-	case node.Status == "disabled":
-		node.Presence = "disabled"
-	case node.Status == "pending" || !hasCredential.Bool:
-		node.Presence = "pending"
-	case node.LastSeen == nil:
-		node.Presence = "never"
-	case node.LastSeen.After(now) || now.Sub(*node.LastSeen) > OnlineWindow:
-		node.Presence = "offline"
-	default:
-		node.Presence = "online"
-	}
+	// HTTP inventory uses durable observations; live reads overlay only a
+	// strictly matching in-memory process identity.
+	node.Presence = Presence(node.Status, hasCredential.Bool, node.LastSeen, now)
 	var system v1.System
 	if json.Unmarshal([]byte(systemJSON), &system) == nil {
 		node.AgentVersion = system.AgentVersion

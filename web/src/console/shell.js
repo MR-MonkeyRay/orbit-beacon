@@ -7,10 +7,16 @@ import {initNotifications, syncNotifications} from './notifications.js';
 
 // Sidebar navigation, account block and the mobile drawer. The markup is static
 // in index.html so navigation paints before the script loads.
-const sidebar = document.getElementById('sidebar');
-const account = document.getElementById('account');
-const menuButton = document.getElementById('menu');
-const scrim = document.getElementById('scrim');
+let sidebar;
+let account;
+let menuButton;
+let scrim;
+function shellElements() {
+  sidebar = document.getElementById('sidebar');
+  account = document.getElementById('account');
+  menuButton = document.getElementById('menu');
+  scrim = document.getElementById('scrim');
+}
 const narrow = matchMedia('(max-width: 860px)');
 
 const themeNames = {system: 'System', light: 'Light', dark: 'Dark'};
@@ -18,6 +24,7 @@ const themeNames = {system: 'System', light: 'Light', dark: 'Dark'};
 function syncMenuInert() { sidebar.inert = narrow.matches && !sidebar.classList.contains('open'); }
 
 function renderAccount() {
+  shellElements();
   if (!session.user) { account.replaceChildren(); return; }
   const exit = button('Sign out', {id: 'sign-out', icon: 'logout', small: true, onClick: async () => {
     busy(exit, true);
@@ -33,6 +40,7 @@ function renderAccount() {
 // Marks the active section; the pill element carries a view-transition-name so
 // it glides between items during page transitions.
 export function setActiveNav(nav) {
+  shellElements();
   let pill = sidebar.querySelector('.nav-pill');
   for (const anchor of sidebar.querySelectorAll('[data-nav]')) {
     if (anchor.dataset.nav === nav) {
@@ -54,6 +62,7 @@ function openMenu() {
 }
 
 export function closeMenu(restoreFocus = false) {
+  shellElements();
   if (!sidebar.classList.contains('open')) return;
   sidebar.classList.remove('open');
   syncMenuInert();
@@ -62,9 +71,10 @@ export function closeMenu(restoreFocus = false) {
   if (restoreFocus) menuButton.focus();
 }
 
-export function brandMark() { return sidebar.querySelector('.mark').cloneNode(true); }
+export function brandMark() { shellElements(); return sidebar.querySelector('.mark').cloneNode(true); }
 
 export function initShell() {
+  shellElements();
   syncMenuInert();
   narrow.addEventListener('change', syncMenuInert);
   onSession(renderAccount);

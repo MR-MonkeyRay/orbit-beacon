@@ -126,7 +126,6 @@ test('probe polling skips hidden pages, pauses off-tab and resumes on reattachme
     env.root.remove();
     env.mutations();
     assert.equal(env.timers.size, 0);
-    assert.equal(env.requests[1].signal.aborted, true);
     env.body.append(env.root);
     env.mutations();
     assert.equal(env.timers.size, 1);

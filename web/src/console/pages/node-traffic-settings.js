@@ -17,7 +17,7 @@ export function quotaToBytes(value, unit = 'bytes') {
   return {ok: true, value: bytes.toString()};
 }
 
-export function trafficSettingsPanel(id, settings, onSaved, signal) {
+export function trafficSettingsPanel(id, settings, onSaved, signal, isDeleted = () => false) {
   let saved = settings;
   const quota = input({type: 'number', name: 'quota_value', min: 0, step: 1, required: true, value: settings.quota_bytes,
     inputMode: 'numeric', autocomplete: 'off', id: 'field-quota', dataset: {field: 'quota_bytes'}});
@@ -50,12 +50,20 @@ export function trafficSettingsPanel(id, settings, onSaved, signal) {
   };
   restore();
   trackDirty(form, controls);
-  controls.discard.addEventListener('click', () => { restore(); form.syncDirty(); });
+  const syncDirty = form.syncDirty;
+  form.syncDirty = () => {
+    syncDirty();
+    if (isDeleted()) for (const control of form.querySelectorAll('button')) control.disabled = true;
+  };
+  controls.discard.addEventListener('click', () => { if (!isDeleted()) { restore(); form.syncDirty(); } });
   onSubmit(form, controls.save, async () => {
+    if (isDeleted()) return;
     const result = quotaToBytes(quota.value, quotaUnit.value);
     if (!result.ok) { quota.setCustomValidity(result.error); throw new Error(result.error); }
-    saved = await api(`/nodes/${encodeURIComponent(id)}/traffic-settings`, {method: 'PATCH', signal,
+    const response = await api(`/nodes/${encodeURIComponent(id)}/traffic-settings`, {method: 'PATCH', signal,
       body: {billing_day: Number(billing.value), quota_bytes: result.value}});
+    if (isDeleted()) return;
+    saved = response;
     restore();
     form.markClean();
     toast('Billing settings saved.');

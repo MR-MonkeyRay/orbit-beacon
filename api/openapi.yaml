@@ -232,6 +232,115 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Error'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/live:
+    get:
+      operationId: getConsoleLive
+      description: |
+        Authenticated read-only snapshot using the same frame and Server cadence
+        as the public transports. Omit node_id for compact states of the complete
+        inventory; provide it for one node's detail, latest sample and observed
+        runtime. Fleet reception times merge current-identity in-memory reports
+        with durable observations, without decoding every node's full report.
+        A deleted detail is a successful snapshot with node/latest/runtime null;
+        an existing node without a current sample has node present and latest null.
+        No subscriptions, replay, delta or Agent configuration writes are accepted.
+      parameters:
+        - $ref: '#/components/parameters/LiveNodeID'
+      responses:
+        '200':
+          description: Current authenticated fleet or detail snapshot.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConsoleSnapshotFrame'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '405': {$ref: '#/components/responses/Error'}
+        '503':
+          description: Snapshot identity changed during projection/encoding; code is snapshot_busy. No obsolete payload is returned.
+          headers:
+            Retry-After:
+              schema: {type: string, pattern: '^[1-9][0-9]*$'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/live/stream:
+    get:
+      operationId: streamConsoleLive
+      description: |
+        Cookie-authenticated SSE; every event is message with a ConsoleLiveFrame.
+        Data selection is identical to GET /api/v1/live. The first snapshot is
+        immediate; changes coalesce to web_update_interval_seconds, while quiet
+        streams send only a heartbeat every ten seconds. Sample times never tick.
+        The session is checked before every snapshot and heartbeat. Expiry,
+        revocation or account deletion emits error:unauthenticated and terminates;
+        the browser must clear private state, not continue ordinary fallback.
+        Stream lifetime is the earlier of session expiry and fifteen minutes.
+        Admission, interrupted writes and shutdown tracking are shared with public
+        SSE/WS: four per resolved IP and 200 globally. Previously delivered data
+        cannot be recalled, and a disconnected peer may receive no terminal frame.
+      parameters:
+        - $ref: '#/components/parameters/LiveNodeID'
+      responses:
+        '200':
+          description: Unbuffered read-only authenticated event stream.
+          headers:
+            X-Accel-Buffering:
+              schema: {type: string, const: 'no'}
+          content:
+            text/event-stream:
+              schema: {type: string, description: Each message data matches ConsoleLiveFrame.}
+              example: |
+                event: message
+                data: {"type":"heartbeat","server_time":"2026-10-28T12:00:10Z","update_interval_seconds":10}
+
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '405': {$ref: '#/components/responses/Error'}
+        '503':
+          description: Shared stream capacity unavailable; code is stream_busy.
+          headers:
+            Retry-After:
+              schema: {type: string, pattern: '^[1-9][0-9]*$'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/live/ws:
+    get:
+      operationId: websocketConsoleLive
+      description: |
+        Cookie-authenticated read-only WebSocket with ConsoleLiveFrame text
+        messages, the same selection, pacing, per-frame authentication and expiry
+        as SSE. Raw Origin must exactly equal the configured public_url before
+        upgrade. Compression is disabled, read limit is 1 KiB, application writes
+        are rejected and each write has a ten-second deadline. Shared admission
+        and shutdown include hijacked sockets.
+
+        Browser APIs do not expose the rejected handshake's HTTP status. Before
+        falling back from an unopened WS the console unconditionally GETs /me;
+        an invalid session is terminal, not a transport availability failure.
+      parameters:
+        - $ref: '#/components/parameters/LiveNodeID'
+        - $ref: '#/components/parameters/Origin'
+      responses:
+        '101':
+          description: HTTP/1.1 upgrade accepted; subsequent text messages match ConsoleLiveFrame.
+          x-websocket-message-schema:
+            $ref: '#/components/schemas/ConsoleLiveFrame'
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '405': {$ref: '#/components/responses/Error'}
+        '503':
+          description: Shared stream capacity unavailable; code is stream_busy.
+          headers:
+            Retry-After:
+              schema: {type: string, pattern: '^[1-9][0-9]*$'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/session:
     post:
       operationId: login
@@ -1808,6 +1917,12 @@ components:
       scheme: bearer
       description: Per-node credential, stored only as SHA-256 server-side.
   parameters:
+    LiveNodeID:
+      name: node_id
+      in: query
+      required: false
+      description: Omit for fleet states; provide one UUID for detail. Duplicate and unknown query parameters are invalid.
+      schema: {type: string, format: uuid}
     Origin:
       name: Origin
       in: header
@@ -2627,6 +2742,67 @@ components:
     PublicLiveFrame:
       oneOf:
         - {$ref: '#/components/schemas/PublicSnapshotFrame'}
+        - {$ref: '#/components/schemas/LiveHeartbeatFrame'}
+        - {$ref: '#/components/schemas/LiveCloseFrame'}
+        - {$ref: '#/components/schemas/LiveErrorFrame'}
+    ConsoleFleetState:
+      type: object
+      additionalProperties: false
+      required: [nodes]
+      properties:
+        nodes:
+          type: array
+          description: Complete compact inventory, including pending, never-reported, offline and disabled nodes; empty is [].
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, status, presence, last_seen, agent_version]
+            properties:
+              id: {$ref: '#/components/schemas/Node/properties/id'}
+              status: {$ref: '#/components/schemas/Node/properties/status'}
+              presence: {$ref: '#/components/schemas/Node/properties/presence'}
+              last_seen:
+                type: [string, 'null']
+                format: date-time
+                description: Newest known current-identity server reception, including coalesced in-memory reports; null before reporting or after identity reset.
+              agent_version: {$ref: '#/components/schemas/Node/properties/agent_version'}
+    ConsoleDetailState:
+      type: object
+      additionalProperties: false
+      required: [node, latest, runtime]
+      properties:
+        node:
+          oneOf:
+            - {$ref: '#/components/schemas/Node'}
+            - {type: 'null'}
+          description: Null only when the inventory node has been deleted.
+        latest:
+          oneOf:
+            - allOf:
+                - {$ref: '#/components/schemas/LatestSampleView'}
+              unevaluatedProperties: false
+            - {type: 'null'}
+          description: Latest accepted process-local sample; null is not a deletion. No credentials or process identity.
+        runtime:
+          oneOf:
+            - {$ref: '#/components/schemas/RuntimeSettings'}
+            - {type: 'null'}
+          description: Current-identity last observed Agent-owned runtime; null before reporting or after identity reset.
+    ConsoleSnapshotFrame:
+      allOf:
+        - {$ref: '#/components/schemas/LiveFrameClock'}
+        - type: object
+          required: [data]
+          properties:
+            type: {const: snapshot}
+            data:
+              oneOf:
+                - {$ref: '#/components/schemas/ConsoleFleetState'}
+                - {$ref: '#/components/schemas/ConsoleDetailState'}
+      unevaluatedProperties: false
+    ConsoleLiveFrame:
+      oneOf:
+        - {$ref: '#/components/schemas/ConsoleSnapshotFrame'}
         - {$ref: '#/components/schemas/LiveHeartbeatFrame'}
         - {$ref: '#/components/schemas/LiveCloseFrame'}
         - {$ref: '#/components/schemas/LiveErrorFrame'}

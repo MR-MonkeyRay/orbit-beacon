@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/ingest"
 )
 
@@ -249,10 +250,26 @@ func equalLiveTime(a, b *time.Time) bool {
 	return a == b || a != nil && b != nil && a.Equal(*b)
 }
 
-// runPublicLive is deliberately a narrow page sender, shared by SSE and WS.
-// The subscription precedes the first query so a withdrawal cannot fall in the
-// gap between initial snapshot and waiting for notifications.
+// liveSource keeps only projection, semantic equality and optional private
+// authentication in the shared read-only sender. Transport policy stays here.
+type liveSource[T any] struct {
+	snapshot     func(context.Context) (T, uint64, error)
+	equal        func(T, T) bool
+	authenticate func(context.Context) error
+}
+
 func (h *handler) runPublicLive(ctx context.Context, request context.Context, stream *liveStream, limit, offset int, send func(context.Context, []byte) error) {
+	runLive(h, ctx, request, stream, liveSource[ingest.PublicPage]{
+		snapshot: func(ctx context.Context) (ingest.PublicPage, uint64, error) {
+			return h.publicSnapshotVersion(ctx, limit, offset)
+		},
+		equal: publicPagesEqual,
+	}, send)
+}
+
+// Subscribe before the first query: identity/visibility withdrawal cannot fall
+// in the gap between the initial projection and waiting for notifications.
+func runLive[T any](h *handler, ctx context.Context, request context.Context, stream *liveStream, source liveSource[T], send func(context.Context, []byte) error) {
 	visibility, visibilityChanged := h.nodes.PublicSafetyChanges()
 	ctx, cancel := context.WithCancel(ctx)
 	watchDone := make(chan struct{})
@@ -271,13 +288,13 @@ func (h *handler) runPublicLive(ctx context.Context, request context.Context, st
 	}()
 	interval := h.liveInterval()
 	heartbeat := streamDuration(h.streamHeartbeat, 10*time.Second)
-	var previous ingest.PublicPage
+	var previous T
 	var projectionVersion uint64
 	var nextProjection, nextHeartbeat time.Time
 	first := true
 	timer := time.NewTimer(0)
 	defer timer.Stop()
-	write := func(frame liveFrame[ingest.PublicPage], terminal bool) error {
+	write := func(frame liveFrame[T], terminal bool) error {
 		body, err := json.Marshal(frame)
 		if err != nil {
 			return err
@@ -292,14 +309,42 @@ func (h *handler) runPublicLive(ctx context.Context, request context.Context, st
 		writeCtx, cancel := context.WithTimeout(writeCtx, 10*time.Second)
 		defer cancel()
 		return stream.write(writeCtx, terminal, func() error {
+			if !terminal && source.authenticate != nil {
+				if err := source.authenticate(writeCtx); err != nil {
+					return err
+				}
+			}
+			if frame.Type == "snapshot" && h.nodes.PublicVisibilityVersion() != projectionVersion {
+				return errSnapshotBusy
+			}
 			return send(writeCtx, body)
 		})
 	}
 	closeFrame := func(code string) {
-		_ = write(controlFrame[ingest.PublicPage](h, "close", code), true)
+		if source.authenticate != nil {
+			checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			err := source.authenticate(checkCtx)
+			cancel()
+			if errors.Is(err, auth.ErrUnauthenticated) || errors.Is(context.Cause(ctx), auth.ErrUnauthenticated) {
+				_ = write(controlFrame[T](h, "error", "unauthenticated"), true)
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+		_ = write(controlFrame[T](h, "close", code), true)
+	}
+	unauthorized := func() { _ = write(controlFrame[T](h, "error", "unauthenticated"), true) }
+	isUnauthorized := func(err error) bool {
+		return errors.Is(err, auth.ErrUnauthenticated) || errors.Is(context.Cause(ctx), auth.ErrUnauthenticated)
 	}
 	for {
 		if ctx.Err() != nil {
+			if errors.Is(context.Cause(ctx), auth.ErrUnauthenticated) {
+				unauthorized()
+				return
+			}
 			if request.Err() == nil {
 				code := "renew"
 				if stream.ctx.Err() != nil {
@@ -315,7 +360,19 @@ func (h *handler) runPublicLive(ctx context.Context, request context.Context, st
 		}
 		now := time.Now()
 		if first || !now.Before(nextProjection) {
-			page, version, err := h.publicSnapshotVersion(ctx, limit, offset)
+			if source.authenticate != nil {
+				if err := source.authenticate(ctx); err != nil {
+					if isUnauthorized(err) {
+						unauthorized()
+						return
+					}
+					if ctx.Err() != nil {
+						continue
+					}
+					return
+				}
+			}
+			page, version, err := source.snapshot(ctx)
 			if err != nil {
 				if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 					continue
@@ -330,8 +387,12 @@ func (h *handler) runPublicLive(ctx context.Context, request context.Context, st
 			}
 			projectionVersion = version
 			nextProjection = time.Now().Add(interval)
-			if first || !publicPagesEqual(previous, page) {
+			if first || !source.equal(previous, page) {
 				if err := write(snapshotFrame(h, page), false); err != nil {
+					if isUnauthorized(err) {
+						unauthorized()
+						return
+					}
 					if errors.Is(err, errSnapshotBusy) && h.nodes.PublicSafetyVersion() != visibility {
 						closeFrame("renew")
 					}
@@ -343,7 +404,10 @@ func (h *handler) runPublicLive(ctx context.Context, request context.Context, st
 			first = false
 		}
 		if !time.Now().Before(nextHeartbeat) {
-			if err := write(controlFrame[ingest.PublicPage](h, "heartbeat", ""), false); err != nil {
+			if err := write(controlFrame[T](h, "heartbeat", ""), false); err != nil {
+				if isUnauthorized(err) {
+					unauthorized()
+				}
 				return
 			}
 			nextHeartbeat = time.Now().Add(heartbeat)

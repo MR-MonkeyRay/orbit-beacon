@@ -50,13 +50,17 @@ CI 会运行这两项检查。构建目标为 Chrome 111、Firefox 115、Safari 
 - SSE/HTTP 每 300 秒关闭旧通道并重新优选 WS；刷新、切页和恢复可见也从 WS 开始。隐藏/pagehide 关闭通道及所有 timer，恢复先保留旧数据并标旧；generation 与 AbortSignal 同时拦截迟到响应。连接故障不把节点改成离线，无首份快照时显示真实加载失败；下一有效快照立即移除撤回节点。只有 HTTP 显示服务端周期倒计时，心跳只校时，不刷新采样时间或重复 ARIA 播报。
 - HTTP 重试截止时间使用单调时钟，跨 300 秒优选及回退保留，不能借重建通道绕过 Retry-After；HTTP-date 优先相对响应 Date 计算。倒计时也使用单调增量，不受浏览器墙钟调整影响。
 - 公开卡片只消费白名单数值、`last_seen` 与四项 `metric_status`，离线不清空卡片或最后数值；过期数字弱化并显示“最后数据 · 时间”，真正不可用显示“—”。不向匿名页面增加 runtime、原始来源或采样周期。
-- Details 的 Latest sample 只读保留最后报告，错误/缺失指标不显示报告中的残留数字，也不拼补较早成功值。Sampled 与 Last report 使用绝对时间，避免静默时保留“just now”文案。单个页级 deadline timer 使用 `server_time` 加 `performance.now()`，超过来源新鲜度边界才标 Stale；只改标签/样式，不改数字或递增 uptime。隐藏、pagehide、页签分离、导航及会话失效停 timer，恢复重新计算；后续校时不会倒退或刷新原报告时间。
+- Details 的 Latest sample 只读保留最后报告，错误/缺失指标不显示报告中的残留数字，也不拼补较早成功值。Sampled、Last report 及各管理页 Last seen/Last reported 共用绝对日期和秒级时间，静默心跳不会留下永久“just now”。单个页级 deadline timer 使用 `server_time` 加 `performance.now()`，超过来源新鲜度边界才标 Stale；只改标签/样式，不改数字或递增 uptime。隐藏、pagehide、页签分离、导航及会话失效停 timer，恢复重新计算；后续校时不会倒退或刷新原报告时间。
+- Overview、Nodes 和节点详情各使用一条 `console/live.js` 订阅；详情所有页签共享，history/probes/traffic 的原有 timer 不重复迁入。只读事实原位更新，不写 input/select/textarea 或调用整页 refresh。状态计数只改文字并显示新出现的非零筛选，不隐藏聚焦的零计数控件；重筛由 `Apply current filters` 显式触发。`Refresh list` 保留筛选并钳制页码：暂停旧通道，失效 nodes 缓存读取 metadata，再用 `readConsoleFleet` 获取因果上更晚的完整集合，应用后重开一条通道；不凭帧到达顺序推测 HTTP 新增/删除。列表手动与批量后的重载串行，仅手动 Refresh 确认清理既有 Deleted 行；批量操作保留删除提示。失败保留旧视图并恢复订阅。删除行不可操作，只取消该行选择；批量确认目标冻结。详情删除提示保留草稿，但禁用写操作。
+- `api.js` 集中 session epoch、abort 与私有 cache；同一会话校验/更名不重建页面，身份替换、退出、401、密码撤销或已知 expires_at 到期取消旧请求与通道。HTTP Date/frame 配合单调时钟到期，断网或 HTTP60 等待也清空私有页面与 dialog，并强制去登录，不能让 dirty 确认阻挡。旧 epoch 响应不回写；被替换的导航/刷新以取消结束，旧操作不能继续发私有成功提示，非等待式导航只消费预期取消。未知远端撤销须下次通信获知。
 - 动画遵循 `prefers-reduced-motion`；主题偏好共用 `localStorage` 的 `orbitbeacon-theme`。不加入外部资源或必须联网加载的运行时依赖。
 
 ## 共享实时客户端
 
 `connectLive({urls, signal, credentials, validateSnapshot, onSnapshot, onState, onClock, onUnauthorized})` 返回 `{refresh(), close()}`；`urls` 为 `{ws, sse, http}`。`refresh` 重新优选 WS，`close`/外部 abort 为最终关闭。每份快照只校验一次，再调用 `onSnapshot(data, frame)`；`onClock(serverTime)` 只接收通过协议校验的时钟。`onState` 为 `{state: 'connecting'|'live'|'stale', transport: 'ws'|'sse'|'http', intervalSeconds, retryAt}`，`retryAt` 是毫秒 Unix 时间或 null；transport 仅供内部展示策略，ARIA 只播报 state 真正变化。
 
-`close: renew` 立即重建同种通道，`shutdown` 标旧后退避。已知 HTTP 401/`error: unauthenticated` 终止通道，不继续降级。可选异步 `onUnauthorized('verify')` 在未成功打开的 WS 失败后、降级前调用（浏览器不暴露握手状态）；返回 false 最终停止，网络未知可允许降级。`onUnauthorized('unauthenticated')` 用于已知失效处理，不会重开通道。公开页不需要认证 hook。本步骤不接入管理实时端点。
+`close: renew` 立即重建同种通道，`shutdown` 标旧后退避。已知 HTTP 401/`error: unauthenticated` 终止通道，不继续降级。可选异步 `onUnauthorized('verify')` 在未成功打开的 WS 失败后、降级前调用（浏览器不暴露握手状态）；返回 false 最终停止，网络未知可允许降级。`onUnauthorized('unauthenticated')` 用于已知失效处理，不会重开通道。公开页不需要认证 hook。
 
 `shared/sse.js` 用 fatal UTF-8 解码和 1 MiB 行/事件累计上限处理分块输入；只保留一个活动 reader，取消时释放。无运行时 UI 或协议库依赖。
+
+`console/live.js` 的 `connectConsoleLive({nodeID, signal, onSnapshot, onState, onClock})` 返回相同控制器；省略 nodeID 为紧凑 fleet，否则为 detail。包装管理 Cookie、schema、session epoch/abort 和认证复核，页面不直接拼私有通道。恢复可见必须无条件 `/me` 成功后才创建新通道，不能让共享客户端自动恢复抢先连接；网络失败在已知期限前保留 stale。工具栏为 Live / Reconnecting… / Stale，HTTP 正常也为 Live，技术传输名不向用户展示。

@@ -33,7 +33,8 @@ test('overview requests one alert summary and uses aggregate counts with only th
   globalThis.window = new EventTarget();
   globalThis.matchMedia = () => ({matches: false, addEventListener() {}});
   const requests = [];
-  setNavigationSignal(null);
+  const page = new AbortController();
+  setNavigationSignal(page.signal);
   setSession({user: {id: 'admin-two', username: 'admin-two'}, csrf_token: 'csrf', expires_at: ''});
   invalidate('nodes', 'groups', 'users');
   globalThis.fetch = async (path) => {
@@ -54,6 +55,9 @@ test('overview requests one alert summary and uses aggregate counts with only th
     assert.equal(elements(root).filter((element) => element.tagName === 'li').length, 1);
     assert.deepEqual(requests.filter((path) => path.startsWith('/api/v1/alerts')), ['/api/v1/alerts/summary']);
   } finally {
+    page.abort();
+    setNavigationSignal(null);
+    await flush();
     invalidate('nodes', 'groups', 'users');
     globalThis.fetch = originalFetch;
     if (originalWindow === undefined) delete globalThis.window; else globalThis.window = originalWindow;

@@ -1,10 +1,14 @@
 import {h, reducedMotion} from '../../shared/dom.js';
+import {onSession} from '../api.js';
 import {button, iconButton, uid} from './components.js';
 import {onSubmit} from './forms.js';
 
 const dialogs = new Set();
 let dialogEpoch = 0;
 const activeActions = [];
+
+// Body-level secrets obey the same boundary even while routing is awaiting data.
+onSession((_session, detail) => { if (detail.boundary && detail.previousUser) closeDialogs(); });
 
 // Navigation removes body-level dialogs before the view is replaced.
 export function closeDialogs() {

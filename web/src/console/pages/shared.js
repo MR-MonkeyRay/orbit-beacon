@@ -1,7 +1,7 @@
 import {h, icon} from '../../shared/dom.js';
 import {api, invalidate} from '../api.js';
 import {describeAction, shortID, when} from '../format.js';
-import {go} from '../router.js';
+import {go, ignoreNavigationCancellation} from '../router.js';
 import {button} from '../ui/components.js';
 import {formDialog} from '../ui/dialogs.js';
 import {toast} from '../ui/feedback.js';
@@ -22,7 +22,7 @@ export function createNodeDialog() {
       const node = await api('/nodes', {method: 'POST', body: {name: name.value}});
       invalidate('nodes');
       toast(`Added ${node.name}. It stays pending until an agent enrolls.`);
-      go(`/nodes/${encodeURIComponent(node.id)}`);
+      void go(`/nodes/${encodeURIComponent(node.id)}`).catch(ignoreNavigationCancellation);
     }
   });
 }

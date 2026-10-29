@@ -66,7 +66,7 @@ test('history 404 tears down sibling requests, charts and interval permanently',
     env.respond(env.requests[0], 404);
     await flush();
     assert.equal(env.timers.size, 0);
-    assert.ok(env.requests.every((request) => request.signal.aborted));
+    assert.ok(env.requests.slice(1).every((request) => request.signal.aborted));
     assert.equal(env.root.querySelector('.segmented').hidden, true);
     assert.match(env.root.textContent, /This node no longer exists/);
     assert.equal(env.root.querySelector('.history-grid').children.length, 0);

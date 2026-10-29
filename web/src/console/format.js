@@ -21,6 +21,7 @@ export function describeAction(action) {
 
 const dateFormat = new Intl.DateTimeFormat('en', {dateStyle: 'medium', timeStyle: 'short'});
 const relativeFormat = new Intl.RelativeTimeFormat('en', {numeric: 'auto'});
+const observationFormat = new Intl.DateTimeFormat('en', {dateStyle: 'medium', timeStyle: 'medium'});
 
 export function relative(date) {
   const seconds = (date.getTime() - Date.now()) / 1000;
@@ -37,6 +38,14 @@ export function when(iso) {
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return h('span', null, iso);
   return h('time', {datetime: iso, title: `${dateFormat.format(date)} (UTC ${iso})`}, relative(date));
+}
+
+// Quiet live streams do not repaint unchanged observations. An absolute clock
+// cannot turn into a permanently misleading "just now" label.
+export function absoluteWhen(iso) {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return h('span', null, iso);
+  return h('time', {datetime: iso, title: `UTC ${iso}`}, observationFormat.format(date));
 }
 
 export const shortID = (id) => (id ? id.slice(0, 8) : '');

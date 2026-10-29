@@ -22,11 +22,28 @@ const edit = (form, name, value) => {
 
 async function setup({hash = '#details', observed = runtime, presence = 'online', lastSeen = '2026-10-28T10:00:00Z', patchStatus = 200, latest = null} = {}) {
   const dom = installDOM();
-  const originals = new Map(['fetch', 'window', 'matchMedia', 'requestAnimationFrame', 'history', 'performance', 'setTimeout', 'clearTimeout'].map((key) => [key, globalThis[key]]));
+  const originals = new Map(['fetch', 'window', 'WebSocket', 'matchMedia', 'requestAnimationFrame', 'history', 'performance', 'setTimeout', 'clearTimeout'].map((key) => [key, globalThis[key]]));
+  const originalNow = Date.now;
   globalThis.window = new EventTarget();
   globalThis.matchMedia = () => ({matches: false, addEventListener() {}});
   globalThis.requestAnimationFrame = () => 0;
   let now = 0;
+  const clock = Date.parse('2026-10-28T10:00:00Z');
+  Date.now = () => clock + now;
+  const sockets = [];
+  globalThis.WebSocket = class extends EventTarget {
+    constructor() {
+      super(); sockets.push(this);
+      queueMicrotask(() => {
+        if (this.closed) return;
+        this.dispatchEvent(new Event('open'));
+        this.message({type: 'snapshot', server_time: new Date(clock + now).toISOString(), update_interval_seconds: 10,
+          data: {node, latest: latest ? {...latest, system: latest.system || null, runtime: observed || runtime} : null, runtime: observed}});
+      });
+    }
+    message(value) { this.dispatchEvent(Object.assign(new Event('message'), {data: JSON.stringify(value)})); }
+    close() { this.closed = true; }
+  };
   let timerID = 0;
   const deadlines = new Map();
   globalThis.performance = {now: () => now};
@@ -34,22 +51,25 @@ async function setup({hash = '#details', observed = runtime, presence = 'online'
   globalThis.clearTimeout = (key) => deadlines.delete(key);
   location.pathname = `/nodes/${id}`;
   location.hash = hash;
+  location.href = `https://example.test/nodes/${id}`;
   globalThis.history = {state: null, replaceState(_state, _unused, url) { location.hash = url.includes('#') ? `#${url.split('#')[1]}` : ''; }};
   toastHost.replaceChildren();
   dom.body.append(toastHost);
   const page = new AbortController();
   setNavigationSignal(page.signal);
   invalidate('groups', 'nodes');
-  setSession({csrf_token: 'csrf', user: {id, username: 'administrator'}, expires_at: ''});
+  const userSession = {csrf_token: 'csrf', user: {id, username: 'administrator'}, expires_at: '2026-10-29T10:00:00Z'};
+  setSession(userSession);
   const requests = [];
-  const node = {id, name: 'Internal name', status: 'enrolled', presence, agent_version: 'test-agent',
+  const node = {id, name: 'Internal name', status: 'unknown', presence, agent_version: 'test-agent',
     last_seen: lastSeen, group_id: null, region: '', provider: '', notes: 'Saved notes', tags: [], created_at: '2026-10-27T10:00:00Z'};
   const traffic = {billing_day: 1, quota_bytes: '0', cycle: {}, daily: [], updated_at: null};
   globalThis.fetch = async (url, options) => {
     requests.push({url, options});
     let data;
     let status = 200;
-    if (url === path) data = node;
+    if (url === '/api/v1/me') data = userSession;
+    else if (url === path) data = node;
     else if (url === `${path}/runtime`) data = {runtime: observed};
     else if (url === `${path}/traffic-settings`) {
       status = options.method === 'PATCH' ? patchStatus : 200;
@@ -72,15 +92,20 @@ async function setup({hash = '#details', observed = runtime, presence = 'online'
     await flush();
     return {...dom, root, page, requests, node, deadlines, advance(milliseconds) {
       now += milliseconds;
+      for (const socket of sockets) if (!socket.closed) socket.message({type: 'heartbeat', server_time: new Date(clock + now).toISOString(), update_interval_seconds: 10});
       for (const [key, timer] of [...deadlines]) if (timer.at <= now) { deadlines.delete(key); timer.callback(); }
     }, cleanup() {
       page.abort();
       setNavigationSignal(null);
+      setSession({user: null, csrf_token: '', expires_at: ''});
+      Date.now = originalNow;
       for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
       dom.restore();
     }};
   } catch (error) {
     page.abort(); setNavigationSignal(null);
+    setSession({user: null, csrf_token: '', expires_at: ''});
+    Date.now = originalNow;
     for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
     dom.restore();
     throw error;

@@ -101,7 +101,7 @@ Server 默认不信任转发头。原生同机代理可设置：
 
 容器中需填写 **Server 实际看到的代理源 IP** 或最小必要 CIDR，不能照抄宿主机回环地址，也不要信任整个共享网络。环境变量 `ORBITBEACON_TRUSTED_PROXIES` / CLI `--trusted-proxies` 接受逗号分隔列表；禁止 `/0`。Server 只对可信直连代理解析 `X-Forwarded-For`，从右向左跳过可信代理，取第一个不可信地址；无有效结果则回退直连 IP。入口代理必须覆盖或正确追加真实客户端地址。
 
-公开页按 WS → SSE → HTTP 自动回退，SSE/HTTP 每 300 秒重新优选 WS；一次只有一个活动通道。`/api/public/v1/ws` 与 `/stream` 共享每 IP 4 条、全局 200 条及 15 分钟寿命。WS Origin 必须与 `public_url` 精确一致。nginx 示例已转发 Upgrade/Connection 并关闭缓冲，30 秒读超时可容纳 10 秒心跳；不要覆盖 Server 的 `X-Accel-Buffering: no`。[Caddy 原生支持 WS 与 SSE](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#streaming)，无需另写升级头。不信任代理会让访客共用代理 IP 的流数/限流额度；nginx 另有登录限流，Caddy 需在边缘另配。
+公开页和节点管理页按 WS → SSE → HTTP 自动回退，SSE/HTTP 每 300 秒重新优选 WS；每页一次只有一个活动通道。公开 `/api/public/v1/ws`、`/stream` 与私有 `/api/v1/live/ws`、`/stream` 共享每 IP 4 条、全局 200 条及最长 15 分钟寿命，私有流还受会话到期限制。WS Origin 必须与 `public_url` 精确一致。nginx 示例已转发 Upgrade/Connection 并关闭缓冲，30 秒读超时可容纳 10 秒心跳；不要覆盖 Server 的 `X-Accel-Buffering: no`。[Caddy 原生支持 WS 与 SSE](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#streaming)，无需另写升级头。不信任代理会让访客共用代理 IP 的流数/限流额度；nginx 另有登录限流，Caddy 需在边缘另配。
 
 ## 检查与日常观测
 

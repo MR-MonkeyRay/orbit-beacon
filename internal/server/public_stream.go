@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/nodes"
 )
 
@@ -56,8 +57,15 @@ func (h *handler) releasePublicStream(stream *liveStream) {
 	stream.release()
 }
 
-func (h *handler) publicStreamContext(r *http.Request, stream *liveStream) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithTimeout(stream.ctx, streamDuration(h.streamLifetime, 15*time.Minute))
+func (h *handler) liveStreamContext(r *http.Request, stream *liveStream, expires time.Time) (context.Context, context.CancelFunc) {
+	lifetime := streamDuration(h.streamLifetime, 15*time.Minute)
+	var cause error
+	if !expires.IsZero() {
+		if remaining := expires.Sub(h.now()); remaining <= lifetime {
+			lifetime, cause = remaining, auth.ErrUnauthenticated
+		}
+	}
+	ctx, cancel := context.WithTimeoutCause(stream.ctx, lifetime, cause)
 	stop := context.AfterFunc(r.Context(), cancel)
 	return ctx, func() { stop(); cancel() }
 }
@@ -68,7 +76,13 @@ func (h *handler) publicStream(w http.ResponseWriter, r *http.Request, requestID
 		return
 	}
 	defer h.releasePublicStream(stream)
-	ctx, cancel := h.publicStreamContext(r, stream)
+	h.serveLiveSSE(w, r, stream, time.Time{}, func(ctx, request context.Context, send func(context.Context, []byte) error) {
+		h.runPublicLive(ctx, request, stream, limit, offset, send)
+	})
+}
+
+func (h *handler) serveLiveSSE(w http.ResponseWriter, r *http.Request, stream *liveStream, expires time.Time, run func(context.Context, context.Context, func(context.Context, []byte) error)) {
+	ctx, cancel := h.liveStreamContext(r, stream, expires)
 	defer cancel()
 	controller := http.NewResponseController(w)
 	stream.setWriter(func() error { return controller.SetWriteDeadline(time.Now().Add(10 * time.Second)) }, func() { _ = controller.SetWriteDeadline(time.Now()) })
@@ -82,16 +96,23 @@ func (h *handler) publicStream(w http.ResponseWriter, r *http.Request, requestID
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
-	h.runPublicLive(ctx, r.Context(), stream, limit, offset, func(_ context.Context, body []byte) error {
+	run(ctx, r.Context(), func(_ context.Context, body []byte) error {
 		return writePublicFrame(w, body)
 	})
 }
 
-func (h *handler) publicWebSocket(w http.ResponseWriter, r *http.Request, requestID string) {
+func (h *handler) trustedLiveOrigin(w http.ResponseWriter, r *http.Request, requestID string) bool {
 	// Compare the raw browser Origin with the configured canonical origin. Do
 	// not trust Host, normalize attacker input or accept an absent Origin.
 	if h.origin == "" || len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != h.origin {
 		fail(w, http.StatusForbidden, "forbidden", "A trusted Origin is required", requestID)
+		return false
+	}
+	return true
+}
+
+func (h *handler) publicWebSocket(w http.ResponseWriter, r *http.Request, requestID string) {
+	if !h.trustedLiveOrigin(w, r, requestID) {
 		return
 	}
 	stream, limit, offset, ok := h.admitPublicStream(w, r, requestID)
@@ -99,6 +120,12 @@ func (h *handler) publicWebSocket(w http.ResponseWriter, r *http.Request, reques
 		return
 	}
 	defer h.releasePublicStream(stream)
+	h.serveLiveWebSocket(w, r, stream, time.Time{}, func(ctx, request context.Context, send func(context.Context, []byte) error) {
+		h.runPublicLive(ctx, request, stream, limit, offset, send)
+	})
+}
+
+func (h *handler) serveLiveWebSocket(w http.ResponseWriter, r *http.Request, stream *liveStream, expires time.Time, run func(context.Context, context.Context, func(context.Context, []byte) error)) {
 	controller := http.NewResponseController(w)
 	stream.setWriter(func() error { return controller.SetWriteDeadline(time.Now().Add(10 * time.Second)) }, func() { _ = controller.SetWriteDeadline(time.Now()) })
 	upgradeWriter := &liveUpgradeWriter{ResponseWriter: w, stream: stream}
@@ -132,7 +159,7 @@ func (h *handler) publicWebSocket(w http.ResponseWriter, r *http.Request, reques
 	if err := upgradeWriter.connection.SetDeadline(time.Time{}); err != nil {
 		return
 	}
-	ctx, cancel := h.publicStreamContext(r, stream)
+	ctx, cancel := h.liveStreamContext(r, stream, expires)
 	defer cancel()
 	// v1.8.15 CloseRead waits for its own goroutine on unexpected data.
 	// Use the library reader once: any application message ends this readonly
@@ -145,7 +172,7 @@ func (h *handler) publicWebSocket(w http.ResponseWriter, r *http.Request, reques
 		stopRead()
 		cancel()
 	}()
-	h.runPublicLive(ctx, readCtx, stream, limit, offset, func(writeCtx context.Context, body []byte) error {
+	run(ctx, readCtx, func(writeCtx context.Context, body []byte) error {
 		return connection.Write(writeCtx, websocket.MessageText, body)
 	})
 }

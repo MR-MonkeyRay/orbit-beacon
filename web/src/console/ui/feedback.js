@@ -1,9 +1,7 @@
 import {h, icon} from '../../shared/dom.js';
 
-const toasts = document.getElementById('toasts');
-const bar = document.getElementById('progress');
-
 export function toast(message, options = {}) {
+  const toasts = document.getElementById('toasts');
   let timer = 0;
   const item = h('div', {class: `toast${options.error ? ' error' : ''}`, role: options.error ? 'alert' : null});
   const dismiss = () => {
@@ -22,15 +20,24 @@ export function toast(message, options = {}) {
 }
 
 export function toastError(error) {
+  // Navigation/session cancellation has no action result to report. A managed
+  // unauthenticated response already cleared private UI at the central boundary;
+  // its initiating action must not recreate a stale toast on the login page.
+  if (error.name === 'AbortError' || error.status === 401 && error.code === 'unauthenticated') return;
   toast(error.message, {error: true, detail: error.requestID ? `Request ${error.requestID}` : undefined});
 }
 
 // Thin bar at the top of the viewport while a page loads.
 export const progress = {
   start() {
+    const bar = document.getElementById('progress');
     bar.className = 'progress';
     void bar.offsetWidth;
     bar.classList.add('run');
   },
-  done() { bar.classList.replace('run', 'done'); }
+  done() {
+    const bar = document.getElementById('progress');
+    bar.classList.remove('run');
+    bar.classList.add('done');
+  }
 };

@@ -15,7 +15,9 @@
 
 在线状态按 Server 收到报告的时间判断，不等于 ping 或业务健康。失联时保留机器和最后样本：来源过期标旧，超过 180 秒标离线，数字与 uptime 不自行增长；新报告明确失败/缺失的值显示 `—`。样本仅在当前 Server 进程内保留，重启后资产和已落库 last_seen 仍在，数字可空。浏览器断网只标旧，不把节点自行改为离线；历史记录仍是尽力而为。
 
-公开页自动按 WS → SSE → HTTP 回退，降级后每 300 秒重新优选；静默时只发心跳。Server 的 `web_update_interval_seconds` 统一控制推送合并与 HTTP 轮询（默认 10，范围 2–60 秒，重启生效），不改变 Agent 采集周期。
+公开页和节点管理页自动按 WS → SSE → HTTP 回退，降级后每 300 秒重新优选；静默时只发心跳。Server 的 `web_update_interval_seconds` 统一控制推送合并与 HTTP 轮询（默认 10，范围 2–60 秒，重启生效），不改变 Agent 采集周期。
+
+管理页只更新只读状态、样本和 runtime，保留筛选、勾选及未保存文字；状态重筛和资产增删由页面提示后手动应用。会话已知到期时，即使断网也立即清空私有页面并转登录；离线期间无法提前获知远端撤销。
 
 遥测报告忽略并丢弃新增未知字段，已知指标和来源仍校验；注册、恢复、管理写入及本地配置严格拒绝未知字段。请求上限为 64 KiB，不改变协议版本校验。
 
@@ -88,7 +90,7 @@ build/orbitbeacon-server health --url https://localhost:8443 \
 
 管理员进入 Nodes → 节点详情 → Public page，填写独立的 Public name、Region、Provider，勾选 Publish this node 后保存。不会自动复制内部元数据；已注册且启用的节点才会展示。不要填入 IP、域名、主机名或凭证；这些文本是主动发布的内容，不会自动脱敏。CPU、内存、负载和运行时长也会公开。
 
-取消公开、禁用、删除节点或撤销节点凭证后，下次请求将其排除；已发送的数据无法撤回。首页优先使用事件流，建立连接失败时回退到轮询。`/status` 不提供页面。
+取消公开、禁用、删除节点或撤销节点凭证后，新快照将其排除；安全变更会中断流以重新读取，已发送或断网保留的数据无法召回。`/status` 不提供页面。
 
 ## 正式部署
 
@@ -117,6 +119,7 @@ Server 配置优先级：**CLI 参数 > `ORBITBEACON_` 环境变量 > JSON 文�
 | `trusted_proxies` | 默认空数组；仅信任指定代理 IP 或 CIDR 的 `X-Forwarded-For` |
 | `metrics_listen` | 默认空，即关闭独立指标监听；开启时应限制访问 |
 | `access_log` | 默认 `false`，是否启用访问日志 |
+| `web_update_interval_seconds` | `10`；浏览器更新周期，整数 2–60 秒，重启生效；不覆盖 Agent 运行设置 |
 | `allow_insecure_webhooks` / `notification_allow_private_networks` | 默认 `false`；通知目标的网络安全限制见部署文档 |
 
 环境变量使用同名 `ORBITBEACON_` 前缀，对应 CLI 使用连字符，例如 `ORBITBEACON_MAX_NODES=100` / `--max-nodes 100`。Agent 五项运行设置由本地 JSON/env/CLI 合并；服务器地址、CA、状态目录和身份仍受安装策略保护。`systemctl reload orbitbeacon-agent` 发送 SIGHUP，结果以日志和下一报告为准，详见[接入指南](docs/agent.md)。

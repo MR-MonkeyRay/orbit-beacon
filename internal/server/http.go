@@ -383,6 +383,15 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 		fail(w, http.StatusUnauthorized, "unauthenticated", "A valid session is required", requestID)
 		return
 	}
+	if p == "/api/v1/live" || p == "/api/v1/live/stream" || p == "/api/v1/live/ws" {
+		session, err := h.auth.CurrentSession(r.Context(), c.Value)
+		if err != nil {
+			h.serviceError(w, err, requestID)
+			return
+		}
+		h.consoleLive(w, r, requestID, c.Value, session)
+		return
+	}
 	if p == "/api/v1/me" {
 		session, err := h.auth.CurrentSession(r.Context(), c.Value)
 		if err != nil {

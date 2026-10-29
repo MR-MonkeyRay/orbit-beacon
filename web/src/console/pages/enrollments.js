@@ -24,8 +24,9 @@ async function copyText(element, status) {
   }
 }
 
-export async function issueEnrollment(target, title) {
+export async function issueEnrollment(target, title, isDeleted = () => false) {
   const ticket = await api('/enrollments', {method: 'POST', body: target});
+  if (isDeleted()) return;
   const token = h('code', null, ticket.token);
   const installer = h('code', null, installerCommand(ticket.token, location.origin));
   const command = h('code', null, enrollmentCommand(ticket.token));
@@ -67,12 +68,13 @@ export function enrollmentTab(node) {
   const error = h('div', {class: 'callout', role: 'alert', hidden: true});
   let loading = false;
   const reload = async () => {
-    if (loading) return;
+    if (loading || node.deleted) return;
     loading = true;
     busy(retry, true);
     error.hidden = true;
     try {
       const tickets = await nodeEnrollments(node.id, api);
+      if (node.deleted) return;
       list.replaceChildren(tickets.length ? h('div', {class: 'table-wrap'},
         h('table', {class: 'table'}, h('caption', {class: 'sr'}, 'Enrollment tickets for this node'),
           h('thead', null, h('tr', null, ['Ticket', 'Expires', 'Uses', 'State', 'Actions'].map((label) => h('th', {scope: 'col'}, label)))),
@@ -82,24 +84,26 @@ export function enrollmentTab(node) {
             h('td', null, enrollmentState(ticket), ticket.revoked_at ? h('div', {class: 'muted'}, when(ticket.revoked_at)) : null),
             h('td', {class: 'actions'}, ticket.revoked_at ? null : button('Revoke', {small: true, variant: 'danger', onClick: async (event) => {
               const control = event.currentTarget;
-              if (!(await confirmDialog({title: 'Revoke enrollment ticket?', message: 'This immediately blocks claims and retries using this ticket. The enrolled agent credential is kept.', confirm: 'Revoke ticket', danger: true}))) return;
+              if (node.deleted) return;
+              if (!(await confirmDialog({title: 'Revoke enrollment ticket?', message: 'This immediately blocks claims and retries using this ticket. The enrolled agent credential is kept.', confirm: 'Revoke ticket', danger: true})) || node.deleted) return;
               busy(control, true);
               try {
                 await api(`/enrollments/${encodeURIComponent(ticket.id)}`, {method: 'DELETE'});
-                await reload();
+                if (!node.deleted) await reload();
               } catch (failure) { toastError(failure); }
-              finally { busy(control, false); }
+              finally { busy(control, false); control.disabled = Boolean(node.deleted); }
             }}))))))) : emptyState('No enrollment tickets', 'Issue a ticket to enroll an agent for this node.'));
     } catch (failure) {
       if (failure.name !== 'AbortError') { error.textContent = failure.message; error.hidden = false; }
-    } finally { loading = false; busy(retry, false); }
+    } finally { loading = false; busy(retry, false); retry.disabled = Boolean(node.deleted); }
   };
   const retry = button('Refresh tickets', {small: true, icon: 'refresh', onClick: reload});
   const issue = button('Issue enrollment ticket', {variant: 'primary', onClick: async () => {
+    if (node.deleted) return;
     busy(issue, true);
-    try { await issueEnrollment({node_id: node.id, mode: 'single'}, `Enroll ${node.name}`); await reload(); }
+    try { await issueEnrollment({node_id: node.id, mode: 'single'}, `Enroll ${node.name}`, () => node.deleted); if (!node.deleted) await reload(); }
     catch (failure) { toastError(failure); }
-    finally { busy(issue, false); }
+    finally { busy(issue, false); issue.disabled = Boolean(node.deleted); }
   }});
   const content = panel('Enroll agent', {action: issue}, h('div', {class: 'stack'},
     h('p', {class: 'lede'}, 'Issue a single-node ticket, valid for 15 minutes and one use. The token is shown only in the creation dialog.'),

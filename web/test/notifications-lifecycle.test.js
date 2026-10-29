@@ -5,7 +5,14 @@ import {setSession, updateUser} from '../src/console/api.js';
 
 test('notifications activate after SPA login, survive rename, and reset on account switch', async () => {
   const dom = installDOM();
-  const originals = new Map(['window', 'matchMedia', 'fetch'].map((key) => [key, globalThis[key]]));
+  const originals = new Map(['window', 'matchMedia', 'fetch', 'performance', 'setTimeout', 'clearTimeout'].map((key) => [key, globalThis[key]]));
+  const originalNow = Date.now;
+  Date.now = () => Date.parse('2026-10-28T00:00:00Z');
+  globalThis.performance = {now: () => 0};
+  let deadlineID = 0;
+  const deadlines = new Map();
+  globalThis.setTimeout = (callback, delay) => { deadlines.set(++deadlineID, {callback, delay}); return deadlineID; };
+  globalThis.clearTimeout = (id) => deadlines.delete(id);
   globalThis.window = new EventTarget();
   globalThis.matchMedia = () => ({matches: false, addEventListener() {}});
   dom.document.querySelectorAll = (selector) => dom.body.querySelectorAll(selector);
@@ -29,11 +36,12 @@ test('notifications activate after SPA login, survive rename, and reset on accou
     if (requests === 2) return new Promise((resolve) => { resolveSecond = resolve; });
     return new Response(JSON.stringify({unread_count: 2, latest_id: 'first'}));
   };
+  let dispose;
   try {
     const {initNotifications} = await import('../src/console/notifications.js');
     const {setActiveNav} = await import('../src/console/shell.js?notifications-lifecycle');
-    initNotifications();
-    setSession({user: {id: 'one', username: 'admin-one'}, csrf_token: 'csrf-one', expires_at: ''});
+    dispose = initNotifications();
+    setSession({user: {id: 'one', username: 'admin-one'}, csrf_token: 'csrf-one', expires_at: '2026-10-29T00:00:00Z'});
     assert.equal(requests, 0);
     location.pathname = '/overview';
     setActiveNav('/overview');
@@ -45,7 +53,7 @@ test('notifications activate after SPA login, survive rename, and reset on accou
     await flush();
     assert.equal(requests, 1);
     assert.equal(dom.timers.size, 1);
-    setSession({user: {id: 'two', username: 'admin-two'}, csrf_token: 'csrf-two', expires_at: ''});
+    setSession({user: {id: 'two', username: 'admin-two'}, csrf_token: 'csrf-two', expires_at: '2026-10-29T00:00:00Z'});
     assert.equal(count.textContent, '…');
     assert.equal(dom.timers.size, 1);
     resolveSecond(new Response(JSON.stringify({unread_count: 7, latest_id: 'second'})));
@@ -59,7 +67,11 @@ test('notifications activate after SPA login, survive rename, and reset on accou
     assert.equal(dom.timers.size, 0);
   } finally {
     setSession({user: null, csrf_token: '', expires_at: ''});
+    dispose?.();
+    const pendingDeadlines = deadlines.size;
+    Date.now = originalNow;
     dom.restore();
     for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+    assert.equal(pendingDeadlines, 0);
   }
 });

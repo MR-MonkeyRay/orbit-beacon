@@ -1,5 +1,5 @@
 import {h} from '../shared/dom.js';
-import {api, onSession, session} from './api.js';
+import {api, getSessionEpoch, onSession, pauseSessionVerification, session, sessionIsVerified, verifySession} from './api.js';
 import {formatBytes, when} from './format.js';
 import {button, facts} from './ui/components.js';
 import {modal} from './ui/dialogs.js';
@@ -9,11 +9,13 @@ import {taskDetails} from './pages/backup-task.js';
 const tickListeners = new Set();
 const stateLabels = {queued: 'Queued', running: 'Running', succeeded: 'Succeeded', failed: 'Failed', firing: 'Firing', resolved: 'Resolved'};
 const categoryLabels = {configuration: 'Configuration', monitoring: 'Monitoring', events: 'Events'};
-let initialized = false;
+let disposeNotifications;
+let notificationSignal;
 let identity = '';
 let epoch = 0;
 let timer;
 let request;
+let resumeRequest;
 let refreshAgain = false;
 let pageActive = true;
 let summary = null;
@@ -25,7 +27,8 @@ export function onNotificationTick(listener) {
   return () => tickListeners.delete(listener);
 }
 
-const foreground = () => pageActive && !document.hidden && Boolean(session.user && session.csrf) && location.pathname !== '/login';
+const visibleSession = () => pageActive && !document.hidden && Boolean(session.user && session.csrf) && location.pathname !== '/login';
+const foreground = () => visibleSession() && sessionIsVerified();
 const requestOptions = (signal, extra = {}) => ({navigation: false, signal, ...extra});
 const categories = (values) => (values || []).map((value) => categoryLabels[value] || value).join(', ');
 const sourceName = (details) => details.destination?.plan_name || details.destination?.actor_name || (details.kind === 'backup_export' ? 'Manual export' : 'Deleted plan');
@@ -52,17 +55,37 @@ function stopPolling() {
   timer = undefined;
   request?.abort();
   request = null;
+  resumeRequest = undefined;
   refreshAgain = false;
   inbox?.pause();
 }
 
 export function syncNotifications() {
+  if (!notificationSignal || notificationSignal.aborted) return;
   if (!foreground()) { stopPolling(); return; }
   if (!timer) {
-    timer = setInterval(refreshNotifications, 15000);
+    timer = setInterval(() => { if (foreground()) refreshNotifications(); else resumeNotifications(); }, 15000);
     inbox?.resume();
     refreshNotifications();
   }
+}
+
+function resumeNotifications() {
+  if (!visibleSession() || resumeRequest) return;
+  stale = true;
+  renderEntries();
+  inbox?.setStale(true);
+  // Keep the same single 15s controller while a foreground auth check is offline.
+  // The summary itself must wait for /me, but a failed check can be retried.
+  if (!timer) timer = setInterval(() => { if (foreground()) refreshNotifications(); else resumeNotifications(); }, 15000);
+  inbox?.pause();
+  const currentEpoch = epoch;
+  const pending = resumeRequest = verifySession({signal: notificationSignal});
+  pending.then(() => {
+    if (pending !== resumeRequest || epoch !== currentEpoch || !foreground()) return;
+    inbox?.resume();
+    refreshNotifications();
+  }, () => {}).finally(() => { if (resumeRequest === pending) resumeRequest = undefined; }).catch(() => {});
 }
 
 export async function refreshNotifications() {
@@ -96,11 +119,13 @@ export async function refreshNotifications() {
 }
 
 export function initNotifications() {
-  if (initialized) return;
-  initialized = true;
-  for (const entry of document.querySelectorAll('.notification-entry')) entry.addEventListener('click', openInbox);
-  onSession(() => {
-    const next = session.user ? `${session.user.id}:${session.csrf}` : '';
+  if (disposeNotifications) return disposeNotifications;
+  const lifetime = new AbortController();
+  notificationSignal = lifetime.signal;
+  const listen = (target, type, listener) => target.addEventListener(type, listener, {signal: lifetime.signal});
+  for (const entry of document.querySelectorAll('.notification-entry')) listen(entry, 'click', openInbox);
+  const unsubscribe = onSession(() => {
+    const next = session.user ? `${getSessionEpoch()}` : '';
     if (next !== identity) {
       stopPolling();
       inbox?.close();
@@ -111,14 +136,32 @@ export function initNotifications() {
     }
     syncNotifications();
   });
-  document.addEventListener('visibilitychange', syncNotifications);
-  window.addEventListener('pagehide', () => { pageActive = false; stopPolling(); });
-  window.addEventListener('pageshow', () => { pageActive = true; syncNotifications(); });
-  window.addEventListener('online', () => { if (foreground()) refreshNotifications(); });
-  window.addEventListener('offline', () => { if (foreground()) { stale = true; renderEntries(); inbox?.setStale(true); } });
-  identity = session.user ? `${session.user.id}:${session.csrf}` : '';
+  const resume = resumeNotifications;
+  listen(document, 'visibilitychange', () => {
+    if (document.hidden) { pauseSessionVerification(); stopPolling(); }
+    else resume();
+  });
+  listen(window, 'pagehide', () => { pageActive = false; pauseSessionVerification(); stopPolling(); });
+  listen(window, 'pageshow', () => { pageActive = true; resume(); });
+  listen(window, 'online', () => { if (!sessionIsVerified()) resume(); else if (foreground()) refreshNotifications(); });
+  listen(window, 'offline', () => { if (foreground()) { stale = true; renderEntries(); inbox?.setStale(true); } });
+  pageActive = true;
+  identity = session.user ? `${getSessionEpoch()}` : '';
   renderEntries();
   syncNotifications();
+  const dispose = () => {
+    lifetime.abort();
+    unsubscribe();
+    stopPolling();
+    notificationSignal = undefined;
+    inbox?.close();
+    identity = '';
+    summary = null;
+    stale = false;
+    if (disposeNotifications === dispose) disposeNotifications = undefined;
+  };
+  disposeNotifications = dispose;
+  return dispose;
 }
 
 function notificationTitle(notification) {

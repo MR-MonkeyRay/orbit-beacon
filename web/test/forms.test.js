@@ -75,3 +75,32 @@ test('billing success records its normalized baseline while Notes and Public nam
     dom.restore();
   }
 });
+
+test('a detached submitted form cannot publish late private errors into the next page', async () => {
+  const dom = installDOM();
+  const toasts = document.createElement('div'); toasts.id = 'toasts'; dom.body.append(toasts);
+  const originalTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = () => 0;
+  try {
+    const {onSubmit} = await import('../src/console/ui/forms.js');
+    for (const inline of [false, true]) {
+      const form = document.createElement('form'); const submit = document.createElement('button');
+      const errorBox = inline ? document.createElement('div') : undefined;
+      if (errorBox) { errorBox.hidden = true; form.append(errorBox); }
+      form.append(submit); dom.body.append(form);
+      let reject;
+      onSubmit(form, submit, () => new Promise((_resolve, fail) => { reject = fail; }), errorBox);
+      form.dispatchEvent(new Event('submit', {cancelable: true}));
+      form.remove();
+      reject(new Error('Private old-session error'));
+      await flush();
+      assert.equal(toasts.textContent, '');
+      if (errorBox) { assert.equal(errorBox.textContent, ''); assert.equal(errorBox.hidden, true); }
+    }
+    const form = document.createElement('form'); const submit = document.createElement('button'); const errorBox = document.createElement('div');
+    form.append(submit, errorBox); dom.body.append(form);
+    onSubmit(form, submit, async () => { throw new Error('Current form error'); }, errorBox);
+    form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+    assert.match(errorBox.textContent, /Current form error/);
+  } finally { globalThis.setTimeout = originalTimeout; dom.restore(); }
+});

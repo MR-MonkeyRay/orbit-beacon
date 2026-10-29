@@ -162,15 +162,14 @@ test('administrator forms preserve request boundaries and keep conflicts in the 
   }
 });
 
-test('self deletion redirects immediately without fetching the administrator list again', async () => {
+test('self deletion clears the session without fetching the administrator list again', async () => {
   const dom = installDOM();
   const originals = new Map(['fetch', 'window', 'matchMedia', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
   const self = {id: 'user-one', username: 'admin-one', created_at: '2026-10-27T12:00:00Z'};
   const requests = [];
-  const redirects = [];
   Object.assign(globalThis, {window: new EventTarget(), matchMedia: () => ({matches: true, addEventListener() {}}),
     history: {state: null, replaceState() {}}, requestAnimationFrame: () => 0});
-  Object.assign(location, {pathname: '/settings', hash: '#administrators', assign: (path) => redirects.push(path)});
+  Object.assign(location, {pathname: '/settings', hash: '#administrators'});
   setNavigationSignal(null);
   setSession({user: self, csrf_token: 'csrf', expires_at: ''});
   invalidate('nodes', 'groups', 'users');
@@ -194,7 +193,8 @@ test('self deletion redirects immediately without fetching the administrator lis
     elements(dialog).find((element) => element.tagName === 'button' && element.textContent === 'Delete my account').click();
     dialog.dispatchEvent(new Event('animationend'));
     await flush();
-    assert.deepEqual(redirects, ['/login']);
+    assert.equal(session.user, null);
+    assert.equal(session.csrf, '');
     assert.deepEqual(requests.at(-1), {path: '/api/v1/users/user-one', method: 'DELETE'});
     assert.equal(requests.filter((request) => request.path === '/api/v1/users').length, 1);
   } finally {

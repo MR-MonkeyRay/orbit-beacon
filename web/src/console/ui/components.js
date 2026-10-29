@@ -40,11 +40,53 @@ export function pageHead(title, subtitle, ...actions) {
     actions.length ? h('div', {class: 'head-actions'}, actions) : null);
 }
 
-export const statusBadge = (status) => h('span', {class: `badge ${status}`}, STATUS[status] || status);
+export const statusBadge = (status) => h('span', {class: `badge ${status}`}, status === 'deleted' ? 'Deleted' : STATUS[status] || status);
+
+export function patchStatusBadge(element, status) {
+  element.className = `badge ${status}`;
+  const label = status === 'deleted' ? 'Deleted' : STATUS[status] || status;
+  if (element.textContent !== label) element.textContent = label;
+}
+
+// Transport names stay out of the UI. Only transitions update the live region.
+export function liveStatus() {
+  const element = h('span', {class: 'live-status', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true'}, 'Reconnecting…');
+  let previous = 'connecting';
+  return {element, update({state}) {
+    if (state === previous) return;
+    previous = state;
+    element.dataset.state = state;
+    element.textContent = state === 'live' ? 'Live' : state === 'connecting' ? 'Reconnecting…' : 'Stale';
+  }};
+}
 
 export function facts(entries) {
   return h('dl', {class: 'facts'}, entries.map(([label, value]) => h('div', null, h('dt', null, label),
     value === null || value === undefined || value === '' ? h('dd', {class: 'none'}, 'Not set') : h('dd', null, value))));
+}
+
+// Keep the list and its cells stable; callers patch readonly values, never forms.
+export function readonlyFacts(entries = []) {
+  const element = h('dl', {class: 'facts'});
+  const cells = new Map();
+  const update = (values) => {
+    for (const [label, value] of values) {
+      let cell = cells.get(label);
+      if (!cell) {
+        cell = h('dd');
+        cells.set(label, cell);
+        element.append(h('div', null, h('dt', null, label), cell));
+      }
+      const empty = value === null || value === undefined || value === '';
+      cell.className = empty ? 'none' : '';
+      const content = empty ? 'Not set' : value;
+      if (content instanceof Node && cell.firstElementChild === content) continue;
+      if (!(content instanceof Node) && !Array.isArray(content) && cell.textContent === String(content)) continue;
+      cell.replaceChildren(...(Array.isArray(content) ? content : [content]));
+    }
+  };
+  update(entries);
+  return {element, update};
 }
 
 export function note(text) { return h('p', {class: 'note'}, icon('info'), h('span', null, text)); }

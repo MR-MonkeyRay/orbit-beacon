@@ -30,6 +30,8 @@ func routeMethods(p string) []string {
 		return sessionMethods
 	case "/api/v1/me", "/api/v1/audit", "/api/v1/alerts", "/api/v1/alerts/summary", "/api/v1/notification-deliveries", "/api/public/v1/nodes", "/api/public/v1/stream", "/api/public/v1/ws":
 		return readMethods
+	case "/api/v1/live", "/api/v1/live/stream", "/api/v1/live/ws":
+		return readMethods
 	case "/api/v1/me/password":
 		return patchMethods
 	case "/api/v1/users", "/api/v1/groups", "/api/v1/nodes", "/api/v1/alert-rules", "/api/v1/notification-channels":
