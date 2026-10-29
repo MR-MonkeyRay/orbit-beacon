@@ -3,7 +3,9 @@ import {errorText} from '../../shared/errors.js';
 import {h} from '../../shared/dom.js';
 import {api} from '../api.js';
 import {formatPercent, when} from '../format.js';
-import {button, facts, panel} from '../ui/components.js';
+import {facts, panel} from '../ui/components.js';
+import {historyError} from '../ui/history-error.js';
+import {panelLifecycle} from '../ui/polling-panel.js';
 
 const ERRORS = {
   timeout: t('nodes.probe.timeout'), refused: t('nodes.probe.refused'), dns: t('nodes.probe.dns'),
@@ -53,30 +55,11 @@ function probeContent(probes) {
 // permanently disposes it and prevents late responses from repainting.
 export function probesPanel(id, signal) {
   let controller;
-  let timer;
-  let gone = false;
-  let attached = false;
+  let lifecycle;
   const content = h('div', {class: 'probes-body'});
   const root = panel(t('nodes.probes'), {}, content);
-  const stop = () => { controller?.abort(); clearInterval(timer); timer = undefined; };
-  const observer = typeof MutationObserver === 'function' ? new MutationObserver(() => {
-    if (gone || signal?.aborted) return;
-    if (root.isConnected) {
-      attached = true;
-      if (timer === undefined) { startTimer(); if (!document.hidden) load(); }
-    } else if (attached) stop();
-  }) : null;
-  const dispose = () => {
-    gone = true;
-    stop();
-    observer?.disconnect();
-    signal?.removeEventListener('abort', dispose);
-  };
-  observer?.observe(document.body, {childList: true, subtree: true});
-  signal?.addEventListener('abort', dispose, {once: true});
-
   async function load() {
-    if (gone || signal?.aborted) return;
+    if (lifecycle?.disposed || signal?.aborted) return;
     controller?.abort();
     const request = new AbortController();
     controller = request;
@@ -88,22 +71,14 @@ export function probesPanel(id, signal) {
       if (!request.signal.aborted && !signal?.aborted && controller === request) content.replaceChildren(probeContent(data.probes));
     } catch (error) {
       if (!request.signal.aborted && !signal?.aborted && controller === request && error.name !== 'AbortError') {
-        content.replaceChildren(h('div', {class: 'history-error'},
-          h('p', {class: 'muted', role: 'status'}, t('nodes.probe.loadError', {error: errorText(error)})),
-          button(t('common.retry'), {small: true, id: 'probes-retry', onClick: load})));
+        content.replaceChildren(historyError(t('nodes.probe.loadError', {error: errorText(error)}),
+          {retryID: 'probes-retry', onRetry: load, status: true}));
       }
     } finally {
       if (!request.signal.aborted && !signal?.aborted && controller === request) content.setAttribute('aria-busy', 'false');
     }
   }
 
-  function startTimer() {
-    timer = setInterval(() => {
-      if (!root.isConnected) { stop(); return; }
-      if (!document.hidden && !gone) load();
-    }, 60000);
-  }
-  if (!signal?.aborted) { startTimer(); load(); }
-  else dispose();
+  lifecycle = panelLifecycle({root, signal, load, cancel: () => controller?.abort()});
   return root;
 }

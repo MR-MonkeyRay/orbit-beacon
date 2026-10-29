@@ -1,11 +1,12 @@
 import {errorText} from '../../shared/errors.js';
 import {t, getLocale} from '../i18n.js';
 import {h} from '../../shared/dom.js';
-import {ApiError} from '../api.js';
 import {formatBytes, when} from '../format.js';
 import {formatMetricValue, metricLabel, severityLabel} from '../lib/alert-utils.js';
+import {taskCategoryKey, taskStateKey} from '../lib/task-labels.js';
 import {button, facts} from './components.js';
 import {modal} from './dialogs.js';
+import {nextCursor as pageCursor} from './pager.js';
 
 const requestOptions = (signal, extra = {}) => ({navigation: false, signal, ...extra});
 
@@ -24,19 +25,19 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
   let loaded = false;
   let refreshPending = false;
   const alive = () => !closed && isActive();
-  const stateLabels = {queued: t('common.queued'), running: t('common.running'), succeeded: t('common.succeeded'), failed: t('common.failed'), firing: t('notifications.firing'), resolved: t('notifications.resolved')};
-  const categoryLabels = {configuration: t('common.configuration'), monitoring: t('common.monitoring'), events: t('common.events')};
-  const categories = (values) => (values || []).map((value) => categoryLabels[value] || value).join(', ');
+  const stateLabels = {firing: t('notifications.firing'), resolved: t('notifications.resolved')};
+  const stateLabel = (value) => stateLabels[value] || (taskStateKey(value) ? t(taskStateKey(value)) : undefined);
+  const categories = (values) => (values || []).map((value) => taskCategoryKey(value) ? t(taskCategoryKey(value)) : value).join(', ');
   const sourceName = (details) => details.destination?.plan_name || details.destination?.actor_name || (details.kind === 'backup_export' ? t('notifications.manualExport') : t('notifications.deletedPlan'));
   const notificationTitle = (notification) => {
     const details = notification.details || {};
     return notification.kind === 'alert'
-      ? `${details.rule_name || t('notifications.alert')} · ${stateLabels[notification.transition] || notification.transition}`
-      : `${sourceName(details)} · ${stateLabels[details.state || notification.transition] || t('notifications.unknownState')}`;
+      ? `${details.rule_name || t('notifications.alert')} · ${stateLabel(notification.transition) || notification.transition}`
+      : `${sourceName(details)} · ${stateLabel(details.state || notification.transition) || t('notifications.unknownState')}`;
   };
   const snapshot = (notification) => {
     const details = notification.details || {};
-    const rows = [[t('notifications.received'), when(notification.created_at)], [t('notifications.status'), stateLabels[notification.transition] || notification.transition]];
+    const rows = [[t('notifications.received'), when(notification.created_at)], [t('notifications.status'), stateLabel(notification.transition) || notification.transition]];
     if (notification.kind === 'alert') rows.push(
       [t('notifications.rule'), details.rule_name || details.rule_id], [t('notifications.node'), details.node_name || details.node_id],
       [t('notifications.metric'), metricLabel(details.metric)], [t('notifications.severity'), severityLabel(details.severity || notification.severity)],
@@ -114,9 +115,9 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
     try {
       const page = await api(`/notifications?${params}`, requestOptions(controller.signal));
       if (!alive() || listRequest !== controller) return;
-      if (page.has_more && (!page.next_cursor || append && page.next_cursor === nextCursor)) throw new ApiError(200, {code: 'unreadable_response'});
+      const cursor = pageCursor(page, append ? nextCursor : null);
       entries = append ? [...entries, ...page.notifications.filter((item) => !entries.some((old) => old.id === item.id))] : page.notifications;
-      nextCursor = page.next_cursor || null; hasMore = page.has_more; readThrough = page.read_through; loaded = true;
+      nextCursor = cursor; hasMore = page.has_more; readThrough = page.read_through; loaded = true;
     } catch (error) {
       if (!alive() || listRequest !== controller || error.name === 'AbortError') return;
       showError(t('notifications.notificationsLoadFailed', {error: errorText(error)}));

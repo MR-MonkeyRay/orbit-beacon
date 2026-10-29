@@ -4,7 +4,7 @@ import {h} from '../../shared/dom.js';
 import {copyElementText} from '../../shared/clipboard.js';
 import {api} from '../api.js';
 import {shortID, when} from '../format.js';
-import {busy, button, callout, emptyState, panel} from '../ui/components.js';
+import {busy, button, callout, dataTable, emptyState, panel} from '../ui/components.js';
 import {confirmDialog, modal} from '../ui/dialogs.js';
 import {toastError} from '../ui/feedback.js';
 import {enrollmentCommand, enrollmentCountdown, installerCommand, enrollmentState, nodeEnrollments} from '../lib/enrollment-utils.js';
@@ -65,10 +65,9 @@ export function enrollmentTab(node) {
     try {
       const tickets = await nodeEnrollments(node.id, api);
       if (node.deleted) return;
-      list.replaceChildren(tickets.length ? h('div', {class: 'table-wrap'},
-        h('table', {class: 'table'}, h('caption', {class: 'sr'}, t('nodes.enrollment.caption')),
-          h('thead', null, h('tr', null, [t('nodes.enrollment.ticket'), t('nodes.enrollment.expiresHeader'), t('nodes.enrollment.uses'), t('nodes.enrollment.state'), t('nodes.enrollment.actions')].map((label) => h('th', {scope: 'col'}, label)))),
-          h('tbody', null, tickets.map((ticket) => h('tr', null,
+      list.replaceChildren(tickets.length ? dataTable({caption: t('nodes.enrollment.caption'),
+        columns: [t('nodes.enrollment.ticket'), t('nodes.enrollment.expiresHeader'), t('nodes.enrollment.uses'), t('nodes.enrollment.state'), t('nodes.enrollment.actions')],
+        body: h('tbody', null, tickets.map((ticket) => h('tr', null,
             h('td', {class: 'mono', title: ticket.id}, shortID(ticket.id)),
             h('td', null, when(ticket.expires_at)), h('td', null, `${ticket.uses} / ${ticket.max_uses}`),
             h('td', null, enrollmentState(ticket), ticket.revoked_at ? h('div', {class: 'muted'}, when(ticket.revoked_at)) : null),
@@ -82,7 +81,7 @@ export function enrollmentTab(node) {
                 if (!node.deleted) await reload();
               } catch (failure) { toastError(failure); }
               finally { busy(control, false); control.disabled = Boolean(node.deleted); }
-            }}))))))) : emptyState(t('nodes.enrollment.empty'), t('nodes.enrollment.emptyHint')));
+            }})))))}) : emptyState(t('nodes.enrollment.empty'), t('nodes.enrollment.emptyHint')));
     } catch (failure) {
       if (failure.name !== 'AbortError') { error.textContent = errorText(failure); error.hidden = false; }
     } finally { loading = false; busy(retry, false); retry.disabled = Boolean(node.deleted); }

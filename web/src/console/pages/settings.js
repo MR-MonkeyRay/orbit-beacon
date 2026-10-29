@@ -7,7 +7,9 @@ import {ignoreNavigationCancellation, refresh} from '../router.js';
 import {busy, button, emptyState, facts, iconButton, link, pageHead, panel, skeleton} from '../ui/components.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
-import {field, input, onSubmit, passwordInput, trackFormDirty, validateBytes} from '../ui/forms.js';
+import {field, input, onSubmit, passwordInput, validateBytes} from '../ui/forms.js';
+import {passwordChangeForm} from '../ui/password-form.js';
+import {nextCursor} from '../ui/pager.js';
 import {tabSet} from '../ui/tabs.js';
 import {issueEnrollment} from './enrollments.js';
 import {auditItem} from '../lib/audit-item.js';
@@ -153,46 +155,8 @@ function publicPageTab() {
 function accountTab() {
   const {user} = session;
   const disabled = !session.csrf;
-  const oldPassword = passwordInput({name: 'old_password', autocomplete: 'current-password', required: true, disabled, id: 'pw-old'});
-  const newPassword = passwordInput({name: 'new_password', autocomplete: 'new-password', required: true, disabled, id: 'pw-new'});
-  const confirmPassword = input({type: 'password', name: 'confirm_password', autocomplete: 'new-password', required: true, disabled, id: 'pw-confirm'});
-  validateBytes(oldPassword, 1, 1024, t('account.currentPassword'));
-  validateBytes(newPassword, 8, 1024, t('account.newPassword'));
-  const checkMatch = () => confirmPassword.setCustomValidity(confirmPassword.value && confirmPassword.value !== newPassword.value ? t('account.passwordMismatch') : '');
-  confirmPassword.addEventListener('input', checkMatch);
-  newPassword.addEventListener('input', checkMatch);
-  const submit = button(t('account.changeAndSignOut'), {type: 'submit', variant: 'primary', disabled, id: 'pw-save'});
-  const form = h('form', {class: 'form'},
-    field(t('account.currentPassword'), oldPassword, {inner: oldPassword.wrapper}),
-    field(t('account.newPassword'), newPassword, {inner: newPassword.wrapper, hint: t('account.passwordBytes')}),
-    field(t('account.confirmPassword'), confirmPassword),
-    h('div', {class: 'form-actions'}, submit));
-  const clearPasswords = () => { oldPassword.value = ''; newPassword.value = ''; confirmPassword.value = ''; };
-  trackFormDirty(form);
-  getNavigationSignal()?.addEventListener('abort', clearPasswords, {once: true});
-  window.addEventListener('pagehide', clearPasswords, {once: true, signal: getNavigationSignal() || undefined});
-  onSubmit(form, submit, async () => {
-    try {
-      await api('/me/password', {method: 'PATCH', body: {old_password: oldPassword.value, new_password: newPassword.value}});
-      clearPasswords();
-      form.markClean();
-      invalidateSession('password');
-    } catch (error) {
-      if (error.status === 400 && error.code === 'invalid_old_password') {
-        oldPassword.showError(errorText(error));
-        oldPassword.focus();
-      } else if (error.status === 400 && error.code === 'password_unchanged') {
-        newPassword.showError(errorText(error));
-        newPassword.focus();
-      } else if (error.status === 429 && error.code === 'rate_limited') {
-        oldPassword.showError(errorText(error));
-        oldPassword.focus();
-      } else throw error;
-    } finally {
-      clearPasswords();
-      form.syncDirty();
-    }
-  });
+  const {form} = passwordChangeForm({disabled, hint: t('account.passwordBytes'),
+    ids: {old: 'pw-old', new: 'pw-new', confirm: 'pw-confirm', submit: 'pw-save'}, wrapActions: true});
   return h('div', {class: 'split'},
     panel(t('account.yourAccount'), {}, facts([
       [t('account.username'), user.username],
@@ -364,7 +328,7 @@ function auditTab(page, names) {
     busy(more, true);
     try {
       const nextPage = await api(`/audit?limit=50&before=${encodeURIComponent(cursor)}`);
-      cursor = nextPage.next_cursor;
+      cursor = nextCursor(nextPage, cursor);
       const newEvents = nextPage.events.filter((event) => {
         if (eventIDs.has(event.id)) return false;
         eventIDs.add(event.id);

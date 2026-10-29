@@ -10,6 +10,8 @@ export class ApiError extends Error {
   }
 }
 
+const unauthenticated = () => new ApiError(401, {code: 'unauthenticated'});
+
 export const session = {csrf: '', user: null, expires: ''};
 const sessionListeners = new Set();
 const cache = new Map();
@@ -59,7 +61,7 @@ export function invalidateSession(reason = 'unauthenticated') {
   notifySession({boundary: true, previousUser, reason});
 }
 
-export function requirePasswordChange() {
+function requirePasswordChange() {
   if (!session.user || session.user.must_change_password) return;
   const previousUser = session.user;
   advanceSession();
@@ -110,7 +112,7 @@ export function setSession(value) {
   const nextProof = proofKey(value);
   if (value.user && nextProof === rejectedProof && metadata && !metadata.login) {
     if (session.user) invalidateSession('expired');
-    throw new ApiError(401, {code: 'unauthenticated', message: 'Sign in again to continue.'});
+    throw unauthenticated();
   }
   const boundary = currentProof() !== nextProof || Boolean(metadata?.login);
   if (boundary) {
@@ -184,7 +186,7 @@ function assertActive(signal) {
 export async function api(path, options = {}) {
   if (session.user) {
     scheduleExpiry();
-    if (!session.user) throw new ApiError(401, {code: 'unauthenticated', message: 'Sign in again to continue.'});
+    if (!session.user) throw unauthenticated();
   }
   const method = options.method || 'GET';
   const started = monotonicNow();
@@ -205,7 +207,7 @@ export async function api(path, options = {}) {
     if (response.status === 401 && !(path === '/session' && method === 'POST')) {
       if (response.body && !response.body.locked) void response.body.cancel().catch(() => {});
       invalidateSession('unauthenticated');
-      throw new ApiError(401, {code: 'unauthenticated', message: 'Sign in again to continue.'});
+      throw unauthenticated();
     }
     if (response.status === 204) return null;
     let value = null;
@@ -257,7 +259,7 @@ export async function revalidateSession({signal} = {}) {
   const value = await api('/me', {signal, noRedirect: true, navigation: false});
   if (epoch !== sessionEpoch || signal?.aborted) throw cancelled();
   setSession(value);
-  if (!session.user) throw new ApiError(401, {code: 'unauthenticated', message: 'Sign in again to continue.'});
+  if (!session.user) throw unauthenticated();
   return session.user;
 }
 

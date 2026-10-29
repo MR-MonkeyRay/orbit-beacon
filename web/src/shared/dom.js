@@ -1,5 +1,5 @@
 // Minimal element factory shared by the console and the public page.
-export const SVG = 'http://www.w3.org/2000/svg';
+const SVG = 'http://www.w3.org/2000/svg';
 let motionQuery;
 export const reducedMotion = {
   get matches() {
@@ -27,7 +27,7 @@ export function h(tag, props, ...children) {
   return element;
 }
 
-export function append(parent, children) {
+function append(parent, children) {
   for (const child of children.flat(Infinity)) {
     if (child === null || child === undefined || child === false) continue;
     parent.append(child instanceof Node ? child : String(child));

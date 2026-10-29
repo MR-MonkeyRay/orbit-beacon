@@ -17,8 +17,9 @@ import {historyPanel} from './node-history.js';
 import {trafficPanel} from './node-traffic.js';
 import {trafficSettingsPanel} from './node-traffic-settings.js';
 import {probesPanel} from './node-probes.js';
+import {uuid} from '../../shared/uuid.js';
 
-export const NODE_PATH = /^\/nodes\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+export const NODE_PATH = new RegExp(`^/nodes/(${uuid.source.slice(1, -1)})$`, 'i');
 
 export async function nodePage() {
   const signal = getNavigationSignal();

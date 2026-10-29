@@ -2,15 +2,15 @@ import {h, icon} from '../shared/dom.js';
 import {statusLabels} from '../shared/status.js';
 import {timestampMillis} from '../shared/freshness.js';
 import {getLocale, t} from '../shared/i18n.js';
+import {formatLoadNumber} from '../shared/format.js';
 
 const reportFormat = new Intl.DateTimeFormat(getLocale(), {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
 const integerFormat = new Intl.NumberFormat(getLocale());
 const percentFormat = new Intl.NumberFormat(getLocale(), {style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1});
-const loadFormat = new Intl.NumberFormat(getLocale(), {useGrouping: false, minimumFractionDigits: 2, maximumFractionDigits: 2});
 
 export const STATUS = statusLabels({unknown: 'public.status.unknown'});
 
-export function duration(seconds) {
+function duration(seconds) {
   if (seconds === null) return '—';
   const minutes = Math.floor(seconds / 60);
   const days = Math.floor(minutes / 1440);
@@ -96,7 +96,7 @@ export function createCard() {
     where.hidden = !node.region && !node.provider;
     cpu.set(node.cpu_percent);
     memory.set(node.memory_percent);
-    load.textContent = node.load1 === null ? '—' : loadFormat.format(Number(node.load1.toFixed(2)));
+    load.textContent = node.load1 === null ? '—' : formatLoadNumber(node.load1);
     uptime.textContent = duration(node.uptime_seconds);
     const received = timestampMillis(node.last_seen);
     lastReport.replaceChildren(...(Number.isFinite(received)

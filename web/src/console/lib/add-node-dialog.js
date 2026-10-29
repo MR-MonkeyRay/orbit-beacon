@@ -7,7 +7,7 @@ import {formDialog} from '../ui/dialogs.js';
 import {toast} from '../ui/feedback.js';
 import {field, input, validateBytes} from '../ui/forms.js';
 
-export function createNodeDialog() {
+function createNodeDialog() {
   let name;
   formDialog({
     title: t('nodes.add'),

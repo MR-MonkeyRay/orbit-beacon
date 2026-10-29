@@ -35,7 +35,7 @@ export function select(choices, value, props = {}) {
 
 // Only customError is supplied by the application. Native browser messages may
 // use a different language from the selected interface locale.
-export function validationText(control) {
+function validationText(control) {
   const validity = control.validity;
   if (validity.valid) return '';
   if (validity.customError) return control.validationMessage;

@@ -12,6 +12,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {ICONS} from './src/shared/icons.js';
+import {themeBootstrap} from './theme-bootstrap.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.resolve(root, '../internal/server/webui/dist');
@@ -50,6 +51,7 @@ async function build(outDir) {
     const asset = (name) => `/${path.relative(outDir, path.resolve(root, name)).split(path.sep).join('/')}`;
     const template = await readFile(path.join(root, page.template), 'utf8');
     const html = template
+      .replace('<!--theme-->', themeBootstrap(page.entry === 'console'))
       .replace('<!--icons-->', sprite)
       .replace('%STYLE%', asset(output.cssBundle))
       .replace('%SCRIPT%', asset(file));
@@ -89,7 +91,9 @@ if (mode === '--check') {
   let timer;
   const rebuild = () => build(dist).then(() => console.log(`rebuilt ${new Date().toLocaleTimeString()}`), (error) => console.error(error.message));
   await rebuild();
-  watch(path.join(root, 'src'), {recursive: true}, () => { clearTimeout(timer); timer = setTimeout(rebuild, 80); });
+  for (const input of ['src', 'theme-bootstrap.mjs']) {
+    watch(path.join(root, input), {recursive: input === 'src'}, () => { clearTimeout(timer); timer = setTimeout(rebuild, 80); });
+  }
 } else {
   await build(dist);
   console.log(`Built web UI into ${path.relative(process.cwd(), dist) || dist}`);

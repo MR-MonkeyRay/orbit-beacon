@@ -4,7 +4,8 @@ import {h, svg} from '../../shared/dom.js';
 import {api} from '../api.js';
 import {formatBytes, formatPercent, when} from '../format.js';
 import {fitChartText, niceMax} from '../ui/chart.js';
-import {button, facts, panel} from '../ui/components.js';
+import {facts, panel} from '../ui/components.js';
+import {historyError} from '../ui/history-error.js';
 
 const DAY = 86400000;
 const dateFormat = new Intl.DateTimeFormat(getLocale(), {dateStyle: 'medium', timeZone: 'UTC'});
@@ -180,9 +181,9 @@ export function trafficPanel(id, signal) {
         alignLatest();
       }
     } catch (error) {
-      if (!signal?.aborted && version === loadVersion && error.name !== 'AbortError') content.replaceChildren(h('div', {class: 'history-error'},
-        h('p', {class: 'muted', role: 'status'}, t('nodes.trafficLoadError', {error: errorText(error)})),
-        button(t('common.retry'), {small: true, id: 'traffic-retry', onClick: load})));
+      if (!signal?.aborted && version === loadVersion && error.name !== 'AbortError') content.replaceChildren(
+        historyError(t('nodes.trafficLoadError', {error: errorText(error)}),
+          {retryID: 'traffic-retry', onRetry: load, status: true}));
     } finally {
       if (!signal?.aborted && version === loadVersion) content.setAttribute('aria-busy', 'false');
     }

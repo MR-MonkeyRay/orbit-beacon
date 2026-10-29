@@ -43,11 +43,13 @@ export function pageHead(title, subtitle, ...actions) {
     actions.length ? h('div', {class: 'head-actions'}, actions) : null);
 }
 
-export const statusBadge = (status) => h('span', {class: `badge ${status}`}, status === 'deleted' ? t('controls.deleted') : STATUS[status] || status);
+const statusLabel = (status) => status === 'deleted' ? t('controls.deleted') : STATUS[status] || status;
+
+export const statusBadge = (status) => h('span', {class: `badge ${status}`}, statusLabel(status));
 
 export function patchStatusBadge(element, status) {
   element.className = `badge ${status}`;
-  const label = status === 'deleted' ? t('controls.deleted') : STATUS[status] || status;
+  const label = statusLabel(status);
   if (element.textContent !== label) element.textContent = label;
 }
 
@@ -64,20 +66,31 @@ export function liveStatus() {
 }
 
 export function facts(entries) {
-  return h('dl', {class: 'facts'}, entries.map(([label, value]) => h('div', null, h('dt', null, label),
-    value === null || value === undefined || value === '' ? h('dd', {class: 'none'}, t('controls.notSet')) : h('dd', null, value))));
+  return buildReadonlyFacts(entries, true).element;
 }
 
 // Keep the list and its cells stable; callers patch readonly values, never forms.
 export function readonlyFacts(entries = []) {
+  return buildReadonlyFacts(entries, false);
+}
+
+function buildReadonlyFacts(entries, flattenChildren) {
   const element = h('dl', {class: 'facts'});
   const cells = new Map();
   const update = (values) => {
+    const occurrences = new Map();
     for (const [label, value] of values) {
-      let cell = cells.get(label);
+      const occurrence = occurrences.get(label) || 0;
+      occurrences.set(label, occurrence + 1);
+      let group = cells.get(label);
+      if (!group) {
+        group = [];
+        cells.set(label, group);
+      }
+      let cell = group[occurrence];
       if (!cell) {
         cell = h('dd');
-        cells.set(label, cell);
+        group.push(cell);
         element.append(h('div', null, h('dt', null, label), cell));
       }
       const empty = value === null || value === undefined || value === '';
@@ -85,11 +98,23 @@ export function readonlyFacts(entries = []) {
       const content = empty ? t('controls.notSet') : value;
       if (content instanceof Node && cell.firstElementChild === content) continue;
       if (!(content instanceof Node) && !Array.isArray(content) && cell.textContent === String(content)) continue;
-      cell.replaceChildren(...(Array.isArray(content) ? content : [content]));
+      const children = flattenChildren
+        ? (Array.isArray(content) ? content.flat(Infinity) : [content])
+          .filter((child) => child !== null && child !== undefined && child !== false)
+          .map((child) => child instanceof Node ? child : String(child))
+        : (Array.isArray(content) ? content : [content]);
+      cell.replaceChildren(...children);
     }
   };
   update(entries);
   return {element, update};
+}
+
+export function dataTable({caption, columns, body, className = '', colgroup, hidden = false, ...wrapperProps}) {
+  return h('div', {class: 'table-wrap', hidden, ...wrapperProps}, h('table', {class: `table ${className}`.trim()},
+    caption ? h('caption', {class: 'sr'}, caption) : null,
+    colgroup,
+    h('thead', null, h('tr', null, columns.map((label) => h('th', {scope: 'col'}, label)))), body));
 }
 
 export function note(text) { return h('p', {class: 'note'}, icon('info'), h('span', null, text)); }

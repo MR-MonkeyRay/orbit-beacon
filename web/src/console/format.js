@@ -1,6 +1,7 @@
 import {getLocale, t} from './i18n.js';
 import {statusLabels} from '../shared/status.js';
 import {h} from '../shared/dom.js';
+import {formatLoadNumber} from '../shared/format.js';
 
 export const STATUS = statusLabels();
 export const STATUS_ORDER = ['online', 'offline', 'never', 'pending', 'disabled'];
@@ -33,7 +34,6 @@ const relativeFormat = new Intl.RelativeTimeFormat(getLocale(), {numeric: 'auto'
 const observationFormat = new Intl.DateTimeFormat(getLocale(), {dateStyle: 'medium', timeStyle: 'medium'});
 const integerFormat = new Intl.NumberFormat(getLocale(), {useGrouping: false, maximumFractionDigits: 0});
 const percentFormat = new Intl.NumberFormat(getLocale(), {useGrouping: false, maximumFractionDigits: 1});
-const loadFormat = new Intl.NumberFormat(getLocale(), {useGrouping: false, minimumFractionDigits: 2, maximumFractionDigits: 2});
 const decimalSeparator = percentFormat.formatToParts(1.1).find((part) => part.type === 'decimal').value;
 
 export function relative(date) {
@@ -82,7 +82,7 @@ export function formatPercent(value) {
 }
 
 export function formatLoad(value) {
-  return Number.isFinite(value) && value >= 0 ? loadFormat.format(Number(value.toFixed(2))) : t('common.unavailable');
+  return Number.isFinite(value) && value >= 0 ? formatLoadNumber(value) : t('common.unavailable');
 }
 
 export function formatDuration(seconds) {

@@ -54,11 +54,16 @@ function stopPolling() {
   inbox?.pause();
 }
 
+function pollNotifications() {
+  if (foreground()) refreshNotifications();
+  else resumeNotifications();
+}
+
 export function syncNotifications() {
   if (!notificationSignal || notificationSignal.aborted) return;
   if (!foreground()) { stopPolling(); return; }
   if (!timer) {
-    timer = setInterval(() => { if (foreground()) refreshNotifications(); else resumeNotifications(); }, 15000);
+    timer = setInterval(pollNotifications, 15000);
     inbox?.resume();
     refreshNotifications();
   }
@@ -71,7 +76,7 @@ function resumeNotifications() {
   inbox?.setStale(true);
   // Keep the same single 15s controller while a foreground auth check is offline.
   // The summary itself must wait for /me, but a failed check can be retried.
-  if (!timer) timer = setInterval(() => { if (foreground()) refreshNotifications(); else resumeNotifications(); }, 15000);
+  if (!timer) timer = setInterval(pollNotifications, 15000);
   inbox?.pause();
   const currentEpoch = epoch;
   const pending = resumeRequest = verifySession({signal: notificationSignal});

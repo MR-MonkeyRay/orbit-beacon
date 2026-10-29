@@ -445,6 +445,37 @@ test('successful account password change invalidates the shared session and remo
   }
 });
 
+test('account password errors focus the mapped field and clear every secret', async (t) => {
+  let failure = 'invalid_old_password';
+  const env = setup(t, (request) => {
+    if (request.url === '/api/v1/me/password') return response({code: failure, message: 'private backend wording'}, {status: failure === 'rate_limited' ? 429 : 400});
+    return assert.fail(`Unexpected request ${request.url}`);
+  });
+  const originals = new Map(['history', 'requestAnimationFrame', 'matchMedia'].map((key) => [key, globalThis[key]]));
+  globalThis.history = {state: {}, replaceState() {}};
+  globalThis.requestAnimationFrame = () => 0;
+  globalThis.matchMedia = () => ({matches: true, addEventListener() {}});
+  location.pathname = '/settings'; location.hash = '#account';
+  try {
+    client.setSession(proof());
+    const {settingsPage} = await import('../src/console/pages/settings.js');
+    const page = await settingsPage(); env.body.append(page);
+    const form = page.querySelector('form');
+    const controls = form.querySelectorAll('input');
+    for (const code of ['invalid_old_password', 'password_unchanged', 'rate_limited']) {
+      failure = code;
+      controls.forEach((control) => { control.value = 'a sufficiently long password'; });
+      form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+      assert.equal(document.activeElement, controls[code === 'password_unchanged' ? 1 : 0]);
+      assert.equal(controls.every((control) => control.value === ''), true);
+      assert.equal(client.session.user.must_change_password, false);
+    }
+  } finally {
+    env.clean();
+    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+  }
+});
+
 test('notifications resume only after the shared me gate and keep one summary request per restoration', async (t) => {
   let release;
   const env = setup(t, (request) => request.url === '/api/v1/me' ? new Promise((resolve) => { release = resolve; })

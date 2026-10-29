@@ -1,8 +1,8 @@
 import {timestampMillis} from '../shared/freshness.js';
 import {connectLive} from '../shared/live.js';
 import {api, ApiError, calibrateSessionClock, getNavigationSignal, getSessionEpoch, getSessionSignal, invalidateSession, pauseSessionVerification, session, verifySession} from './api.js';
+import {uuid} from '../shared/uuid.js';
 
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const time = (value) => Number.isFinite(timestampMillis(value));
 const stringList = (value, max = Infinity) => Array.isArray(value) && value.length <= max && value.every((item) => typeof item === 'string');

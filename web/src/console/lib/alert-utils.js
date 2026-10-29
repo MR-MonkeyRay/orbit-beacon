@@ -1,9 +1,7 @@
 // Alert and notification form logic, kept independent of the DOM.
 import {getLocale, t} from '../i18n.js';
-
-const utf8 = new TextEncoder();
-const bytes = (value) => utf8.encode(value || '').length;
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import {byteLength} from '../../shared/dom.js';
+import {uuid} from '../../shared/uuid.js';
 export const METRICS = [
   ['cpu_percent', t('alerts.metric.cpu')], ['memory_used_percent', t('alerts.metric.memory')],
   ['swap_used_percent', t('alerts.metric.swap')], ['disk_used_percent', t('alerts.metric.disk')],
@@ -52,7 +50,7 @@ export function scopeLabel(rule, groups = [], nodes = []) {
 }
 export function validateRule(rule) {
   const fields = {};
-  if (!rule.name?.trim() || bytes(rule.name) > 100) fields.name = t('alerts.validation.name');
+  if (!rule.name?.trim() || byteLength(rule.name || '') > 100) fields.name = t('alerts.validation.name');
   if (typeof rule.enabled !== 'boolean') fields.enabled = t('alerts.validation.enabled');
   if (!['all', 'group', 'node'].includes(rule.scope_kind)) fields.scope_kind = t('alerts.validation.scope');
   else if (rule.scope_kind === 'all' ? rule.scope_id != null : !uuid.test(rule.scope_id || '')) fields.scope_id = t(rule.scope_kind === 'all' ? 'alerts.validation.allScopeID' : 'alerts.validation.scopeID');
@@ -107,9 +105,9 @@ export function buildChannelPayload(values, {editing = false, replaceURL = false
 export function validateChannel(body, {kind = body.kind, existing = null} = {}) {
   const fields = {};
   const config = body.config || {};
-  if (!body.name?.trim() || bytes(body.name) > 100) fields.name = t('alerts.validation.name');
+  if (!body.name?.trim() || byteLength(body.name || '') > 100) fields.name = t('alerts.validation.name');
   if (!['webhook', 'telegram', 'email'].includes(kind)) fields.kind = t('alerts.validation.kind');
-  if (body.secret !== undefined && (typeof body.secret !== 'string' || bytes(body.secret) > 4096)) fields.secret = t('alerts.validation.secret');
+  if (body.secret !== undefined && (typeof body.secret !== 'string' || byteLength(body.secret || '') > 4096)) fields.secret = t('alerts.validation.secret');
   const hasSecret = body.secret === undefined ? existing?.secret_set : Boolean(body.secret);
   if (kind === 'webhook' && (config.url !== undefined || !existing?.config?.url_set)) {
     try {
@@ -125,12 +123,12 @@ export function validateChannel(body, {kind = body.kind, existing = null} = {}) 
   if (kind === 'email') {
     if (!validHost(config.host || '')) fields['config.host'] = t('alerts.validation.smtpHost');
     if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535) fields['config.port'] = t('alerts.validation.smtpPort');
-    if (bytes(config.username) > 100 || /[\r\n\x00]/.test(config.username || '')) fields['config.username'] = t('alerts.validation.smtpUsername');
-    const address = {test: (value) => bytes(value) <= 254 && /^[\x21-\x7e]+$/.test(value) && /^[^\s@<>]+@[^\s@<>]+$/.test(value)};
+    if (byteLength(config.username || '') > 100 || /[\r\n\x00]/.test(config.username || '')) fields['config.username'] = t('alerts.validation.smtpUsername');
+    const address = {test: (value) => byteLength(value || '') <= 254 && /^[\x21-\x7e]+$/.test(value) && /^[^\s@<>]+@[^\s@<>]+$/.test(value)};
     if (!address.test(config.from || '')) fields['config.from'] = t('alerts.validation.smtpFrom');
     if (!Array.isArray(config.to) || !config.to.length || config.to.length > 20 || config.to.some((item) => !address.test(item))) fields['config.to'] = t('alerts.validation.smtpTo');
     if (config.username && !hasSecret) fields.secret = t('alerts.validation.smtpPassword');
-    if (body.secret !== undefined && (body.secret.includes('\0') || bytes(config.username) + bytes(body.secret) > 360)) fields.secret = t('alerts.validation.smtpCredentials');
+    if (body.secret !== undefined && (body.secret.includes('\0') || byteLength(config.username || '') + byteLength(body.secret || '') > 360)) fields.secret = t('alerts.validation.smtpCredentials');
   }
   return fields;
 }
