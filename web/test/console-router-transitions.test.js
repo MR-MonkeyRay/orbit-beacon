@@ -4,7 +4,7 @@ import {setImmediate as nextTurn} from 'node:timers/promises';
 import * as client from '../src/console/api.js';
 import {reducedMotion} from '../src/shared/dom.js';
 import {flush, TestElement} from './console-dom.js';
-import {liveHarness} from './live-harness.js';
+import {liveHarness, response} from './live-harness.js';
 
 function deferred() {
   let resolve;
@@ -17,7 +17,8 @@ function deferred() {
 }
 
 async function routing(t, {hidden = false} = {}) {
-  const env = liveHarness(t);
+	const env = liveHarness(t, () => response({user: {id: 'routing-user', username: 'administrator', must_change_password: false},
+	  csrf_token: 'routing-proof', expires_at: '2026-10-28T00:10:00Z'}, {headers: {Date: 'Wed, 28 Oct 2026 00:00:00 GMT'}}));
   const originals = new Map(['matchMedia', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
   const motion = Object.getOwnPropertyDescriptor(reducedMotion, 'matches');
   Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => false});
@@ -45,7 +46,7 @@ async function routing(t, {hidden = false} = {}) {
     return entry;
   };
   client.setNavigationSignal(null);
-  client.setSession({user: null, csrf_token: '', expires_at: ''});
+  client.setSession({user: {id: 'routing-user', username: 'administrator', must_change_password: false}, csrf_token: 'routing-proof', expires_at: '2026-10-28T00:10:00Z'});
   const router = await import(`../src/console/router.js?transition-${encodeURIComponent(t.name)}`);
   const stop = router.startRouter([{match: () => true, page: async () => {
     const heading = new TestElement('h1'); heading.append(location.pathname);

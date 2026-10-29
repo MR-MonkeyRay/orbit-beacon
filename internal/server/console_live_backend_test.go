@@ -49,7 +49,7 @@ func newConsoleLiveFixture(t *testing.T) *consoleLiveFixture {
 	f.clock.Store(time.Now().UTC().UnixNano())
 	now := func() time.Time { return time.Unix(0, f.clock.Load()).UTC() }
 	a := auth.NewService(db, auth.Options{Now: now})
-	if _, err := a.BootstrapAdministrator(context.Background(), "admin", "private-live-password"); err != nil {
+	if _, err := a.CreateUser(context.Background(), "admin", "private-live-password", false); err != nil {
 		t.Fatal(err)
 	}
 	session, err := a.Login(context.Background(), "admin", "private-live-password")

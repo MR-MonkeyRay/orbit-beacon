@@ -80,7 +80,7 @@ test('audit load more uses the cursor and hides after a full final page', async 
     return new Response(JSON.stringify(body), {headers: {'Content-Type': 'application/json'}});
   };
   invalidate('nodes', 'groups', 'users');
-  setSession({csrf_token: 'csrf', user: {id: 'user', username: 'admin', created_at: '2026-10-27T12:00:00Z'}, expires_at: ''});
+  setSession({csrf_token: 'csrf', user: {id: 'user', username: 'admin', must_change_password: false, created_at: '2026-10-27T12:00:00Z'}, expires_at: ''});
   try {
     const {settingsPage} = await import('../src/console/pages/settings.js');
     const page = await settingsPage();
@@ -107,7 +107,7 @@ test('audit load more uses the cursor and hides after a full final page', async 
 test('administrator forms preserve request boundaries and keep conflicts in the dialog', async () => {
   const dom = installDOM();
   const originals = new Map(['fetch', 'window', 'matchMedia', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
-  const self = {id: 'user-one', username: 'admin-one', created_at: '2026-10-27T12:00:00Z'};
+  const self = {id: 'user-one', username: 'admin-one', must_change_password: false, created_at: '2026-10-27T12:00:00Z'};
   const requests = [];
   Object.assign(globalThis, {window: new EventTarget(), matchMedia: () => ({matches: true, addEventListener() {}}),
     history: {state: null, replaceState() {}}, requestAnimationFrame: () => 0});
@@ -136,12 +136,19 @@ test('administrator forms preserve request boundaries and keep conflicts in the 
     let controls = elements(dialog);
     controls.find((element) => element.name === 'username').value = 'admin-two';
     const password = controls.find((element) => element.name === 'password');
+    const mustChangePassword = controls.find((element) => element.name === 'must_change_password');
+    assert.equal(mustChangePassword.checked, false);
     password.value = 'regression password two';
     dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true}));
     await flush();
-    assert.deepEqual(requests[0], {path: '/api/v1/users', method: 'POST', body: {username: 'admin-two', password: 'regression password two'}});
+    assert.deepEqual(requests[0], {path: '/api/v1/users', method: 'POST', body: {username: 'admin-two', password: 'regression password two', must_change_password: false}});
     assert.equal(password.value, '');
     assert.match(dialog.textContent, /Username already exists/);
+    mustChangePassword.checked = true;
+    password.value = 'another regression password';
+    dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true}));
+    await flush();
+    assert.equal(requests[1].body.must_change_password, true);
     closeDialogs();
     elements(page).find((element) => element.getAttribute('aria-label') === 'Rename administrator "admin-one"').click();
     dialog = dom.body.querySelector('dialog');
@@ -150,7 +157,7 @@ test('administrator forms preserve request boundaries and keep conflicts in the 
     controls.find((element) => element.name === 'username').value = 'admin-two';
     dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true}));
     await flush();
-    assert.deepEqual(requests[1], {path: '/api/v1/users/user-one', method: 'PATCH', body: {username: 'admin-two'}});
+    assert.deepEqual(requests[2], {path: '/api/v1/users/user-one', method: 'PATCH', body: {username: 'admin-two'}});
     assert.match(dialog.textContent, /Username already exists/);
     assert.equal(session.user.username, 'admin-one');
     assert.equal(session.csrf, 'csrf');
@@ -165,7 +172,7 @@ test('administrator forms preserve request boundaries and keep conflicts in the 
 test('self deletion clears the session without fetching the administrator list again', async () => {
   const dom = installDOM();
   const originals = new Map(['fetch', 'window', 'matchMedia', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
-  const self = {id: 'user-one', username: 'admin-one', created_at: '2026-10-27T12:00:00Z'};
+  const self = {id: 'user-one', username: 'admin-one', must_change_password: false, created_at: '2026-10-27T12:00:00Z'};
   const requests = [];
   Object.assign(globalThis, {window: new EventTarget(), matchMedia: () => ({matches: true, addEventListener() {}}),
     history: {state: null, replaceState() {}}, requestAnimationFrame: () => 0});

@@ -19,7 +19,8 @@ const themeNames = {system: 'System', light: 'Light', dark: 'Dark'};
 
 function renderAccount() {
   shellElements();
-  if (!session.user) { account.replaceChildren(); return; }
+  if (session.user?.must_change_password) document.documentElement.classList.add('route-login');
+  if (!session.user || session.user.must_change_password) { account.replaceChildren(); return; }
   // In the icon rail the label span becomes the button's tooltip.
   const exit = button(h('span', {class: 'nav-label'}, 'Sign out'), {id: 'sign-out', icon: 'logout', small: true, onClick: async () => {
     busy(exit, true);

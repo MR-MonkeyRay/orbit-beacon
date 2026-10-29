@@ -14,10 +14,10 @@ import (
 
 func TestManagementLatestSample(t *testing.T) {
 	f := newAgentHTTP(t, 5)
-	if _, err := f.auth.BootstrapAdministrator(context.Background(), "admin", password); err != nil {
+	if _, err := f.auth.CreateUser(context.Background(), "admin", password, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.auth.CreateUser(context.Background(), "admin-two", password); err != nil {
+	if _, err := f.auth.CreateUser(context.Background(), "admin-two", password, false); err != nil {
 		t.Fatal(err)
 	}
 	sessionFixture := fixture{handler: f.handler, auth: f.auth, nodes: f.nodes, db: f.db}

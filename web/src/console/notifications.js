@@ -27,7 +27,7 @@ export function onNotificationTick(listener) {
   return () => tickListeners.delete(listener);
 }
 
-const visibleSession = () => pageActive && !document.hidden && Boolean(session.user && session.csrf) && location.pathname !== '/login';
+const visibleSession = () => pageActive && !document.hidden && Boolean(session.user && !session.user.must_change_password && session.csrf) && location.pathname !== '/login';
 const foreground = () => visibleSession() && sessionIsVerified();
 const requestOptions = (signal, extra = {}) => ({navigation: false, signal, ...extra});
 const categories = (values) => (values || []).map((value) => categoryLabels[value] || value).join(', ');
@@ -36,7 +36,7 @@ const failureText = () => navigator.onLine === false ? 'You are offline. Reconne
 
 function renderEntries() {
   for (const entry of document.querySelectorAll('.notification-entry')) {
-    entry.hidden = !session.user;
+    entry.hidden = !session.user || session.user.must_change_password;
     const count = entry.querySelector('.notification-count');
     // The icon rail shows the count as a small badge, so large counts are capped.
     count.textContent = summary ? (summary.unread_count > 99 ? '99+' : String(summary.unread_count)) : stale ? '?' : '…';

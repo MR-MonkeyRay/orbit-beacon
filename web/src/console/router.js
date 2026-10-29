@@ -1,5 +1,5 @@
 import {h, reducedMotion} from '../shared/dom.js';
-import {onSession, pauseSessionVerification, session, setNavigationSignal, verifySession} from './api.js';
+import {ensureSession, onSession, pauseSessionVerification, session, setNavigationSignal, verifySession} from './api.js';
 import {setActiveNav} from './shell.js';
 import {button, emptyState, linkButton, pageHead, resetIDs, skeleton} from './ui/components.js';
 import {closeDialogs, confirmDiscard, dialogActionStale} from './ui/dialogs.js';
@@ -72,6 +72,18 @@ async function render(options = {}) {
   let content;
   try {
     resetIDs();
+    // Gate before page loaders can fetch private data or construct private DOM.
+    if (location.pathname !== '/login') {
+      try { await ensureSession(); }
+      catch (error) { if (error.status === 401) return go('/login', {replace: true, force: true}); throw error; }
+    }
+    if (token !== navigation) throw new NavigationCancelled();
+    if (session.user?.must_change_password && location.pathname !== '/change-password') {
+      return go('/change-password', {replace: true, force: true});
+    }
+    if (location.pathname === '/change-password' && !session.user?.must_change_password) {
+      return go(session.user ? '/overview' : '/login', {replace: true, force: true});
+    }
     content = await route.page();
   } catch (error) {
     if (token !== navigation) throw new NavigationCancelled();
@@ -151,9 +163,10 @@ export function startRouter(table) {
     closeDialogs();
     document.getElementById('toasts')?.replaceChildren();
     view.replaceChildren();
-    const target = current.user ? location.pathname + location.search + location.hash
-      : detail.reason === 'password' ? '/login?password-changed' : '/login';
-    if (current.user && location.pathname === '/login') return;
+    const target = current.user?.must_change_password ? '/change-password'
+      : current.user ? location.pathname + location.search + location.hash
+        : detail.reason === 'password' ? '/login?password-changed' : '/login';
+    if (current.user && !current.user.must_change_password && location.pathname === '/login') return;
     void go(target, {replace: true, force: true}).catch(ignoreNavigationCancellation);
   });
   history.scrollRestoration = 'manual';

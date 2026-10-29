@@ -41,7 +41,7 @@ test('notifications activate after SPA login, survive rename, and reset on accou
     const {initNotifications} = await import('../src/console/notifications.js');
     const {setActiveNav} = await import('../src/console/shell.js?notifications-lifecycle');
     dispose = initNotifications();
-    setSession({user: {id: 'one', username: 'admin-one'}, csrf_token: 'csrf-one', expires_at: '2026-10-29T00:00:00Z'});
+    setSession({user: {id: 'one', username: 'admin-one', must_change_password: false}, csrf_token: 'csrf-one', expires_at: '2026-10-29T00:00:00Z'});
     assert.equal(requests, 0);
     location.pathname = '/overview';
     setActiveNav('/overview');
@@ -53,7 +53,7 @@ test('notifications activate after SPA login, survive rename, and reset on accou
     await flush();
     assert.equal(requests, 1);
     assert.equal(dom.timers.size, 1);
-    setSession({user: {id: 'two', username: 'admin-two'}, csrf_token: 'csrf-two', expires_at: '2026-10-29T00:00:00Z'});
+    setSession({user: {id: 'two', username: 'admin-two', must_change_password: false}, csrf_token: 'csrf-two', expires_at: '2026-10-29T00:00:00Z'});
     assert.equal(count.textContent, '…');
     assert.equal(dom.timers.size, 1);
     resolveSecond(new Response(JSON.stringify({unread_count: 7, latest_id: 'second'})));

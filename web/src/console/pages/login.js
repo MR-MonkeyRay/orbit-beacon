@@ -1,20 +1,10 @@
-import {h, icon, svg} from '../../shared/dom.js';
-import {api, revalidateSession, setSession} from '../api.js';
+import {h, icon} from '../../shared/dom.js';
+import {api, getNavigationSignal, revalidateSession, session, setSession} from '../api.js';
 import {go, ignoreNavigationCancellation} from '../router.js';
-import {brandMark} from '../shell.js';
+import {authLayout} from '../ui/auth-layout.js';
 import {busy, button, callout} from '../ui/components.js';
 import {field, input, passwordInput, validateBytes} from '../ui/forms.js';
 
-// Rings are circles in a squashed, tilted group so satellites travel along
-// ellipses. Satellites are pre-stretched and counter-rotate so they stay round.
-function orbits() {
-  const element = svg('svg', {class: 'login-orbits', viewBox: '0 0 1100 1100', 'aria-hidden': 'true'});
-  element.innerHTML = '<g transform="rotate(-16 550 550) translate(0 320) scale(1 .42)">'
-    + '<g class="ring r1"><circle class="path" cx="550" cy="550" r="300"/><ellipse class="sat" cx="850" cy="550" rx="7" ry="16.7"/><ellipse class="sat" cx="250" cy="550" rx="5" ry="11.9"/></g>'
-    + '<g class="ring r2"><circle class="path" cx="550" cy="550" r="420"/><ellipse class="sat" cx="550" cy="130" rx="8" ry="19.0"/></g>'
-    + '<g class="ring r3"><circle class="path" cx="550" cy="550" r="540"/><ellipse class="sat" cx="10" cy="550" rx="6" ry="14.3"/><ellipse class="sat" cx="932" cy="932" rx="5" ry="11.9"/></g></g>';
-  return element;
-}
 
 function nextPath() {
   const next = new URLSearchParams(location.search).get('next');
@@ -22,14 +12,14 @@ function nextPath() {
   let target;
   try { target = new URL(next, location.origin); } catch { return '/overview'; }
   const normalizedPath = target.pathname.replace(/\/$/, '') || '/';
-  if (target.origin !== location.origin || normalizedPath === '/login') return '/overview';
+  if (target.origin !== location.origin || ['/login', '/change-password'].includes(normalizedPath)) return '/overview';
   return `${target.pathname}${target.search}${target.hash}`;
 }
 
 export async function loginPage() {
   try {
     await revalidateSession();
-    return nextPath();
+    return session.user.must_change_password ? '/change-password' : nextPath();
   } catch { /* not signed in */ }
   const errorBox = h('div', {class: 'form-error', role: 'alert', hidden: true});
   const username = input({name: 'username', autocomplete: 'username', required: true, autocapitalize: 'none', dataset: {autofocus: ''}});
@@ -38,14 +28,18 @@ export async function loginPage() {
   validateBytes(password, 8, 1024, 'Password');
   const submit = button('Sign in', {type: 'submit', variant: 'primary'});
   const form = h('form', {class: 'form'}, errorBox, field('Username', username), field('Password', password, {inner: password.wrapper}), submit);
+  getNavigationSignal()?.addEventListener('abort', () => { password.value = ''; }, {once: true});
+  window.addEventListener('pagehide', () => { password.value = ''; }, {once: true, signal: getNavigationSignal() || undefined});
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (submit.classList.contains('busy')) return;
     errorBox.hidden = true;
     busy(submit, true);
     try {
-      setSession(await api('/session', {method: 'POST', body: {username: username.value, password: password.value}, noRedirect: true}));
-      void go(nextPath(), {replace: true}).catch(ignoreNavigationCancellation);
+      const value = await api('/session', {method: 'POST', body: {username: username.value, password: password.value}, noRedirect: true});
+      password.value = '';
+      setSession(value);
+      void go(session.user.must_change_password ? '/change-password' : nextPath(), {replace: true}).catch(ignoreNavigationCancellation);
     } catch (error) {
       if (!form.isConnected || error.name === 'AbortError') return;
       const message = error.status === 401 ? 'Username or password is incorrect.'
@@ -60,13 +54,10 @@ export async function loginPage() {
     }
   });
   const changed = new URLSearchParams(location.search).has('password-changed');
-  return h('section', {class: 'login'}, orbits(),
-    h('div', null,
-      h('div', {class: 'login-card'},
-        h('div', {class: 'brand'}, brandMark(), h('span', null, 'OrbitBeacon')),
-        h('h1', {tabindex: '-1'}, 'Sign in to the console'),
-        h('p', null, 'Manage nodes, access and the public status page for this server.'),
-        changed ? callout('Password changed. Every session was signed out; sign in with your new password.', 'info') : null,
-        form),
-      h('p', {class: 'login-foot'}, h('a', {href: '/'}, 'View the public status page'))));
+  return authLayout({
+    title: 'Sign in to the console',
+    description: 'Manage nodes, access and the public status page for this server.',
+    content: [changed ? callout('Password changed. Every session was signed out; sign in with your new password.', 'info') : null, form],
+    footer: h('a', {href: '/'}, 'View the public status page')
+  });
 }

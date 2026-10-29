@@ -24,7 +24,7 @@ let verification;
 let authReady = true;
 
 const monotonicNow = () => performance.now();
-const proofKey = (value) => value.user ? `${value.user.id}:${value.csrf_token}:${value.expires_at}` : '';
+const proofKey = (value) => value.user ? `${value.user.id}:${value.csrf_token}:${value.expires_at}:${value.user.must_change_password}` : '';
 const currentProof = () => proofKey({user: session.user, csrf_token: session.csrf, expires_at: session.expires});
 const serverNow = () => serverAt + Math.max(0, monotonicNow() - monotonicAt);
 const cancelled = () => new DOMException('The session has changed.', 'AbortError');
@@ -59,6 +59,15 @@ export function invalidateSession(reason = 'unauthenticated') {
   notifySession({boundary: true, previousUser, reason});
 }
 
+export function requirePasswordChange() {
+  if (!session.user || session.user.must_change_password) return;
+  const previousUser = session.user;
+  advanceSession();
+  session.user = {...session.user, must_change_password: true};
+  scheduleExpiry();
+  notifySession({boundary: true, previousUser, reason: 'password-change-required'});
+}
+
 function scheduleExpiry() {
   clearTimeout(expiryTimer);
   expiryTimer = undefined;
@@ -87,9 +96,15 @@ export function setSession(value) {
   const metadata = responseProofs.get(value);
   if (metadata && metadata.epoch !== sessionEpoch) throw cancelled();
   if (metadata?.callerSignal?.aborted || metadata?.pageSignal?.aborted) throw cancelled();
-  if (metadata && (!value.user || typeof value.user.id !== 'string' || typeof value.user.username !== 'string'
-    || typeof value.csrf_token !== 'string' || !value.csrf_token || !Number.isFinite(Date.parse(value.expires_at)))) {
+  if ((metadata && !value.user) || (value.user && (typeof value.user.id !== 'string' || typeof value.user.username !== 'string'
+    || typeof value.user.must_change_password !== 'boolean'
+    || metadata && (typeof value.csrf_token !== 'string' || !value.csrf_token || !Number.isFinite(Date.parse(value.expires_at)))))) {
     throw new ApiError(200, {message: 'The server returned an invalid session.'});
+  }
+  // Only a new login can restore management access after this credential was
+  // restricted. A delayed or inconsistent /me must never reopen private data.
+  if (!metadata?.login && session.user?.must_change_password && value.user?.id === session.user.id && !value.user.must_change_password) {
+    value = {...value, user: {...value.user, must_change_password: true}};
   }
   const responseTime = metadata?.date == null ? undefined : metadata.date + Math.max(0, monotonicNow() - metadata.at);
   const nextProof = proofKey(value);
@@ -111,7 +126,8 @@ export function setSession(value) {
   if (responseTime != null) calibrateSessionClock(new Date(responseTime).toISOString());
   else scheduleExpiry();
   if (session.user !== value.user) return;
-  notifySession({boundary, previousUser, reason: metadata?.login ? 'login' : 'session'});
+  notifySession({boundary, previousUser, reason: metadata?.login ? 'login'
+    : value.user?.must_change_password ? 'password-change-required' : 'session'});
 }
 
 export function updateUser(patch) {
@@ -196,6 +212,7 @@ export async function api(path, options = {}) {
     try { value = await response.json(); } catch { assertActive(request.signal); }
     assertActive(request.signal);
     if (!response.ok) {
+      if (response.status === 403 && value?.code === 'password_change_required') requirePasswordChange();
       throw new ApiError(response.status, value);
     }
     if (value === null) throw new ApiError(response.status, {message: 'The server returned an unreadable response.'});
@@ -266,7 +283,7 @@ export function verifySession({signal, fresh = false} = {}) {
 
 export async function ensureSession() {
   scheduleExpiry();
-  if (!session.user) await revalidateSession({signal: navigationSignal});
+  if (!session.user || !authReady) await verifySession({signal: navigationSignal});
   return session.user;
 }
 

@@ -40,7 +40,7 @@ func TestHistoryAPIValidationSecondAdministratorAndDisabledHistory(t *testing.T)
 
 func TestHistoryHTTPIngestFlushTiersAndDeleteVisibility(t *testing.T) {
 	f := newAgentHTTP(t, 5)
-	if _, err := f.auth.BootstrapAdministrator(context.Background(), "admin", password); err != nil {
+	if _, err := f.auth.CreateUser(context.Background(), "admin", password, false); err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()

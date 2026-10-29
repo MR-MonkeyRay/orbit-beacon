@@ -149,7 +149,7 @@ func TestBootstrapRefusesToReplaceExistingAdministrator(t *testing.T) {
 func TestSessionsPersistOnlySHA256AndExpireAfterTwelveHours(t *testing.T) {
 	service, db, now := newAuth(t)
 	ctx := context.Background()
-	user, err := service.BootstrapAdministrator(ctx, "admin", initialPassword)
+	user, err := service.CreateUser(ctx, "admin", initialPassword, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestSessionsPersistOnlySHA256AndExpireAfterTwelveHours(t *testing.T) {
 func TestPasswordChangeRevokesAllSessionsButFailedChangeDoesNot(t *testing.T) {
 	service, _, _ := newAuth(t)
 	ctx := context.Background()
-	user, err := service.BootstrapAdministrator(ctx, "admin", initialPassword)
+	user, err := service.CreateUser(ctx, "admin", initialPassword, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestPasswordChangeRevokesAllSessionsButFailedChangeDoesNot(t *testing.T) {
 func TestLoginRefusesFailedSessionEntropy(t *testing.T) {
 	service, db, now := newAuth(t)
 	ctx := context.Background()
-	if _, err := service.BootstrapAdministrator(ctx, "admin", initialPassword); err != nil {
+	if _, err := service.CreateUser(ctx, "admin", initialPassword, false); err != nil {
 		t.Fatal(err)
 	}
 	service = auth.NewService(db, auth.Options{
@@ -273,7 +273,7 @@ func TestLoginRefusesFailedSessionEntropy(t *testing.T) {
 func TestValidCredentialsAreNotLockedOutByInvalidAttempts(t *testing.T) {
 	service, _, _ := newAuth(t)
 	ctx := context.Background()
-	if _, err := service.BootstrapAdministrator(ctx, "admin", initialPassword); err != nil {
+	if _, err := service.CreateUser(ctx, "admin", initialPassword, false); err != nil {
 		t.Fatal(err)
 	}
 	for range 60 {
@@ -289,11 +289,11 @@ func TestValidCredentialsAreNotLockedOutByInvalidAttempts(t *testing.T) {
 func TestSuccessfulLoginReclaimsExpiredSessionsAndPreservesActiveSessions(t *testing.T) {
 	service, db, now := newAuth(t)
 	ctx := context.Background()
-	admin, err := service.BootstrapAdministrator(ctx, "admin", initialPassword)
+	admin, err := service.CreateUser(ctx, "admin", initialPassword, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondAdmin, err := service.CreateUser(ctx, "admin-two", initialPassword)
+	secondAdmin, err := service.CreateUser(ctx, "admin-two", initialPassword, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ func TestSessionExpirationHasLeadingIndex(t *testing.T) {
 
 func TestLoginAdmissionRejectsBeforeDatabaseAndDoesNotLockOtherPeers(t *testing.T) {
 	service, db, _ := newAuth(t)
-	if _, err := service.BootstrapAdministrator(context.Background(), "admin", initialPassword); err != nil {
+	if _, err := service.CreateUser(context.Background(), "admin", initialPassword, false); err != nil {
 		t.Fatal(err)
 	}
 	attacker := auth.WithLoginPeer(context.Background(), "192.0.2.1:1000")
@@ -404,7 +404,7 @@ func TestConcurrentUserCreationReturnsOneDomainConflict(t *testing.T) {
 	results := make(chan error, 2)
 	for _, service := range []*auth.Service{first, second} {
 		go func(service *auth.Service) {
-			_, err := service.CreateUser(context.Background(), "contended-name", initialPassword)
+			_, err := service.CreateUser(context.Background(), "contended-name", initialPassword, false)
 			results <- err
 		}(service)
 	}
@@ -431,7 +431,7 @@ func TestConcurrentUserCreationReturnsOneDomainConflict(t *testing.T) {
 func TestBootstrapRefusesWhenCreatedAdministratorAlreadyExists(t *testing.T) {
 	service, db, _ := newAuth(t)
 	ctx := context.Background()
-	existing, err := service.CreateUser(ctx, "admin-two", initialPassword)
+	existing, err := service.CreateUser(ctx, "admin-two", initialPassword, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,11 +451,11 @@ func TestConcurrentIndependentServicesCannotDeleteEveryAdministrator(t *testing.
 	first, db, now := newAuth(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	adminOne, err := first.BootstrapAdministrator(ctx, "admin-one", initialPassword)
+	adminOne, err := first.CreateUser(ctx, "admin-one", initialPassword, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	adminTwo, err := first.CreateUser(ctx, "admin-two", initialPassword)
+	adminTwo, err := first.CreateUser(ctx, "admin-two", initialPassword, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +508,7 @@ func TestConcurrentIndependentServicesCannotDeleteEveryAdministrator(t *testing.
 func TestLastAdministratorDeletionPreservesAccountSessionsAndAudit(t *testing.T) {
 	service, db, _ := newAuth(t)
 	ctx := context.Background()
-	user, err := service.BootstrapAdministrator(ctx, "admin-one", initialPassword)
+	user, err := service.CreateUser(ctx, "admin-one", initialPassword, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,11 +551,11 @@ func TestAdministratorDeletionRevokesOnlyTargetSessions(t *testing.T) {
 		t.Run(fmt.Sprintf("self=%t", self), func(t *testing.T) {
 			service, db, _ := newAuth(t)
 			ctx := context.Background()
-			other, err := service.BootstrapAdministrator(ctx, "admin-one", initialPassword)
+			other, err := service.CreateUser(ctx, "admin-one", initialPassword, false)
 			if err != nil {
 				t.Fatal(err)
 			}
-			target, err := service.CreateUser(audit.WithActor(ctx, other.ID), "admin-two", initialPassword)
+			target, err := service.CreateUser(audit.WithActor(ctx, other.ID), "admin-two", initialPassword, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -614,11 +614,11 @@ func TestAdministratorDeletionRevokesOnlyTargetSessions(t *testing.T) {
 func TestAdministratorRenamePreservesSessionsAndConflictsAreAtomic(t *testing.T) {
 	service, db, _ := newAuth(t)
 	ctx := context.Background()
-	other, err := service.BootstrapAdministrator(ctx, "admin-one", initialPassword)
+	other, err := service.CreateUser(ctx, "admin-one", initialPassword, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := service.CreateUser(audit.WithActor(ctx, other.ID), "admin-two", initialPassword)
+	user, err := service.CreateUser(audit.WithActor(ctx, other.ID), "admin-two", initialPassword, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -685,11 +685,11 @@ func TestAdministratorMutationsRollbackWhenAuditFails(t *testing.T) {
 		t.Run(action, func(t *testing.T) {
 			service, db, _ := newAuth(t)
 			ctx := context.Background()
-			other, err := service.BootstrapAdministrator(ctx, "admin-one", initialPassword)
+			other, err := service.CreateUser(ctx, "admin-one", initialPassword, false)
 			if err != nil {
 				t.Fatal(err)
 			}
-			user, err := service.CreateUser(audit.WithActor(ctx, other.ID), "admin-two", initialPassword)
+			user, err := service.CreateUser(audit.WithActor(ctx, other.ID), "admin-two", initialPassword, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -713,7 +713,7 @@ func TestAdministratorMutationsRollbackWhenAuditFails(t *testing.T) {
 			actor := audit.WithActor(ctx, user.ID)
 			switch action {
 			case "user.create":
-				_, err = service.CreateUser(actor, "admin-three", initialPassword)
+				_, err = service.CreateUser(actor, "admin-three", initialPassword, false)
 			case "user.patch":
 				name := "admin-two-renamed"
 				_, err = service.PatchUser(actor, user.ID, auth.UserPatch{Username: &name})

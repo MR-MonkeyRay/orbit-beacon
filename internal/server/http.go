@@ -380,29 +380,27 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 		fail(w, http.StatusUnauthorized, "unauthenticated", "A valid session is required", requestID)
 		return
 	}
-	if p == "/api/v1/live" || p == "/api/v1/live/stream" || p == "/api/v1/live/ws" {
-		session, err := h.auth.CurrentSession(r.Context(), c.Value)
-		if err != nil {
-			h.serviceError(w, err, requestID)
-			return
-		}
-		h.consoleLive(w, r, requestID, c.Value, session)
-		return
-	}
-	if p == "/api/v1/me" {
-		session, err := h.auth.CurrentSession(r.Context(), c.Value)
-		if err != nil {
-			h.serviceError(w, err, requestID)
-			return
-		}
-		writeJSON(w, http.StatusOK, session)
-		return
-	}
-	user, err := h.auth.Authenticate(r.Context(), c.Value)
+	session, err := h.auth.CurrentSession(r.Context(), c.Value)
 	if err != nil {
 		h.serviceError(w, err, requestID)
 		return
 	}
+	passwordRoute := (p == "/api/v1/me" && r.Method == http.MethodGet) ||
+		(p == "/api/v1/me/password" && r.Method == http.MethodPatch) ||
+		(p == "/api/v1/session" && r.Method == http.MethodDelete)
+	if session.User.MustChangePassword && !passwordRoute {
+		h.serviceError(w, auth.ErrPasswordChangeRequired, requestID)
+		return
+	}
+	if p == "/api/v1/live" || p == "/api/v1/live/stream" || p == "/api/v1/live/ws" {
+		h.consoleLive(w, r, requestID, c.Value, session)
+		return
+	}
+	if p == "/api/v1/me" {
+		writeJSON(w, http.StatusOK, session)
+		return
+	}
+	user := session.User
 	mutation := r.Method != http.MethodGet && r.Method != http.MethodHead
 	if mutation {
 		if r.Header.Get("Origin") != h.origin {
@@ -600,6 +598,10 @@ func (h *handler) serviceError(w http.ResponseWriter, err error, requestID strin
 		fail(w, http.StatusUnauthorized, "unauthenticated", "Credentials or session are invalid or expired", requestID)
 	case errors.Is(err, auth.ErrWrongPassword):
 		fail(w, http.StatusBadRequest, "invalid_old_password", "Current password is incorrect", requestID)
+	case errors.Is(err, auth.ErrPasswordChangeRequired):
+		fail(w, http.StatusForbidden, "password_change_required", "Change your password before accessing management", requestID)
+	case errors.Is(err, auth.ErrPasswordUnchanged):
+		fail(w, http.StatusBadRequest, "password_unchanged", "New password must differ from the current password", requestID)
 	case errors.Is(err, auth.ErrRateLimited):
 		w.Header().Set("Retry-After", "1")
 		fail(w, http.StatusTooManyRequests, "rate_limited", "Request rate limit reached; retry later", requestID)
@@ -641,7 +643,7 @@ func (h *handler) static(w http.ResponseWriter, r *http.Request) {
 	}
 	p := r.URL.Path
 	name := strings.TrimPrefix(p, "/")
-	uiRoute := p == "/login" || p == "/overview" || p == "/nodes" || p == "/alerts" || p == "/settings" || (strings.HasPrefix(p, "/nodes/") && identity.ValidUUID(strings.TrimPrefix(p, "/nodes/")))
+	uiRoute := p == "/login" || p == "/change-password" || p == "/overview" || p == "/nodes" || p == "/alerts" || p == "/settings" || (strings.HasPrefix(p, "/nodes/") && identity.ValidUUID(strings.TrimPrefix(p, "/nodes/")))
 	if uiRoute {
 		name = "200.html"
 		if p == "/login" {

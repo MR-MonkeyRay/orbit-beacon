@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func validationDB(t *testing.T, category Category) *sql.DB {
 		}
 	}
 	if category == Configuration {
-		if _, err := db.Exec("INSERT INTO users(id,username,password_hash,created_at) VALUES(?,?,?,?)", validationID, "admin", validationHash, validationTime); err != nil {
+		if _, err := db.Exec("INSERT INTO users(id,username,password_hash,created_at,must_change_password) VALUES(?,?,?,?,0)", validationID, "admin", validationHash, validationTime); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -70,7 +71,7 @@ func TestPayloadRequiresAtLeastOneAdministrator(t *testing.T) {
 	if err := ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err == nil {
 		t.Fatal("accepted configuration without administrators")
 	}
-	if _, err := db.Exec("INSERT INTO users(id,username,password_hash,created_at) VALUES(?,?,?,?),(?,?,?,?)", validationID, "admin-one", validationHash, validationTime, "00000000-0000-4000-8000-000000000002", "admin-two", validationHash, validationTime); err != nil {
+	if _, err := db.Exec("INSERT INTO users(id,username,password_hash,created_at,must_change_password) VALUES(?,?,?,?,0),(?,?,?,?,0)", validationID, "admin-one", validationHash, validationTime, "00000000-0000-4000-8000-000000000002", "admin-two", validationHash, validationTime); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err != nil {
@@ -95,6 +96,25 @@ func TestPayloadPreservesExactUsernameContract(t *testing.T) {
 		if err := ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err == nil {
 			t.Fatalf("invalid username %q accepted", username)
 		}
+	}
+}
+
+func TestPayloadRequiresBooleanPasswordChangeFlag(t *testing.T) {
+	for _, value := range []any{0, 1, -1, 2, nil, "true"} {
+		t.Run(fmt.Sprint(value), func(t *testing.T) {
+			db := validationDB(t, Configuration)
+			if _, err := db.Exec("UPDATE users SET must_change_password=?", value); err != nil {
+				t.Fatal(err)
+			}
+			err := ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32))
+			valid := value == 0 || value == 1
+			if valid && err != nil {
+				t.Fatalf("valid password-change flag %v: %v", value, err)
+			}
+			if !valid && (err == nil || !strings.Contains(err.Error(), "restore_invalid_data")) {
+				t.Fatalf("invalid password-change flag %v: %v", value, err)
+			}
+		})
 	}
 }
 

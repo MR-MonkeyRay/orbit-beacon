@@ -17,7 +17,7 @@ type UserPatch struct {
 func scanUser(row interface{ Scan(...any) error }) (User, error) {
 	var user User
 	var created string
-	if err := row.Scan(&user.ID, &user.Username, &created); err != nil {
+	if err := row.Scan(&user.ID, &user.Username, &created, &user.MustChangePassword); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return User{}, ErrNotFound
 		}
@@ -32,7 +32,7 @@ func scanUser(row interface{ Scan(...any) error }) (User, error) {
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id, username, created_at FROM users ORDER BY username, id")
+	rows, err := s.db.QueryContext(ctx, "SELECT id, username, created_at, must_change_password FROM users ORDER BY username, id")
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 }
 
 func (s *Service) GetUser(ctx context.Context, id string) (User, error) {
-	return scanUser(s.db.QueryRowContext(ctx, "SELECT id, username, created_at FROM users WHERE id = ?", id))
+	return scanUser(s.db.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password FROM users WHERE id = ?", id))
 }
 
 func (s *Service) PatchUser(ctx context.Context, id string, patch UserPatch) (User, error) {
@@ -64,7 +64,7 @@ func (s *Service) PatchUser(ctx context.Context, id string, patch UserPatch) (Us
 		return User{}, err
 	}
 	defer tx.Rollback()
-	user, err := scanUser(tx.QueryRowContext(ctx, "SELECT id, username, created_at FROM users WHERE id = ?", id))
+	user, err := scanUser(tx.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password FROM users WHERE id = ?", id))
 	if err != nil {
 		return User{}, err
 	}
@@ -94,7 +94,7 @@ func (s *Service) DeleteUser(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = scanUser(tx.QueryRowContext(ctx, "SELECT id, username, created_at FROM users WHERE id = ?", id))
+	_, err = scanUser(tx.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password FROM users WHERE id = ?", id))
 	if err != nil {
 		return err
 	}

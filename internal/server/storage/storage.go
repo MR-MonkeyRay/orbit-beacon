@@ -27,7 +27,7 @@ type Migration struct {
 }
 
 // CurrentSchemaVersion is the highest schema version produced by this binary.
-const CurrentSchemaVersion = 19
+const CurrentSchemaVersion = 20
 
 // Open opens a persistent local database. The driver applies connection-local
 // pragmas to every pooled connection, not just the migration connection.
@@ -241,6 +241,7 @@ func applyMigration(ctx context.Context, db *sql.DB, migration Migration) error 
 const foundationSchema = `
 CREATE TABLE users (
  id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+ must_change_password INTEGER NOT NULL DEFAULT 0 CHECK(must_change_password IN (0,1)),
  created_at TEXT NOT NULL
 );
 CREATE TABLE sessions (

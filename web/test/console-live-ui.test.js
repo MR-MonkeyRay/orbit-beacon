@@ -34,7 +34,7 @@ async function setup(t, {page = 'nodes', hash = '#details', count = 2, search = 
   let nextInventory;
   let nextFleet;
   const fallback = stream();
-  const session = {user: {id: id(999), username: 'administrator'}, csrf_token: 'csrf', expires_at: '2026-10-29T00:00:00Z'};
+  const session = {user: {id: id(999), username: 'administrator', must_change_password: false}, csrf_token: 'csrf', expires_at: '2026-10-29T00:00:00Z'};
   const env = liveHarness(t, (request) => {
     const url = new URL(request.url, 'https://example.test'); const path = url.pathname;
     if (mutate && request.method && request.method !== 'GET') return mutate(request);

@@ -5,7 +5,7 @@ import * as client from '../src/console/api.js';
 import {flush, TestElement} from './console-dom.js';
 import {frame, liveHarness, response, stream} from './live-harness.js';
 
-const user = {id: '00000000-0000-4000-8000-000000000001', username: 'administrator'};
+const user = {id: '00000000-0000-4000-8000-000000000001', username: 'administrator', must_change_password: false};
 let fixtureProof = '';
 const proof = (extra = {}) => ({user, csrf_token: fixtureProof, expires_at: '2026-10-28T00:10:00Z', ...extra});
 const me = (value = proof(), time = 'Wed, 28 Oct 2026 00:00:00 GMT') => response(value, {headers: {Date: time}});
@@ -53,6 +53,165 @@ test('same-session revalidation and username updates preserve the active session
     assert.equal(signal.aborted, false);
     assert.equal(await client.cached('private-test', 60000, () => assert.fail('same proof cleared cache')), cached);
   } finally { env.clean(); }
+});
+
+test('password-change-required403 preserves credentials but aborts and clears the private lifetime', async (t) => {
+  let release;
+  const env = setup(t, (request) => request.url === '/api/v1/nodes'
+    ? response({code: 'password_change_required'}, {status: 403})
+    : new Promise((resolve) => { release = resolve; }));
+  const details = [];
+  const unsubscribe = client.onSession((_session, detail) => details.push(detail));
+  try {
+    client.setSession(proof());
+    const previous = client.getSessionSignal();
+    const epoch = client.getSessionEpoch();
+    await client.cached('settled-private', 60000, async () => 'private');
+    const pending = client.api('/me');
+    const rejected = assert.rejects(pending, (error) => error.name === 'AbortError');
+    await assert.rejects(client.api('/nodes'), (error) => error.code === 'password_change_required');
+    assert.equal(previous.aborted, true);
+    assert.equal(client.getSessionEpoch(), epoch + 1);
+    assert.equal(client.session.csrf, fixtureProof);
+    assert.equal(client.session.expires, proof().expires_at);
+    assert.equal(client.session.user.must_change_password, true);
+    assert.equal(details.at(-1).reason, 'password-change-required');
+    assert.equal(details.at(-1).boundary, true);
+    assert.equal(await client.cached('settled-private', 60000, async () => 'fresh'), 'fresh');
+    release(me()); await rejected;
+    assert.equal(client.session.user.must_change_password, true);
+    globalThis.fetch = async (_url, options) => {
+      assert.equal(options.headers['X-CSRF-Token'], fixtureProof);
+      return new Response(null, {status: 204});
+    };
+    await client.api('/me/password', {method: 'PATCH', body: {old_password: 'old-password', new_password: 'new-password'}});
+  } finally { unsubscribe(); env.clean(); }
+});
+
+test('restricted session rejects resolved old me and cannot downgrade before a fresh login', async (t) => {
+  const env = setup(t, () => me());
+  try {
+    client.setSession(proof());
+    const old = await client.api('/me');
+    client.setSession(proof({user: {...user, must_change_password: true}}));
+    assert.throws(() => client.setSession(old), (error) => error.name === 'AbortError');
+    await client.revalidateSession();
+    assert.equal(client.session.user.must_change_password, true, 'a newer me cannot reopen the restricted lifetime');
+    client.setSession(await client.api('/session', {method: 'POST', body: {username: user.username, password: 'changed-password'}}));
+    assert.equal(client.session.user.must_change_password, false, 'only fresh login can restore management access');
+  } finally { env.clean(); }
+});
+
+test('session payload requires an explicit boolean password-change flag', async (t) => {
+  let flag;
+  const env = setup(t, () => me(proof({user: {...user, must_change_password: flag}})));
+  try {
+    for (flag of [undefined, null, 0, 'false']) {
+      await assert.rejects(client.revalidateSession(), (error) => error.status === 200);
+      assert.equal(client.session.user, null);
+    }
+  } finally { env.clean(); }
+});
+
+test('restricted sessions never activate live channels or notification polling', async (t) => {
+  const env = setup(t, () => assert.fail('restricted state must not request private data'));
+  let dispose;
+  try {
+    client.setSession(proof({user: {...user, must_change_password: true}}));
+    const {connectConsoleLive} = await import('../src/console/live.js');
+    const {initNotifications} = await import('../src/console/notifications.js');
+    dispose = initNotifications();
+    const live = connectConsoleLive({signal: env.page.signal, onSnapshot() { assert.fail('restricted snapshot'); }});
+    await flush();
+    assert.equal(env.requests.length, 0);
+    assert.equal(env.sockets.length, 0);
+    live.close();
+  } finally { dispose?.(); env.clean(); }
+});
+
+test('router fences private DOM and redirects restricted sessions before loading management pages', async (t) => {
+  const env = setup(t, () => me(proof({user: {...user, must_change_password: true}})));
+  const originals = new Map(['matchMedia', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
+  globalThis.matchMedia = () => ({matches: true, addEventListener() {}});
+  globalThis.requestAnimationFrame = () => 0;
+  globalThis.history = {state: {}, replaceState(_state, _unused, target) { if (target) location.pathname = target.split('?')[0]; }, pushState(_state, _unused, target) { location.pathname = target; }};
+  env.window.scrollTo = () => {};
+  for (const id of ['view', 'sidebar', 'account', 'progress', 'toasts']) {
+    const element = new TestElement('div'); element.id = id; env.body.append(element);
+  }
+  let stop;
+  let privateLoads = 0;
+  try {
+    client.setSession(proof());
+    const router = await import('../src/console/router.js?restricted-boundary');
+    const content = (text) => { const element = new TestElement('h1'); element.append(text); return element; };
+    stop = router.startRouter([
+      {match: (path) => path === '/login', bare: true, page: async () => content('login')},
+      {match: (path) => path === '/change-password', bare: true, page: async () => content('password form')},
+      {match: () => true, page: async () => { privateLoads += 1; return content('private draft'); }}
+    ]);
+    await flush();
+    assert.equal(privateLoads, 1);
+    client.setSession(proof({user: {...user, must_change_password: true}}));
+    assert.equal(document.getElementById('view').textContent, '', 'private DOM disappears synchronously');
+    await flush();
+    assert.equal(location.pathname, '/change-password');
+    assert.equal(document.getElementById('view').textContent, 'password form');
+    await router.go('/settings');
+    assert.equal(location.pathname, '/change-password');
+    assert.equal(privateLoads, 1, 'restricted navigation never calls a private page loader');
+    await router.go('/login');
+    assert.equal(location.pathname, '/change-password');
+    globalThis.fetch = async () => response({code: 'unauthenticated'}, {status: 401});
+    client.invalidateSession('logout'); await flush();
+    await router.go('/change-password');
+    assert.equal(location.pathname, '/login');
+    globalThis.fetch = async () => me();
+    client.setSession(await client.api('/session', {method: 'POST', body: {}}));
+    await flush();
+    await router.go('/change-password');
+    assert.equal(location.pathname, '/overview');
+  } finally {
+    stop?.(); env.clean();
+    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+  }
+});
+
+test('required password page focuses field errors, preserves CSRF, and clears secrets before sign-out', async (t) => {
+  let failure = 'invalid_old_password';
+  const env = setup(t, (request) => {
+    assert.equal(request.url, '/api/v1/me/password');
+    assert.equal(request.headers['X-CSRF-Token'], fixtureProof);
+    return failure ? response({code: failure, message: 'untranslated backend detail'}, {status: 400}) : new Response(null, {status: 204});
+  });
+  const sidebar = new TestElement('div'); sidebar.id = 'sidebar';
+  const mark = new TestElement('span'); mark.className = 'mark'; mark.cloneNode = () => new TestElement('span');
+  sidebar.append(mark); env.body.append(sidebar);
+  let unsubscribe;
+  try {
+    client.setSession(proof({user: {...user, must_change_password: true}}));
+    const {changePasswordPage} = await import('../src/console/pages/change-password.js');
+    const page = await changePasswordPage(); env.body.append(page);
+    const form = page.querySelector('form');
+    const controls = form.querySelectorAll('input');
+    const fill = () => controls.forEach((control, index) => { control.value = index === 0 ? 'initial-password' : 'changed-password'; });
+    for (const code of ['invalid_old_password', 'password_unchanged']) {
+      failure = code; fill();
+      form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+      assert.equal(document.activeElement, controls[code === 'invalid_old_password' ? 0 : 1]);
+      assert.equal(form.querySelector('.form-error').hidden, false);
+      assert.equal(form.textContent.includes('untranslated backend detail'), false);
+      assert.equal(controls.every((control) => control.value === ''), true);
+      assert.equal(client.session.user.must_change_password, true);
+    }
+    unsubscribe = client.onSession((_session, detail) => {
+      if (detail.reason === 'password') assert.equal(controls.every((control) => control.value === ''), true);
+    });
+    failure = ''; fill();
+    form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+    assert.equal(client.session.user, null);
+    assert.equal(controls.every((control) => control.value === ''), true);
+  } finally { unsubscribe?.(); env.clean(); }
 });
 
 test('known expiry aborts private requests offline using server time despite a backwards wall clock', async (t) => {

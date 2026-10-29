@@ -223,6 +223,9 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 		if username := r.text("username"); len(username) < 1 || len(username) > 128 || !utf8.ValidString(username) {
 			return invalidRow()
 		}
+		if flag := r.integer("must_change_password"); flag < 0 || flag > 1 {
+			return invalidRow()
+		}
 		return auth.ValidatePasswordHash(r.text("password_hash"))
 	case "groups":
 		if !validText(r.text("name"), 255) {

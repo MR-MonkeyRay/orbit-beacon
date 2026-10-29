@@ -68,7 +68,7 @@ func restoreFixture(t *testing.T, marker string) string {
 		q string
 		a []any
 	}{
-		{`INSERT INTO users(id,username,password_hash,created_at) VALUES(?,?,?,?)`, []any{restoreUser, marker, hash, at}},
+		{`INSERT INTO users(id,username,password_hash,created_at,must_change_password) VALUES(?,?,?,?,0)`, []any{restoreUser, marker, hash, at}},
 		{`INSERT INTO nodes(id,name,status,token_hash,credential_epoch,installation_id,first_enrolled_at,last_seen,system,agent_runtime,billing_day,quota_bytes,run_generation,report_session_id,created_at) VALUES(?,?,'online',?,?,'restore-installation',?,?,?,?,?,?,'17','55555555-5555-4555-8555-555555555555',?)`, []any{restoreNode, marker, bytes.Repeat([]byte{3}, 32), credentialEpoch, at, at, fmt.Sprintf(`{"hostname":%q}`, marker), runtime, billingDay, quota, at}},
 		{`INSERT INTO audit_events(id,actor_id,action,target_id,created_at,details) VALUES('66666666-6666-4666-8666-666666666666',NULL,'fixture',NULL,?,?)`, []any{at, fmt.Sprintf(`{"marker":%q}`, marker)}},
 		{`INSERT INTO backup_plans(id,name,enabled,kind,categories_json,cron,destination_json,retain_count,next_run_at,created_at,updated_at) VALUES(?, 'plan',1,'local','["configuration"]','0 3 * * *','{"path":"/does/not/exist/on/new/machine"}',7,?,?,?)`, []any{restorePlan, at, at, at}},
@@ -318,7 +318,7 @@ func TestRestorePreservesAdministratorLoginsAndIndividualInboxReads(t *testing.T
 	}
 	defer db.Close()
 	accounts := auth.NewService(db, auth.Options{})
-	second, err := accounts.CreateUser(ctx, "admin-two", "second administrator password")
+	second, err := accounts.CreateUser(ctx, "admin-two", "second administrator password", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,6 +376,73 @@ func TestRestorePreservesAdministratorLoginsAndIndividualInboxReads(t *testing.T
 		unread, err := notifications.Detail(ctx, who, account.unreadID)
 		if err != nil || unread.Read {
 			t.Fatalf("restored administrator %s unread=%+v err=%v", account.username, unread, err)
+		}
+	}
+}
+
+func TestRestorePreservesPasswordChangeRestrictionsWithoutSessions(t *testing.T) {
+	ctx := context.Background()
+	source := restoreFixture(t, "normal-admin")
+	db, err := storage.Open(ctx, filepath.Join(source, "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	const restrictedID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	if _, err = db.Exec(`INSERT INTO users(id,username,password_hash,created_at,must_change_password) SELECT ?,'restricted-admin',password_hash,created_at,1 FROM users WHERE id=?`, restrictedID, restoreUser); err != nil {
+		t.Fatal(err)
+	}
+	accounts := auth.NewService(db, auth.Options{})
+	for _, username := range []string{"normal-admin", "restricted-admin"} {
+		if _, err = accounts.Login(ctx, username, "restore-fixture-password"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archive, password := restoreArchive(t, source, []Category{Configuration})
+	target := framingTempDir(t)
+	if _, err = Restore(ctx, target, archive, password, false); err != nil {
+		t.Fatal(err)
+	}
+	restored := restoreDB(t, target)
+	for id, want := range map[string]int{restoreUser: 0, restrictedID: 1} {
+		var flag int
+		if err = restored.QueryRow(`SELECT must_change_password FROM users WHERE id=?`, id).Scan(&flag); err != nil {
+			t.Fatal(err)
+		}
+		if flag != want {
+			t.Fatalf("administrator %s password-change flag=%d want %d", id, flag, want)
+		}
+	}
+	var sessions int
+	if err = restored.QueryRow(`SELECT count(*) FROM sessions`).Scan(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	if sessions != 0 {
+		t.Fatalf("restored %d sessions", sessions)
+	}
+	writable, err := storage.Open(ctx, filepath.Join(target, "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writable.Close()
+	restoredAccounts := auth.NewService(writable, auth.Options{})
+	for username, wantRestricted := range map[string]bool{"normal-admin": false, "restricted-admin": true} {
+		session, err := restoredAccounts.Login(ctx, username, "restore-fixture-password")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if session.User.MustChangePassword != wantRestricted {
+			t.Fatalf("restored %s restricted=%t want %t", username, session.User.MustChangePassword, wantRestricted)
+		}
+		if _, err = restoredAccounts.CurrentSession(ctx, session.Token); err != nil {
+			t.Fatalf("restored %s current session: %v", username, err)
+		}
+		_, err = restoredAccounts.Authenticate(ctx, session.Token)
+		if wantRestricted && !errors.Is(err, auth.ErrPasswordChangeRequired) {
+			t.Fatalf("restored restricted account gained management access: %v", err)
+		}
+		if !wantRestricted && err != nil {
+			t.Fatalf("restored unrestricted account denied management access: %v", err)
 		}
 	}
 }

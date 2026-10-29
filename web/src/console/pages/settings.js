@@ -48,22 +48,27 @@ function accountTab() {
     field('New password', newPassword, {inner: newPassword.wrapper, hint: '8–1024 UTF-8 bytes.'}),
     field('Confirm new password', confirmPassword),
     h('div', {class: 'form-actions'}, submit));
+  const clearPasswords = () => { oldPassword.value = ''; newPassword.value = ''; confirmPassword.value = ''; };
+  getNavigationSignal()?.addEventListener('abort', clearPasswords, {once: true});
+  window.addEventListener('pagehide', clearPasswords, {once: true, signal: getNavigationSignal() || undefined});
   onSubmit(form, submit, async () => {
     try {
       await api('/me/password', {method: 'PATCH', body: {old_password: oldPassword.value, new_password: newPassword.value}});
+      clearPasswords();
       invalidateSession('password');
     } catch (error) {
       if (error.status === 400 && error.code === 'invalid_old_password') {
         oldPassword.showError('The current password is incorrect.');
         oldPassword.focus();
+      } else if (error.status === 400 && error.code === 'password_unchanged') {
+        newPassword.showError('Choose a password different from your current password.');
+        newPassword.focus();
       } else if (error.status === 429 && error.code === 'rate_limited') {
         oldPassword.showError('Too many password change attempts. Wait a minute and try again.');
         oldPassword.focus();
       } else throw error;
     } finally {
-      oldPassword.value = '';
-      newPassword.value = '';
-      confirmPassword.value = '';
+      clearPasswords();
     }
   });
   return h('div', {class: 'split'},
@@ -126,20 +131,23 @@ function administratorsTab(users) {
   const createUser = () => {
     let username;
     let password;
+    let mustChangePassword;
     formDialog({
       title: 'Add administrator',
       submit: 'Add administrator',
       build: (form) => {
         username = input({name: 'username', required: true, autocomplete: 'off'});
         password = passwordInput({name: 'password', required: true, autocomplete: 'new-password'});
+        mustChangePassword = input({type: 'checkbox', name: 'must_change_password', checked: false});
         validateBytes(username, 1, 128, 'Username');
         validateBytes(password, 8, 1024, 'Password');
         form.append(field('Username', username),
-          field('Initial password', password, {inner: password.wrapper, hint: '8–1024 UTF-8 bytes. Share it with the administrator through a secure channel.'}));
+          field('Initial password', password, {inner: password.wrapper, hint: '8–1024 UTF-8 bytes. Share it with the administrator through a secure channel.'}),
+          h('label', {class: 'data-check'}, mustChangePassword, h('span', null, 'Require password change on first sign-in')));
       },
       action: async () => {
         try {
-          const created = await api('/users', {method: 'POST', body: {username: username.value, password: password.value}});
+          const created = await api('/users', {method: 'POST', body: {username: username.value, password: password.value, must_change_password: mustChangePassword.checked}});
           invalidate('users');
           await refresh();
           toast(`Added ${created.username}.`);

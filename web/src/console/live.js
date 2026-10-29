@@ -69,7 +69,7 @@ export function connectConsoleLive({nodeID, signal = getNavigationSignal(), onSn
   let pageHidden = false;
   let seen = false;
   let state = {state: 'connecting', transport: 'ws', intervalSeconds: 10, retryAt: null};
-  const active = () => !closed && !signal?.aborted && !sessionSignal.aborted && epoch === getSessionEpoch() && Boolean(session.user);
+  const active = () => !closed && !signal?.aborted && !sessionSignal.aborted && epoch === getSessionEpoch() && Boolean(session.user && !session.user.must_change_password);
   const visible = () => active() && !document.hidden && !pageHidden;
   const emit = (next) => { state = next; if (active()) onState(next); };
   const stop = () => {

@@ -37,7 +37,7 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(`INSERT INTO users(id,username,password_hash,created_at) VALUES('11111111-1111-4111-8111-111111111111','configuration-canary',?,?)`, hash, at); err != nil {
+	if _, err = db.Exec(`INSERT INTO users(id,username,password_hash,created_at,must_change_password) VALUES('11111111-1111-4111-8111-111111111111','configuration-canary',?,?,0)`, hash, at); err != nil {
 		t.Fatal(err)
 	}
 	node := "22222222-2222-4222-8222-222222222222"
@@ -188,7 +188,7 @@ func TestMonitoringMissingHistoryFailsButConfigurationDoesNotRequireIt(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(`INSERT INTO users(id,username,password_hash,created_at) VALUES('11111111-1111-4111-8111-111111111111','admin',?,?)`, hash, timekey.Format(time.Now())); err != nil {
+	if _, err = db.Exec(`INSERT INTO users(id,username,password_hash,created_at,must_change_password) VALUES('11111111-1111-4111-8111-111111111111','admin',?,?,0)`, hash, timekey.Format(time.Now())); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = CreateSnapshotPayloads(ctx, dir, filepath.Join(dir, "configuration-work"), []Category{Configuration}, time.Now); err != nil {

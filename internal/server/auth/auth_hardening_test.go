@@ -107,8 +107,8 @@ func TestChangePasswordCASConflictPreservesConcurrentPasswordAndSession(t *testi
 	if storedHash != concurrentHash {
 		t.Fatal("failed CAS overwrote the concurrently changed password")
 	}
-	if got, err := service.Authenticate(ctx, session.Token); err != nil || got.ID != user.ID {
-		t.Fatalf("failed CAS revoked the existing session: user=%+v err=%v", got, err)
+	if got, err := service.CurrentSession(ctx, session.Token); err != nil || got.User.ID != user.ID || !got.User.MustChangePassword {
+		t.Fatalf("failed CAS revoked or unrestricted the existing session: session=%+v err=%v", got, err)
 	}
 	var audits int
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM audit_events WHERE action = 'user.password.change' AND target_id = ?", user.ID).Scan(&audits); err != nil {
@@ -138,7 +138,7 @@ func TestPasswordHashingDoesNotHoldSQLiteWriter(t *testing.T) {
 		random := newBlockingReader(52)
 		service := auth.NewService(db, auth.Options{Now: func() time.Time { return *now }, Random: random})
 		assertWriterAvailableDuringEntropy(t, db, random, func() error {
-			_, err := service.CreateUser(context.Background(), "admin-two", initialPassword)
+			_, err := service.CreateUser(context.Background(), "admin-two", initialPassword, false)
 			return err
 		})
 	})
@@ -184,7 +184,7 @@ func assertWriterAvailableDuringEntropy(t *testing.T, db *sql.DB, random *blocki
 func TestLoginRehashesInBoundsNonDefaultArgon2Parameters(t *testing.T) {
 	service, db, _ := newAuth(t)
 	ctx := auth.WithLoginPeer(context.Background(), "192.0.2.10:1234")
-	user, err := service.BootstrapAdministrator(ctx, "admin", initialPassword)
+	user, err := service.CreateUser(ctx, "admin", initialPassword, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +362,7 @@ func encodedPassword(password string, memory, iterations uint32, parallelism uin
 func TestLegitimateLoginWorksAfterAdmissionBudgetRefills(t *testing.T) {
 	service, _, now := newAuth(t)
 	ctx := auth.WithLoginPeer(context.Background(), "192.0.2.99:1234")
-	if _, err := service.BootstrapAdministrator(ctx, "admin", initialPassword); err != nil {
+	if _, err := service.CreateUser(ctx, "admin", initialPassword, false); err != nil {
 		t.Fatal(err)
 	}
 	for range 10 {

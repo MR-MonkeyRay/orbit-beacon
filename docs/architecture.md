@@ -67,7 +67,7 @@ WS/SSE 共用每 IP 4 条、全局 200 条、最长 15 分钟限制；私有流�
 
 主库 `orbitbeacon.db` 保存账户、资产、身份、配置、审计、流量、探测、告警、通知和备份任务。使用纯 Go SQLite、WAL、外键、5 秒 busy timeout、`synchronous=FULL` 和 immediate 写事务；公开查询使用独立只读连接池。
 
-**主库 schema 19**：空库单事务直接建表并写入一条当前版本记录，不执行历史迁移。旧库、缺失/空/混合版本记录和更高版本库均拒绝，不改写业务数据或删除文件。
+**主库 schema 20**：空库单事务直接建表并写入一条当前版本记录，不执行历史迁移。旧库（含 schema 19）、缺失/空/混合版本记录和更高版本库均拒绝，不改写业务数据或删除文件。
 
 `metrics.db` 独立使用 **schema 1**，只存成功且新鲜的标量聚合，不存原始报告。非阻塞有界缓冲约每分钟写入分钟聚合与 rollup，无数据不补零，缓冲满时丢弃。该库打开失败时主服务继续，历史接口可返回空点集。
 
@@ -90,7 +90,7 @@ WS/SSE 共用每 IP 4 条、全局 200 条、最长 15 分钟限制；私有流�
 
 - 仅备份已落库数据，不暂停采集或冲刷内存；主库与指标库分别取一致快照，不保证跨库同一时刻。选择 Monitoring 而历史库不可读时任务失败。
 - 按固定表/列白名单生成传输库，避免未选数据残留。流式压缩加密，不落盘明文归档；恢复验证认证、清单、哈希、精确 DDL 与行值。
-- 格式 v1、主库 schema19、指标库 schema1 必须精确匹配，不跨 schema 转换。类别整体替换，稳定 ID 依赖不满足则整次拒绝。
+- 格式 v1、主库 schema20、指标库 schema1 必须精确匹配，不跨 schema 转换或接收 schema19 归档。类别整体替换，稳定 ID 依赖不满足则整次拒绝。配置包含用户 `must_change_password` 整数标志（仅 0/1），还原保留正常/待改密状态。
 - 导出持久排队，全局最多 32 个非终态任务、一个 worker。阶段为 snapshot、packaging、storing；重启保留 queued，running 转为 failed，错误码为 interrupted，存储中断可能结果未知。发布后只重试终态及站内通知事务，不重复上传。
 - 恢复在相同目录锁下用 prepared/committed journal 安装文件组：prepared 回滚完整旧组，committed 仅清理 journal。配置恢复停用计划，不导入会话或接入票据；事件恢复不重放任务或外发投递。
 
@@ -109,7 +109,7 @@ WS/SSE 共用每 IP 4 条、全局 200 条、最长 15 分钟限制；私有流�
 ## 安全与关闭
 
 - Agent 安装策略固定信任根、地址、状态目录和非 root 运行身份；主机失陷后凭据及采集结果不再可信。探测配置等同授权 Agent 访问目标网络。
-- 浏览器使用 host-only、HttpOnly、SameSite=Lax 会话 Cookie；仅 HTTPS `public_url` 启用 Secure。管理写入校验 Origin 和 CSRF。账户均为等权管理员；更名保留会话，删除撤销目标会话，修改本人密码撤销本人全部会话，至少保留一名管理员。
+- 浏览器使用 host-only、HttpOnly、SameSite=Lax 会话 Cookie；仅 HTTPS `public_url` 启用 Secure。管理写入校验 Origin 和 CSRF。账户均为等权管理员；更名保留会话，删除撤销目标会话，至少保留一名管理员。初始化账户始终要求首次登录改密，新建账户可选（默认否）。待改密会话仅允许 `GET /api/v1/me`、`PATCH /api/v1/me/password`、`DELETE /api/v1/session`，其他已识别管理路由返回 403 `password_change_required`，不影响匿名公开与 Agent API。改密验证旧密码后拒绝相同新密码（400 `password_unchanged`）；同事务更新哈希、清除标志并撤销本人全部会话。成功仅返回 204，不发送 `Set-Cookie`，必须重新登录，迟到响应不会清除新会话 Cookie。
 - 公开信息独立配置，不从内部元数据回填；仅投影公开字段、状态和 CPU/内存/负载/uptime，不返回完整报告。
 - 数据目录、数据库、sidecar 和 `secrets.key` 是本地信任根，严格检查所有权、权限和无符号链接。`server.lock` 不删除；禁止多个 Server 共用目录。
 - 通知凭据和完整 Webhook URL 使用 `secrets.key` 派生的 AES-256-GCM 密钥加密。默认拒绝私网、回环及元数据目标；拨号校验最终 IP，HTTP 不使用代理或重定向，SMTP 要求 TLS。放宽选项见部署文档。

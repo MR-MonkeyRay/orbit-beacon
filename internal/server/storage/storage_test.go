@@ -101,6 +101,33 @@ func TestOpenInitializesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
 	}
 }
 
+func TestUsersPasswordChangeRequirementSchema(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(ctx, filepath.Join(privateDirectory(t), "password-requirement.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if storage.CurrentSchemaVersion != 20 {
+		t.Fatalf("password requirement schema version = %d, want 20", storage.CurrentSchemaVersion)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,username,password_hash,created_at) VALUES('default','default','hash','now')`); err != nil {
+		t.Fatal(err)
+	}
+	var required int
+	if err := db.QueryRowContext(ctx, "SELECT must_change_password FROM users WHERE id='default'").Scan(&required); err != nil || required != 0 {
+		t.Fatalf("default password requirement=%d err=%v", required, err)
+	}
+	for _, value := range []any{nil, -1, 2, "true"} {
+		if _, err := db.ExecContext(ctx, "UPDATE users SET must_change_password=? WHERE id='default'", value); err == nil {
+			t.Fatalf("invalid password requirement %v accepted", value)
+		}
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE users SET must_change_password=1 WHERE id='default'"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOpenConfiguresDurableSQLiteConnections(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -269,7 +296,7 @@ func TestOpenRejectsIncompatibleLedgerWithoutChangingData(t *testing.T) {
 		{"empty", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);"},
 		{"old", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(16,'original');"},
 		{"intermediate", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(17,'original');"},
-		{"previous-current", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(18,'original');"},
+		{"previous-current", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(19,'original');"},
 		{"mixed", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'original'),(16,'original');"},
 		{"mixed-current", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'original'),(%d,'original');", storage.CurrentSchemaVersion)},
 		{"future", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(%d,'original');", storage.CurrentSchemaVersion+1)},

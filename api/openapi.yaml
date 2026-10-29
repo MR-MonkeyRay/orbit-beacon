@@ -8,11 +8,17 @@ info:
     plans and a shared notification inbox. Agent upgrades are not available.
     Browser reads require a session unless explicitly marked otherwise; agent
     routes use separate Bearer credentials and never accept browser sessions.
-    Every console account is an equal administrator with full management access.
-    All browser mutations require the configured HTTP/HTTPS Origin and a session-bound
-    CSRF token; login requires Origin. Backup plans, tasks, downloads, recovery
-    passwords and shared task/alert notifications are available to every signed-in
-    administrator. Notification read state is independent for each account.
+    Every console account is an equal administrator, but must_change_password=true
+    restricts an established session to GET /api/v1/me, PATCH /api/v1/me/password
+    and DELETE /api/v1/session. Every other recognized management endpoint,
+    including reads, backup downloads/passwords, notifications and HTTP/SSE/WS
+    live transports, returns 403 password_change_required before business data.
+    Public and Agent routes are unaffected. All browser mutations require the
+    configured HTTP/HTTPS Origin and a session-bound CSRF token; login requires
+    Origin. These checks also apply to allowed restricted-session mutations.
+    Backup plans, tasks, downloads, recovery passwords and shared task/alert
+    notifications require an unrestricted administrator session. Notification
+    read state is independent for each account.
     Canonical origins lowercase DNS names, normalize IPv6 and omit default ports
     (80 for HTTP, 443 for HTTPS); request Host and forwarded headers do not establish
     Origin trust. Real IP/domain deployments must explicitly configure public_url
@@ -41,8 +47,15 @@ info:
     perform bounded expired-session cleanup; other requests, including anonymous
     public reads, never trigger cleanup. Login (session.create) and logout
     (session.delete) are audited; agent enrollment claims are audited without an
-    actor_id and with details.actor_kind "agent". Password changes revoke every
-    session of the affected user; renaming an account preserves its sessions.
+    actor_id and with details.actor_kind "agent". Empty-user startup initializes
+    one administrator using orbitbeacon/orbitbeacon or the independently optional
+    ORBITBEACON_ADMIN_USERNAME and ORBITBEACON_ADMIN_PASSWORD environment variables;
+    explicit empty values are invalid, and existing-user databases ignore them.
+    Initialized accounts always require a password change, including custom
+    environment credentials. New administrators may optionally require one.
+    Password changes atomically clear must_change_password and revoke every
+    session of the affected user. Success is 204 without Set-Cookie or a new
+    session; log in again. Renaming an account preserves its sessions.
     HTML responses use a self-only CSP with per-file SHA-256 hashes for inline
     scripts, data images, no inline styles, no objects or base URI, same-origin
     forms, frame-ancestors 'none' and X-Frame-Options DENY. The Server serves only
@@ -54,8 +67,10 @@ info:
     The data directory must be effective-user-owned and private (0700); SQLite,
     its sidecars and secrets.key must be owned regular 0600 files, never symlinks.
     Linux validates that the backing mount is local and writable.
-    The main database and archives require schema 19 exactly; previous schemas
-    are rejected without migration or automatic removal of existing files.
+    The main database and archives require schema 20 exactly; previous schemas,
+    including schema 19, are rejected without migration or automatic removal of
+    existing files. Configuration archives preserve each user's password-change
+    requirement as integer 0/1, but configuration restore never imports sessions.
   license:
     name: GNU General Public License v3.0
     identifier: GPL-3.0
@@ -266,6 +281,7 @@ paths:
               schema: {$ref: '#/components/schemas/ConsoleSnapshotFrame'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
         '405': {$ref: '#/components/responses/Error'}
         '503':
           description: Snapshot identity changed during projection/encoding; code is snapshot_busy. No obsolete payload is returned.
@@ -308,6 +324,7 @@ paths:
 
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
         '405': {$ref: '#/components/responses/Error'}
         '503':
           description: Shared stream capacity unavailable; code is stream_busy.
@@ -371,6 +388,8 @@ paths:
         preventing a remote attacker from locking out a user's usual network.
         Password work is serialized with at most eight waiters and a one-second
         queue deadline. Admission overload returns 429 with Retry-After of one second.
+        Accounts requiring a password change still receive 200 and a session;
+        user.must_change_password=true identifies its restricted permissions.
       parameters:
         - $ref: '#/components/parameters/Origin'
       requestBody:
@@ -397,6 +416,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     delete:
       operationId: logout
+      description: Available to restricted and unrestricted sessions; requires Origin and CSRF.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -409,6 +429,7 @@ paths:
   /api/v1/me:
     get:
       operationId: currentSession
+      description: Available to restricted and unrestricted sessions without clearing or changing the password-change requirement.
       responses:
         '200':
           description: Current authenticated session and stable CSRF token, recoverable in a new tab without rotating another tab's token. No session bearer credential is exposed. This read never writes; expired sessions are reclaimed by login and the hourly retention task.
@@ -420,13 +441,17 @@ paths:
     patch:
       operationId: changeOwnPassword
       description: |
-        Only the current account can change its password; the current password proves ownership. Attempts
-        are limited per user with burst 5 and one token per 60 seconds, charged
-        before Argon2. An incorrect current password returns 400
-        invalid_old_password and leaves the authenticated session valid. A missing
-        or invalid session returns 401 unauthenticated. A successful change
-        atomically revokes every session of this user, including the current
-        session; log in again.
+        Only the current account can change its password; restricted sessions are
+        allowed. The current password proves ownership. Attempts are limited per
+        user with burst 5 and one token per 60 seconds, charged before Argon2.
+        An incorrect current password returns 400 invalid_old_password. After
+        verifying it, an identical new password returns 400 password_unchanged.
+        Either failure preserves the password-change requirement and sessions.
+        A missing or invalid session returns 401 unauthenticated. Success atomically
+        changes the hash, clears must_change_password and revokes every session of
+        this user, including the current session. No new session is created and no
+        Set-Cookie is sent, so a delayed response cannot clear a later login's cookie.
+        The browser returns to /login?password-changed and must log in again.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -442,7 +467,7 @@ paths:
                 old_password: {type: string, x-maxLengthBytes: 1024}
                 new_password: {type: string, x-minLengthBytes: 8, x-maxLengthBytes: 1024, examples: [天地玄黄]}
       responses:
-        '204': {description: Password changed and all of this user's sessions revoked.}
+        '204': {description: Password changed, password-change requirement cleared and all of this user's sessions revoked. No body or Set-Cookie; log in again.}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -451,7 +476,7 @@ paths:
   /api/v1/users:
     get:
       operationId: listUsers
-      description: Available to every authenticated administrator; credential fields are never returned. Returns the complete, unpaginated user list.
+      description: Available to every unrestricted administrator; credential fields are never returned. Returns the complete, unpaginated user list.
       responses:
         '200':
           description: User collection.
@@ -468,7 +493,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createUser
-      description: Creates another equal administrator. Usernames are matched exactly without trimming or case folding. An existing username returns 409 username_conflict without creating an account. Unknown request fields return 400 invalid_json.
+      description: Creates another equal administrator. Optional must_change_password is a boolean defaulting to false; true requires password change before management access. Explicit null, strings or numbers return 400 invalid_json. Usernames are matched exactly without trimming or case folding. An existing username returns 409 username_conflict without creating an account. Unknown request fields return 400 invalid_json.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -483,6 +508,7 @@ paths:
               properties:
                 username: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 128}
                 password: {type: string, x-minLengthBytes: 8, x-maxLengthBytes: 1024}
+                must_change_password: {type: boolean, default: false, description: Require a password change before management access; null is invalid.}
       responses:
         '201':
           description: User created.
@@ -510,7 +536,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     patch:
       operationId: updateUser
-      description: Renames an administrator. Username is optional; omission leaves it unchanged. An existing exact username returns 409 username_conflict without changing the account or sessions. Renaming preserves all sessions, including the current one. Unknown request fields return 400 invalid_json. Password changes are available only at /api/v1/me/password with the current password.
+      description: Renames an administrator. Username is the only accepted field and is optional; omission leaves it unchanged. An existing exact username returns 409 username_conflict without changing the account or sessions. Renaming preserves all sessions, including the current one. must_change_password and other unknown request fields return 400 invalid_json. Password changes are available only at /api/v1/me/password with the current password.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -2005,7 +2031,7 @@ components:
         application/octet-stream:
           schema: {type: string, format: binary}
     Error:
-      description: Structured failure. Invalid JSON/input returns 400, invalid credentials 401, browser Origin/CSRF failures or disabled-node agent requests 403, missing resources 404, plan-busy/secret/enrollment/identity/username or last-administrator conflicts 409, expired or missing backup artifacts/passwords 410, bodies above 64 KiB 413, unsupported agent protocol 426, rate limiting or backup queue capacity 429, and retryable SQLite contention 503 storage_busy. Unsupported methods return 405 with Allow before authentication; unknown API routes return 404. No API error returns the SPA shell.
+      description: Structured failure. Invalid JSON/input or an unchanged new password (password_unchanged) returns 400, invalid credentials 401, browser Origin/CSRF failures, restricted management sessions (password_change_required) or disabled-node agent requests 403, missing resources 404, plan-busy/secret/enrollment/identity/username or last-administrator conflicts 409, expired or missing backup artifacts/passwords 410, bodies above 64 KiB 413, unsupported agent protocol 426, rate limiting or backup queue capacity 429, and retryable SQLite contention 503 storage_busy. Unsupported methods return 405 with Allow before authentication; unknown API routes return 404. No API error returns the SPA shell.
       headers:
         X-Request-ID:
           schema: {type: string, format: uuid}
@@ -2520,7 +2546,7 @@ components:
         code:
           type: string
           description: Machine-readable failure code; validation_failed may include per-field messages. Clients must tolerate new error codes.
-          examples: [unauthenticated, forbidden, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, username_conflict, invalid_json, invalid_input, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, backup_queue_full, backup_plan_busy, backup_plan_not_found, task_not_found, artifact_not_ready, artifact_expired, artifact_missing, password_unavailable, password_expired, secret_unreadable, storage_busy, not_available, internal_error]
+          examples: [unauthenticated, forbidden, password_change_required, invalid_old_password, password_unchanged, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, username_conflict, invalid_json, invalid_input, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, backup_queue_full, backup_plan_busy, backup_plan_not_found, task_not_found, artifact_not_ready, artifact_expired, artifact_missing, password_unavailable, password_expired, secret_unreadable, storage_busy, not_available, internal_error]
         message: {type: string, minLength: 1}
         request_id: {type: string, format: uuid, description: Correlates the response with safe server diagnostic metadata for internal service failures.}
         fields:
@@ -2540,11 +2566,12 @@ components:
     User:
       type: object
       additionalProperties: false
-      required: [id, username, created_at]
+      required: [id, username, created_at, must_change_password]
       properties:
         id: {type: string, format: uuid}
         username: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 128}
         created_at: {type: string, format: date-time, description: UTC RFC3339.}
+        must_change_password: {type: boolean, description: Always present. True restricts management access until a successful password change and new login.}
     Group:
       type: object
       additionalProperties: false

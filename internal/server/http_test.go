@@ -48,10 +48,10 @@ func newHTTP(t *testing.T, capacity int) fixture {
 	now := func() time.Time { return time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC) }
 	authService := auth.NewService(db, auth.Options{Now: now, Random: rand.NewChaCha8([32]byte{31})})
 	nodeService := nodes.NewService(db, nodes.Options{MaxNodes: capacity, Now: now, Random: rand.NewChaCha8([32]byte{32})})
-	if _, err := authService.BootstrapAdministrator(context.Background(), "admin", password); err != nil {
+	if _, err := authService.CreateUser(context.Background(), "admin", password, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := authService.CreateUser(context.Background(), "admin-two", password); err != nil {
+	if _, err := authService.CreateUser(context.Background(), "admin-two", password, false); err != nil {
 		t.Fatal(err)
 	}
 	handler, err := server.NewHandler(server.Options{
@@ -348,7 +348,7 @@ func TestAPIFailuresHaveStructuredErrorsAndNeverSPAFallback(t *testing.T) {
 func TestStaticFallbackIsLimitedToDeclaredUIRoutes(t *testing.T) {
 	f := newHTTP(t, 2)
 	cookie, _ := login(t, f, "admin")
-	for _, path := range []string{"/login", "/overview", "/nodes", "/nodes/00000000-0000-4000-8000-000000000123", "/alerts", "/settings"} {
+	for _, path := range []string{"/login", "/change-password", "/overview", "/nodes", "/nodes/00000000-0000-4000-8000-000000000123", "/alerts", "/settings"} {
 		t.Run(path, func(t *testing.T) {
 			response := request(t, f.handler, http.MethodGet, path, "", cookie, "", "")
 			if response.Code != http.StatusOK || !strings.HasPrefix(response.Header().Get("Content-Type"), "text/html") {

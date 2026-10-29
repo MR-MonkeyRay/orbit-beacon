@@ -33,6 +33,7 @@ CI 执行产物一致性检查和 Node.js 测试。构建目标为 Chrome 111、
 
 - `/` 返回 `public.html`，控制台路由返回 `200.html`；新增路由同时核对 `src/console/main.js` 和 `internal/server/http.go`，验证直达与刷新。HTML 为 `no-store`，`_app/immutable/` 缓存一年；保留 Go 的 `all:dist` 嵌入声明。
 - 控制台最小宽度 744px，面向桌面和平板；1200px 以下使用图标窄侧栏，保留可访问名称与悬停/聚焦提示。公开页适配手机到大屏。
+- `/login` 与 `/change-password` 共享无侧栏登录卡片。初始化管理员必须改密；新增管理员可勾选首次登录改密，默认不勾选。受限会话仅保留改密与退出操作，不加载管理数据、通知或私有实时通道；公开页仍可匿名浏览。
 - 复用现有组件与原生 modal，保留 Escape、Tab、焦点恢复和脏表单保护。动画遵循 `prefers-reduced-motion`；主题键为 `orbitbeacon-theme`。字号、控件高度、层级使用 `shared/tokens.css`，断点约定见文件开头。
 - 节点页保留 Details、Public page、Agent settings（`#agent`）、Enroll agent。runtime 只读；Traffic billing 独立保存 Server 账期与配额，不下发 Agent，不刷新整页或清除其他草稿。
 - Settings 页签需支持哈希直达和窄窗口；Data operations 复用 Export、Backup plans、Task history 三块 panel。任务详情 `/settings?task=<uuid>#data`、告警详情 `/alerts?event=<uuid>#history` 不依赖列表当前页。
@@ -50,6 +51,7 @@ CI 执行产物一致性检查和 Node.js 测试。构建目标为 Chrome 111、
 - Overview、Nodes、节点详情各只有一条私有订阅，详情页签共享。实时补丁只改只读状态、样本与 runtime，不替换表单、历史/探测/流量容器或已确认批量目标。
 - 列表保留筛选和勾选，重筛由 `Apply current filters` 触发；手动 `Refresh list` 先暂停旧通道，读取 metadata 后再读 HTTP fleet，按更晚集合收敛成员，再恢复订阅。不能用响应到达顺序推断新增/删除。删除行保留提示并禁用操作；详情删除保留草稿。
 - `api.js` 统一管理 session epoch、abort 和私有缓存。退出、身份替换、401、密码撤销或已知到期清空私有 DOM 与 dialog，绕过脏表单确认转登录；旧响应不得回写。恢复可见先无缓存 `/me` 成功，再重开私有通道；离线不能提前获知远端撤销。
+- `must_change_password` 必须是会话 user 中的布尔值。收到 `password_change_required` 时保留 CSRF/会话凭据但切换 epoch，清空私有 UI/缓存并进入 `/change-password`；迟到 `/me` 不能解除限制，只有改密后重新登录才恢复管理权限。改密成功清空密码输入、退出全部会话并前往 `/login?password-changed`。
 
 ### 客户端接口
 

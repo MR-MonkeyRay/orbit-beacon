@@ -10,7 +10,7 @@
 .login-orbits .ring.r2{--d:140s}
 .login-orbits .ring.r3{--d:210s}
 .login-orbits .sat{fill:var(--orbit);opacity:.7;transform-box:fill-box;transform-origin:center;animation:orbit var(--d) linear infinite reverse}
-.login-card{width:min(400px,100%);padding:30px 28px 28px;background:color-mix(in srgb,var(--panel) 88%,transparent);backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow-lg);animation:dialog-in .5s var(--ease)}
+.login-card{width:min(400px,100%);padding:30px 28px 28px;background:var(--panel);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow-lg);animation:dialog-in .5s var(--ease)}
 .login-card .brand{padding:0 0 22px}
 .login-card h1{font-size:var(--fs-xl);letter-spacing:-.025em}
 .login-card>p{margin:6px 0 22px;color:var(--ink-2);font-size:var(--fs-md)}

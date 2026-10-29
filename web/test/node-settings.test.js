@@ -58,7 +58,7 @@ async function setup({hash = '#details', observed = runtime, presence = 'online'
   const page = new AbortController();
   setNavigationSignal(page.signal);
   invalidate('groups', 'nodes');
-  const userSession = {csrf_token: 'csrf', user: {id, username: 'administrator'}, expires_at: '2026-10-29T10:00:00Z'};
+  const userSession = {csrf_token: 'csrf', user: {id, username: 'administrator', must_change_password: false}, expires_at: '2026-10-29T10:00:00Z'};
   setSession(userSession);
   const requests = [];
   const node = {id, name: 'Internal name', status: 'unknown', presence, agent_version: 'test-agent',

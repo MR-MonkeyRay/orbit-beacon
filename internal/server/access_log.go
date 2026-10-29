@@ -112,7 +112,7 @@ func requestRoute(p string) string {
 		return strings.Join(parts, "/")
 	}
 	switch p {
-	case "/", "/login", "/overview", "/nodes", "/alerts", "/settings":
+	case "/", "/login", "/change-password", "/overview", "/nodes", "/alerts", "/settings":
 		return p
 	}
 	if strings.HasPrefix(p, "/nodes/") {

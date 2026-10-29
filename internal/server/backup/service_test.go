@@ -40,7 +40,7 @@ func workerFixture(t *testing.T) (*sql.DB, Options) {
 func TestEveryExistingAdministratorCanCreateExport(t *testing.T) {
 	db, opts := workerFixture(t)
 	second := "20000000-0000-4000-8000-000000000002"
-	if _, err := db.Exec(`INSERT INTO users(id,username,password_hash,created_at) VALUES(?,'admin-two',?,?)`, second, validationHash, validationTime); err != nil {
+	if _, err := db.Exec(`INSERT INTO users(id,username,password_hash,created_at,must_change_password) VALUES(?,'admin-two',?,?,0)`, second, validationHash, validationTime); err != nil {
 		t.Fatal(err)
 	}
 	s, err := New(db, opts)

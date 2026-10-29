@@ -1,10 +1,11 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/auth"
@@ -111,7 +112,6 @@ func (h *handler) managementRoute(w http.ResponseWriter, r *http.Request, reques
 			h.serviceError(w, err, requestID)
 			return true
 		}
-		http.SetCookie(w, h.cookie("", time.Unix(1, 0), -1))
 		w.WriteHeader(http.StatusNoContent)
 	case p == "/api/v1/users" || strings.HasPrefix(p, "/api/v1/users/"):
 		h.users(w, r, requestID)
@@ -174,13 +174,21 @@ func (h *handler) users(w http.ResponseWriter, r *http.Request, requestID string
 			return
 		}
 		var input struct {
-			Username string `json:"username"`
-			Password string `json:"password"`
+			Username           string          `json:"username"`
+			Password           string          `json:"password"`
+			MustChangePassword json.RawMessage `json:"must_change_password"`
 		}
 		if !decode(w, r, &input, requestID) {
 			return
 		}
-		user, err := h.auth.CreateUser(r.Context(), input.Username, input.Password)
+		var mustChangePassword bool
+		if len(input.MustChangePassword) != 0 {
+			if bytes.Equal(bytes.TrimSpace(input.MustChangePassword), []byte("null")) || json.Unmarshal(input.MustChangePassword, &mustChangePassword) != nil {
+				fail(w, http.StatusBadRequest, "invalid_json", "must_change_password must be a boolean", requestID)
+				return
+			}
+		}
+		user, err := h.auth.CreateUser(r.Context(), input.Username, input.Password, mustChangePassword)
 		if err != nil {
 			h.serviceError(w, err, requestID)
 			return

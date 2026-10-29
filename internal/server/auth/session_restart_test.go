@@ -34,8 +34,11 @@ func TestSessionSurvivesDatabaseRestart(t *testing.T) {
 	defer reopened.Close()
 	restarted := auth.NewService(reopened, auth.Options{Now: func() time.Time { return *now }})
 	recovered, err := restarted.CurrentSession(ctx, active.Token)
-	if err != nil || recovered.User.ID != active.User.ID || recovered.User.Username != active.User.Username || !recovered.ExpiresAt.Equal(active.ExpiresAt) || recovered.Token != "" || recovered.CSRFToken != active.CSRFToken {
+	if err != nil || recovered.User.ID != active.User.ID || recovered.User.Username != active.User.Username || !recovered.User.MustChangePassword || !recovered.ExpiresAt.Equal(active.ExpiresAt) || recovered.Token != "" || recovered.CSRFToken != active.CSRFToken {
 		t.Fatalf("restart changed or exposed active session: %+v err=%v", recovered, err)
+	}
+	if _, err := restarted.Authenticate(ctx, active.Token); !errors.Is(err, auth.ErrPasswordChangeRequired) {
+		t.Fatalf("restart removed initial password restriction: %v", err)
 	}
 	if valid, err := restarted.VerifyCSRF(ctx, active.Token, recovered.CSRFToken); err != nil || !valid {
 		t.Fatalf("restarted session cannot mutate: valid=%v err=%v", valid, err)

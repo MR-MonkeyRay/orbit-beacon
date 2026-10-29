@@ -96,7 +96,7 @@ func TestInboxHTTPVisibilityReadIsolationAndSnapshots(t *testing.T) {
 	if sum := inboxHTTPSummary(t, f, admin); sum.UnreadCount != 2 {
 		t.Fatal("read changed another user")
 	}
-	if _, err := f.auth.CreateUser(context.Background(), "admin-three", password); err != nil {
+	if _, err := f.auth.CreateUser(context.Background(), "admin-three", password, false); err != nil {
 		t.Fatal(err)
 	}
 	third, _ := login(t, f, "admin-three")

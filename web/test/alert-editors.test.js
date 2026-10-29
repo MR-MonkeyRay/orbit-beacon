@@ -4,7 +4,7 @@ import {setNavigationSignal, setSession} from '../src/console/api.js';
 import {elements, flush, installDOM} from './console-dom.js';
 
 const id = '00000000-0000-4000-8000-000000000001';
-const admin = () => setSession({csrf_token: 'csrf', user: {id, username: 'admin-two'}, expires_at: ''});
+const admin = () => setSession({csrf_token: 'csrf', user: {id, username: 'admin-two', must_change_password: false}, expires_at: ''});
 const change = (element, value) => { element.value = value; element.dispatchEvent(new Event('change')); };
 const control = (root, name) => elements(root).find((element) => element.name === name);
 

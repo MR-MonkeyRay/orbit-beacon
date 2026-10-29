@@ -15,7 +15,7 @@
 | 节点接入 | 创建节点后在 Enroll agent 签发一次性凭证；支持分组批量接入 |
 | 公开页面 | 节点 Public page：独立填写公开名称、地区和服务商，默认不公开 |
 | 告警 | Alerts：规则、事件及 Webhook / Telegram / 邮件通道；未绑定通道仍产生站内事件与通知 |
-| 管理员 | Settings → Administrators：新增、更名、删除等权管理员，至少保留一名；Account 修改本人密码并结束本人全部会话 |
+| 管理员 | Settings → Administrators：新增、更名、删除等权管理员，至少保留一名；新增时可要求首次登录改密，默认不勾选；Account 修改本人密码并结束本人全部会话 |
 | 导出与备份 | Settings → Data operations：加密导出、本地或对象存储备份计划、任务记录；恢复须停服后通过 CLI 执行 |
 | 站内通知 | Notifications：告警与备份结果，未读状态按管理员独立保存；备份结果不外发 |
 
@@ -40,7 +40,7 @@ go build -o build/orbitbeacon-server ./cmd/orbitbeacon-server
 go build -o build/orbitbeacon-agent ./cmd/orbitbeacon-agent
 ```
 
-首次启动空用户库会创建 `orbitbeacon` / `orbitbeacon` 管理员。可用 `ORBITBEACON_ADMIN_USERNAME`、`ORBITBEACON_ADMIN_PASSWORD` 分别覆盖，未设置的一项保留默认值；显式空值或不符合规则的凭据使启动失败。密码为 8–1024 个 UTF-8 字节，不裁剪空格。已有用户时忽略这两个变量，不重置密码或新增账户；初始化凭据不写入 JSON 配置或备份。
+首次启动空用户库会创建 `orbitbeacon` / `orbitbeacon` 管理员。可用 `ORBITBEACON_ADMIN_USERNAME`、`ORBITBEACON_ADMIN_PASSWORD` 分别覆盖，未设置的一项保留默认值；显式空值或不符合规则的凭据使启动失败。密码为 8–1024 个 UTF-8 字节，不裁剪空格。已有用户时忽略这两个变量，不重置密码或新增账户；初始化凭据不写入 JSON 配置或备份。无论默认还是环境变量初始化的账户，首次登录均必须修改密码。
 
 ### 2. 启动 HTTP
 
@@ -49,6 +49,8 @@ build/orbitbeacon-server serve --data-dir "$HOME/orbitbeacon-demo"
 ```
 
 自定义初始化凭据须在首次 `serve` 前设置环境变量；不要将密码放入命令参数。默认凭据只用于本机或受控网络初始化，公网访问前应配置外置 HTTPS 并修改密码。
+
+待改密账户登录后进入 `/change-password`，只能查看本人会话、修改本人密码或退出登录，不能访问其他管理数据；匿名公开页与 Agent API 不受影响。新密码不能与已验证的旧密码相同。修改成功返回 204，不发送 `Set-Cookie`，原子撤销该账户全部会话；页面回到 `/login?password-changed`，须用新密码重新登录。配置备份保留每个账户的改密要求，但不恢复会话。
 
 默认监听 `127.0.0.1:8080`，公开源为 `http://localhost:8080`。另开终端检查：
 
@@ -70,7 +72,7 @@ build/orbitbeacon-server health --url http://localhost:8080
 
 按[部署指南](deploy/README.md)选择 systemd 或 Docker Compose，配置备份；公网访问应由外置反向代理提供可信 HTTPS。页面与 API 同源，不支持子路径前缀。
 
-**当前主库 schema 为 19，不提供历史迁移或跨 schema 恢复。** 旧库（含 schema 18）会被拒绝；使用新的私有数据目录，保留旧目录供原版本使用。
+**当前主库 schema 为 20，不提供历史迁移或跨 schema 恢复。** 旧库与旧归档（含 schema 19）会被拒绝，不修改或删除原数据；使用新的私有数据目录，保留旧目录供原版本使用。
 
 Server 配置优先级：**CLI > `ORBITBEACON_` 环境变量 > JSON > 默认值**；未知 JSON 键报错。
 

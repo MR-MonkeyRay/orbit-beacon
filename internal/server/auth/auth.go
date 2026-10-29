@@ -30,15 +30,17 @@ type serviceError string
 func (err serviceError) Error() string { return string(err) }
 
 const (
-	ErrAdminExists      serviceError = "administrator already exists"
-	ErrUnauthenticated  serviceError = "authentication required"
-	ErrWrongPassword    serviceError = "current password is incorrect"
-	ErrRateLimited      serviceError = "login rate limit reached"
-	ErrInvalidInput     serviceError = "invalid user input"
-	ErrNotFound         serviceError = "user not found"
-	ErrLastAdmin        serviceError = "at least one administrator is required"
-	ErrUsernameConflict serviceError = "username already exists"
-	SessionLifetime                  = 12 * time.Hour
+	ErrAdminExists            serviceError = "administrator already exists"
+	ErrUnauthenticated        serviceError = "authentication required"
+	ErrWrongPassword          serviceError = "current password is incorrect"
+	ErrPasswordChangeRequired serviceError = "password change required"
+	ErrPasswordUnchanged      serviceError = "new password must differ from current password"
+	ErrRateLimited            serviceError = "login rate limit reached"
+	ErrInvalidInput           serviceError = "invalid user input"
+	ErrNotFound               serviceError = "user not found"
+	ErrLastAdmin              serviceError = "at least one administrator is required"
+	ErrUsernameConflict       serviceError = "username already exists"
+	SessionLifetime                        = 12 * time.Hour
 )
 
 const (
@@ -50,9 +52,10 @@ const (
 var csrfEncoding = base64.RawURLEncoding.Strict()
 
 type User struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	CreatedAt time.Time `json:"created_at"`
+	ID                 string    `json:"id"`
+	Username           string    `json:"username"`
+	MustChangePassword bool      `json:"must_change_password"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 type Session struct {
@@ -235,7 +238,7 @@ func (s *Service) BootstrapAdministrator(ctx context.Context, username, password
 	if !validUser(username, password) {
 		return User{}, ErrInvalidInput
 	}
-	user, hash, err := s.prepareUser(username, password)
+	user, hash, err := s.prepareUser(username, password, true)
 	if err != nil {
 		return User{}, err
 	}
@@ -260,7 +263,7 @@ func (s *Service) BootstrapAdministrator(ctx context.Context, username, password
 	return user, nil
 }
 
-func (s *Service) CreateUser(ctx context.Context, username, password string) (User, error) {
+func (s *Service) CreateUser(ctx context.Context, username, password string, mustChangePassword bool) (User, error) {
 	if !validUser(username, password) {
 		return User{}, ErrInvalidInput
 	}
@@ -268,7 +271,7 @@ func (s *Service) CreateUser(ctx context.Context, username, password string) (Us
 		return User{}, err
 	}
 	defer func() { <-s.gate }()
-	user, hash, err := s.prepareUser(username, password)
+	user, hash, err := s.prepareUser(username, password, mustChangePassword)
 	if err != nil {
 		return User{}, err
 	}
@@ -289,7 +292,7 @@ func (s *Service) CreateUser(ctx context.Context, username, password string) (Us
 	return user, nil
 }
 
-func (s *Service) prepareUser(username, password string) (User, string, error) {
+func (s *Service) prepareUser(username, password string, mustChangePassword bool) (User, string, error) {
 	hash, err := HashPassword(password, s.random)
 	if err != nil {
 		return User{}, "", err
@@ -298,14 +301,14 @@ func (s *Service) prepareUser(username, password string) (User, string, error) {
 	if err != nil {
 		return User{}, "", err
 	}
-	return User{ID: id, Username: username, CreatedAt: s.now().UTC()}, hash, nil
+	return User{ID: id, Username: username, MustChangePassword: mustChangePassword, CreatedAt: s.now().UTC()}, hash, nil
 }
 
 func (s *Service) insertUser(ctx context.Context, tx *sql.Tx, user User, hash string) error {
 	if err := requireAvailableUsername(ctx, tx, user.Username, ""); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, "INSERT INTO users(id, username, password_hash, created_at) VALUES (?, ?, ?, ?)", user.ID, user.Username, hash, timekey.Format(user.CreatedAt))
+	_, err := tx.ExecContext(ctx, "INSERT INTO users(id, username, password_hash, must_change_password, created_at) VALUES (?, ?, ?, ?, ?)", user.ID, user.Username, hash, user.MustChangePassword, timekey.Format(user.CreatedAt))
 	return err
 }
 
@@ -329,7 +332,7 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 	}
 	var user User
 	var hash, created string
-	err := s.db.QueryRowContext(ctx, "SELECT id, username, created_at, password_hash FROM users WHERE username = ?", username).Scan(&user.ID, &user.Username, &created, &hash)
+	err := s.db.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password, password_hash FROM users WHERE username = ?", username).Scan(&user.ID, &user.Username, &created, &user.MustChangePassword, &hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Unknown usernames consume the same Argon2 work as incorrect passwords.
 		var salt [16]byte
@@ -422,7 +425,13 @@ func (s *Service) token() (string, error) {
 
 func (s *Service) Authenticate(ctx context.Context, token string) (User, error) {
 	user, _, err := s.lookupSession(ctx, token)
-	return user, err
+	if err != nil {
+		return User{}, err
+	}
+	if user.MustChangePassword {
+		return User{}, ErrPasswordChangeRequired
+	}
+	return user, nil
 }
 
 // CurrentSession recovers a stable session-bound CSRF token without exposing the
@@ -443,8 +452,8 @@ func (s *Service) lookupSession(ctx context.Context, token string) (User, int64,
 	var user User
 	var created string
 	var expiry int64
-	err := s.db.QueryRowContext(ctx, `SELECT u.id, u.username, u.created_at, s.expires_at
- FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`, digest[:]).Scan(&user.ID, &user.Username, &created, &expiry)
+	err := s.db.QueryRowContext(ctx, `SELECT u.id, u.username, u.created_at, u.must_change_password, s.expires_at
+ FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`, digest[:]).Scan(&user.ID, &user.Username, &created, &user.MustChangePassword, &expiry)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, 0, ErrUnauthenticated
 	}
@@ -547,6 +556,9 @@ func (s *Service) ChangePassword(ctx context.Context, userID, oldPassword, newPa
 	if err != nil || !ok {
 		return ErrWrongPassword
 	}
+	if newPassword == oldPassword {
+		return ErrPasswordUnchanged
+	}
 	newHash, err := HashPassword(newPassword, s.random)
 	if err != nil {
 		return err
@@ -556,7 +568,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID, oldPassword, newPa
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, "UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?", newHash, userID, hash)
+	result, err := tx.ExecContext(ctx, "UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ? AND password_hash = ?", newHash, userID, hash)
 	if err != nil {
 		return err
 	}
