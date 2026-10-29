@@ -1,3 +1,5 @@
+import {setImmediate as nextTurn} from 'node:timers/promises';
+
 // Minimal DOM for asynchronous console panels; deliberately no HTML parsing.
 export class TestElement extends EventTarget {
   constructor(tagName = '') {
@@ -77,7 +79,8 @@ export class TestElement extends EventTarget {
   click() { this.dispatchEvent(new Event('click')); }
 }
 export const elements = (node) => [node, ...node.children.filter((child) => child instanceof TestElement).flatMap(elements)];
-export const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+// Yield past the microtask checkpoint without advancing the mocked timers.
+export const flush = () => nextTurn();
 export function installDOM() {
   const originals = new Map();
   const observers = new Set();

@@ -24,6 +24,8 @@ npm test       # Node.js 前端回归
 
 CI 会运行这两项检查。构建目标为 Chrome 111、Firefox 115、Safari 16.4；这不是浏览器实测兼容性保证。
 
+异步测试通过 `test/console-dom.js` 的 `flush()` 等待事件循环检查点，不依赖固定微任务次数；模拟计时器仍需显式推进。
+
 ## 源码入口
 
 | 路径 | 用途 |

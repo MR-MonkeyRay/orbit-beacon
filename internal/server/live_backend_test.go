@@ -702,7 +702,7 @@ func TestPublicLiveRegistryDoesNotHoldAdmissionLockDuringInterrupt(t *testing.T)
 	called := make(chan struct{})
 	stream.setWriter(nil, func() {
 		f.h.streams.mu.Lock()
-		f.h.streams.mu.Unlock()
+		defer f.h.streams.mu.Unlock()
 		close(called)
 	})
 	ctx, cancel := context.WithCancel(context.Background())

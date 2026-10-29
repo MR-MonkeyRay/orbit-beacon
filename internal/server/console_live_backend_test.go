@@ -430,7 +430,7 @@ func TestConsoleLivePrivateWebSocketIsReadOnlyAndReleasesNativeReader(t *testing
 type consoleFleetBatchConnector struct{ queries *atomic.Int64 }
 
 func (c consoleFleetBatchConnector) Connect(context.Context) (driver.Conn, error) {
-	return consoleFleetBatchConn{c.queries}, nil
+	return consoleFleetBatchConn(c), nil
 }
 func (consoleFleetBatchConnector) Driver() driver.Driver { return publicStreamDriver{} }
 
