@@ -389,7 +389,10 @@ paths:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
       responses:
-        '204': {description: Session revoked and cookie expired.}
+        '204':
+          description: >
+            Session revoked. No Set-Cookie is sent, so a delayed response cannot
+            clear a later login's cookie. The revoked credential cannot authenticate.
         default: {$ref: '#/components/responses/Error'}
   /api/v1/me:
     get:

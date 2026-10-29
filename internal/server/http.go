@@ -444,7 +444,8 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 			h.serviceError(w, err, requestID)
 			return
 		}
-		http.SetCookie(w, cookie("", time.Unix(1, 0), -1))
+		// A delayed logout must not expire a newer login's cookie.
+		// Revocation above remains authoritative for the request's session.
 		w.WriteHeader(http.StatusNoContent)
 	case "/api/v1/nodes":
 		if r.Method == http.MethodGet {
