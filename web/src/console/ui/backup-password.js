@@ -1,5 +1,5 @@
 import {h} from '../../shared/dom.js';
-import {t, getLocale} from '../../shared/i18n.js';
+import {t, getLocale} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {api} from '../api.js';
 import {busy, button} from './components.js';

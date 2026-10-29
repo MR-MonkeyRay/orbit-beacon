@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildChannelPayload, durationSeconds, formatMetricValue, formatRuleDuration, metricUnit, scopeLabel, validateChannel, validateRule, validHost} from '../src/console/pages/alert-utils.js';
+import {buildChannelPayload, durationSeconds, formatMetricValue, formatRuleDuration, metricUnit, scopeLabel, validateChannel, validateRule, validHost} from '../src/console/lib/alert-utils.js';
 
 const id = '00000000-0000-4000-8000-000000000001';
 const valid = () => ({name: 'High CPU', enabled: true, scope_kind: 'all', scope_id: null, metric: 'cpu_percent', comparator: '>', threshold: 80, for_seconds: 60, severity: 'warning', channel_ids: []});

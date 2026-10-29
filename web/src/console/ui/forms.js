@@ -1,5 +1,5 @@
 import {byteLength, h, icon} from '../../shared/dom.js';
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {errorText, fieldErrorText} from '../../shared/errors.js';
 import {busy, button, iconButton, uid} from './components.js';
 import {toastError} from './feedback.js';

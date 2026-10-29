@@ -1,4 +1,4 @@
-import {getLocale, t} from '../../shared/i18n.js';
+import {getLocale, t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h} from '../../shared/dom.js';
 import {api} from '../api.js';
@@ -18,12 +18,12 @@ export function probeErrorText(error, statusCode) {
 }
 
 export function formatProbeLatency(value) {
-  return Number.isFinite(value) && value >= 0 ? t('nodes.probe.latencyValue', {value: Number(value.toFixed(1)).toLocaleString(getLocale(), {useGrouping: false, maximumFractionDigits: 1})}) : t('nodes.unavailable');
+  return Number.isFinite(value) && value >= 0 ? t('nodes.probe.latencyValue', {value: Number(value.toFixed(1)).toLocaleString(getLocale(), {useGrouping: false, maximumFractionDigits: 1})}) : t('common.unavailable');
 }
 
 export function formatProbeUptime(uptime, checks) {
   const count = Number.isSafeInteger(checks) && checks >= 0 ? checks : 0;
-  const percent = count > 0 && Number.isFinite(uptime) && uptime >= 0 && uptime <= 100 ? formatPercent(uptime) : t('nodes.unavailable');
+  const percent = count > 0 && Number.isFinite(uptime) && uptime >= 0 && uptime <= 100 ? formatPercent(uptime) : t('common.unavailable');
   return t('nodes.probe.checks', {percent, count});
 }
 
@@ -33,7 +33,7 @@ function probeContent(probes) {
     h('p', {class: 'muted'}, t('nodes.probe.guidance')));
   return h('div', {class: 'stack'},
     h('ul', {class: 'probe-list'}, probes.map((probe) => {
-      const status = {up: ['online', t('nodes.probe.up')], down: ['offline', t('nodes.probe.down')], pending: ['pending', t('nodes.status.pending')]}[probe.status] || ['pending', t('nodes.status.pending')];
+      const status = {up: ['online', t('nodes.probe.up')], down: ['offline', t('nodes.probe.down')], pending: ['pending', t('common.status.pending')]}[probe.status] || ['pending', t('common.status.pending')];
       const error = probeErrorText(probe.error, probe.status_code);
       return h('li', {class: 'probe-row'},
         h('div', {class: 'probe-heading'}, h('span', {class: `badge ${status[0]}`}, status[1]),
@@ -90,7 +90,7 @@ export function probesPanel(id, signal) {
       if (!request.signal.aborted && !signal?.aborted && controller === request && error.name !== 'AbortError') {
         content.replaceChildren(h('div', {class: 'history-error'},
           h('p', {class: 'muted', role: 'status'}, t('nodes.probe.loadError', {error: errorText(error)})),
-          button(t('nodes.retry'), {small: true, id: 'probes-retry', onClick: load})));
+          button(t('common.retry'), {small: true, id: 'probes-retry', onClick: load})));
       }
     } finally {
       if (!request.signal.aborted && !signal?.aborted && controller === request) content.setAttribute('aria-busy', 'false');

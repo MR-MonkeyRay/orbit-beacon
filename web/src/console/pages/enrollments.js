@@ -1,29 +1,17 @@
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h} from '../../shared/dom.js';
+import {copyElementText} from '../../shared/clipboard.js';
 import {api} from '../api.js';
 import {shortID, when} from '../format.js';
 import {busy, button, callout, emptyState, panel} from '../ui/components.js';
 import {confirmDialog, modal} from '../ui/dialogs.js';
 import {toastError} from '../ui/feedback.js';
-import {enrollmentCommand, enrollmentCountdown, installerCommand, enrollmentState, nodeEnrollments} from './enrollment-utils.js';
+import {enrollmentCommand, enrollmentCountdown, installerCommand, enrollmentState, nodeEnrollments} from '../lib/enrollment-utils.js';
 
-// Same selection + execCommand fallback as the node-ID copy control.
 async function copyText(element, status) {
-  try {
-    if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable');
-    await navigator.clipboard.writeText(element.textContent);
-    status.textContent = t('nodes.enrollment.copied');
-  } catch {
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    const selection = getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-    let copied = false;
-    try { copied = document.execCommand('copy'); } catch {}
-    status.textContent = copied ? t('nodes.enrollment.copiedFallback') : t('nodes.enrollment.copyManual');
-  }
+  const result = await copyElementText(element);
+  status.textContent = t(result === 'clipboard' ? 'nodes.enrollment.copied' : result === 'fallback' ? 'nodes.enrollment.copiedFallback' : 'nodes.enrollment.copyManual');
 }
 
 export async function issueEnrollment(target, title, isDeleted = () => false) {

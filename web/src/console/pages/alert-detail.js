@@ -1,11 +1,11 @@
 import {h} from '../../shared/dom.js';
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {api} from '../api.js';
 import {when} from '../format.js';
 import {facts, link} from '../ui/components.js';
 import {modal} from '../ui/dialogs.js';
-import {formatMetricValue, metricLabel, severityLabel} from './alert-utils.js';
+import {formatMetricValue, metricLabel, severityLabel} from '../lib/alert-utils.js';
 
 export function showAlert(id, signal) {
   const controller = new AbortController();

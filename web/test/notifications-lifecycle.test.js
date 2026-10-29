@@ -75,3 +75,61 @@ test('notifications activate after SPA login, survive rename, and reset on accou
     assert.equal(pendingDeadlines, 0);
   }
 });
+
+test('open notification inbox refreshes when unread count changes without a new latest notification', async () => {
+  const dom = installDOM();
+  const originals = new Map(['window', 'matchMedia', 'fetch', 'performance', 'setTimeout', 'clearTimeout'].map((key) => [key, globalThis[key]]));
+  globalThis.performance = {now: () => 0};
+  globalThis.setTimeout = () => 1;
+  globalThis.clearTimeout = () => {};
+  globalThis.window = new EventTarget();
+  globalThis.matchMedia = () => ({matches: true, addEventListener() {}});
+  dom.document.querySelectorAll = (selector) => dom.body.querySelectorAll(selector);
+  const elementPrototype = Object.getPrototypeOf(dom.body);
+  const originalClosest = elementPrototype.closest;
+  elementPrototype.closest = function (selector) {
+    let current = this;
+    while (current) {
+      if (selector === 'dialog' && current.tagName === 'dialog') return current;
+      current = current.parentElement;
+    }
+    return null;
+  };
+  const entry = document.createElement('button');
+  entry.className = 'notification-entry';
+  const count = document.createElement('span');
+  count.className = 'notification-count';
+  entry.append(count);
+  dom.body.append(entry);
+  location.pathname = '/overview';
+  setSession({user: {id: 'one', username: 'admin', must_change_password: false}, csrf_token: 'csrf', expires_at: '2099-10-29T00:00:00Z'});
+  let unreadCount = 2;
+  let listRequests = 0;
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/notifications/summary')) return new Response(JSON.stringify({unread_count: unreadCount, latest_id: 'same'}));
+    if (url.includes('/notifications?')) {
+      listRequests += 1;
+      return new Response(JSON.stringify({notifications: [], next_cursor: null, has_more: false, read_through: null}));
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  };
+  let dispose;
+  try {
+    const {initNotifications, refreshNotifications} = await import('../src/console/notifications.js?unread-refresh');
+    dispose = initNotifications();
+    await flush();
+    entry.click();
+    await flush();
+    assert.equal(listRequests, 1);
+    unreadCount = 1;
+    await refreshNotifications();
+    await flush();
+    assert.equal(listRequests, 2);
+  } finally {
+    setSession({user: null, csrf_token: '', expires_at: ''});
+    dispose?.();
+    if (originalClosest === undefined) delete elementPrototype.closest; else elementPrototype.closest = originalClosest;
+    dom.restore();
+    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+  }
+});

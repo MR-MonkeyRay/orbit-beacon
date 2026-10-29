@@ -46,6 +46,98 @@ function findButton(node, label) {
 
 const event = (id) => ({id, action: 'node.create', created_at: '2026-10-27T12:00:00Z'});
 
+test('settings loads each tab data only when first shown', async () => {
+  const dom = installDOM();
+  const originals = new Map(['fetch', 'window', 'matchMedia', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
+  const calls = [];
+  Object.assign(globalThis, {window: new EventTarget(), matchMedia: () => ({matches: true, addEventListener() {}}),
+    history: {state: null, replaceState(_state, _unused, url) { location.hash = new URL(url, 'https://example.test').hash; }}, requestAnimationFrame: (callback) => callback()});
+  Object.assign(location, {pathname: '/settings', search: '', hash: '#account'});
+  setNavigationSignal(null);
+  setSession({csrf_token: 'csrf', user: {id: 'user', username: 'admin', must_change_password: false, created_at: '2026-10-27T12:00:00Z'}, expires_at: ''});
+  invalidate('nodes', 'groups', 'users');
+  globalThis.fetch = async (path) => {
+    calls.push(path);
+    const body = path === '/api/v1/users' ? {users: []}
+      : path === '/api/v1/groups' ? {groups: []}
+        : path.startsWith('/api/v1/nodes?') ? {nodes: [], has_more: false}
+          : path.startsWith('/api/v1/audit?') ? {events: [], has_more: false}
+            : path.endsWith('/settings/public-page') ? {enabled: true}
+              : path.startsWith('/api/v1/backup-plans?') ? {plans: [], has_more: false, timezone_name: 'UTC', utc_offset_seconds: 0}
+                : path.startsWith('/api/v1/tasks?') ? {tasks: [], has_more: false}
+                  : assert.fail(`Unexpected request: ${path}`);
+    return new Response(JSON.stringify(body));
+  };
+  try {
+    const {settingsPage} = await import('../src/console/pages/settings.js');
+    const page = await settingsPage();
+    dom.body.append(page); dom.mutations(); await flush();
+    assert.deepEqual(calls, []);
+
+    const tabs = elements(page).filter((element) => element.getAttribute('role') === 'tab');
+    tabs.find((element) => element.id === 'tab-administrators').click(); dom.mutations(); await flush();
+    assert.deepEqual(calls, ['/api/v1/users']);
+    tabs.find((element) => element.id === 'tab-account').click(); dom.mutations(); await flush();
+    tabs.find((element) => element.id === 'tab-administrators').click(); dom.mutations(); await flush();
+    assert.deepEqual(calls, ['/api/v1/users']);
+
+    tabs.find((element) => element.id === 'tab-groups').click(); dom.mutations(); await flush();
+    assert.deepEqual(calls.slice(1).sort(), ['/api/v1/groups', '/api/v1/nodes?limit=100&offset=0']);
+    tabs.find((element) => element.id === 'tab-audit').click(); dom.mutations(); await flush();
+    assert.deepEqual(calls.slice(3), ['/api/v1/audit?limit=50&offset=0']);
+  } finally {
+    invalidate('nodes', 'groups', 'users');
+    setSession({user: null, csrf_token: '', expires_at: ''});
+    setNavigationSignal(null);
+    dom.restore();
+    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+  }
+});
+
+test('settings lazy tabs show loading and retry an inline load failure', async () => {
+  const dom = installDOM();
+  const originals = new Map(['fetch', 'window', 'matchMedia', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
+  let userRequests = 0;
+  Object.assign(globalThis, {window: new EventTarget(), matchMedia: () => ({matches: true, addEventListener() {}}),
+    history: {state: null, replaceState() {}}, requestAnimationFrame: (callback) => callback()});
+  Object.assign(location, {pathname: '/settings', search: '', hash: '#account'});
+  setNavigationSignal(null);
+  setSession({csrf_token: 'csrf', user: {id: 'user', username: 'admin', must_change_password: false, created_at: '2026-10-27T12:00:00Z'}, expires_at: ''});
+  invalidate('users');
+  globalThis.fetch = async (path) => {
+    assert.equal(path, '/api/v1/users');
+    userRequests += 1;
+    if (userRequests === 1) return new Response(JSON.stringify({message: 'Administrators could not be loaded.'}), {status: 500});
+    return new Response(JSON.stringify({users: []}));
+  };
+  try {
+    const {settingsPage} = await import('../src/console/pages/settings.js');
+    const page = await settingsPage();
+    dom.body.append(page); dom.mutations();
+    const tabs = elements(page).filter((element) => element.getAttribute('role') === 'tab');
+    tabs.find((element) => element.id === 'tab-administrators').click();
+    assert.ok(elements(page).some((element) => element.getAttribute('aria-label') === 'Loading'));
+    await flush();
+    const loadError = elements(page).find((element) => element.getAttribute('role') === 'alert');
+    assert.ok(loadError?.textContent);
+    elements(page).find((element) => element.tagName === 'button' && element.textContent === 'Retry').click();
+    assert.ok(elements(page).some((element) => element.getAttribute('aria-label') === 'Loading'));
+    await flush();
+    assert.equal(userRequests, 2);
+    assert.ok(elements(page).some((element) => element.tagName === 'button' && element.textContent === 'Add administrator'));
+    tabs.find((element) => element.id === 'tab-account').click();
+    tabs.find((element) => element.id === 'tab-administrators').click();
+    await flush();
+    assert.equal(userRequests, 2);
+  } finally {
+    invalidate('users');
+    setSession({user: null, csrf_token: '', expires_at: ''});
+    setNavigationSignal(null);
+    dom.restore();
+    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+  }
+});
+
 test('audit load more uses the cursor and hides after a full final page', async () => {
   const calls = [];
   const firstCursor = 'opaque/cursor+value';
@@ -85,6 +177,7 @@ test('audit load more uses the cursor and hides after a full final page', async 
   try {
     const {settingsPage} = await import('../src/console/pages/settings.js');
     const page = await settingsPage();
+    await flush();
     const more = findButton(page, 'Load older events');
     assert.ok(more);
     assert.equal(more.hidden, false);
@@ -132,6 +225,7 @@ test('administrator forms preserve request boundaries and keep conflicts in the 
     const {settingsPage} = await import('../src/console/pages/settings.js');
     const page = await settingsPage();
     dom.body.append(page);
+    await flush();
     elements(page).find((element) => element.tagName === 'button' && element.textContent === 'Add administrator').click();
     let dialog = dom.body.querySelector('dialog');
     let controls = elements(dialog);
@@ -257,6 +351,7 @@ test('self deletion clears the session without fetching the administrator list a
     const {settingsPage} = await import('../src/console/pages/settings.js');
     const page = await settingsPage();
     dom.body.append(page);
+    await flush();
     elements(page).find((element) => element.getAttribute('aria-label') === 'Delete administrator "admin-one"').click();
     const dialog = dom.body.querySelector('dialog');
     elements(dialog).find((element) => element.tagName === 'button' && element.textContent === 'Delete my account').click();

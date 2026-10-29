@@ -1,4 +1,4 @@
-import {t} from '../shared/i18n.js';
+import {t} from './i18n.js';
 import {errorText} from '../shared/errors.js';
 import {h, reducedMotion} from '../shared/dom.js';
 import {ensureSession, onSession, pauseSessionVerification, session, setNavigationSignal, verifySession} from './api.js';

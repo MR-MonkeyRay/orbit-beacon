@@ -1,5 +1,5 @@
 import {h, reducedMotion} from '../../shared/dom.js';
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {onSession} from '../api.js';
 import {button, iconButton, uid} from './components.js';
 import {onSubmit} from './forms.js';

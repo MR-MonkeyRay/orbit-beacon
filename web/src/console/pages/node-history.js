@@ -1,4 +1,4 @@
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h} from '../../shared/dom.js';
 import {api} from '../api.js';
@@ -102,7 +102,7 @@ export function historyPanel(id, signal) {
       const error = item.metrics.map(([metric]) => results.get(metric).error).find(Boolean);
       const content = error
         ? h('div', {class: 'history-error'}, h('p', {class: 'muted'}, t('nodes.historyLoadError', {error: errorText(error)})),
-          button(t('nodes.retry'), {small: true, id: `history-retry-${item.metrics[0][0]}`, onClick: load}))
+          button(t('common.retry'), {small: true, id: `history-retry-${item.metrics[0][0]}`, onClick: load}))
         : chart({title: item.title, unit: item.unit, id: `history-chart-${item.metrics[0][0]}`,
           selectedTime: focusedID === `history-chart-${item.metrics[0][0]}` ? selectedTime : undefined,
           series: item.metrics.map(([metric, label]) => {

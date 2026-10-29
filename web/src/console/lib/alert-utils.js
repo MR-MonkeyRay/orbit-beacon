@@ -1,5 +1,5 @@
 // Alert and notification form logic, kept independent of the DOM.
-import {getLocale, t} from '../../shared/i18n.js';
+import {getLocale, t} from '../i18n.js';
 
 const utf8 = new TextEncoder();
 const bytes = (value) => utf8.encode(value || '').length;
@@ -7,7 +7,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const METRICS = [
   ['cpu_percent', t('alerts.metric.cpu')], ['memory_used_percent', t('alerts.metric.memory')],
   ['swap_used_percent', t('alerts.metric.swap')], ['disk_used_percent', t('alerts.metric.disk')],
-  ['load1', t('alerts.metric.load1')], ['probes_down', t('alerts.metric.probesDown')], ['offline', t('alerts.metric.offline')]
+  ['load1', t('alerts.metric.load1')], ['probes_down', t('alerts.metric.probesDown')], ['offline', t('common.status.offline')]
 ];
 export const SEVERITIES = [['info', t('alerts.severity.info')], ['warning', t('alerts.severity.warning')], ['critical', t('alerts.severity.critical')]];
 export const metricLabel = (metric) => METRICS.find(([id]) => id === metric)?.[1] || t('alerts.metric.unknown');
@@ -25,7 +25,7 @@ export function validHost(host) {
 
 export function formatMetricValue(metric, value) {
   if (!metric) return t('alerts.value.unknownMetric', {value: Number.isFinite(value) ? value.toLocaleString(getLocale(), {maximumSignificantDigits: 21}) : t('common.unavailable')});
-  if (metric === 'offline') return t('alerts.metric.offline');
+  if (metric === 'offline') return t('common.status.offline');
   if (!Number.isFinite(value)) return t('common.unavailable');
   if (metricUnit(metric) === '%') return `${Number(value.toFixed(1)).toLocaleString(getLocale(), {maximumFractionDigits: 1})}%`;
   if (metric === 'load1') return t('alerts.value.load', {value: value > 0 && value < .01 ? `< ${(0.01).toLocaleString(getLocale())}` : Number(value.toFixed(2)).toLocaleString(getLocale(), {minimumFractionDigits: 2, maximumFractionDigits: 2})});

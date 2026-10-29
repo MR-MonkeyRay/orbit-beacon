@@ -1,5 +1,5 @@
 import {h, icon} from '../../shared/dom.js';
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 
 export function toast(message, options = {}) {

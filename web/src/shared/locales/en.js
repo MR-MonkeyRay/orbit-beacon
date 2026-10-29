@@ -1,17 +1,19 @@
+import common from './common.en.js';
 import controls from './controls.en.js';
 import publicPage from './public.en.js';
 import alerts from './alerts.en.js';
 import data from './data.en.js';
 import shell from './shell.en.js';
 import nodes from './nodes.en.js';
+import settings from './settings.en.js';
+import account from './account.en.js';
+import audit from './audit.en.js';
+import notifications from './notifications.en.js';
 
 export default {
-  ...controls, ...publicPage, ...alerts, ...data, ...shell, ...nodes,
-  'common.signOut': 'Sign out', 'common.refresh': 'Refresh', 'common.none': 'None',
-  'common.unavailable': 'Unavailable', 'common.language': 'Language',
-  'errors.generic': 'The operation could not be completed.',
-  'errors.withRequest': '{message} (request {id})',
-  'errors.unauthenticated': 'Sign in again to continue.', 'errors.forbidden': 'This request is not allowed.',
+  ...common, ...controls, ...publicPage, ...alerts, ...data, ...shell, ...nodes, ...settings, ...account, ...audit, ...notifications,
+  'errors.unauthenticated': 'Sign in again to continue.',
+  'errors.forbidden': 'This request is not allowed.',
   'errors.password_change_required': 'Change your password before accessing the console.',
   'errors.password_unchanged': 'Choose a password different from your current password.',
   'errors.public_page_disabled': 'Public access is disabled.',
@@ -22,7 +24,6 @@ export default {
   'errors.network': 'Could not reach the server. Check your connection and try again.',
   'errors.timeout': 'The request timed out. Try again.',
   'errors.unreadable_response': 'The server returned an unreadable response.',
-  'errors.locale_save_failed': 'Could not save language preference.',
   'errors.not_found': 'The requested resource was not found.',
   'errors.node_not_found': 'The node was not found.',
   'errors.node_disabled': 'The node is disabled.',
@@ -47,7 +48,6 @@ export default {
   'errors.password_expired': 'The recovery password has expired.',
   'errors.task_not_found': 'The task was not found.',
   'errors.backup_plan_not_found': 'The backup plan was not found.',
-  'errors.locale_storage_failed': 'Could not save language preference.',
   'errors.secret_unavailable': 'Notification secrets are unavailable.',
   'errors.snapshot_failed': 'The backup snapshot could not be created.',
   'errors.history_unavailable': 'Metric history is unavailable.',

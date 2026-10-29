@@ -1,17 +1,19 @@
+import common from './common.zh-CN.js';
 import controls from './controls.zh-CN.js';
 import publicPage from './public.zh-CN.js';
 import alerts from './alerts.zh-CN.js';
 import data from './data.zh-CN.js';
 import shell from './shell.zh-CN.js';
 import nodes from './nodes.zh-CN.js';
+import settings from './settings.zh-CN.js';
+import account from './account.zh-CN.js';
+import audit from './audit.zh-CN.js';
+import notifications from './notifications.zh-CN.js';
 
 export default {
-  ...controls, ...publicPage, ...alerts, ...data, ...shell, ...nodes,
-  'common.signOut': '退出登录', 'common.refresh': '刷新', 'common.none': '无',
-  'common.unavailable': '不可用', 'common.language': '语言',
-  'errors.generic': '无法完成此操作。',
-  'errors.withRequest': '{message}（请求 {id}）',
-  'errors.unauthenticated': '请重新登录后继续。', 'errors.forbidden': '不允许此请求。',
+  ...common, ...controls, ...publicPage, ...alerts, ...data, ...shell, ...nodes, ...settings, ...account, ...audit, ...notifications,
+  'errors.unauthenticated': '请重新登录后继续。',
+  'errors.forbidden': '不允许此请求。',
   'errors.password_change_required': '请先修改密码，再访问管理控制台。',
   'errors.password_unchanged': '请选择与当前密码不同的新密码。',
   'errors.public_page_disabled': '公开访问已关闭。',
@@ -22,7 +24,6 @@ export default {
   'errors.network': '无法连接服务器，请检查网络后重试。',
   'errors.timeout': '请求超时，请重试。',
   'errors.unreadable_response': '无法读取服务器响应。',
-  'errors.locale_save_failed': '无法保存语言设置。',
   'errors.not_found': '未找到所请求的资源。',
   'errors.node_not_found': '未找到该节点。',
   'errors.node_disabled': '该节点已禁用。',
@@ -47,7 +48,6 @@ export default {
   'errors.password_expired': '还原密码已过期。',
   'errors.task_not_found': '未找到该任务。',
   'errors.backup_plan_not_found': '未找到该备份计划。',
-  'errors.locale_storage_failed': '无法保存语言设置。',
   'errors.secret_unavailable': '通知凭据暂不可用。',
   'errors.snapshot_failed': '无法创建备份快照。',
   'errors.history_unavailable': '指标历史暂不可用。',

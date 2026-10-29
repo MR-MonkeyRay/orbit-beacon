@@ -1,9 +1,9 @@
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {h} from '../../shared/dom.js';
 import {createFreshnessController, sourceDeadline, timestampMillis} from '../../shared/freshness.js';
 import {absoluteWhen, formatDuration, formatLoad, formatPercent} from '../format.js';
 import {panel, readonlyFacts} from '../ui/components.js';
-import {diskSummary, memorySummary, networkSummary} from './latest-sample-helpers.js';
+import {diskSummary, memorySummary, networkSummary} from '../lib/latest-sample-helpers.js';
 
 const usableStatus = (value) => value === 'ok' || value === 'stale';
 const number = (value) => Number.isFinite(value) && value >= 0;

@@ -1,15 +1,16 @@
-import {t} from '../../shared/i18n.js';
-import {h, svg} from '../../shared/dom.js';
+import {t} from '../i18n.js';
+import {h} from '../../shared/dom.js';
+import {orbitSVG} from '../../shared/orbit.js';
 import {brandMark, consoleLocaleSelect} from '../shell.js';
 
 // Shared bare authentication layout retains the console's existing orbit art.
 function orbits() {
-  const element = svg('svg', {class: 'login-orbits', viewBox: '0 0 1100 1100', 'aria-hidden': 'true'});
-  element.innerHTML = '<g transform="rotate(-16 550 550) translate(0 320) scale(1 .42)">'
-    + '<g class="ring r1"><circle class="path" cx="550" cy="550" r="300"/><ellipse class="sat" cx="850" cy="550" rx="7" ry="16.7"/><ellipse class="sat" cx="250" cy="550" rx="5" ry="11.9"/></g>'
-    + '<g class="ring r2"><circle class="path" cx="550" cy="550" r="420"/><ellipse class="sat" cx="550" cy="130" rx="8" ry="19.0"/></g>'
-    + '<g class="ring r3"><circle class="path" cx="550" cy="550" r="540"/><ellipse class="sat" cx="10" cy="550" rx="6" ry="14.3"/><ellipse class="sat" cx="932" cy="932" rx="5" ry="11.9"/></g></g>';
-  return element;
+  return orbitSVG({className: 'login-orbits', viewBox: '0 0 1100 1100', center: 550, squash: .42, tilt: -16, verticalOffset: 320,
+    radii: [300, 420, 540], satellites: [
+      {ring: 0, x: 850, y: 550, radius: 7, verticalRadius: 16.7}, {ring: 0, x: 250, y: 550, radius: 5, verticalRadius: 11.9},
+      {ring: 1, x: 550, y: 130, radius: 8, verticalRadius: 19}, {ring: 2, x: 10, y: 550, radius: 6, verticalRadius: 14.3},
+      {ring: 2, x: 932, y: 932, radius: 5, verticalRadius: 11.9}
+    ]}).root;
 }
 
 export function authLayout({title, description, content, footer}) {

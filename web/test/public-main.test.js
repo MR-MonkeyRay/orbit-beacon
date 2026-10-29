@@ -186,3 +186,19 @@ test('public-page disable clears rendered data and timers before replacing the r
   assert.deepEqual(redirects, ['/']);
   assert.equal(ui.requests.length, 0);
 });
+
+test('public gauges clear both ARIA values when a metric becomes missing', async (t) => {
+  const ui = await setup(t);
+  const socket = ui.sockets[0]; socket.open();
+  const data = payload();
+  data.nodes[0].cpu_percent = 80;
+  socket.message(snapshot(data));
+  const meter = ui.elements.nodes.querySelector('.track');
+  assert.equal(meter.getAttribute('aria-valuenow'), '80.0');
+  assert.equal(meter.getAttribute('aria-valuetext'), '80.0%');
+  data.nodes[0].cpu_percent = null;
+  data.nodes[0].metric_status.cpu_percent = 'unavailable';
+  socket.message(snapshot(data));
+  assert.equal(meter.getAttribute('aria-valuenow'), null);
+  assert.equal(meter.getAttribute('aria-valuetext'), null);
+});

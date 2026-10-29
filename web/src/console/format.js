@@ -1,26 +1,27 @@
-import {getLocale, t} from '../shared/i18n.js';
+import {getLocale, t} from './i18n.js';
+import {statusLabels} from '../shared/status.js';
 import {h} from '../shared/dom.js';
 
-export const STATUS = {online: t('nodes.status.online'), offline: t('nodes.status.offline'), never: t('nodes.status.never'), unknown: t('nodes.status.unknown'), pending: t('nodes.status.pending'), disabled: t('nodes.status.disabled')};
+export const STATUS = statusLabels();
 export const STATUS_ORDER = ['online', 'offline', 'never', 'pending', 'disabled'];
 
 const ACTIONS = {
-  'node.create': t('nodes.action.nodeCreate'), 'node.delete': t('nodes.action.nodeDelete'), 'node.disable': t('nodes.action.nodeDisable'), 'node.enable': t('nodes.action.nodeEnable'),
-  'node.metadata.patch': t('nodes.action.nodeMetadata'), 'node.config.patch': t('nodes.action.nodeConfig'),
-  'node.traffic_settings.patch': t('nodes.action.nodeTraffic'),
-  'public_page.update': t('nodes.action.publicPage'),
-  'node.public_settings.patch': t('nodes.action.nodePublic'), 'group.create': t('nodes.action.groupCreate'), 'group.update': t('nodes.action.groupUpdate'),
-  'group.delete': t('nodes.action.groupDelete'), 'user.create': t('nodes.action.userCreate'), 'user.patch': t('nodes.action.userPatch'), 'user.delete': t('nodes.action.userDelete'),
-  'user.password.change': t('nodes.action.password'), 'enrollment.create': t('nodes.action.enrollmentCreate'),
-  'enrollment.claim': t('nodes.action.enrollmentClaim'), 'enrollment.revoke': t('nodes.action.enrollmentRevoke'),
-  'session.create': t('nodes.action.signIn'), 'session.delete': t('nodes.action.signOut'),
-  'node.credential.revoke': t('nodes.action.credentialRevoke'),
-  'alert_rule.create': t('nodes.action.ruleCreate'), 'alert_rule.update': t('nodes.action.ruleUpdate'), 'alert_rule.delete': t('nodes.action.ruleDelete'),
-  'notification_channel.create': t('nodes.action.channelCreate'), 'notification_channel.update': t('nodes.action.channelUpdate'),
-  'notification_channel.delete': t('nodes.action.channelDelete'), 'notification_channel.test': t('nodes.action.channelTest'),
-  'backup.plan.create': t('nodes.action.backupPlanCreate'), 'backup.plan.update': t('nodes.action.backupPlanUpdate'), 'backup.plan.delete': t('nodes.action.backupPlanDelete'),
-  'backup.restore': t('nodes.action.backupRestore'), 'backup.schedule': t('nodes.action.backupSchedule'),
-  'backup.export': t('nodes.action.backupExport'), 'backup.password': t('nodes.action.backupPassword')
+  'node.create': t('audit.nodeCreate'), 'node.delete': t('audit.nodeDelete'), 'node.disable': t('audit.nodeDisable'), 'node.enable': t('audit.nodeEnable'),
+  'node.metadata.patch': t('audit.nodeMetadata'), 'node.config.patch': t('audit.nodeConfig'),
+  'node.traffic_settings.patch': t('audit.nodeTraffic'),
+  'public_page.update': t('audit.publicPage'),
+  'node.public_settings.patch': t('audit.nodePublic'), 'group.create': t('audit.groupCreate'), 'group.update': t('audit.groupUpdate'),
+  'group.delete': t('audit.groupDelete'), 'user.create': t('audit.userCreate'), 'user.patch': t('audit.userPatch'), 'user.delete': t('audit.userDelete'),
+  'user.password.change': t('audit.password'), 'enrollment.create': t('audit.enrollmentCreate'),
+  'enrollment.claim': t('audit.enrollmentClaim'), 'enrollment.revoke': t('audit.enrollmentRevoke'),
+  'session.create': t('audit.signIn'), 'session.delete': t('audit.signOut'),
+  'node.credential.revoke': t('audit.credentialRevoke'),
+  'alert_rule.create': t('audit.ruleCreate'), 'alert_rule.update': t('audit.ruleUpdate'), 'alert_rule.delete': t('audit.ruleDelete'),
+  'notification_channel.create': t('audit.channelCreate'), 'notification_channel.update': t('audit.channelUpdate'),
+  'notification_channel.delete': t('audit.channelDelete'), 'notification_channel.test': t('audit.channelTest'),
+  'backup.plan.create': t('audit.backupPlanCreate'), 'backup.plan.update': t('audit.backupPlanUpdate'), 'backup.plan.delete': t('audit.backupPlanDelete'),
+  'backup.restore': t('audit.backupRestore'), 'backup.schedule': t('audit.backupSchedule'),
+  'backup.export': t('audit.backupExport'), 'backup.password': t('audit.backupPassword')
 };
 
 export function describeAction(action) {
@@ -77,15 +78,15 @@ export function formatBytes(decimal) {
 }
 
 export function formatPercent(value) {
-  return Number.isFinite(value) ? `${percentFormat.format(Number(value.toFixed(1)))}%` : t('nodes.unavailable');
+  return Number.isFinite(value) ? `${percentFormat.format(Number(value.toFixed(1)))}%` : t('common.unavailable');
 }
 
 export function formatLoad(value) {
-  return Number.isFinite(value) && value >= 0 ? loadFormat.format(Number(value.toFixed(2))) : t('nodes.unavailable');
+  return Number.isFinite(value) && value >= 0 ? loadFormat.format(Number(value.toFixed(2))) : t('common.unavailable');
 }
 
 export function formatDuration(seconds) {
-  if (!Number.isFinite(seconds) || seconds < 0) return t('nodes.unavailable');
+  if (!Number.isFinite(seconds) || seconds < 0) return t('common.unavailable');
   const total = Math.floor(seconds);
   const days = Math.floor(total / 86400);
   const hours = Math.floor(total % 86400 / 3600);
@@ -97,6 +98,6 @@ export function formatDuration(seconds) {
 }
 
 export function formatRate(bytesPerSecond) {
-  return Number.isFinite(bytesPerSecond) && bytesPerSecond >= 0 ? t('nodes.rate', {value: formatBytes(Math.round(bytesPerSecond))}) : t('nodes.unavailable');
+  return Number.isFinite(bytesPerSecond) && bytesPerSecond >= 0 ? t('nodes.rate', {value: formatBytes(Math.round(bytesPerSecond))}) : t('common.unavailable');
 }
 

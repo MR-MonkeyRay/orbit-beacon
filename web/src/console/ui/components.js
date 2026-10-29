@@ -1,5 +1,5 @@
 import {h, icon, svg} from '../../shared/dom.js';
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {STATUS} from '../format.js';
 
 // IDs restart on every page render, so a quiet refresh rebuilds the same IDs

@@ -1,4 +1,5 @@
 import {h, icon} from '../shared/dom.js';
+import {statusLabels} from '../shared/status.js';
 import {timestampMillis} from '../shared/freshness.js';
 import {getLocale, t} from '../shared/i18n.js';
 
@@ -7,7 +8,7 @@ const integerFormat = new Intl.NumberFormat(getLocale());
 const percentFormat = new Intl.NumberFormat(getLocale(), {style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1});
 const loadFormat = new Intl.NumberFormat(getLocale(), {useGrouping: false, minimumFractionDigits: 2, maximumFractionDigits: 2});
 
-export const STATUS = {online: t('public.status.online'), offline: t('public.status.offline'), unknown: t('public.status.unknown')};
+export const STATUS = statusLabels({unknown: 'public.status.unknown'});
 
 export function duration(seconds) {
   if (seconds === null) return '—';
@@ -31,6 +32,7 @@ function gauge(label) {
     value.textContent = display;
     if (missing) {
       track.removeAttribute('aria-valuenow');
+      track.removeAttribute('aria-valuetext');
       return;
     }
     track.setAttribute('aria-valuenow', percent.toFixed(1));

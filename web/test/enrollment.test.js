@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {enrollmentCommand, enrollmentCountdown, enrollmentState, installerCommand, nodeEnrollments, shellQuote} from '../src/console/pages/enrollment-utils.js';
+import {enrollmentCommand, enrollmentCountdown, enrollmentState, installerCommand, nodeEnrollments, shellQuote} from '../src/console/lib/enrollment-utils.js';
 
 test('enrollment command quotes token literally and uses private file + policy', () => {
   assert.equal(shellQuote("a'b"), "'a'\\''b'");

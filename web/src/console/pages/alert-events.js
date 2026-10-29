@@ -1,10 +1,10 @@
 import {h} from '../../shared/dom.js';
-import {getLocale, t} from '../../shared/i18n.js';
+import {getLocale, t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {api} from '../api.js';
 import {when} from '../format.js';
 import {busy, button, link, panel} from '../ui/components.js';
-import {formatMetricValue, severityLabel} from './alert-utils.js';
+import {formatMetricValue, severityLabel} from '../lib/alert-utils.js';
 
 export const severityPill = (severity) => h('span', {class: `badge alert-${['info', 'warning', 'critical'].includes(severity) ? severity : 'unknown'}`}, severityLabel(severity));
 export const eventTime = (iso) => h('div', {class: 'alert-time'}, when(iso), h('small', {class: 'muted'}, Number.isFinite(Date.parse(iso)) ? new Date(iso).toLocaleString(getLocale()) : t('alerts.unknownTime')));
@@ -65,7 +65,7 @@ export function eventsPanel(state, signal) {
       table.setAttribute('aria-busy', 'false');
     }
   };
-  const more = button(t('alerts.events.loadMore'), {onClick: () => load(), small: true});
+  const more = button(t('common.loadMore'), {onClick: () => load(), small: true});
   more.hidden = true;
   const reload = button(t('common.refresh'), {small: true, icon: 'refresh', onClick: () => load(true)});
   const root = panel(t(active ? 'alerts.events.activeTitle' : 'alerts.tab.history'), {action: reload}, status, table, more);

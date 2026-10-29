@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {errorText, fieldErrorText} from '../src/shared/errors.js';
-import {setLocalePreference} from '../src/shared/i18n.js';
+import {setLocalePreference} from '../src/console/i18n.js';
 
 test('error text never renders server or network error messages', () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');

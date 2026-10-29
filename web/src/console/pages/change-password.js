@@ -1,4 +1,4 @@
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h} from '../../shared/dom.js';
 import {api, getNavigationSignal, invalidateSession, signOut} from '../api.js';
@@ -11,9 +11,9 @@ export async function changePasswordPage() {
   const oldPassword = passwordInput({name: 'old_password', autocomplete: 'current-password', required: true, dataset: {autofocus: ''}});
   const newPassword = passwordInput({name: 'new_password', autocomplete: 'new-password', required: true});
   const confirmPassword = input({type: 'password', name: 'confirm_password', autocomplete: 'new-password', required: true});
-  validateBytes(oldPassword, 1, 1024, t('shell.currentPassword'));
-  validateBytes(newPassword, 8, 1024, t('shell.newPassword'));
-  const checkMatch = () => confirmPassword.setCustomValidity(confirmPassword.value && confirmPassword.value !== newPassword.value ? t('shell.passwordMismatch') : '');
+  validateBytes(oldPassword, 1, 1024, t('account.currentPassword'));
+  validateBytes(newPassword, 8, 1024, t('account.newPassword'));
+  const checkMatch = () => confirmPassword.setCustomValidity(confirmPassword.value && confirmPassword.value !== newPassword.value ? t('account.passwordMismatch') : '');
   confirmPassword.addEventListener('input', checkMatch);
   newPassword.addEventListener('input', checkMatch);
   const clear = () => {
@@ -25,17 +25,17 @@ export async function changePasswordPage() {
   getNavigationSignal()?.addEventListener('abort', clear, {once: true});
   window.addEventListener('pagehide', clear, {once: true, signal: getNavigationSignal() || undefined});
   const errorBox = h('div', {class: 'form-error', role: 'alert', hidden: true});
-  const submit = button(t('shell.changeAndSignOut'), {type: 'submit', variant: 'primary'});
-  const exit = button(t('shell.signOut'), {variant: 'ghost', onClick: async () => {
+  const submit = button(t('account.changeAndSignOut'), {type: 'submit', variant: 'primary'});
+  const exit = button(t('common.signOut'), {variant: 'ghost', onClick: async () => {
     clear();
     form.markClean();
     busy(exit, true);
     try { await signOut(); } catch (error) { toastError(error); } finally { busy(exit, false); }
   }});
   const form = h('form', {class: 'form'}, errorBox,
-    field(t('shell.currentPassword'), oldPassword, {inner: oldPassword.wrapper}),
-    field(t('shell.newPassword'), newPassword, {inner: newPassword.wrapper, hint: t('shell.passwordDifferentHint')}),
-    field(t('shell.confirmPassword'), confirmPassword), submit, exit);
+    field(t('account.currentPassword'), oldPassword, {inner: oldPassword.wrapper}),
+    field(t('account.newPassword'), newPassword, {inner: newPassword.wrapper, hint: t('account.passwordDifferentHint')}),
+    field(t('account.confirmPassword'), confirmPassword), submit, exit);
   trackFormDirty(form);
   onSubmit(form, submit, async () => {
     exit.disabled = true;
@@ -59,8 +59,8 @@ export async function changePasswordPage() {
     } finally { clear(); form.syncDirty(); exit.disabled = false; }
   }, errorBox);
   return authLayout({
-    title: t('shell.changePasswordTitle'),
-    description: t('shell.changePasswordDescription'),
+    title: t('account.changePasswordTitle'),
+    description: t('account.changePasswordDescription'),
     content: form
   });
 }

@@ -1,4 +1,4 @@
-import {getLocale, t} from '../../shared/i18n.js';
+import {getLocale, t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h, svg} from '../../shared/dom.js';
 import {api} from '../api.js';
@@ -182,7 +182,7 @@ export function trafficPanel(id, signal) {
     } catch (error) {
       if (!signal?.aborted && version === loadVersion && error.name !== 'AbortError') content.replaceChildren(h('div', {class: 'history-error'},
         h('p', {class: 'muted', role: 'status'}, t('nodes.trafficLoadError', {error: errorText(error)})),
-        button(t('nodes.retry'), {small: true, id: 'traffic-retry', onClick: load})));
+        button(t('common.retry'), {small: true, id: 'traffic-retry', onClick: load})));
     } finally {
       if (!signal?.aborted && version === loadVersion) content.setAttribute('aria-busy', 'false');
     }

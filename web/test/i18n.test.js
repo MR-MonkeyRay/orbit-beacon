@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const i18n = await import('../src/shared/i18n.js');
+const i18n = await import('../src/console/i18n.js');
 
 test('locale resolution respects language priority and Simplified Chinese fallback', () => {
   for (const [preference, languages, expected] of [

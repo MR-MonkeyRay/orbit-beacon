@@ -1,13 +1,17 @@
-import en from './locales/en.js';
-import zhCN from './locales/zh-CN.js';
+import en from './locales/public-catalog.en.js';
+import zhCN from './locales/public-catalog.zh-CN.js';
 
 const STORAGE_KEY = 'orbitbeacon-locale';
 const preferences = new Set(['system', 'zh-CN', 'en']);
 let cachedStorage;
 let cachedNavigator;
 let cachedLocale;
-const catalogs = {en, 'zh-CN': zhCN};
+let catalogs = {en, 'zh-CN': zhCN};
 const plurals = new Map();
+
+// The public entry uses the small synchronous catalogs above. The console
+// installs its full catalogs before any console labels or formatters are built.
+export function setCatalogs(value) { catalogs = value; }
 
 export function resolveLocale(preference, languages) {
   if (preference === 'zh-CN' || preference === 'en') return preference;

@@ -1,4 +1,4 @@
-import {t} from '../shared/i18n.js';
+import {t} from './i18n.js';
 import {localeSelect} from '../shared/locale-select.js';
 import {confirmLocaleChange, reloadAfterConfirmation} from './router.js';
 import {h} from '../shared/dom.js';

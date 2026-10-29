@@ -1,12 +1,12 @@
 import {h} from '../../shared/dom.js';
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {api, session} from '../api.js';
 import {busy, button, iconButton, panel} from '../ui/components.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, passwordInput, select, textarea, validateBytes} from '../ui/forms.js';
-import {buildChannelPayload, errorCodeMessage, validateChannel, validationError} from './alert-utils.js';
+import {buildChannelPayload, errorCodeMessage, validateChannel, validationError} from '../lib/alert-utils.js';
 import {eventTime} from './alert-events.js';
 
 const KINDS = [['webhook', t('alerts.kind.webhook')], ['telegram', 'Telegram'], ['email', t('alerts.kind.email')]];

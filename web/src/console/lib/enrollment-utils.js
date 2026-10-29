@@ -1,4 +1,4 @@
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {nextOffset} from '../api.js';
 
 // Keep token text out of URLs and quote it as one literal shell argument.

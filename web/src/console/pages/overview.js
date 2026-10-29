@@ -1,11 +1,12 @@
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h, icon} from '../../shared/dom.js';
-import {allNodes, api, ensureSession, getNavigationSignal, groupsList, invalidate, nameLookup, usersList} from '../api.js';
+import {allNodes, api, getNavigationSignal, groupsList, invalidate, nameLookup, usersList} from '../api.js';
 import {absoluteWhen, STATUS, STATUS_ORDER} from '../format.js';
 import {connectConsoleLive, readConsoleFleet} from '../live.js';
 import {busy, button, emptyState, link, liveStatus, pageHead, panel, patchStatusBadge, statusBadge} from '../ui/components.js';
-import {addNodeButton, auditItem} from './shared.js';
+import {addNodeButton} from '../lib/add-node-dialog.js';
+import {auditItem} from '../lib/audit-item.js';
 import {activeAlertsSummary} from './alert-events.js';
 import {toastError} from '../ui/feedback.js';
 
@@ -101,7 +102,6 @@ function groupsPanel(nodes, groups) {
 
 export async function overviewPage() {
   const signal = getNavigationSignal();
-  await ensureSession();
   const [nodes, groups, audit, users, alerts] = await Promise.all([allNodes(), groupsList(), api('/audit?limit=8&offset=0'), usersList(),
     api('/alerts/summary', {signal}).then((summary) => ({summary}), (error) => {
       if (signal?.aborted) throw error;

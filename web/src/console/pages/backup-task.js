@@ -1,5 +1,5 @@
 import {h} from '../../shared/dom.js';
-import {t, getLocale} from '../../shared/i18n.js';
+import {t, getLocale} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {api, getNavigationSignal} from '../api.js';
 import {when} from '../format.js';
@@ -7,12 +7,12 @@ import {facts, link} from '../ui/components.js';
 import {modal} from '../ui/dialogs.js';
 import {backupPassword} from '../ui/backup-password.js';
 
-const stateNames = {queued: 'data.state.queued', running: 'data.state.running', succeeded: 'data.state.succeeded', failed: 'data.state.failed'};
+const stateNames = {queued: 'common.queued', running: 'common.running', succeeded: 'common.succeeded', failed: 'common.failed'};
 const phaseNames = {snapshot: 'data.phase.snapshot', packaging: 'data.phase.packaging', storing: 'data.phase.storing'};
 const failureNames = new Set(['snapshot_failed', 'history_unavailable', 'archive_too_large', 'disk_full', 'storage_permission_denied',
   'storage_unreachable', 'storage_auth_failed', 'storage_upload_failed', 'secret_unreadable', 'interrupted', 'restore_interrupted', 'internal_error']);
 export const taskState = (task) => t(stateNames[task.state] || 'data.state.unknown');
-export const categoryNames = (categories = []) => categories.map((category) => ({configuration: 'data.category.configuration', monitoring: 'data.category.monitoring', events: 'data.category.events'}[category])).map((key) => t(key || 'data.category.unknown')).join(t('data.listSeparator'));
+export const categoryNames = (categories = []) => categories.map((category) => ({configuration: 'common.configuration', monitoring: 'common.monitoring', events: 'common.events'}[category])).map((key) => t(key || 'data.category.unknown')).join(t('data.listSeparator'));
 
 export function taskDetails(task, {signal} = {}) {
   const element = h('div', {class: 'stack backup-task-detail'});

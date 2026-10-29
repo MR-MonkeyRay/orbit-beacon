@@ -1,11 +1,11 @@
 import {h} from '../../shared/dom.js';
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {api, session} from '../api.js';
 import {button, iconButton, panel} from '../ui/components.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, select, validateBytes} from '../ui/forms.js';
-import {durationSeconds, formatMetricValue, formatRuleDuration, METRICS, metricLabel, metricMax, scopeLabel, SEVERITIES, validateRule, validationError} from './alert-utils.js';
+import {durationSeconds, formatMetricValue, formatRuleDuration, METRICS, metricLabel, metricMax, scopeLabel, SEVERITIES, validateRule, validationError} from '../lib/alert-utils.js';
 import {severityPill} from './alert-events.js';
 
 export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {

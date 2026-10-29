@@ -1,4 +1,5 @@
 import './public.css';
+import {translateHTML} from '../shared/translate-html.js';
 import {h} from '../shared/dom.js';
 import {themeButton} from '../shared/theme.js';
 import {createCard, skeletonCards, STATUS} from './cards.js';
@@ -9,14 +10,7 @@ import {getLocale, t} from '../shared/i18n.js';
 import {localeSelect} from '../shared/locale-select.js';
 import {errorText} from '../shared/errors.js';
 
-document.documentElement.lang = getLocale();
-for (const [attribute, target] of [['data-i18n', null], ['data-i18n-aria-label', 'aria-label'], ['data-i18n-content', 'content']]) {
-  for (const element of document.querySelectorAll(`[${attribute}]`)) {
-    const text = t(element.getAttribute(attribute));
-    if (target) element.setAttribute(target, text);
-    else element.textContent = text;
-  }
-}
+translateHTML();
 
 const PAGE = 50;
 const $ = (id) => document.getElementById(id);

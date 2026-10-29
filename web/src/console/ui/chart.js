@@ -1,4 +1,4 @@
-import {getLocale, t} from '../../shared/i18n.js';
+import {getLocale, t} from '../i18n.js';
 import {h, svg} from '../../shared/dom.js';
 import {formatLoad, formatPercent, formatRate} from '../format.js';
 

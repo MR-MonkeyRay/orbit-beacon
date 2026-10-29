@@ -1,4 +1,5 @@
 import {svg} from '../shared/dom.js';
+import {orbitSVG} from '../shared/orbit.js';
 
 // The fleet drawn as satellites around a beacon. Rings sit on a tilted plane
 // (a squashed group); each ring rotates in CSS, and each satellite counter-rotates
@@ -10,17 +11,7 @@ const SAT = 5.5;
 
 export function createConstellation(container) {
   // The tilted outer ring spans roughly y 100–300, so the view box is cropped to it.
-  const root = svg('svg', {viewBox: '0 86 400 228', class: 'orbits idle'});
-  const plane = svg('g', {transform: `rotate(-18 ${CENTER} ${CENTER}) translate(0 ${CENTER * (1 - SQUASH)}) scale(1 ${SQUASH})`});
-  const rings = RADII.map((radius, index) => {
-    const ring = svg('g', {class: `ring r${index + 1}`});
-    ring.append(svg('circle', {class: 'path', cx: CENTER, cy: CENTER, r: radius}));
-    plane.append(ring);
-    return ring;
-  });
-  const beacon = svg('g', {class: 'beacon'});
-  beacon.append(svg('circle', {class: 'halo', cx: CENTER, cy: CENTER, r: 14}), svg('circle', {class: 'core', cx: CENTER, cy: CENTER, r: 14}));
-  root.append(plane, beacon);
+  const {root, rings} = orbitSVG({className: 'orbits idle', viewBox: '0 86 400 228', center: CENTER, squash: SQUASH, tilt: -18, radii: RADII, beaconRadius: 14});
   container.append(root);
   let satellites = [];
   // The orbit animations never stop on their own, so they pause while the
