@@ -1,3 +1,4 @@
+import {t} from '../../shared/i18n.js';
 import {h, icon} from '../../shared/dom.js';
 import {api, ensureSession, getNavigationSignal, groupsList, invalidate, onSession, session} from '../api.js';
 import {absoluteWhen, shortID, when} from '../format.js';
@@ -35,12 +36,12 @@ export async function nodePage() {
     copy.replaceChildren(icon('check'));
     setTimeout(() => copy.replaceChildren(icon('copy')), 1600);
   };
-  const copy = iconButton('copy', 'Copy node ID', async () => {
+  const copy = iconButton('copy', t('nodes.copyID'), async () => {
     try {
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable');
       await navigator.clipboard.writeText(node.id);
       showCopied();
-      toast('Node ID copied.');
+      toast(t('nodes.copiedID'));
     } catch {
       const range = document.createRange();
       range.selectNodeContents(idText);
@@ -51,11 +52,11 @@ export async function nodePage() {
       try { copied = document.execCommand('copy'); } catch {}
       if (copied) {
         showCopied();
-        toast('Node ID copied using the browser fallback.');
-      } else toast('The node ID is selected. Press Ctrl+C or Command+C to copy it.', {error: true});
+        toast(t('nodes.copiedIDFallback'));
+      } else toast(t('nodes.copyIDManual'), {error: true});
     }
   });
-  const back = link('/nodes', icon('left'), 'All nodes');
+  const back = link('/nodes', icon('left'), t('nodes.allNodes'));
   back.className = 'back';
   let history;
   let traffic;
@@ -68,7 +69,7 @@ export async function nodePage() {
   const badge = statusBadge(node.presence);
   const connection = liveStatus();
   const actions = lifecycleActions(node);
-  const deletedNotice = h('div', {class: 'node-deleted-notice', hidden: true}, callout('This node has been deleted.'));
+  const deletedNotice = h('div', {class: 'node-deleted-notice', hidden: true}, callout(t('nodes.deletedNotice')));
   const sample = latestSamplePanel(node, latest, {signal});
   sample.detach();
   const userID = session.user?.id;
@@ -81,7 +82,7 @@ export async function nodePage() {
   signal?.addEventListener('abort', unsubscribe, {once: true});
   if (signal?.aborted) unsubscribe();
   const tabs = tabSet([
-    {id: 'details', label: 'Details', icon: 'server', build: () => {
+    {id: 'details', label: t('nodes.audit.details'), icon: 'server', build: () => {
       detailsView = detailsTab(node, groups, sample.element,
         history ||= historyPanel(id, signal), traffic ||= trafficPanel(id, signal),
         probes ||= probesPanel(id, signal),
@@ -92,14 +93,14 @@ export async function nodePage() {
         }, signal, () => node.deleted));
       return {element: detailsView.element, attach: sample.attach, detach: sample.detach};
     }},
-    {id: 'public', label: 'Public page', icon: 'globe', build: () => publicTab(node, publicSettings)},
-    {id: 'agent', label: 'Agent settings', icon: 'sliders', build: () => {
+    {id: 'public', label: t('nodes.publicPage'), icon: 'globe', build: () => publicTab(node, publicSettings)},
+    {id: 'agent', label: t('nodes.agentSettings'), icon: 'sliders', build: () => {
       agent ||= agentSettingsTab(node, observedRuntime);
       agent.snapshot(node, observedRuntime);
       return agent;
     }},
-    {id: 'enrollment', label: 'Enroll agent', icon: 'server', build: () => enrollmentTab(node)}
-  ], 'Node sections');
+    {id: 'enrollment', label: t('nodes.enrollAgent'), icon: 'server', build: () => enrollmentTab(node)}
+  ], t('nodes.sections'));
   const root = h('div', null,
     h('header', {class: 'page-head'}, h('div', null, back,
       h('div', {class: 'detail-head'}, title, badge),
@@ -181,66 +182,66 @@ function detailsTab(node, groups, sample, history, traffic, probes, billing) {
     const currentGroup = groups.find((item) => item.id === current.group_id);
     patchStatusBadge(summaryBadge, current.deleted ? 'deleted' : current.presence);
     summaryValues.update([
-      ['Presence', summaryBadge],
-      ['Last seen', current.last_seen ? absoluteWhen(current.last_seen) : 'Never'],
-      ['Group', currentGroup ? currentGroup.name : current.group_id ? `Unknown (${shortID(current.group_id)})` : 'Ungrouped'],
-      ['Region', current.region], ['Provider', current.provider],
-      ['Tags', current.tags.length ? h('div', {class: 'cell-tags'}, current.tags.map((tag) => h('span', {class: 'tag static'}, tag))) : null],
-      ['Added', when(current.created_at)], ['Notes', current.notes]
+      [t('nodes.presence'), summaryBadge],
+      [t('nodes.lastSeen'), current.last_seen ? absoluteWhen(current.last_seen) : t('nodes.never')],
+      [t('nodes.group'), currentGroup ? currentGroup.name : current.group_id ? t('nodes.unknownID', {id: shortID(current.group_id)}) : t('nodes.ungrouped')],
+      [t('nodes.region'), current.region], [t('nodes.provider'), current.provider],
+      [t('nodes.tags'), current.tags.length ? h('div', {class: 'cell-tags'}, current.tags.map((tag) => h('span', {class: 'tag static'}, tag))) : null],
+      [t('nodes.added'), when(current.created_at)], [t('nodes.notes'), current.notes]
     ]);
   };
   snapshot(node);
-  const summary = panel('Summary', {}, summaryValues.element);
+  const summary = panel(t('nodes.summary'), {}, summaryValues.element);
   summary.classList.add('split-aside');
 
   const name = input({name: 'name', required: true, value: node.name, id: 'node-name'});
-  validateBytes(name, 1, 255, 'Node name');
+  validateBytes(name, 1, 255, t('nodes.name'));
   const region = input({name: 'region', value: node.region, id: 'node-region'});
   const provider = input({name: 'provider', value: node.provider, id: 'node-provider'});
-  const choices = [['', 'Ungrouped'], ...groups.map((item) => [item.id, item.name])];
-  if (node.group_id && !group) choices.push([node.group_id, `Unknown (${shortID(node.group_id)})`]);
+  const choices = [['', t('nodes.ungrouped')], ...groups.map((item) => [item.id, item.name])];
+  if (node.group_id && !group) choices.push([node.group_id, t('nodes.unknownID', {id: shortID(node.group_id)})]);
   const groupID = select(choices, node.group_id || '', {name: 'group_id', id: 'node-group'});
   const tags = tagEditor(node.tags);
   const tagBox = tags.querySelector('[data-tags]');
   const notes = textarea({name: 'notes', id: 'node-notes'}, node.notes);
-  const controls = saveBar('Save changes', 'node-save');
+  const controls = saveBar(t('nodes.saveChanges'), 'node-save');
   const form = h('form', {class: 'form form-wide'},
-    field('Node name', name, {hint: 'Internal only. The public page uses its own name.'}),
-    h('div', {class: 'form-row'}, field('Region', region), field('Provider', provider)),
-    field('Group', groupID), tags, field('Notes', notes), controls.bar);
+    field(t('nodes.name'), name, {hint: t('nodes.internalNameHint')}),
+    h('div', {class: 'form-row'}, field(t('nodes.region'), region), field(t('nodes.provider'), provider)),
+    field(t('nodes.group'), groupID), tags, field(t('nodes.notes'), notes), controls.bar);
   editableForm(form, controls, async () => {
-    if (!tagBox.commit()) throw new Error('Fix the highlighted tag before saving.');
+    if (!tagBox.commit()) throw new Error(t('nodes.tagInvalid'));
     const result = await api(`/nodes/${encodeURIComponent(node.id)}`, {method: 'PATCH', body: {
       name: name.value, notes: notes.value, region: region.value, provider: provider.value, group_id: groupID.value || null, tags: tagBox.getValue()
     }});
     invalidate('nodes');
-    return `Saved ${result.name}.`;
+    return t('nodes.saved', {name: result.name});
   }, node);
-  return {element: h('div', {class: 'stack'}, h('div', {class: 'split'}, summary, panel('Edit details', {}, form)), sample, history, traffic, billing, probes), snapshot};
+  return {element: h('div', {class: 'stack'}, h('div', {class: 'split'}, summary, panel(t('nodes.editDetails'), {}, form)), sample, history, traffic, billing, probes), snapshot};
 }
 
 function publicPreview() {
   const name = h('h3');
   const where = h('div', {class: 'where'});
   const badge = h('span', {class: 'badge'});
-  const element = h('div', {class: 'preview'}, h('p', {class: 'preview-label'}, 'How the card appears on the public page'),
+  const element = h('div', {class: 'preview'}, h('p', {class: 'preview-label'}, t('nodes.previewIntro')),
     h('div', {class: 'preview-card'}, h('div', {class: 'top'}, name, badge), where));
   element.paint = ({enabled, name: title, region, provider}) => {
-    name.replaceChildren(title || h('span', {class: 'placeholder'}, 'Public name'));
+    name.replaceChildren(title || h('span', {class: 'placeholder'}, t('nodes.publicName')));
     where.replaceChildren(...[region && h('span', null, icon('pin'), region), provider && h('span', null, icon('cloud'), provider)].filter(Boolean));
-    if (!region && !provider) where.append(h('span', {class: 'placeholder'}, 'No region or provider'));
+    if (!region && !provider) where.append(h('span', {class: 'placeholder'}, t('nodes.noLocation')));
     badge.className = `badge ${enabled ? 'online' : 'disabled'}`;
-    badge.textContent = enabled ? 'Published' : 'Hidden';
+    badge.textContent = enabled ? t('nodes.published') : t('nodes.hidden');
   };
   return element;
 }
 
 function publicTab(node, settings) {
   const hidden = node.status === 'pending' || node.status === 'disabled'
-    ? callout(`This node is ${node.status}. It is not shown on the public page until it is enrolled and enabled.`) : null;
-  const privacy = callout('Publishing shows the public name, region and provider, plus online status, CPU, memory, load and uptime. Internal details are never copied. Do not enter IP addresses, hostnames, domains or credentials.', 'info');
+    ? callout(t('nodes.publicUnavailable', {status: t(`nodes.status.${node.status}`)})) : null;
+  const privacy = callout(t('nodes.privacy'), 'info');
   const preview = publicPreview();
-  const previewPanel = panel('Preview', {action: h('a', {class: 'btn btn-sm', href: '/'}, icon('external'), 'View public page')}, preview);
+  const previewPanel = panel(t('nodes.preview'), {action: h('a', {class: 'btn btn-sm', href: '/'}, icon('external'), t('nodes.viewPublic'))}, preview);
   previewPanel.classList.add('split-aside');
 
 
@@ -248,29 +249,29 @@ function publicTab(node, settings) {
   const name = input({name: 'public_name', value: settings.name, id: 'public-name', autocomplete: 'off', dataset: {field: 'name'}});
   const region = input({name: 'public_region', value: settings.region, id: 'public-region', autocomplete: 'off', dataset: {field: 'region'}});
   const provider = input({name: 'public_provider', value: settings.provider, id: 'public-provider', autocomplete: 'off', dataset: {field: 'provider'}});
-  const checkName = validateBytes(name, 0, 255, 'Public name');
-  validateBytes(region, 0, 128, 'Public region');
-  validateBytes(provider, 0, 128, 'Public provider');
+  const checkName = validateBytes(name, 0, 255, t('nodes.publicName'));
+  validateBytes(region, 0, 128, t('nodes.publicRegion'));
+  validateBytes(provider, 0, 128, t('nodes.publicProvider'));
   // The server trims text, so the preview and the required check do too.
   const sync = () => {
     name.required = enabled.checked;
-    if (enabled.checked && name.value.trim() === '') name.setCustomValidity('A public name is required while the node is published.');
+    if (enabled.checked && name.value.trim() === '') name.setCustomValidity(t('nodes.publicNameRequired'));
     else checkName();
     preview.paint({enabled: enabled.checked, name: name.value.trim(), region: region.value.trim(), provider: provider.value.trim()});
   };
   for (const control of [enabled, name, region, provider]) control.addEventListener('input', sync);
   enabled.addEventListener('change', sync);
   sync();
-  const controls = saveBar('Save public settings', 'public-save');
+  const controls = saveBar(t('nodes.savePublic'), 'public-save');
   const form = h('form', {class: 'form form-wide'},
     h('label', {class: 'switch'}, enabled, h('span', {class: 'switch-track', 'aria-hidden': 'true'}),
-      h('span', {class: 'switch-text'}, h('strong', null, 'Publish this node'), h('span', null, 'Show this node on the public status page.'))),
-    field('Public name', name, {hint: 'Shown as the card title. Up to 255 UTF-8 bytes.'}),
-    h('div', {class: 'form-row'}, field('Public region', region, {hint: 'Up to 128 UTF-8 bytes.'}), field('Public provider', provider, {hint: 'Up to 128 UTF-8 bytes.'})),
+      h('span', {class: 'switch-text'}, h('strong', null, t('nodes.publish')), h('span', null, t('nodes.publishHint')))),
+    field(t('nodes.publicName'), name, {hint: t('nodes.publicNameHint')}),
+    h('div', {class: 'form-row'}, field(t('nodes.publicRegion'), region, {hint: t('nodes.publicLocationHint')}), field(t('nodes.publicProvider'), provider, {hint: t('nodes.publicLocationHint')})),
     controls.bar);
   editableForm(form, controls, async () => {
     await api(`/nodes/${encodeURIComponent(node.id)}/public-settings`, {method: 'PATCH', body: {enabled: enabled.checked, name: name.value, region: region.value, provider: provider.value}});
-    return enabled.checked ? 'Public settings saved. Online status depends on valid agent reports.' : 'Public settings saved. The node is hidden from the public page.';
+    return enabled.checked ? t('nodes.publicSaved') : t('nodes.publicHidden');
   }, node);
-  return h('div', {class: 'split'}, panel('Public page', {}, h('div', {class: 'stack'}, hidden, privacy, form)), previewPanel);
+  return h('div', {class: 'split'}, panel(t('nodes.publicPage'), {}, h('div', {class: 'stack'}, hidden, privacy, form)), previewPanel);
 }

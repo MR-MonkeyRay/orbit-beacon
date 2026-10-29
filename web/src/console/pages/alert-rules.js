@@ -1,28 +1,29 @@
 import {h} from '../../shared/dom.js';
+import {t} from '../../shared/i18n.js';
 import {api, session} from '../api.js';
 import {button, iconButton, panel} from '../ui/components.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, select, validateBytes} from '../ui/forms.js';
-import {durationSeconds, errorCodeMessage, formatMetricValue, formatRuleDuration, METRICS, metricLabel, metricMax, scopeLabel, SEVERITIES, validateRule, validationError} from './alert-utils.js';
+import {durationSeconds, formatMetricValue, formatRuleDuration, METRICS, metricLabel, metricMax, scopeLabel, SEVERITIES, validateRule, validationError} from './alert-utils.js';
 import {severityPill} from './alert-events.js';
 
 export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
   if (!session.user || !session.csrf || signal?.aborted) return;
   const controls = {};
   return formDialog({
-    title: item ? `Edit ${item.name}` : 'Add alert rule', submit: 'Save rule',
+    title: item ? t('alerts.editNamed', {name: item.name}) : t('alerts.rules.addTitle'), submit: t('alerts.rules.save'),
     build: (form) => {
       const name = controls.name = input({name: 'name', required: true, value: item?.name || '', autocomplete: 'off'});
-      validateBytes(name, 1, 100, 'Rule name');
+      validateBytes(name, 1, 100, t('alerts.rules.name'));
       const enabled = controls.enabled = input({type: 'checkbox', name: 'enabled', checked: item?.enabled ?? true});
       const metric = controls.metric = select(METRICS, item?.metric || 'cpu_percent', {name: 'metric'});
-      const comparator = controls.comparator = select([['>', 'Greater than (>)'], ['<', 'Less than (<)']], item?.comparator || '>', {name: 'comparator'});
+      const comparator = controls.comparator = select([['>', t('alerts.rules.greaterThan')], ['<', t('alerts.rules.lessThan')]], item?.comparator || '>', {name: 'comparator'});
       const threshold = controls.threshold = input({type: 'number', name: 'threshold', required: true, min: 0, step: 'any', value: item?.threshold ?? 80});
-      const thresholdField = field('Threshold', threshold);
+      const thresholdField = field(t('alerts.rules.threshold'), threshold);
       const thresholdLabel = thresholdField.querySelector('label');
-      const condition = h('div', {class: 'form-row'}, field('Comparator', comparator), thresholdField);
-      const offlineHint = h('p', {class: 'hint'}, 'Offline uses time since the latest server-received report, or enrollment. It has no comparator or threshold and requires at least 180 seconds (3 minutes).');
+      const condition = h('div', {class: 'form-row'}, field(t('alerts.rules.comparator'), comparator), thresholdField);
+      const offlineHint = h('p', {class: 'hint'}, t('alerts.rules.offlineHint'));
       const minutes = controls.minutes = input({name: 'for_seconds', type: 'number', min: 0, max: 1440, step: 1, required: true, value: Math.floor((item?.for_seconds ?? 180) / 60)});
       const seconds = controls.seconds = input({name: 'duration_seconds', type: 'number', min: 0, max: 59, step: 1, required: true, value: (item?.for_seconds ?? 180) % 60});
       const syncMetric = () => {
@@ -34,17 +35,17 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
         threshold.max = metricMax(metric.value);
         // Defaults such as 80% are out of range for a count; 0 means any failure.
         if (Number(threshold.value) > threshold.max) threshold.value = metric.value === 'probes_down' ? '0' : String(threshold.max);
-        thresholdLabel.textContent = metric.value === 'load1' ? 'Threshold (load)' : metric.value === 'probes_down' ? 'Threshold (failing probes)' : 'Threshold (%)';
+        thresholdLabel.textContent = t(metric.value === 'load1' ? 'alerts.rules.thresholdLoad' : metric.value === 'probes_down' ? 'alerts.rules.thresholdProbes' : 'alerts.rules.thresholdPercent');
         minutes.min = offline ? 3 : 0;
       };
       metric.addEventListener('change', syncMetric);
       syncMetric();
-      const scope = controls.scope_kind = select([['all', 'All nodes'], ['group', 'Group'], ['node', 'Node']], item?.scope_kind || 'all', {name: 'scope_kind'});
+      const scope = controls.scope_kind = select([['all', t('alerts.scope.all')], ['group', t('alerts.scope.group')], ['node', t('alerts.scope.node')]], item?.scope_kind || 'all', {name: 'scope_kind'});
       const scopeID = controls.scope_id = select([], '', {name: 'scope_id'});
-      const scopeField = field('Group or node', scopeID);
+      const scopeField = field(t('alerts.rules.groupOrNode'), scopeID);
       const syncScope = () => {
         const options = scope.value === 'group' ? groups : nodes;
-        scopeID.replaceChildren(h('option', {value: ''}, 'Choose…'), ...options.map((entry) => h('option', {value: entry.id}, entry.name)));
+        scopeID.replaceChildren(h('option', {value: ''}, t('alerts.choose')), ...options.map((entry) => h('option', {value: entry.id}, entry.name)));
         scopeID.value = scope.value === item?.scope_kind ? item.scope_id || '' : '';
         scopeID.disabled = scope.value === 'all';
         scopeID.required = scope.value !== 'all';
@@ -53,12 +54,12 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
       scope.addEventListener('change', syncScope);
       syncScope();
       const severity = controls.severity = select(SEVERITIES, item?.severity || 'warning', {name: 'severity'});
-      const routing = controls.channel_ids = select(channels.map((entry) => [entry.id, `${entry.name}${entry.enabled ? '' : ' (disabled)'}`]), '', {name: 'channel_ids', multiple: true, size: Math.min(6, Math.max(2, channels.length)), class: 'input alert-multiselect'});
+      const routing = controls.channel_ids = select(channels.map((entry) => [entry.id, entry.enabled ? entry.name : t('alerts.disabledName', {name: entry.name})]), '', {name: 'channel_ids', multiple: true, size: Math.min(6, Math.max(2, channels.length)), class: 'input alert-multiselect'});
       for (const option of routing.options) option.selected = Boolean(item?.channel_ids.includes(option.value));
-      form.append(field('Name', name), field('Enabled', enabled), field('Metric', metric), condition, offlineHint,
-        h('div', {class: 'form-row'}, field('Duration (minutes)', minutes, {hint: 'Maximum total duration: 24 hours.'}), field('Additional seconds', seconds)),
-        field('Scope', scope), scopeField, field('Severity', severity),
-        field('Notification channels', routing, {hint: channels.length ? 'Select any channels to notify. Use Ctrl or Command to select multiple; disabled channels do not deliver.' : 'No channels configured. Rules can fire without sending notifications.'}));
+      form.append(field(t('alerts.column.name'), name), field(t('alerts.state.enabled'), enabled), field(t('alerts.column.metric'), metric), condition, offlineHint,
+        h('div', {class: 'form-row'}, field(t('alerts.rules.durationMinutes'), minutes, {hint: t('alerts.rules.durationHint')}), field(t('alerts.rules.additionalSeconds'), seconds)),
+        field(t('alerts.column.scope'), scope), scopeField, field(t('alerts.column.severity'), severity),
+        field(t('alerts.channels.title'), routing, {hint: t(channels.length ? 'alerts.rules.routingHint' : 'alerts.rules.noChannelsHint')}));
     },
     action: async () => {
       if (!session.user || !session.csrf || signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
@@ -71,14 +72,9 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
         channel_ids: [...c.channel_ids.selectedOptions].map((option) => option.value)};
       const errors = validateRule(body);
       if (Object.keys(errors).length) throw validationError(errors);
-      try {
-        await api(item ? `/alert-rules/${encodeURIComponent(item.id)}` : '/alert-rules', {method: item ? 'PATCH' : 'POST', body, signal});
-      } catch (error) {
-        if (error.code === 'alert_rule_capacity_reached') error.message = errorCodeMessage(error.code);
-        throw error;
-      }
+      await api(item ? `/alert-rules/${encodeURIComponent(item.id)}` : '/alert-rules', {method: item ? 'PATCH' : 'POST', body, signal});
       await saved();
-      toast('Alert rule saved.');
+      toast(t('alerts.rules.saved'));
     }
   });
 }
@@ -87,24 +83,24 @@ export function rulesPanel({rules, groups, nodes, channels, signal, saved}) {
   const edit = (rule) => ruleEditor(rule, {groups, nodes, channels, signal, saved});
   const remove = async (rule) => {
     if (!session.user || !session.csrf || signal?.aborted) return;
-    if (!(await confirmDialog({title: `Delete ${rule.name}?`, message: 'Event history is kept. Firing episodes resolve on the next evaluation.', confirm: 'Delete rule', danger: true}))) return;
+    if (!(await confirmDialog({title: t('alerts.deleteNamed', {name: rule.name}), message: t('alerts.rules.deleteHint'), confirm: t('alerts.rules.delete'), danger: true}))) return;
     if (signal?.aborted) return;
     try {
       await api(`/alert-rules/${encodeURIComponent(rule.id)}`, {method: 'DELETE', signal});
       await saved();
-      toast('Alert rule deleted.');
+      toast(t('alerts.rules.deleted'));
     } catch (error) { if (!signal?.aborted) toastError(error); }
   };
-  return panel('Rules', {action: button('Add rule', {small: true, variant: 'primary', onClick: () => edit(null)})},
-    h('p', {class: 'lede'}, 'Rules are evaluated every 30 seconds. Metric conditions must hold for the full duration.'),
+  return panel(t('alerts.tab.rules'), {action: button(t('alerts.rules.add'), {small: true, variant: 'primary', onClick: () => edit(null)})},
+    h('p', {class: 'lede'}, t('alerts.rules.evaluationHint')),
     rules.length ? h('div', {class: 'table-wrap'}, h('table', {class: 'table'},
-      h('caption', {class: 'sr'}, 'Alert rules'),
-      h('thead', null, h('tr', null, ['Name', 'Condition', 'Scope', 'Severity', 'State', 'Channels', 'Actions'].map((label) => h('th', {scope: 'col'}, label)))),
+      h('caption', {class: 'sr'}, t('alerts.rules.caption')),
+      h('thead', null, h('tr', null, ['name', 'condition', 'scope', 'severity', 'state', 'channels', 'actions'].map((key) => h('th', {scope: 'col'}, t(`alerts.column.${key}`))))),
       h('tbody', null, rules.map((rule) => h('tr', null,
         h('td', null, rule.name),
-        h('td', null, metricLabel(rule.metric), rule.metric === 'offline' ? '' : ` ${rule.comparator} ${formatMetricValue(rule.metric, rule.threshold)}`, ` for ${formatRuleDuration(rule.for_seconds)}`),
-        h('td', null, scopeLabel(rule, groups, nodes)), h('td', null, severityPill(rule.severity)), h('td', null, rule.enabled ? 'Enabled' : 'Disabled'),
-        h('td', null, rule.channel_ids.map((id) => channels.find((channel) => channel.id === id)?.name || id).join(', ') || 'None'),
-        h('td', {class: 'actions'}, iconButton('edit', `Edit ${rule.name}`, () => edit(rule)), iconButton('trash', `Delete ${rule.name}`, () => remove(rule))))))))
-      : h('p', {class: 'muted'}, 'No alert rules yet.'));
+        h('td', null, t('alerts.rules.conditionDuration', {condition: rule.metric === 'offline' ? metricLabel(rule.metric) : t('alerts.rules.metricCondition', {metric: metricLabel(rule.metric), comparator: rule.comparator, value: formatMetricValue(rule.metric, rule.threshold)}), duration: formatRuleDuration(rule.for_seconds)})),
+        h('td', null, scopeLabel(rule, groups, nodes)), h('td', null, severityPill(rule.severity)), h('td', null, t(rule.enabled ? 'alerts.state.enabled' : 'alerts.state.disabled')),
+        h('td', null, rule.channel_ids.map((id) => channels.find((channel) => channel.id === id)?.name || id).join(', ') || t('common.none')),
+        h('td', {class: 'actions'}, iconButton('edit', t('alerts.editNamed', {name: rule.name}), () => edit(rule)), iconButton('trash', t('alerts.deleteAction', {name: rule.name}), () => remove(rule))))))))
+      : h('p', {class: 'muted'}, t('alerts.rules.empty')));
 }

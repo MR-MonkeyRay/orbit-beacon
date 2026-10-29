@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {describeAction, formatBytes, formatDuration, formatLoad, formatPercent, formatRate, relative, shortID} from '../src/console/format.js';
+import {formatBytes, formatDuration, formatLoad, formatPercent, formatRate, relative, shortID} from '../src/console/format.js';
 
 test('formatBytes formats decimal byte strings with binary units', () => {
   assert.equal(formatBytes('0'), '0 B');
@@ -54,17 +54,6 @@ test('load, percent and byte rates format history values and unavailable samples
 });
 
 
-test('describeAction includes server audit actions and fallback formatting', () => {
-  assert.equal(describeAction('session.create'), 'Signed in');
-  assert.equal(describeAction('session.delete'), 'Signed out');
-  assert.equal(describeAction('node.credential.revoke'), 'Revoked agent credential');
-  assert.equal(describeAction('enrollment.claim'), 'Agent enrolled');
-  assert.equal(describeAction('node.create'), 'Node created');
-  assert.equal(describeAction('node.traffic_settings.patch'), 'Traffic billing settings saved');
-  assert.equal(describeAction('custom.audit_event'), 'Custom audit event');
-  assert.equal(describeAction(''), '');
-  assert.equal(describeAction('thing.changed'), 'Thing changed');
-});
 
 test('shortID truncates identifiers safely', () => {
   assert.equal(shortID('123456789'), '12345678');

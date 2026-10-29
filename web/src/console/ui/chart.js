@@ -1,3 +1,4 @@
+import {getLocale, t} from '../../shared/i18n.js';
 import {h, svg} from '../../shared/dom.js';
 import {formatLoad, formatPercent, formatRate} from '../format.js';
 
@@ -86,13 +87,14 @@ export function formatAxisValue(value, unit, max) {
   const step = max / 3;
   if (unit === 'bytes_per_second' && step >= 1) return formatRate(value);
   const decimals = Math.min(6, Math.max(unit === 'bytes_per_second' ? 0 : 2, Math.ceil(-Math.log10(step)) + 1));
-  return unit === 'bytes_per_second' ? `${value.toFixed(decimals)} B/s` : value.toFixed(decimals);
+  const formatted = Number(value.toFixed(decimals)).toLocaleString(getLocale(), {useGrouping: false, minimumFractionDigits: decimals, maximumFractionDigits: decimals});
+  return unit === 'bytes_per_second' ? t('nodes.bytesRate', {value: formatted}) : formatted;
 }
 
 export function formatChartValue(value, unit) {
   if (unit === 'percent') return formatPercent(value);
-  if (unit === 'bytes_per_second') return value > 0 && value < 1 ? '< 1 B/s' : formatRate(value);
-  return value > 0 && value < 0.01 ? '< 0.01' : formatLoad(value);
+  if (unit === 'bytes_per_second') return value > 0 && value < 1 ? t('nodes.chart.belowByte') : formatRate(value);
+  return value > 0 && value < 0.01 ? t('nodes.chart.belowLoad') : formatLoad(value);
 }
 
 // Sorted points and a time-based x scale keep omitted buckets as real gaps.
@@ -110,11 +112,11 @@ export function pointIndexAtX(points, x, scales) {
   return Math.abs(scales.x(timestamp(points[low - 1])) - x) <= Math.abs(scales.x(timestamp(points[low])) - x) ? low - 1 : low;
 }
 
-const timeFormat = new Intl.DateTimeFormat('en', {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
-const fullTimeFormat = new Intl.DateTimeFormat('en', {dateStyle: 'medium', timeStyle: 'long'});
+const timeFormat = new Intl.DateTimeFormat(getLocale(), {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+const fullTimeFormat = new Intl.DateTimeFormat(getLocale(), {dateStyle: 'medium', timeStyle: 'long'});
 
 function seriesSummary(series, unit) {
-  if (!series.points.length) return `${series.label}: no samples.`;
+  if (!series.points.length) return t('nodes.chart.noSamples', {label: series.label});
   let min = Infinity;
   let max = -Infinity;
   for (const point of series.points) {
@@ -123,7 +125,7 @@ function seriesSummary(series, unit) {
   }
   const latest = series.points.at(-1);
   const format = (value) => formatChartValue(value, unit);
-  return `${series.label}: latest average ${format(latest.avg)}, latest maximum ${format(latest.max)} at ${fullTimeFormat.format(new Date(latest.t))}; minimum average ${format(min)}, peak maximum ${format(max)}; ${series.points.length} samples.`;
+  return t('nodes.chart.summary', {label: series.label, avg: format(latest.avg), max: format(latest.max), time: fullTimeFormat.format(new Date(latest.t)), min: format(min), peak: format(max), count: series.points.length});
 }
 
 function legendKey(label, classes) {
@@ -135,13 +137,13 @@ function legendKey(label, classes) {
 export function chart({title, unit, series, id, selectedTime}) {
   const timeline = [...new Map(series.flatMap((item) => item.points).map((point) => [timestamp(point), point])).values()]
     .sort((a, b) => timestamp(a) - timestamp(b));
-  if (!timeline.length) return h('p', {class: 'muted'}, 'No history yet for this range');
+  if (!timeline.length) return h('p', {class: 'muted'}, t('nodes.chart.empty'));
   // Include both network series' peaks even where their timestamps overlap.
   const scales = chartScales(series.flatMap((item) => item.points), unit);
   const descriptionID = `${id}-description`;
   const tooltipID = `${id}-tooltip`;
   const description = h('p', {class: 'sr', id: descriptionID},
-    'Use Left and Right arrow keys to inspect samples, Home and End for the first and last. Missing buckets are gaps; values are not interpolated. Times use your local time zone.');
+    t('nodes.chart.guidance'));
   const drawing = svg('svg', {class: 'chart-svg', viewBox: `0 0 ${WIDTH} ${HEIGHT}`, role: 'img',
     'aria-label': `${title}. ${series.map((item) => seriesSummary(item, unit)).join(' ')}`});
   const text = (value, attributes) => {
@@ -169,7 +171,7 @@ export function chart({title, unit, series, id, selectedTime}) {
   const crosshair = svg('line', {class: 'chart-crosshair', y1: TOP, y2: HEIGHT - BOTTOM, visibility: 'hidden', 'aria-hidden': 'true'});
   drawing.append(crosshair);
   const tooltip = h('div', {class: 'chart-tooltip', id: tooltipID, role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true', hidden: true});
-  const plot = h('div', {class: 'chart-plot', id, tabindex: 0, role: 'group', 'aria-label': `${title} history: explore samples`,
+  const plot = h('div', {class: 'chart-plot', id, tabindex: 0, role: 'group', 'aria-label': t('nodes.chart.explore', {title}),
     'aria-describedby': `${descriptionID} ${tooltipID}`}, drawing, tooltip);
   // A rebuilt chart keeps the reader's selected sample when it still exists.
   const kept = timeline.findIndex((point) => timestamp(point) === selectedTime);
@@ -186,7 +188,7 @@ export function chart({title, unit, series, id, selectedTime}) {
     tooltip.hidden = false;
     tooltip.replaceChildren(h('strong', null, fullTimeFormat.format(time)), ...series.map((item, position) => {
       const point = byTime[position].get(time);
-      return h('div', null, `${item.label}: avg ${formatChartValue(point?.avg, unit)} · max ${formatChartValue(point?.max, unit)}`);
+      return h('div', null, t('nodes.chart.tooltip', {label: item.label, avg: formatChartValue(point?.avg, unit), max: formatChartValue(point?.max, unit)}));
     }));
     // Place beside the crosshair, flipping and clamping with measured sizes so
     // the tooltip always stays inside the plot.
@@ -216,8 +218,8 @@ export function chart({title, unit, series, id, selectedTime}) {
   });
   fitChartText(drawing, WIDTH);
   return h('div', {class: 'history-chart'},
-    h('div', {class: 'chart-legend', 'aria-label': 'Chart legend'},
+    h('div', {class: 'chart-legend', 'aria-label': t('nodes.chartLegend')},
       series.map((item, index) => legendKey(item.label, `chart-series chart-series-${index} chart-average`)),
-      legendKey('Maximum (thin dotted line)', 'chart-series chart-maximum-key')),
+      legendKey(t('nodes.chart.maximum'), 'chart-series chart-maximum-key')),
     plot, description);
 }

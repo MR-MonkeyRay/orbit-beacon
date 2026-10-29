@@ -1,9 +1,11 @@
+import {t} from '../../shared/i18n.js';
+import {errorText} from '../../shared/errors.js';
 import {h, icon} from '../../shared/dom.js';
 import {api, getNavigationSignal, revalidateSession, session, setSession} from '../api.js';
 import {go, ignoreNavigationCancellation} from '../router.js';
 import {authLayout} from '../ui/auth-layout.js';
 import {busy, button, callout} from '../ui/components.js';
-import {field, input, passwordInput, validateBytes} from '../ui/forms.js';
+import {field, input, passwordInput, trackFormDirty, validateBytes} from '../ui/forms.js';
 
 
 function nextPath() {
@@ -24,10 +26,11 @@ export async function loginPage() {
   const errorBox = h('div', {class: 'form-error', role: 'alert', hidden: true});
   const username = input({name: 'username', autocomplete: 'username', required: true, autocapitalize: 'none', dataset: {autofocus: ''}});
   const password = passwordInput({name: 'password', autocomplete: 'current-password', required: true});
-  validateBytes(username, 1, 128, 'Username');
-  validateBytes(password, 8, 1024, 'Password');
-  const submit = button('Sign in', {type: 'submit', variant: 'primary'});
-  const form = h('form', {class: 'form'}, errorBox, field('Username', username), field('Password', password, {inner: password.wrapper}), submit);
+  validateBytes(username, 1, 128, t('shell.username'));
+  validateBytes(password, 8, 1024, t('shell.password'));
+  const submit = button(t('shell.signIn'), {type: 'submit', variant: 'primary'});
+  const form = h('form', {class: 'form'}, errorBox, field(t('shell.username'), username), field(t('shell.password'), password, {inner: password.wrapper}), submit);
+  trackFormDirty(form);
   getNavigationSignal()?.addEventListener('abort', () => { password.value = ''; }, {once: true});
   window.addEventListener('pagehide', () => { password.value = ''; }, {once: true, signal: getNavigationSignal() || undefined});
   form.addEventListener('submit', async (event) => {
@@ -38,26 +41,28 @@ export async function loginPage() {
     try {
       const value = await api('/session', {method: 'POST', body: {username: username.value, password: password.value}, noRedirect: true});
       password.value = '';
+      form.markClean();
       setSession(value);
       void go(session.user.must_change_password ? '/change-password' : nextPath(), {replace: true}).catch(ignoreNavigationCancellation);
     } catch (error) {
       if (!form.isConnected || error.name === 'AbortError') return;
-      const message = error.status === 401 ? 'Username or password is incorrect.'
-        : error.status === 429 ? 'Too many sign-in attempts. Wait a moment and try again.' : error.message;
+      const message = error.status === 401 ? t('shell.invalidCredentials')
+        : error.status === 429 ? t('shell.signInRateLimited') : errorText(error);
       errorBox.replaceChildren(icon('alert'), h('span', null, message));
       errorBox.hidden = false;
       password.classList.remove('touched');
       password.focus();
     } finally {
       password.value = '';
+      form.syncDirty();
       busy(submit, false);
     }
   });
   const changed = new URLSearchParams(location.search).has('password-changed');
   return authLayout({
-    title: 'Sign in to the console',
-    description: 'Manage nodes, access and the public status page for this server.',
-    content: [changed ? callout('Password changed. Every session was signed out; sign in with your new password.', 'info') : null, form],
-    footer: h('a', {href: '/'}, 'View the public status page')
+    title: t('shell.signInTitle'),
+    description: t('shell.signInDescription'),
+    content: [changed ? callout(t('shell.passwordChanged'), 'info') : null, form],
+    footer: h('a', {href: '/'}, t('shell.viewPublic'))
   });
 }

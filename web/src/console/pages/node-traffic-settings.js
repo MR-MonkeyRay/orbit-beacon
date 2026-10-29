@@ -1,3 +1,4 @@
+import {t} from '../../shared/i18n.js';
 import {h} from '../../shared/dom.js';
 import {api} from '../api.js';
 import {panel} from '../ui/components.js';
@@ -8,12 +9,12 @@ const UINT64_MAX = 18446744073709551615n;
 const QUOTA_UNITS = Object.freeze({bytes: 1n, KB: 1000n, MB: 1000n ** 2n, GB: 1000n ** 3n, TB: 1000n ** 4n});
 
 export function quotaToBytes(value, unit = 'bytes') {
-  if (typeof value === 'number' && (!Number.isSafeInteger(value) || value < 0)) return {ok: false, error: 'Enter a whole number.'};
-  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') return {ok: false, error: 'Enter a whole number.'};
+  if (typeof value === 'number' && (!Number.isSafeInteger(value) || value < 0)) return {ok: false, error: t('nodes.quotaWhole')};
+  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') return {ok: false, error: t('nodes.quotaWhole')};
   const raw = String(value).trim();
-  if (!/^\d+$/.test(raw) || !Object.hasOwn(QUOTA_UNITS, unit)) return {ok: false, error: 'Enter a whole number and choose a valid unit.'};
+  if (!/^\d+$/.test(raw) || !Object.hasOwn(QUOTA_UNITS, unit)) return {ok: false, error: t('nodes.quotaUnitInvalid')};
   const bytes = BigInt(raw) * QUOTA_UNITS[unit];
-  if (bytes > UINT64_MAX) return {ok: false, error: 'The quota must be at most 18,446,744,073,709,551,615 bytes.'};
+  if (bytes > UINT64_MAX) return {ok: false, error: t('nodes.quotaMax')};
   return {ok: true, value: bytes.toString()};
 }
 
@@ -22,8 +23,8 @@ export function trafficSettingsPanel(id, settings, onSaved, signal, isDeleted = 
   const quota = input({type: 'number', name: 'quota_value', min: 0, step: 1, required: true, value: settings.quota_bytes,
     inputMode: 'numeric', autocomplete: 'off', id: 'field-quota', dataset: {field: 'quota_bytes'}});
   const quotaUnit = select([
-    ['bytes', 'Bytes'], ['KB', 'KB (1,000 bytes)'], ['MB', 'MB (1,000,000 bytes)'], ['GB', 'GB (1,000,000,000 bytes)'], ['TB', 'TB (1,000,000,000,000 bytes)']
-  ], 'bytes', {name: 'quota_unit', id: 'field-quota-unit', 'aria-label': 'Quota unit'});
+    ['bytes', t('nodes.bytes')], ['KB', t('nodes.unitKB')], ['MB', t('nodes.unitMB')], ['GB', t('nodes.unitGB')], ['TB', t('nodes.unitTB')]
+  ], 'bytes', {name: 'quota_unit', id: 'field-quota-unit', 'aria-label': t('nodes.quotaUnit')});
   const checkQuota = () => {
     const result = quotaToBytes(quota.value, quotaUnit.value);
     quota.setCustomValidity(result.ok ? '' : result.error);
@@ -32,11 +33,11 @@ export function trafficSettingsPanel(id, settings, onSaved, signal, isDeleted = 
   quotaUnit.addEventListener('change', checkQuota);
   const billing = input({type: 'number', name: 'billing_day', min: 1, max: 28, step: 1, required: true,
     value: String(settings.billing_day), id: 'field-billing', inputMode: 'numeric'});
-  const controls = saveBar('Save billing settings', 'billing-save');
+  const controls = saveBar(t('nodes.saveBilling'), 'billing-save');
   const form = h('form', {class: 'form form-wide'},
-    field('Traffic quota', quota, {inner: h('div', {class: 'form-row'}, quota, h('div', null, quotaUnit)),
-      hint: 'Decimal SI units (1 KB = 1,000 bytes); charts use binary units. Enter 0 for unlimited.'}),
-    field('Billing day', billing, {hint: 'Day of the month a traffic cycle starts, 1–28.'}), controls.bar);
+    field(t('nodes.trafficQuota'), quota, {inner: h('div', {class: 'form-row'}, quota, h('div', null, quotaUnit)),
+      hint: t('nodes.quotaHint')}),
+    field(t('nodes.billingDay'), billing, {hint: t('nodes.billingDayHint')}), controls.bar);
   const restore = () => {
     billing.value = String(saved.billing_day);
     const bytes = BigInt(saved.quota_bytes);
@@ -66,8 +67,8 @@ export function trafficSettingsPanel(id, settings, onSaved, signal, isDeleted = 
     saved = response;
     restore();
     form.markClean();
-    toast('Billing settings saved.');
+    toast(t('nodes.billingSaved'));
     await onSaved(saved);
   });
-  return panel('Traffic billing', {}, form);
+  return panel(t('nodes.trafficBilling'), {}, form);
 }

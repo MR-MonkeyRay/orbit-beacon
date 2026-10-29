@@ -5,7 +5,10 @@
 .top{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:72px;border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:10px;color:var(--ink);font-weight:680;font-size:var(--fs-lg);letter-spacing:-.02em;text-decoration:none}
 .top-actions{display:flex;align-items:center;gap:6px}
-.login{display:inline-flex;align-items:center;min-height:var(--control-h);padding:0 16px;border:1px solid var(--line-2);border-radius:999px;color:var(--ink);font-size:var(--fs-md);font-weight:600;text-decoration:none;transition:background-color .15s,border-color .15s,transform .1s}
+.top-actions .input{max-width:180px;min-width:0;min-height:var(--control-h);padding:0 10px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--panel);color:var(--ink);font:inherit;font-size:var(--fs-md)}
+.top-actions .icon-button,.login{flex:none}
+.locale-error{margin-top:12px;color:var(--bad);font-size:var(--fs-sm);overflow-wrap:anywhere}
+.login{display:inline-flex;align-items:center;min-height:var(--control-h);padding:0 16px;border:1px solid var(--line-2);border-radius:999px;color:var(--ink);font-size:var(--fs-md);font-weight:600;text-decoration:none;white-space:nowrap;transition:background-color .15s,border-color .15s,transform .1s}
 
 /* Hero: the live headline beside the fleet constellation */
 .hero{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);align-items:center;gap:24px 40px;padding:44px 0 32px}
@@ -129,6 +132,8 @@ footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 24px;ma
 /* Phones: a compact constellation band so the first card shows above the fold,
    and one scrolling row of filters instead of wrapped rows. */
 @media (max-width:719px){
+  .top{flex-wrap:wrap;padding:12px 0}
+  .top-actions{margin-left:auto}
   .hero{grid-template-columns:minmax(0,1fr);gap:12px;padding:20px 0 24px}
   .constellation{justify-self:center;width:min(70%,260px);order:-1}
   .live{margin-top:20px}
@@ -137,8 +142,13 @@ footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 24px;ma
   .filters button{flex:none;scroll-snap-align:start}
 }
 @media (max-width:480px){
-  .top{min-height:60px}
+  .top{flex-direction:column;align-items:stretch;gap:10px;min-height:60px;padding:14px 0}
+  .brand{align-self:flex-start}
+  .top-actions{width:100%}
+  .top-actions .input{flex:1;width:0;max-width:none}
   .summary{font-size:var(--fs-base)}
   .live{display:flex;border-radius:var(--r-lg)}
   .live-text{flex:1}
+  .live-text .update-time,.live-text .update-mode{white-space:normal}
+  .refresh{flex:none}
 }

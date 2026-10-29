@@ -227,7 +227,7 @@ test('rejected billing saves preserve the draft and do not refresh traffic', asy
     assert.equal(control(billing, 'billing_day').value, '2');
     assert.equal(billing.querySelector('#billing-save').disabled, false);
     assert.equal(env.requests.filter((request) => request.url === `${path}/traffic?days=30`).length, before);
-    assert.match(toastHost.textContent, /Billing update rejected/);
+    assert.ok(toastHost.querySelector('.error'));
   } finally { env.cleanup(); }
 });
 

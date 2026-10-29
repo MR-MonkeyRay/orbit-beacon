@@ -1,6 +1,7 @@
+import {t} from '../../shared/i18n.js';
 import {h} from '../../shared/dom.js';
 import {createFreshnessController, sourceDeadline, timestampMillis} from '../../shared/freshness.js';
-import {absoluteWhen, formatDuration, formatPercent} from '../format.js';
+import {absoluteWhen, formatDuration, formatLoad, formatPercent} from '../format.js';
 import {panel, readonlyFacts} from '../ui/components.js';
 import {diskSummary, memorySummary, networkSummary} from './latest-sample-helpers.js';
 
@@ -13,7 +14,7 @@ const bytes = (value) => Number.isSafeInteger(value) && value >= 0;
 export function latestSamplePanel(node, initial, {signal} = {}) {
   const sequence = h('span', {class: 'revision'});
   const body = h('div');
-  const element = panel('Latest sample', {action: sequence}, body);
+  const element = panel(t('nodes.sample'), {action: sequence}, body);
   let records = [];
   let metricRecords = new Map();
   const values = readonlyFacts();
@@ -25,7 +26,7 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
       const old = record.available && (record.originalStale || !Number.isFinite(now) || now > record.deadline);
       record.value.classList.toggle('metric-stale', old);
       record.state.hidden = !old;
-      record.state.textContent = old ? 'Stale' : '';
+      record.state.textContent = old ? t('nodes.stale') : '';
       if (record.available && !record.originalStale && record.deadline >= now) next = Math.min(next, record.deadline);
     }
     if (lastReport) lastReport.hidden = !lastReport.querySelector('time');
@@ -45,11 +46,11 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
     records = [];
     const nextRecords = new Map();
     sequence.hidden = !latest;
-    sequence.textContent = latest ? `Sequence ${latest.seq}` : '';
+    sequence.textContent = latest ? t('nodes.sequence', {value: latest.seq}) : '';
     if (!latest) {
       metricRecords.clear();
       lastReport.replaceChildren();
-      body.replaceChildren(h('p', {class: 'muted'}, 'No current sample. The agent has not reported since the server started, or its credential was revoked or the node disabled.'));
+      body.replaceChildren(h('p', {class: 'muted'}, t('nodes.sampleEmpty')));
       freshness.refresh();
       return;
     }
@@ -74,7 +75,7 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
     };
     const memoryValid = bytes(metrics.memory_total_bytes) && bytes(metrics.memory_available_bytes)
       && metrics.memory_available_bytes <= metrics.memory_total_bytes;
-    const load = ['load1', 'load5', 'load15'].map((key) => metric([key], 'load', number(metrics[key]), number(metrics[key]) ? metrics[key].toFixed(2) : '—'));
+    const load = ['load1', 'load5', 'load15'].map((key) => metric([key], 'load', number(metrics[key]), number(metrics[key]) ? formatLoad(metrics[key]) : '—'));
     const disks = Array.isArray(metrics.disks) && metrics.disks.length ? h('div', {class: 'sample-series'}, metrics.disks.map((disk) => metric(
       [`disk:${disk.path}`], `disk:${disk.path}`, bytes(disk.total_bytes) && bytes(disk.used_bytes) && disk.used_bytes <= disk.total_bytes,
       diskSummary([disk])))) : '—';
@@ -84,17 +85,17 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
     const sampled = timestampMillis(latest.sampled_at);
     const entries = [
       ['CPU', metric(['cpu_percent'], 'cpu', number(metrics.cpu_percent) && metrics.cpu_percent <= 100, formatPercent(metrics.cpu_percent))],
-      ['Memory', metric(['memory_total_bytes', 'memory_available_bytes'], 'memory', memoryValid, memorySummary(metrics))],
-      ['Load (1 / 5 / 15 min)', h('span', {class: 'sample-load'}, load[0], ' / ', load[1], ' / ', load[2])],
-      ['Disk', disks], ['Network', networks],
-      ['Uptime', metric(['uptime_seconds'], 'uptime', number(metrics.uptime_seconds), formatDuration(metrics.uptime_seconds))],
-      ['Agent version', latest.system?.agent_version || node.agent_version || '—'],
-      ['Sampled', Number.isFinite(sampled) ? absoluteWhen(latest.sampled_at) : '—'],
+      [t('nodes.memory'), metric(['memory_total_bytes', 'memory_available_bytes'], 'memory', memoryValid, memorySummary(metrics))],
+      [t('nodes.loadSeries'), h('span', {class: 'sample-load'}, load[0], ' / ', load[1], ' / ', load[2])],
+      [t('nodes.disk'), disks], [t('nodes.network'), networks],
+      [t('nodes.uptime'), metric(['uptime_seconds'], 'uptime', number(metrics.uptime_seconds), formatDuration(metrics.uptime_seconds))],
+      [t('nodes.agentVersion'), latest.system?.agent_version || node.agent_version || '—'],
+      [t('nodes.sampled'), Number.isFinite(sampled) ? absoluteWhen(latest.sampled_at) : '—'],
     ];
     const received = timestampMillis(latest.received_at);
     metricRecords = nextRecords;
     lastReport.replaceChildren(...(Number.isFinite(received)
-      ? ['Last report · ', absoluteWhen(latest.received_at)] : []));
+      ? [t('nodes.lastReport'), absoluteWhen(latest.received_at)] : []));
     values.update(entries);
     if (!body.contains(values.element)) body.replaceChildren(values.element, lastReport);
     if (!freshness.clock(serverTime)) freshness.refresh();

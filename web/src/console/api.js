@@ -91,7 +91,7 @@ export function calibrateSessionClock(serverTime) {
 }
 
 export function setSession(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ApiError(200, {message: 'The server returned an invalid session.'});
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ApiError(200, {code: 'unreadable_response'});
   const previousUser = session.user;
   const metadata = responseProofs.get(value);
   if (metadata && metadata.epoch !== sessionEpoch) throw cancelled();
@@ -99,7 +99,7 @@ export function setSession(value) {
   if ((metadata && !value.user) || (value.user && (typeof value.user.id !== 'string' || typeof value.user.username !== 'string'
     || typeof value.user.must_change_password !== 'boolean'
     || metadata && (typeof value.csrf_token !== 'string' || !value.csrf_token || !Number.isFinite(Date.parse(value.expires_at)))))) {
-    throw new ApiError(200, {message: 'The server returned an invalid session.'});
+    throw new ApiError(200, {code: 'unreadable_response'});
   }
   // Only a new login can restore management access after this credential was
   // restricted. A delayed or inconsistent /me must never reopen private data.
@@ -175,7 +175,7 @@ function requestSignal(callerSignal, navigation = true) {
 
 function assertActive(signal) {
   if (!signal.aborted) return;
-  if (signal.reason && signal.reason.name === 'TimeoutError') throw new Error('The request timed out after 15 seconds.');
+  if (signal.reason && signal.reason.name === 'TimeoutError') throw new ApiError(0, {code: 'timeout'});
   throw signal.reason || new DOMException('The request was cancelled.', 'AbortError');
 }
 
@@ -211,11 +211,11 @@ export async function api(path, options = {}) {
     let value = null;
     try { value = await response.json(); } catch { assertActive(request.signal); }
     assertActive(request.signal);
+    if (value === null) throw new ApiError(response.status, {code: 'unreadable_response'});
     if (!response.ok) {
       if (response.status === 403 && value?.code === 'password_change_required') requirePasswordChange();
       throw new ApiError(response.status, value);
     }
-    if (value === null) throw new ApiError(response.status, {message: 'The server returned an unreadable response.'});
     if ((path === '/me' || (path === '/session' && method === 'POST')) && typeof value === 'object') {
       const date = Date.parse(response.headers.get('Date'));
       responseProofs.set(value, {date: Number.isFinite(date) ? date + 999 + Math.max(0, monotonicNow() - started) : undefined,
@@ -225,7 +225,8 @@ export async function api(path, options = {}) {
   } catch (error) {
     if (error instanceof ApiError) throw error;
     assertActive(request.signal);
-    throw error;
+    if (error.name === 'AbortError') throw error;
+    throw new ApiError(0, {code: 'network'});
   } finally {
     request.cleanup();
   }
@@ -308,7 +309,7 @@ export function invalidate(...keys) { for (const key of keys) cache.delete(key);
 // A continuation must move forward, or a bad envelope would loop forever.
 export function nextOffset(page, offset) {
   const next = page.next_offset;
-  if (!Number.isSafeInteger(next) || next <= offset) throw new Error('The server returned an invalid page offset.');
+  if (!Number.isSafeInteger(next) || next <= offset) throw new ApiError(200, {code: 'unreadable_response'});
   return next;
 }
 

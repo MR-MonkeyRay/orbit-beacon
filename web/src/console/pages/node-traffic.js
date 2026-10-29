@@ -1,3 +1,5 @@
+import {getLocale, t} from '../../shared/i18n.js';
+import {errorText} from '../../shared/errors.js';
 import {h, svg} from '../../shared/dom.js';
 import {api} from '../api.js';
 import {formatBytes, formatPercent, when} from '../format.js';
@@ -5,8 +7,8 @@ import {fitChartText, niceMax} from '../ui/chart.js';
 import {button, facts, panel} from '../ui/components.js';
 
 const DAY = 86400000;
-const dateFormat = new Intl.DateTimeFormat('en', {dateStyle: 'medium', timeZone: 'UTC'});
-const shortDateFormat = new Intl.DateTimeFormat('en', {month: 'short', day: 'numeric', timeZone: 'UTC'});
+const dateFormat = new Intl.DateTimeFormat(getLocale(), {dateStyle: 'medium', timeZone: 'UTC'});
+const shortDateFormat = new Intl.DateTimeFormat(getLocale(), {month: 'short', day: 'numeric', timeZone: 'UTC'});
 
 // Never coerce floats, exponent notation or malformed API values into bytes.
 export function parseTrafficBytes(value) {
@@ -28,7 +30,7 @@ export function fillTrafficDays(daily, now = new Date()) {
 export function cycleDateLabel(cycle) {
   const start = Date.parse(cycle?.start);
   const end = Date.parse(cycle?.end);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 'Cycle dates unavailable';
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return t('nodes.cycleUnavailable');
   return `${dateFormat.format(start)} – ${dateFormat.format(end - DAY)} (UTC)`;
 }
 
@@ -44,13 +46,13 @@ export function trafficQuota(usedValue, quotaValue) {
 
 function quotaMeter(used, quota) {
   const {percent, state} = trafficQuota(used, quota);
-  const label = `Traffic quota: ${formatBytes(used)} used of ${formatBytes(quota)} (${formatPercent(percent)})`;
-  return h('section', {class: `traffic-quota ${state}`, 'aria-label': 'Traffic quota'},
-    h('h3', null, 'Quota'),
+  const label = t('nodes.trafficQuotaDescription', {used: formatBytes(used), quota: formatBytes(quota), percent: formatPercent(percent)});
+  return h('section', {class: `traffic-quota ${state}`, 'aria-label': t('nodes.trafficQuota')},
+    h('h3', null, t('nodes.quota')),
     h('p', {class: 'num'}, `${formatBytes(used)} / ${formatBytes(quota)} · ${formatPercent(percent)}`),
     h('meter', {min: 0, max: 100, low: 0, high: 80, optimum: 0, value: Math.min(100, percent),
       'aria-label': label, 'aria-valuetext': label}, label),
-    state === 'normal' ? null : h('p', null, state === 'over' ? 'Quota reached or exceeded.' : 'At least 80% of quota used.'));
+    state === 'normal' ? null : h('p', null, state === 'over' ? t('nodes.quotaExceeded') : t('nodes.quotaWarning')));
 }
 
 function dailyChart(days) {
@@ -66,15 +68,19 @@ function dailyChart(days) {
     return total > max ? total : max;
   }, 0n);
   // Round in the binary unit the axis displays, so ticks read 50/100/150 GiB.
-  const unit = 1024 ** Math.max(0, Math.floor(Math.log(Math.max(1, Number(peak))) / Math.log(1024)));
-  const rounded = niceMax(Number(peak) / unit) * unit;
-  const proposed = Number.isFinite(rounded) ? BigInt(Math.ceil(rounded)) : peak;
+  let unit = 1n;
+  while (peak >= unit * 1024n) unit *= 1024n;
+  // Only a bounded ratio enters Number; byte totals and axis ticks stay exact.
+  const precision = 1000000000000n;
+  const normalized = Number((peak * precision + unit - 1n) / unit) / 1e12;
+  const rounded = BigInt(Math.ceil(niceMax(normalized) * 1e12));
+  const proposed = (rounded * unit + precision - 1n) / precision;
   const upper = proposed > peak ? proposed : peak;
   const max = upper > 3n ? upper : 3n;
   const scaledHeight = (value) => Number(value * 1000000n / max) / 1000000 * plotHeight;
   // h() creates HTML elements; use the same namespace-aware svg() as history.
   const drawing = svg('svg', {class: 'chart-svg traffic-svg', viewBox: `0 0 ${width} ${height}`,
-    role: 'group', 'aria-label': 'Daily traffic, last 30 days (UTC). Each bar stacks received below sent.'});
+    role: 'group', 'aria-label': t('nodes.dailyTrafficAria')});
   const text = (value, attributes) => {
     const element = svg('text', attributes);
     element.textContent = value;
@@ -91,7 +97,7 @@ function dailyChart(days) {
     const x = left + index * slot + 2;
     const rxHeight = scaledHeight(day.rx_bytes);
     const txHeight = scaledHeight(day.tx_bytes);
-    const label = `${dateFormat.format(Date.parse(day.day))} (UTC): Received ${formatBytes(day.rx_bytes)}, Sent ${formatBytes(day.tx_bytes)}, Total ${formatBytes(day.rx_bytes + day.tx_bytes)}`;
+    const label = t('nodes.dailyTrafficDescription', {date: dateFormat.format(Date.parse(day.day)), rx: formatBytes(day.rx_bytes), tx: formatBytes(day.tx_bytes), total: formatBytes(day.rx_bytes + day.tx_bytes)});
     const group = svg('g', {class: 'traffic-day', tabindex: 0, role: 'img', 'aria-label': label});
     const title = svg('title');
     title.textContent = label;
@@ -108,12 +114,12 @@ function dailyChart(days) {
   }
   fitChartText(drawing, width);
   const key = (label, className) => h('span', {class: 'chart-key'}, h('i', {class: className, 'aria-hidden': 'true'}), label);
-  return h('section', {class: 'traffic-chart', 'aria-label': 'Daily traffic'},
-    h('h3', null, 'Daily traffic'),
-    h('p', {class: 'muted'}, 'Last 30 days, including today (UTC). Missing days count as zero.'),
-    h('div', {class: 'chart-legend', 'aria-label': 'Chart legend'}, key('Received (lower)', 'traffic-rx-key'), key('Sent (upper)', 'traffic-tx-key')),
+  return h('section', {class: 'traffic-chart', 'aria-label': t('nodes.dailyTraffic')},
+    h('h3', null, t('nodes.dailyTraffic')),
+    h('p', {class: 'muted'}, t('nodes.dailyTrafficIntro')),
+    h('div', {class: 'chart-legend', 'aria-label': t('nodes.chartLegend')}, key(t('nodes.receivedLower'), 'traffic-rx-key'), key(t('nodes.sentUpper'), 'traffic-tx-key')),
     h('div', {class: 'traffic-plot'}, drawing),
-    h('p', {class: 'note'}, 'Focus a daily bar to read its received, sent and total traffic.'));
+    h('p', {class: 'note'}, t('nodes.dailyTrafficHint')));
 }
 
 function trafficContent(data) {
@@ -124,19 +130,19 @@ function trafficContent(data) {
   const daily = Array.isArray(data.daily) ? data.daily : [];
   const empty = !data.updated_at && !daily.length && rx === 0n && tx === 0n && total === 0n;
   return h('div', {class: 'traffic-content'},
-    h('section', {class: 'traffic-cycle', 'aria-label': 'Current cycle'}, h('h3', null, 'Current cycle'),
+    h('section', {class: 'traffic-cycle', 'aria-label': t('nodes.currentCycle')}, h('h3', null, t('nodes.currentCycle')),
       h('p', {class: 'muted'}, cycleDateLabel(cycle)),
-      facts([['Received', formatBytes(rx)], ['Sent', formatBytes(tx)], ['Total', formatBytes(total)]])),
+      facts([[t('nodes.received'), formatBytes(rx)], [t('nodes.sent'), formatBytes(tx)], [t('nodes.total'), formatBytes(total)]])),
     // A quota of 0 means unlimited, matching the Traffic billing form.
     parseTrafficBytes(data.quota_bytes) > 0n ? quotaMeter(total, parseTrafficBytes(data.quota_bytes)) : null,
-    empty ? h('p', {class: 'muted', role: 'status'}, 'No traffic has been recorded yet. Counting starts once the agent is upgraded to a version that reports traffic.') : dailyChart(fillTrafficDays(daily)),
-    data.updated_at ? h('p', {class: 'note'}, 'Updated ', when(data.updated_at)) : null);
+    empty ? h('p', {class: 'muted', role: 'status'}, t('nodes.trafficEmpty')) : dailyChart(fillTrafficDays(daily)),
+    data.updated_at ? h('p', {class: 'note'}, t('nodes.updated'), when(data.updated_at)) : null);
 }
 
 // Retained with the Details tab; billing changes refresh this panel only.
 export function trafficPanel(id, signal) {
   const content = h('div', {class: 'traffic-body'});
-  const root = panel('Traffic', {}, content);
+  const root = panel(t('nodes.traffic'), {}, content);
   let loadVersion = 0;
   let currentPlot;
   let followLatest = true;
@@ -166,7 +172,7 @@ export function trafficPanel(id, signal) {
     if (signal?.aborted) return;
     const version = ++loadVersion;
     content.setAttribute('aria-busy', 'true');
-    content.replaceChildren(h('p', {class: 'muted', role: 'status'}, 'Loading traffic…'));
+    content.replaceChildren(h('p', {class: 'muted', role: 'status'}, t('nodes.trafficLoading')));
     try {
       const data = await api(`/nodes/${encodeURIComponent(id)}/traffic?days=30`, {signal});
       if (!signal?.aborted && version === loadVersion) {
@@ -175,8 +181,8 @@ export function trafficPanel(id, signal) {
       }
     } catch (error) {
       if (!signal?.aborted && version === loadVersion && error.name !== 'AbortError') content.replaceChildren(h('div', {class: 'history-error'},
-        h('p', {class: 'muted', role: 'status'}, `Could not load traffic: ${error.message}`),
-        button('Retry', {small: true, id: 'traffic-retry', onClick: load})));
+        h('p', {class: 'muted', role: 'status'}, t('nodes.trafficLoadError', {error: errorText(error)})),
+        button(t('nodes.retry'), {small: true, id: 'traffic-retry', onClick: load})));
     } finally {
       if (!signal?.aborted && version === loadVersion) content.setAttribute('aria-busy', 'false');
     }

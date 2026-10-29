@@ -54,7 +54,7 @@ test('billing success records its normalized baseline while Notes and Public nam
     assert.equal(trafficRefreshes, 1);
     assert.equal(billing.dataset.dirty, 'false');
     assert.equal(billing.querySelector('#billing-save').disabled, true);
-    assert.equal(billing.querySelectorAll('button').find((button) => button.textContent === 'Discard changes').hidden, true);
+    assert.equal(billing.querySelector('.form-actions').querySelectorAll('button').find((button) => button !== billing.querySelector('#billing-save')).hidden, true);
     assert.equal(billing.querySelector('.dirty-note').classList.contains('on'), false);
     for (const section of [notes, publicName]) {
       assert.equal(section.form.dataset.dirty, 'true');
@@ -99,8 +99,11 @@ test('a detached submitted form cannot publish late private errors into the next
     }
     const form = document.createElement('form'); const submit = document.createElement('button'); const errorBox = document.createElement('div');
     form.append(submit, errorBox); dom.body.append(form);
-    onSubmit(form, submit, async () => { throw new Error('Current form error'); }, errorBox);
+    const error = new Error('Current form error');
+    onSubmit(form, submit, async () => { throw error; }, errorBox);
     form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
-    assert.match(errorBox.textContent, /Current form error/);
+    assert.equal(errorBox.hidden, false);
+    assert.ok(errorBox.textContent.length > 0);
+    assert.equal(errorBox.textContent.includes(error.message), false);
   } finally { globalThis.setTimeout = originalTimeout; dom.restore(); }
 });

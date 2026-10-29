@@ -1,4 +1,5 @@
 import {h, icon} from './dom.js';
+import {t} from './i18n.js';
 
 // The HTML shells apply a stored theme before first paint; this module only
 // changes it. "system" means no override, following prefers-color-scheme.
@@ -29,13 +30,14 @@ window.addEventListener('storage', (event) => {
   listeners.forEach((paint) => paint());
 });
 
-// names: display names per theme; describe(current, next) builds the accessible label.
-export function themeButton(names, describe, element = h('button', {type: 'button', class: 'icon-button'})) {
+export function themeButton(element = h('button', {type: 'button', class: 'icon-button'})) {
   const next = (theme) => ORDER[(ORDER.indexOf(theme) + 1) % ORDER.length];
   const paint = () => {
     const theme = currentTheme();
     element.replaceChildren(icon(ICON[theme]));
-    element.setAttribute('aria-label', describe(names[theme], names[next(theme)]));
+    element.setAttribute('aria-label', t('controls.theme.switch', {
+      current: t(`controls.theme.${theme}`), next: t(`controls.theme.${next(theme)}`)
+    }));
     element.title = element.getAttribute('aria-label');
   };
   element.addEventListener('click', () => setTheme(next(currentTheme())));

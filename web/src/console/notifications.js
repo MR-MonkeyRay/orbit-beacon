@@ -1,5 +1,7 @@
+import {errorText} from '../shared/errors.js';
+import {t, getLocale} from '../shared/i18n.js';
 import {h} from '../shared/dom.js';
-import {api, getSessionEpoch, onSession, pauseSessionVerification, session, sessionIsVerified, verifySession} from './api.js';
+import {api, ApiError, getSessionEpoch, onSession, pauseSessionVerification, session, sessionIsVerified, verifySession} from './api.js';
 import {formatBytes, when} from './format.js';
 import {button, facts} from './ui/components.js';
 import {modal} from './ui/dialogs.js';
@@ -7,8 +9,8 @@ import {formatMetricValue, metricLabel, severityLabel} from './pages/alert-utils
 import {taskDetails} from './pages/backup-task.js';
 
 const tickListeners = new Set();
-const stateLabels = {queued: 'Queued', running: 'Running', succeeded: 'Succeeded', failed: 'Failed', firing: 'Firing', resolved: 'Resolved'};
-const categoryLabels = {configuration: 'Configuration', monitoring: 'Monitoring', events: 'Events'};
+const stateLabels = {queued: t('shell.queued'), running: t('shell.running'), succeeded: t('shell.succeeded'), failed: t('shell.failed'), firing: t('shell.firing'), resolved: t('shell.resolved')};
+const categoryLabels = {configuration: t('shell.configuration'), monitoring: t('shell.monitoring'), events: t('shell.events')};
 let disposeNotifications;
 let notificationSignal;
 let identity = '';
@@ -31,22 +33,22 @@ const visibleSession = () => pageActive && !document.hidden && Boolean(session.u
 const foreground = () => visibleSession() && sessionIsVerified();
 const requestOptions = (signal, extra = {}) => ({navigation: false, signal, ...extra});
 const categories = (values) => (values || []).map((value) => categoryLabels[value] || value).join(', ');
-const sourceName = (details) => details.destination?.plan_name || details.destination?.actor_name || (details.kind === 'backup_export' ? 'Manual export' : 'Deleted plan');
-const failureText = () => navigator.onLine === false ? 'You are offline. Reconnect to refresh notifications.' : 'Notifications could not be refreshed. Previously loaded information may be out of date.';
+const sourceName = (details) => details.destination?.plan_name || details.destination?.actor_name || (details.kind === 'backup_export' ? t('shell.manualExport') : t('shell.deletedPlan'));
+const failureText = () => navigator.onLine === false ? t('shell.notificationOffline') : t('shell.notificationStale');
 
 function renderEntries() {
   for (const entry of document.querySelectorAll('.notification-entry')) {
     entry.hidden = !session.user || session.user.must_change_password;
     const count = entry.querySelector('.notification-count');
     // The icon rail shows the count as a small badge, so large counts are capped.
-    count.textContent = summary ? (summary.unread_count > 99 ? '99+' : String(summary.unread_count)) : stale ? '?' : '…';
-    const status = stale ? (navigator.onLine === false ? 'Offline' : 'Stale') : '';
+    count.textContent = summary ? (summary.unread_count > 99 ? '99+' : new Intl.NumberFormat(getLocale()).format(summary.unread_count)) : stale ? '?' : '…';
+    const status = stale ? (navigator.onLine === false ? t('shell.offline') : t('shell.stale')) : '';
     const freshness = entry.querySelector('.notification-freshness');
     if (freshness) freshness.textContent = status;
     entry.classList.toggle('stale', stale);
-    const description = summary ? `${summary.unread_count} unread` : 'unread count unavailable';
-    entry.setAttribute('aria-label', `Notifications, ${description}${status ? `, ${status.toLowerCase()}` : ''}`);
-    entry.title = stale ? failureText() : `Notifications, ${description}`;
+    const description = summary ? t('shell.unreadCount', {count: summary.unread_count}) : t('shell.unreadUnavailable');
+    entry.setAttribute('aria-label', t(status ? 'shell.notificationEntryStatus' : 'shell.notificationEntry', {description, status}));
+    entry.title = stale ? failureText() : t('shell.notificationEntry', {description});
   }
 }
 
@@ -168,26 +170,26 @@ export function initNotifications() {
 function notificationTitle(notification) {
   const details = notification.details || {};
   return notification.kind === 'alert'
-    ? `${details.rule_name || 'Alert'} · ${stateLabels[notification.transition] || notification.transition}`
-    : `${sourceName(details)} · ${stateLabels[details.state || notification.transition] || 'Unknown state'}`;
+    ? `${details.rule_name || t('shell.alert')} · ${stateLabels[notification.transition] || notification.transition}`
+    : `${sourceName(details)} · ${stateLabels[details.state || notification.transition] || t('shell.unknownState')}`;
 }
 
 function snapshot(notification) {
   const details = notification.details || {};
-  const rows = [['Received', when(notification.created_at)], ['Status', stateLabels[notification.transition] || notification.transition]];
+  const rows = [[t('shell.received'), when(notification.created_at)], [t('shell.status'), stateLabels[notification.transition] || notification.transition]];
   if (notification.kind === 'alert') rows.push(
-    ['Rule', details.rule_name || details.rule_id], ['Node', details.node_name || details.node_id],
-    ['Metric', metricLabel(details.metric)], ['Severity', severityLabel(details.severity || notification.severity)],
-    ['Value', formatMetricValue(details.metric, details.value)], ['Started', details.started_at ? when(details.started_at) : null],
-    ['Resolved', details.resolved_at ? when(details.resolved_at) : null]);
+    [t('shell.rule'), details.rule_name || details.rule_id], [t('shell.node'), details.node_name || details.node_id],
+    [t('shell.metric'), metricLabel(details.metric)], [t('shell.severity'), severityLabel(details.severity || notification.severity)],
+    [t('shell.value'), formatMetricValue(details.metric, details.value)], [t('shell.started'), details.started_at ? when(details.started_at) : null],
+    [t('shell.resolved'), details.resolved_at ? when(details.resolved_at) : null]);
   else rows.push(
-    ['Source', sourceName(details)], ['Categories', categories(details.categories)], ['Phase', details.phase || null],
-    ['File', details.artifact_name], ['Size', details.artifact_bytes != null ? formatBytes(details.artifact_bytes) : null],
+    [t('shell.source'), sourceName(details)], [t('shell.categories'), categories(details.categories)], [t('shell.phase'), details.phase ? t(({snapshot: 'data.phase.snapshot', packaging: 'data.phase.packaging', storing: 'data.phase.storing'})[details.phase] || 'data.phase.starting') : null],
+    [t('shell.file'), details.artifact_name], [t('shell.size'), details.artifact_bytes != null ? formatBytes(details.artifact_bytes) : null],
     ['SHA-256', details.artifact_sha256 ? h('span', {class: 'mono'}, details.artifact_sha256) : null],
-    [details.kind === 'backup_remote' ? 'Object key' : 'Location', details.result_location], ['Failure code', details.error_code || null], ['Warning code', details.warning_code || null]);
-  return h('section', {class: 'notification-snapshot'}, h('h3', null, 'Notification snapshot'), facts(rows),
-    details.warning_code === 'storage_outcome_unknown' ? h('p', {class: 'callout'}, 'The storage outcome is unknown. A file or object may have been saved; this is not a confirmed success.') : null,
-    details.warning_code === 'retention_cleanup_failed' ? h('p', {class: 'callout'}, 'The backup succeeded, but older local archives could not all be removed.') : null);
+    [details.kind === 'backup_remote' ? t('shell.objectKey') : t('shell.location'), details.result_location], [t('shell.failureCode'), details.error_code || null], [t('shell.warningCode'), details.warning_code || null]);
+  return h('section', {class: 'notification-snapshot'}, h('h3', null, t('shell.notificationSnapshot')), facts(rows),
+    details.warning_code === 'storage_outcome_unknown' ? h('p', {class: 'callout'}, t('shell.storageUnknown')) : null,
+    details.warning_code === 'retention_cleanup_failed' ? h('p', {class: 'callout'}, t('shell.retentionWarning')) : null);
 }
 
 function openInbox() {
@@ -211,14 +213,14 @@ function openInbox() {
   const actionError = h('p', {class: 'notification-error', role: 'alert', hidden: true});
   const list = h('div', {class: 'notification-list'});
   const detail = h('div', {class: 'notification-detail', hidden: true});
-  const allButton = button('All', {onClick: () => changeFilter(false)});
-  const unreadButton = button('Unread', {onClick: () => changeFilter(true)});
-  const markAllButton = button('Mark all read', {onClick: markAll});
-  const refreshButton = button('Refresh', {icon: 'refresh', onClick: () => { loadList(); refreshNotifications(); }});
-  const moreButton = button('Load more', {onClick: () => loadList(true)});
-  const toolbar = h('div', {class: 'notification-toolbar'}, h('div', {class: 'notification-filters', 'aria-label': 'Notification filter'}, allButton, unreadButton), markAllButton, refreshButton);
+  const allButton = button(t('shell.all'), {onClick: () => changeFilter(false)});
+  const unreadButton = button(t('shell.unread'), {onClick: () => changeFilter(true)});
+  const markAllButton = button(t('shell.markAllRead'), {onClick: markAll});
+  const refreshButton = button(t('shell.refresh'), {icon: 'refresh', onClick: () => { loadList(); refreshNotifications(); }});
+  const moreButton = button(t('shell.loadMore'), {onClick: () => loadList(true)});
+  const toolbar = h('div', {class: 'notification-toolbar'}, h('div', {class: 'notification-filters', 'aria-label': t('shell.notificationFilter')}, allButton, unreadButton), markAllButton, refreshButton);
   const content = h('div', {class: 'dialog-body notification-inbox'}, toolbar, status, actionError, list, moreButton, detail);
-  const dialog = modal('Notifications', () => content);
+  const dialog = modal(t('shell.notifications'), () => content);
   content.closest('dialog').classList.add('notifications-dialog');
   function clearComponent() { component?.dispose(); component = null; }
   function stopRequests() {
@@ -270,10 +272,10 @@ function openInbox() {
       const notification = entries[index];
       const row = list.children[index];
       row.append(h('span', {class: 'notification-row-title'}, notificationTitle(notification)),
-        h('span', {class: 'notification-row-meta'}, h('span', {class: notification.read ? 'notification-read' : 'notification-unread'}, notification.read ? 'Read' : 'Unread'), when(notification.created_at)),
-        notification.kind === 'alert' ? h('span', {class: 'notification-row-subject'}, notification.details?.node_name || notification.details?.node_id || 'Unknown node') : h('span', {class: 'notification-row-subject'}, categories(notification.details?.categories)));
+        h('span', {class: 'notification-row-meta'}, h('span', {class: notification.read ? 'notification-read' : 'notification-unread'}, notification.read ? t('shell.read') : t('shell.unread')), when(notification.created_at)),
+        notification.kind === 'alert' ? h('span', {class: 'notification-row-subject'}, notification.details?.node_name || notification.details?.node_id || t('shell.unknownNode')) : h('span', {class: 'notification-row-subject'}, categories(notification.details?.categories)));
     }
-    if (!entries.length) list.append(h('p', {class: 'notification-empty'}, loaded ? (unread ? 'No unread notifications.' : 'No notifications yet.') : 'Loading notifications…'));
+    if (!entries.length) list.append(h('p', {class: 'notification-empty'}, loaded ? (unread ? t('shell.noUnread') : t('shell.noNotifications')) : t('shell.notificationsLoading')));
   }
   async function loadList(append = false) {
     if (!alive() || selected) return;
@@ -290,7 +292,7 @@ function openInbox() {
     try {
       const page = await api(`/notifications?${params}`, requestOptions(controller.signal));
       if (!alive() || listRequest !== controller) return;
-      if (page.has_more && (!page.next_cursor || (append && page.next_cursor === nextCursor))) throw new Error('Invalid notification cursor.');
+      if (page.has_more && (!page.next_cursor || (append && page.next_cursor === nextCursor))) throw new ApiError(200, {code: 'unreadable_response'});
       entries = append ? [...entries, ...page.notifications.filter((item) => !entries.some((old) => old.id === item.id))] : page.notifications;
       nextCursor = page.next_cursor || null;
       hasMore = page.has_more;
@@ -298,8 +300,8 @@ function openInbox() {
       loaded = true;
     } catch (error) {
       if (!alive() || listRequest !== controller || error.name === 'AbortError') return;
-      showError(navigator.onLine === false ? 'You are offline. Notifications have not been loaded.' : 'Could not load notifications. Use Refresh to try again.');
-      if (!loaded) list.replaceChildren(h('p', {class: 'notification-empty'}, 'Notifications are unavailable.'));
+      showError(t('shell.notificationsLoadFailed', {error: errorText(error)}));
+      if (!loaded) list.replaceChildren(h('p', {class: 'notification-empty'}, t('shell.notificationsUnavailable')));
     } finally {
       if (listRequest === controller) {
         listRequest = null;
@@ -322,7 +324,7 @@ function openInbox() {
       await loadList();
       refreshNotifications();
     } catch (error) {
-      if (alive() && readAllRequest === controller && error.name !== 'AbortError') showError('Could not mark notifications read. No local read state was changed. Refresh and try again.');
+      if (alive() && readAllRequest === controller && error.name !== 'AbortError') showError(t('shell.markReadFailed', {error: errorText(error)}));
     } finally {
       if (readAllRequest === controller) { readAllRequest = null; markAllButton.disabled = !readThrough; }
     }
@@ -340,7 +342,7 @@ function openInbox() {
     moreButton.hidden = true;
     detail.hidden = false;
     actionError.hidden = true;
-    const back = button('Back to notifications', {onClick: () => {
+    const back = button(t('shell.backNotifications'), {onClick: () => {
       detailRequest?.abort(); detailRequest = null;
       clearComponent();
       selected = null;
@@ -352,15 +354,15 @@ function openInbox() {
       if (unread || refreshPending) loadList();
       allButton.focus();
     }});
-    const body = h('div', {class: 'notification-detail-content'}, h('p', {role: 'status'}, 'Loading notification…'));
+    const body = h('div', {class: 'notification-detail-content'}, h('p', {role: 'status'}, t('shell.notificationLoading')));
     detail.replaceChildren(back, body);
     back.focus();
     const current = () => alive() && selected === id && detailRequest === controller;
     try {
       const notification = await api(`/notifications/${encodeURIComponent(id)}`, requestOptions(controller.signal));
       if (!current()) return;
-      const readStatus = h('p', {class: 'notification-read-status', role: 'status'}, notification.read ? 'Read' : 'Unread');
-      const source = h('section', {class: 'notification-source'}, h('p', null, 'Loading current source…'));
+      const readStatus = h('p', {class: 'notification-read-status', role: 'status'}, notification.read ? t('shell.read') : t('shell.unread'));
+      const source = h('section', {class: 'notification-source'}, h('p', null, t('shell.sourceLoading')));
       body.replaceChildren(h('h3', null, notificationTitle(notification)), readStatus, snapshot(notification), source);
       // The immutable snapshot is now rendered. Failed details never mark an item read.
       if (!notification.read) {
@@ -370,11 +372,11 @@ function openInbox() {
           notification.read = true;
           const cached = entries.find((item) => item.id === id);
           if (cached) cached.read = true;
-          readStatus.textContent = 'Read';
+          readStatus.textContent = t('shell.read');
           refreshNotifications();
         } catch (error) {
           if (!current()) return;
-          readStatus.textContent = 'Unread · Could not save read status. Reopen this notification to try again.';
+          readStatus.textContent = t('shell.readSaveFailed', {error: errorText(error)});
         }
       }
       if (!current()) return;
@@ -383,8 +385,8 @@ function openInbox() {
         const value = await api(`/${task ? 'tasks' : 'alerts'}/${encodeURIComponent(notification.source_id)}`, requestOptions(controller.signal));
         if (!current()) return;
         const href = task ? `/settings?task=${encodeURIComponent(notification.source_id)}#data` : `/alerts?event=${encodeURIComponent(notification.source_id)}#history`;
-        const link = h('a', {class: 'btn', href, dataset: {link: ''}}, task ? 'View task' : 'View alert');
-        source.replaceChildren(h('h3', null, task ? 'Current task' : 'Alert details'), link);
+        const link = h('a', {class: 'btn', href, dataset: {link: ''}}, task ? t('shell.viewTask') : t('shell.viewAlert'));
+        source.replaceChildren(h('h3', null, task ? t('shell.currentTask') : t('shell.alertDetails')), link);
         if (task) {
           component = taskDetails(value, {signal: controller.signal});
           source.append(component.element);
@@ -392,12 +394,12 @@ function openInbox() {
       } catch (error) {
         if (!current()) return;
         source.replaceChildren(h('p', {class: 'notification-source-status'}, error.status === 404 || error.status === 410
-          ? `${task ? 'Task' : 'Alert'} details are no longer available. The notification snapshot above is retained.`
-          : 'Current source details could not be loaded. The notification snapshot above remains available. Reopen the notification to try again.'));
+          ? t(task ? 'shell.taskUnavailable' : 'shell.alertUnavailable')
+          : t('shell.sourceLoadFailed', {error: errorText(error)})));
       }
     } catch (error) {
       if (!current() || error.name === 'AbortError') return;
-      body.replaceChildren(h('p', {class: 'notification-error', role: 'alert'}, error.status === 404 ? 'Notification not found. It may have expired.' : 'Could not load this notification. Its read status was not changed. Go back and try again.'));
+      body.replaceChildren(h('p', {class: 'notification-error', role: 'alert'}, error.status === 404 ? t('shell.notificationMissing') : t('shell.notificationLoadFailed', {error: errorText(error)})));
     }
   }
   renderList();

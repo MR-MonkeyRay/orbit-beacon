@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import * as client from '../src/console/api.js';
+import {errorText} from '../src/shared/errors.js';
 import {flush, TestElement} from './console-dom.js';
 import {frame, liveHarness, response, stream} from './live-harness.js';
 
@@ -20,6 +21,17 @@ function setup(t, respond) {
   client.setSession({user: null, csrf_token: '', expires_at: ''});
   return {...env, page, clean() { page.abort(); client.setSession({user: null, csrf_token: '', expires_at: ''}); client.setNavigationSignal(null); }};
 }
+
+test('API client classifies network and unreadable failures without exposing transport wording', async (t) => {
+  const env = setup(t, () => { throw new TypeError('private transport details'); });
+  try {
+    await assert.rejects(client.api('/nodes'), (error) => error.code === 'network');
+    globalThis.fetch = async () => new Response('not json', {status: 200});
+    await assert.rejects(client.api('/nodes'), (error) => error.code === 'unreadable_response');
+    const controller = new AbortController(); controller.abort();
+    await assert.rejects(client.api('/nodes', {signal: controller.signal}), (error) => error.name === 'AbortError');
+  } finally { env.clean(); }
+});
 
 test('session replacement aborts old requests and fences late paginated cache results', async (t) => {
   let release;
@@ -303,7 +315,7 @@ test('expiry synchronously clears private drafts and body dialogs without a dirt
     assert.equal(env.body.querySelectorAll('dialog').length, 0);
     assert.equal(location.pathname, '/login');
     assert.equal(env.body.textContent.includes('private toast token'), false);
-    assert.equal(env.body.textContent.includes('Discard unsaved changes?'), false);
+    assert.equal(env.body.querySelector('dialog'), null);
   } finally {
     stopRouter?.();
     await flush();
@@ -600,11 +612,11 @@ test('current action server failures and request timeouts remain visible', async
   }) : response({message: 'Cannot disable this node.', request_id: 'action-failure'}, {status: 503}));
   try {
     await env.disable();
-    assert.equal(document.getElementById('toasts').textContent.includes('Cannot disable this node.'), true);
-    assert.equal(document.getElementById('toasts').textContent.includes('Request action-failure'), true);
+    assert.equal(document.getElementById('toasts').textContent.includes('Cannot disable this node.'), false, 'raw server wording must not reach the user');
+    assert.equal(document.getElementById('toasts').textContent.includes('action-failure'), true);
     timeout = true;
     await env.disable(); await env.advance(15000);
-    assert.equal(document.getElementById('toasts').textContent.includes('The request timed out after 15 seconds.'), true);
+    assert.equal(document.getElementById('toasts').textContent.includes(errorText({code: 'timeout'})), true);
     assert.equal(client.session.user.id, user.id);
     assert.equal(location.pathname, '/overview');
   } finally { env.clean(); }
@@ -696,7 +708,8 @@ test('login credential rejection still renders its inline error after private-se
     form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
     const error = form.querySelector('.form-error');
     assert.equal(error.hidden, false);
-    assert.equal(error.textContent, 'Username or password is incorrect.');
+    assert.ok(error.textContent);
+    assert.equal(form.querySelectorAll('input').find((control) => control.name === 'password').value, '');
     assert.equal(location.pathname, '/login');
     assert.equal(client.session.user, null);
   } finally {

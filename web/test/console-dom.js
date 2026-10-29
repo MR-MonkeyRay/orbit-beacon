@@ -59,6 +59,9 @@ export class TestElement extends EventTarget {
       if (part === '[name]') return element.name !== '';
       const dirtyForm = part.match(/^form\[data-dirty="(true|false)"\]$/);
       if (dirtyForm) return element.tagName === 'form' && element.dataset.dirty === dirtyForm[1];
+      if (part === 'button.busy') return element.tagName === 'button' && element.classList.contains('busy');
+      if (part === '[data-busy="true"]') return element.dataset.busy === 'true';
+      if (part === 'form[data-busy="true"]') return element.tagName === 'form' && element.dataset.busy === 'true';
       if (part.startsWith('.')) return element.classList.contains(part.slice(1));
       if (part.startsWith('#')) return element.id === part.slice(1);
       const dataField = part.match(/^\[data-field="(.+)"\]$/);

@@ -1,5 +1,6 @@
+import {t} from '../../shared/i18n.js';
 import {h, svg} from '../../shared/dom.js';
-import {brandMark} from '../shell.js';
+import {brandMark, consoleLocaleSelect} from '../shell.js';
 
 // Shared bare authentication layout retains the console's existing orbit art.
 function orbits() {
@@ -16,6 +17,7 @@ export function authLayout({title, description, content, footer}) {
     h('div', null,
       h('div', {class: 'login-card'},
         h('div', {class: 'brand'}, brandMark(), h('span', null, 'OrbitBeacon')),
+        h('label', {class: 'console-locale auth-locale'}, h('span', null, t('common.language')), consoleLocaleSelect({navigation: true})),
         h('h1', {tabindex: '-1'}, title),
         h('p', null, description), content),
       footer ? h('p', {class: 'login-foot'}, footer) : null));

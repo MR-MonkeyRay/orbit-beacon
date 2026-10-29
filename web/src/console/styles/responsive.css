@@ -27,6 +27,8 @@
   .notification-entry .notification-freshness{display:none}
   .account{justify-items:center;padding:12px 0 4px}
   .account .who-text{display:none}
+  .account-locale{width:100%;max-width:100%}
+  .account-locale select{padding-inline:3px;font-size:var(--fs-2xs)}
   .account-actions{flex-direction:column;align-items:center}
   .account-actions .btn{flex:none;width:var(--control-h);min-height:var(--control-h);padding:0}
 }

@@ -5,6 +5,18 @@ import {createCard, skeletonCards, STATUS} from './cards.js';
 import {createConstellation} from './constellation.js';
 import {validResponse} from './validate.js';
 import {connectLive} from '../shared/live.js';
+import {getLocale, t} from '../shared/i18n.js';
+import {localeSelect} from '../shared/locale-select.js';
+import {errorText} from '../shared/errors.js';
+
+document.documentElement.lang = getLocale();
+for (const [attribute, target] of [['data-i18n', null], ['data-i18n-aria-label', 'aria-label'], ['data-i18n-content', 'content']]) {
+  for (const element of document.querySelectorAll(`[${attribute}]`)) {
+    const text = t(element.getAttribute(attribute));
+    if (target) element.setAttribute(target, text);
+    else element.textContent = text;
+  }
+}
 
 const PAGE = 50;
 const $ = (id) => document.getElementById(id);
@@ -26,8 +38,8 @@ const pagination = $('pagination');
 const previous = $('previous');
 const next = $('next');
 const page = $('page');
-const timeFormat = new Intl.DateTimeFormat('zh-CN', {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
-const fullFormat = new Intl.DateTimeFormat('zh-CN', {year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZoneName: 'short'});
+const timeFormat = new Intl.DateTimeFormat(getLocale(), {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
+const fullFormat = new Intl.DateTimeFormat(getLocale(), {year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZoneName: 'short'});
 const constellation = createConstellation($('constellation'));
 
 let offset = 0;
@@ -42,13 +54,18 @@ let filter = '';
 let current = [];
 let hasSnapshot = false;
 
-themeButton({system: '跟随系统', light: '浅色', dark: '深色'}, (now, then) => `主题：${now}，切换为${then}`, $('theme'));
+themeButton($('theme'));
+const localeError = $('locale-error');
+$('top-actions').prepend(localeSelect({onError(error) {
+  localeError.textContent = errorText(error);
+  localeError.hidden = false;
+}}));
 
 // ------------------------------------------------------------------ filters
 
 const filterButtons = new Map(['', 'online', 'offline', 'unknown'].map((status) => {
   const button = h('button', {type: 'button', 'aria-pressed': String(status === ''), onclick: () => { filter = status; applyFilter(); }},
-    status ? h('i', {class: `dot ${status}`, 'aria-hidden': 'true'}) : null, status ? STATUS[status] : '全部', h('span', {class: 'num'}));
+    status ? h('i', {class: `dot ${status}`, 'aria-hidden': 'true'}) : null, status ? STATUS[status] : t('public.filter.all'), h('span', {class: 'num'}));
   filtersBar.append(button);
   return [status, button];
 }));
@@ -68,7 +85,7 @@ function applyFilter() {
   filtersBar.hidden = current.length === 0;
   if (current.length && !shown) {
     empty.hidden = false;
-    emptyText.textContent = `本页没有${STATUS[filter]}的节点`;
+    emptyText.textContent = t(`public.filter.empty.${filter}`);
     retry.hidden = true;
   } else if (current.length) empty.hidden = true;
 }
@@ -97,20 +114,21 @@ function render(result) {
   const unknown = nodes.length - online - offline;
   const partial = offset > 0 || result.has_more;
   if (nodes.length === 0) {
-    headline.textContent = partial ? '本页暂无公开的节点。' : '暂无公开的节点。';
-    summary.textContent = '管理员公开节点后，会在这里显示它们的在线状态和资源使用情况。';
+    headline.textContent = t(partial ? 'public.empty.page' : 'public.empty.all');
+    summary.textContent = t('public.empty.explanation');
   } else {
-    headline.textContent = online === nodes.length ? `${nodes.length} 个节点全部在线` : `${online} / ${nodes.length} 个节点在线`;
-    summary.textContent = `${partial ? '本页' : '共'} ${nodes.length} 个公开节点${offline ? `，${offline} 个离线` : ''}${unknown ? `，${unknown} 个状态未知` : ''}。`;
+    headline.textContent = online === nodes.length ? t('public.headline.allOnline', {count: nodes.length}) : t('public.headline.online', {online, count: nodes.length});
+    const summaryKey = `public.summary.${partial ? 'page' : 'full'}${offline && unknown ? 'Both' : offline ? 'Offline' : unknown ? 'Unknown' : ''}`;
+    summary.textContent = t(summaryKey, {count: nodes.length, offline, unknown});
   }
   lastGenerated = new Date(result.generated_at);
-  updateText(`更新于 ${timeFormat.format(lastGenerated)}`, '自动更新');
-  updated.title = `${fullFormat.format(lastGenerated)}（本地时间）`;
+  updateText(t('public.updatedAt', {time: timeFormat.format(lastGenerated)}), t('public.autoUpdate'));
+  updated.title = t('public.localTime', {time: fullFormat.format(lastGenerated)});
   nextOffset = result.next_offset;
   next.disabled = nextOffset === null;
   pagination.hidden = offset === 0 && nextOffset === null;
   empty.hidden = nodes.length !== 0;
-  emptyText.textContent = partial ? '本页暂无公开的节点。' : '暂无公开的节点。';
+  emptyText.textContent = t(partial ? 'public.empty.page' : 'public.empty.all');
   retry.hidden = true;
   applyFilter();
 }
@@ -122,9 +140,9 @@ function clearData() {
   keys = '';
   current = [];
   constellation.clear();
-  headline.textContent = '节点状态';
+  headline.textContent = t('public.heading');
   summary.textContent = '—';
-  updateText('尚未成功更新');
+  updateText(t('public.notUpdated'));
   updated.removeAttribute('title');
   nextOffset = null;
   next.disabled = true;
@@ -149,7 +167,7 @@ function begin() {
   list.setAttribute('aria-busy', 'true');
   if (!cards.length) list.replaceChildren(...skeletonCards(6));
   previous.disabled = offset === 0;
-  page.textContent = `第 ${Math.floor(offset / PAGE) + 1} 页`;
+  page.textContent = t('public.page', {page: Math.floor(offset / PAGE) + 1});
 }
 
 function finish() {
@@ -174,7 +192,7 @@ function paintConnection(state) {
     const paint = () => {
       const remaining = deadline === null ? 0 : Math.max(0, deadline - performance.now());
       const seconds = Math.ceil(remaining / 1000);
-      updateText(`更新于 ${timeFormat.format(lastGenerated)}`, state.transport === 'http' && state.retryAt !== null ? `${seconds} 秒后刷新` : '自动更新');
+      updateText(t('public.updatedAt', {time: timeFormat.format(lastGenerated)}), state.transport === 'http' && state.retryAt !== null ? t('public.refreshIn', {count: seconds}) : t('public.autoUpdate'));
       if (seconds > 0) displayTimer = setTimeout(paint, Math.min(1000, remaining));
     };
     paint();
@@ -184,16 +202,16 @@ function paintConnection(state) {
     countdown.dataset.state = 'stale';
     if (hasSnapshot) {
       cards.forEach((card) => card.setStale());
-      summary.textContent = document.hidden ? '更新已暂停；当前显示最后一次数据。' : '连接中断，正在重连；当前显示最后一次数据。';
-      updateText(`更新于 ${timeFormat.format(lastGenerated)}`, '数据可能已过期');
+      summary.textContent = t(document.hidden ? 'public.paused' : 'public.reconnecting');
+      updateText(t('public.updatedAt', {time: timeFormat.format(lastGenerated)}), t('public.stale'));
     } else {
       list.replaceChildren();
-      headline.textContent = '暂时无法获取节点信息';
-      summary.textContent = '加载失败，请检查网络后重试。';
+      headline.textContent = t('public.unavailable');
+      summary.textContent = t('public.loadFailed');
       empty.hidden = false;
-      emptyText.textContent = '加载失败，请检查网络后重试。';
+      emptyText.textContent = t('public.loadFailed');
       retry.hidden = false;
-      updateText('尚未成功更新');
+      updateText(t('public.notUpdated'));
     }
   } else {
     countdown.dataset.state = 'connecting';
@@ -201,9 +219,9 @@ function paintConnection(state) {
   // Transport changes, heartbeats and HTTP countdown ticks are not announcements.
   if (announcedState !== state.state) {
     announcedState = state.state;
-    announcement.textContent = state.state === 'live' ? '节点数据已更新，正在自动更新。'
-      : state.state === 'connecting' ? '正在加载节点…'
-        : hasSnapshot ? '连接中断，当前显示最后一次数据。' : '加载失败，请检查网络后重试。';
+    announcement.textContent = state.state === 'live' ? t('public.announce.updated')
+      : state.state === 'connecting' ? t('public.loading')
+        : t(hasSnapshot ? 'public.announce.stale' : 'public.loadFailed');
   }
 }
 

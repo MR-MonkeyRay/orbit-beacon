@@ -1,4 +1,6 @@
 import {h} from '../../shared/dom.js';
+import {t, getLocale} from '../../shared/i18n.js';
+import {errorText, fieldErrorText} from '../../shared/errors.js';
 import {api, getNavigationSignal} from '../api.js';
 import {when} from '../format.js';
 import {onNotificationTick} from '../notifications.js';
@@ -7,31 +9,32 @@ import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toastError} from '../ui/feedback.js';
 import {field, input, onSubmit, select, validateBytes} from '../ui/forms.js';
 import {showTask} from './backup-task.js';
+import {categoryNames, taskState} from './backup-task.js';
 
 const CATEGORIES = [
-  ['configuration', 'Configuration', 'Administrators, Agent identities, rules, plans and stored credentials.'],
-  ['monitoring', 'Monitoring', 'Recorded metrics, traffic and probe history.'],
-  ['events', 'Events', 'Audit, alert and completed task history; no historical backup passwords.']
+  ['configuration', 'data.category.configuration', 'data.category.configurationHint'],
+  ['monitoring', 'data.category.monitoring', 'data.category.monitoringHint'],
+  ['events', 'data.category.events', 'data.category.eventsHint']
 ];
-const PROVIDERS = [['s3_compatible', 'S3 compatible'], ['cos', 'Tencent COS'], ['oss', 'Alibaba OSS'], ['r2', 'Cloudflare R2'], ['s3', 'AWS S3']];
-const STATES = {queued: 'Queued', running: 'Running', succeeded: 'Succeeded', failed: 'Failed'};
-const PHASES = {snapshot: 'Snapshot', packaging: 'Compressing and encrypting', storing: 'Storing'};
-const labels = (categories) => categories.map((value) => CATEGORIES.find(([id]) => id === value)?.[1] || value).join(', ');
-const stateLabel = (task) => `${STATES[task.state] || 'Unknown state'}${task.state === 'running' && PHASES[task.phase] ? ` · ${PHASES[task.phase]}` : ''}`;
+const PROVIDERS = [['s3_compatible', 'data.provider.compatible'], ['cos', 'data.provider.cos'], ['oss', 'data.provider.oss'], ['r2', 'data.provider.r2'], ['s3', 'data.provider.s3']];
+const STATES = {queued: 'data.state.queued', running: 'data.state.running', succeeded: 'data.state.succeeded', failed: 'data.state.failed'};
+const PHASES = {snapshot: 'data.phase.snapshot', packaging: 'data.phase.packaging', storing: 'data.phase.storing'};
+const labels = categoryNames;
+const stateLabel = (task) => `${taskState(task)}${task.state === 'running' && PHASES[task.phase] ? ` · ${t(PHASES[task.phase])}` : ''}`;
 const taskStatus = (task) => h('span', {class: `data-state data-state-${Object.hasOwn(STATES, task.state) ? task.state : 'unknown'}`}, stateLabel(task));
 
 function categoriesField(selected = ['configuration']) {
   const controls = CATEGORIES.map(([value]) => input({type: 'checkbox', name: 'categories', value, checked: selected.includes(value)}));
   controls[0].dataset.field = 'categories';
-  const check = () => controls[0].setCustomValidity(controls.some((control) => control.checked) ? '' : 'Select at least one data category.');
+  const check = () => controls[0].setCustomValidity(controls.some((control) => control.checked) ? '' : t('data.category.required'));
   controls.forEach((control) => control.addEventListener('change', () => {
     check();
     if (controls[0].validity.valid) controls[0].showError?.('');
   }));
   check();
   const choices = h('div', {class: 'data-category-choices'}, CATEGORIES.map(([, title, hint], index) =>
-    h('label', {class: 'data-check'}, controls[index], h('span', null, h('strong', null, title), h('small', null, hint)))));
-  return {element: field('Data categories', controls[0], {inner: choices}), value: () => controls.filter((control) => control.checked).map((control) => control.value)};
+    h('label', {class: 'data-check'}, controls[index], h('span', null, h('strong', null, t(title)), h('small', null, t(hint))))));
+  return {element: field(t('data.categories'), controls[0], {inner: choices}), value: () => controls.filter((control) => control.checked).map((control) => control.value)};
 }
 
 function checkField(label, name, checked, hint) {
@@ -74,18 +77,18 @@ export function dataOperationsTab() {
   const dialogs = new Set();
   const taskRows = h('div');
   const planRows = h('div');
-  const taskNote = h('p', {class: 'data-load-note', role: 'status'}, 'Task history loads when this tab is open.');
-  const planNote = h('p', {class: 'data-load-note', role: 'status'}, 'Backup plans load when this tab is open.');
-  const timezone = h('p', {class: 'hint'}, 'Server timezone is loading.');
-  const taskPrevious = button('Newer tasks', {disabled: true, onClick: () => { taskPage -= 1; loadTasks(); }});
-  const taskNext = button('Older tasks', {disabled: true, onClick: () => { taskPage += 1; loadTasks(); }});
-  const planPrevious = button('Newer plans', {disabled: true, onClick: () => { planPage -= 1; loadPlans(); }});
-  const planNext = button('Older plans', {disabled: true, onClick: () => { planPage += 1; loadPlans(); }});
-  const taskRefresh = button('Refresh tasks', {icon: 'refresh', onClick: () => loadTasks()});
-  const planRefresh = button('Refresh plans', {icon: 'refresh', onClick: () => loadPlans()});
-  const addPlan = button('Add plan', {icon: 'plus', variant: 'primary', onClick: () => editPlan()});
+  const taskNote = h('p', {class: 'data-load-note', role: 'status'}, t('data.tasks.initial'));
+  const planNote = h('p', {class: 'data-load-note', role: 'status'}, t('data.plans.initial'));
+  const timezone = h('p', {class: 'hint'}, t('data.timezone.loading'));
+  const taskPrevious = button(t('data.tasks.newer'), {disabled: true, onClick: () => { taskPage -= 1; loadTasks(); }});
+  const taskNext = button(t('data.tasks.older'), {disabled: true, onClick: () => { taskPage += 1; loadTasks(); }});
+  const planPrevious = button(t('data.plans.newer'), {disabled: true, onClick: () => { planPage -= 1; loadPlans(); }});
+  const planNext = button(t('data.plans.older'), {disabled: true, onClick: () => { planPage += 1; loadPlans(); }});
+  const taskRefresh = button(t('data.tasks.refresh'), {icon: 'refresh', onClick: () => loadTasks()});
+  const planRefresh = button(t('data.plans.refresh'), {icon: 'refresh', onClick: () => loadPlans()});
+  const addPlan = button(t('data.plan.add'), {icon: 'plus', variant: 'primary', onClick: () => editPlan()});
   const exportCategories = categoriesField();
-  const start = button('Start export', {type: 'submit', variant: 'primary'});
+  const start = button(t('data.export.start'), {type: 'submit', variant: 'primary'});
   const exportError = h('div', {class: 'form-error', role: 'alert', hidden: true});
   const exportStatus = h('p', {class: 'data-load-note', role: 'status', hidden: true});
   const exportForm = h('form', {class: 'form form-wide'}, exportError, exportCategories.element,
@@ -96,24 +99,24 @@ export function dataOperationsTab() {
     const task = await api('/backups/exports', {method: 'POST', body: {categories: exportCategories.value()}, signal});
     if (signal.aborted) return;
     exportStatus.hidden = false;
-    exportStatus.replaceChildren(h('span', null, `Export ${stateLabel(task).toLowerCase()}. You can leave this page; work continues on the server. Open Notifications for the result. `),
-      button('View task', {onClick: () => showTask(task.id, {signal: controller?.signal})}));
+    exportStatus.replaceChildren(h('span', null, t('data.export.started', {state: stateLabel(task)}), ' '),
+      button(t('data.task.view'), {onClick: () => showTask(task.id, {signal: controller?.signal})}));
     taskPage = 0;
     taskCursors = [null];
     await loadTasks();
   }, exportError);
   const element = h('div', {class: 'data-operations'},
-    panel('Export', {},
-      h('p', {class: 'lede'}, 'Create an encrypted .tar.gz.age archive in the background. Each category is independent; select at least one.'),
-      callout('Configuration includes password hashes, persistent Agent identities and stored credentials. Keep archives private. Every archive has its own password: save it separately from task details. If the password is lost or its 90-day record expires, the archive cannot be recovered.'),
-      h('p', {class: 'hint'}, 'Successful manual exports are available to download for 24 hours. Nothing downloads automatically. Only committed data is included; main and metrics snapshots are individually consistent, not one cross-database instant.'),
+    panel(t('data.export.title'), {},
+      h('p', {class: 'lede'}, t('data.export.intro')),
+      callout(t('data.export.warning')),
+      h('p', {class: 'hint'}, t('data.export.hint')),
       exportForm),
-    panel('Backup plans', {action: h('div', {class: 'data-actions'}, planRefresh, addPlan)},
-      h('p', {class: 'lede'}, 'Run encrypted backups on the Server’s five-field Cron schedule. Plans have one local or object-storage destination. Restored plans are disabled.'),
+    panel(t('data.plans.title'), {action: h('div', {class: 'data-actions'}, planRefresh, addPlan)},
+      h('p', {class: 'lede'}, t('data.plans.intro')),
       timezone, planNote, planRows,
       h('div', {class: 'data-pagination'}, planPrevious, planNext)),
-    panel('Task history', {action: taskRefresh},
-      h('p', {class: 'lede'}, 'Shared administrator history, retained for 90 days. Scheduled backups stay at their saved destination; only manual exports offer a browser download.'),
+    panel(t('data.tasks.title'), {action: taskRefresh},
+      h('p', {class: 'lede'}, t('data.tasks.intro')),
       taskNote, taskRows, h('div', {class: 'data-pagination'}, taskPrevious, taskNext)));
 
   function requestPath(path, cursor) {
@@ -134,17 +137,17 @@ export function dataOperationsTab() {
       if (signal.aborted || epoch !== taskRequest) return;
       const json = JSON.stringify(page.tasks);
       if (json !== taskJSON) {
-        taskRows.replaceChildren(page.tasks.length ? taskTable(page.tasks) : h('p', {class: 'data-empty'}, 'No tasks on this page.'));
+        taskRows.replaceChildren(page.tasks.length ? taskTable(page.tasks) : h('p', {class: 'data-empty'}, t('data.tasks.empty')));
         taskJSON = json;
       }
-      taskNote.textContent = 'Up to date. Refreshes while this tab is open.';
+      taskNote.textContent = t('data.tasks.current');
       taskNote.classList.remove('data-stale');
       taskCursors[pageIndex + 1] = page.has_more ? page.next_cursor : null;
       taskPrevious.disabled = pageIndex === 0;
       taskNext.disabled = !page.has_more || !page.next_cursor;
     } catch (error) {
       if (signal.aborted || epoch !== taskRequest) return;
-      taskNote.textContent = `Task history could not refresh. ${error.message}${taskJSON ? ' Previously loaded results are shown.' : ''}`;
+      taskNote.textContent = t(taskJSON ? 'data.tasks.refreshFailedStale' : 'data.tasks.refreshFailed', {error: errorText(error)});
       taskNote.classList.add('data-stale');
       taskPrevious.disabled = pageIndex === 0;
       taskNext.disabled = !taskCursors[pageIndex + 1];
@@ -165,10 +168,10 @@ export function dataOperationsTab() {
     try {
       const page = await api(requestPath('/backup-plans', planCursors[pageIndex]), {signal});
       if (signal.aborted || epoch !== planRequest) return;
-      timezone.textContent = `Server timezone: ${timezoneText(page)}. Next-run times below are supplied by the Server, not converted to your browser timezone. Timezone changes require a Server restart.`;
+      timezone.textContent = t('data.timezone.description', {timezone: timezoneText(page)});
       const json = JSON.stringify(page.plans);
       if (json !== planJSON) {
-        planRows.replaceChildren(page.plans.length ? h('div', {class: 'data-plan-list'}, page.plans.map(planCard)) : h('p', {class: 'data-empty'}, 'No backup plans on this page. Add a disabled plan, review it, then enable it when ready.'));
+        planRows.replaceChildren(page.plans.length ? h('div', {class: 'data-plan-list'}, page.plans.map(planCard)) : h('p', {class: 'data-empty'}, t('data.plans.empty')));
         planJSON = json;
       }
       planNote.textContent = '';
@@ -178,7 +181,7 @@ export function dataOperationsTab() {
       planNext.disabled = !page.has_more || !page.next_cursor;
     } catch (error) {
       if (signal.aborted || epoch !== planRequest) return;
-      planNote.textContent = `Backup plans could not refresh. ${error.message}${planJSON ? ' Previously loaded results are shown.' : ''}`;
+      planNote.textContent = t(planJSON ? 'data.plans.refreshFailedStale' : 'data.plans.refreshFailed', {error: errorText(error)});
       planNote.classList.add('data-stale');
       planPrevious.disabled = pageIndex === 0;
       planNext.disabled = !planCursors[pageIndex + 1];
@@ -190,14 +193,14 @@ export function dataOperationsTab() {
   function taskTable(tasks) {
     const cell = (label, ...content) => h('td', {dataset: {label}}, content);
     return h('div', {class: 'table-wrap'}, h('table', {class: 'table data-task-table'},
-      h('thead', null, h('tr', null, ['Created', 'Source', 'Categories', 'State', 'Details'].map((text) => h('th', {scope: 'col'}, text)))),
+      h('thead', null, h('tr', null, ['data.task.created', 'data.task.source', 'data.categories', 'data.task.state', 'data.task.details'].map((key) => h('th', {scope: 'col'}, t(key))))),
       h('tbody', null, tasks.map((task) => h('tr', null,
-        cell('Created', when(task.created_at)),
-        cell('Source', task.destination.plan_name || (task.kind === 'backup_export' ? 'Manual export' : 'Deleted plan'),
-          task.destination.actor_name ? h('small', {class: 'data-secondary'}, `Started by ${task.destination.actor_name}`) : null),
-        cell('Categories', labels(task.categories)),
-        cell('State', taskStatus(task), task.warning_code ? h('small', {class: 'data-secondary'}, 'Warning · view details') : null),
-        cell('Details', button('Details', {onClick: () => showTask(task.id, {signal: controller?.signal})})))))));
+        cell(t('data.task.created'), when(task.created_at)),
+        cell(t('data.task.source'), task.destination.plan_name || t(task.kind === 'backup_export' ? 'data.task.manual' : 'data.task.deletedPlan'),
+          task.destination.actor_name ? h('small', {class: 'data-secondary'}, t('data.task.startedBy', {name: task.destination.actor_name})) : null),
+        cell(t('data.categories'), labels(task.categories)),
+        cell(t('data.task.state'), taskStatus(task), task.warning_code ? h('small', {class: 'data-secondary'}, t('data.task.warningDetails')) : null),
+        cell(t('data.task.details'), button(t('data.task.details'), {onClick: () => showTask(task.id, {signal: controller?.signal})})))))));
   }
 
   function planCard(plan) {
@@ -205,32 +208,31 @@ export function dataOperationsTab() {
     const next = plan.next_runs?.[0];
     return h('article', {class: 'data-plan'},
       h('div', {class: 'data-plan-head'}, h('div', null, h('h3', null, plan.name),
-        h('span', {class: 'data-secondary'}, plan.kind === 'local' ? 'Local directory' : PROVIDERS.find(([id]) => id === plan.destination.provider)?.[1] || plan.destination.provider)),
-      h('span', {class: `data-state ${plan.enabled ? 'data-state-succeeded' : 'data-state-unknown'}`}, plan.enabled ? 'Enabled' : 'Disabled')),
+        h('span', {class: 'data-secondary'}, plan.kind === 'local' ? t('data.plan.localDirectory') : t(PROVIDERS.find(([id]) => id === plan.destination.provider)?.[1] || 'data.provider.unknown'))),
+      h('span', {class: `data-state ${plan.enabled ? 'data-state-succeeded' : 'data-state-unknown'}`}, t(plan.enabled ? 'data.plan.enabled' : 'data.plan.disabled'))),
       h('p', {class: 'data-location'}, planLocation(plan)),
       h('dl', {class: 'data-plan-facts'},
-        h('div', null, h('dt', null, 'Cron'), h('dd', null, h('code', null, plan.cron))),
-        h('div', null, h('dt', null, 'Next run · Server local'), h('dd', null, plan.enabled && next ? localRun(next) : 'Not scheduled')),
-        h('div', null, h('dt', null, 'Categories'), h('dd', null, labels(plan.categories))),
-        h('div', null, h('dt', null, 'Retention'), h('dd', null, plan.kind === 'local' ? `Latest ${plan.retain_count} archives` : 'Managed by your cloud lifecycle policy')),
-        h('div', null, h('dt', null, 'Last task'), h('dd', null, last ? h('span', null, taskStatus(last), ' ', when(last.created_at), last.warning_code ? ' · Warning' : '') : 'No task yet'))),
+        h('div', null, h('dt', null, t('data.plan.cron')), h('dd', null, h('code', null, plan.cron))),
+        h('div', null, h('dt', null, t('data.plan.nextRun')), h('dd', null, plan.enabled && next ? localRun(next) : t('data.plan.notScheduled'))),
+        h('div', null, h('dt', null, t('data.categories')), h('dd', null, labels(plan.categories))),
+        h('div', null, h('dt', null, t('data.plan.retention')), h('dd', null, plan.kind === 'local' ? t('data.plan.retainArchives', {count: plan.retain_count, value: new Intl.NumberFormat(getLocale()).format(plan.retain_count)}) : t('data.plan.cloudRetention'))),
+        h('div', null, h('dt', null, t('data.plan.lastTask')), h('dd', null, last ? h('span', null, taskStatus(last), ' ', when(last.created_at), last.warning_code ? t('data.task.warningSuffix') : '') : t('data.plan.noTask')))),
       h('div', {class: 'data-actions'},
-        button('Edit', {onClick: () => editPlan(plan)}),
-        button('Delete', {variant: 'danger', onClick: () => deletePlan(plan)}),
-        last ? button('Last task details', {onClick: () => showTask(last.id, {signal: controller?.signal})}) : null));
+        button(t('data.plan.edit'), {onClick: () => editPlan(plan)}),
+        button(t('data.plan.delete'), {variant: 'danger', onClick: () => deletePlan(plan)}),
+        last ? button(t('data.plan.lastDetails'), {onClick: () => showTask(last.id, {signal: controller?.signal})}) : null));
   }
 
   async function deletePlan(plan) {
     const signal = controller?.signal;
     if (!signal || signal.aborted) return;
-    const confirmed = await confirmDialog({title: `Delete ${plan.name}?`, message: 'This removes the schedule. It will not delete any saved backups or task history. A plan with a queued or running task cannot be deleted; wait for that task to finish.', confirm: 'Delete plan', danger: true});
+    const confirmed = await confirmDialog({title: t('data.plan.deleteTitle', {name: plan.name}), message: t('data.plan.deleteMessage'), confirm: t('data.plan.deleteConfirm'), danger: true});
     if (!confirmed || signal.aborted) return;
     try {
       await api(`/backup-plans/${encodeURIComponent(plan.id)}`, {method: 'DELETE', signal});
       if (!signal.aborted) { planPage = 0; planCursors = [null]; await loadPlans(); }
     } catch (error) {
       if (signal.aborted) return;
-      if (error.code === 'backup_plan_busy') error.message = 'This plan has a queued or running task. Wait for it to finish before deleting the plan.';
       toastError(error);
     }
   }
@@ -281,49 +283,49 @@ function backupPlanDialog(plan, {signal, onSaved}) {
   let previewEpoch = 0;
   let controls;
   const dialog = formDialog({
-    title: plan ? `Edit ${plan.name}` : 'Add backup plan',
-    intro: 'Schedules use the Server timezone. Saved archives have independent passwords; save each recovery credential before its 90-day record expires. Deleting a plan does not delete its saved archives.',
-    submit: plan ? 'Save plan' : 'Add plan',
+    title: plan ? t('data.plan.editTitle', {name: plan.name}) : t('data.plan.addTitle'),
+    intro: t('data.plan.intro'),
+    submit: t(plan ? 'data.plan.save' : 'data.plan.add'),
     build: (form) => {
       form.classList.add('data-plan-form');
       const destination = plan?.destination || {};
       const name = input({name: 'name', required: true, value: plan?.name || '', autocomplete: 'off'});
-      validateBytes(name, 1, 100, 'Plan name');
-      const kind = select([['local', 'Local directory'], ['object', 'Object storage']], plan?.kind || 'local', {name: 'kind', disabled: Boolean(plan)});
-      const enabled = checkField('Enabled', 'enabled', plan?.enabled || false, 'New plans are disabled by default. Enabling starts at the next Cron occurrence, not immediately.');
+      validateBytes(name, 1, 100, t('data.plan.name'));
+      const kind = select([['local', t('data.plan.localDirectory')], ['object', t('data.plan.objectStorage')]], plan?.kind || 'local', {name: 'kind', disabled: Boolean(plan)});
+      const enabled = checkField(t('data.plan.enabled'), 'enabled', plan?.enabled || false, t('data.plan.enabledHint'));
       const categories = categoriesField(plan?.categories);
       const cron = input({name: 'cron', value: plan?.cron || '0 3 * * *', required: true, autocomplete: 'off', spellcheck: false});
-      const preview = h('div', {class: 'data-cron-preview', role: 'status'}, 'Checking the next three Server-local runs…');
+      const preview = h('div', {class: 'data-cron-preview', role: 'status'}, t('data.preview.initial'));
       const path = input({name: 'path', 'data-field': 'destination.path', value: destination.path || '', required: true, placeholder: '/var/lib/orbitbeacon/backups', autocomplete: 'off'});
       const retain = input({name: 'retain_count', type: 'number', min: 1, max: 1000, step: 1, value: plan?.retain_count ?? 7, required: true});
-      const local = h('fieldset', {class: 'data-destination'}, h('legend', null, 'Local destination'),
-        field('Directory', path, {hint: 'Must already exist, be owned by the Server user, have mode 0700 and contain no symlinks. The Server does not change permissions. For paths outside the data directory, configure a systemd ReadWritePaths drop-in or a writable Docker volume.'}),
-        field('Archives to retain', retain, {hint: '1–1000. Only this plan’s own oldest archives are removed after a successful backup.'}));
-      const provider = select(PROVIDERS, destination.provider || 's3_compatible', {name: 'provider', 'data-field': 'destination.provider'});
+      const local = h('fieldset', {class: 'data-destination'}, h('legend', null, t('data.plan.localDestination')),
+        field(t('data.plan.directory'), path, {hint: t('data.plan.directoryHint')}),
+        field(t('data.plan.retain'), retain, {hint: t('data.plan.retainHint')}));
+      const provider = select(PROVIDERS.map(([value, key]) => [value, t(key)]), destination.provider || 's3_compatible', {name: 'provider', 'data-field': 'destination.provider'});
       const endpoint = input({name: 'endpoint', 'data-field': 'destination.endpoint', value: destination.endpoint || '', type: 'url', required: true, autocomplete: 'off'});
       const region = input({name: 'region', 'data-field': 'destination.region', value: destination.region || '', required: true, autocomplete: 'off'});
       const bucket = input({name: 'bucket', 'data-field': 'destination.bucket', value: destination.bucket || '', required: true, autocomplete: 'off'});
       const prefix = input({name: 'prefix', 'data-field': 'destination.prefix', value: destination.prefix || '', autocomplete: 'off'});
-      const pathStyle = checkField('Path-style addressing', 'path_style', destination.path_style ?? true, 'S3 compatible supports either style. R2 requires path-style; COS, OSS and AWS S3 use virtual-host addressing.');
-      const replace = checkField('Replace stored credentials', 'replace_credentials', !plan, 'Stored keys are never displayed. Leave unchecked to keep them. A replacement must include both keys; an omitted session token clears the old token.');
+      const pathStyle = checkField(t('data.plan.pathStyle'), 'path_style', destination.path_style ?? true, t('data.plan.pathStyleHint'));
+      const replace = checkField(t('data.plan.replaceCredentials'), 'replace_credentials', !plan, t('data.plan.replaceCredentialsHint'));
       const keyID = input({name: 'access_key_id', 'data-field': 'credentials.access_key_id', autocomplete: 'off', spellcheck: false});
       const secret = input({name: 'secret_access_key', 'data-field': 'credentials.secret_access_key', type: 'password', autocomplete: 'new-password'});
       const token = input({name: 'session_token', 'data-field': 'credentials.session_token', type: 'password', autocomplete: 'new-password'});
-      const credentialFields = h('fieldset', {class: 'data-destination'}, h('legend', null, 'Replacement credentials'),
-        field('Access key ID', keyID), field('Secret access key', secret), field('Session token (optional)', token));
-      const credentialsNote = h('p', {class: 'hint'}, plan ? `Stored credentials: ${plan.credentials_set ? 'set' : 'not set'}. Session token: ${plan.session_token_set ? 'set' : 'not set'}.` : 'New object-storage plans require complete credentials.');
-      const allowPrivate = checkField('Allow private networks', 'allow_private_networks', destination.allow_private_networks || false, 'Explicitly allow private destination addresses. Loopback, link-local and metadata endpoints are still blocked. HTTPS certificate validation remains required.');
+      const credentialFields = h('fieldset', {class: 'data-destination'}, h('legend', null, t('data.plan.replacementCredentials')),
+        field(t('data.plan.keyID'), keyID), field(t('data.plan.secretKey'), secret), field(t('data.plan.sessionToken'), token));
+      const credentialsNote = h('p', {class: 'hint'}, plan ? t('data.plan.credentialsStatus', {credentials: t(plan.credentials_set ? 'data.plan.set' : 'data.plan.notSet'), token: t(plan.session_token_set ? 'data.plan.set' : 'data.plan.notSet')}) : t('data.plan.credentialsRequired'));
+      const allowPrivate = checkField(t('data.plan.allowPrivate'), 'allow_private_networks', destination.allow_private_networks || false, t('data.plan.allowPrivateHint'));
       const providerHint = h('p', {class: 'hint'});
-      const recommendation = button('Use recommended endpoint', {onClick: () => {
+      const recommendation = button(t('data.plan.useEndpoint'), {onClick: () => {
         const suggested = suggestedEndpoint(provider.value, region.value.trim());
         if (suggested) { endpoint.value = suggested; endpoint.dispatchEvent(new Event('input', {bubbles: true})); }
       }});
-      const remote = h('fieldset', {class: 'data-destination'}, h('legend', null, 'Object-storage destination'),
-        field('Provider', provider), field('HTTPS endpoint', endpoint, {hint: 'Origin only: no path, user information, query or fragment.'}),
+      const remote = h('fieldset', {class: 'data-destination'}, h('legend', null, t('data.plan.remoteDestination')),
+        field(t('data.plan.provider'), provider), field(t('data.plan.endpoint'), endpoint, {hint: t('data.plan.endpointHint')}),
         h('div', {class: 'data-endpoint-help'}, providerHint, recommendation),
-        field('Region', region), field('Bucket', bucket), field('Prefix (optional)', prefix, {hint: 'Relative slash-separated path; no empty components, dot segments or backslashes.'}),
+        field(t('data.plan.region'), region), field(t('data.plan.bucket'), bucket), field(t('data.plan.prefix'), prefix, {hint: t('data.plan.prefixHint')}),
         pathStyle.element, credentialsNote, replace.element, credentialFields, allowPrivate.element,
-        h('p', {class: 'hint'}, 'Remote archives are retained by your cloud lifecycle policy. Passwords are never uploaded with archives. OSS custom domains must already be bucket-bound and correctly configured for TLS.'));
+        h('p', {class: 'hint'}, t('data.plan.remoteHint')));
       const updateCredentials = () => {
         const providerChanged = Boolean(plan && provider.value !== destination.provider);
         if (providerChanged) replace.control.checked = true;
@@ -345,7 +347,7 @@ function backupPlanDialog(plan, {signal, onSaved}) {
         const suggested = suggestedEndpoint(value, region.value.trim());
         recommendation.hidden = !['cos', 'oss', 's3'].includes(value);
         recommendation.disabled = !suggested;
-        providerHint.textContent = value === 'r2' ? 'Enter your account-specific R2 endpoint. Region is auto.' : suggested ? `Recommended: ${suggested}. Custom values are not replaced automatically.` : value === 's3_compatible' ? 'Enter your service’s HTTPS endpoint and signing region.' : 'Enter a region to see the recommended endpoint. COS buckets include the APPID.';
+        providerHint.textContent = value === 'r2' ? t('data.provider.r2Hint') : suggested ? t('data.provider.recommended', {endpoint: suggested}) : t(value === 's3_compatible' ? 'data.provider.compatibleHint' : 'data.provider.regionHint');
         if (changed && plan && value !== destination.provider) replace.control.checked = true;
         updateCredentials();
       };
@@ -364,32 +366,32 @@ function backupPlanDialog(plan, {signal, onSaved}) {
         const previewSignal = previewController.signal;
         const cancel = () => previewController?.abort();
         controller.signal.addEventListener('abort', cancel, {once: true});
-        preview.textContent = 'Checking schedule…';
+        preview.textContent = t('data.preview.checking');
         try {
           const result = await api('/backup-plans/preview', {method: 'POST', body: {cron: cron.value}, signal: previewSignal});
           if (controller.signal.aborted || previewSignal.aborted || epoch !== previewEpoch) return;
           cron.showError('');
-          preview.replaceChildren(h('p', null, `Server timezone: ${timezoneText(result)}`), h('ol', null, result.next_runs.map((run) => h('li', null, localRun(run)))));
+          preview.replaceChildren(h('p', null, t('data.timezone.label', {timezone: timezoneText(result)})), h('ol', null, result.next_runs.map((run) => h('li', null, localRun(run)))));
         } catch (error) {
           if (controller.signal.aborted || previewSignal.aborted || epoch !== previewEpoch) return;
-          const message = error.fields?.cron;
-          if (message) cron.showError(message);
-          preview.textContent = message ? 'No preview: correct the Cron expression. Saving is always validated by the Server.' : `Schedule preview unavailable. ${error.message} Saving is still validated by the Server.`;
+          const reason = error.fields?.cron;
+          if (reason) cron.showError(fieldErrorText(reason));
+          preview.textContent = reason ? t('data.preview.invalid') : t('data.preview.unavailable', {error: errorText(error)});
         } finally { controller.signal.removeEventListener('abort', cancel); }
       };
       cron.addEventListener('input', () => {
         clearTimeout(previewTimer);
         previewEpoch += 1;
         previewController?.abort();
-        preview.textContent = 'Waiting to check schedule…';
+        preview.textContent = t('data.preview.waiting');
         previewTimer = setTimeout(previewCron, 500);
       });
       provider.addEventListener('change', () => updateProvider(true));
       region.addEventListener('input', () => updateProvider());
       kind.addEventListener('change', updateKind);
       replace.control.addEventListener('change', updateCredentials);
-      form.append(field('Name', name), field('Destination kind', kind, {hint: plan ? 'Destination kind cannot be changed after creation.' : undefined}), enabled.element, categories.element,
-        field('Cron', cron, {hint: 'Five fields: minute hour day-of-month month day-of-week. Default: 0 3 * * * (03:00 Server time). No seconds, TZ prefixes or @ shortcuts.'}), preview, local, remote);
+      form.append(field(t('data.plan.name'), name), field(t('data.plan.destinationKind'), kind, {hint: plan ? t('data.plan.kindHint') : undefined}), enabled.element, categories.element,
+        field(t('data.plan.cron'), cron, {hint: t('data.plan.cronHint')}), preview, local, remote);
       controls = {name, kind, enabled: enabled.control, categories, cron, path, retain, provider, endpoint, region, bucket, prefix, pathStyle: pathStyle.control, replace: replace.control, keyID, secret, token, allowPrivate: allowPrivate.control};
       updateProvider();
       updateKind();
@@ -410,7 +412,6 @@ function backupPlanDialog(plan, {signal, onSaved}) {
         await api(plan ? `/backup-plans/${encodeURIComponent(plan.id)}` : '/backup-plans', {method: plan ? 'PATCH' : 'POST', body, signal: controller.signal});
         if (!controller.signal.aborted) await onSaved();
       } catch (error) {
-        if (error.code === 'backup_plan_busy') error.message = 'This plan has a queued or running task. Your edits are kept here. Wait for the task to finish, then save again; editing never cancels it.';
         if (error.fields?.destination) error.fields = {...error.fields, [c.kind.value === 'local' ? 'destination.path' : 'destination.endpoint']: error.fields.destination};
         if (error.fields?.credentials) error.fields = {...error.fields, 'credentials.access_key_id': error.fields.credentials};
         throw error;

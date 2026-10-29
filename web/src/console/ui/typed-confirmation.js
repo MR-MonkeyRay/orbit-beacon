@@ -1,4 +1,5 @@
 import {h} from '../../shared/dom.js';
+import {t} from '../../shared/i18n.js';
 import {button} from './components.js';
 import {modal} from './dialogs.js';
 import {field, input} from './forms.js';
@@ -13,8 +14,8 @@ export function typedConfirmation({title, message, expected, confirm}) {
       event.preventDefault();
       if (matchesConfirmation(entry.value, expected)) close('confirm');
     }},
-    h('div', {class: 'dialog-body stack'}, h('p', null, message), field(`Type ${expected} to confirm`, entry)),
-    h('div', {class: 'dialog-foot'}, button('Cancel', {onClick: () => close(), id: 'typed-confirm-cancel'}), submit));
+    h('div', {class: 'dialog-body stack'}, h('p', null, message), field(t('controls.confirmation.type', {expected}), entry)),
+    h('div', {class: 'dialog-foot'}, button(t('controls.cancel'), {onClick: () => close(), id: 'typed-confirm-cancel'}), submit));
   });
   return closed.then((value) => value === 'confirm');
 }

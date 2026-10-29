@@ -173,8 +173,8 @@ test('traffic panel shows an inline error and retry starts a fresh request', asy
   try {
     env.respond(env.requests[0], {message: 'Traffic service unavailable'}, 503);
     await flush();
-    assert.match(env.root.textContent, /Could not load traffic: Traffic service unavailable/);
-    const retry = elements(env.root).find((element) => element.tagName === 'button' && element.textContent === 'Retry');
+    assert.ok(env.root.querySelector('.history-error'));
+    const retry = env.root.querySelector('#traffic-retry');
     assert.ok(retry);
     retry.click();
     assert.equal(env.requests.length, 2);

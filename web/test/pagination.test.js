@@ -43,6 +43,6 @@ test('allNodes stops when a full page says there are no more nodes', async () =>
 test('continuations must be safe integers that move forward', () => {
   assert.equal(nextOffset({next_offset: 100}, 0), 100);
   for (const page of [{}, {next_offset: 0}, {next_offset: '100'}, {next_offset: 1.5}, {next_offset: 2 ** 60}]) {
-    assert.throws(() => nextOffset(page, 0), /invalid page offset/);
+    assert.throws(() => nextOffset(page, 0), (error) => error.code === 'unreadable_response');
   }
 });

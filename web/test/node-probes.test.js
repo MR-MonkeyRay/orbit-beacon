@@ -95,7 +95,7 @@ test('probe request failures render a working retry', async () => {
   try {
     env.respond(env.requests[0], {message: 'Service unavailable'}, 503);
     await flush();
-    assert.match(env.root.textContent, /Could not load service probes: Service unavailable/);
+    assert.ok(env.root.querySelector('.history-error'));
     env.root.querySelector('#probes-retry').click();
     assert.equal(env.requests.length, 2);
     env.respond(env.requests[1], {probes: []});

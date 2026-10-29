@@ -1,4 +1,5 @@
 import {h, reducedMotion} from '../../shared/dom.js';
+import {t} from '../../shared/i18n.js';
 import {onSession} from '../api.js';
 import {button, iconButton, uid} from './components.js';
 import {onSubmit} from './forms.js';
@@ -22,6 +23,8 @@ export function closeDialogs() {
 }
 
 export const dialogActionStale = () => activeActions.some((epoch) => epoch !== dialogEpoch);
+
+export const hasUnsavedDialogChanges = () => [...dialogs].some((entry) => entry.dirty());
 
 // Native modal <dialog> with enter/exit animation, Escape and backdrop close.
 // Resolves `closed` with the return value once the dialog is gone.
@@ -53,10 +56,11 @@ export function modal(title, build) {
     dialog.addEventListener('animationend', () => finish(value), {once: true});
     timer = setTimeout(() => finish(value), 260);
   };
-  const entry = {opener, cancel: () => finish('cancel')};
+  const entry = {opener, cancel: () => finish('cancel'), dirty: () => snapshot() !== initial};
   let initial;
   const snapshot = () => JSON.stringify([...dialog.querySelectorAll('input,select,textarea,[data-tags]')]
-    .map((control) => control.dataset.tags !== undefined ? control.getValue() : ['checkbox', 'radio'].includes(control.type) ? control.checked : control.value));
+    .map((control) => control.dataset.tags !== undefined ? control.getValue() : control.multiple ? [...control.selectedOptions].map((option) => option.value)
+      : ['checkbox', 'radio'].includes(control.type) ? control.checked : control.value));
   const dismiss = async () => {
     if (finished || confirming || dialog.querySelector('button.busy')) return;
     if (snapshot() !== initial) {
@@ -73,7 +77,7 @@ export function modal(title, build) {
   dialog.addEventListener('pointerdown', (event) => { pressedBackdrop = event.target === dialog; });
   dialog.addEventListener('click', (event) => { if (event.target === dialog && pressedBackdrop) dismiss(); });
   dialog.addEventListener('close', () => finish(dialog.returnValue));
-  dialog.append(h('div', {class: 'dialog-head'}, h('h2', {id: titleID}, title), iconButton('x', 'Close dialog', () => close())), build(close));
+  dialog.append(h('div', {class: 'dialog-head'}, h('h2', {id: titleID}, title), iconButton('x', t('controls.dialog.close'), () => close())), build(close));
   initial = snapshot();
   dialogs.add(entry);
   document.body.append(dialog);
@@ -87,13 +91,13 @@ export function confirmDialog({title, message, confirm, danger = false}) {
   const {closed} = modal(title, (close) => h('div', null,
     h('div', {class: 'dialog-body'}, h('p', null, message)),
     h('div', {class: 'dialog-foot'},
-      h('button', {type: 'button', class: 'btn', onclick: () => close(), dataset: {autofocus: ''}}, 'Cancel'),
+      h('button', {type: 'button', class: 'btn', onclick: () => close(), dataset: {autofocus: ''}}, t('controls.cancel')),
       button(confirm, {variant: danger ? 'danger' : 'primary', className: danger ? 'solid' : '', onClick: () => close('confirm')}))));
   return closed.then((value) => value === 'confirm');
 }
 
 export const confirmDiscard = () => confirmDialog({
-  title: 'Discard unsaved changes?', message: 'You have edits here that have not been saved.', confirm: 'Discard changes', danger: true
+  title: t('controls.discard.title'), message: t('controls.discard.message'), confirm: t('controls.discard'), danger: true
 });
 
 // Form in a dialog. build(form) adds fields; action(form) runs on submit and the
@@ -105,7 +109,7 @@ export function formDialog({title, intro, submit, build, action}) {
     const submitButton = button(submit, {type: 'submit', variant: 'primary'});
     form.append(errorBox);
     build(form);
-    form.append(h('div', {class: 'dialog-foot'}, button('Cancel', {onClick: () => close()}), submitButton));
+    form.append(h('div', {class: 'dialog-foot'}, button(t('controls.cancel'), {onClick: () => close()}), submitButton));
     onSubmit(form, submitButton, async () => {
       const epoch = dialogEpoch;
       activeActions.push(epoch);

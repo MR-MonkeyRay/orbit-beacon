@@ -1,6 +1,6 @@
 import {timestampMillis} from '../shared/freshness.js';
 import {connectLive} from '../shared/live.js';
-import {api, calibrateSessionClock, getNavigationSignal, getSessionEpoch, getSessionSignal, invalidateSession, pauseSessionVerification, session, verifySession} from './api.js';
+import {api, ApiError, calibrateSessionClock, getNavigationSignal, getSessionEpoch, getSessionSignal, invalidateSession, pauseSessionVerification, session, verifySession} from './api.js';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -48,7 +48,7 @@ export async function readConsoleFleet(signal) {
   const frame = await api('/live', {signal});
   if (!record(frame) || frame.type !== 'snapshot' || !time(frame.server_time)
     || !Number.isInteger(frame.update_interval_seconds) || frame.update_interval_seconds < 2 || frame.update_interval_seconds > 60
-    || !validSnapshot(frame.data)) throw new Error('The server returned an invalid fleet snapshot.');
+    || !validSnapshot(frame.data)) throw new ApiError(200, {code: 'unreadable_response'});
   calibrateSessionClock(frame.server_time);
   if (epoch !== getSessionEpoch() || signal?.aborted) throw new DOMException('The session has changed.', 'AbortError');
   return frame.data;

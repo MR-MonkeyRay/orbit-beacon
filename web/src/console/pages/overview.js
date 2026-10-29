@@ -1,3 +1,5 @@
+import {t} from '../../shared/i18n.js';
+import {errorText} from '../../shared/errors.js';
 import {h, icon} from '../../shared/dom.js';
 import {allNodes, api, ensureSession, getNavigationSignal, groupsList, invalidate, nameLookup, usersList} from '../api.js';
 import {absoluteWhen, STATUS, STATUS_ORDER} from '../format.js';
@@ -22,13 +24,13 @@ function fleetPanel(nodes) {
     return [status, {segment, count, entry}];
   }));
   const content = h('div', null, h('div', {class: 'fleet-total'}, total, label), bar, legend);
-  const empty = emptyState('No nodes yet', 'Add a node, then enroll its agent with a credential from the management API.', addNodeButton());
-  const element = panel('Fleet', {}, content, empty);
+  const empty = emptyState(t('nodes.empty'), t('nodes.emptyIntro'), addNodeButton());
+  const element = panel(t('nodes.fleet'), {}, content, empty);
   element.snapshot = (current) => {
     const counts = Object.fromEntries(states.map((status) => [status, 0]));
     for (const node of current) counts[node.presence] = (counts[node.presence] || 0) + 1;
     total.textContent = current.length;
-    label.textContent = current.length === 1 ? 'node in inventory' : 'nodes in inventory';
+    label.textContent = t('nodes.inventoryCount', {count: current.length});
     content.hidden = current.length === 0;
     empty.hidden = current.length !== 0;
     const description = [];
@@ -48,9 +50,9 @@ function fleetPanel(nodes) {
 
 function newestPanel(nodes, groupNames) {
   const list = h('ul', {class: 'rows'});
-  const empty = h('p', {class: 'muted'}, 'Nodes you add appear here.');
+  const empty = h('p', {class: 'muted'}, t('nodes.newestEmpty'));
   const refs = new Map();
-  const element = panel('Newest nodes', {action: link('/nodes', 'All nodes')}, list, empty);
+  const element = panel(t('nodes.newest'), {action: link('/nodes', t('nodes.allNodes'))}, list, empty);
   element.reload = (current, snapshot = current) => {
     refs.clear();
     const newest = [...current].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 6);
@@ -61,7 +63,7 @@ function newestPanel(nodes, groupNames) {
       refs.set(node.id, {name, seen, badge});
       return h('li', null,
         h('div', {class: 'grow'}, h('div', {class: 'title'}, name), h('div', {class: 'sub'},
-          node.group_id ? groupNames.get(node.group_id) || 'Unknown group' : 'Ungrouped', seen)), badge);
+          node.group_id ? groupNames.get(node.group_id) || t('nodes.unknownGroup') : t('nodes.ungrouped'), seen)), badge);
     }));
     list.hidden = newest.length === 0;
     empty.hidden = newest.length !== 0;
@@ -77,7 +79,7 @@ function newestPanel(nodes, groupNames) {
         delete name.dataset.link;
         name.setAttribute('aria-disabled', 'true');
         name.setAttribute('tabindex', '-1');
-      } else seen.replaceChildren(...(node.last_seen ? [', last seen ', absoluteWhen(node.last_seen)] : [', never seen']));
+      } else seen.replaceChildren(...(node.last_seen ? [t('nodes.lastSeenPrefix'), absoluteWhen(node.last_seen)] : [t('nodes.neverSeenSuffix')]));
     }
   };
   element.reload(nodes);
@@ -92,9 +94,9 @@ function groupsPanel(nodes, groups) {
   const row = (label, size, href, index) => h('div', {class: 'meter-row'},
     link(href, label), h('span', {class: 'num muted'}, size),
     h('div', {class: 'bar'}, h('i', {style: `width:${size / max * 100}%;animation-delay:${index * 50}ms`})));
-  return panel('Groups', {action: link('/settings#groups', 'Manage groups')},
+  return panel(t('nodes.groups'), {action: link('/settings#groups', t('nodes.manageGroups'))},
     sizes.map(([group, size], index) => row(group.name, size, `/nodes?group=${group.id}`, index)),
-    row('Ungrouped', ungrouped, '/nodes?group=none', sizes.length));
+    row(t('nodes.ungrouped'), ungrouped, '/nodes?group=none', sizes.length));
 }
 
 export async function overviewPage() {
@@ -106,9 +108,9 @@ export async function overviewPage() {
       return {error};
     })]);
   const names = nameLookup(nodes, users, groups);
-  const activity = panel('Recent activity', {action: link('/settings#audit', 'Audit log')},
+  const activity = panel(t('nodes.recentActivity'), {action: link('/settings#audit', t('nodes.auditLog'))},
     audit.events.length ? h('ol', {class: 'timeline'}, audit.events.map((event) => auditItem(event, names, false)))
-      : h('p', {class: 'muted'}, 'Console changes are recorded here.'));
+      : h('p', {class: 'muted'}, t('nodes.activityEmpty')));
   const connection = liveStatus();
   const fleet = fleetPanel(nodes);
   const newest = newestPanel(nodes, new Map(groups.map((group) => [group.id, group.name])));
@@ -120,7 +122,7 @@ export async function overviewPage() {
     const ids = new Set(current.map((node) => node.id));
     inventoryNotice.hidden = ids.size === known.size && [...ids].every((id) => known.has(id));
   };
-  const refreshNodes = button('Refresh list', {small: true, onClick: async () => {
+  const refreshNodes = button(t('nodes.refreshList'), {small: true, onClick: async () => {
     if (refreshNodes.disabled) return;
     busy(refreshNodes, true);
     const previousIDs = new Set(currentFleet.map((node) => node.id));
@@ -147,11 +149,11 @@ export async function overviewPage() {
       if (!signal?.aborted) live = subscribe();
     }
   }});
-  const inventoryNotice = h('div', {class: 'table-foot live-change', hidden: true, 'aria-live': 'polite'}, 'Inventory changed. ', refreshNodes);
+  const inventoryNotice = h('div', {class: 'table-foot live-change', hidden: true, 'aria-live': 'polite'}, t('nodes.inventoryChanged'), refreshNodes);
   const root = h('div', null,
-    pageHead('Overview', 'Fleet inventory and the latest console activity.', connection.element, addNodeButton(), h('a', {class: 'btn', href: '/'}, icon('external'), 'Open public page')),
+    pageHead(t('nodes.overview'), t('nodes.overviewIntro'), connection.element, addNodeButton(), h('a', {class: 'btn', href: '/'}, icon('external'), t('nodes.openPublic'))),
     fleet,
-    alerts.error ? panel('Active alerts', {action: link('/alerts', 'View alerts')}, h('p', {role: 'status', class: 'muted'}, `Could not load alerts: ${alerts.error.message}`)) : activeAlertsSummary(alerts.summary),
+    alerts.error ? panel(t('nodes.activeAlerts'), {action: link('/alerts', t('nodes.viewAlerts'))}, h('p', {role: 'status', class: 'muted'}, t('nodes.alertsLoadError', {error: errorText(alerts.error)}))) : activeAlertsSummary(alerts.summary),
     h('div', {class: 'grid-2'}, newest, activity), inventoryNotice,
     groupsPanel(nodes, groups));
   const subscribe = () => connectConsoleLive({signal, onState: connection.update, onSnapshot(data) {

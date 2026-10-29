@@ -1,3 +1,5 @@
+import {t} from '../../shared/i18n.js';
+import {errorText} from '../../shared/errors.js';
 import {h} from '../../shared/dom.js';
 import {api} from '../api.js';
 import {chart} from '../ui/chart.js';
@@ -7,10 +9,10 @@ const STORAGE_KEY = 'orbitbeacon.history.range';
 const RANGES = ['1h', '6h', '24h', '7d', '30d'];
 const CHARTS = [
   {title: 'CPU', unit: 'percent', metrics: [['cpu_percent', 'CPU']]},
-  {title: 'Memory', unit: 'percent', metrics: [['memory_used_percent', 'Memory']]},
-  {title: 'Load (1 min)', unit: 'load', metrics: [['load1', 'Load']]},
-  {title: 'Disk', unit: 'percent', metrics: [['disk_used_percent', 'Disk']]},
-  {title: 'Network', unit: 'bytes_per_second', metrics: [['net_rx_bytes_per_second', 'Receive (rx)'], ['net_tx_bytes_per_second', 'Send (tx)']]}
+  {title: t('nodes.memory'), unit: 'percent', metrics: [['memory_used_percent', t('nodes.memory')]]},
+  {title: t('nodes.load1'), unit: 'load', metrics: [['load1', t('nodes.load')]]},
+  {title: t('nodes.disk'), unit: 'percent', metrics: [['disk_used_percent', t('nodes.disk')]]},
+  {title: t('nodes.network'), unit: 'bytes_per_second', metrics: [['net_rx_bytes_per_second', t('nodes.receiveRx')], ['net_tx_bytes_per_second', t('nodes.sendTx')]]}
 ];
 
 function savedRange() {
@@ -30,18 +32,18 @@ export function historyPanel(id, signal) {
   let timer;
   const status = h('p', {class: 'muted', role: 'status'});
   const charts = h('div', {class: 'history-grid'});
-  const controls = RANGES.map((value) => h('button', {type: 'button', id: `history-range-${value}`,
+  const controls = RANGES.map((value) => h('button', {type: 'button', id: `history-range-${value}`, dataset: {range: value},
     'aria-pressed': String(value === range), onclick: () => {
       if (range === value) return;
       range = value;
       try { localStorage.setItem(STORAGE_KEY, range); } catch {}
-      for (const control of controls) control.setAttribute('aria-pressed', String(control.textContent === range));
+      for (const control of controls) control.setAttribute('aria-pressed', String(control.dataset.range === range));
       load();
-    }}, value));
-  const selector = h('div', {class: 'segmented', role: 'group', 'aria-label': 'History range'}, controls);
-  const root = panel('History', {action: selector},
-    h('p', {class: 'lede'}, 'Average values with bucket maxima. Times are local; gaps mean no samples were recorded.'),
-    status, charts, note('History is best effort and starts after the agent reports. Visible history refreshes every 60 seconds.'));
+    }}, t(value.endsWith('h') ? 'nodes.range.hours' : 'nodes.range.days', {count: Number.parseInt(value, 10)})));
+  const selector = h('div', {class: 'segmented', role: 'group', 'aria-label': t('nodes.historyRange')}, controls);
+  const root = panel(t('nodes.history'), {action: selector},
+    h('p', {class: 'lede'}, t('nodes.historyIntro')),
+    status, charts, note(t('nodes.historyHint')));
   const stop = () => { controller?.abort(); clearInterval(timer); timer = undefined; };
   const dispose = () => {
     gone = true;
@@ -68,7 +70,7 @@ export function historyPanel(id, signal) {
     const request = new AbortController();
     controller = request;
     const requestedRange = range;
-    status.textContent = 'Loading history…';
+    status.textContent = t('nodes.historyLoading');
     charts.setAttribute('aria-busy', 'true');
     // Clear charts when the selected range changes so stale data cannot be
     // mistaken for the new range. Refreshes keep focused charts while loading.
@@ -79,7 +81,7 @@ export function historyPanel(id, signal) {
     await Promise.all(metrics.map(async (metric) => {
       try {
         const data = await api(`/nodes/${encodeURIComponent(id)}/history?metric=${metric}&range=${requestedRange}`, {signal: request.signal});
-        if (data.unit !== CHARTS.find((item) => item.metrics.some(([name]) => name === metric)).unit) throw new Error('The server returned an unsupported history unit.');
+        if (data.unit !== CHARTS.find((item) => item.metrics.some(([name]) => name === metric)).unit) throw Object.assign(new Error('Unsupported history unit'), {code: 'unreadable_response'});
         results.set(metric, {data});
       } catch (error) {
         results.set(metric, {error});
@@ -88,7 +90,7 @@ export function historyPanel(id, signal) {
           selector.hidden = true;
           charts.replaceChildren();
           charts.setAttribute('aria-busy', 'false');
-          status.replaceChildren('This node no longer exists. ', link('/nodes', 'Go to nodes'));
+          status.replaceChildren(t('nodes.nodeMissingPrefix'), link('/nodes', t('nodes.goNodes')));
         }
       }
     }));
@@ -99,8 +101,8 @@ export function historyPanel(id, signal) {
     charts.replaceChildren(...CHARTS.map((item) => {
       const error = item.metrics.map(([metric]) => results.get(metric).error).find(Boolean);
       const content = error
-        ? h('div', {class: 'history-error'}, h('p', {class: 'muted'}, `Could not load history: ${error.message}`),
-          button('Retry', {small: true, id: `history-retry-${item.metrics[0][0]}`, onClick: load}))
+        ? h('div', {class: 'history-error'}, h('p', {class: 'muted'}, t('nodes.historyLoadError', {error: errorText(error)})),
+          button(t('nodes.retry'), {small: true, id: `history-retry-${item.metrics[0][0]}`, onClick: load}))
         : chart({title: item.title, unit: item.unit, id: `history-chart-${item.metrics[0][0]}`,
           selectedTime: focusedID === `history-chart-${item.metrics[0][0]}` ? selectedTime : undefined,
           series: item.metrics.map(([metric, label]) => {
@@ -110,11 +112,11 @@ export function historyPanel(id, signal) {
               && Number.isFinite(point.avg) && Number.isFinite(point.max)) : [];
             return {label, points, stepSeconds: Number.isFinite(data.step_seconds) && data.step_seconds > 0 ? data.step_seconds : 60};
           })});
-      return h('section', {class: 'history-metric', 'aria-label': `${item.title} history`}, h('h3', null, item.title), content);
+      return h('section', {class: 'history-metric', 'aria-label': t('nodes.historyAria', {title: item.title})}, h('h3', null, item.title), content);
     }));
     charts.setAttribute('aria-busy', 'false');
     const failures = [...results.values()].filter((result) => result.error).length;
-    status.textContent = failures ? 'Some history could not load. Retry below.' : '';
+    status.textContent = failures ? t('nodes.historyPartial') : '';
     if (focusedID) {
       const target = document.getElementById(focusedID);
       if (target && root.contains(target)) target.focus({preventScroll: true});

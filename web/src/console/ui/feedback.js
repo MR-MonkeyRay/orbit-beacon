@@ -1,4 +1,6 @@
 import {h, icon} from '../../shared/dom.js';
+import {t} from '../../shared/i18n.js';
+import {errorText} from '../../shared/errors.js';
 
 export function toast(message, options = {}) {
   const toasts = document.getElementById('toasts');
@@ -13,7 +15,7 @@ export function toast(message, options = {}) {
   };
   item.append(icon(options.error ? 'alert' : 'check'),
     h('p', null, message, options.detail ? h('small', null, options.detail) : null),
-    h('button', {type: 'button', 'aria-label': 'Dismiss notification', onclick: dismiss}, icon('x')));
+    h('button', {type: 'button', 'aria-label': t('controls.notification.dismiss'), onclick: dismiss}, icon('x')));
   toasts.append(item);
   while (toasts.children.length > 4) toasts.firstElementChild.remove();
   timer = setTimeout(dismiss, options.error ? 9000 : 4500);
@@ -24,7 +26,7 @@ export function toastError(error) {
   // unauthenticated response already cleared private UI at the central boundary;
   // its initiating action must not recreate a stale toast on the login page.
   if (error.name === 'AbortError' || error.status === 401 && error.code === 'unauthenticated') return;
-  toast(error.message, {error: true, detail: error.requestID ? `Request ${error.requestID}` : undefined});
+  toast(errorText(error), {error: true});
 }
 
 // Thin bar at the top of the viewport while a page loads.

@@ -1,35 +1,40 @@
 import {h, icon} from '../shared/dom.js';
 import {timestampMillis} from '../shared/freshness.js';
+import {getLocale, t} from '../shared/i18n.js';
 
-const reportFormat = new Intl.DateTimeFormat('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
+const reportFormat = new Intl.DateTimeFormat(getLocale(), {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
+const integerFormat = new Intl.NumberFormat(getLocale());
+const percentFormat = new Intl.NumberFormat(getLocale(), {style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1});
+const loadFormat = new Intl.NumberFormat(getLocale(), {useGrouping: false, minimumFractionDigits: 2, maximumFractionDigits: 2});
 
-export const STATUS = {online: '在线', offline: '离线', unknown: '状态未知'};
+export const STATUS = {online: t('public.status.online'), offline: t('public.status.offline'), unknown: t('public.status.unknown')};
 
 export function duration(seconds) {
   if (seconds === null) return '—';
   const minutes = Math.floor(seconds / 60);
   const days = Math.floor(minutes / 1440);
   const hours = Math.floor(minutes % 1440 / 60);
-  if (days) return `${days}天 ${hours}小时`;
-  if (hours) return `${hours}小时 ${minutes % 60}分钟`;
-  return `${minutes % 60}分钟`;
+  if (days) return t('public.duration.daysHours', {days: integerFormat.format(days), hours: integerFormat.format(hours)});
+  if (hours) return t('public.duration.hoursMinutes', {hours: integerFormat.format(hours), minutes: integerFormat.format(minutes % 60)});
+  return t('public.duration.minutes', {minutes: integerFormat.format(minutes % 60)});
 }
 
 function gauge(label) {
   const value = h('span', {class: 'gauge-value num'});
   const fill = h('span', {class: 'fill'});
   const track = h('span', {class: 'track', role: 'meter', 'aria-label': label, 'aria-valuemin': '0', 'aria-valuemax': '100'}, fill);
-  const element = h('div', {class: 'gauge'}, h('div', {class: 'gauge-line'}, h('span', null, label), value), track, h('span', {class: 'na'}, '暂无有效数据'));
+  const element = h('div', {class: 'gauge'}, h('div', {class: 'gauge-line'}, h('span', null, label), value), track, h('span', {class: 'na'}, t('public.metric.noData')));
   element.set = (percent) => {
     const missing = percent === null;
     element.classList.toggle('missing', missing);
-    value.textContent = missing ? '—' : `${percent.toFixed(1)}%`;
+    const display = missing ? '—' : percentFormat.format(Number(percent.toFixed(1)) / 100);
+    value.textContent = display;
     if (missing) {
       track.removeAttribute('aria-valuenow');
       return;
     }
     track.setAttribute('aria-valuenow', percent.toFixed(1));
-    track.setAttribute('aria-valuetext', `${percent.toFixed(1)}%`);
+    track.setAttribute('aria-valuetext', display);
     element.dataset.level = percent >= 90 ? 'critical' : percent >= 75 ? 'high' : 'normal';
     fill.style.setProperty('--v', String(percent / 100));
   };
@@ -44,8 +49,8 @@ export function createCard() {
   const region = h('span', null, icon('pin'), h('span'));
   const provider = h('span', null, icon('cloud'), h('span'));
   const where = h('p', {class: 'where'}, region, provider);
-  const cpu = gauge('CPU');
-  const memory = gauge('内存');
+  const cpu = gauge(t('public.metric.cpu'));
+  const memory = gauge(t('public.metric.memory'));
   const load = h('dd', {class: 'num'});
   const uptime = h('dd', {class: 'num'});
   const lastReport = h('p', {class: 'last-report', hidden: true});
@@ -64,7 +69,7 @@ export function createCard() {
   const article = h('article', {class: 'card'},
     h('header', {class: 'card-head'}, name, badge), where,
     h('div', {class: 'gauges'}, cpu, memory),
-    h('dl', {class: 'stats'}, h('div', null, h('dt', null, '1分钟负载'), load), h('div', null, h('dt', null, '运行时长'), uptime)), lastReport);
+    h('dl', {class: 'stats'}, h('div', null, h('dt', null, t('public.metric.load')), load), h('div', null, h('dt', null, t('public.metric.uptime')), uptime)), lastReport);
   const item = h('li', {class: 'node'}, article);
   article.addEventListener('animationend', (event) => {
     if (event.target === article && event.animationName === 'status-changed') article.classList.remove('changed');
@@ -89,11 +94,11 @@ export function createCard() {
     where.hidden = !node.region && !node.provider;
     cpu.set(node.cpu_percent);
     memory.set(node.memory_percent);
-    load.textContent = node.load1 === null ? '—' : node.load1.toFixed(2);
+    load.textContent = node.load1 === null ? '—' : loadFormat.format(Number(node.load1.toFixed(2)));
     uptime.textContent = duration(node.uptime_seconds);
     const received = timestampMillis(node.last_seen);
     lastReport.replaceChildren(...(Number.isFinite(received)
-      ? ['最后数据 · ', h('time', {datetime: node.last_seen, title: node.last_seen}, reportFormat.format(new Date(received)))] : []));
+      ? [t('public.lastReport'), h('time', {datetime: node.last_seen, title: node.last_seen}, reportFormat.format(new Date(received)))] : []));
     paintFreshness();
   };
   item.setStale = (stale = true) => { connectionStale = stale; paintFreshness(); };

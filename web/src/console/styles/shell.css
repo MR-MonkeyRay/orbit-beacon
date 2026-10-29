@@ -27,6 +27,9 @@
 .who-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .account-actions{display:flex;gap:6px}
 .account-actions .btn{flex:1}
+.console-locale{min-width:0}
+.console-locale select{width:100%;min-width:0;text-overflow:ellipsis}
+.account-locale{width:100%}
 .main{min-width:0;padding:34px clamp(18px,4vw,48px) 64px;outline:none;view-transition-name:main-view}
 .main>*{max-width:var(--content-max);margin-inline:auto}
 .noscript{padding:40px;text-align:center}

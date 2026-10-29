@@ -1,3 +1,4 @@
+import {t} from '../../shared/i18n.js';
 import {nextOffset} from '../api.js';
 
 // Keep token text out of URLs and quote it as one literal shell argument.
@@ -16,15 +17,15 @@ export function installerCommand(token, origin) {
 
 export function enrollmentCountdown(expiresAt, now = Date.now()) {
   const seconds = Math.max(0, Math.ceil((Date.parse(expiresAt) - now) / 1000));
-  if (!Number.isFinite(seconds) || seconds === 0) return 'Expired';
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')} remaining`;
+  if (!Number.isFinite(seconds) || seconds === 0) return t('nodes.enrollment.expired');
+  return t('nodes.enrollment.remaining', {time: `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`});
 }
 
 export function enrollmentState(ticket, now = Date.now()) {
-  if (ticket.revoked_at) return 'Revoked';
-  if (Date.parse(ticket.expires_at) <= now) return 'Expired';
-  if (ticket.uses >= ticket.max_uses) return 'Used';
-  return 'Active';
+  if (ticket.revoked_at) return t('nodes.enrollment.revoked');
+  if (Date.parse(ticket.expires_at) <= now) return t('nodes.enrollment.expired');
+  if (ticket.uses >= ticket.max_uses) return t('nodes.enrollment.used');
+  return t('nodes.enrollment.active');
 }
 
 // Filter after pagination: node_id is not a supported server query parameter.

@@ -1,4 +1,5 @@
 import {h, icon, svg} from '../../shared/dom.js';
+import {t} from '../../shared/i18n.js';
 import {STATUS} from '../format.js';
 
 // IDs restart on every page render, so a quiet refresh rebuilds the same IDs
@@ -24,6 +25,8 @@ export function busy(element, on) {
   element.classList.toggle('busy', on);
   element.setAttribute('aria-busy', String(on));
   element.disabled = on;
+  const form = element.form || element.closest?.('form');
+  if (form) form.dataset.busy = String(on);
 }
 
 export function panel(title, options = {}, ...body) {
@@ -40,29 +43,29 @@ export function pageHead(title, subtitle, ...actions) {
     actions.length ? h('div', {class: 'head-actions'}, actions) : null);
 }
 
-export const statusBadge = (status) => h('span', {class: `badge ${status}`}, status === 'deleted' ? 'Deleted' : STATUS[status] || status);
+export const statusBadge = (status) => h('span', {class: `badge ${status}`}, status === 'deleted' ? t('controls.deleted') : STATUS[status] || status);
 
 export function patchStatusBadge(element, status) {
   element.className = `badge ${status}`;
-  const label = status === 'deleted' ? 'Deleted' : STATUS[status] || status;
+  const label = status === 'deleted' ? t('controls.deleted') : STATUS[status] || status;
   if (element.textContent !== label) element.textContent = label;
 }
 
 // Transport names stay out of the UI. Only transitions update the live region.
 export function liveStatus() {
-  const element = h('span', {class: 'live-status', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true'}, 'Reconnecting…');
+  const element = h('span', {class: 'live-status', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true'}, t('controls.live.connecting'));
   let previous = 'connecting';
   return {element, update({state}) {
     if (state === previous) return;
     previous = state;
     element.dataset.state = state;
-    element.textContent = state === 'live' ? 'Live' : state === 'connecting' ? 'Reconnecting…' : 'Stale';
+    element.textContent = t(state === 'live' ? 'controls.live.live' : state === 'connecting' ? 'controls.live.connecting' : 'controls.live.stale');
   }};
 }
 
 export function facts(entries) {
   return h('dl', {class: 'facts'}, entries.map(([label, value]) => h('div', null, h('dt', null, label),
-    value === null || value === undefined || value === '' ? h('dd', {class: 'none'}, 'Not set') : h('dd', null, value))));
+    value === null || value === undefined || value === '' ? h('dd', {class: 'none'}, t('controls.notSet')) : h('dd', null, value))));
 }
 
 // Keep the list and its cells stable; callers patch readonly values, never forms.
@@ -79,7 +82,7 @@ export function readonlyFacts(entries = []) {
       }
       const empty = value === null || value === undefined || value === '';
       cell.className = empty ? 'none' : '';
-      const content = empty ? 'Not set' : value;
+      const content = empty ? t('controls.notSet') : value;
       if (content instanceof Node && cell.firstElementChild === content) continue;
       if (!(content instanceof Node) && !Array.isArray(content) && cell.textContent === String(content)) continue;
       cell.replaceChildren(...(Array.isArray(content) ? content : [content]));
@@ -109,7 +112,7 @@ export function emptyState(title, message, ...actions) {
 
 export function skeleton() {
   const line = (width) => h('div', {class: 'sk sk-line', style: `width:${width}%`});
-  return h('div', {'aria-busy': 'true', 'aria-label': 'Loading'},
+  return h('div', {'aria-busy': 'true', 'aria-label': t('controls.loading')},
     h('div', {class: 'sk sk-title'}), line(38),
     h('div', {class: 'grid-2'}, h('div', {class: 'sk sk-block'}), h('div', {class: 'sk sk-block'})),
     h('div', {class: 'sk sk-block', style: 'margin-top:18px;height:240px'}));

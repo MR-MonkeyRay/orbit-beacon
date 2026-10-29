@@ -1,3 +1,4 @@
+import {t} from '../../shared/i18n.js';
 import {h} from '../../shared/dom.js';
 import {api, invalidate} from '../api.js';
 import {go, refresh} from '../router.js';
@@ -34,30 +35,29 @@ export function lifecycleActions(node) {
   };
   let disabling;
   const element = h('div', {class: 'head-actions'},
-    action(node.status === 'disabled' ? 'Enable' : 'Disable', {}, () => {
+    action(node.status === 'disabled' ? t('nodes.enable') : t('nodes.disable'), {}, () => {
       disabling = node.status !== 'disabled';
-      const verb = disabling ? 'Disable' : 'Enable';
       return confirmDialog({
-        title: `${verb} ${node.name}?`, confirm: `${verb} node`, danger: disabling,
+        title: t(disabling ? 'nodes.disableTitle' : 'nodes.enableTitle', {name: node.name}), confirm: t(disabling ? 'nodes.disableNode' : 'nodes.enableNode'), danger: disabling,
         message: disabling
-          ? 'A disabled node’s agent is rejected with 403 node_disabled until the node is re-enabled. The asset and its credential are kept.'
-          : 'The agent will be accepted again with its existing credential.'
+          ? t('nodes.disableIntro')
+          : t('nodes.enableIntro')
       });
     }, async () => {
       const {results} = await api('/nodes/batch', {method: 'POST', body: {node_ids: [node.id], action: disabling ? 'disable' : 'enable'}});
       const result = results.find((item) => item.node_id === node.id);
-      if (result?.status !== 'succeeded') throw new Error(`${node.name}: ${result?.status || 'failed'} (${result?.error_code || 'missing_result'}).`);
-    }, async () => { await refresh(); toast(`${node.name} ${disabling ? 'disabled' : 'enabled'}.`); }),
-    action('Revoke agent credential', {variant: 'danger', className: 'btn-quiet'}, () => confirmDialog({
-      title: `Revoke ${node.name}’s agent credential?`, confirm: 'Revoke credential', danger: true,
-      message: 'The asset, metadata, traffic billing and public settings are kept. Last reported settings, system details and probe observations are cleared. The agent stops being accepted (401), and this node disappears from the public page. A new enrollment ticket is needed to enroll the agent again.'
-    }), () => api(`${path}/credential`, {method: 'DELETE'}), async () => { await refresh(); toast('Agent credential revoked. Issue a new enrollment ticket to enroll again.'); }),
-    action('Delete node', {variant: 'danger', className: 'btn-quiet'}, () => typedConfirmation({
-      title: `Delete ${node.name}?`, expected: node.name, confirm: 'Delete node',
-      message: 'This permanently deletes the asset and revokes its agent identity. This cannot be undone.'
-    }), () => api(`${path}?confirm=true`, {method: 'DELETE'}), async () => { await go('/nodes', {force: true}); toast(`Deleted ${node.name}.`); }));
+      if (result?.status !== 'succeeded') throw Object.assign(new Error('Node action failed'), {code: result?.error_code});
+    }, async () => { await refresh(); toast(t(disabling ? 'nodes.disabledDone' : 'nodes.enabledDone', {name: node.name})); }),
+    action(t('nodes.revokeCredential'), {variant: 'danger', className: 'btn-quiet'}, () => confirmDialog({
+      title: t('nodes.revokeTitle', {name: node.name}), confirm: t('nodes.revokeConfirm'), danger: true,
+      message: t('nodes.revokeIntro')
+    }), () => api(`${path}/credential`, {method: 'DELETE'}), async () => { await refresh(); toast(t('nodes.revokeDone')); }),
+    action(t('nodes.deleteNode'), {variant: 'danger', className: 'btn-quiet'}, () => typedConfirmation({
+      title: t('nodes.deleteTitle', {name: node.name}), expected: node.name, confirm: t('nodes.deleteNode'),
+      message: t('nodes.deleteNodeIntro')
+    }), () => api(`${path}?confirm=true`, {method: 'DELETE'}), async () => { await go('/nodes', {force: true}); toast(t('nodes.deletedDone', {name: node.name})); }));
   element.snapshot = () => {
-    actions[0].textContent = node.status === 'disabled' ? 'Enable' : 'Disable';
+    actions[0].textContent = node.status === 'disabled' ? t('nodes.enable') : t('nodes.disable');
     if (node.deleted) actions.forEach((control) => { control.disabled = true; });
   };
   return element;

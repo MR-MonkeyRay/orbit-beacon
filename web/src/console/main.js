@@ -1,4 +1,5 @@
 import './styles/index.css';
+import {getLocale, t} from '../shared/i18n.js';
 import {startRouter} from './router.js';
 import {initShell} from './shell.js';
 import {alertsPage} from './pages/alerts.js';
@@ -8,6 +9,10 @@ import {NODE_PATH, nodePage} from './pages/node.js';
 import {nodesPage} from './pages/nodes.js';
 import {overviewPage} from './pages/overview.js';
 import {settingsPage} from './pages/settings.js';
+
+document.documentElement.lang = getLocale();
+for (const element of document.querySelectorAll('[data-i18n]')) element.textContent = t(element.dataset.i18n);
+for (const element of document.querySelectorAll('[data-i18n-aria-label]')) element.setAttribute('aria-label', t(element.dataset.i18nAriaLabel));
 
 // Paths must stay in sync with the console routes the Go server answers with 200.html.
 const routes = [

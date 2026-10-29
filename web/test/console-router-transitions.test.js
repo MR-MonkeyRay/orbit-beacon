@@ -189,3 +189,53 @@ test('root navigation honors dirty-form cancellation before any full-page reques
     assert.equal(unapprovedUnload.defaultPrevented, true, 'the unload permission is used once');
   } finally { env.clean(); }
 });
+
+test('locale reload confirms dirty content once, rejects busy forms, and consumes unload approval once', async (t) => {
+  const env = await routing(t, {hidden: true});
+  const form = new TestElement('form'); form.dataset.dirty = 'true';
+  document.getElementById('view').append(form);
+  const busy = new TestElement('button'); busy.classList.add('busy'); form.append(busy);
+  let reloads = 0;
+  location.reload = () => { reloads += 1; };
+  try {
+    assert.equal(await env.confirmLocaleChange(), false);
+    assert.equal(document.querySelector('dialog'), null);
+    busy.classList.remove('busy');
+    const cancelled = env.confirmLocaleChange(); await flush();
+    document.querySelector('dialog').close('cancel');
+    assert.equal(await cancelled, false);
+    assert.equal(form.isConnected, true);
+    const accepted = env.confirmLocaleChange(); await flush();
+    document.querySelector('dialog').close('confirm');
+    assert.equal(await accepted, true);
+    env.reloadAfterConfirmation();
+    assert.equal(reloads, 1);
+    const approved = new Event('beforeunload', {cancelable: true}); env.window.dispatchEvent(approved);
+    assert.equal(approved.defaultPrevented, false);
+    const next = new Event('beforeunload', {cancelable: true}); env.window.dispatchEvent(next);
+    assert.equal(next.defaultPrevented, true);
+  } finally { env.clean(); }
+});
+
+test('locale confirmation includes dialog drafts and uses one prompt for a dirty view plus dialog', async (t) => {
+  const env = await routing(t, {hidden: true});
+  const {modal} = await import('../src/console/ui/dialogs.js');
+  const input = new TestElement('input');
+  const dialog = modal('Private form', () => input);
+  input.value = 'unsaved secret';
+  const form = new TestElement('form'); form.dataset.dirty = 'true';
+  document.getElementById('view').append(form);
+  try {
+    const pending = env.confirmLocaleChange(); await flush();
+    const dialogs = env.body.querySelectorAll('dialog');
+    assert.equal(dialogs.length, 2, 'the existing form gets only one discard confirmation');
+    dialogs.at(-1).close('cancel');
+    assert.equal(await pending, false);
+    assert.equal(input.value, 'unsaved secret');
+    form.dataset.dirty = 'false';
+    const dialogOnly = env.confirmLocaleChange(); await flush();
+    env.body.querySelectorAll('dialog').at(-1).close('confirm');
+    assert.equal(await dialogOnly, true);
+    dialog.close('done');
+  } finally { env.clean(); }
+});

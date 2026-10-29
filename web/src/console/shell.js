@@ -1,6 +1,9 @@
+import {t} from '../shared/i18n.js';
+import {localeSelect} from '../shared/locale-select.js';
+import {confirmLocaleChange, reloadAfterConfirmation} from './router.js';
 import {h} from '../shared/dom.js';
 import {themeButton} from '../shared/theme.js';
-import {onSession, session, signOut} from './api.js';
+import {getNavigationSignal, onSession, session, signOut} from './api.js';
 import {busy, button} from './ui/components.js';
 import {toastError} from './ui/feedback.js';
 import {initNotifications, syncNotifications} from './notifications.js';
@@ -15,14 +18,13 @@ function shellElements() {
   account = document.getElementById('account');
 }
 
-const themeNames = {system: 'System', light: 'Light', dark: 'Dark'};
 
 function renderAccount() {
   shellElements();
   if (session.user?.must_change_password) document.documentElement.classList.add('route-login');
   if (!session.user || session.user.must_change_password) { account.replaceChildren(); return; }
   // In the icon rail the label span becomes the button's tooltip.
-  const exit = button(h('span', {class: 'nav-label'}, 'Sign out'), {id: 'sign-out', icon: 'logout', small: true, onClick: async () => {
+  const exit = button(h('span', {class: 'nav-label'}, t('common.signOut')), {id: 'sign-out', icon: 'logout', small: true, onClick: async () => {
     busy(exit, true);
     try { await signOut(); } catch (error) { busy(exit, false); toastError(error); }
   }});
@@ -30,7 +32,13 @@ function renderAccount() {
   account.replaceChildren(
     h('div', {class: 'who'}, h('span', {class: 'avatar', 'aria-hidden': 'true', title: username}, username.slice(0, 1)),
       h('div', {class: 'who-text'}, h('div', {class: 'who-name', title: username}, username))),
-    h('div', {class: 'account-actions'}, themeButton(themeNames, (now, next) => `Theme: ${now}. Switch to ${next}.`), exit));
+    h('div', {class: 'console-locale account-locale'}, consoleLocaleSelect()),
+    h('div', {class: 'account-actions'}, themeButton(), exit));
+}
+
+export function consoleLocaleSelect({navigation = false} = {}) {
+  return localeSelect({beforeChange: confirmLocaleChange, reload: reloadAfterConfirmation, onError: toastError,
+    signal: navigation ? getNavigationSignal() : undefined});
 }
 
 // Marks the active section; the pill element carries a view-transition-name so

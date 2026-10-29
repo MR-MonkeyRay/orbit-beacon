@@ -1,3 +1,5 @@
+import {getLocale, t} from '../../shared/i18n.js';
+import {errorText} from '../../shared/errors.js';
 import {h, icon, reducedMotion} from '../../shared/dom.js';
 import {allNodes, api, ensureSession, getNavigationSignal, groupsList, invalidate} from '../api.js';
 import {absoluteWhen, STATUS, STATUS_ORDER, when} from '../format.js';
@@ -48,7 +50,7 @@ export async function nodesPage() {
   await ensureSession();
   const [nodes, groups] = await Promise.all([allNodes(), groupsList()]);
   const connection = liveStatus();
-  const head = pageHead('Nodes', 'Every node in inventory, including pending and disabled ones. Select a node to edit its details, public page and local agent settings.', connection.element, addNodeButton());
+  const head = pageHead(t('nodes.listTitle'), t('nodes.listIntro'), connection.element, addNodeButton());
 
   const filter = readFilter();
   const groupNames = new Map(groups.map((group) => [group.id, group.name]));
@@ -62,7 +64,7 @@ export async function nodesPage() {
   let live;
   let reloadQueue = Promise.resolve();
 
-  const search = input({type: 'search', id: 'node-search', placeholder: 'Search name, region, provider or tag', value: filter.q, 'aria-label': 'Search nodes', autocomplete: 'off'});
+  const search = input({type: 'search', id: 'node-search', placeholder: t('nodes.searchPlaceholder'), value: filter.q, 'aria-label': t('nodes.search'), autocomplete: 'off'});
   let frame = 0;
   search.addEventListener('input', () => {
     cancelAnimationFrame(frame);
@@ -70,10 +72,10 @@ export async function nodesPage() {
   });
 
   const statusButtons = new Map(['', ...STATUS_ORDER].map((status) => [status, h('button', {type: 'button',
-    onclick: () => { filter.status = status; filter.page = 0; update(); }}, status ? STATUS[status] : 'All', h('span', {class: 'count'}))]));
+    onclick: () => { filter.status = status; filter.page = 0; update(); }}, status ? STATUS[status] : t('nodes.all'), h('span', {class: 'count'}))]));
 
-  const groupChoices = [['', 'All groups'], ['none', 'Ungrouped'], ...groups.map((group) => [group.id, group.name])];
-  const groupSelect = select(groupChoices, groupChoices.some(([id]) => id === filter.group) ? filter.group : '', {'aria-label': 'Filter by group'});
+  const groupChoices = [['', t('nodes.allGroups')], ['none', t('nodes.ungrouped')], ...groups.map((group) => [group.id, group.name])];
+  const groupSelect = select(groupChoices, groupChoices.some(([id]) => id === filter.group) ? filter.group : '', {'aria-label': t('nodes.filterGroup')});
   groupSelect.addEventListener('change', () => { filter.group = groupSelect.value; filter.page = 0; update(); });
 
   const direction = () => (filter.dir || (filter.sort === 'created' ? 'desc' : 'asc'));
@@ -82,10 +84,10 @@ export async function nodesPage() {
     filter.sort = key;
     update();
   }}, label, icon('up')));
-  const selectAll = h('input', {type: 'checkbox', 'aria-label': 'Select all nodes on this page'});
+  const selectAll = h('input', {type: 'checkbox', 'aria-label': t('nodes.selectAll')});
   const headers = [h('th', {scope: 'col', class: 'selection-cell'}, selectAll),
-    sortable('name', 'Name'), sortable('status', 'Presence'), h('th', {scope: 'col', class: 'hide-compact'}, 'Last seen'), h('th', {scope: 'col', class: 'hide-compact'}, 'Group'),
-    h('th', {scope: 'col', class: 'hide-compact'}, 'Location'), h('th', {scope: 'col', class: 'hide-compact'}, 'Tags'), sortable('created', 'Added')];
+    sortable('name', t('nodes.column.name')), sortable('status', t('nodes.presence')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.lastSeen')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.group')),
+    h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.location')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.tags')), sortable('created', t('nodes.added'))];
 
   const body = h('tbody');
   const summary = h('span', {'aria-live': 'polite'});
@@ -98,8 +100,8 @@ export async function nodesPage() {
     if (restoreFocus && control.disabled) (delta < 0 ? next : previous).focus();
     window.scrollTo({top: 0, behavior: reducedMotion.matches ? 'auto' : 'smooth'});
   };
-  const previous = button('Previous', {icon: 'left', small: true, onClick: () => turn(-1)});
-  const next = button('Next', {trailingIcon: 'right', small: true, onClick: () => turn(1)});
+  const previous = button(t('nodes.previous'), {icon: 'left', small: true, onClick: () => turn(-1)});
+  const next = button(t('nodes.next'), {trailingIcon: 'right', small: true, onClick: () => turn(1)});
   const pager = h('div', {class: 'pager'}, previous, next);
   const clear = () => {
     Object.assign(filter, {q: '', status: '', group: '', page: 0});
@@ -113,14 +115,14 @@ export async function nodesPage() {
   let visibleIDs = new Set();
   let batchBusy = false;
   const selectionCount = h('span', {class: 'selection-count', 'aria-live': 'polite'});
-  const disableSelected = button('Disable', {small: true, onClick: () => runBatch('disable')});
-  const enableSelected = button('Enable', {small: true, onClick: () => runBatch('enable')});
-  const deleteSelected = button('Delete', {small: true, variant: 'danger', onClick: () => runBatch('delete')});
+  const disableSelected = button(t('nodes.disable'), {small: true, onClick: () => runBatch('disable')});
+  const enableSelected = button(t('nodes.enable'), {small: true, onClick: () => runBatch('enable')});
+  const deleteSelected = button(t('nodes.delete'), {small: true, variant: 'danger', onClick: () => runBatch('delete')});
   const actionBar = h('div', {class: 'bulk-actions', hidden: true}, selectionCount, disableSelected, enableSelected, deleteSelected);
 
   const updateSelection = () => {
     const count = selected.size;
-    const text = `${count} node${count === 1 ? '' : 's'} selected`;
+    const text = t('nodes.selected', {count});
     if (selectionCount.textContent !== text) selectionCount.textContent = text;
     actionBar.hidden = count === 0;
     const visibleSelected = [...visibleIDs].filter((id) => selected.has(id)).length;
@@ -139,7 +141,7 @@ export async function nodesPage() {
 
   const row = (node, query) => {
     const checkbox = h('input', {type: 'checkbox', checked: selected.has(node.id), disabled: deleted.has(node.id),
-      dataset: {nodeId: node.id}, 'aria-label': `Select ${node.name}`, onchange: (event) => {
+      dataset: {nodeId: node.id}, 'aria-label': t('nodes.selectNode', {name: node.name}), onchange: (event) => {
         if (deleted.has(node.id)) return;
         if (event.currentTarget.checked) selected.add(node.id);
         else selected.delete(node.id);
@@ -147,11 +149,11 @@ export async function nodesPage() {
       }});
     const name = link(`/nodes/${node.id}`, highlight(node.name, query));
     const badge = statusBadge(node.presence);
-    const lastSeen = h('td', {class: 'hide-compact muted'}, node.last_seen ? absoluteWhen(node.last_seen) : 'Never');
+    const lastSeen = h('td', {class: 'hide-compact muted'}, node.last_seen ? absoluteWhen(node.last_seen) : t('nodes.never'));
     const element = h('tr', null, h('td', {class: 'selection-cell'}, checkbox), h('td', {class: 'name'}, name),
       h('td', null, badge), lastSeen,
-      h('td', {class: 'hide-compact'}, node.group_id ? groupNames.get(node.group_id) || h('span', {class: 'muted'}, 'Unknown') : h('span', {class: 'muted'}, 'None')),
-      h('td', {class: 'hide-compact'}, [node.region, node.provider].filter(Boolean).join(', ') || h('span', {class: 'muted'}, 'None')),
+      h('td', {class: 'hide-compact'}, node.group_id ? groupNames.get(node.group_id) || h('span', {class: 'muted'}, t('nodes.status.unknown')) : h('span', {class: 'muted'}, t('nodes.none'))),
+      h('td', {class: 'hide-compact'}, [node.region, node.provider].filter(Boolean).join(', ') || h('span', {class: 'muted'}, t('nodes.none'))),
       h('td', {class: 'hide-compact'}, h('div', {class: 'cell-tags'}, node.tags.slice(0, 3).map((tag) => h('span', {class: 'tag static'}, tag)),
         node.tags.length > 3 ? h('span', {class: 'muted'}, `+${node.tags.length - 3}`) : null)),
       h('td', {class: 'muted'}, when(node.created_at)));
@@ -202,7 +204,7 @@ export async function nodesPage() {
     }
     const sign = direction() === 'asc' ? 1 : -1;
     const rows = scoped.filter((node) => !filter.status || node.presence === filter.status).sort((a, b) => {
-      const order = filter.sort === 'name' ? a.name.localeCompare(b.name, undefined, {numeric: true, sensitivity: 'base'})
+      const order = filter.sort === 'name' ? a.name.localeCompare(b.name, getLocale(), {numeric: true, sensitivity: 'base'})
         : filter.sort === 'status' ? STATUS_ORDER.indexOf(a.presence) - STATUS_ORDER.indexOf(b.presence)
           : a.created_at.localeCompare(b.created_at);
       return order * sign || a.id.localeCompare(b.id);
@@ -221,11 +223,11 @@ export async function nodesPage() {
     rowRefs.clear();
     body.replaceChildren(...(visible.length ? visible.map((node) => row(node, query))
       : [h('tr', null, h('td', {colspan: 8}, nodes.length
-        ? emptyState('No nodes match these filters', 'Try a different search, presence or group.', button('Clear filters', {onClick: clear}))
-        : emptyState('No nodes yet', 'Add a node, then enroll its agent.', addNodeButton())))]));
+        ? emptyState(t('nodes.noMatch'), t('nodes.filterHint'), button(t('nodes.clearFilters'), {onClick: clear}))
+        : emptyState(t('nodes.empty'), t('nodes.emptyEnroll'), addNodeButton())))]));
     updateSelection();
-    const summaryText = rows.length === 0 ? 'No matching nodes'
-      : `Showing ${start + 1}–${start + visible.length} of ${rows.length}${rows.length !== nodes.length ? ` (filtered from ${nodes.length})` : ''}`;
+    const summaryText = rows.length === 0 ? t('nodes.noMatching')
+      : t(rows.length !== nodes.length ? 'nodes.showingFiltered' : 'nodes.showing', {start: start + 1, end: start + visible.length, count: rows.length, total: nodes.length});
     clearTimeout(summaryTimer);
     if (debounceSummary) summaryTimer = setTimeout(() => { summary.textContent = summaryText; }, 400);
     else summary.textContent = summaryText;
@@ -238,16 +240,16 @@ export async function nodesPage() {
   }
 
   async function typedDelete(count) {
-    const expected = `delete ${count} nodes`;
-    const confirmation = h('input', {class: 'input', autocomplete: 'off', spellcheck: 'false', 'aria-label': `Type ${expected} to confirm`});
-    const confirm = button('Delete nodes', {variant: 'danger', className: 'solid', disabled: true});
-    const {closed} = modal(`Delete ${count} nodes?`, (close) => {
+    const expected = t('nodes.deletePhrase', {count});
+    const confirmation = h('input', {class: 'input', autocomplete: 'off', spellcheck: 'false', 'aria-label': t('nodes.typeConfirmLabel', {value: expected})});
+    const confirm = button(t('nodes.deleteNodes'), {variant: 'danger', className: 'solid', disabled: true});
+    const {closed} = modal(t('nodes.deleteBatchTitle', {count}), (close) => {
       confirmation.addEventListener('input', () => { confirm.disabled = confirmation.value !== expected; });
       confirm.addEventListener('click', () => close('confirm'));
       return h('div', null,
-        h('div', {class: 'dialog-body'}, h('p', null, 'This permanently deletes the selected nodes and their recorded data.'),
-          h('p', null, 'Type ', h('strong', null, expected), ' to confirm.'), confirmation),
-        h('div', {class: 'dialog-foot'}, button('Cancel', {onClick: () => close('dismiss')}), confirm));
+        h('div', {class: 'dialog-body'}, h('p', null, t('nodes.deleteIntro')),
+          h('p', null, t('nodes.typeConfirm', {value: expected})), confirmation),
+        h('div', {class: 'dialog-foot'}, button(t('nodes.cancel'), {onClick: () => close('dismiss')}), confirm));
     });
     return await closed === 'confirm';
   }
@@ -255,14 +257,15 @@ export async function nodesPage() {
   function showResults(action, results, names) {
     const succeeded = results.filter((result) => result.status === 'succeeded').length;
     const failed = results.length - succeeded;
-    const label = `${action[0].toUpperCase()}${action.slice(1)}`;
-    return modal(`${label} results`, (close) => h('div', null,
+    const label = t({disable: 'nodes.disable', enable: 'nodes.enable', delete: 'nodes.delete'}[action]);
+    return modal(t('nodes.batchResults', {action: label}), (close) => h('div', null,
       h('div', {class: 'dialog-body'},
-        h('p', null, `${succeeded} succeeded${failed ? `; ${failed} failed` : '.'}`),
+        h('p', null, t('nodes.resultCounts', {count: succeeded, failed})),
         h('ul', null, results.map((result) => h('li', null,
           h('strong', null, names.get(result.node_id) || result.node_id),
-          ` — ${result.status}${result.error_code ? ` (${result.error_code})` : ''}`)))),
-      h('div', {class: 'dialog-foot'}, button('Close', {variant: 'primary', onClick: () => close('done')})))).closed;
+          ' — ', t(result.status === 'succeeded' ? 'nodes.result.succeeded' : 'nodes.result.failed'),
+          result.error_code ? ` (${errorText({code: result.error_code})})` : '')))),
+      h('div', {class: 'dialog-foot'}, button(t('nodes.close'), {variant: 'primary', onClick: () => close('done')})))).closed;
   }
 
   function reloadNodes({acknowledgeDeleted = false} = {}) {
@@ -302,11 +305,11 @@ export async function nodesPage() {
     if (ids.length === 0) return;
     batchBusy = true;
     const confirmed = action === 'delete' ? await typedDelete(ids.length) : await confirmDialog({
-      title: `${action === 'disable' ? 'Disable' : 'Enable'} ${ids.length} node${ids.length === 1 ? '' : 's'}?`,
+      title: t(action === 'disable' ? 'nodes.disableBatchTitle' : 'nodes.enableBatchTitle', {count: ids.length}),
       message: action === 'disable'
-        ? 'Disabled nodes stop accepting agent reports and credential recovery until they are enabled again.'
-        : 'Selected nodes will accept their agents again.',
-      confirm: action === 'disable' ? 'Disable nodes' : 'Enable nodes'
+        ? t('nodes.batchDisableIntro')
+        : t('nodes.batchEnableIntro'),
+      confirm: action === 'disable' ? t('nodes.disableNodes') : t('nodes.enableNodes')
     });
     if (!confirmed || signal?.aborted) { batchBusy = false; return; }
     const controls = [disableSelected, enableSelected, deleteSelected];
@@ -326,9 +329,9 @@ export async function nodesPage() {
     finally { controls.forEach((control) => busy(control, false)); batchBusy = false; }
   }
 
-  const applyFilters = button('Apply current filters', {small: true, onClick: () => update()});
-  const statusChange = h('span', {class: 'live-change', hidden: true}, 'Status changed. ', applyFilters);
-  const refreshList = button('Refresh list', {small: true, onClick: async () => {
+  const applyFilters = button(t('nodes.applyFilters'), {small: true, onClick: () => update()});
+  const statusChange = h('span', {class: 'live-change', hidden: true}, t('nodes.statusChanged'), applyFilters);
+  const refreshList = button(t('nodes.refreshList'), {small: true, onClick: async () => {
     if (refreshList.disabled) return;
     busy(refreshList, true);
     try {
@@ -337,8 +340,8 @@ export async function nodesPage() {
     } catch (error) { if (!signal?.aborted) toastError(error); }
     finally { busy(refreshList, false); }
   }});
-  const inventoryChange = h('span', {class: 'live-change', hidden: true}, 'Inventory changed. ', refreshList);
-  const selectionChange = h('span', {hidden: true}, 'A deleted node was removed from the selection.');
+  const inventoryChange = h('span', {class: 'live-change', hidden: true}, t('nodes.inventoryChanged'), refreshList);
+  const selectionChange = h('span', {hidden: true}, t('nodes.selectionRemoved'));
   const changes = h('div', {class: 'live-changes', 'aria-live': 'polite', hidden: true}, statusChange, inventoryChange, selectionChange);
   function paintChanges() {
     statusChange.hidden = !statusChanged;
@@ -349,9 +352,9 @@ export async function nodesPage() {
   const table = h('div', {class: 'panel'},
     h('div', {class: 'toolbar'},
       h('div', {class: 'search'}, icon('search'), search, h('kbd', null, '/')),
-      h('div', {class: 'segmented', role: 'group', 'aria-label': 'Filter by presence'}, [...statusButtons.values()]),
+      h('div', {class: 'segmented', role: 'group', 'aria-label': t('nodes.filterPresence')}, [...statusButtons.values()]),
       groupSelect),
-    h('div', {class: 'table-wrap'}, h('table', {class: 'table'}, h('caption', {class: 'sr'}, 'Nodes'), h('thead', null, h('tr', null, headers)), body)),
+    h('div', {class: 'table-wrap'}, h('table', {class: 'table'}, h('caption', {class: 'sr'}, t('nodes.listTitle')), h('thead', null, h('tr', null, headers)), body)),
     h('div', {class: 'table-foot'}, summary, pager, changes), actionBar);
   update();
   function patchFleet(data) {
@@ -375,7 +378,7 @@ export async function nodesPage() {
       Object.assign(node, fresh);
       if (refs) {
         patchStatusBadge(refs.badge, node.presence);
-        if (seenChanged) refs.lastSeen.replaceChildren(node.last_seen ? absoluteWhen(node.last_seen) : 'Never');
+        if (seenChanged) refs.lastSeen.replaceChildren(node.last_seen ? absoluteWhen(node.last_seen) : t('nodes.never'));
       }
     }
     patchCounts();

@@ -19,11 +19,14 @@ test('storage events synchronize themes and button labels without writing back',
   };
   try {
     const {currentTheme, setTheme, themeButton} = await import('../src/shared/theme.js');
-    themeButton({system: 'System', light: 'Light', dark: 'Dark'}, (now, next) => `${now} to ${next}`, element);
+    themeButton(element);
+    const systemLabel = attributes.get('aria-label');
     const storage = (key, newValue) => window.dispatchEvent(Object.assign(new Event('storage'), {key, newValue}));
     storage('orbitbeacon-theme', 'dark');
     assert.equal(currentTheme(), 'dark');
-    assert.equal(attributes.get('aria-label'), 'Dark to System');
+    const darkLabel = attributes.get('aria-label');
+    assert.notEqual(darkLabel, systemLabel);
+    assert.equal(element.title, darkLabel);
     storage('unrelated', 'light');
     assert.equal(currentTheme(), 'dark');
     storage('orbitbeacon-theme', 'light');
@@ -34,7 +37,7 @@ test('storage events synchronize themes and button labels without writing back',
     assert.equal(currentTheme(), 'system');
     assert.deepEqual(writes, []);
     setTheme('dark');
-    assert.equal(attributes.get('aria-label'), 'Dark to System');
+    assert.equal(attributes.get('aria-label'), darkLabel);
     setTheme('system');
     assert.deepEqual(writes, [['orbitbeacon-theme', 'dark'], ['orbitbeacon-theme', null]]);
     localStorage.setItem = () => { throw new Error('Storage unavailable'); };

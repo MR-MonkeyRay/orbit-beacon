@@ -1,4 +1,5 @@
 import {h} from '../../shared/dom.js';
+import {t} from '../../shared/i18n.js';
 import {allNodes, api, ensureSession, getNavigationSignal, groupsList} from '../api.js';
 import {refresh} from '../router.js';
 import {pageHead} from '../ui/components.js';
@@ -18,11 +19,11 @@ export async function alertsPage() {
   const event = new URLSearchParams(location.search).get('event');
   if (event !== null) requestAnimationFrame(() => { if (!signal?.aborted) showAlert(event, signal); });
   return h('div', null,
-    pageHead('Alerts', 'Firing alerts, event history, rules and notification channels.'),
+    pageHead(t('alerts.title'), t('alerts.subtitle')),
     tabSet([
-      {id: 'active', label: 'Active', icon: 'alert', build: () => eventsPanel('firing', signal)},
-      {id: 'history', label: 'History', icon: 'list', build: () => eventsPanel('all', signal)},
-      {id: 'rules', label: 'Rules', icon: 'sliders', build: () => rulesPanel(context)},
-      {id: 'channels', label: 'Channels', icon: 'bell', build: () => h('div', null, channelsPanel(context), deliveriesPanel(channels, signal))}
-    ], 'Alert sections'));
+      {id: 'active', label: t('alerts.tab.active'), icon: 'alert', build: () => eventsPanel('firing', signal)},
+      {id: 'history', label: t('alerts.tab.history'), icon: 'list', build: () => eventsPanel('all', signal)},
+      {id: 'rules', label: t('alerts.tab.rules'), icon: 'sliders', build: () => rulesPanel(context)},
+      {id: 'channels', label: t('alerts.tab.channels'), icon: 'bell', build: () => h('div', null, channelsPanel(context), deliveriesPanel(channels, signal))}
+    ], t('alerts.sections')));
 }

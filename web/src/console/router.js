@@ -1,8 +1,10 @@
+import {t} from '../shared/i18n.js';
+import {errorText} from '../shared/errors.js';
 import {h, reducedMotion} from '../shared/dom.js';
 import {ensureSession, onSession, pauseSessionVerification, session, setNavigationSignal, verifySession} from './api.js';
 import {setActiveNav} from './shell.js';
 import {button, emptyState, linkButton, pageHead, resetIDs, skeleton} from './ui/components.js';
-import {closeDialogs, confirmDiscard, dialogActionStale} from './ui/dialogs.js';
+import {closeDialogs, confirmDiscard, dialogActionStale, hasUnsavedDialogChanges} from './ui/dialogs.js';
 import {progress} from './ui/feedback.js';
 
 // History-API router. A page is an async function returning an element (or a
@@ -28,6 +30,18 @@ export function ignoreNavigationCancellation(error) {
 }
 
 const hasUnsavedChanges = () => Boolean(view.querySelector('form[data-dirty="true"]'));
+
+const localeChangeBusy = () => Boolean(document.querySelector('[data-busy="true"],button.busy'));
+export async function confirmLocaleChange() {
+  if (localeChangeBusy()) return false;
+  if ((hasUnsavedChanges() || hasUnsavedDialogChanges()) && !(await confirmDiscard())) return false;
+  return !localeChangeBusy();
+}
+
+export function reloadAfterConfirmation() {
+  confirmedUnload = true;
+  location.reload();
+}
 
 function skipTransition(hidden = false) {
   if (!transition) return;
@@ -123,7 +137,7 @@ function swap(content, route, mode, token) {
     setActiveNav(route.nav);
     view.replaceChildren(content);
     const heading = content.querySelector('h1');
-    document.title = heading ? `${heading.textContent} – OrbitBeacon` : 'OrbitBeacon console';
+    document.title = heading ? `${heading.textContent} – OrbitBeacon` : t('shell.consoleTitle');
   };
   if (mode === 'transition' && !document.hidden && document.startViewTransition && !reducedMotion.matches) {
     const current = {value: document.startViewTransition(update), skipped: false, hidden: false};
@@ -147,11 +161,11 @@ function swap(content, route, mode, token) {
 
 function errorPage(error) {
   const notFound = error.status === 404;
-  return h('div', null, pageHead(notFound ? 'Not found' : 'This page could not load'),
+  return h('div', null, pageHead(notFound ? t('shell.notFound') : t('shell.pageLoadFailed')),
     h('div', {class: 'panel'}, emptyState(
-      notFound ? 'This resource does not exist' : 'The console could not reach the server',
-      notFound ? 'It may have been deleted, or the link is incorrect.' : `${error.message}${error.requestID ? ` (request ${error.requestID})` : ''}`,
-      notFound ? linkButton('/nodes', 'Go to nodes') : button('Try again', {icon: 'refresh', variant: 'primary', onClick: () => { void render().catch(ignoreNavigationCancellation); }}))));
+      notFound ? t('shell.resourceMissing') : t('shell.serverUnreachable'),
+      notFound ? t('shell.resourceMissingHint') : errorText(error),
+      notFound ? linkButton('/nodes', t('shell.goToNodes')) : button(t('shell.tryAgain'), {icon: 'refresh', variant: 'primary', onClick: () => { void render().catch(ignoreNavigationCancellation); }}))));
 }
 
 export function startRouter(table) {
@@ -212,7 +226,7 @@ export function startRouter(table) {
   listen(window, 'pageshow', revalidate);
   listen(window, 'beforeunload', (event) => {
     if (confirmedUnload) { confirmedUnload = false; return; }
-    if (hasUnsavedChanges()) event.preventDefault();
+    if (hasUnsavedChanges() || hasUnsavedDialogChanges()) event.preventDefault();
   });
   void render().catch(ignoreNavigationCancellation);
   return () => {

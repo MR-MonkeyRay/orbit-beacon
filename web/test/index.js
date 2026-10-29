@@ -1,7 +1,10 @@
 // Node resolves the explicit test/ entry to this file. Keep the suite imports
 // static so the built-in runner registers every test before execution starts.
+import './i18n.test.js';
+import './i18n-errors.test.js';
 import './contrast.test.js';
 import './dom.test.js';
+import './controls-i18n.test.js';
 import './format.test.js';
 import './theme.test.js';
 import './validate.test.js';
