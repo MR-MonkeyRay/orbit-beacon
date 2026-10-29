@@ -5,13 +5,14 @@ import test from 'node:test';
 const css = readFileSync(new URL('../src/shared/tokens.css', import.meta.url), 'utf8');
 
 function declarations(selector) {
-  const start = css.indexOf(`${selector}{`);
+  const pattern = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replaceAll('\\{', '\\s*\\{\\s*');
+  const start = css.search(new RegExp(`${pattern}\\s*\\{`));
   assert.notEqual(start, -1, `missing ${selector}`);
   return css.slice(start, css.indexOf('}', start));
 }
 
 function token(block, name) {
-  const value = block.match(new RegExp(`--${name}:(#[0-9a-f]{3,6})`, 'i'))?.[1];
+  const value = block.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{3,6})`, 'i'))?.[1];
   assert.ok(value, `missing --${name}`);
   return value;
 }
