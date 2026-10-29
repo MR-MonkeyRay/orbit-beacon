@@ -15,6 +15,7 @@ let controller;
 let currentURL = location.pathname + location.search + location.hash;
 let intent = 0;
 let transition;
+let confirmedUnload = false;
 
 class NavigationCancelled extends DOMException {
   constructor() { super('The navigation was cancelled.', 'AbortError'); }
@@ -39,6 +40,12 @@ export async function go(target, options = {}) {
   const attempt = ++intent;
   if (!options.force && hasUnsavedChanges() && !(await confirmDiscard())) throw new NavigationCancelled();
   if (attempt !== intent) throw new NavigationCancelled();
+  const destination = new URL(target, location.href);
+  if (destination.pathname === '/' || destination.pathname === '/public.html') {
+    confirmedUnload = true;
+    location[options.replace ? 'replace' : 'assign'](target);
+    return;
+  }
   if (target !== location.pathname + location.search + location.hash) {
     history.replaceState({...history.state, scroll: window.scrollY}, '');
     history[options.replace ? 'replaceState' : 'pushState']({scroll: 0}, '', target);
@@ -203,7 +210,10 @@ export function startRouter(table) {
   listen(document, 'visibilitychange', () => { if (document.hidden) hide(); else revalidate(); });
   listen(window, 'pagehide', hide);
   listen(window, 'pageshow', revalidate);
-  listen(window, 'beforeunload', (event) => { if (hasUnsavedChanges()) event.preventDefault(); });
+  listen(window, 'beforeunload', (event) => {
+    if (confirmedUnload) { confirmedUnload = false; return; }
+    if (hasUnsavedChanges()) event.preventDefault();
+  });
   void render().catch(ignoreNavigationCancellation);
   return () => {
     lifetime.abort();

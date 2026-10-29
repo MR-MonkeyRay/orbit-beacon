@@ -128,6 +128,8 @@ readiness 不证明 Agent 已上报，需另查节点最近报告。CLI 接受 H
 
 管理员可在控制台管理通知通道、测试投递并查看日志。回环 HTTP webhook 必须同时开启两项通知选项；HTTPS 和 SMTP 校验证书，SMTP 的非 465 端口要求 STARTTLS。探测目标与通知通道不是同一出站策略，Agent 探测限制见 [Agent 指南](../docs/agent.md#服务探测)。
 
+全站公开页在 **Settings → Public page** 控制，默认开启。关闭会停止全部匿名节点 API 与 WS/SSE 流（`403 public_page_disabled`，可写连接先发送同码 error 终止帧）；已打开的公开页清空数据并返回根入口。`/` 和 `/public.html` 的 GET/HEAD 不缓存：开启时所有会话均显示公开页，关闭时匿名/无效会话跳 `/login`、正常管理员跳 `/overview`、待改密账户跳 `/change-password`。静态资源仍可加载，Agent API 与节点公开白名单不变；开启不会自动公开节点。
+
 ## 导出与备份计划
 
 在 **Settings → Data operations** 发起导出或配置计划，在 Task history 查看结果。受理后可离开页面，完成或失败有站内通知；手动下载，不自动下载。所有管理员共享任务、下载和密码，备份结果不外发。
@@ -135,7 +137,7 @@ readiness 不证明 Agent 已上报，需另查节点最近报告。CLI 接受 H
 ### 归档与密码
 
 - Configuration、Monitoring、Events 三类独立勾选，至少一类，默认仅 Configuration。
-- 配置含用户密码哈希、Agent 持久身份、通知/对象存储凭据及匹配的 `secrets.key`；不含机器部署配置、TLS 证书或可执行文件，请另存这些文件。
+- 配置含用户密码哈希、Agent 持久身份、通知/对象存储凭据、全站公开页开关及匹配的 `secrets.key`；settings 仅归档 `public_page_enabled`，缺失合法，值严格为文本 `true` / `false`，其他键或值拒绝；不含机器部署配置、TLS 证书或可执行文件，请另存这些文件。
 - 监控含已落库的节点观测、流量、探测和指标历史；事件含审计、告警、已结束投递、站内通知及已结束任务历史，不带历史备份密码。登录会话、接入票据、待执行任务、待发送通知和旧下载产物不归档。
 - 每包为 `.tar.gz.age`，有独立的 16 位随机大小写字母/数字密码。管理员仅在详情中主动 Reveal、Copy 或 Download recovery info 时获取密码；须把每包凭据另存到安全位置，密码不会随远程包上传，也没有主密码托管。
 - 手动导出文件有效 24 小时；任务、站内通知及密码保留 90 天，任务和密码从任务完成时计期。原机丢失或密码过期且未另存时无法恢复。计划包只显示本地路径或目标 bucket 内的准确 Object key，不拼造下载 URL，也不提供网页下载副本。
@@ -168,7 +170,7 @@ Endpoint 只允许 HTTPS 源站（可带端口），不能含路径、用户信�
 
 ## 恢复
 
-先停止 Server，用服务账号恢复。仅接受格式 v1、主库 schema 20、指标库 schema 1 精确匹配的 `.tar.gz.age` 包；旧包不转换。密码文件须归运行用户所有、权限 `0600`，含该包 16 位密码，可带换行；省略 `--password-file` 则终端无回显输入。不接受参数或环境变量明文密码。
+先停止 Server，用服务账号恢复。仅接受格式 v1、主库 schema 21、指标库 schema 1 精确匹配的 `.tar.gz.age` 包；旧包（含 schema 20）不转换。密码文件须归运行用户所有、权限 `0600`，含该包 16 位密码，可带换行；省略 `--password-file` 则终端无回显输入。不接受参数或环境变量明文密码。
 
 ```sh
 sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore --data-dir /var/lib/orbitbeacon \
@@ -176,7 +178,7 @@ sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore --data-dir /var/li
   --replace --password-file /backup/password.txt
 ```
 
-目标已有业务数据须加 `--replace`；空目录可省略，但包内须有 Configuration。所选类别整体替换，未选类别保留，不逐条合并；稳定 ID 依赖不满足则整次拒绝。配置恢复后计划全部停用，不导入会话或接入票据；事件不重放任务/投递，目标原活动工作标为恢复中断。
+目标已有业务数据须加 `--replace`；空目录可省略，但包内须有 Configuration。所选类别整体替换，未选类别保留，不逐条合并；稳定 ID 依赖不满足则整次拒绝。Configuration 还原整体替换公开页开关（归档缺失时默认开启）；仅 Monitoring / Events 还原保留当前开关。配置恢复后计划全部停用，不导入会话或接入票据；事件不重放任务/投递，目标原活动工作标为恢复中断。
 
 恢复使用 `restore-journal.json` 安装数据库与密钥，失败时可回滚旧文件组。成功会输出 `.restore-<id>/old/` 原副本位置，不自动删除；确认恢复正常后再妥善处理。不要删除 `server.lock`、journal 或 SQLite sidecar 强行启动，恢复原理见[架构文档](../docs/architecture.md#备份一致性与恢复)。
 
@@ -184,7 +186,7 @@ sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore --data-dir /var/li
 
 ## 升级
 
-主库 schema 20 不执行历史迁移，备份也不跨 schema 转换。旧库或更高版本库会被拒绝；改用新私有目录，保留旧目录、备份和原版本程序。
+主库 schema 21 不执行历史迁移，备份也不跨 schema 转换。旧库（含 schema 20）或更高版本库会被拒绝；改用新私有目录，保留旧目录、备份和原版本程序。
 
 以下替换步骤仅适用于数据库 schema 不变的版本：
 

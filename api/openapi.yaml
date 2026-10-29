@@ -67,10 +67,20 @@ info:
     The data directory must be effective-user-owned and private (0700); SQLite,
     its sidecars and secrets.key must be owned regular 0600 files, never symlinks.
     Linux validates that the backing mount is local and writable.
-    The main database and archives require schema 20 exactly; previous schemas,
-    including schema 19, are rejected without migration or automatic removal of
+    The main database and archives require schema 21 exactly; previous schemas,
+    including schema 20, are rejected without migration or automatic removal of
     existing files. Configuration archives preserve each user's password-change
     requirement as integer 0/1, but configuration restore never imports sessions.
+    They whitelist only settings.public_page_enabled with text true/false; missing
+    is valid and defaults to enabled. Configuration restore replaces this setting,
+    while Monitoring/Events-only restore preserves the current value.
+    The global public page is enabled by default. GET/HEAD / and /public.html
+    serve public HTML to every session while enabled; while disabled they redirect
+    anonymous/invalid sessions to /login, normal sessions to /overview and restricted
+    sessions to /change-password. These responses are no-store and the gate runs
+    before conditional/ETag handling. Static assets remain accessible. Disabling
+    stops every anonymous data endpoint and existing public streams independently
+    of cookies; management/Agent authorization and per-node publication are unchanged.
   license:
     name: GNU General Public License v3.0
     identifier: GPL-3.0
@@ -82,6 +92,50 @@ servers:
 security:
   - session: []
 paths:
+  /api/v1/settings/public-page:
+    get:
+      operationId: getPublicPageSettings
+      description: |
+        Unrestricted administrator only. Returns the published runtime state used
+        by root routing and anonymous transports; missing stored setting defaults
+        to enabled. Does not change the per-node public whitelist.
+      responses:
+        '200':
+          description: Current global public access setting.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PublicPageSettings'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: setPublicPageEnabled
+      description: |
+        Unrestricted administrator only. Requires exactly a boolean enabled;
+        empty objects, null, wrong types and unknown keys return 400 without changes.
+        The setting and public_page.update audit commit together, then runtime
+        publication and public visibility invalidation complete before success.
+        An unchanged value creates no audit event and does not renew streams.
+        Failure leaves both stored and runtime state unchanged. Disabling stops
+        all anonymous API/streams; enabling never publishes a private node.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PublicPageSettings'}
+      responses:
+        '200':
+          description: Saved and published global public access setting.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PublicPageSettings'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
   /api/public/v1/nodes:
     get:
       operationId: listPublicNodes
@@ -92,6 +146,9 @@ paths:
         no session is created or cleaned up and no CORS access is granted. The
         three exact /api/public/v1 endpoints bypass browser authentication.
         All responses, including errors, use Cache-Control: no-store.
+        When the global public page is disabled, this endpoint returns 403
+        public_page_disabled with no node data, regardless of session cookies.
+        The global switch never changes which individual nodes are published.
 
         Includes only nodes with valid enabled public settings, a nonempty public
         name, internal status unknown, an active node credential and completed
@@ -137,6 +194,7 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/PublicSnapshotFrame'}
         '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/PublicPageDisabled'}
         '405': {$ref: '#/components/responses/Error'}
         '503':
           description: Public visibility changed through all three projection attempts; code is snapshot_busy.
@@ -176,6 +234,13 @@ paths:
         Streams renew after 15 minutes. Shutdown attempts close:shutdown, then
         interrupts blocked writes and waits for tracked streams before draining
         ingestion. A disconnected or forcibly closed peer may receive no close frame.
+        Global public page disable rejects setup with 403 public_page_disabled.
+        Existing streams attempt an error frame with code public_page_disabled,
+        server_time and update_interval_seconds, no data, and then end. A blocked
+        or disconnected peer may only observe a disconnect; subsequent requests
+        return the explicit 403. Known disable is terminal, not a retryable outage:
+        the browser clears public data and replaces its location with / for routing.
+        Ordinary network/5xx/other 403 failures do not imply public disable.
 
         WebSocket and SSE share a global limit of 200 and four per resolved client
         IP; capacity is released once on exit. Excess streams receive 503
@@ -207,7 +272,11 @@ paths:
                 close:
                   summary: Immediate renewal
                   value: "event: message\ndata: {\"type\":\"close\",\"server_time\":\"2026-01-01T00:15:00Z\",\"update_interval_seconds\":10,\"code\":\"renew\"}\n\n"
+                disabled:
+                  summary: Global public access disabled; terminal, without node data
+                  value: "event: message\ndata: {\"type\":\"error\",\"server_time\":\"2026-01-01T00:00:10Z\",\"update_interval_seconds\":10,\"code\":\"public_page_disabled\"}\n\n"
         '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/PublicPageDisabled'}
         '405': {$ref: '#/components/responses/Error'}
         '503':
           description: Shared WebSocket/SSE concurrency limit reached; code is stream_busy.
@@ -238,6 +307,10 @@ paths:
         anonymous HTTP/SSE use credentials omit. Compression is disabled, the
         read limit is 1 KiB, application writes are rejected and every write has
         a ten-second deadline. No subscription commands, replay or delta protocol.
+        When globally disabled, setup returns 403 public_page_disabled before
+        upgrade. An admitted connection attempts the same terminal no-data
+        error:public_page_disabled frame as SSE and then closes. A browser cannot
+        inspect a failed WS handshake, so fallback HTTP/SSE obtains the explicit code.
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/Limit'
@@ -2012,6 +2085,25 @@ components:
             properties:
               name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
   responses:
+    PublicEntryRedirect:
+      description: Public page disabled; redirect selected by the current session.
+      headers:
+        Cache-Control:
+          schema: {type: string, const: no-store}
+        Location:
+          schema: {type: string, enum: [/login, /overview, /change-password]}
+    PublicPageDisabled:
+      description: Global public page disabled; code public_page_disabled, no node data, independent of session cookies.
+      headers:
+        Cache-Control:
+          schema: {type: string, const: no-store}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          example:
+            code: public_page_disabled
+            message: Public page is disabled.
+            request_id: 00000000-0000-4000-8000-000000000001
     BackupArchive:
       description: Encrypted .tar.gz.age attachment, or a requested byte range of it. No recovery password is included.
       headers:
@@ -2031,7 +2123,7 @@ components:
         application/octet-stream:
           schema: {type: string, format: binary}
     Error:
-      description: Structured failure. Invalid JSON/input or an unchanged new password (password_unchanged) returns 400, invalid credentials 401, browser Origin/CSRF failures, restricted management sessions (password_change_required) or disabled-node agent requests 403, missing resources 404, plan-busy/secret/enrollment/identity/username or last-administrator conflicts 409, expired or missing backup artifacts/passwords 410, bodies above 64 KiB 413, unsupported agent protocol 426, rate limiting or backup queue capacity 429, and retryable SQLite contention 503 storage_busy. Unsupported methods return 405 with Allow before authentication; unknown API routes return 404. No API error returns the SPA shell.
+      description: Structured failure. Invalid JSON/input or an unchanged new password (password_unchanged) returns 400, invalid credentials 401, browser Origin/CSRF failures, restricted management sessions (password_change_required), globally disabled anonymous access (public_page_disabled) or disabled-node agent requests 403, missing resources 404, plan-busy/secret/enrollment/identity/username or last-administrator conflicts 409, expired or missing backup artifacts/passwords 410, bodies above 64 KiB 413, unsupported agent protocol 426, rate limiting or backup queue capacity 429, and retryable SQLite contention 503 storage_busy. Unsupported methods return 405 with Allow before authentication; unknown API routes return 404. No API error returns the SPA shell.
       headers:
         X-Request-ID:
           schema: {type: string, format: uuid}
@@ -2050,7 +2142,7 @@ components:
       minItems: 1
       maxItems: 3
       uniqueItems: true
-      description: Independent categories; configuration is never added implicitly. Responses use configuration, monitoring, events order. Configuration contains password hashes, persistent Agent identity, credentials and the matching secrets.key, but not deployment configuration, TLS certificates or executables. Monitoring includes persisted observations and metric history, not in-memory reports. Events exclude historical backup passwords, pending deliveries/tasks and download artifacts. Only committed data is snapshotted; main and metrics databases are individually consistent, not one cross-database instant.
+      description: Independent categories; configuration is never added implicitly. Responses use configuration, monitoring, events order. Configuration contains password hashes, persistent Agent identity, credentials, the global public_page_enabled setting and the matching secrets.key, but not deployment configuration, TLS certificates or executables. Only that settings key and text true/false are accepted; absence is valid. Configuration restore replaces the switch (absent means enabled); data-only restore preserves it. Monitoring includes persisted observations and metric history, not in-memory reports. Events exclude historical backup passwords, pending deliveries/tasks and download artifacts. Only committed data is snapshotted; main and metrics databases are individually consistent, not one cross-database instant.
       items: {type: string, enum: [configuration, monitoring, events]}
     BackupCron:
       type: string
@@ -2546,7 +2638,7 @@ components:
         code:
           type: string
           description: Machine-readable failure code; validation_failed may include per-field messages. Clients must tolerate new error codes.
-          examples: [unauthenticated, forbidden, password_change_required, invalid_old_password, password_unchanged, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, username_conflict, invalid_json, invalid_input, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, backup_queue_full, backup_plan_busy, backup_plan_not_found, task_not_found, artifact_not_ready, artifact_expired, artifact_missing, password_unavailable, password_expired, secret_unreadable, storage_busy, not_available, internal_error]
+          examples: [unauthenticated, forbidden, password_change_required, public_page_disabled, invalid_old_password, password_unchanged, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, username_conflict, invalid_json, invalid_input, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, backup_queue_full, backup_plan_busy, backup_plan_not_found, task_not_found, artifact_not_ready, artifact_expired, artifact_missing, password_unavailable, password_expired, secret_unreadable, storage_busy, not_available, internal_error]
         message: {type: string, minLength: 1}
         request_id: {type: string, format: uuid, description: Correlates the response with safe server diagnostic metadata for internal service failures.}
         fields:
@@ -2663,6 +2755,13 @@ components:
           oneOf:
             - {$ref: '#/components/schemas/System'}
             - {type: 'null'}
+    PublicPageSettings:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      description: Global public access switch, independent of each node's publication. Missing persistent key defaults to enabled. PATCH requires this boolean explicitly; null and unknown keys are invalid.
+      properties:
+        enabled: {type: boolean, default: true}
     PublicSettings:
       type: object
       additionalProperties: false
@@ -2782,12 +2881,21 @@ components:
             type: {const: error}
             code: {type: string, const: unauthenticated}
       unevaluatedProperties: false
+    PublicPageDisabledFrame:
+      allOf:
+        - {$ref: '#/components/schemas/LiveFrameClock'}
+        - type: object
+          required: [code]
+          properties:
+            type: {const: error}
+            code: {type: string, const: public_page_disabled}
+      unevaluatedProperties: false
     PublicLiveFrame:
       oneOf:
         - {$ref: '#/components/schemas/PublicSnapshotFrame'}
         - {$ref: '#/components/schemas/LiveHeartbeatFrame'}
         - {$ref: '#/components/schemas/LiveCloseFrame'}
-        - {$ref: '#/components/schemas/LiveErrorFrame'}
+        - {$ref: '#/components/schemas/PublicPageDisabledFrame'}
     ConsoleFleetState:
       type: object
       additionalProperties: false

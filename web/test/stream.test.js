@@ -55,6 +55,11 @@ for (const status of [401, 404, 503]) {
     await assert.rejects(openSSE(options()), (error) => error instanceof StreamSetupError && error.response.status === status);
   });
 }
+test('SSE preserves explicit public-page-disabled setup codes before discarding the body', async (t) => {
+  mockFetch(t, async () => new Response(JSON.stringify({code: 'public_page_disabled'}), {status: 403}));
+  await assert.rejects(openSSE(options()), (error) => error instanceof StreamSetupError
+    && error.response.status === 403 && error.errorCode === 'public_page_disabled' && !error.response.body.locked);
+});
 test('SSE sends explicit credentials and decodes split UTF-8; handler termination cancels reader', async (t) => {
   const stream = bodyStream(); const received = [];
   const request = options((frame) => { received.push(frame); return received.length < 2; });

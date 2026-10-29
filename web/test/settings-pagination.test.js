@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {invalidate, session, setNavigationSignal, setSession} from '../src/console/api.js';
 import {elements, flush, installDOM} from './console-dom.js';
+import {reducedMotion} from '../src/shared/dom.js';
 
 class TestNode extends EventTarget {
   constructor(tagName = '') {
@@ -166,6 +167,66 @@ test('administrator forms preserve request boundaries and keep conflicts in the 
     invalidate('nodes', 'groups', 'users');
     dom.restore();
     for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+  }
+});
+
+test('public-page settings confirm disabling, block duplicate writes, and restore server state after failure', async () => {
+  const dom = installDOM();
+  const originals = new Map(['fetch', 'window', 'matchMedia', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
+  const motion = Object.getOwnPropertyDescriptor(reducedMotion, 'matches');
+  Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => true});
+  Object.assign(globalThis, {window: new EventTarget(), matchMedia: () => ({matches: true, addEventListener() {}}), history: {state: null, replaceState() {}}, requestAnimationFrame: () => 0});
+  Object.assign(location, {pathname: '/settings', hash: '#public-page'});
+  setNavigationSignal(null);
+  setSession({user: {id: 'public-settings-user', username: 'admin', must_change_password: false}, csrf_token: 'csrf', expires_at: ''});
+  invalidate('nodes', 'groups', 'users');
+  const writes = [];
+  let resolveWrite;
+  globalThis.fetch = async (path, options) => {
+    if (options.method === 'PATCH') {
+      writes.push(JSON.parse(options.body));
+      return new Promise((resolve) => { resolveWrite = resolve; });
+    }
+    const body = path.endsWith('/settings/public-page') ? {enabled: true}
+      : path.endsWith('/users') ? {users: []} : path.endsWith('/groups') ? {groups: []}
+        : path.includes('/nodes?') ? {nodes: [], has_more: false} : {events: [], has_more: false};
+    return new Response(JSON.stringify(body));
+  };
+  const {closeDialogs} = await import('../src/console/ui/dialogs.js');
+  try {
+    const {settingsPage} = await import('../src/console/pages/settings.js');
+    const page = await settingsPage(); dom.body.append(page); dom.mutations(); await flush();
+    const control = elements(page).find((element) => element.name === 'public_page_enabled');
+    assert.ok(control);
+    assert.equal(control.checked, true);
+    const toggle = () => { control.checked = !control.checked; control.dispatchEvent(new Event('change')); };
+    toggle(); await flush();
+    assert.equal(writes.length, 0);
+    const cancel = elements(dom.body.querySelector('dialog')).find((element) => element.textContent === 'Cancel');
+    cancel.click(); await flush();
+    assert.equal(control.checked, true); assert.equal(writes.length, 0);
+    toggle(); await flush();
+    elements(dom.body.querySelector('dialog')).find((element) => element.tagName === 'button' && element.textContent === 'Disable public page').click();
+    await flush();
+    assert.equal(control.disabled, true); assert.deepEqual(writes, [{enabled: false}]);
+    resolveWrite(new Response(JSON.stringify({code: 'internal_error', message: 'Could not save setting.'}), {status: 500}));
+    await flush();
+    assert.equal(control.checked, true); assert.equal(control.disabled, false);
+    toggle(); await flush();
+    elements(dom.body.querySelector('dialog')).find((element) => element.tagName === 'button' && element.textContent === 'Disable public page').click();
+    await flush(); resolveWrite(new Response(JSON.stringify({enabled: false}))); await flush();
+    assert.equal(control.checked, false);
+    toggle(); await flush();
+    assert.deepEqual(writes.at(-1), {enabled: true});
+    assert.equal(dom.body.querySelector('dialog'), null);
+    resolveWrite(new Response(JSON.stringify({enabled: true}))); await flush();
+    assert.equal(control.checked, true); assert.equal(control.disabled, false);
+  } finally {
+    closeDialogs(); invalidate('nodes', 'groups', 'users'); setSession({user: null, csrf_token: '', expires_at: ''});
+    setNavigationSignal(null);
+    Object.defineProperty(reducedMotion, 'matches', motion);
+    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+    dom.restore();
   }
 });
 

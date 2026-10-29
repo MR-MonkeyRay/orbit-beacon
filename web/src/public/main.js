@@ -223,7 +223,15 @@ function start() {
       render(data);
       finish();
     },
-    onState: paintConnection
+    onState: paintConnection,
+    onPublicPageDisabled() {
+      connection?.close();
+      clearTimeout(displayTimer);
+      restartCountdown(false);
+      clearData();
+      finish();
+      location.replace('/');
+    }
   });
 }
 

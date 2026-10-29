@@ -13,7 +13,7 @@
 | 节点监控 | Nodes：查看 CPU、内存、磁盘、网络、负载、指标历史和服务探测；Agent settings 只读显示 Agent 本地运行参数 |
 | 流量统计 | 节点 Details → Traffic billing：设置账期和配额；仅统计，不限速，也不等同于云厂商账单 |
 | 节点接入 | 创建节点后在 Enroll agent 签发一次性凭证；支持分组批量接入 |
-| 公开页面 | 节点 Public page：独立填写公开名称、地区和服务商，默认不公开 |
+| 公开页面 | Settings → Public page 控制全站匿名访问，默认开启；节点 Public page 独立设置公开信息，默认不公开 |
 | 告警 | Alerts：规则、事件及 Webhook / Telegram / 邮件通道；未绑定通道仍产生站内事件与通知 |
 | 管理员 | Settings → Administrators：新增、更名、删除等权管理员，至少保留一名；新增时可要求首次登录改密，默认不勾选；Account 修改本人密码并结束本人全部会话 |
 | 导出与备份 | Settings → Data operations：加密导出、本地或对象存储备份计划、任务记录；恢复须停服后通过 CLI 执行 |
@@ -68,11 +68,24 @@ build/orbitbeacon-server health --url http://localhost:8080
 
 公开文本不会自动脱敏，不要填入 IP、主机名或秘密。CPU、内存、负载和 uptime 也会公开。取消公开、禁用、删除或撤销凭据会从后续快照移除节点，但无法召回已发送或断网保留的数据。`/status` 不提供页面。
 
+### 全站公开页开关
+
+在 **Settings → Public page** 关闭后，全部匿名节点 API（`/api/public/v1/nodes`、`/api/public/v1/stream`、`/api/public/v1/ws`）均返回 `403 public_page_disabled`，已有实时连接尝试发送无节点数据的 `error:public_page_disabled` 终止帧后关闭。已打开的公开页收到明确禁用信号会清空数据并整页返回 `/`；普通断网或服务错误只重连，不当作禁用。已发送或离线保留的数据无法召回。
+
+`/` 与 `/public.html` 的 GET/HEAD 入口规则相同，响应不缓存；关闭时即使带旧 ETag 也不会返回 304：
+
+| 全站开关 | 匿名或无效会话 | 正常管理员会话 | 待改密会话 |
+| --- | --- | --- | --- |
+| 开启（默认） | 公开页 | 公开页 | 公开页 |
+| 关闭 | 302 `/login` | 302 `/overview` | 302 `/change-password` |
+
+开关不限制静态资源，也不改变 Agent API、管理权限或每节点公开白名单；重新开启不会自动发布私有节点。配置备份包含该开关，Configuration 还原整体替换它（归档缺失时恢复默认开启）；仅还原 Monitoring / Events 保留当前开关。
+
 ## 正式部署与配置
 
 按[部署指南](deploy/README.md)选择 systemd 或 Docker Compose，配置备份；公网访问应由外置反向代理提供可信 HTTPS。页面与 API 同源，不支持子路径前缀。
 
-**当前主库 schema 为 20，不提供历史迁移或跨 schema 恢复。** 旧库与旧归档（含 schema 19）会被拒绝，不修改或删除原数据；使用新的私有数据目录，保留旧目录供原版本使用。
+**当前主库 schema 为 21，不提供历史迁移或跨 schema 恢复。** 旧库与旧归档（含 schema 20）会被拒绝，不修改或删除原数据；使用新的私有数据目录，保留旧目录供原版本使用。
 
 Server 配置优先级：**CLI > `ORBITBEACON_` 环境变量 > JSON > 默认值**；未知 JSON 键报错。
 

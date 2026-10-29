@@ -195,6 +195,50 @@ for (const kind of ['ws', 'sse', 'http']) {
   });
 }
 
+for (const kind of ['ws', 'sse-frame', 'sse-setup', 'http-frame', 'http-setup']) {
+  test(`${kind} public-page disable closes before its one terminal callback and never retries`, async (t) => {
+    const sse = stream();
+    const disabled = frame('error', {code: 'public_page_disabled'});
+    const env = liveHarness(t, (request) => request.url === '/stream'
+      ? kind.startsWith('http') ? response({}, {status: 503})
+        : kind === 'sse-setup' ? response({code: 'public_page_disabled'}, {status: 403}) : sse.response
+      : kind === 'http-frame' ? response(disabled) : response({code: 'public_page_disabled'}, {status: 403}));
+    let calls = 0;
+    let stoppedBeforeCallback = false;
+    const ui = consumer({onPublicPageDisabled() {
+      calls += 1;
+      stoppedBeforeCallback = env.sockets[0].closed && env.timers.size === 0
+        && env.requests.every((request) => request.signal.aborted);
+      throw new Error('Navigation hook failed');
+    }});
+    if (kind === 'ws') { env.sockets[0].open(); env.sockets[0].message(disabled); }
+    else { env.sockets[0].fail(); await flush(); if (kind === 'sse-frame') sse.frame(disabled); }
+    await flush();
+    assert.equal(calls, 1);
+    assert.equal(stoppedBeforeCallback, true);
+    const requests = env.requests.length;
+    ui.live.refresh(); env.sockets[0].message(disabled);
+    await env.advance(600000);
+    assert.equal(calls, 1); assert.equal(env.requests.length, requests);
+    assert.equal(env.timers.size, 0); assert.equal(ui.snapshots.length, 0);
+  });
+}
+
+for (const bad of ['ordinary', 'malformed', 'oversized', 'server-error']) {
+  test(`${bad} error bodies retain fallback and retry without public-page redirection`, async (t) => {
+    const errorResponse = () => bad === 'malformed' ? new Response('{', {status: 403})
+      : response({code: bad === 'ordinary' ? 'forbidden' : 'public_page_disabled', padding: bad === 'oversized' ? 'x'.repeat(65536) : ''}, {status: bad === 'server-error' ? 503 : 403});
+    const env = liveHarness(t, errorResponse);
+    let calls = 0;
+    const ui = consumer({onPublicPageDisabled: () => { calls += 1; }});
+    env.sockets[0].fail(); await flush();
+    assert.equal(env.requests.length, 2);
+    await env.advance(10000);
+    assert.equal(env.requests.length, 3); assert.equal(calls, 0);
+    ui.live.close();
+  });
+}
+
 test('malformed control frames and clocks cannot update data or the validated server clock', async (t) => {
   const sse = stream();
   const env = liveHarness(t, () => sse.response);

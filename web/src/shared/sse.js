@@ -1,3 +1,5 @@
+import {responseErrorCode} from './http-error.js';
+
 const MAX_BUFFER = 1024 * 1024;
 const encoder = new TextEncoder();
 
@@ -48,9 +50,10 @@ export function createSSEParser() {
 }
 
 export class StreamSetupError extends Error {
-  constructor(message, {response, cause} = {}) {
+  constructor(message, {response, cause, errorCode = ''} = {}) {
     super(message, {cause});
     this.response = response;
+    this.errorCode = errorCode;
   }
 }
 
@@ -71,8 +74,9 @@ export async function openSSE({url, credentials, signal, onFrame}) {
     signal.throwIfAborted();
   }
   if (!response.ok || response.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase() !== 'text/event-stream' || !response.body) {
+    const errorCode = await responseErrorCode(response, signal);
     discard();
-    throw new StreamSetupError('SSE unavailable', {response});
+    throw new StreamSetupError('SSE unavailable', {response, errorCode});
   }
   const reader = response.body.getReader();
   const parser = createSSEParser();

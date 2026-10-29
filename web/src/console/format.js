@@ -7,6 +7,7 @@ const ACTIONS = {
   'node.create': 'Node created', 'node.delete': 'Node deleted', 'node.disable': 'Node disabled', 'node.enable': 'Node enabled',
   'node.metadata.patch': 'Node details updated', 'node.config.patch': 'Desired configuration updated',
   'node.traffic_settings.patch': 'Traffic billing settings saved',
+  'public_page.update': 'Public page access updated',
   'node.public_settings.patch': 'Public page settings saved', 'group.create': 'Group created', 'group.update': 'Group renamed',
   'group.delete': 'Group deleted', 'user.create': 'Administrator added', 'user.patch': 'Administrator renamed', 'user.delete': 'Administrator deleted',
   'user.password.change': 'Password changed', 'enrollment.create': 'Enrollment credential issued',

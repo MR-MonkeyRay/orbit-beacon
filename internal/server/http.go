@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"orbitbeacon/internal/config"
@@ -93,6 +94,8 @@ type handler struct {
 	streamHeartbeat          time.Duration
 	streamLifetime           time.Duration
 	webUpdateIntervalSeconds int
+	publicPageDisabled       atomic.Bool
+	publicPageMu             sync.Mutex
 }
 
 type apiError struct {
@@ -118,6 +121,10 @@ func NewHandler(opts Options) (*handler, error) {
 	}
 	if opts.Management == nil {
 		opts.Management = opts.Auth.Management()
+	}
+	publicPage, err := opts.Management.PublicPageSettings(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("public page settings: %w", err)
 	}
 	if opts.Enrollments == nil {
 		opts.Enrollments = enrollment.NewService(opts.Nodes.Database(), enrollment.Options{MaxNodes: opts.Nodes.Capacity()})
@@ -172,6 +179,7 @@ func NewHandler(opts Options) (*handler, error) {
 	}
 	h := &handler{notifications: opts.Notifications, alerts: opts.Alerts, history: opts.History, staticAssets: staticAssets, accessLog: opts.AccessLog, metrics: newHTTPMetrics(opts.BuildVersion), trustedProxies: append([]netip.Prefix(nil), opts.TrustedProxies...), htmlPolicies: policies, auth: opts.Auth, nodes: opts.Nodes, management: opts.Management, enrollments: opts.Enrollments, ingest: opts.Ingest, traffic: opts.Traffic, origin: origin, assets: opts.Assets, logger: opts.Logger, now: opts.Now, ready: true}
 	h.backups, h.inbox = opts.Backups, opts.Inbox
+	h.publicPageDisabled.Store(!publicPage.Enabled)
 	h.webUpdateIntervalSeconds = opts.WebUpdateIntervalSeconds
 	return h, nil
 }
@@ -335,6 +343,12 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 	}
 	if !method(w, r, requestID, allowed...) {
 		return
+	}
+	if p == "/api/public/v1/nodes" || p == "/api/public/v1/stream" || p == "/api/public/v1/ws" {
+		if err := h.publicPageAccess(); err != nil {
+			h.publicPageError(w, requestID)
+			return
+		}
 	}
 	if p == "/api/public/v1/nodes" {
 		h.publicNodes(w, r, requestID)
@@ -642,6 +656,9 @@ func (h *handler) static(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := r.URL.Path
+	if (p == "/" || p == "/public.html") && !h.publicPageRoot(w, r) {
+		return
+	}
 	name := strings.TrimPrefix(p, "/")
 	uiRoute := p == "/login" || p == "/change-password" || p == "/overview" || p == "/nodes" || p == "/alerts" || p == "/settings" || (strings.HasPrefix(p, "/nodes/") && identity.ValidUUID(strings.TrimPrefix(p, "/nodes/")))
 	if uiRoute {

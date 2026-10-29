@@ -164,3 +164,20 @@ test('public stale/offline cards retain last values and null last_seen hides the
   data.nodes[0].last_seen = null; socket.message(snapshot(data));
   assert.equal(card.querySelector('.last-report').hidden, true);
 });
+
+test('public-page disable clears rendered data and timers before replacing the root URL', async (t) => {
+  const ui = await setup(t);
+  const redirects = [];
+  location.replace = (target) => {
+    assert.equal(ui.elements.nodes.children.length, 0);
+    assert.equal(ui.elements.summary.textContent, '—');
+    assert.equal(ui.sockets[0].closed, true);
+    assert.equal(ui.timers.size, 0);
+    redirects.push(target);
+  };
+  ui.sockets[0].open(); ui.sockets[0].message(snapshot(payload('withdrawn')));
+  ui.sockets[0].message(frame('error', {code: 'public_page_disabled'}));
+  await flush(); await ui.advance(600000);
+  assert.deepEqual(redirects, ['/']);
+  assert.equal(ui.requests.length, 0);
+});

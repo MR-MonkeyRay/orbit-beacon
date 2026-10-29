@@ -17,8 +17,14 @@ var errSnapshotBusy = errors.New("public snapshot changed while reading")
 // the final post-serialization fence shared by HTTP, SSE and WebSocket.
 func (h *handler) publicSnapshotVersion(ctx context.Context, limit, offset int) (ingest.PublicPage, uint64, error) {
 	for range 3 {
+		if err := h.publicPageAccess(); err != nil {
+			return ingest.PublicPage{}, 0, err
+		}
 		version := h.nodes.PublicVisibilityVersion()
 		page, err := h.ingest.PublicPage(ctx, h.nodes, limit, offset, h.liveInterval(), h.now)
+		if disabled := h.publicPageAccess(); disabled != nil {
+			return ingest.PublicPage{}, 0, disabled
+		}
 		if err != nil {
 			return ingest.PublicPage{}, 0, err
 		}
@@ -37,6 +43,10 @@ func (h *handler) publicNodes(w http.ResponseWriter, r *http.Request, requestID 
 	}
 	result, visibility, err := h.publicSnapshotVersion(r.Context(), limit, offset)
 	if err != nil {
+		if errors.Is(err, errPublicPageDisabled) {
+			h.publicPageError(w, requestID)
+			return
+		}
 		if errors.Is(err, errSnapshotBusy) {
 			w.Header().Set("Retry-After", strconv.Itoa(h.liveSeconds()))
 			fail(w, http.StatusServiceUnavailable, "snapshot_busy", "Public snapshot is changing; retry later", requestID)
@@ -49,6 +59,10 @@ func (h *handler) publicNodes(w http.ResponseWriter, r *http.Request, requestID 
 	body, err := json.Marshal(frame)
 	if err != nil {
 		h.serviceError(w, err, requestID)
+		return
+	}
+	if h.publicPageAccess() != nil {
+		h.publicPageError(w, requestID)
 		return
 	}
 	if h.nodes.PublicVisibilityVersion() != visibility {

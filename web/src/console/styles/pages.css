@@ -57,6 +57,7 @@
 .tabs button::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;border-radius:2px;background:var(--beacon);transform:scaleX(0);transition:transform .25s var(--ease)}
 .tabs button[aria-selected="true"]::after{transform:scaleX(1)}
 .tabs .icon{width:16px;height:16px}
+@media (max-width:820px){.tabs .icon{display:none}.tabs button{padding-inline:12px}}
 .tabpanel{animation:fade .3s var(--ease)}
 @keyframes fade{from{opacity:0;transform:translateY(4px)}}
 .split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:18px;align-items:start}

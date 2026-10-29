@@ -27,7 +27,7 @@ type Migration struct {
 }
 
 // CurrentSchemaVersion is the highest schema version produced by this binary.
-const CurrentSchemaVersion = 20
+const CurrentSchemaVersion = 21
 
 // Open opens a persistent local database. The driver applies connection-local
 // pragmas to every pooled connection, not just the migration connection.

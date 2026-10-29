@@ -1,5 +1,6 @@
 import {timestampMillis} from './freshness.js';
 import {openSSE} from './sse.js';
+import {responseErrorCode} from './http-error.js';
 
 const FIRST_SNAPSHOT_MS = 8000;
 const WATCHDOG_MS = 30000;
@@ -21,7 +22,7 @@ function retryAfter(response) {
 
 // One read-only channel per consumer. Transport and retryAt are internal UI hints,
 // not user-facing transport choices. retryAt is an epoch-ms HTTP countdown target.
-export function connectLive({urls, signal, credentials = 'same-origin', validateSnapshot, onSnapshot, onState = () => {}, onClock = () => {}, onUnauthorized}) {
+export function connectLive({urls, signal, credentials = 'same-origin', validateSnapshot, onSnapshot, onState = () => {}, onClock = () => {}, onUnauthorized, onPublicPageDisabled}) {
   let generation = 0;
   let channel;
   let closed = false;
@@ -73,6 +74,12 @@ export function connectLive({urls, signal, credentials = 'same-origin', validate
     // Known authentication failure is terminal even if the hook cannot reach /me.
     try { Promise.resolve(onUnauthorized?.('unauthenticated')).catch(() => {}); } catch { /* terminal */ }
   };
+  const publicPageDisabled = (active) => {
+    if (!current(active)) return;
+    close();
+    // Close/invalidate before application code can navigate or throw.
+    try { Promise.resolve(onPublicPageDisabled?.()).catch(() => {}); } catch { /* terminal */ }
+  };
   const fail = async (active) => {
     if (!current(active)) return;
     const {transport, opened} = active;
@@ -122,13 +129,16 @@ export function connectLive({urls, signal, credentials = 'same-origin', validate
     if (frame.type === 'snapshot') {
       if (!owns(frame, 'data') || owns(frame, 'code') || validateSnapshot(frame.data) !== true) throw new Error('Invalid live snapshot');
     } else if (owns(frame, 'data') || (frame.type === 'heartbeat' ? owns(frame, 'code')
-      : frame.type === 'close' ? !['renew', 'shutdown'].includes(frame.code) : frame.code !== 'unauthenticated')) throw new Error('Invalid live control');
+      : frame.type === 'close' ? !['renew', 'shutdown'].includes(frame.code) : !['unauthenticated', 'public_page_disabled'].includes(frame.code))) throw new Error('Invalid live control');
     if (active.transport === 'http' && frame.type === 'heartbeat') throw new Error('Expected HTTP snapshot');
     if (!current(active)) return false;
     intervalSeconds = frame.update_interval_seconds;
     onClock(frame.server_time);
     if (!current(active)) return false;
-    if (frame.type === 'error') { unauthenticated(active); return false; }
+    if (frame.type === 'error') {
+      if (frame.code === 'public_page_disabled') publicPageDisabled(active); else unauthenticated(active);
+      return false;
+    }
     if (frame.type === 'close') { control(active, frame.code); return false; }
     if (frame.type === 'snapshot') {
       active.received = true;
@@ -178,6 +188,7 @@ export function connectLive({urls, signal, credentials = 'same-origin', validate
     } catch (error) {
       if (!current(active)) return;
       if (error.response?.status === 401) unauthenticated(active);
+      else if (error.response?.status === 403 && error.errorCode === 'public_page_disabled') publicPageDisabled(active);
       else void fail(active);
     }
   };
@@ -217,6 +228,11 @@ export function connectLive({urls, signal, credentials = 'same-origin', validate
         const response = await fetch(urls.http, {credentials, cache: 'no-store', signal: request.signal});
         if (!valid()) { discard(response); return; }
         if (response.status === 401) { discard(response); unauthenticated(active); return; }
+        if (response.status === 403) {
+          const code = await responseErrorCode(response, request.signal);
+          if (!valid()) return;
+          if (code === 'public_page_disabled') { publicPageDisabled(active); return; }
+        }
         delay = Math.max(delay, retryAfter(response));
         if (!response.ok) { discard(response); throw new Error('Live request failed'); }
         const frame = await response.json();

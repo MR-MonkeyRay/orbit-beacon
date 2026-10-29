@@ -258,12 +258,26 @@ type liveSource[T any] struct {
 	authenticate func(context.Context) error
 }
 
+// Only these sentinels are terminal protocol errors. Database and transport
+// failures must never masquerade as a policy decision or an expired session.
+func liveTerminalCode(err error) string {
+	switch {
+	case errors.Is(err, errPublicPageDisabled):
+		return "public_page_disabled"
+	case errors.Is(err, auth.ErrUnauthenticated):
+		return "unauthenticated"
+	default:
+		return ""
+	}
+}
+
 func (h *handler) runPublicLive(ctx context.Context, request context.Context, stream *liveStream, limit, offset int, send func(context.Context, []byte) error) {
 	runLive(h, ctx, request, stream, liveSource[ingest.PublicPage]{
 		snapshot: func(ctx context.Context) (ingest.PublicPage, uint64, error) {
 			return h.publicSnapshotVersion(ctx, limit, offset)
 		},
-		equal: publicPagesEqual,
+		equal:        publicPagesEqual,
+		authenticate: func(context.Context) error { return h.publicPageAccess() },
 	}, send)
 }
 
@@ -320,29 +334,44 @@ func runLive[T any](h *handler, ctx context.Context, request context.Context, st
 			return send(writeCtx, body)
 		})
 	}
-	closeFrame := func(code string) {
-		if source.authenticate != nil {
-			checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			err := source.authenticate(checkCtx)
-			cancel()
-			if errors.Is(err, auth.ErrUnauthenticated) || errors.Is(context.Cause(ctx), auth.ErrUnauthenticated) {
-				_ = write(controlFrame[T](h, "error", "unauthenticated"), true)
-				return
-			}
-			if err != nil {
-				return
-			}
+	terminalState := func(err error) (string, error) {
+		if code := liveTerminalCode(err); code != "" {
+			return code, err
 		}
-		_ = write(controlFrame[T](h, "close", code), true)
+		if code := liveTerminalCode(context.Cause(ctx)); code != "" {
+			return code, context.Cause(ctx)
+		}
+		if source.authenticate != nil {
+			// Safety withdrawal may have canceled the projection/write context.
+			// Recheck policy independently so cancellation cannot hide its cause.
+			checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			err = source.authenticate(checkCtx)
+			cancel()
+			return liveTerminalCode(err), err
+		}
+		return "", nil
 	}
-	unauthorized := func() { _ = write(controlFrame[T](h, "error", "unauthenticated"), true) }
-	isUnauthorized := func(err error) bool {
-		return errors.Is(err, auth.ErrUnauthenticated) || errors.Is(context.Cause(ctx), auth.ErrUnauthenticated)
+	terminalError := func(err error) bool {
+		code, _ := terminalState(err)
+		if code == "" {
+			return false
+		}
+		_ = write(controlFrame[T](h, "error", code), true)
+		return true
+	}
+	closeFrame := func(code string) {
+		terminal, err := terminalState(nil)
+		if terminal != "" {
+			_ = write(controlFrame[T](h, "error", terminal), true)
+			return
+		}
+		if err == nil {
+			_ = write(controlFrame[T](h, "close", code), true)
+		}
 	}
 	for {
 		if ctx.Err() != nil {
-			if errors.Is(context.Cause(ctx), auth.ErrUnauthenticated) {
-				unauthorized()
+			if terminalError(context.Cause(ctx)) {
 				return
 			}
 			if request.Err() == nil {
@@ -362,8 +391,7 @@ func runLive[T any](h *handler, ctx context.Context, request context.Context, st
 		if first || !now.Before(nextProjection) {
 			if source.authenticate != nil {
 				if err := source.authenticate(ctx); err != nil {
-					if isUnauthorized(err) {
-						unauthorized()
+					if terminalError(err) {
 						return
 					}
 					if ctx.Err() != nil {
@@ -374,6 +402,9 @@ func runLive[T any](h *handler, ctx context.Context, request context.Context, st
 			}
 			page, version, err := source.snapshot(ctx)
 			if err != nil {
+				if terminalError(err) {
+					return
+				}
 				if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 					continue
 				}
@@ -389,8 +420,7 @@ func runLive[T any](h *handler, ctx context.Context, request context.Context, st
 			nextProjection = time.Now().Add(interval)
 			if first || !source.equal(previous, page) {
 				if err := write(snapshotFrame(h, page), false); err != nil {
-					if isUnauthorized(err) {
-						unauthorized()
+					if terminalError(err) {
 						return
 					}
 					if errors.Is(err, errSnapshotBusy) && h.nodes.PublicSafetyVersion() != visibility {
@@ -405,9 +435,7 @@ func runLive[T any](h *handler, ctx context.Context, request context.Context, st
 		}
 		if !time.Now().Before(nextHeartbeat) {
 			if err := write(controlFrame[T](h, "heartbeat", ""), false); err != nil {
-				if isUnauthorized(err) {
-					unauthorized()
-				}
+				terminalError(err)
 				return
 			}
 			nextHeartbeat = time.Now().Add(heartbeat)

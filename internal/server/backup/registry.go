@@ -44,6 +44,7 @@ func table(name, source, where, definition, primary string) tableSpec {
 var categoryTables = map[Category][]tableSpec{
 	Configuration: {
 		table("users", "main", "", "id TEXT,username TEXT,password_hash TEXT,created_at TEXT,must_change_password INTEGER", "id"),
+		table("settings", "main", "key = 'public_page_enabled'", "key TEXT,value TEXT", "key"),
 		table("groups", "main", "", "id TEXT,name TEXT", "id"),
 		table("nodes", "main", "", "id TEXT,name TEXT,status TEXT,group_id TEXT,region TEXT,provider TEXT,notes TEXT,created_at TEXT,public_settings TEXT,billing_day INTEGER,quota_bytes TEXT,token_hash BLOB,credential_epoch INTEGER,installation_id TEXT,first_enrolled_at TEXT,run_generation TEXT,report_session_id TEXT", "id"),
 		table("node_tags", "main", "", "node_id TEXT,tag TEXT", "node_id,tag"),

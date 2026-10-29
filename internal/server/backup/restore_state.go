@@ -172,6 +172,9 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 				columns += ",next_run_at"
 				query = "SELECT " + columns + " FROM backup_plans"
 			}
+			if spec.Where != "" {
+				query += " WHERE " + spec.Where
+			}
 			var transform restoreRowTransform
 			if spec.Name == "nodes" {
 				transform = func(names []string, values []any) error {

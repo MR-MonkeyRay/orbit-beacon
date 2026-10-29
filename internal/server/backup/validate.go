@@ -219,6 +219,10 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 		return invalidRow()
 	}
 	switch table {
+	case "settings":
+		if r.text("key") != "public_page_enabled" || !oneOf(r.text("value"), "true", "false") {
+			return invalidRow()
+		}
 	case "users":
 		if username := r.text("username"); len(username) < 1 || len(username) > 128 || !utf8.ValidString(username) {
 			return invalidRow()

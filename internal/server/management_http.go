@@ -35,6 +35,8 @@ func routeMethods(p string) []string {
 		return readMethods
 	case "/api/v1/me/password":
 		return patchMethods
+	case "/api/v1/settings/public-page":
+		return settingsMethods
 	case "/api/v1/users", "/api/v1/groups", "/api/v1/nodes", "/api/v1/alert-rules", "/api/v1/notification-channels":
 		return createMethods
 	case "/api/v1/nodes/batch", "/api/agent/v1/enroll", "/api/agent/v1/enroll/check", "/api/agent/v1/report", "/api/agent/v1/recover":
@@ -100,6 +102,8 @@ func routeMethods(p string) []string {
 func (h *handler) managementRoute(w http.ResponseWriter, r *http.Request, requestID string, user auth.User) bool {
 	p := r.URL.Path
 	switch {
+	case p == "/api/v1/settings/public-page":
+		h.publicPageSettings(w, r, requestID)
 	case p == "/api/v1/me/password":
 		var input struct {
 			OldPassword string `json:"old_password"`

@@ -64,6 +64,22 @@ async function routing(t, {hidden = false} = {}) {
   }};
 }
 
+for (const target of ['/?from=login#status', '/public.html']) {
+  for (const replace of [false, true]) {
+    test(`root navigation ${target} uses full-page ${replace ? 'replace' : 'assign'} instead of the console fallback`, async (t) => {
+      const env = await routing(t, {hidden: true});
+      const navigated = [];
+      location.assign = (url) => navigated.push(['assign', url]);
+      location.replace = (url) => navigated.push(['replace', url]);
+      try {
+        await env.go(target, {replace});
+        assert.deepEqual(navigated, [[replace ? 'replace' : 'assign', target]]);
+        assert.equal(document.getElementById('view').textContent, '/initial');
+      } finally { env.clean(); }
+    });
+  }
+}
+
 test('hidden initial routing and hidden navigation update content without starting ineligible transitions', async (t) => {
   const env = await routing(t, {hidden: true});
   try {
@@ -146,5 +162,30 @@ test('rapid link and popstate navigation consume only their expected cancellatio
     env.transitions.at(-1).begin(); await flush();
     await nextTurn();
     assert.equal(document.getElementById('view').textContent, '/second-popstate');
+  } finally { env.clean(); }
+});
+
+test('root navigation honors dirty-form cancellation before any full-page request', async (t) => {
+  const env = await routing(t, {hidden: true});
+  const navigated = [];
+  location.assign = (target) => navigated.push(target);
+  const form = new TestElement('form'); form.dataset.dirty = 'true';
+  document.getElementById('view').append(form);
+  try {
+    const cancelled = env.go('/');
+    const rejection = assert.rejects(cancelled, (error) => error.name === 'AbortError');
+    await flush();
+    assert.deepEqual(navigated, []);
+    document.querySelector('dialog').close('cancel'); await rejection;
+    assert.equal(form.isConnected, true);
+    const accepted = env.go('/public.html'); await flush();
+    document.querySelector('dialog').close('confirm'); await accepted;
+    assert.deepEqual(navigated, ['/public.html']);
+    const approvedUnload = new Event('beforeunload', {cancelable: true});
+    env.window.dispatchEvent(approvedUnload);
+    assert.equal(approvedUnload.defaultPrevented, false, 'confirmed navigation must not prompt twice');
+    const unapprovedUnload = new Event('beforeunload', {cancelable: true});
+    env.window.dispatchEvent(unapprovedUnload);
+    assert.equal(unapprovedUnload.defaultPrevented, true, 'the unload permission is used once');
   } finally { env.clean(); }
 });

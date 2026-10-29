@@ -108,9 +108,6 @@ func TestUsersPasswordChangeRequirementSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if storage.CurrentSchemaVersion != 20 {
-		t.Fatalf("password requirement schema version = %d, want 20", storage.CurrentSchemaVersion)
-	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,username,password_hash,created_at) VALUES('default','default','hash','now')`); err != nil {
 		t.Fatal(err)
 	}

@@ -27,8 +27,81 @@ export async function settingsPage() {
       {id: 'administrators', label: 'Administrators', icon: 'users', build: () => administratorsTab(users)},
       {id: 'groups', label: 'Groups', icon: 'folder', build: () => groupsTab(groups, nodes)},
       {id: 'audit', label: 'Audit log', icon: 'list', build: () => auditTab(audit, nameLookup(nodes, users, groups))},
-      {id: 'data', label: 'Data operations', icon: 'cloud', build: dataOperationsTab}
+      {id: 'data', label: 'Data operations', icon: 'cloud', build: dataOperationsTab},
+      {id: 'public-page', label: 'Public page', icon: 'globe', build: publicPageTab}
     ], 'Settings sections'));
+}
+
+function publicPageTab() {
+  const navigation = getNavigationSignal();
+  const control = h('input', {type: 'checkbox', name: 'public_page_enabled', disabled: true});
+  const note = h('p', {class: 'hint', role: 'status'}, 'Loading public page settings…');
+  const errorBox = h('div', {class: 'form-error', role: 'alert', hidden: true});
+  const retry = button('Try again', {onClick: () => { void load(); }});
+  retry.hidden = true;
+  let controller;
+  let enabled;
+  let pending = false;
+  const active = () => controller && !controller.signal.aborted && !navigation?.aborted;
+  const showError = (error) => {
+    errorBox.textContent = error.message;
+    errorBox.hidden = false;
+  };
+  const load = async () => {
+    if (!active() || pending) return;
+    pending = true;
+    control.disabled = true;
+    retry.hidden = true;
+    errorBox.hidden = true;
+    try {
+      const settings = await api('/settings/public-page', {signal: controller.signal});
+      if (!active()) return;
+      enabled = settings.enabled;
+      control.checked = enabled;
+      note.textContent = '';
+    } catch (error) {
+      if (active() && error.name !== 'AbortError') { showError(error); retry.hidden = false; }
+    } finally {
+      pending = false;
+      control.disabled = !active() || typeof enabled !== 'boolean' || !session.csrf;
+    }
+  };
+  control.addEventListener('change', async () => {
+    const requested = control.checked;
+    control.checked = enabled;
+    if (!active() || pending || requested === enabled || !session.csrf) return;
+    pending = true;
+    control.disabled = true;
+    errorBox.hidden = true;
+    note.textContent = '';
+    try {
+      if (!requested && !(await confirmDialog({
+        title: 'Disable public page?',
+        message: 'Anonymous access, public APIs and live streams will stop. Signed-in visitors will enter the console; visitors who must change their password will enter the password change page.',
+        confirm: 'Disable public page', danger: true
+      }))) return;
+      if (!active()) return;
+      const settings = await api('/settings/public-page', {method: 'PATCH', body: {enabled: requested}, signal: controller.signal});
+      if (!active()) return;
+      enabled = settings.enabled;
+      note.textContent = enabled ? 'Public page enabled.' : 'Public page disabled.';
+    } catch (error) {
+      if (active() && error.name !== 'AbortError') showError(error);
+    } finally {
+      pending = false;
+      control.checked = enabled;
+      control.disabled = !active() || !session.csrf;
+    }
+  });
+  const element = panel('Public page', {},
+    h('label', {class: 'switch'}, control, h('span', {class: 'switch-track', 'aria-hidden': 'true'}),
+      h('span', {class: 'switch-text'}, h('strong', null, 'Enable public page'), h('span', null, 'Allow anonymous access to the public status page, public APIs and live streams.'))),
+    h('p', {class: 'lede'}, 'When disabled, signed-in visitors enter the console and anonymous visitors go to sign in. Accounts that require a password change go to the password change page. Enabling this setting does not publish private nodes.'),
+    errorBox, note, retry);
+  return {element,
+    attach() { controller = new AbortController(); void load(); },
+    detach() { controller?.abort(); }
+  };
 }
 
 function accountTab() {
