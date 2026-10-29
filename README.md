@@ -1,41 +1,34 @@
 # OrbitBeacon
 
-自托管的多节点监控系统。Server 提供管理 API、内嵌 Web 控制台和 SQLite 存储；Agent 采集主机指标，通过 HTTPS 上报。
+自托管的多节点监控系统：Server 提供管理 API、内嵌 Web 界面和 SQLite 存储，Linux Agent 以非 root 身份采集并通过 HTTPS 上报。
 
-管理控制台为英文，公开节点首页为中文。Agent 当前按 Linux 部署；Windows 和 macOS 的采集代码不代表已支持部署。
+管理控制台为英文，公开节点页为中文。控制台面向桌面和平板（最小宽度 744px），公开页支持手机。
 
-文档：[部署与备份](deploy/README.md) · [Linux Agent 接入](docs/agent.md) · [架构与数据边界](docs/architecture.md) · [HTTP API](api/openapi.yaml) · [Web 开发](web/README.md)
+[部署与备份](deploy/README.md) · [Agent 接入](docs/agent.md) · [架构与数据边界](docs/architecture.md) · [HTTP API](api/openapi.yaml) · [Web 开发](web/README.md)
 
-## 功能
+## 能做什么
 
-- 管理节点、分组、管理员和接入凭证；只读查看 Agent 本地运行设置，管理流量账期/配额及指标、历史与探测结果。
-- 配置告警规则，查看告警事件，通过 Webhook、Telegram 或邮件发送通知。
-- 为每个节点独立设置公开名称、地区和服务商，选择是否在公开首页展示；默认不公开。
-- 在 Settings → Data operations 导出加密归档、管理本地/对象存储备份计划，支持离线按类别恢复；提供 systemd 和 Docker Compose 部署。Agent 自动升级尚未实现。
+| 功能 | 使用入口与边界 |
+| --- | --- |
+| 节点监控 | Nodes：查看 CPU、内存、磁盘、网络、负载、指标历史和服务探测；Agent settings 只读显示 Agent 本地运行参数 |
+| 流量统计 | 节点 Details → Traffic billing：设置账期和配额；仅统计，不限速，也不等同于云厂商账单 |
+| 节点接入 | 创建节点后在 Enroll agent 签发一次性凭证；支持分组批量接入 |
+| 公开页面 | 节点 Public page：独立填写公开名称、地区和服务商，默认不公开 |
+| 告警 | Alerts：规则、事件及 Webhook / Telegram / 邮件通道；未绑定通道仍产生站内事件与通知 |
+| 管理员 | Settings → Administrators：新增、更名、删除等权管理员，至少保留一名；Account 修改本人密码并结束本人全部会话 |
+| 导出与备份 | Settings → Data operations：加密导出、本地或对象存储备份计划、任务记录；恢复须停服后通过 CLI 执行 |
+| 站内通知 | Notifications：告警与备份结果，未读状态按管理员独立保存；备份结果不外发 |
 
-在线状态按 Server 收到报告的时间判断，不等于 ping 或业务健康。失联时保留机器和最后样本：来源过期标旧，超过 180 秒标离线，数字与 uptime 不自行增长；新报告明确失败/缺失的值显示 `—`。样本仅在当前 Server 进程内保留，重启后资产和已落库 last_seen 仍在，数字可空。浏览器断网只标旧，不把节点自行改为离线；历史记录仍是尽力而为。
+需要了解的限制：
 
-公开页和节点管理页自动按 WS → SSE → HTTP 回退，降级后每 300 秒重新优选；静默时只发心跳。Server 的 `web_update_interval_seconds` 统一控制推送合并与 HTTP 轮询（默认 10，范围 2–60 秒，重启生效），不改变 Agent 采集周期。
+- 在线表示 Server 在最近 180 秒内收到报告，不代表业务健康。失联保留最后样本并标旧，数字和 uptime 不自行增长；完整样本只在内存中，Server 重启后须等待新报告。指标历史为尽力写入。
+- 公开页和节点管理页自动按 WebSocket → SSE → HTTP 回退。浏览器断网只标旧，不自行判定节点离线；节点管理页实时更新只读数据，不覆盖未保存表单。
+- 告警每 30 秒评估，外发通知可能延迟、重复或丢失，不替代独立的高可靠告警系统。
+- 所有控制台账户均为管理员；没有他人密码重置或找回流程。Agent 没有远程升级、终端或任意命令执行功能；当前部署支持 Linux。
 
-管理页只更新只读状态、样本和 runtime，保留筛选、勾选及未保存文字；状态重筛和资产增删由页面提示后手动应用。会话已知到期时，即使断网也立即清空私有页面并转登录；离线期间无法提前获知远端撤销。
+## 快速开始：本机 HTTPS
 
-遥测报告忽略并丢弃新增未知字段，已知指标和来源仍校验；注册、恢复、管理写入及本地配置严格拒绝未知字段。请求上限为 64 KiB，不改变协议版本校验。
-
-配置、监控、事件可独立选择，默认仅配置；配置包包含匹配的 `secrets.key`，不含部署配置、TLS 证书或程序。每个 `.tar.gz.age` 包使用独立的 16 位随机密码，须另行保管；密码和任务保留至完成后 90 天，手动下载有效 24 小时。步骤与恢复边界见[部署文档](deploy/README.md)。
-
-### 使用控制台
-
-- **Nodes**：创建节点，在 **Enroll agent** 签发凭证。**Agent settings** 只读显示最近报告的本地设置；修改 Agent JSON 后 reload。**Details → Traffic billing** 单独保存 Server 账期与配额，不影响 Agent 采集周期。
-- **Alerts**：在 **Channels** 配置并测试通知通道，在 **Rules** 添加规则并绑定通道；在 **Active** 和 **History** 查看事件。规则可覆盖全部节点、分组或单节点，支持 CPU、内存、Swap、磁盘、负载、探测失败和离线。未绑定通道时仍可产生事件和站内通知，但不会外发。
-- **Settings → Administrators**：新增、更名和删除管理员；所有账户权限相同，至少保留一名管理员。存在其他管理员时可删除本人并立即退出。**Account** 仅支持验证旧密码后修改本人密码，成功后结束本人全部会话；不能重置他人密码。
-- **Settings → Data operations**：发起后台导出、管理备份计划、查看任务详情；完成后自行下载，不会自动下载。备份结果只进站内通知，不外发。
-- **Notifications** 铃铛：所有管理员查看备份结果和告警；未读数与已读状态按账户独立保存，不是当前触发告警数。
-
-告警每 30 秒评估一次；外发通知可能延迟或丢失，不能替代独立的高可靠告警系统。未绑定外发通道仍会生成站内告警通知。更多数据保留和可靠性边界见[架构说明](docs/architecture.md)。
-
-## 快速开始：本机 HTTPS 体验
-
-需要 Linux、Go 1.27.3 和 OpenSSL，普通用户执行即可，不需要 Node.js。以下命令在仓库根目录运行，适用于新建的本机数据目录。数据目录及其祖先必须由 root 或当前用户所有，且不能对组/其他用户可写，所以示例把它放在 `$HOME/orbitbeacon-demo`，不要直接使用仓库内的 `./data`。
+需要 Linux、Go（版本见 [go.mod](go.mod)）和 OpenSSL，不需要 Node.js。以下在仓库根目录以普通用户执行，使用新的数据目录。数据目录及祖先须归 root 或当前用户所有，且不可被组或其他用户写入；不要直接使用权限不符合要求的仓库目录。
 
 ### 1. 编译并创建管理员
 
@@ -43,14 +36,14 @@
 umask 077
 mkdir -p build "$HOME/orbitbeacon-demo"
 chmod 700 "$HOME/orbitbeacon-demo"
-GOTOOLCHAIN=go1.27.3 go build -o build/orbitbeacon-server ./cmd/orbitbeacon-server
-GOTOOLCHAIN=go1.27.3 go build -o build/orbitbeacon-agent ./cmd/orbitbeacon-agent
+go build -o build/orbitbeacon-server ./cmd/orbitbeacon-server
+go build -o build/orbitbeacon-agent ./cmd/orbitbeacon-agent
 build/orbitbeacon-server bootstrap --data-dir "$HOME/orbitbeacon-demo" --username admin
 ```
 
-按提示输入密码，长度 8–1024 个 UTF-8 字节，终端不回显。没有默认密码或 HTTP 初始化入口；已有管理员时不会覆盖。自动化场景可从标准输入传入一行密码，但不要放进命令参数。
+按提示输入密码（8–1024 个 UTF-8 字节，终端不回显）。没有默认密码或网页初始化入口；已有管理员不会被覆盖。自动化可从标准输入传入一行密码，不要放进命令参数。
 
-### 2. 配置证书并启动
+### 2. 启动 HTTPS
 
 ```sh
 DEMO_DIR="$HOME/orbitbeacon-demo"
@@ -65,96 +58,79 @@ cat > "$DEMO_DIR/server.json" <<EOF
   "data_dir": "$DEMO_DIR",
   "public_url": "https://localhost:8443",
   "tls_cert_file": "$DEMO_DIR/server-cert.pem",
-  "tls_key_file": "$DEMO_DIR/server-key.pem",
-  "max_nodes": 500
+  "tls_key_file": "$DEMO_DIR/server-key.pem"
 }
 EOF
 build/orbitbeacon-server serve --config "$DEMO_DIR/server.json"
 ```
 
-保持服务运行，在另一个终端检查（如果新开了终端，先重新设置 `DEMO_DIR`）：
+另开终端检查：
 
 ```sh
-DEMO_DIR="$HOME/orbitbeacon-demo"
 build/orbitbeacon-server health --url https://localhost:8443 \
-  --ca-file "$DEMO_DIR/server-cert.pem"
+  --ca-file "$HOME/orbitbeacon-demo/server-cert.pem"
 ```
 
-浏览器信任 `$DEMO_DIR/server-cert.pem` 后访问 <https://localhost:8443> 查看公开首页，点“管理登录”使用刚创建的账号。这张证书仅用于本机演示，不要分发 `server-key.pem`。会话 Cookie 固定为 `Secure`，不能改用 HTTP 登录。
+浏览器信任 `server-cert.pem` 后访问 <https://localhost:8443>，点“管理登录”。此证书仅用于本机演示，不要分发私钥。登录 Cookie 固定为 `Secure`，不能改用 HTTP 登录。
 
-### 3. 接入 Agent
+### 3. 接入并选择公开节点
 
-在控制台 Nodes 中创建节点，在节点详情的 Enroll agent 签发凭证；然后按 [Linux Agent 接入指南](docs/agent.md) 安装并运行。指南也说明私有 CA 和远程节点的配置。
+1. 在 Nodes 创建节点，打开 Enroll agent 签发凭证，按 [Agent 指南](docs/agent.md) 安装。
+2. 确认最近上报时间和最新样本；注册成功不等于已上报。
+3. 如需公开，在 Public page 填写公开信息并勾选 Publish this node。仅已注册、启用且有有效凭据的公开节点展示。
 
-### 4. 选择公开节点
+公开文本不会自动脱敏，不要填入 IP、主机名或秘密。CPU、内存、负载和 uptime 也会公开。取消公开、禁用、删除或撤销凭据会从后续快照移除节点，但无法召回已发送或断网保留的数据。`/status` 不提供页面。
 
-管理员进入 Nodes → 节点详情 → Public page，填写独立的 Public name、Region、Provider，勾选 Publish this node 后保存。不会自动复制内部元数据；已注册且启用的节点才会展示。不要填入 IP、域名、主机名或凭证；这些文本是主动发布的内容，不会自动脱敏。CPU、内存、负载和运行时长也会公开。
+## 正式部署与配置
 
-取消公开、禁用、删除节点或撤销节点凭证后，新快照将其排除；安全变更会中断流以重新读取，已发送或断网保留的数据无法召回。`/status` 不提供页面。
+按[部署指南](deploy/README.md)选择 systemd 或 Docker Compose，配置可信 HTTPS 和备份。页面与 API 同源，不支持子路径前缀。
 
-## 正式部署
+**当前主库 schema 为 19，不提供历史迁移或跨 schema 恢复。** 旧库（含 schema 18）会被拒绝；使用新的私有数据目录，保留旧目录供原版本使用。
 
-见 [部署与备份说明](deploy/README.md)，包含 systemd、Docker Compose、管理员初始化和备份恢复。
+Server 配置优先级：**CLI > `ORBITBEACON_` 环境变量 > JSON > 默认值**；未知 JSON 键报错。
 
-部署前至少确认：
-
-- 使用可信 HTTPS 证书，或让客户端显式信任你的私有 CA；不要用跳过 TLS 校验代替信任配置。
-- `public_url` 是浏览器实际访问的 HTTPS 源站，推荐域名根路径。API 与页面同源，不支持子路径前缀。
-- 数据目录放在本地文件系统，由运行用户单独所有并设为 `0700`；数据库、SQLite 辅助文件和 `secrets.key` 必须是同一用户的 `0600` 普通文件，路径不能经过符号链接。
-- 主库使用 schema 19：空库直接建表，不执行历史迁移；旧库（含 schema 18）及旧 schema 归档均拒绝，不清空或转换。使用新的私有数据目录，保留旧目录供原版本使用。
-- 导出和计划备份由运行中的 Server 执行；恢复或重新 `bootstrap` 前先停服。遇到 `data_dir_in_use` 不要删除 `server.lock`。
-- 默认不信任转发头，代理后的登录限流按代理直连 IP 计算。仅在受控代理下配置 `trusted_proxies`，并确保代理正确设置 `X-Forwarded-For`；详见部署文档。
-
-## 配置
-
-Server 配置优先级：**CLI 参数 > `ORBITBEACON_` 环境变量 > JSON 文件 > 默认值**。未知配置键会直接报错。
-
-| JSON 配置项 | 默认值 / 说明 |
+| JSON 键 | 默认值 / 说明 |
 | --- | --- |
 | `listen_addr` | `127.0.0.1:8080` |
-| `data_dir` | `./data`，本地持久化目录 |
-| `public_url` | `https://localhost`；必须是实际 HTTPS 地址，用于浏览器 Origin 校验 |
-| `max_nodes` | `500`；包括待接入和禁用节点，是容量上限，不是性能承诺 |
-| `tls_cert_file` / `tls_key_file` | 默认空；直接提供 HTTPS 时必须成对设置 |
-| `trusted_proxies` | 默认空数组；仅信任指定代理 IP 或 CIDR 的 `X-Forwarded-For` |
-| `metrics_listen` | 默认空，即关闭独立指标监听；开启时应限制访问 |
-| `access_log` | 默认 `false`，是否启用访问日志 |
-| `web_update_interval_seconds` | `10`；浏览器更新周期，整数 2–60 秒，重启生效；不覆盖 Agent 运行设置 |
-| `allow_insecure_webhooks` / `notification_allow_private_networks` | 默认 `false`；通知目标的网络安全限制见部署文档 |
+| `data_dir` | `./data`；本地持久化目录，所有权和权限要求见部署指南 |
+| `public_url` | `https://localhost`；浏览器实际访问的 HTTPS 源站，用于 Origin 校验 |
+| `max_nodes` | `500`；包括待接入和禁用节点，不是性能承诺 |
+| `tls_cert_file` / `tls_key_file` | 空；Server 直接终结 TLS 时成对设置 |
+| `trusted_proxies` | `[]`；仅信任指定 IP / CIDR 的转发客户端地址 |
+| `web_update_interval_seconds` | `10`；整数 2–60 秒，控制网页推送合并与 HTTP 轮询，重启生效，不改变 Agent 采集周期 |
+| `metrics_listen` | 空，关闭独立 `/metrics` 监听；开启时须限制访问 |
+| `access_log` | `false` |
+| `allow_insecure_webhooks` / `notification_allow_private_networks` | `false`；出站安全限制见部署指南 |
 
-环境变量使用同名 `ORBITBEACON_` 前缀，对应 CLI 使用连字符，例如 `ORBITBEACON_MAX_NODES=100` / `--max-nodes 100`。Agent 五项运行设置由本地 JSON/env/CLI 合并；服务器地址、CA、状态目录和身份仍受安装策略保护。`systemctl reload orbitbeacon-agent` 发送 SIGHUP，结果以日志和下一报告为准，详见[接入指南](docs/agent.md)。
+环境变量如 `ORBITBEACON_MAX_NODES=100`，CLI 如 `--max-nodes 100`。Agent 的五项运行参数在 Agent 主机上配置并 reload，不通过网页下发。
 
 ## API 与排障
 
-接口契约见 [OpenAPI](api/openapi.yaml)。
+完整字段、端点和错误码见 [OpenAPI](api/openapi.yaml)。
 
-- 管理端：`/api/v1/`，使用会话 Cookie；写请求校验 `Origin` 和会话 CSRF token。
-- Agent 端：`/api/agent/v1/`，使用接入凭证或节点 Bearer 凭证，不能与浏览器会话互换。
-- 公开端：`GET /api/public/v1/nodes?limit=50&offset=0` 和 `/api/public/v1/stream`，无需会话，仅返回公开白名单字段。公开设置由管理端保护。
-- 健康检查：`GET /healthz/live` 检查进程，`GET /healthz/ready` 检查是否接收流量及 SQLite 是否可用；两者都不需要认证。
-- 错误响应包含 `code`、`message`、`request_id` 和可选 `fields`。排障时记录 `request_id`，不要发送 Cookie、密码或 token。
+- 管理：`/api/v1/`，使用会话 Cookie，写请求校验 Origin 和 CSRF token。
+- Agent：`/api/agent/v1/`，使用接入或节点凭证，不能与管理会话互换。
+- 公开：`/api/public/v1/nodes`、`/stream`、`/ws`，匿名白名单数据。
+- 健康检查：`/healthz/live` 检查进程；`/healthz/ready` 检查接流状态及 SQLite；均无需认证，不证明 Agent 已上报。
 
-## 开发
+排障记录错误响应的 `code` 和 `request_id`，不要发送 Cookie、密码或 token。遇到 `data_dir_in_use` 先查占用进程，不要删除 `server.lock`。
 
-主要入口在 [`cmd/`](cmd/)，Server 和 Agent 实现在 [`internal/`](internal/)，Web 静态资源直接嵌入 Server 二进制。项目版本集中记录在根目录 [`VERSION`](VERSION)；发布流水线从该文件读取版本，不要在流水线中另行维护版本号。
+## 开发与发布
+
+入口为 [`cmd/`](cmd/)，实现为 [`internal/`](internal/)。Web 产物嵌入 Server，修改界面见 [Web 开发](web/README.md)。
 
 ```sh
-GOTOOLCHAIN=go1.27.3 go mod verify
-GOTOOLCHAIN=go1.27.3 go test -count=1 ./...
-GOTOOLCHAIN=go1.27.3 go test -race -count=1 ./internal/server/... ./internal/agent/...
-GOTOOLCHAIN=go1.27.3 go vet ./...
-GOTOOLCHAIN=go1.27.3 go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+go mod verify
+go test -count=1 ./...
+go test -race -count=1 ./internal/server/... ./internal/agent/...
+go vet ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 ```
 
-| Workflow | 触发与职责 |
-| --- | --- |
-| [CI](.github/workflows/ci.yml) | push / PR：并行执行 Go 格式、测试、race、跨平台 vet、Staticcheck，Web 产物一致性与测试，漏洞扫描，Agent 安装脚本检查与回归 |
-| [Release](.github/workflows/release.yml) | 仅由 `main` push 的 CI 全部门禁通过后调用；发布 amd64/arm64 镜像和 Linux Server/Agent 包 |
+[CI](.github/workflows/ci.yml) 检查 Go、Web 产物与测试、漏洞和 Agent 安装脚本。`main` push 的 CI 全部通过后调用 [Release](.github/workflows/release.yml)，从 [`VERSION`](VERSION) 发布 Linux amd64/arm64 Server、Agent 包与镜像；发布配置不代表对应产物已可用。
 
-Go 版本读取 `go.mod`，Node.js 版本读取 `web/.nvmrc`。发布镜像标签为版本号、提交 SHA 和 `latest`，Release tag 为 `v<VERSION>`；版本镜像、发布包及 `SHA256SUMS` 均已存在时跳过发布。PR、其他分支和 tag push 只检查、不发布。架构边界检查包含在 `go test -count=1 ./...` 中，不能依赖测试缓存。
-
-CI 与 Release 的 JavaScript Actions 使用 Node.js 24 运行时，并以完整 commit SHA 锁定版本；这与 `web/.nvmrc` 指定的前端构建 Node.js 22 独立。仅调整 `node-version` 不会更新 Action 自身的运行时；升级时应核对上游 `action.yml` 的 `runs.using`、输入兼容性及 runner 要求（Node.js 24 至少需要 Actions Runner v2.327.1）。当前工作流使用 GitHub 托管的 `ubuntu-24.04` runner。
+Go 版本以 `go.mod` 为准，Web 构建 Node.js 版本以 `web/.nvmrc` 为准。JavaScript Actions 独立使用 Node.js 24 运行时并固定完整 commit SHA；修改前端 `node-version` 不会升级 Action 运行时。
 
 ## 许可证
 
-**GNU GPL v3**，以仓库中的 [LICENSE](LICENSE) 为准。
+[GNU GPL v3](LICENSE)。

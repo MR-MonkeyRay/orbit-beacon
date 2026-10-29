@@ -6,6 +6,7 @@
 
 - 准备 Linux 主机、可用域名和可信 HTTPS（或自行分发私有 CA）。
 - SQLite 数据必须放在支持文件锁的本地文件系统，不要共用数据目录运行多个 Server。
+- 数据目录由运行用户所有、权限 `0700`；数据库、SQLite sidecar 和 `secrets.key` 为该用户所有的 `0600` 普通文件。路径不得经过符号链接，祖先目录不可被组或其他用户写入。
 - 默认由同机反向代理终结 TLS，业务端口 `8080` 不对公网开放。
 - `public_url` 填浏览器实际访问的 HTTPS 源站，包含非默认端口。配置优先级为 CLI > `ORBITBEACON_*` 环境变量 > JSON > 默认值；未知 JSON 键会报错。
 
@@ -19,7 +20,7 @@
 
 ```sh
 mkdir -p build
-GOTOOLCHAIN=go1.27.3 CGO_ENABLED=0 go build -trimpath \
+CGO_ENABLED=0 go build -trimpath \
   -o build/orbitbeacon-server ./cmd/orbitbeacon-server
 
 # 已有该账号时跳过 useradd。
@@ -48,7 +49,7 @@ sudo journalctl -u orbitbeacon-server -n 100 --no-pager
 
 按提示输入管理员密码；已有管理员时不能重复初始化。初始化和恢复使用服务账号并先停服；导出及计划备份由运行中的 Server 执行。
 
-控制台 **Settings → Administrators** 管理多个等权管理员，至少保留一名；有其他管理员时可自删并立即退出。更名保留会话；删除结束目标全部会话。**Account** 仅支持验证旧密码后修改本人密码，成功后结束本人全部会话；没有代改密或密码找回，丢失密码须由另一管理员删除重建。
+没有密码找回或代改密功能。保留可用的管理员账户；丢失密码需另一管理员删除重建，`bootstrap` 不能重置已有账户。
 
 ## Docker Compose
 
@@ -72,7 +73,7 @@ docker compose -f deploy/docker/compose.yaml logs --tail=100 orbitbeacon
 
 `deploy/docker/server.json` 在构建时复制进镜像，并非运行时挂载。修改仓库中的该文件不会改变现有容器；额外设置需在 Compose 的 `environment` 中传入对应 `ORBITBEACON_*`，或只读挂载完整配置到 `/etc/orbitbeacon/server.json`。宿主机 `export` 的变量只有被 Compose 引用或显式传入时才会进入容器。环境或镜像标签变更后执行 `up -d` 重建容器。
 
-镜像构建文件为 [`build/server.Dockerfile`](../build/server.Dockerfile)。[`ci.yml`](../.github/workflows/ci.yml) 在 `main` push 且全部检查通过后调用 [`release.yml`](../.github/workflows/release.yml)，按根目录 `VERSION` 发布 amd64/arm64 镜像、Linux Server/Agent 包及 `SHA256SUMS`；版本镜像与两项 Release 资产齐全时跳过。PR、其他分支和 tag push 不发布；流水线配置不代表产物已可用。
+本地镜像构建入口为 [`build/server.Dockerfile`](../build/server.Dockerfile)；发布流程见[主 README](../README.md#开发与发布)。流水线配置不代表对应版本已发布。
 
 ## HTTPS 与反向代理
 
@@ -96,12 +97,12 @@ sudo systemctl reload nginx
 Server 默认不信任转发头。原生同机代理可设置：
 
 ```json
-"trusted_proxies": ["127.0.0.1", "::1"]
+{"trusted_proxies": ["127.0.0.1", "::1"]}
 ```
 
 容器中需填写 **Server 实际看到的代理源 IP** 或最小必要 CIDR，不能照抄宿主机回环地址，也不要信任整个共享网络。环境变量 `ORBITBEACON_TRUSTED_PROXIES` / CLI `--trusted-proxies` 接受逗号分隔列表；禁止 `/0`。Server 只对可信直连代理解析 `X-Forwarded-For`，从右向左跳过可信代理，取第一个不可信地址；无有效结果则回退直连 IP。入口代理必须覆盖或正确追加真实客户端地址。
 
-公开页和节点管理页按 WS → SSE → HTTP 自动回退，SSE/HTTP 每 300 秒重新优选 WS；每页一次只有一个活动通道。公开 `/api/public/v1/ws`、`/stream` 与私有 `/api/v1/live/ws`、`/stream` 共享每 IP 4 条、全局 200 条及最长 15 分钟寿命，私有流还受会话到期限制。WS Origin 必须与 `public_url` 精确一致。nginx 示例已转发 Upgrade/Connection 并关闭缓冲，30 秒读超时可容纳 10 秒心跳；不要覆盖 Server 的 `X-Accel-Buffering: no`。[Caddy 原生支持 WS 与 SSE](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#streaming)，无需另写升级头。不信任代理会让访客共用代理 IP 的流数/限流额度；nginx 另有登录限流，Caddy 需在边缘另配。
+网页需要 WebSocket / SSE 长连接。nginx 示例已转发升级头、关闭缓冲，30 秒读超时可容纳 10 秒心跳；不要覆盖 `X-Accel-Buffering: no`。[Caddy 原生支持 WS 与 SSE](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#streaming)。WS Origin 须匹配 `public_url`；公开与私有流共用每 IP 4 条、全局 200 条限制，错误配置可信代理会使访客共用额度。nginx 另有登录限流，Caddy 需在边缘另配。
 
 ## 检查与日常观测
 
@@ -111,9 +112,7 @@ curl --fail https://beacon.your-domain.com/healthz/ready
 /usr/local/bin/orbitbeacon-server health --url https://beacon.your-domain.com
 ```
 
-readiness 仅证明 Server 可用，不证明 Agent 已上报。明文健康检查只接受 `http://127.0.0.1:8080` 或 `http://[::1]:8080`，不接受 `localhost`；远程检查用 HTTPS。
-
-Agent 失联不移除资产或清空当前进程的最后有效样本；指标过期与超过 180 秒离线分开显示，uptime 不自行增长。Server 重启仅保证资产与已落库 last_seen 保留，未持久化完整报告，数字可空。浏览器连接故障只标旧，不据此改变节点 presence。
+readiness 不证明 Agent 已上报，需另查节点最近报告。CLI 的明文检查只接受字面回环地址（如 `http://127.0.0.1:8080` 或 `http://[::1]:8080`），不接受 `localhost`；端口按实际监听配置。远程检查使用 HTTPS。
 
 可选 Server 配置：
 
@@ -123,7 +122,7 @@ Agent 失联不移除资产或清空当前进程的最后有效样本；指标�
 | `metrics_listen` | `""` | 独立 HTTP 监听器的 `/metrics`，例如 `127.0.0.1:9464`；主监听器不提供该接口 |
 | `allow_insecure_webhooks` | `false` | 允许字面回环地址的 HTTP webhook |
 | `notification_allow_private_networks` | `false` | 允许通知访问内网 SMTP / webhook；元数据地址始终拒绝 |
-| `web_update_interval_seconds` | `10` | 推送合并与 HTTP 轮询周期，整数 2–60，重启生效；env `ORBITBEACON_WEB_UPDATE_INTERVAL_SECONDS` / CLI `--web-update-interval-seconds` |
+| `web_update_interval_seconds` | `10` | 网页推送合并与 HTTP 轮询周期，整数 2–60 秒，重启生效，不改变 Agent 采集周期 |
 
 以上键均有对应的大写 `ORBITBEACON_*` 环境变量和连字符形式 CLI flag。指标监听器不使用主服务的 TLS，须绑定回环或受保护的运维网络；Compose 还需自行配置采集可达的网络或端口。
 
@@ -131,7 +130,7 @@ Agent 失联不移除资产或清空当前进程的最后有效样本；指标�
 
 ## 导出与备份计划
 
-管理员进入 **Settings → Data operations**：Export 发起后台导出，Backup plans 管理计划，Task history 查看结果。受理后可以离开页面；铃铛会显示完成或失败，下载必须手动点击，不会自动下载。所有管理员共享任务、下载和密码；铃铛同时显示备份和告警，各账户已读状态独立。备份结果不通过 Webhook、Telegram 或邮件外发。
+在 **Settings → Data operations** 发起导出或配置计划，在 Task history 查看结果。受理后可离开页面，完成或失败有站内通知；手动下载，不自动下载。所有管理员共享任务、下载和密码，备份结果不外发。
 
 ### 归档与密码
 
@@ -165,27 +164,27 @@ Agent 失联不移除资产或清空当前进程的最后有效样本；指标�
 
 Endpoint 只允许 HTTPS 源站（可带端口），不能含路径、用户信息、查询或片段；prefix 使用安全相对路径。TLS 至少 1.2 并校验证书，不使用 HTTP 代理、不跟随重定向。默认拒绝私网；显式允许私网仍禁止回环、链路本地、非全局单播和元数据地址，最终 bucket 域名也执行 DNS/IP 校验。凭据仅加密保存，编辑时不回填；更换 provider 须提交匹配 endpoint、region 及完整新凭据。
 
-已进行 profile 协议测试和真实 MinIO S3 兼容存储 smoke；COS、OSS、R2、AWS S3 四家实云尚未实测，不据此承诺全部自定义域或供应商特性可用。没有连接测试、任务取消或重试按钮；失败后可重新发起导出，计划等待下一周期。存储结果未知时先核对详情中的位置、大小与哈希，不要把它当作确定未写入。
+未承诺各供应商全部特性或自定义域兼容性，正式使用前应验证上传与恢复。没有连接测试、任务取消或重试按钮；失败后重新导出，计划等待下一周期。若结果未知，先核对详情中的对象位置、大小与哈希，不能假定未写入。
 
 ## 恢复
 
-先停止 Server，用服务账号恢复。仅接受格式 v1、主库 schema19、指标库 schema1 精确匹配的 `.tar.gz.age` 包；旧 schema 包（含仅 Monitoring）拒绝，不转换。密码文件须归运行用户、0600 普通文件，含该包16位密码，可带换行；省略 `--password-file` 则终端无回显输入。不支持 argv 或环境变量明文密码。
+先停止 Server，用服务账号恢复。仅接受格式 v1、主库 schema 19、指标库 schema 1 精确匹配的 `.tar.gz.age` 包；旧包不转换。密码文件须归运行用户所有、权限 `0600`，含该包 16 位密码，可带换行；省略 `--password-file` 则终端无回显输入。不接受参数或环境变量明文密码。
 
 ```sh
-orbitbeacon-server restore --data-dir /var/lib/orbitbeacon \
+sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore --data-dir /var/lib/orbitbeacon \
   --input /backup/orbitbeacon-....tar.gz.age \
   --replace --password-file /backup/password.txt
 ```
 
-语法仅为 `restore --data-dir PATH --input ARCHIVE [--replace] [--password-file FILE]`。目标已有业务数据时必须显式 `--replace`；真正空目录可省略，但包内须包含 Configuration。包内所选类别整体替换，未含类别保留，不逐条合并；缺失稳定 ID 依赖时整次拒绝，不按名称匹配或自动创建节点。配置包自带匹配密钥，恢复配置后计划全部停用；登录会话及接入票据不从包导入。恢复事件不重放任务或外发投递；保留目标事件时，原活动任务/待发送投递会标为恢复中断。
+目标已有业务数据须加 `--replace`；空目录可省略，但包内须有 Configuration。所选类别整体替换，未选类别保留，不逐条合并；稳定 ID 依赖不满足则整次拒绝。配置恢复后计划全部停用，不导入会话或接入票据；事件不重放任务/投递，目标原活动工作标为恢复中断。
 
-多文件恢复保持 data-dir 与 `server.lock` inode 不变，使用 `restore-journal.json` 安装主库、指标库和密钥。失败或下次启动发现 prepared 状态时，验证回滚副本后恢复完整旧文件组；committed 状态仅清理 journal，不回滚。成功后输出 `.restore-<id>/old/` 原文件组位置，不自动删除；自行确认恢复正常后妥善保管或处理。回滚副本缺失、损坏或 journal 无效会阻止启动。不要删除锁、journal 或 SQLite sidecar 强行继续。
+恢复使用 `restore-journal.json` 安装数据库与密钥，失败时可回滚旧文件组。成功会输出 `.restore-<id>/old/` 原副本位置，不自动删除；确认恢复正常后再妥善处理。不要删除 `server.lock`、journal 或 SQLite sidecar 强行启动，恢复原理见[架构文档](../docs/architecture.md#备份一致性与恢复)。
 
 成功后再启动，检查 HTTPS readiness、登录、节点上报和通知凭据。Compose 先停服务，再通过一次性 `compose run` 将包及密码文件只读挂载到容器，使用相同数据卷和运行身份执行上述命令。
 
 ## 升级
 
-主库 schema19 仅为空库初始化。旧库（含18）、缺失/混合版本记录及更高版本库均拒绝，不迁移或自动删除。使用新的私有 data-dir，保留旧目录、旧包及原版本程序；备份恢复也不提供跨 schema 转换。
+主库 schema 19 不执行历史迁移，备份也不跨 schema 转换。旧库或更高版本库会被拒绝；改用新私有目录，保留旧目录、备份和原版本程序。
 
 以下替换步骤仅适用于数据库 schema 不变的版本：
 
@@ -193,4 +192,4 @@ orbitbeacon-server restore --data-dir /var/lib/orbitbeacon \
 2. systemd 替换 `/usr/local/bin/orbitbeacon-server`；Compose 设置已发布的 `ORBITBEACON_IMAGE_TAG`，执行 `pull orbitbeacon` 和 `up -d orbitbeacon`。
 3. 启动并检查 readiness，确认数据库格式匹配，再升级 Agent。
 
-遥测报告会丢弃新增未知字段，已知指标与来源仍校验；注册、恢复、管理写入和本地配置继续严格。仍应先升级 Server，再升级 Agent：新增必需字段或协议变更不保证兼容旧版。降级前确认数据库格式；Server 拒绝更高版本数据库，加密归档要求格式及 schema 精确匹配，不提供跨 schema 转换。
+**先升级 Server，再升级 Agent。** 遥测忽略新增未知字段，已知字段、正文大小和协议版本仍校验；注册、恢复和管理写入保持严格。升级或降级前先确认数据库及归档格式兼容。

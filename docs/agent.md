@@ -21,7 +21,7 @@
 
 ## 2. 安装并启动
 
-从与部署版本匹配、**确实包含脚本的固定 tag** 下载脚本，检查后运行；不要把网络脚本直接管道给 root shell。以下在仓库根目录读取版本；非源码部署请手动设置已发布版本：
+使用与 Server 匹配、已发布且包含脚本的固定版本；检查后运行，不要把网络脚本管道给 root shell。源码部署可读取 `VERSION`，否则手动设置版本：
 
 ```sh
 VERSION="$(cat VERSION)"
@@ -43,7 +43,7 @@ printf '%s\n' "$TOKEN" | sudo sh ./install-agent.sh \
 unset TOKEN
 ```
 
-私有 CA 加 `--ca-file /安全路径/ca.pem`；只传公开 CA，不传私钥。`--server` 只接受 HTTPS 源站，可带端口，不能带账号、子路径、查询或片段。脚本下载 release 包及 `SHA256SUMS` 并校验完整性，**不是独立的发布签名验证**。离线安装用 `--binary /安全路径/orbitbeacon-agent-linux-amd64` 替代下载，`--version` 可省略；来源和架构自行核对。
+私有 CA 加 `--ca-file /安全路径/ca.pem`。`--server` 只接受 HTTPS 源站，可带端口，不接受账号、子路径、查询或片段。下载校验 release 包的 `SHA256SUMS`，不是独立签名验证。离线用 `--binary /安全路径/orbitbeacon-agent-linux-amd64`，可省略版本；自行核对来源与架构。
 
 脚本创建专用账号 `orbitbeacon-agent`，固定实际 UID/GID，不保证是 `1000:1000`。安装路径：
 
@@ -56,7 +56,7 @@ unset TOKEN
 | `/var/lib/orbitbeacon-agent` | Agent 账号所有，`0700`；身份和状态不应共享 |
 | `/etc/systemd/system/orbitbeacon-agent.service` | 非 root systemd 服务 |
 
-脚本以 Agent 账号执行 `enroll`。成功后启动服务；systemd 未运行时只打印前台启动命令，需自行管理进程。注册失败保留状态目录内的 `enrollment.token`，不会启用服务；不要先删除凭证再重试，可检查 URL、CA、网络和有效期后执行：
+脚本以 Agent 账号注册，成功后启动服务；没有运行中的 systemd 时打印前台启动命令。失败保留 state 中的 `enrollment.token`，不启用服务。修复 URL、CA、网络或票据问题后重试：
 
 ```sh
 sudo -u orbitbeacon-agent /usr/local/bin/orbitbeacon-agent enroll \
@@ -67,7 +67,7 @@ sudo -u orbitbeacon-agent /usr/local/bin/orbitbeacon-agent enroll \
 
 重试成功后，以原来的 `--server`、版本和 CA 参数重跑安装脚本，并加 `< /dev/null`，让脚本补装并启动服务，不再提供 token。
 
-注册成功会移除该 token 文件，但不会删除原先通过 `--token-file` 提供的源文件或管理机副本，需另行清理。若提示注册成功但清理失败，应核对服务端结果后删除残留文件，不能认为认领已回滚。
+成功后删除 state 中的 token，但源文件和管理机副本须自行清理。若提示清理失败，先核对注册结果，不能假定认领已回滚。
 
 ## 3. 确认运行结果
 
@@ -82,7 +82,7 @@ sudo -u orbitbeacon-agent /usr/local/bin/orbitbeacon-agent doctor \
 
 在控制台确认：
 
-- 节点的在线状态、最近上报时间及最新样本；在线窗口为 180 秒，管理列表的持久化时间可能约滞后 30 秒。`enroll` 成功或进程存在都不等于上报成功。
+- 查看在线状态、最近上报与样本；在线窗口 180 秒，持久化 `last_seen` 约每 30 秒更新。注册成功或进程存在不等于上报成功。
 - **Agent settings** 只读显示实际上报的本地运行参数；账期与流量配额在 **Details → Traffic billing** 独立管理，不下发 Agent。
 - 首页仅显示管理员显式公开的节点；没有出现在首页不代表接入失败。公开设置独立于内部名称和元数据。
 
@@ -100,7 +100,7 @@ sudo -u orbitbeacon-agent /usr/local/bin/orbitbeacon-agent doctor \
 
 ## 本地运行参数与 reload
 
-五项参数按默认值 < JSON < 环境变量 < 显式 CLI flag 合并；`run`、`enroll`、`doctor` 使用相同入口。JSON 严格拒绝未知键、null、错误类型及越界值；七项安装策略字段仍逐层校验，不允许覆盖信任根、账号或状态目录。
+五项参数按 **CLI > 环境变量 > JSON > 默认值** 合并，`run`、`enroll`、`doctor` 一致。JSON 拒绝未知键、null、错误类型和越界；安装策略固定的信任根、身份及目录不能覆盖。
 
 ```json
 {
@@ -112,19 +112,23 @@ sudo -u orbitbeacon-agent /usr/local/bin/orbitbeacon-agent doctor \
 }
 ```
 
-- `report_interval_seconds`：采集和正常上报共用周期，5–60 秒，默认 10。
-- `disk_interval_seconds`：磁盘周期，60–3600 秒，默认 60。
-- `interfaces`：最多 8 项；空数组使用默认路由网卡。
-- `disk_paths`：最多 8 个绝对路径；空数组使用 Agent 默认根路径。
-- `probe_targets`：最多 5 项；空数组不探测。选择还受 JSON 转义后的 64 KiB 报告预算约束。
+| 参数 | 默认值 | 范围 / 选择 |
+| --- | --- | --- |
+| `report_interval_seconds` | `10` | 5–60 秒，采集与正常上报共用周期 |
+| `disk_interval_seconds` | `60` | 60–3600 秒 |
+| `interfaces` | `[]` | 最多 8 项；空数组使用默认路由网卡 |
+| `disk_paths` | `[]` | 最多 8 个绝对路径；空数组使用默认根路径 |
+| `probe_targets` | `[]` | 最多 5 项；空数组不探测 |
+
+选择还受 JSON 转义后 64 KiB 报告预算约束。
 
 环境变量为 `ORBITBEACON_REPORT_INTERVAL_SECONDS` 等大写参数名；flag 使用 `--report-interval-seconds` 等连字符形式。列表必须是 JSON 数组字符串，例如 `ORBITBEACON_INTERFACES='["eth0"]'` 或 `--probe-targets '["https://example.com/a,b"]'`，不按逗号拆分。
 
-修改文件后执行 `sudo systemctl reload orbitbeacon-agent`；前台进程可用 `kill -HUP <精确 PID>`。reload 重读启动时指定的同一 JSON，重放启动时捕获的环境和显式 flags，不重新读取安装策略。未指定 JSON 也可 reload，但无变更不会额外采样。有效变更在采样边界完整应用并立即重采，generation、session 和累计流量不重置；坏配置保留原设置。日志分别为 `configuration reloaded`、`configuration unchanged`、`configuration reload rejected`。systemctl 成功只代表信号送达，以日志及下一报告为准。
+修改后执行 `sudo systemctl reload orbitbeacon-agent`（前台进程用 `kill -HUP <PID>`）。reload 重读原 JSON，沿用启动时环境和显式 flags，不重读 policy；有效变更在采样边界完整应用并重采，不重置身份或累计流量，坏配置保留旧值。检查日志 `configuration reloaded` / `configuration unchanged` / `configuration reload rejected` 和下一报告；systemctl 成功只代表信号送达。
 
 ## 升级与卸载
 
-**先升级 Server，再升级 Agent。** 遥测报告忽略新增未知字段，但仍校验已知指标、来源和正文大小；注册、恢复及管理写入继续严格拒绝未知字段。不支持的协议版本仍会拒绝。先检查 Server readiness，再运行经过检查的新版本安装脚本：
+**先升级 Server，再升级 Agent。** 未知遥测字段可忽略，不代表协议或必需字段兼容。检查 Server readiness 后，下载并检查目标版本的安装脚本，更新 `VERSION`，再执行：
 
 ```sh
 sudo sh ./install-agent.sh --server https://beacon.your-domain.com \
@@ -171,9 +175,9 @@ sudo chown "root:$AGENT_GID" /etc/orbitbeacon/agent.json
 sudo chmod 0640 /etc/orbitbeacon/agent.json
 ```
 
-私有 CA 先以 root 安装为 `/etc/orbitbeacon/ca.pem`（`0644`），再将 policy 的 `ca_file` 设为该绝对路径。policy、CA 及各级祖先目录必须 root 所有、组/其他用户不可写，路径不得经过符号链接，不能放进家目录或 `/tmp`。state 目录归运行用户、权限 `0700`。
+私有 CA 由 root 安装为 `/etc/orbitbeacon/ca.pem`（`0644`），并填写 policy 的 `ca_file`。policy、CA 及祖先目录须 root 所有且不可被组/其他用户写入，无符号链接；不要放在家目录或 `/tmp`。state 归运行用户、`0700`。
 
-将通过安全通道收到的 token 保存为当前用户所有的 `0600` 普通文件；token 和祖先路径不得经过符号链接，祖先只允许 root 或运行用户所有且不可被组/其他用户写入（安全 sticky 临时目录例外）。下面将 `TOKEN_SOURCE` 改为该文件的绝对路径，以普通用户执行：
+通过安全通道接收 token，保存为当前用户所有的 `0600` 普通文件；路径无符号链接，祖先仅 root 或运行用户所有且不可被组/其他用户写入（安全 sticky 临时目录例外）。以普通用户执行：
 
 ```sh
 TOKEN_SOURCE=/安全路径/enrollment.token
@@ -236,7 +240,7 @@ unset CSRF ADMIN
 
 网卡选择与网速一致（显式 `interfaces` 或默认路由网卡），按内核收发计数差累计到 UTC 小时桶。新网卡先建基线；重置后从当前计数继续累计。每次启动使用新 epoch，服务端按累计值确认，已结算桶在后续采样后移除。
 
-状态只在内存中：停机期间不计入、重启不补算，最多保留 24 个未结算小时桶，超出时丢弃最旧桶。无法读取网卡计数器时发送空列表。这不是云厂商账单数据。
+状态只在内存中：停机期间不计入、重启不补算，最多保留 24 个小时桶，超出时丢弃最旧桶。首次成功读取网卡计数器前发送空列表；后续读取失败不新增计数，已有未结算值仍可重发。这不是云厂商账单数据。
 
 ## 服务探测
 
