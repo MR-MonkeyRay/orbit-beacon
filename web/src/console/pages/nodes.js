@@ -84,8 +84,8 @@ export async function nodesPage() {
   }}, label, icon('up')));
   const selectAll = h('input', {type: 'checkbox', 'aria-label': 'Select all nodes on this page'});
   const headers = [h('th', {scope: 'col', class: 'selection-cell'}, selectAll),
-    sortable('name', 'Name'), sortable('status', 'Presence'), h('th', {scope: 'col', class: 'hide-sm'}, 'Last seen'), h('th', {scope: 'col', class: 'hide-sm'}, 'Group'),
-    h('th', {scope: 'col', class: 'hide-sm'}, 'Location'), h('th', {scope: 'col', class: 'hide-sm'}, 'Tags'), sortable('created', 'Added')];
+    sortable('name', 'Name'), sortable('status', 'Presence'), h('th', {scope: 'col', class: 'hide-compact'}, 'Last seen'), h('th', {scope: 'col', class: 'hide-compact'}, 'Group'),
+    h('th', {scope: 'col', class: 'hide-compact'}, 'Location'), h('th', {scope: 'col', class: 'hide-compact'}, 'Tags'), sortable('created', 'Added')];
 
   const body = h('tbody');
   const summary = h('span', {'aria-live': 'polite'});
@@ -147,12 +147,12 @@ export async function nodesPage() {
       }});
     const name = link(`/nodes/${node.id}`, highlight(node.name, query));
     const badge = statusBadge(node.presence);
-    const lastSeen = h('td', {class: 'hide-sm muted'}, node.last_seen ? absoluteWhen(node.last_seen) : 'Never');
+    const lastSeen = h('td', {class: 'hide-compact muted'}, node.last_seen ? absoluteWhen(node.last_seen) : 'Never');
     const element = h('tr', null, h('td', {class: 'selection-cell'}, checkbox), h('td', {class: 'name'}, name),
       h('td', null, badge), lastSeen,
-      h('td', {class: 'hide-sm'}, node.group_id ? groupNames.get(node.group_id) || h('span', {class: 'muted'}, 'Unknown') : h('span', {class: 'muted'}, 'None')),
-      h('td', {class: 'hide-sm'}, [node.region, node.provider].filter(Boolean).join(', ') || h('span', {class: 'muted'}, 'None')),
-      h('td', {class: 'hide-sm'}, h('div', {class: 'cell-tags'}, node.tags.slice(0, 3).map((tag) => h('span', {class: 'tag static'}, tag)),
+      h('td', {class: 'hide-compact'}, node.group_id ? groupNames.get(node.group_id) || h('span', {class: 'muted'}, 'Unknown') : h('span', {class: 'muted'}, 'None')),
+      h('td', {class: 'hide-compact'}, [node.region, node.provider].filter(Boolean).join(', ') || h('span', {class: 'muted'}, 'None')),
+      h('td', {class: 'hide-compact'}, h('div', {class: 'cell-tags'}, node.tags.slice(0, 3).map((tag) => h('span', {class: 'tag static'}, tag)),
         node.tags.length > 3 ? h('span', {class: 'muted'}, `+${node.tags.length - 3}`) : null)),
       h('td', {class: 'muted'}, when(node.created_at)));
     const refs = {element, checkbox, name, badge, lastSeen};

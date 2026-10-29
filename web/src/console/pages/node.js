@@ -191,6 +191,7 @@ function detailsTab(node, groups, sample, history, traffic, probes, billing) {
   };
   snapshot(node);
   const summary = panel('Summary', {}, summaryValues.element);
+  summary.classList.add('split-aside');
 
   const name = input({name: 'name', required: true, value: node.name, id: 'node-name'});
   validateBytes(name, 1, 255, 'Node name');
@@ -240,6 +241,7 @@ function publicTab(node, settings) {
   const privacy = callout('Publishing shows the public name, region and provider, plus online status, CPU, memory, load and uptime. Internal details are never copied. Do not enter IP addresses, hostnames, domains or credentials.', 'info');
   const preview = publicPreview();
   const previewPanel = panel('Preview', {action: h('a', {class: 'btn btn-sm', href: '/'}, icon('external'), 'View public page')}, preview);
+  previewPanel.classList.add('split-aside');
 
 
   const enabled = h('input', {type: 'checkbox', name: 'enabled', id: 'public-enabled', checked: settings.enabled});

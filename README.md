@@ -153,6 +153,8 @@ GOTOOLCHAIN=go1.27.3 go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 
 Go 版本读取 `go.mod`，Node.js 版本读取 `web/.nvmrc`。发布镜像标签为版本号、提交 SHA 和 `latest`，Release tag 为 `v<VERSION>`；版本镜像、发布包及 `SHA256SUMS` 均已存在时跳过发布。PR、其他分支和 tag push 只检查、不发布。架构边界检查包含在 `go test -count=1 ./...` 中，不能依赖测试缓存。
 
+CI 与 Release 的 JavaScript Actions 使用 Node.js 24 运行时，并以完整 commit SHA 锁定版本；这与 `web/.nvmrc` 指定的前端构建 Node.js 22 独立。仅调整 `node-version` 不会更新 Action 自身的运行时；升级时应核对上游 `action.yml` 的 `runs.using`、输入兼容性及 runner 要求（Node.js 24 至少需要 Actions Runner v2.327.1）。当前工作流使用 GitHub 托管的 `ubuntu-24.04` runner。
+
 ## 许可证
 
 **GNU GPL v3**，以仓库中的 [LICENSE](LICENSE) 为准。

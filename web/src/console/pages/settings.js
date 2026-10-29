@@ -155,7 +155,7 @@ function administratorsTab(users) {
       h('td', null, h('div', {class: 'who administrator-who'}, h('span', {class: 'avatar', 'aria-hidden': 'true'}, item.username.slice(0, 1)),
         h('div', {class: 'administrator-name'}, h('span', {class: 'administrator-username', title: item.username}, item.username),
           self(item) ? h('span', {class: 'muted administrator-self'}, '(you)') : null))),
-      h('td', {class: 'muted hide-sm'}, when(item.created_at)),
+      h('td', {class: 'muted hide-compact'}, when(item.created_at)),
       h('td', {class: 'actions'}, iconButton('edit', `Rename administrator "${item.username}"`, () => editUser(item)), remove));
   });
 
@@ -163,7 +163,7 @@ function administratorsTab(users) {
     h('div', {class: 'panel-head'}, h('h2', {id: 'administrators-title'}, 'Administrators'), button('Add administrator', {icon: 'plus', variant: 'primary', small: true, onClick: createUser})),
     h('div', {class: 'panel-body flush'}, h('p', {class: 'lede'}, 'All administrators have full access.')),
     h('div', {class: 'table-wrap'}, h('table', {class: 'table administrators-table'},
-      h('thead', null, h('tr', null, h('th', {scope: 'col'}, 'Username'), h('th', {scope: 'col', class: 'hide-sm'}, 'Created'),
+      h('thead', null, h('tr', null, h('th', {scope: 'col'}, 'Username'), h('th', {scope: 'col', class: 'hide-compact'}, 'Created'),
         h('th', {scope: 'col'}, h('span', {class: 'sr'}, 'Actions')))),
       h('tbody', null, users.length ? rows : h('tr', null, h('td', {colspan: 3}, 'No administrators.'))))),
     lastAdministrator ? h('p', {class: 'administrator-protection muted'}, 'At least one administrator is required.') : null);

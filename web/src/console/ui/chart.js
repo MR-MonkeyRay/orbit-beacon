@@ -10,6 +10,27 @@ const BOTTOM = 38;
 const timestamp = (point) => Date.parse(point.t);
 const coordinate = (value) => Number(value.toFixed(2));
 
+// SVG text scales with the view box, so --chart-k (view box units per CSS
+// pixel) keeps axis labels at a fixed CSS size however wide a chart renders.
+// A chart removed after it was laid out reports a zero size once, which
+// releases its observation; one built before insertion keeps waiting.
+let textFitter;
+const viewBoxWidths = new WeakMap();
+const laidOut = new WeakSet();
+export function fitChartText(drawing, viewBoxWidth) {
+  if (typeof ResizeObserver !== 'function') return;
+  textFitter ||= new ResizeObserver((entries) => {
+    for (const {target, contentRect} of entries) {
+      if (!target.isConnected) { if (laidOut.has(target)) textFitter.unobserve(target); } else if (contentRect.width > 0) {
+        laidOut.add(target);
+        target.style.setProperty('--chart-k', (viewBoxWidths.get(target) / contentRect.width).toFixed(3));
+      }
+    }
+  });
+  viewBoxWidths.set(drawing, viewBoxWidth);
+  textFitter.observe(drawing);
+}
+
 // Three equal intervals give four labelled gridlines, even for very small loads.
 export function niceMax(value) {
   if (!Number.isFinite(value) || value <= 0) return 1;
@@ -193,6 +214,7 @@ export function chart({title, unit, series, id, selectedTime}) {
     event.preventDefault();
     show(Math.max(0, Math.min(timeline.length - 1, index)));
   });
+  fitChartText(drawing, WIDTH);
   return h('div', {class: 'history-chart'},
     h('div', {class: 'chart-legend', 'aria-label': 'Chart legend'},
       series.map((item, index) => legendKey(item.label, `chart-series chart-series-${index} chart-average`)),

@@ -38,7 +38,8 @@ function renderEntries() {
   for (const entry of document.querySelectorAll('.notification-entry')) {
     entry.hidden = !session.user;
     const count = entry.querySelector('.notification-count');
-    count.textContent = summary ? (entry.classList.contains('notification-mobile') && summary.unread_count > 99 ? '99+' : String(summary.unread_count)) : stale ? '?' : '…';
+    // The icon rail shows the count as a small badge, so large counts are capped.
+    count.textContent = summary ? (summary.unread_count > 99 ? '99+' : String(summary.unread_count)) : stale ? '?' : '…';
     const status = stale ? (navigator.onLine === false ? 'Offline' : 'Stale') : '';
     const freshness = entry.querySelector('.notification-freshness');
     if (freshness) freshness.textContent = status;

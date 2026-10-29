@@ -48,11 +48,11 @@ export function lifecycleActions(node) {
       const result = results.find((item) => item.node_id === node.id);
       if (result?.status !== 'succeeded') throw new Error(`${node.name}: ${result?.status || 'failed'} (${result?.error_code || 'missing_result'}).`);
     }, async () => { await refresh(); toast(`${node.name} ${disabling ? 'disabled' : 'enabled'}.`); }),
-    action('Revoke agent credential', {variant: 'danger'}, () => confirmDialog({
+    action('Revoke agent credential', {variant: 'danger', className: 'btn-quiet'}, () => confirmDialog({
       title: `Revoke ${node.name}’s agent credential?`, confirm: 'Revoke credential', danger: true,
       message: 'The asset, metadata, traffic billing and public settings are kept. Last reported settings, system details and probe observations are cleared. The agent stops being accepted (401), and this node disappears from the public page. A new enrollment ticket is needed to enroll the agent again.'
     }), () => api(`${path}/credential`, {method: 'DELETE'}), async () => { await refresh(); toast('Agent credential revoked. Issue a new enrollment ticket to enroll again.'); }),
-    action('Delete node', {variant: 'danger'}, () => typedConfirmation({
+    action('Delete node', {variant: 'danger', className: 'btn-quiet'}, () => typedConfirmation({
       title: `Delete ${node.name}?`, expected: node.name, confirm: 'Delete node',
       message: 'This permanently deletes the asset and revokes its agent identity. This cannot be undone.'
     }), () => api(`${path}?confirm=true`, {method: 'DELETE'}), async () => { await go('/nodes', {force: true}); toast(`Deleted ${node.name}.`); }));

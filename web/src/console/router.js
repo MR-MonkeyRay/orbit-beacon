@@ -1,6 +1,6 @@
 import {h, reducedMotion} from '../shared/dom.js';
 import {onSession, pauseSessionVerification, session, setNavigationSignal, verifySession} from './api.js';
-import {closeMenu, setActiveNav} from './shell.js';
+import {setActiveNav} from './shell.js';
 import {button, emptyState, linkButton, pageHead, resetIDs, skeleton} from './ui/components.js';
 import {closeDialogs, confirmDiscard, dialogActionStale} from './ui/dialogs.js';
 import {progress} from './ui/feedback.js';
@@ -164,7 +164,6 @@ export function startRouter(table) {
     const url = new URL(anchor.href);
     if (url.origin !== location.origin) return;
     event.preventDefault();
-    closeMenu();
     void go(url.pathname + url.search + url.hash).catch(ignoreNavigationCancellation);
   });
   listen(window, 'popstate', async (event) => {

@@ -66,7 +66,16 @@ export function createCard() {
     h('div', {class: 'gauges'}, cpu, memory),
     h('dl', {class: 'stats'}, h('div', null, h('dt', null, '1分钟负载'), load), h('div', null, h('dt', null, '运行时长'), uptime)), lastReport);
   const item = h('li', {class: 'node'}, article);
+  article.addEventListener('animationend', (event) => {
+    if (event.target === article && event.animationName === 'status-changed') article.classList.remove('changed');
+  });
   item.update = (node) => {
+    // A presence change on a card already showing data gets one brief ring in the new status colour.
+    if (current && current.status !== node.status) {
+      article.classList.remove('changed');
+      void article.offsetWidth;
+      article.classList.add('changed');
+    }
     current = node;
     connectionStale = false;
     item.dataset.status = node.status;

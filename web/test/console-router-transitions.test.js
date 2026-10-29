@@ -29,7 +29,7 @@ async function routing(t, {hidden = false} = {}) {
   globalThis.history = {state: {}, replaceState(_state, _unused, target) { setURL(target); }, pushState(_state, _unused, target) { setURL(target); }};
   env.window.scrollTo = () => {};
   env.document.hidden = hidden;
-  for (const id of ['view', 'sidebar', 'account', 'menu', 'scrim', 'progress', 'toasts']) {
+  for (const id of ['view', 'sidebar', 'account', 'progress', 'toasts']) {
     const element = new TestElement('div'); element.id = id; env.body.append(element);
   }
   const transitions = [];

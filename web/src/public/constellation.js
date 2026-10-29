@@ -23,6 +23,14 @@ export function createConstellation(container) {
   root.append(plane, beacon);
   container.append(root);
   let satellites = [];
+  // The orbit animations never stop on their own, so they pause while the
+  // drawing is scrolled away or the page is hidden.
+  let onScreen = true;
+  const pause = () => root.classList.toggle('paused', !onScreen || document.hidden);
+  if (typeof IntersectionObserver === 'function') {
+    new IntersectionObserver(([entry]) => { onScreen = entry.isIntersecting; pause(); }).observe(root);
+  }
+  document.addEventListener('visibilitychange', pause);
 
   return {
     update(nodes) {

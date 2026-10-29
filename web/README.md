@@ -44,7 +44,8 @@ CI 会运行这两项检查。构建目标为 Chrome 111、Firefox 115、Safari 
 - Settings 页签在哈希直达和窗口缩窄后保持当前标签可见；页面导航移除监听并释放已挂载页签的请求订阅。
 - 节点页保留 Details、Public page、Agent settings（`#agent`）、Enroll agent 四页签；旧 `#config` 不作兼容跳转。Agent settings 经 `runtime` API 只读展示 Agent 最近报告的本地运行参数；修改本地 JSON 后 reload，以日志和下一份报告确认生效，不提供网页修改或 reload 按钮。
 - Details 的 Traffic billing 独立管理账期（1–28）与配额（十进制 Bytes/KB/MB/GB/TB，0 不限额），使用 `traffic-settings` API，不下发 Agent。保存后以响应重设该表单基线，仅重载 Traffic，不刷新整页或清除其他表单的未保存内容。
-- 桌面侧栏与移动顶栏都提供 Notifications 铃铛，由单一 controller 管理。只用一个 15 秒前台 summary timer；隐藏、pagehide、退出时停止并 abort，恢复立即刷新，旧会话结果不得回写。Data 页订阅该 tick 刷新任务，detach 时解除，不另起 timer；失败保留旧计数并标为 stale，不伪装成零。铃铛计数是当前管理员的未读，不是 firing 告警数。
+- 控制台只支持桌面和 iPad 宽度（最小 744px），不做手机布局；1200px 以下侧栏收为图标窄栏，文字保留为可访问名称并在悬停/聚焦时显示提示。公开页需适配手机、平板、桌面和大屏。
+- 侧栏只有一个 Notifications 铃铛（窄栏中为角标），由单一 controller 管理。只用一个 15 秒前台 summary timer；隐藏、pagehide、退出时停止并 abort，恢复立即刷新，旧会话结果不得回写。Data 页订阅该 tick 刷新任务，detach 时解除，不另起 timer；失败保留旧计数并标为 stale，不伪装成零。铃铛计数是当前管理员的未读，不是 firing 告警数。
 - 通知使用现有原生 modal，支持 All/Unread、分页和逐用户已读；详情成功展示后才标已读。保留 Escape、Tab 与关闭后的焦点恢复，来源过期仍展示安全快照；管理员可查看告警与备份结果。
 - 导出受理后可跨页面运行，不自动下载，也不提供取消/重试操作。下载用普通同源附件链接，不加 `data-link`，不经 JSON 客户端或大 Blob。`/settings?task=<uuid>#data` 与 `/alerts?event=<uuid>#history` 直接读取详情，不依赖当前列表页。
 - 密码仅在 Reveal、Copy、Download recovery info 操作后显式 POST 获取，不放入列表、toast、日志或初始 HTML。仅在当前组件内存短暂保存，30 秒无交互重新遮罩，关闭/导航清除；恢复凭据小 txt 在浏览器生成并由用户另存，不上传。Copy 失败提供可选文本，不使用 `execCommand`。
@@ -55,7 +56,7 @@ CI 会运行这两项检查。构建目标为 Chrome 111、Firefox 115、Safari 
 - Details 的 Latest sample 只读保留最后报告，错误/缺失指标不显示报告中的残留数字，也不拼补较早成功值。Sampled、Last report 及各管理页 Last seen/Last reported 共用绝对日期和秒级时间，静默心跳不会留下永久“just now”。单个页级 deadline timer 使用 `server_time` 加 `performance.now()`，超过来源新鲜度边界才标 Stale；只改标签/样式，不改数字或递增 uptime。隐藏、pagehide、页签分离、导航及会话失效停 timer，恢复重新计算；后续校时不会倒退或刷新原报告时间。
 - Overview、Nodes 和节点详情各使用一条 `console/live.js` 订阅；详情所有页签共享，history/probes/traffic 的原有 timer 不重复迁入。只读事实原位更新，不写 input/select/textarea 或调用整页 refresh。状态计数只改文字并显示新出现的非零筛选，不隐藏聚焦的零计数控件；重筛由 `Apply current filters` 显式触发。`Refresh list` 保留筛选并钳制页码：暂停旧通道，失效 nodes 缓存读取 metadata，再用 `readConsoleFleet` 获取因果上更晚的完整集合，应用后重开一条通道；不凭帧到达顺序推测 HTTP 新增/删除。列表手动与批量后的重载串行，仅手动 Refresh 确认清理既有 Deleted 行；批量操作保留删除提示。失败保留旧视图并恢复订阅。删除行不可操作，只取消该行选择；批量确认目标冻结。详情删除提示保留草稿，但禁用写操作。
 - `api.js` 集中 session epoch、abort 与私有 cache；同一会话校验/更名不重建页面，身份替换、退出、401、密码撤销或已知 expires_at 到期取消旧请求与通道。HTTP Date/frame 配合单调时钟到期，断网或 HTTP60 等待也清空私有页面与 dialog，并强制去登录，不能让 dirty 确认阻挡。旧 epoch 响应不回写；被替换的导航/刷新以取消结束，旧操作不能继续发私有成功提示，非等待式导航只消费预期取消。未知远端撤销须下次通信获知。
-- 动画遵循 `prefers-reduced-motion`；主题偏好共用 `localStorage` 的 `orbitbeacon-theme`。不加入外部资源或必须联网加载的运行时依赖。
+- 动画遵循 `prefers-reduced-motion`；主题偏好共用 `localStorage` 的 `orbitbeacon-theme`。字号、控件高度、z-index 使用 `shared/tokens.css` 的 token，断点约定写在该文件开头；两份深色调色板由测试保证一致。不加入外部资源或必须联网加载的运行时依赖。
 
 ## 共享实时客户端
 

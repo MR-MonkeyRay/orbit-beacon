@@ -121,7 +121,7 @@ test('expiry synchronously clears private drafts and body dialogs without a dirt
   globalThis.history = {state: {}, replaceState(_state, _unused, target) { if (target) location.pathname = target.split('?')[0]; }, pushState(_state, _unused, target) { location.pathname = target; }};
   env.window.scrollTo = () => {};
   env.document.querySelectorAll = (selector) => env.body.querySelectorAll(selector);
-  for (const id of ['view', 'sidebar', 'account', 'menu', 'scrim', 'progress', 'toasts']) {
+  for (const id of ['view', 'sidebar', 'account', 'progress', 'toasts']) {
     const element = new TestElement('div'); element.id = id; env.body.append(element);
   }
   let stopRouter;
@@ -368,7 +368,7 @@ async function actionPage(t, respond, expires_at = '2026-10-28T00:10:00Z', load)
   globalThis.requestAnimationFrame = () => 0;
   globalThis.history = {state: {}, replaceState(_state, _unused, target) { if (target) location.pathname = target.split('?')[0]; }, pushState(_state, _unused, target) { location.pathname = target; }};
   env.window.scrollTo = () => {};
-  for (const id of ['view', 'sidebar', 'account', 'menu', 'scrim', 'progress', 'toasts']) {
+  for (const id of ['view', 'sidebar', 'account', 'progress', 'toasts']) {
     const element = new TestElement('div'); element.id = id; env.body.append(element);
   }
   client.setSession(proof({expires_at}));

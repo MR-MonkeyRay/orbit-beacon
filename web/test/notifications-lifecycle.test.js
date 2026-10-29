@@ -16,7 +16,7 @@ test('notifications activate after SPA login, survive rename, and reset on accou
   globalThis.window = new EventTarget();
   globalThis.matchMedia = () => ({matches: false, addEventListener() {}});
   dom.document.querySelectorAll = (selector) => dom.body.querySelectorAll(selector);
-  for (const id of ['sidebar', 'account', 'menu', 'scrim']) {
+  for (const id of ['sidebar', 'account']) {
     const element = document.createElement('div');
     element.id = id;
     dom.body.append(element);

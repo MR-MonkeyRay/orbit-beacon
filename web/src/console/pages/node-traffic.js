@@ -1,7 +1,7 @@
 import {h, svg} from '../../shared/dom.js';
 import {api} from '../api.js';
 import {formatBytes, formatPercent, when} from '../format.js';
-import {niceMax} from '../ui/chart.js';
+import {fitChartText, niceMax} from '../ui/chart.js';
 import {button, facts, panel} from '../ui/components.js';
 
 const DAY = 86400000;
@@ -54,8 +54,8 @@ function quotaMeter(used, quota) {
 }
 
 function dailyChart(days) {
-  const width = 640;
-  const height = 260;
+  const width = 960;
+  const height = 280;
   const left = 100;
   const right = 16;
   const top = 16;
@@ -106,6 +106,7 @@ function dailyChart(days) {
     drawing.append(text(shortDateFormat.format(Date.parse(days[index].day)), {class: 'chart-axis',
       x: left + (index + 0.5) * slot, y: height - 10, 'text-anchor': index === 0 ? 'start' : index === 29 ? 'end' : 'middle'}));
   }
+  fitChartText(drawing, width);
   const key = (label, className) => h('span', {class: 'chart-key'}, h('i', {class: className, 'aria-hidden': 'true'}), label);
   return h('section', {class: 'traffic-chart', 'aria-label': 'Daily traffic'},
     h('h3', null, 'Daily traffic'),

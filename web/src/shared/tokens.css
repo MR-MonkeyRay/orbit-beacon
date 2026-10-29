@@ -1,6 +1,10 @@
 /* Design tokens shared by the console and the public page.
    Palette: deep "night sky" indigo surfaces, a sodium-amber beacon for brand and
-   primary actions, a periwinkle orbit for links and data, and status hues. */
+   primary actions, a periwinkle orbit for links and data, and status hues.
+   Breakpoints (media queries cannot read custom properties):
+     public page  480 small phone · 720 phone/tablet · 1024 tablet/desktop · 1600 · 2200 wide screens
+     console      1024 iPad portrait (compact tables) · 1200 icon rail · 1680 wide content
+   The console supports desktop and iPad widths only; the public page supports all devices. */
 :root{
   --bg:#f1f4f9;--rail:#e8edf5;--panel:#fff;--panel-2:#f6f8fc;--line:#d8dfeb;--line-2:#c2ccdd;
   --ink:#14203a;--ink-2:#46546f;--ink-3:#5f6b83;
@@ -11,11 +15,15 @@
   --shadow:0 1px 2px rgba(20,32,58,.05),0 10px 30px -18px rgba(20,32,58,.35);
   --shadow-lg:0 24px 60px -20px rgba(10,18,40,.45);
   --r-lg:16px;--r-md:10px;--r-sm:7px;
+  --fs-2xs:11px;--fs-xs:12px;--fs-sm:13px;--fs-md:14px;--fs-base:15px;--fs-lg:17px;--fs-xl:24px;--fs-display:40px;
+  --control-h-sm:32px;--control-h:40px;--control-h-lg:44px;
+  --z-raised:1;--z-sticky:10;--z-nav:50;--z-toast:80;--z-progress:90;--z-skip:100;
   --ease:cubic-bezier(.2,.8,.2,1);
   --font:system-ui,-apple-system,"Segoe UI Variable Text","Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
   --mono:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
   color-scheme:light;
 }
+@media (pointer:coarse){:root{--control-h:44px;--control-h-sm:40px}}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#0e1526;--rail:#0b1120;--panel:#141f36;--panel-2:#19253f;--line:#233150;--line-2:#32446b;
   --ink:#e3e9f5;--ink-2:#a7b3cb;--ink-3:#7f8ba6;
@@ -38,7 +46,7 @@
 /* Base shared by both pages */
 *,*::before,*::after{box-sizing:border-box}
 html{background:var(--bg);-webkit-text-size-adjust:100%}
-body{margin:0;min-height:100vh;font:15px/1.55 var(--font);color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+body{margin:0;min-height:100vh;font:var(--fs-base)/1.55 var(--font);color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 h1,h2,h3,p,dl,dd,ol,ul{margin:0}
 ol,ul{padding:0;list-style:none}
 a{color:var(--orbit);text-decoration-thickness:1px;text-underline-offset:3px}
@@ -55,15 +63,17 @@ button,input,select,textarea{font:inherit;color:inherit}
 .mark-orbit{fill:none;stroke:var(--orbit);stroke-width:2.2}
 .mark-core{fill:var(--beacon)}
 .mark-sat{fill:var(--orbit)}
-.icon-button{display:inline-grid;place-items:center;width:38px;height:38px;border:1px solid transparent;border-radius:var(--r-md);background:transparent;color:var(--ink-2);cursor:pointer;transition:background-color .15s,color .15s}
-.icon-button:hover{background:var(--orbit-soft);color:var(--ink)}
+.icon-button{display:inline-grid;place-items:center;width:var(--control-h);height:var(--control-h);border:1px solid transparent;border-radius:var(--r-md);background:transparent;color:var(--ink-2);cursor:pointer;transition:background-color .15s,color .15s}
+@media (hover:hover){.icon-button:hover{background:var(--orbit-soft);color:var(--ink)}}
 .badge,.status{display:inline-flex;align-items:center;gap:6px;padding:3px 10px 3px 8px;border-radius:999px;font-size:12.5px;font-weight:600;white-space:nowrap;color:var(--idle);background:var(--idle-bg)}
 .badge::before,.status::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
 .badge.online,.status.online{color:var(--ok);background:var(--ok-bg)}
 .badge.offline,.status.offline{color:var(--bad);background:var(--bad-bg)}
-.sk{background:linear-gradient(90deg,var(--line) 0%,var(--panel-2) 40%,var(--line) 80%);background-size:300% 100%;animation:shimmer 1.4s linear infinite}
+/* The shimmer moves a highlight with transform, so it composites instead of repainting every frame. */
+.sk{position:relative;overflow:hidden;background:var(--line)}
+.sk::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--panel-2) 75%,transparent),transparent);transform:translateX(-100%);animation:shimmer 1.4s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes orbit{to{transform:rotate(360deg)}}
 @keyframes fade-only{from{opacity:0}}
-@keyframes shimmer{from{background-position:100% 0}to{background-position:-200% 0}}
+@keyframes shimmer{to{transform:translateX(100%)}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after,::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}

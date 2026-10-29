@@ -1,6 +1,6 @@
 /* Login */
-.route-login .shell{display:block}
-.route-login .sidebar,.route-login .topbar{display:none}
+.route-login .shell{display:block;min-width:0}
+.route-login .sidebar{display:none}
 .route-login .main{padding:0}
 .route-login .main>*{max-width:none}
 .login{position:relative;display:grid;place-items:center;min-height:100vh;padding:32px 18px;overflow:hidden;isolation:isolate}
@@ -12,11 +12,11 @@
 .login-orbits .sat{fill:var(--orbit);opacity:.7;transform-box:fill-box;transform-origin:center;animation:orbit var(--d) linear infinite reverse}
 .login-card{width:min(400px,100%);padding:30px 28px 28px;background:color-mix(in srgb,var(--panel) 88%,transparent);backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow-lg);animation:dialog-in .5s var(--ease)}
 .login-card .brand{padding:0 0 22px}
-.login-card h1{font-size:24px;letter-spacing:-.025em}
-.login-card>p{margin:6px 0 22px;color:var(--ink-2);font-size:14px}
+.login-card h1{font-size:var(--fs-xl);letter-spacing:-.025em}
+.login-card>p{margin:6px 0 22px;color:var(--ink-2);font-size:var(--fs-md)}
 .login-card .form{gap:14px}
-.login-card .btn-primary{width:100%;min-height:44px;font-size:15px;margin-top:6px}
-.login-foot{margin-top:18px;text-align:center;font-size:13px}
+.login-card .btn-primary{width:100%;min-height:var(--control-h-lg);font-size:var(--fs-base);margin-top:6px}
+.login-foot{margin-top:18px;text-align:center;font-size:var(--fs-sm)}
 .login-foot a{color:var(--ink-3);text-decoration:none}
-.login-foot a:hover{color:var(--ink)}
+@media (hover:hover){.login-foot a:hover{color:var(--ink)}}
 

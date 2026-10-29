@@ -1,10 +1,10 @@
 /* History charts use the shared light/dark palette and have no animation. */
 .history-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:24px 20px;margin-top:18px}
 .history-metric{min-width:0}
-.history-metric h3{font-size:14px;font-weight:650;margin-bottom:10px}
+.history-metric h3{font-size:var(--fs-md);font-weight:650;margin-bottom:10px}
 .history-metric>.muted{padding:24px 0}
 .history-error{display:grid;justify-items:start;gap:10px;padding:18px 0;overflow-wrap:anywhere}
-.chart-legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--ink-2);margin-bottom:6px}
+.chart-legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:var(--fs-xs);color:var(--ink-2);margin-bottom:6px}
 .chart-key{display:inline-flex;align-items:center;gap:6px}
 .chart-key i{display:inline-block;width:24px;height:0;border-top:2px solid currentColor}
 .chart-key .chart-maximum-key{border-top:1px dotted var(--ink-2)}
@@ -13,7 +13,8 @@
 .chart-key .chart-series-1{border-top-style:dashed}
 .chart-plot{position:relative;isolation:isolate;touch-action:pan-y}
 .chart-svg{display:block;width:100%;height:auto;overflow:visible}
-.chart-axis{fill:var(--ink-2);font-size:13px;font-family:var(--font);font-variant-numeric:tabular-nums}
+/* fitChartText sets --chart-k so labels keep one CSS size at any chart width. */
+.chart-axis{fill:var(--ink-2);font-size:calc(var(--fs-xs) * var(--chart-k,1));font-family:var(--font);font-variant-numeric:tabular-nums}
 .chart-gridline{stroke:var(--line);stroke-width:1}
 .chart-area{fill:currentColor;fill-opacity:.08;stroke:none}
 .chart-average,.chart-max{fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
@@ -22,6 +23,5 @@
 .chart-series-1 .chart-average{stroke-dasharray:8 4}
 .chart-series-1 .chart-max{stroke-dasharray:2 3}
 .chart-crosshair{stroke:var(--ink-2);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
-.chart-tooltip{position:absolute;top:4px;z-index:2;width:max-content;max-width:min(280px,calc(100% - 8px));padding:8px 10px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);box-shadow:var(--shadow);color:var(--ink);font-size:12px;pointer-events:none;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-.chart-tooltip strong{display:block;color:var(--ink-2);font-size:11px;font-weight:550;margin-bottom:3px}
-@media(max-width:600px){.history-grid{grid-template-columns:minmax(0,1fr)}.chart-axis{font-size:22px}.chart-tooltip{font-size:11px}.panel:has(.history-grid)>.panel-head{flex-wrap:wrap}}
+.chart-tooltip{position:absolute;top:4px;z-index:2;width:max-content;max-width:min(280px,calc(100% - 8px));padding:8px 10px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);box-shadow:var(--shadow);color:var(--ink);font-size:var(--fs-xs);pointer-events:none;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.chart-tooltip strong{display:block;color:var(--ink-2);font-size:var(--fs-2xs);font-weight:550;margin-bottom:3px}
