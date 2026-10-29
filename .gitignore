@@ -17,3 +17,4 @@
 *.key
 # The minimal embedded UI distribution is intentionally tracked.
 *.test
+temp/
