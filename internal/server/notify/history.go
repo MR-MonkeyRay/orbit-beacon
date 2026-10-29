@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"orbitbeacon/internal/server/management"
+	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -16,14 +17,14 @@ type DeliveryPage struct {
 func (s *Service) Deliveries(ctx context.Context, limit int, before string) (DeliveryPage, error) {
 	page := DeliveryPage{Deliveries: make([]Delivery, 0)}
 	if limit < 1 || limit > 100 {
-		return page, invalid("limit", "must be between 1 and 100")
+		return page, validation.Invalid("limit", "must be between 1 and 100")
 	}
 	query := `SELECT id,channel_id,event_id,state,attempts,next_attempt_at,last_error_code,coalesced_count,created_at,updated_at FROM notification_deliveries WHERE 1=1`
 	args := []any{}
 	if before != "" {
 		stamp, id, e := management.DecodeEventCursor(before)
 		if e != nil {
-			return page, invalid("before", "invalid cursor")
+			return page, validation.Invalid("before", "invalid cursor")
 		}
 		query += " AND (created_at,id)<(?,?)"
 		args = append(args, stamp, id)

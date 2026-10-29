@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/server/audit"
-	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -21,7 +21,7 @@ func TestRuleValidation(t *testing.T) {
 	} {
 		t.Run(raw, func(t *testing.T) {
 			_, err := f.s.Save(context.Background(), f.rule.ID, patch(t, raw))
-			var v *nodes.ValidationError
+			var v *validation.Error
 			if !errors.As(err, &v) {
 				t.Fatalf("err=%v", err)
 			}

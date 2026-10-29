@@ -14,6 +14,7 @@ import (
 	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -66,9 +67,6 @@ func NewService(db *sql.DB, now func() time.Time) *Service {
 	}
 	return &Service{db: db, now: now}
 }
-func invalid(field, message string) error {
-	return &nodes.ValidationError{Fields: map[string]string{field: message}}
-}
 func apply(r *Rule, p Patch, create bool) error {
 	for _, f := range []struct {
 		name     string
@@ -84,15 +82,15 @@ func apply(r *Rule, p Patch, create bool) error {
 	} {
 		if len(f.raw) == 0 {
 			if create && !f.nullable {
-				return invalid(f.name, "is required")
+				return validation.Invalid(f.name, "is required")
 			}
 			continue
 		}
 		if !f.nullable && strings.TrimSpace(string(f.raw)) == "null" {
-			return invalid(f.name, "cannot be null")
+			return validation.Invalid(f.name, "cannot be null")
 		}
 		if err := json.Unmarshal(f.raw, f.dest); err != nil {
-			return invalid(f.name, "has an invalid type")
+			return validation.Invalid(f.name, "has an invalid type")
 		}
 	}
 	return nil
@@ -103,7 +101,7 @@ func apply(r *Rule, p Patch, create bool) error {
 func ParseRuleSnapshot(raw []byte) (Rule, error) {
 	var r Rule
 	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
-		return r, invalid("rule_snapshot", "must be an object")
+		return r, validation.Invalid("rule_snapshot", "must be an object")
 	}
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return r, err
@@ -114,21 +112,21 @@ func ParseRuleSnapshot(raw []byte) (Rule, error) {
 // ValidateRuleSyntax checks rule values without querying scope dependencies.
 func ValidateRuleSyntax(r Rule) error {
 	if strings.TrimSpace(r.Name) == "" || len(r.Name) > 100 {
-		return invalid("name", "must contain 1..100 UTF-8 bytes")
+		return validation.Invalid("name", "must contain 1..100 UTF-8 bytes")
 	}
 	if r.ForSeconds < 0 || r.ForSeconds > 86400 {
-		return invalid("for_seconds", "must be between 0 and 86400")
+		return validation.Invalid("for_seconds", "must be between 0 and 86400")
 	}
 	if r.Severity != "info" && r.Severity != "warning" && r.Severity != "critical" {
-		return invalid("severity", "must be info, warning or critical")
+		return validation.Invalid("severity", "must be info, warning or critical")
 	}
 	switch r.Metric {
 	case "offline":
 		if r.Comparator != nil || r.Threshold != nil {
-			return invalid("metric", "offline has no comparator or threshold")
+			return validation.Invalid("metric", "offline has no comparator or threshold")
 		}
 		if time.Duration(r.ForSeconds)*time.Second < nodes.OnlineWindow {
-			return invalid("for_seconds", "offline duration must be at least the online window")
+			return validation.Invalid("for_seconds", "offline duration must be at least the online window")
 		}
 	case "cpu_percent", "memory_used_percent", "swap_used_percent", "disk_used_percent", "load1", "probes_down":
 		bound := 100.0
@@ -138,27 +136,27 @@ func ValidateRuleSyntax(r Rule) error {
 			bound = 5
 		}
 		if r.Threshold == nil || math.IsNaN(*r.Threshold) || math.IsInf(*r.Threshold, 0) || *r.Threshold < 0 || *r.Threshold > bound {
-			return invalid("threshold", "must be finite and within the metric bounds")
+			return validation.Invalid("threshold", "must be finite and within the metric bounds")
 		}
 		if r.Comparator == nil || (*r.Comparator != ">" && *r.Comparator != "<") {
-			return invalid("comparator", "must be > or <")
+			return validation.Invalid("comparator", "must be > or <")
 		}
 	default:
-		return invalid("metric", "unsupported metric")
+		return validation.Invalid("metric", "unsupported metric")
 	}
 	if r.ScopeKind == "all" {
 		if r.ScopeID != nil {
-			return invalid("scope_id", "must be null for all")
+			return validation.Invalid("scope_id", "must be null for all")
 		}
 		return nil
 	}
 	switch r.ScopeKind {
 	case "group", "node":
 	default:
-		return invalid("scope_kind", "must be all, group or node")
+		return validation.Invalid("scope_kind", "must be all, group or node")
 	}
 	if r.ScopeID == nil || !identity.ValidUUID(*r.ScopeID) {
-		return invalid("scope_id", "must identify an existing scope")
+		return validation.Invalid("scope_id", "must identify an existing scope")
 	}
 	return nil
 }
@@ -179,7 +177,7 @@ func validate(ctx context.Context, tx *sql.Tx, r Rule) error {
 		return err
 	}
 	if n == 0 {
-		return invalid("scope_id", "scope does not exist")
+		return validation.Invalid("scope_id", "scope does not exist")
 	}
 	return nil
 }
@@ -286,7 +284,7 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Rule, error) {
 	}
 	if len(p.ChannelIDs) > 0 {
 		if strings.TrimSpace(string(p.ChannelIDs)) == "null" || json.Unmarshal(p.ChannelIDs, &r.ChannelIDs) != nil || len(r.ChannelIDs) > 20 {
-			return Rule{}, invalid("channel_ids", "must be an array of at most 20 existing channel IDs")
+			return Rule{}, validation.Invalid("channel_ids", "must be an array of at most 20 existing channel IDs")
 		}
 		if _, err = tx.ExecContext(ctx, "DELETE FROM alert_rule_channels WHERE rule_id=?", r.ID); err != nil {
 			return Rule{}, err
@@ -294,7 +292,7 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Rule, error) {
 		seen := map[string]bool{}
 		for _, channelID := range r.ChannelIDs {
 			if !identity.ValidUUID(channelID) || seen[channelID] {
-				return Rule{}, invalid("channel_ids", "must contain unique existing channel IDs")
+				return Rule{}, validation.Invalid("channel_ids", "must contain unique existing channel IDs")
 			}
 			seen[channelID] = true
 			var exists int
@@ -302,7 +300,7 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Rule, error) {
 				return Rule{}, err
 			}
 			if exists == 0 {
-				return Rule{}, invalid("channel_ids", "channel does not exist")
+				return Rule{}, validation.Invalid("channel_ids", "channel does not exist")
 			}
 			if _, err = tx.ExecContext(ctx, "INSERT INTO alert_rule_channels(rule_id,channel_id) VALUES(?,?)", r.ID, channelID); err != nil {
 				return Rule{}, err

@@ -9,7 +9,6 @@ import (
 	"reflect"
 
 	"orbitbeacon/internal/server/auth"
-
 	"orbitbeacon/internal/server/storage"
 )
 

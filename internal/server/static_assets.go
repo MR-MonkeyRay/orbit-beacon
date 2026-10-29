@@ -4,14 +4,18 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"mime"
 	"net/http"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
+
+	"orbitbeacon/internal/identity"
 )
 
 type staticAsset struct {
@@ -118,4 +122,97 @@ func etagMatches(value, etag string) bool {
 		}
 	}
 	return false
+}
+
+func (h *handler) static(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p := r.URL.Path
+	if (p == "/" || p == "/public.html") && !h.publicPageRoot(w, r) {
+		return
+	}
+	name := strings.TrimPrefix(p, "/")
+	uiRoute := p == "/login" || p == "/change-password" || p == "/overview" || p == "/nodes" || p == "/alerts" || p == "/settings" || (strings.HasPrefix(p, "/nodes/") && identity.ValidUUID(strings.TrimPrefix(p, "/nodes/")))
+	if uiRoute {
+		name = "200.html"
+	}
+	if p == "/" {
+		name = "public.html"
+	}
+	if !fs.ValidPath(name) || path.Clean(name) != name {
+		http.NotFound(w, r)
+		return
+	}
+	asset, ok := h.staticAssets[name]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if uiRoute || strings.HasSuffix(name, ".html") {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Security-Policy", h.htmlPolicies[name])
+		w.Header().Set("X-Frame-Options", "DENY")
+	}
+	if strings.HasPrefix(name, "_app/immutable/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
+	data := asset.data
+	etag := asset.etag
+	if asset.gzipData != nil {
+		w.Header().Add("Vary", "Accept-Encoding")
+		if acceptsGzip(r.Header.Get("Accept-Encoding")) {
+			data = asset.gzipData
+			etag = asset.gzipETag
+			w.Header().Set("Content-Encoding", "gzip")
+		}
+	}
+	w.Header().Set("Content-Type", asset.contentType)
+	w.Header().Set("ETag", etag)
+	if etagMatches(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(data)
+	}
+}
+
+var scriptElement = regexp.MustCompile(`(?is)<script\b([^>]*)>(.*?)</script\s*>`)
+var scriptSource = regexp.MustCompile(`(?i)(?:^|\s)src\s*=`)
+
+func htmlPolicies(assets fs.FS, origin string) (map[string]string, error) {
+	policies := make(map[string]string)
+	websocketOrigin := "ws" + strings.TrimPrefix(origin, "http")
+	err := fs.WalkDir(assets, ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(name, ".html") {
+			return nil
+		}
+		data, err := fs.ReadFile(assets, name)
+		if err != nil {
+			return err
+		}
+		policy := "default-src 'self'; script-src 'self'"
+		seen := make(map[string]bool)
+		for _, script := range scriptElement.FindAllSubmatch(data, -1) {
+			if scriptSource.Match(script[1]) {
+				continue
+			}
+			sum := sha256.Sum256(script[2])
+			hash := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+			if !seen[hash] {
+				policy += " " + hash
+				seen[hash] = true
+			}
+		}
+		policies[name] = policy + "; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' " + websocketOrigin + "; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+		return nil
+	})
+	return policies, err
 }

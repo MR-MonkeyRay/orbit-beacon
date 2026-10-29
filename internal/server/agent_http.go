@@ -1,7 +1,6 @@
 package server
 
 import (
-	"errors"
 	"net/http"
 	"strings"
 
@@ -93,37 +92,6 @@ func (h *handler) agentRoute(w http.ResponseWriter, r *http.Request, requestID s
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
-}
-
-func (h *handler) agentError(w http.ResponseWriter, err error, requestID string) {
-	switch {
-	case errors.Is(err, ingest.ErrProtocolUnsupported), errors.Is(err, v1.ErrProtocolUnsupported):
-		fail(w, http.StatusUpgradeRequired, "protocol_unsupported", "Protocol version is not supported", requestID)
-	case errors.Is(err, enrollment.ErrConflict):
-		fail(w, http.StatusConflict, "enrollment_conflict", "Enrollment does not match the bound installation and credential", requestID)
-	case errors.Is(err, enrollment.ErrExpired), errors.Is(err, enrollment.ErrRevoked), errors.Is(err, enrollment.ErrUnauthenticated):
-		fail(w, http.StatusUnauthorized, "unauthenticated", "Enrollment credential is invalid, expired or revoked", requestID)
-	case errors.Is(err, enrollment.ErrNotFound):
-		fail(w, http.StatusNotFound, "enrollment_not_found", "Enrollment not found", requestID)
-	case errors.Is(err, enrollment.ErrInvalidInput), errors.Is(err, ingest.ErrInvalidReport):
-		fail(w, http.StatusBadRequest, "validation_failed", "Request values are invalid", requestID)
-	case errors.Is(err, ingest.ErrIdentityConflict):
-		fail(w, http.StatusConflict, "identity_conflict", "A newer generation or another session owns this identity", requestID)
-	case errors.Is(err, enrollment.ErrRateLimited):
-		w.Header().Set("Retry-After", "1")
-		fail(w, http.StatusTooManyRequests, "rate_limited", "Enrollment rate limit exceeded", requestID)
-	case errors.Is(err, ingest.ErrRateLimited):
-		w.Header().Set("Retry-After", "1")
-		fail(w, http.StatusTooManyRequests, "rate_limited", "Report rate limit exceeded", requestID)
-	case errors.Is(err, ingest.ErrWriterBusy):
-		w.Header().Set("Retry-After", "1")
-		fail(w, http.StatusServiceUnavailable, "report_busy", "Report writer is busy", requestID)
-	case errors.Is(err, ingest.ErrServiceClosed):
-		w.Header().Set("Retry-After", "1")
-		fail(w, http.StatusServiceUnavailable, "service_unavailable", "Report ingestion is shutting down", requestID)
-	default:
-		h.serviceError(w, err, requestID)
-	}
 }
 
 func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, requestID string) bool {

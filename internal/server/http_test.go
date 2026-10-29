@@ -59,7 +59,6 @@ func newHTTP(t *testing.T, capacity int) fixture {
 		Assets: fstest.MapFS{
 			"200.html":               &fstest.MapFile{Data: []byte("<!doctype html><main>regression SPA shell</main>")},
 			"public.html":            &fstest.MapFile{Data: []byte("<!doctype html><main>regression public shell</main>")},
-			"login.html":             &fstest.MapFile{Data: []byte("<!doctype html><main>regression login shell</main>")},
 			"_app/immutable/main.js": &fstest.MapFile{Data: []byte("export const fixture = true;")},
 		},
 	})
@@ -354,7 +353,7 @@ func TestStaticFallbackIsLimitedToDeclaredUIRoutes(t *testing.T) {
 			if response.Code != http.StatusOK || !strings.HasPrefix(response.Header().Get("Content-Type"), "text/html") {
 				t.Errorf("declared SPA route returned %d, type=%q", response.Code, response.Header().Get("Content-Type"))
 			}
-			if !bytes.Contains(response.Body.Bytes(), []byte("regression SPA shell")) && !bytes.Contains(response.Body.Bytes(), []byte("regression login shell")) {
+			if !bytes.Contains(response.Body.Bytes(), []byte("regression SPA shell")) {
 				t.Error("declared route did not serve a UI document")
 			}
 		})

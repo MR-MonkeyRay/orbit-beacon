@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/server/management"
+	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -132,10 +133,10 @@ func (s *Service) Events(ctx context.Context, state string, limit int, before st
 		state = "all"
 	}
 	if state != "all" && state != "firing" && state != "resolved" {
-		return EventPage{}, invalid("state", "must be firing, resolved or all")
+		return EventPage{}, validation.Invalid("state", "must be firing, resolved or all")
 	}
 	if limit < 1 || limit > 100 {
-		return EventPage{}, invalid("limit", "must be between 1 and 100")
+		return EventPage{}, validation.Invalid("limit", "must be between 1 and 100")
 	}
 	// Metric and severity come from the snapshot taken at firing, so history
 	// stays meaningful after the rule is edited or deleted.
@@ -148,7 +149,7 @@ func (s *Service) Events(ctx context.Context, state string, limit int, before st
 	if before != "" {
 		stamp, id, err := management.DecodeEventCursor(before)
 		if err != nil {
-			return EventPage{}, invalid("before", "invalid cursor")
+			return EventPage{}, validation.Invalid("before", "invalid cursor")
 		}
 		query += " AND (e.started_at,e.id)<(?,?)"
 		args = append(args, stamp, id)
@@ -181,7 +182,7 @@ func (s *Service) Events(ctx context.Context, state string, limit int, before st
 }
 func (s *Service) Cleanup(ctx context.Context, before time.Time, limit int) (int64, error) {
 	if limit < 1 {
-		return 0, invalid("limit", "must be positive")
+		return 0, validation.Invalid("limit", "must be positive")
 	}
 	result, err := s.db.ExecContext(ctx, `DELETE FROM alert_events WHERE id IN (SELECT id FROM alert_events WHERE state='resolved' AND resolved_at<? ORDER BY resolved_at,id LIMIT ?)`, timekey.Format(before), limit)
 	if err != nil {

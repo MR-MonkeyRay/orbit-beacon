@@ -2,12 +2,10 @@ package server
 
 import (
 	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
 
 	"orbitbeacon/internal/server/alerts"
-	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/validation"
 )
 
 func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID string) bool {
@@ -23,7 +21,7 @@ func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID 
 	}
 	if strings.HasPrefix(p, "/api/v1/alerts/") {
 		if r.URL.RawQuery != "" {
-			h.serviceError(w, &nodes.ValidationError{Fields: map[string]string{"query": "unknown parameter"}}, requestID)
+			h.serviceError(w, &validation.Error{Fields: map[string]string{"query": "unknown parameter"}}, requestID)
 			return true
 		}
 		event, err := h.alerts.Event(r.Context(), strings.TrimPrefix(p, "/api/v1/alerts/"))
@@ -35,27 +33,15 @@ func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID 
 		return true
 	}
 	if p == "/api/v1/alerts" {
-		query, err := url.ParseQuery(r.URL.RawQuery)
-		fields := map[string]string{}
-		if err != nil {
-			fields["query"] = "invalid query string"
-		}
-		for key, values := range query {
-			if key != "state" && key != "limit" && key != "before" {
-				fields[key] = "unknown parameter"
-			} else if len(values) != 1 || values[0] == "" {
-				fields[key] = "must be supplied once and nonempty"
-			}
-		}
-		limit := 50
-		if query.Has("limit") {
-			limit, err = strconv.Atoi(query.Get("limit"))
-			if err != nil {
-				fields["limit"] = "must be an integer"
-			}
-		}
+		const suppliedOnce = "must be supplied once and nonempty"
+		query, fields := parseQuery(r.URL.RawQuery, "invalid query string", map[string]queryParameter{
+			"state":  {nonempty: true, repeated: suppliedOnce},
+			"limit":  {nonempty: true, repeated: suppliedOnce},
+			"before": {nonempty: true, repeated: suppliedOnce},
+		})
+		limit := parseLimit(query, fields, 50, "must be an integer")
 		if len(fields) > 0 {
-			h.serviceError(w, &nodes.ValidationError{Fields: fields}, requestID)
+			h.serviceError(w, &validation.Error{Fields: fields}, requestID)
 			return true
 		}
 		page, err := h.alerts.Events(r.Context(), query.Get("state"), limit, query.Get("before"))

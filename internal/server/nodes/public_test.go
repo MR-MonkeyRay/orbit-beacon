@@ -9,6 +9,7 @@ import (
 
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/validation"
 )
 
 func TestPublicSettingsRemainIndependentAndValidateAtomically(t *testing.T) {
@@ -30,8 +31,8 @@ func TestPublicSettingsRemainIndependentAndValidateAtomically(t *testing.T) {
 	original := got
 	for _, name := range []string{"", strings.Repeat("中", 86), "control\x00", string([]byte{0xff})} {
 		_, err := s.PatchPublicSettings(ctx, n.ID, nodes.PublicSettingsPatch{Name: &name})
-		var validation *nodes.ValidationError
-		if !errors.As(err, &validation) || validation.Fields["name"] == "" {
+		var fields *validation.Error
+		if !errors.As(err, &fields) || fields.Fields["name"] == "" {
 			t.Fatalf("invalid name %q: %v", name, err)
 		}
 		after, err := s.GetPublicSettings(ctx, n.ID)

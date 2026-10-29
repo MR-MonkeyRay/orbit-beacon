@@ -2,25 +2,16 @@ package server
 
 import (
 	"net/http"
-	"net/url"
 
 	"orbitbeacon/internal/server/history"
-	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/validation"
 )
 
 func (h *handler) nodeHistory(w http.ResponseWriter, r *http.Request, id, requestID string) {
-	query, err := url.ParseQuery(r.URL.RawQuery)
-	fields := make(map[string]string)
-	if err != nil {
-		fields["query"] = "must be a valid query string"
-	}
-	for key, values := range query {
-		if key != "metric" && key != "range" {
-			fields[key] = "unknown parameter"
-		} else if len(values) != 1 {
-			fields[key] = "must be supplied exactly once"
-		}
-	}
+	query, fields := parseQuery(r.URL.RawQuery, "must be a valid query string", map[string]queryParameter{
+		"metric": {repeated: "must be supplied exactly once"},
+		"range":  {repeated: "must be supplied exactly once"},
+	})
 	metric, requestedRange := query.Get("metric"), query.Get("range")
 	if !history.ValidMetric(metric) {
 		fields["metric"] = "must be a supported history metric"
@@ -29,7 +20,7 @@ func (h *handler) nodeHistory(w http.ResponseWriter, r *http.Request, id, reques
 		fields["range"] = "must be one of 1h, 6h, 24h, 7d, 30d"
 	}
 	if len(fields) > 0 {
-		h.serviceError(w, &nodes.ValidationError{Fields: fields}, requestID)
+		h.serviceError(w, &validation.Error{Fields: fields}, requestID)
 		return
 	}
 	// Existence is checked even when best-effort history was disabled at startup.
@@ -39,6 +30,7 @@ func (h *handler) nodeHistory(w http.ResponseWriter, r *http.Request, id, reques
 	}
 	response, _ := history.Empty(metric, requestedRange)
 	if h.history != nil {
+		var err error
 		response, err = h.history.Query(r.Context(), id, metric, requestedRange, h.now())
 		if err != nil {
 			h.serviceError(w, err, requestID)

@@ -18,6 +18,7 @@ import (
 
 	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -62,7 +63,7 @@ func (p *PublicSettingsPatch) UnmarshalJSON(data []byte) error {
 		{"name", wire.Name, &p.Name}, {"region", wire.Region, &p.Region}, {"provider", wire.Provider, &p.Provider},
 	} {
 		if !utf8.Valid(field.raw) {
-			return &ValidationError{Fields: map[string]string{field.name: "must be valid UTF-8"}}
+			return validation.Invalid(field.name, "must be valid UTF-8")
 		}
 		if len(field.raw) != 0 {
 			if err := json.Unmarshal(field.raw, field.dst); err != nil {
@@ -88,7 +89,7 @@ func (p PublicSettings) Validate() error {
 		fields["name"] = "must be nonempty when published"
 	}
 	if len(fields) > 0 {
-		return &ValidationError{Fields: fields}
+		return &validation.Error{Fields: fields}
 	}
 	return nil
 }

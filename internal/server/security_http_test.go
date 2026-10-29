@@ -133,7 +133,7 @@ func TestUnsupportedMethodsPrecedeAuthenticationAuthorizationAndCSRF(t *testing.
 
 func TestUIDocumentsDisallowFramingWithCSP(t *testing.T) {
 	f := newHTTP(t, 2)
-	for _, path := range []string{"/", "/public.html", "/login", "/overview", "/nodes", "/alerts", "/settings", "/200.html", "/login.html"} {
+	for _, path := range []string{"/", "/public.html", "/login", "/overview", "/nodes", "/alerts", "/settings", "/200.html"} {
 		for _, method := range []string{http.MethodGet, http.MethodHead} {
 			t.Run(method+" "+path, func(t *testing.T) {
 				response := request(t, f.handler, method, path, "", nil, "", "")

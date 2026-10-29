@@ -27,7 +27,6 @@ func TestHTMLCSPMatchesServedInlineScripts(t *testing.T) {
 		{"multiple scripts", fstest.MapFS{
 			"200.html":        {Data: []byte("<!doctype html><script>consoleTheme()</script><script type=\"module\">\nconsoleInit()\n</script><script src=\"/external.js\">externalBody()</script>")},
 			"public.html":     {Data: []byte("<!doctype html><script>publicTheme()</script><script>publicTheme()</script>")},
-			"login.html":      {Data: []byte("<!doctype html><script>loginTheme()</script>")},
 			"extra/page.html": {Data: []byte("<!doctype html><script>extraTheme()</script>")},
 		}},
 	} {

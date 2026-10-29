@@ -12,8 +12,8 @@ import (
 	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/management"
-	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/securefs"
+	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -98,7 +98,7 @@ func scanPlan(row taskScanner) (planRecord, error) {
 	return p, nil
 }
 func planField(field, message string) error {
-	return &nodes.ValidationError{Fields: map[string]string{field: message}}
+	return validation.Invalid(field, message)
 }
 func planMissing(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {

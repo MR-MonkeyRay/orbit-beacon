@@ -13,6 +13,7 @@ import (
 	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/alerts"
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -383,7 +384,7 @@ func (s *Service) Test(ctx context.Context, id string) (Result, error) {
 }
 func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64, error) {
 	if limit < 1 || limit > 1000 {
-		return 0, invalid("limit", "must be between 1 and 1000")
+		return 0, validation.Invalid("limit", "must be between 1 and 1000")
 	}
 	r, e := s.db.ExecContext(ctx, `DELETE FROM notification_deliveries WHERE id IN (SELECT id FROM notification_deliveries WHERE state IN ('sent','failed') AND updated_at<? ORDER BY updated_at,id LIMIT ?)`, timekey.Format(now.Add(-30*24*time.Hour)), limit)
 	if e != nil {

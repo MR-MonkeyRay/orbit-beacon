@@ -19,6 +19,7 @@ import (
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/change"
 	"orbitbeacon/internal/server/storage"
+	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -87,10 +88,6 @@ type TrafficSettingsPatch struct {
 	QuotaBytes    *string `json:"quota_bytes,omitempty"`
 	invalidFields map[string]string
 }
-
-type ValidationError struct{ Fields map[string]string }
-
-func (err *ValidationError) Error() string { return "node settings validation failed" }
 
 type Options struct {
 	MaxNodes int
@@ -313,7 +310,7 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 		}
 	}
 	if len(fields) != 0 {
-		return Node{}, &ValidationError{Fields: fields}
+		return Node{}, &validation.Error{Fields: fields}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -326,7 +323,7 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 			return Node{}, err
 		}
 		if !exists {
-			return Node{}, &ValidationError{Fields: map[string]string{"group_id": "group does not exist"}}
+			return Node{}, validation.Invalid("group_id", "group does not exist")
 		}
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE nodes SET name = COALESCE(?, name), notes = COALESCE(?, notes), region = COALESCE(?, region), provider = COALESCE(?, provider), group_id = CASE WHEN ? THEN ? ELSE group_id END WHERE id = ?`, patch.Name, patch.Notes, patch.Region, patch.Provider, patch.GroupID != nil, groupID, id)
@@ -589,7 +586,7 @@ func (s *Service) PatchTrafficSettings(ctx context.Context, id string, patch Tra
 		}
 	}
 	if len(fields) != 0 {
-		return TrafficSettings{}, &ValidationError{Fields: fields}
+		return TrafficSettings{}, &validation.Error{Fields: fields}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

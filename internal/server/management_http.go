@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"orbitbeacon/internal/identity"
@@ -122,14 +121,9 @@ func (h *handler) managementRoute(w http.ResponseWriter, r *http.Request, reques
 	case p == "/api/v1/groups" || strings.HasPrefix(p, "/api/v1/groups/"):
 		h.groups(w, r, requestID)
 	case p == "/api/v1/audit":
-		limit, offset, err := pagination(r)
+		limit, offset, before, err := paginationQuery(r, true)
 		if err != nil {
-			h.serviceError(w, auth.ErrInvalidInput, requestID)
-			return true
-		}
-		before := r.URL.Query().Get("before")
-		if r.URL.Query().Has("before") && before == "" {
-			h.serviceError(w, auth.ErrInvalidInput, requestID)
+			h.serviceError(w, err, requestID)
 			return true
 		}
 		page, err := h.management.Events(r.Context(), limit, offset, before)
@@ -142,27 +136,6 @@ func (h *handler) managementRoute(w http.ResponseWriter, r *http.Request, reques
 		return false
 	}
 	return true
-}
-
-func pagination(r *http.Request) (int, int, error) {
-	limit, offset := 50, 0
-	var err error
-	if value := r.URL.Query().Get("limit"); value != "" {
-		limit, err = strconv.Atoi(value)
-		if err != nil {
-			return 0, 0, err
-		}
-	}
-	if value := r.URL.Query().Get("offset"); value != "" {
-		offset, err = strconv.Atoi(value)
-		if err != nil {
-			return 0, 0, err
-		}
-	}
-	if limit < 1 || limit > 100 || offset < 0 {
-		return 0, 0, auth.ErrInvalidInput
-	}
-	return limit, offset, nil
 }
 
 func (h *handler) users(w http.ResponseWriter, r *http.Request, requestID string) {

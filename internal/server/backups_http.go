@@ -8,16 +8,13 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/backup"
-	"orbitbeacon/internal/server/management"
-	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/validation"
 )
 
 // backupsRoute is reached only after route existence, method, session and CSRF
@@ -46,7 +43,7 @@ func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID
 			return true
 		}
 		if _, err := backup.ValidateCategories(input.Categories); err != nil {
-			h.backupError(w, &nodes.ValidationError{Fields: map[string]string{"categories": "Select one or more distinct data categories."}}, requestID)
+			h.backupError(w, &validation.Error{Fields: map[string]string{"categories": "Select one or more distinct data categories."}}, requestID)
 			return true
 		}
 		task, err := h.backups.CreateExport(r.Context(), user.ID, input.Categories)
@@ -140,29 +137,17 @@ func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID
 // discarded: malformed encodings must not silently remove an unwanted field.
 func backupQuery(r *http.Request, list bool) (int, string, error) {
 	invalid := &backup.Error{Code: "invalid_input"}
-	values, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		return 0, "", invalid
+	allowed := map[string]queryParameter{}
+	if list {
+		const suppliedOnce = "must be supplied once and nonempty"
+		allowed["limit"] = queryParameter{nonempty: true, repeated: suppliedOnce}
+		allowed["before"] = queryParameter{nonempty: true, repeated: suppliedOnce}
 	}
-	limit, before := 50, ""
-	for key, items := range values {
-		if !list || len(items) != 1 || items[0] == "" {
-			return 0, "", invalid
-		}
-		switch key {
-		case "limit":
-			limit, err = strconv.Atoi(items[0])
-			if err != nil || limit < 1 || limit > 100 {
-				return 0, "", invalid
-			}
-		case "before":
-			before = items[0]
-			if _, _, err := management.DecodeEventCursor(before); err != nil {
-				return 0, "", invalid
-			}
-		default:
-			return 0, "", invalid
-		}
+	values, fields := parseQuery(r.URL.RawQuery, "invalid query string", allowed)
+	limit := parseLimit(values, fields, 50, "must be an integer from 1 to 100")
+	before, err := parseCursor(values, "before")
+	if len(fields) != 0 || err != nil {
+		return 0, "", invalid
 	}
 	return limit, before, nil
 }
@@ -178,7 +163,7 @@ func (input *backupPlanInput) UnmarshalJSON(data []byte) error {
 	}
 	for key, raw := range fields {
 		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return &nodes.ValidationError{Fields: map[string]string{key: "Must not be null; omit this field to retain its value."}}
+			return &validation.Error{Fields: map[string]string{key: "Must not be null; omit this field to retain its value."}}
 		}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -236,45 +221,6 @@ func (h *handler) backupDownload(w http.ResponseWriter, r *http.Request, request
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", "application/octet-stream")
 	http.ServeContent(w, r, *task.ArtifactName, info.ModTime(), backupArtifactReader{File: file, ctx: r.Context()})
-}
-
-func (h *handler) backupError(w http.ResponseWriter, err error, requestID string) {
-	var validation *nodes.ValidationError
-	if errors.As(err, &validation) {
-		writeJSON(w, http.StatusBadRequest, apiError{Code: "validation_failed", Message: validation.Error(), RequestID: requestID, Fields: validation.Fields})
-		return
-	}
-	var coded *backup.Error
-	if errors.As(err, &coded) {
-		status := http.StatusInternalServerError
-		message := "The backup operation could not be completed"
-		switch coded.Code {
-		case "invalid_input", "invalid_actor":
-			status, message = http.StatusBadRequest, "The request contains invalid parameters"
-		case "forbidden":
-			status, message = http.StatusForbidden, "Administrator access is required"
-		case "backup_queue_full":
-			status, message = http.StatusTooManyRequests, "The backup queue is full; try again after a task finishes"
-		case "backup_plan_busy":
-			status, message = http.StatusConflict, "This plan has a queued or running backup; try again after it finishes"
-		case "backup_plan_not_found", "task_not_found", "password_unavailable":
-			status, message = http.StatusNotFound, "The requested backup resource is unavailable"
-		case "artifact_not_ready":
-			status, message = http.StatusConflict, "The download is not ready"
-		case "artifact_expired", "artifact_missing", "password_expired":
-			status, message = http.StatusGone, "The requested backup artifact or password is no longer available"
-		case "secret_unreadable":
-			status, message = http.StatusConflict, "The backup secret cannot be read with the server key"
-		}
-		if status != http.StatusInternalServerError {
-			fail(w, status, coded.Code, message, requestID)
-			return
-		}
-	}
-	// Raw SQLite/filesystem/SDK errors may include private paths or credentials.
-	// Log only a fixed diagnostic, never the wrapped error supplied by a service.
-	h.logInternalError(errors.New("backup operation failed"), requestID)
-	fail(w, http.StatusInternalServerError, "internal_error", "The backup operation could not be completed", requestID)
 }
 
 var _ io.ReadSeeker = backupArtifactReader{}

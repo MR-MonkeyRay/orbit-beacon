@@ -2,12 +2,10 @@ package server
 
 import (
 	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
 
-	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/notify"
+	"orbitbeacon/internal/server/validation"
 )
 
 func (h *handler) notificationsRoute(w http.ResponseWriter, r *http.Request, requestID string) bool {
@@ -20,27 +18,14 @@ func (h *handler) notificationsRoute(w http.ResponseWriter, r *http.Request, req
 		return true
 	}
 	if p == "/api/v1/notification-deliveries" {
-		query, e := url.ParseQuery(r.URL.RawQuery)
-		fields := map[string]string{}
-		if e != nil {
-			fields["query"] = "invalid query string"
-		}
-		for key, values := range query {
-			if key != "limit" && key != "before" {
-				fields[key] = "unknown parameter"
-			} else if len(values) != 1 || values[0] == "" {
-				fields[key] = "must be supplied once and nonempty"
-			}
-		}
-		limit := 50
-		if query.Has("limit") {
-			limit, e = strconv.Atoi(query.Get("limit"))
-			if e != nil {
-				fields["limit"] = "must be an integer"
-			}
-		}
+		const suppliedOnce = "must be supplied once and nonempty"
+		query, fields := parseQuery(r.URL.RawQuery, "invalid query string", map[string]queryParameter{
+			"limit":  {nonempty: true, repeated: suppliedOnce},
+			"before": {nonempty: true, repeated: suppliedOnce},
+		})
+		limit := parseLimit(query, fields, 50, "must be an integer")
 		if len(fields) > 0 {
-			h.serviceError(w, &nodes.ValidationError{Fields: fields}, requestID)
+			h.serviceError(w, &validation.Error{Fields: fields}, requestID)
 			return true
 		}
 		page, e := h.notifications.Deliveries(r.Context(), limit, query.Get("before"))
