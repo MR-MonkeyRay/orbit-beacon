@@ -9,12 +9,15 @@ info:
     Browser reads require a session unless explicitly marked otherwise; agent
     routes use separate Bearer credentials and never accept browser sessions.
     Every console account is an equal administrator with full management access.
-    All browser mutations require the configured HTTPS Origin and a session-bound
+    All browser mutations require the configured HTTP/HTTPS Origin and a session-bound
     CSRF token; login requires Origin. Backup plans, tasks, downloads, recovery
     passwords and shared task/alert notifications are available to every signed-in
     administrator. Notification read state is independent for each account.
-    Canonical origins lowercase DNS names, normalize IPv6 and omit default port 443;
-    request Host and forwarded headers do not establish Origin trust. Client IP
+    Canonical origins lowercase DNS names, normalize IPv6 and omit default ports
+    (80 for HTTP, 443 for HTTPS); request Host and forwarded headers do not establish
+    Origin trust. Real IP/domain deployments must explicitly configure public_url
+    to match the browser's origin exactly, including nondefault ports. public_url
+    accepts only absolute HTTP/HTTPS root URLs without credentials, query or fragment. Client IP
     policies use X-Forwarded-For only when the direct peer matches trusted_proxies
     (default empty), scanning right to left past trusted hops. Missing, malformed
     or all-trusted chains fall back to the direct peer. X-Forwarded-Proto is ignored.
@@ -40,8 +43,12 @@ info:
     session of the affected user; renaming an account preserves its sessions.
     HTML responses use a self-only CSP with per-file SHA-256 hashes for inline
     scripts, data images, no inline styles, no objects or base URI, same-origin
-    forms, frame-ancestors 'none' and X-Frame-Options DENY. HSTS max-age=31536000
-    is sent only when the Server itself terminates TLS; TLS proxies must set HSTS.
+    forms, frame-ancestors 'none' and X-Frame-Options DENY. The Server serves only
+    HTTP, defaulting to 127.0.0.1:8080 with public_url http://localhost:8080.
+    External proxies provide HTTPS with normally trusted CA certificates and set
+    HSTS; the Server does not generate or load inbound TLS certificates. HTTP is
+    unencrypted; use externally terminated HTTPS for public deployments. Agent
+    clients accept HTTP/HTTPS; HTTP cannot be combined with a custom CA file.
     The data directory must be effective-user-owned and private (0700); SQLite,
     its sidecars and secrets.key must be owned regular 0600 files, never symlinks.
     Linux validates that the backing mount is local and writable.
@@ -51,7 +58,10 @@ info:
     name: GNU General Public License v3.0
     identifier: GPL-3.0
 servers:
+  - url: http://localhost:8080
+    description: Default local HTTP deployment
   - url: https://beacon.example.test
+    description: Optional external HTTPS proxy
 security:
   - session: []
 paths:
@@ -374,7 +384,7 @@ paths:
                 password: {type: string, x-minLengthBytes: 8, x-maxLengthBytes: 1024}
       responses:
         '200':
-          description: Session established; Set-Cookie is __Host-orbitbeacon_session with Secure, HttpOnly, SameSite=Lax, Path=/ and a 12-hour expiry.
+          description: Session established; Set-Cookie is orbitbeacon_session with no Domain (host-only), HttpOnly, SameSite=Lax, Path=/ and a 12-hour expiry. Secure is set only when the configured canonical public origin uses HTTPS, regardless of the upstream request or forwarded headers.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/BrowserSession'}
@@ -1910,7 +1920,8 @@ components:
     session:
       type: apiKey
       in: cookie
-      name: __Host-orbitbeacon_session
+      name: orbitbeacon_session
+      description: Host-only (no Domain), HttpOnly, SameSite=Lax, Path=/; Secure only for a configured HTTPS public origin, never inferred from Host or forwarded headers.
     enrollmentBearer:
       type: http
       scheme: bearer
@@ -1931,7 +1942,7 @@ components:
       in: header
       required: true
       schema: {type: string, format: uri}
-      description: Must match the canonical configured HTTPS public origin (DNS lowercase, normalized IPv6, default port 443 omitted), never request Host or forwarded headers.
+      description: Must match the canonical configured HTTP/HTTPS public origin (DNS lowercase, normalized IPv6, default HTTP port 80 or HTTPS port 443 omitted), never request Host or forwarded headers.
     CSRF:
       name: X-CSRF-Token
       in: header

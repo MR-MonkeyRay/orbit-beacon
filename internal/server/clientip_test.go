@@ -82,7 +82,7 @@ func TestLoginRejectionLogsDerivedClientIP(t *testing.T) {
 	}
 }
 
-func TestHSTSOnlyForDirectTLSOnAllRoutes(t *testing.T) {
+func TestHSTSBelongsToExternalProxy(t *testing.T) {
 	h := &handler{assets: fstest.MapFS{"public.html": {Data: []byte("<!doctype html><title>public</title>")}, "asset.js": {Data: []byte("export {}")}}}
 	var err error
 	h.htmlPolicies, err = htmlPolicies(h.assets, "https://beacon.test")
@@ -99,12 +99,8 @@ func TestHSTSOnlyForDirectTLSOnAllRoutes(t *testing.T) {
 			r.Header.Set("X-Forwarded-Proto", "https")
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, r)
-			want := ""
-			if scheme == "https" {
-				want = "max-age=31536000"
-			}
-			if got := w.Header().Get("Strict-Transport-Security"); got != want {
-				t.Errorf("%s %s %s: HSTS %q, want %q", scheme, route.method, route.path, got, want)
+			if got := w.Header().Get("Strict-Transport-Security"); got != "" {
+				t.Errorf("%s %s %s: application emitted HSTS %q", scheme, route.method, route.path, got)
 			}
 		}
 	}

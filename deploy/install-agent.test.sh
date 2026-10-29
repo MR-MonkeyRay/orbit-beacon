@@ -315,12 +315,47 @@ assert_log_lacks "curl"
 assert_log_lacks "$local_secret"
 pass "local binary install skips release downloads"
 
+http_case=0
+for http_server in 'http://monitor.example.com/' 'http://192.0.2.10:8080' 'http://[2001:db8::1]:8080'; do
+	http_case=$((http_case + 1))
+	setup_case "http_url_$http_case"
+	run_with_token 'http-token' "$CASE_DIR/output" --server "$http_server" --version 0.1.0
+	python3 - "$TEST_ROOT/etc/orbitbeacon/install-policy.json" "${http_server%/}" <<'PY'
+import json, pathlib, sys
+data = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert data["server_url"] == sys.argv[2], data
+assert data["ca_file"] == "", data
+PY
+	assert_exists "$TEST_ROOT/var/lib/orbitbeacon-agent/identity.json"
+	assert_log_has "--proto =https"
+	assert_log_has "--proto-redir =https"
+	assert_log_has "https://github.com/mr-monkeyray/orbit-beacon/releases/download/v0.1.0/"
+done
+pass "ordinary HTTP server origins are accepted without weakening release download TLS"
+
+setup_case http_ca_conflict
+if run_with_token 'http-ca-token' "$CASE_DIR/output" --server http://monitor.example.com --version 0.1.0 --ca-file "$TEST_FIXTURES/missing.pem"; then
+	fail "HTTP server accepted a CA file"
+fi
+grep -F -- '--ca-file requires an HTTPS server.' "$CASE_DIR/output" >/dev/null || fail "HTTP CA conflict was not reported before reading the CA file"
+assert_not_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
+assert_log_lacks "curl"
+pass "HTTP and CA conflict is rejected before reading CA or installing"
+
 setup_case bad_url
 for bad_server in \
 	'https://user@monitor.example.com/path?x=1' \
 	'https://monitor.example.com"' \
 	'https://a..b' \
-	'https://[:::]'; do
+	'https://[:::]' \
+	'http://user@monitor.example.com' \
+	'http://monitor.example.com/prefix' \
+	'http://monitor.example.com/?x=1' \
+	'http://monitor.example.com/#fragment' \
+	'http://monitor.example.com:0' \
+	'http://monitor.example.com:65536' \
+	'ftp://monitor.example.com' \
+	'//monitor.example.com'; do
 	if run_installer "$CASE_DIR/output" --server "$bad_server" --version 0.1.0 </dev/null; then
 		fail "invalid server origin unexpectedly succeeded: $bad_server"
 	fi

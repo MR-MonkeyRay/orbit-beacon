@@ -12,7 +12,7 @@ say() { printf '%s\n' "[orbitbeacon] $*"; }
 die() { printf '%s\n' "[orbitbeacon] ERROR: $*" >&2; exit 1; }
 usage() {
     cat <<'USAGE'
-Usage: sh install-agent.sh --server https://HOST[:PORT] --version VERSION
+Usage: sh install-agent.sh --server http[s]://HOST[:PORT] --version VERSION
        [--ca-file FILE] [--token-file FILE] [--binary FILE]
        sh install-agent.sh --uninstall [--yes]
 Run as root. --binary replaces downloading (then --version is optional).
@@ -138,16 +138,19 @@ if ! printf '%s\n' "$server" | awk '
         for (i = 1; i <= c; i++) if (length(b[i]) < 1 || length(b[i]) > 4) return 0
         return 1
     }
-    NR != 1 || $0 !~ /^https:\/\/([A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(:[0-9]+)?$/ { exit 1 }
-    { host=$0; sub(/^https:\/\//, "", host); sub(/:[0-9]+$/, "", host)
+    NR != 1 || $0 !~ /^https?:\/\/([A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(:[0-9]+)?$/ { exit 1 }
+    { host=$0; sub(/^https?:\/\//, "", host); sub(/:[0-9]+$/, "", host)
       if (host ~ /^\[/) { sub(/^\[/, "", host); sub(/\]$/, "", host); if (valid6(host)) exit 0; exit 1 }
       c=split(host, labels, ".")
       for (i=1; i<=c; i++) if (labels[i] !~ /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/) exit 1
       exit 0 }
 '; then
-    die '--server must be an https:// origin with no path, query, fragment or userinfo.'
+    die '--server must be an http:// or https:// origin with no path, query, fragment or userinfo.'
 fi
-authority=${server#https://}
+case $server in
+    http://*) [ -z "$ca_source" ] || die '--ca-file requires an HTTPS server.' ;;
+esac
+authority=${server#*://}
 case $authority in
     *]:*) port=${authority##*:} ;;
     \[*\]) port= ;;
@@ -155,7 +158,7 @@ case $authority in
     *) port= ;;
 esac
 if [ -n "$port" ]; then
-    if [ "${#port}" -gt 5 ] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then die 'Invalid HTTPS port.'; fi
+    if [ "${#port}" -gt 5 ] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then die 'Invalid server port.'; fi
 fi
 if [ -n "$version" ]; then
     printf '%s\n' "$version" | awk '

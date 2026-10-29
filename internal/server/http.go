@@ -41,7 +41,7 @@ import (
 	"orbitbeacon/internal/server/webui"
 )
 
-const sessionCookie = "__Host-orbitbeacon_session"
+const sessionCookie = "orbitbeacon_session"
 
 type Options struct {
 	Backups                  *backup.Service
@@ -295,9 +295,6 @@ func (h *handler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodHead {
 		w = headResponseWriter{w}
 	}
-	if r.TLS != nil {
-		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
-	}
 	requestID, err := identity.UUID(rand.Reader)
 	if err != nil {
 		h.logInternalError(err, "")
@@ -373,7 +370,7 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 			h.serviceError(w, err, requestID)
 			return
 		}
-		http.SetCookie(w, cookie(session.Token, session.ExpiresAt, int(auth.SessionLifetime.Seconds())))
+		http.SetCookie(w, h.cookie(session.Token, session.ExpiresAt, int(auth.SessionLifetime.Seconds())))
 		writeJSON(w, http.StatusOK, session)
 		return
 	}
@@ -585,8 +582,8 @@ func (h *handler) api(w http.ResponseWriter, r *http.Request, requestID string) 
 	}
 }
 
-func cookie(value string, expires time.Time, maxAge int) *http.Cookie {
-	return &http.Cookie{Name: sessionCookie, Value: value, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: expires, MaxAge: maxAge}
+func (h *handler) cookie(value string, expires time.Time, maxAge int) *http.Cookie {
+	return &http.Cookie{Name: sessionCookie, Value: value, Path: "/", Secure: strings.HasPrefix(h.origin, "https://"), HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: expires, MaxAge: maxAge}
 }
 
 func (h *handler) serviceError(w http.ResponseWriter, err error, requestID string) {

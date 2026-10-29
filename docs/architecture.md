@@ -6,7 +6,7 @@ OrbitBeacon 由中心 Server、Linux 非 root Agent 和内嵌网页组成；不�
 
 ```mermaid
 flowchart LR
-    A[Linux Agent] -->|HTTPS 注册与上报| S[Server]
+    A[Linux Agent] -->|HTTP/HTTPS 注册与上报| S[Server]
     S -->|流量确认| A
     S --> M[内存最新报告]
     S --> D[(orbitbeacon.db)]
@@ -22,6 +22,8 @@ flowchart LR
 | `cmd/orbitbeacon-agent`、`internal/agent/` | 安装策略与身份校验、采集、探测、注册和上报 |
 | `cmd/orbitbeacon-server`、`internal/server/` | 目录锁、恢复收敛、存储、HTTP、告警、通知、备份和保留清理 |
 | `web/src/` | 公开页与管理控制台，构建后嵌入 Server；运行不需要 Node.js |
+
+Server 主监听仅提供 HTTP；公网 HTTPS 与 HSTS 由外置代理提供。`public_url` 固定浏览器可信源，不从请求 Host 或转发头推断；HTTP 不加密密码、会话及 Agent 凭证。
 
 ## 采集与身份
 
@@ -107,7 +109,7 @@ WS/SSE 共用每 IP 4 条、全局 200 条、最长 15 分钟限制；私有流�
 ## 安全与关闭
 
 - Agent 安装策略固定信任根、地址、状态目录和非 root 运行身份；主机失陷后凭据及采集结果不再可信。探测配置等同授权 Agent 访问目标网络。
-- 浏览器使用 Secure、HttpOnly Cookie，管理写入校验 Origin 和 CSRF。账户均为等权管理员；更名保留会话，删除撤销目标会话，修改本人密码撤销本人全部会话，至少保留一名管理员。
+- 浏览器使用 host-only、HttpOnly、SameSite=Lax 会话 Cookie；仅 HTTPS `public_url` 启用 Secure。管理写入校验 Origin 和 CSRF。账户均为等权管理员；更名保留会话，删除撤销目标会话，修改本人密码撤销本人全部会话，至少保留一名管理员。
 - 公开信息独立配置，不从内部元数据回填；仅投影公开字段、状态和 CPU/内存/负载/uptime，不返回完整报告。
 - 数据目录、数据库、sidecar 和 `secrets.key` 是本地信任根，严格检查所有权、权限和无符号链接。`server.lock` 不删除；禁止多个 Server 共用目录。
 - 通知凭据和完整 Webhook URL 使用 `secrets.key` 派生的 AES-256-GCM 密钥加密。默认拒绝私网、回环及元数据目标；拨号校验最终 IP，HTTP 不使用代理或重定向，SMTP 要求 TLS。放宽选项见部署文档。

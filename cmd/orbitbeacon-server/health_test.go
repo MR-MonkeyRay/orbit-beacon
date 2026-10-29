@@ -56,11 +56,9 @@ func TestCheckHealthLoopbackHTTP(t *testing.T) {
 	}
 }
 
-func TestCheckHealthRejectsUnsafeHTTPOrigins(t *testing.T) {
+func TestCheckHealthRejectsUnsafeOrigins(t *testing.T) {
 	for _, origin := range []string{
-		"", "http://localhost:8080", "http://example.com", "http://192.0.2.1",
-		"http://0.0.0.0:8080", "http://127.0.0.2", "http://[::ffff:127.0.0.1]",
-		"http://127.1", "http://2130706433", "http://127.0.0.1.example.com",
+		"",
 		"http://127.0.0.1@192.0.2.1", "http://user@127.0.0.1",
 		"http://127.0.0.1/prefix", "http://127.0.0.1/%2f",
 		"http://127.0.0.1?x=1", "http://127.0.0.1?", "http://127.0.0.1#",
@@ -71,6 +69,23 @@ func TestCheckHealthRejectsUnsafeHTTPOrigins(t *testing.T) {
 				t.Fatalf("expected URL rejection before connecting, got %v", err)
 			}
 		})
+	}
+}
+
+func TestCheckHealthHTTPHostnameAndCAConflict(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz/ready" {
+			t.Errorf("unexpected health path: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	origin := strings.Replace(server.URL, "127.0.0.1", "localhost", 1)
+	if err := checkHealth(origin, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkHealth(origin, filepath.Join(t.TempDir(), "missing-ca.pem")); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("HTTP with CA must reject encryption mismatch before reading CA: %v", err)
 	}
 }
 

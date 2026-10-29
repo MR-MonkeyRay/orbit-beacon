@@ -4,11 +4,11 @@
 
 ## 部署前
 
-- 准备 Linux 主机、可用域名和可信 HTTPS（或自行分发私有 CA）。
+- 准备 Linux 主机；本机或受控网络可使用 HTTP，公网访问应另配可信 HTTPS 代理（私有 CA 须由客户端信任）。
 - SQLite 数据必须放在支持文件锁的本地文件系统，不要共用数据目录运行多个 Server。
 - 数据目录由运行用户所有、权限 `0700`；数据库、SQLite sidecar 和 `secrets.key` 为该用户所有的 `0600` 普通文件。路径不得经过符号链接，祖先目录不可被组或其他用户写入。
-- 默认由同机反向代理终结 TLS，业务端口 `8080` 不对公网开放。
-- `public_url` 填浏览器实际访问的 HTTPS 源站，包含非默认端口。配置优先级为 CLI > `ORBITBEACON_*` 环境变量 > JSON > 默认值；未知 JSON 键会报错。
+- Server 只提供 HTTP，不生成或加载入站 TLS 证书。默认监听回环地址；采用外置 HTTPS 代理时，不对公网开放业务端口 `8080`。
+- `public_url` 默认 `http://localhost:8080`。使用真实 IP 或域名时须显式设置，使规范化后的协议、主机、端口与浏览器 Origin 精确一致，包含非默认端口；只接受 HTTP / HTTPS 根地址，无凭据、查询或片段。HTTP 的 80、HTTPS 的 443 会规范化省略，不从请求 Host 或转发头推断公开源。配置优先级为 CLI > `ORBITBEACON_*` 环境变量 > JSON > 默认值；未知 JSON 键会报错。
 
 配置示例分别为 [`systemd/server.json`](systemd/server.json) 和 [`docker/server.json`](docker/server.json)。原生示例监听 `127.0.0.1:8080`，容器监听 `0.0.0.0:8080`，但只发布到宿主机回环地址；数据目录均为 `/var/lib/orbitbeacon`。
 
@@ -37,7 +37,7 @@ sudo install -d -o orbitbeacon -g orbitbeacon -m 0700 /var/lib/orbitbeacon
 sudoedit /etc/orbitbeacon/server.json
 ```
 
-至少修改 `public_url`。若更改数据目录，需同步调整 unit 的可写路径和目录权限。unit 不授予 capabilities；推荐由代理绑定 `443`，不要直接改成低端口。
+非本机访问须修改 `public_url`；直接 HTTP 访问还须调整监听地址并限制网络访问。若更改数据目录，需同步调整 unit 的可写路径和目录权限。unit 不授予 capabilities；HTTPS 应由代理绑定 `443`，不要直接改成低端口。
 
 ```sh
 sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server bootstrap \
@@ -56,7 +56,7 @@ sudo journalctl -u orbitbeacon-server -n 100 --no-pager
 Compose 使用 GHCR 镜像，不在部署机编译。当前 Compose 的回退标签为 `0.1.0`，**不随 `VERSION` 自动更新**；请显式选择实际已发布的版本并持久保存环境变量，不依赖 `latest`。
 
 ```sh
-export ORBITBEACON_PUBLIC_URL=https://beacon.your-domain.com
+export ORBITBEACON_PUBLIC_URL=http://localhost:8080  # 与 Compose 默认值相同；外置 HTTPS 改为 https://beacon.your-domain.com
 export ORBITBEACON_IMAGE_TAG="$(cat VERSION)"  # 先确认该版本已发布
 # 私有包需先执行 docker login ghcr.io。
 docker compose -f deploy/docker/compose.yaml pull
@@ -73,11 +73,13 @@ docker compose -f deploy/docker/compose.yaml logs --tail=100 orbitbeacon
 
 `deploy/docker/server.json` 在构建时复制进镜像，并非运行时挂载。修改仓库中的该文件不会改变现有容器；额外设置需在 Compose 的 `environment` 中传入对应 `ORBITBEACON_*`，或只读挂载完整配置到 `/etc/orbitbeacon/server.json`。宿主机 `export` 的变量只有被 Compose 引用或显式传入时才会进入容器。环境或镜像标签变更后执行 `up -d` 重建容器。
 
+默认在宿主机访问 <http://localhost:8080>。真实域名/IP 或不同端口必须配置相应 `ORBITBEACON_PUBLIC_URL`；直接远程 HTTP 访问还须显式调整 Compose 的端口发布地址，并限制网络访问。
+
 本地镜像构建入口为 [`build/server.Dockerfile`](../build/server.Dockerfile)；发布流程见[主 README](../README.md#开发与发布)。流水线配置不代表对应版本已发布。
 
-## HTTPS 与反向代理
+## 可选：HTTPS 与反向代理
 
-选择 [`proxy/Caddyfile`](proxy/Caddyfile) 或 [`proxy/nginx.conf`](proxy/nginx.conf)，先修改域名和证书路径。Caddy 示例自动申请证书，要求 Caddy 2.10.0+；nginx 示例需要已有证书。
+Server 上游仍为 HTTP，HTTPS 由外置代理终结，证书必须由客户端正常信任的 CA 签发。选择 [`proxy/Caddyfile`](proxy/Caddyfile) 或 [`proxy/nginx.conf`](proxy/nginx.conf)，先修改域名和证书路径，并将 Server 的 `public_url` 改为浏览器访问的 HTTPS 源站。Caddy 示例自动申请证书，要求 Caddy 2.10.0+；nginx 示例需要已有证书。私有 CA 须配置浏览器信任，Agent 和健康检查可用 `--ca-file` 指定，不跳过证书验证。
 
 ```sh
 # Caddy：修改示例后安装、校验、重载。
@@ -94,6 +96,8 @@ sudo systemctl reload nginx
 
 两个示例均限制请求体为 1 MiB、保留 Host 并设置转发头，且发送含 `includeSubDomains` 的 HSTS。只有确认域名及其子域名均支持 HTTPS 后才保留该设置。代理终结 TLS 时由代理设置 HSTS；`X-Forwarded-Proto` 不替代 `public_url` 的 Origin 校验。
 
+会话 Cookie 为 `orbitbeacon_session`，不设 Domain（host-only），始终为 `HttpOnly`、`SameSite=Lax`、`Path=/`；`Secure` 仅由配置的公开源是否为 HTTPS 决定。代理到 Server 的 HTTP 不影响此属性，请求的 Host 或 `X-Forwarded-Proto` 也不能改变它。
+
 Server 默认不信任转发头。原生同机代理可设置：
 
 ```json
@@ -107,12 +111,13 @@ Server 默认不信任转发头。原生同机代理可设置：
 ## 检查与日常观测
 
 ```sh
-curl --fail https://beacon.your-domain.com/healthz/ready
-# 原生安装还可使用 CLI；私有 CA 加 --ca-file /安全路径/ca.pem。
+curl --fail http://localhost:8080/healthz/ready
+/usr/local/bin/orbitbeacon-server health --url http://localhost:8080
+# 外置 HTTPS 也可检查；私有 CA 加 --ca-file /安全路径/ca.pem。
 /usr/local/bin/orbitbeacon-server health --url https://beacon.your-domain.com
 ```
 
-readiness 不证明 Agent 已上报，需另查节点最近报告。CLI 的明文检查只接受字面回环地址（如 `http://127.0.0.1:8080` 或 `http://[::1]:8080`），不接受 `localhost`；端口按实际监听配置。远程检查使用 HTTPS。
+readiness 不证明 Agent 已上报，需另查节点最近报告。CLI 接受 HTTP / HTTPS 根地址，不限回环地址；HTTP 不加密且不能搭配 `--ca-file`，公网检查应使用 HTTPS，端口按实际部署配置。
 
 可选 Server 配置：
 
@@ -124,7 +129,7 @@ readiness 不证明 Agent 已上报，需另查节点最近报告。CLI 的明�
 | `notification_allow_private_networks` | `false` | 允许通知访问内网 SMTP / webhook；元数据地址始终拒绝 |
 | `web_update_interval_seconds` | `10` | 网页推送合并与 HTTP 轮询周期，整数 2–60 秒，重启生效，不改变 Agent 采集周期 |
 
-以上键均有对应的大写 `ORBITBEACON_*` 环境变量和连字符形式 CLI flag。指标监听器不使用主服务的 TLS，须绑定回环或受保护的运维网络；Compose 还需自行配置采集可达的网络或端口。
+以上键均有对应的大写 `ORBITBEACON_*` 环境变量和连字符形式 CLI flag。指标监听器同样只提供 HTTP，须绑定回环或受保护的运维网络；Compose 还需自行配置采集可达的网络或端口。
 
 管理员可在控制台管理通知通道、测试投递并查看日志。回环 HTTP webhook 必须同时开启两项通知选项；HTTPS 和 SMTP 校验证书，SMTP 的非 465 端口要求 STARTTLS。探测目标与通知通道不是同一出站策略，Agent 探测限制见 [Agent 指南](../docs/agent.md#服务探测)。
 
@@ -180,7 +185,7 @@ sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore --data-dir /var/li
 
 恢复使用 `restore-journal.json` 安装数据库与密钥，失败时可回滚旧文件组。成功会输出 `.restore-<id>/old/` 原副本位置，不自动删除；确认恢复正常后再妥善处理。不要删除 `server.lock`、journal 或 SQLite sidecar 强行启动，恢复原理见[架构文档](../docs/architecture.md#备份一致性与恢复)。
 
-成功后再启动，检查 HTTPS readiness、登录、节点上报和通知凭据。Compose 先停服务，再通过一次性 `compose run` 将包及密码文件只读挂载到容器，使用相同数据卷和运行身份执行上述命令。
+成功后再启动，使用配置的 HTTP/HTTPS 源检查 readiness（默认 `orbitbeacon-server health --url http://localhost:8080`），再检查登录、节点上报和通知凭据。Compose 先停服务，再通过一次性 `compose run` 将包及密码文件只读挂载到容器，使用相同数据卷和运行身份执行上述命令。
 
 ## 升级
 

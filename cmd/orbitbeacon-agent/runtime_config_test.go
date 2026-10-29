@@ -76,7 +76,7 @@ func TestRuntimeFlagsAreAcceptedByAllRuntimeCommands(t *testing.T) {
 }
 
 func TestAgentLoaderWithoutFileSupportsStableReload(t *testing.T) {
-	policy := config.InstallPolicy{ServerURL: "https://beacon.example.test", StateDir: t.TempDir(), ExpectedUID: 1000, ExpectedGID: 1000, InstallMode: "foreground"}
+	policy := config.InstallPolicy{ServerURL: "http://beacon.example.test:8080", StateDir: t.TempDir(), ExpectedUID: 1000, ExpectedGID: 1000, InstallMode: "foreground"}
 	load, err := agentLoader("", nil, policy)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestAgentLoaderWithoutFileSupportsStableReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.ReportIntervalSeconds != 10 || next.ReportIntervalSeconds != first.ReportIntervalSeconds || next.DiskIntervalSeconds != first.DiskIntervalSeconds {
+	if first.ServerURL != policy.ServerURL || next.ServerURL != policy.ServerURL || first.ReportIntervalSeconds != 10 || next.ReportIntervalSeconds != first.ReportIntervalSeconds || next.DiskIntervalSeconds != first.DiskIntervalSeconds {
 		t.Fatalf("fileless reload changed defaults: %+v / %+v", first, next)
 	}
 }

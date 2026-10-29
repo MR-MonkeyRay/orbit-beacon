@@ -56,11 +56,11 @@ func newConsoleLiveFixture(t *testing.T) *consoleLiveFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.cookie = cookie(session.Token, session.ExpiresAt, 3600)
 	f.h, err = NewHandler(Options{Auth: a, Nodes: nodes.NewService(db, nodes.Options{Now: now}), PublicURL: "https://beacon.test", Now: now, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.cookie = f.h.cookie(session.Token, session.ExpiresAt, 3600)
 	f.h.streamInterval = time.Second
 	f.h.streamHeartbeat = 20 * time.Millisecond
 	t.Cleanup(func() {

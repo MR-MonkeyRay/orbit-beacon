@@ -151,8 +151,8 @@ type Diagnostics struct {
 }
 
 // Doctor never sends an enrollment/report or advances the durable generation.
-// A method-only HTTPS request exercises DNS, trust and endpoint connectivity,
-// without claiming to check node authentication or accepting any sample.
+// A method-only request exercises DNS, endpoint connectivity and HTTPS trust
+// when configured, without checking node authentication or accepting a sample.
 func (r *Runtime) Doctor(ctx context.Context) (Diagnostics, error) {
 	result := Diagnostics{Configuration: "valid", Identity: "valid", Connectivity: "error", Authentication: "not_checked", Collection: "error", InstallMode: r.installMode}
 	request, err := http.NewRequestWithContext(ctx, http.MethodHead, r.client.baseURL+"/api/agent/v1/report", nil)

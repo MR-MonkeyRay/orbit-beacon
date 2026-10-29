@@ -1,6 +1,6 @@
 # OrbitBeacon
 
-自托管的多节点监控系统：Server 提供管理 API、内嵌 Web 界面和 SQLite 存储，Linux Agent 以非 root 身份采集并通过 HTTPS 上报。
+自托管的多节点监控系统：Server 提供管理 API、内嵌 Web 界面和 SQLite 存储，Linux Agent 以非 root 身份采集并通过 HTTP / HTTPS 上报。
 
 管理控制台为英文，公开节点页为中文。控制台面向桌面和平板（最小宽度 744px），公开页支持手机。
 
@@ -26,9 +26,9 @@
 - 告警每 30 秒评估，外发通知可能延迟、重复或丢失，不替代独立的高可靠告警系统。
 - 所有控制台账户均为管理员；没有他人密码重置或找回流程。Agent 没有远程升级、终端或任意命令执行功能；当前部署支持 Linux。
 
-## 快速开始：本机 HTTPS
+## 快速开始：本机 HTTP
 
-需要 Linux、Go（版本见 [go.mod](go.mod)）和 OpenSSL，不需要 Node.js。以下在仓库根目录以普通用户执行，使用新的数据目录。数据目录及祖先须归 root 或当前用户所有，且不可被组或其他用户写入；不要直接使用权限不符合要求的仓库目录。
+需要 Linux 和 Go（版本见 [go.mod](go.mod)），不需要 Node.js。以下在仓库根目录以普通用户执行，使用新的数据目录。数据目录及祖先须归 root 或当前用户所有，且不可被组或其他用户写入；不要直接使用权限不符合要求的仓库目录。
 
 ### 1. 编译并创建管理员
 
@@ -43,35 +43,19 @@ build/orbitbeacon-server bootstrap --data-dir "$HOME/orbitbeacon-demo" --usernam
 
 按提示输入密码（8–1024 个 UTF-8 字节，终端不回显）。没有默认密码或网页初始化入口；已有管理员不会被覆盖。自动化可从标准输入传入一行密码，不要放进命令参数。
 
-### 2. 启动 HTTPS
+### 2. 启动 HTTP
 
 ```sh
-DEMO_DIR="$HOME/orbitbeacon-demo"
-openssl req -x509 -newkey rsa:3072 -nodes -days 7 \
-  -keyout "$DEMO_DIR/server-key.pem" -out "$DEMO_DIR/server-cert.pem" \
-  -subj '/CN=localhost' \
-  -addext 'subjectAltName=DNS:localhost' \
-  -addext 'basicConstraints=critical,CA:TRUE'
-cat > "$DEMO_DIR/server.json" <<EOF
-{
-  "listen_addr": "127.0.0.1:8443",
-  "data_dir": "$DEMO_DIR",
-  "public_url": "https://localhost:8443",
-  "tls_cert_file": "$DEMO_DIR/server-cert.pem",
-  "tls_key_file": "$DEMO_DIR/server-key.pem"
-}
-EOF
-build/orbitbeacon-server serve --config "$DEMO_DIR/server.json"
+build/orbitbeacon-server serve --data-dir "$HOME/orbitbeacon-demo"
 ```
 
-另开终端检查：
+默认监听 `127.0.0.1:8080`，公开源为 `http://localhost:8080`。另开终端检查：
 
 ```sh
-build/orbitbeacon-server health --url https://localhost:8443 \
-  --ca-file "$HOME/orbitbeacon-demo/server-cert.pem"
+build/orbitbeacon-server health --url http://localhost:8080
 ```
 
-浏览器信任 `server-cert.pem` 后访问 <https://localhost:8443>，点“管理登录”。此证书仅用于本机演示，不要分发私钥。登录 Cookie 固定为 `Secure`，不能改用 HTTP 登录。
+访问 <http://localhost:8080>，点“管理登录”。HTTP 不加密密码、会话及 Agent 凭证，仅用于本机或受控网络；公网部署请用外置 HTTPS 代理。Server 只提供 HTTP，不生成或加载入站 TLS 证书。
 
 ### 3. 接入并选择公开节点
 
@@ -83,7 +67,7 @@ build/orbitbeacon-server health --url https://localhost:8443 \
 
 ## 正式部署与配置
 
-按[部署指南](deploy/README.md)选择 systemd 或 Docker Compose，配置可信 HTTPS 和备份。页面与 API 同源，不支持子路径前缀。
+按[部署指南](deploy/README.md)选择 systemd 或 Docker Compose，配置备份；公网访问应由外置反向代理提供可信 HTTPS。页面与 API 同源，不支持子路径前缀。
 
 **当前主库 schema 为 19，不提供历史迁移或跨 schema 恢复。** 旧库（含 schema 18）会被拒绝；使用新的私有数据目录，保留旧目录供原版本使用。
 
@@ -93,9 +77,8 @@ Server 配置优先级：**CLI > `ORBITBEACON_` 环境变量 > JSON > 默认值*
 | --- | --- |
 | `listen_addr` | `127.0.0.1:8080` |
 | `data_dir` | `./data`；本地持久化目录，所有权和权限要求见部署指南 |
-| `public_url` | `https://localhost`；浏览器实际访问的 HTTPS 源站，用于 Origin 校验 |
+| `public_url` | `http://localhost:8080`；浏览器实际访问的 HTTP / HTTPS 源站，用于 Origin 校验 |
 | `max_nodes` | `500`；包括待接入和禁用节点，不是性能承诺 |
-| `tls_cert_file` / `tls_key_file` | 空；Server 直接终结 TLS 时成对设置 |
 | `trusted_proxies` | `[]`；仅信任指定 IP / CIDR 的转发客户端地址 |
 | `web_update_interval_seconds` | `10`；整数 2–60 秒，控制网页推送合并与 HTTP 轮询，重启生效，不改变 Agent 采集周期 |
 | `metrics_listen` | 空，关闭独立 `/metrics` 监听；开启时须限制访问 |
@@ -103,6 +86,10 @@ Server 配置优先级：**CLI > `ORBITBEACON_` 环境变量 > JSON > 默认值*
 | `allow_insecure_webhooks` / `notification_allow_private_networks` | `false`；出站安全限制见部署指南 |
 
 环境变量如 `ORBITBEACON_MAX_NODES=100`，CLI 如 `--max-nodes 100`。Agent 的五项运行参数在 Agent 主机上配置并 reload，不通过网页下发。
+
+使用真实 IP 或域名访问时，必须显式设置 `public_url`，使其规范化后的协议、主机和端口与浏览器 Origin 精确一致（HTTP 的 80、HTTPS 的 443 为默认端口）；不能包含凭据、查询或片段，路径不参与 Origin 比较，也不提供子路径部署。Server 不从请求 Host 或转发头自动推断公开源。Agent 和健康检查的服务地址只接受根 URL。HTTPS 由外置代理终结，使用系统信任的 CA 证书；私有 CA 须由浏览器信任，Agent 和健康检查通过 `--ca-file` 指定，HTTP 不能搭配 CA 文件。
+
+会话 Cookie 名为 `orbitbeacon_session`，不设 Domain（host-only），保持 `HttpOnly`、`SameSite=Lax`、`Path=/`；仅当配置的公开源为 HTTPS 时设置 `Secure`，与代理转发协议无关。
 
 ## API 与排障
 

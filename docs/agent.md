@@ -4,7 +4,7 @@
 
 ## 准备
 
-- Server 已启动并创建管理员；Agent 能访问其 HTTPS 源站，证书受系统信任或有私有 CA 的公开 PEM。
+- Server 已启动并创建管理员；Agent 能访问其 HTTP 或 HTTPS 源站。Server 只提供 HTTP，HTTPS 由外置反向代理提供，证书须受系统信任或使用私有 CA 的公开 PEM。
 - 安装脚本支持 Linux amd64 / arm64，需 root 安装、非 root 运行；支持 `useradd` 或 BusyBox 的 `adduser` / `addgroup`，并需 `runuser` 或 `su`。
 - 下载需 `curl`、`tar`、`sha256sum`，另需常用 POSIX 工具、`awk`、`install`。离线提供二进制时不执行下载和解包。
 - 不要复制 Server 私钥、跳过证书校验，或把管理员 Cookie 传到 Agent 主机。
@@ -43,7 +43,7 @@ printf '%s\n' "$TOKEN" | sudo sh ./install-agent.sh \
 unset TOKEN
 ```
 
-私有 CA 加 `--ca-file /安全路径/ca.pem`。`--server` 只接受 HTTPS 源站，可带端口，不接受账号、子路径、查询或片段。下载校验 release 包的 `SHA256SUMS`，不是独立签名验证。离线用 `--binary /安全路径/orbitbeacon-agent-linux-amd64`，可省略版本；自行核对来源与架构。
+`--server` 接受 HTTP 或 HTTPS 源站，可带端口和单个根路径 `/`，不接受账号、子路径、查询或片段；例如受控网络使用 `http://192.0.2.10:8080`。HTTP 不加密凭据与上报数据，跨公网建议使用外置 HTTPS 代理。私有 CA 仅用于 HTTPS，加 `--ca-file /安全路径/ca.pem`；HTTP 与 CA 同时配置会报错，不读取 CA 文件。安装脚本和 release 包下载仍仅允许 HTTPS；下载校验 release 包的 `SHA256SUMS`，不是独立签名验证。离线用 `--binary /安全路径/orbitbeacon-agent-linux-amd64`，可省略版本；自行核对来源与架构。
 
 脚本创建专用账号 `orbitbeacon-agent`，固定实际 UID/GID，不保证是 `1000:1000`。安装路径：
 
@@ -78,7 +78,7 @@ sudo -u orbitbeacon-agent /usr/local/bin/orbitbeacon-agent doctor \
   --install-policy /etc/orbitbeacon/install-policy.json --config /etc/orbitbeacon/agent.json --json
 ```
 
-`doctor` 检查配置、身份文件、HTTPS 连通性和采集，**不注册、不上报、不验证节点凭证**；`authentication: "not_checked"` 是预期结果。
+`doctor` 检查配置、身份文件、HTTP/HTTPS 连通性和采集（HTTPS 同时验证证书），**不注册、不上报、不验证节点凭证**；`authentication: "not_checked"` 是预期结果。
 
 在控制台确认：
 
@@ -175,7 +175,7 @@ sudo chown "root:$AGENT_GID" /etc/orbitbeacon/agent.json
 sudo chmod 0640 /etc/orbitbeacon/agent.json
 ```
 
-私有 CA 由 root 安装为 `/etc/orbitbeacon/ca.pem`（`0644`），并填写 policy 的 `ca_file`。policy、CA 及祖先目录须 root 所有且不可被组/其他用户写入，无符号链接；不要放在家目录或 `/tmp`。state 归运行用户、`0700`。
+HTTP 源站保持 `ca_file` 为空。HTTPS 私有 CA 由 root 安装为 `/etc/orbitbeacon/ca.pem`（`0644`），并填写 policy 的 `ca_file`。policy、CA 及祖先目录须 root 所有且不可被组/其他用户写入，无符号链接；不要放在家目录或 `/tmp`。state 归运行用户、`0700`。
 
 通过安全通道接收 token，保存为当前用户所有的 `0600` 普通文件；路径无符号链接，祖先仅 root 或运行用户所有且不可被组/其他用户写入（安全 sticky 临时目录例外）。以普通用户执行：
 

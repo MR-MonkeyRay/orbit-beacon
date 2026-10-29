@@ -251,7 +251,7 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 	anonymous, anonymousBytes := publicList(t, f, "/api/public/v1/nodes", nil)
 	adminResult, adminBytes := publicList(t, f, "/api/public/v1/nodes", admin)
 	secondResult, secondBytes := publicList(t, f, "/api/public/v1/nodes", second)
-	forgedResult, forgedBytes := publicList(t, f, "/api/public/v1/nodes", &http.Cookie{Name: "__Host-orbitbeacon_session", Value: "forged"})
+	forgedResult, forgedBytes := publicList(t, f, "/api/public/v1/nodes", &http.Cookie{Name: "orbitbeacon_session", Value: "forged"})
 	if len(anonymous.Nodes) != 1 || len(adminResult.Nodes) != 1 || len(secondResult.Nodes) != 1 || len(forgedResult.Nodes) != 1 {
 		t.Fatalf("public visibility differs by session: anonymous=%d admin=%d admin-two=%d forged=%d", len(anonymous.Nodes), len(adminResult.Nodes), len(secondResult.Nodes), len(forgedResult.Nodes))
 	}

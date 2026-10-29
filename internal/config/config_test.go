@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"orbitbeacon/internal/config"
@@ -150,7 +151,7 @@ func TestServerConfigurationRejectsInvalidValuesFromEverySource(t *testing.T) {
 		value string
 	}{
 		{"relative public URL", "public_url", "ORBITBEACON_PUBLIC_URL", "/dashboard"},
-		{"HTTP public URL", "public_url", "ORBITBEACON_PUBLIC_URL", "http://example.test"},
+		{"unsupported public URL scheme", "public_url", "ORBITBEACON_PUBLIC_URL", "ftp://example.test"},
 		{"missing public host", "public_url", "ORBITBEACON_PUBLIC_URL", "https:///dashboard"},
 		{"public URL credentials", "public_url", "ORBITBEACON_PUBLIC_URL", "https://user:password@example.test"},
 		{"public URL query", "public_url", "ORBITBEACON_PUBLIC_URL", "https://example.test/?token=secret"},
@@ -303,7 +304,7 @@ func TestServerValidatesOnlyResolvedOrdinaryConfiguration(t *testing.T) {
 	}{
 		{"capacity", "max_nodes", "ORBITBEACON_MAX_NODES", 0, "0", 25, "25"},
 		{"unparseable capacity", "max_nodes", "ORBITBEACON_MAX_NODES", "not-an-integer", "not-an-integer", 25, "25"},
-		{"public URL", "public_url", "ORBITBEACON_PUBLIC_URL", "http://invalid.test", "http://invalid.test", "https://beacon.example.test", "https://beacon.example.test"},
+		{"public URL", "public_url", "ORBITBEACON_PUBLIC_URL", "ftp://invalid.test", "ftp://invalid.test", "https://beacon.example.test", "https://beacon.example.test"},
 		{"data directory", "data_dir", "ORBITBEACON_DATA_DIR", "file:unsafe.db", "file:unsafe.db", "/var/lib/orbitbeacon", "/var/lib/orbitbeacon"},
 		{"listen address", "listen_addr", "ORBITBEACON_LISTEN_ADDR", "not-an-address", "not-an-address", "127.0.0.1:8181", "127.0.0.1:8181"},
 	} {
@@ -357,35 +358,38 @@ func TestServerValidatesOnlyResolvedOrdinaryConfiguration(t *testing.T) {
 	}
 }
 
-func TestServerTLSPairCanBeComposedAcrossPrecedenceLayers(t *testing.T) {
-	for _, tt := range []struct {
-		name  string
-		file  map[string]any
-		env   map[string]string
-		flags map[string]string
-	}{
-		{"file certificate and environment key", map[string]any{"tls_cert_file": "server.pem"}, map[string]string{"ORBITBEACON_TLS_KEY_FILE": "server.key"}, nil},
-		{"file key and flag certificate", map[string]any{"tls_key_file": "server.key"}, nil, map[string]string{"tls_cert_file": "server.pem"}},
-		{"environment certificate and flag key", nil, map[string]string{"ORBITBEACON_TLS_CERT_FILE": "server.pem"}, map[string]string{"tls_key_file": "server.key"}},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			values := map[string]any{"data_dir": t.TempDir()}
-			for key, value := range tt.file {
-				values[key] = value
+func TestServerRejectsRemovedTLSConfiguration(t *testing.T) {
+	for _, key := range []string{"tls_cert_file", "tls_key_file"} {
+		t.Run(key, func(t *testing.T) {
+			if _, err := config.LoadServer(config.LoadOptions{
+				File: configFile(t, map[string]any{key: "server.pem"}), LookupEnv: lookup(nil),
+			}); err == nil {
+				t.Fatal("accepted removed TLS JSON key")
 			}
-			got, err := config.LoadServer(config.LoadOptions{File: configFile(t, values), LookupEnv: lookup(tt.env), Flags: tt.flags})
-			if err != nil {
-				t.Fatalf("complete resolved TLS pair rejected: %v", err)
-			}
-			if got.TLSCertFile != "server.pem" || got.TLSKeyFile != "server.key" {
-				t.Errorf("resolved TLS pair = %q, %q", got.TLSCertFile, got.TLSKeyFile)
+			if _, err := config.LoadServer(config.LoadOptions{
+				LookupEnv: lookup(nil), Flags: map[string]string{key: "server.pem"},
+			}); err == nil {
+				t.Fatal("accepted removed TLS flag key")
 			}
 		})
 	}
-	for _, key := range []string{"tls_cert_file", "tls_key_file"} {
-		if _, err := config.LoadServer(config.LoadOptions{LookupEnv: lookup(nil), Flags: map[string]string{key: "unpaired.pem"}}); err == nil {
-			t.Errorf("accepted incomplete resolved TLS pair with only %s", key)
+	var lookedUpTLS bool
+	cfg, err := config.LoadServer(config.LoadOptions{LookupEnv: func(key string) (string, bool) {
+		if key == "ORBITBEACON_TLS_CERT_FILE" || key == "ORBITBEACON_TLS_KEY_FILE" {
+			lookedUpTLS = true
+			return "server.pem", true
 		}
+		return "", false
+	}})
+	if err != nil || lookedUpTLS {
+		t.Fatalf("removed TLS environment consulted: %v, err=%v", lookedUpTLS, err)
+	}
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "tls_cert_file") || strings.Contains(string(encoded), "tls_key_file") {
+		t.Fatalf("server configuration still exports removed TLS settings: %s", encoded)
 	}
 }
 
@@ -433,5 +437,125 @@ func TestAgentStateDirectoryHasOneAbsoluteLocationAcrossWorkingDirectories(t *te
 				t.Fatalf("policy loading created a working-directory identity location: %v", err)
 			}
 		})
+	}
+}
+
+func TestHTTPTransportConfiguration(t *testing.T) {
+	t.Run("default public origin", func(t *testing.T) {
+		cfg, err := config.LoadServer(config.LoadOptions{LookupEnv: lookup(nil)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.PublicURL != "http://localhost:8080" {
+			t.Fatalf("default public URL = %q, want http://localhost:8080", cfg.PublicURL)
+		}
+	})
+	t.Run("HTTP public URL from every source", func(t *testing.T) {
+		const publicURL = "http://192.0.2.10:8080"
+		for _, source := range []string{"JSON", "environment", "flag"} {
+			t.Run(source, func(t *testing.T) {
+				opts := config.LoadOptions{LookupEnv: lookup(nil)}
+				switch source {
+				case "JSON":
+					opts.File = configFile(t, map[string]any{"public_url": publicURL})
+				case "environment":
+					opts.LookupEnv = lookup(map[string]string{"ORBITBEACON_PUBLIC_URL": publicURL})
+				case "flag":
+					opts.Flags = map[string]string{"public_url": publicURL}
+				}
+				cfg, err := config.LoadServer(opts)
+				if err != nil || cfg.PublicURL != publicURL {
+					t.Fatalf("HTTP public URL rejected or changed: %q, err=%v", cfg.PublicURL, err)
+				}
+			})
+		}
+	})
+	t.Run("canonical origins", func(t *testing.T) {
+		for raw, want := range map[string]string{
+			"http://EXAMPLE.test:80/":             "http://example.test",
+			"HTTP://EXAMPLE.test:80/":             "http://example.test",
+			"http://example.test:00080/dashboard": "http://example.test",
+			"http://example.test:443":             "http://example.test:443",
+			"http://example.test:8080":            "http://example.test:8080",
+			"http://[2001:0DB8::1]:80/":           "http://[2001:db8::1]",
+			"http://[2001:db8::1]:8080":           "http://[2001:db8::1]:8080",
+			"https://EXAMPLE.test:443/":           "https://example.test",
+			"https://example.test:80":             "https://example.test:80",
+			"https://[2001:db8::1]:443":           "https://[2001:db8::1]",
+		} {
+			t.Run(raw, func(t *testing.T) {
+				got, err := config.CanonicalOrigin(raw)
+				if err != nil || got != want {
+					t.Fatalf("CanonicalOrigin(%q) = %q, %v; want %q", raw, got, err, want)
+				}
+			})
+		}
+	})
+	t.Run("agent transport and CA", func(t *testing.T) {
+		for _, tt := range []struct {
+			serverURL string
+			caFile    string
+			wantError bool
+		}{
+			{"http://beacon.example.test", "", false},
+			{"http://192.0.2.10:8080/", "", false},
+			{"http://[2001:db8::1]:8080/", "", false},
+			{"https://beacon.example.test/", "", false},
+			{"https://beacon.example.test/", "ca.pem", false},
+			{"http://beacon.example.test/", "ca.pem", true},
+			{"HTTP://beacon.example.test/", "ca.pem", true},
+		} {
+			t.Run(tt.serverURL+"/"+tt.caFile, func(t *testing.T) {
+				policy := config.InstallPolicy{ServerURL: tt.serverURL, CAFile: tt.caFile, StateDir: t.TempDir(), InstallMode: "foreground"}
+				got, err := config.LoadAgent(config.LoadOptions{LookupEnv: lookup(nil)}, &policy)
+				if tt.wantError {
+					if err == nil || !strings.Contains(err.Error(), "ca_file") || !strings.Contains(err.Error(), "HTTPS") {
+						t.Fatalf("HTTP with explicit CA must explain that ca_file requires HTTPS, got %v", err)
+					}
+					return
+				}
+				if err != nil || got.ServerURL != tt.serverURL || got.CAFile != tt.caFile {
+					t.Fatalf("agent transport config changed: %+v, %v", got, err)
+				}
+			})
+		}
+	})
+}
+
+func TestServerURLValidation(t *testing.T) {
+	for _, scheme := range []string{"http", "https"} {
+		t.Run(scheme, func(t *testing.T) {
+			for _, authority := range []string{"example.test", "EXAMPLE.test:8080", "192.0.2.10:80", "[2001:db8::1]:443"} {
+				for _, path := range []string{"", "/"} {
+					raw := scheme + "://" + authority + path
+					if err := config.ValidateServerURL(raw); err != nil {
+						t.Errorf("valid server URL %q rejected: %v", raw, err)
+					}
+				}
+			}
+			for _, suffix := range []string{"/prefix", "/prefix/", "//", "/%2F", "/%2f", "/%41", "/?query=1", "/?", "/#fragment", "/#"} {
+				raw := scheme + "://example.test" + suffix
+				if err := config.ValidateServerURL(raw); err == nil {
+					t.Errorf("unsafe or non-root server URL %q accepted", raw)
+				}
+			}
+			for _, authority := range []string{"", "user@example.test", "user:password@example.test", "bad_host.test", "127.1", "0x7f000001", "example.test:", "example.test:65536", "[fe80::1%25eth0]", "[::ffff:192.0.2.10]"} {
+				raw := scheme + "://" + authority
+				if _, err := config.CanonicalOrigin(raw); err == nil {
+					t.Errorf("unsafe origin %q accepted", raw)
+				}
+				if err := config.ValidateServerURL(raw); err == nil {
+					t.Errorf("unsafe server URL %q accepted", raw)
+				}
+			}
+		})
+	}
+	for _, raw := range []string{"", "/", "example.test", "//example.test", "ftp://example.test", "http:example.test", "https:example.test"} {
+		if _, err := config.CanonicalOrigin(raw); err == nil {
+			t.Errorf("non-HTTP(S) absolute origin %q accepted", raw)
+		}
+		if err := config.ValidateServerURL(raw); err == nil {
+			t.Errorf("non-HTTP(S) absolute server URL %q accepted", raw)
+		}
 	}
 }

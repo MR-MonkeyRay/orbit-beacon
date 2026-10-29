@@ -31,8 +31,6 @@ type Server struct {
 	AccessLog                        bool           `json:"access_log"`
 	DataDir                          string         `json:"data_dir"`
 	PublicURL                        string         `json:"public_url"`
-	TLSCertFile                      string         `json:"tls_cert_file"`
-	TLSKeyFile                       string         `json:"tls_key_file"`
 	MaxNodes                         int            `json:"max_nodes"`
 	WebUpdateIntervalSeconds         int            `json:"web_update_interval_seconds"`
 	TrustedProxies                   []netip.Prefix `json:"-"`
@@ -144,8 +142,8 @@ func encodeValue(key, value string) (json.RawMessage, error) {
 }
 
 func LoadServer(opts LoadOptions) (Server, error) {
-	cfg := Server{ListenAddr: "127.0.0.1:8080", DataDir: "./data", PublicURL: "https://localhost", MaxNodes: 500, WebUpdateIntervalSeconds: 10}
-	layers, err := sources(opts, []string{"allow_insecure_webhooks", "notification_allow_private_networks", "listen_addr", "metrics_listen", "access_log", "data_dir", "public_url", "tls_cert_file", "tls_key_file", "max_nodes", "web_update_interval_seconds", "trusted_proxies"})
+	cfg := Server{ListenAddr: "127.0.0.1:8080", DataDir: "./data", PublicURL: "http://localhost:8080", MaxNodes: 500, WebUpdateIntervalSeconds: 10}
+	layers, err := sources(opts, []string{"allow_insecure_webhooks", "notification_allow_private_networks", "listen_addr", "metrics_listen", "access_log", "data_dir", "public_url", "max_nodes", "web_update_interval_seconds", "trusted_proxies"})
 	if err != nil {
 		return Server{}, err
 	}
@@ -212,43 +210,53 @@ func parseTrustedProxies(entries []string) ([]netip.Prefix, error) {
 	return prefixes, nil
 }
 
-// CanonicalOrigin validates an absolute HTTPS URL and returns its browser Origin.
+// CanonicalOrigin validates an absolute HTTP or HTTPS URL and returns its browser Origin.
 // URL paths are allowed, but credentials, queries and fragments are not.
 // DNS names are ASCII-only; unsupported host forms are rejected rather than
 // producing an Origin that differs from the browser's serialization.
 func CanonicalOrigin(raw string) (string, error) {
+	u, err := parseHTTPURL(raw)
+	if err != nil {
+		return "", err
+	}
+	return u.Scheme + "://" + u.Host, nil
+}
+
+func parseHTTPURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") || u.Opaque != "" {
-		return "", errors.New("URL must be absolute HTTPS without credentials, query or fragment")
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") || u.Opaque != "" {
+		return nil, errors.New("URL must be absolute HTTP or HTTPS without credentials, query or fragment")
 	}
 	host := strings.ToLower(u.Hostname())
 	if strings.HasPrefix(u.Host, "[") {
 		address, err := netip.ParseAddr(host)
 		if err != nil || !address.Is6() || address.Is4In6() || address.Zone() != "" {
-			return "", errors.New("URL must have a supported IPv6 address")
+			return nil, errors.New("URL must have a supported IPv6 address")
 		}
 		host = "[" + address.String() + "]"
 	} else if address, err := netip.ParseAddr(host); err == nil {
 		if !address.Is4() {
-			return "", errors.New("URL IPv6 addresses must be bracketed")
+			return nil, errors.New("URL IPv6 addresses must be bracketed")
 		}
 		host = address.String()
 	} else if !validHostname(host) {
-		return "", errors.New("URL must have a valid ASCII hostname or IP address")
+		return nil, errors.New("URL must have a valid ASCII hostname or IP address")
 	}
 	if strings.HasSuffix(u.Host, ":") {
-		return "", errors.New("URL port must not be empty")
+		return nil, errors.New("URL port must not be empty")
 	}
 	if port := u.Port(); port != "" {
 		number, err := strconv.ParseUint(port, 10, 16)
 		if err != nil {
-			return "", errors.New("URL port must be between 0 and 65535")
+			return nil, errors.New("URL port must be between 0 and 65535")
 		}
-		if number != 443 {
+		defaultPort := (u.Scheme == "http" && number == 80) || (u.Scheme == "https" && number == 443)
+		if !defaultPort {
 			host = net.JoinHostPort(strings.Trim(host, "[]"), strconv.FormatUint(number, 10))
 		}
 	}
-	return "https://" + host, nil
+	u.Host = host
+	return u, nil
 }
 
 func validHostname(host string) bool {
@@ -279,12 +287,15 @@ func validHostname(host string) bool {
 	return true
 }
 
-// ValidateHTTPS requires an HTTPS origin with at most a literal root slash.
+// ValidateServerURL requires an HTTP or HTTPS origin with at most a literal root slash.
 // Agent endpoints are absolute paths; accepting a prefix would silently discard it.
-func ValidateHTTPS(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") || u.Opaque != "" || (u.Path != "" && u.Path != "/") || u.RawPath != "" {
-		return errors.New("URL must be absolute HTTPS at its root without credentials, query or fragment")
+func ValidateServerURL(raw string) error {
+	u, err := parseHTTPURL(raw)
+	if err != nil {
+		return err
+	}
+	if (u.Path != "" && u.Path != "/") || u.RawPath != "" {
+		return errors.New("URL must be at its root without an encoded path or prefix")
 	}
 	return nil
 }
@@ -322,9 +333,6 @@ func (cfg Server) Validate() error {
 	}
 	if cfg.WebUpdateIntervalSeconds < 2 || cfg.WebUpdateIntervalSeconds > 60 {
 		return errors.New("web_update_interval_seconds must be between 2 and 60")
-	}
-	if (cfg.TLSCertFile == "") != (cfg.TLSKeyFile == "") {
-		return errors.New("tls_cert_file and tls_key_file must be supplied together")
 	}
 	return nil
 }
@@ -394,8 +402,12 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	if err := settings.Validate(); err != nil {
 		return Agent{}, err
 	}
-	if err := ValidateHTTPS(policy.ServerURL); err != nil {
+	if err := ValidateServerURL(policy.ServerURL); err != nil {
 		return Agent{}, fmt.Errorf("server_url: %w", err)
+	}
+	scheme, _, _ := strings.Cut(policy.ServerURL, ":")
+	if strings.EqualFold(scheme, "http") && policy.CAFile != "" {
+		return Agent{}, errors.New("ca_file requires an HTTPS server_url; HTTP does not use TLS certificates")
 	}
 	if err := ValidatePath(policy.StateDir); err != nil {
 		return Agent{}, err

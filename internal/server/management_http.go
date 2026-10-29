@@ -111,7 +111,7 @@ func (h *handler) managementRoute(w http.ResponseWriter, r *http.Request, reques
 			h.serviceError(w, err, requestID)
 			return true
 		}
-		http.SetCookie(w, cookie("", time.Unix(1, 0), -1))
+		http.SetCookie(w, h.cookie("", time.Unix(1, 0), -1))
 		w.WriteHeader(http.StatusNoContent)
 	case p == "/api/v1/users" || strings.HasPrefix(p, "/api/v1/users/"):
 		h.users(w, r, requestID)

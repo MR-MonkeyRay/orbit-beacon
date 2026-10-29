@@ -279,12 +279,11 @@ func TestPublicStreamFirstFrameImmediate(t *testing.T) {
 	object := lastLiveTestFrame(t, frame)
 	decodeTransportSnapshot(t, objectJSON(t, object))
 	for name, want := range map[string]string{
-		"Content-Type":              "text/event-stream; charset=utf-8",
-		"Cache-Control":             "no-store",
-		"X-Accel-Buffering":         "no",
-		"X-Content-Type-Options":    "nosniff",
-		"Referrer-Policy":           "same-origin",
-		"Strict-Transport-Security": "max-age=31536000",
+		"Content-Type":           "text/event-stream; charset=utf-8",
+		"Cache-Control":          "no-store",
+		"X-Accel-Buffering":      "no",
+		"X-Content-Type-Options": "nosniff",
+		"Referrer-Policy":        "same-origin",
 	} {
 		if got := recorder.Header().Get(name); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)

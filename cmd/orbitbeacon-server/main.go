@@ -73,9 +73,7 @@ func run(args []string) error {
 		fs.Bool("access-log", false, "write one structured access log entry per request")
 		fs.Bool("allow-insecure-webhooks", false, "permit HTTP webhook URLs on literal loopback only")
 		fs.Bool("notification-allow-private-networks", false, "allow notification egress to private networks")
-		fs.String("public-url", "", "public HTTPS URL; required for browser origin validation")
-		fs.String("tls-cert-file", "", "optional TLS certificate PEM")
-		fs.String("tls-key-file", "", "optional TLS private key PEM")
+		fs.String("public-url", "", "public HTTP or HTTPS URL (default http://localhost:8080); used for browser origin validation")
 		fs.Int("max-nodes", 500, "positive node capacity, including pending and disabled nodes")
 		fs.Int("web-update-interval-seconds", 10, "browser update cadence in seconds (2-60, restart to apply)")
 		fs.String("trusted-proxies", "", "comma-separated trusted proxy IP addresses or CIDR prefixes")
@@ -86,7 +84,7 @@ func run(args []string) error {
 		fs.BoolVar(&replace, "replace", false, "replace selected categories in an existing data directory")
 		fs.StringVar(&passwordFile, "password-file", "", "owned 0600 file containing the archive password")
 	case "health":
-		fs.StringVar(&healthURL, "url", "", "server HTTPS origin or HTTP origin at 127.0.0.1 or [::1]")
+		fs.StringVar(&healthURL, "url", "", "server HTTP or HTTPS origin")
 		fs.StringVar(&healthCA, "ca-file", "", "optional CA PEM bundle")
 	case "version":
 		fs.BoolVar(&asJSON, "json", false, "print machine-readable build information")
@@ -341,10 +339,6 @@ func run(args []string) error {
 		go func() { serveErrors <- metricsServer.Serve(metricsListener) }()
 	}
 	go func() {
-		if cfg.TLSCertFile != "" {
-			serveErrors <- httpServer.ServeTLS(mainListener, cfg.TLSCertFile, cfg.TLSKeyFile)
-			return
-		}
 		serveErrors <- httpServer.Serve(mainListener)
 	}()
 	err = <-serveErrors
@@ -404,20 +398,13 @@ func checkHealth(rawURL, caFile string) error {
 	if err != nil {
 		return fmt.Errorf("health URL: %w", err)
 	}
-	validationURL := rawURL
-	if request.URL.Scheme == "http" {
-		host := request.URL.Hostname()
-		if host != "127.0.0.1" && host != "::1" {
-			return errors.New("health URL: HTTP requires literal loopback IP 127.0.0.1 or ::1")
-		}
-		// Apply the same origin restrictions as HTTPS, including rejecting
-		// credentials, paths, query strings and fragments.
-		validationURL = "https" + strings.TrimPrefix(rawURL, "http")
-	}
-	if err := config.ValidateHTTPS(validationURL); err != nil {
+	if err := config.ValidateServerURL(rawURL); err != nil {
 		return fmt.Errorf("health URL: %w", err)
 	}
 	request.URL.Path = "/healthz/ready"
+	if request.URL.Scheme == "http" && caFile != "" {
+		return errors.New("health CA requires an HTTPS URL")
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	defer transport.CloseIdleConnections()
 	if caFile != "" {

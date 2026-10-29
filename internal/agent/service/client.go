@@ -11,8 +11,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
-	"net/url"
 	"strings"
 	"time"
 
@@ -27,8 +25,6 @@ type ClientOptions struct {
 	HTTPClient *http.Client
 	Identity   *identity.Store
 	System     v1.System
-	// AllowInsecureLoopback is for explicit local integration tests only.
-	AllowInsecureLoopback bool
 }
 
 type Client struct {
@@ -64,46 +60,45 @@ func NewClient(options ClientOptions) (*Client, error) {
 	if options.Identity == nil {
 		return nil, errors.New("agent identity is required")
 	}
-	parsed, parseErr := url.Parse(options.ServerURL)
-	if parseErr != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawPath != "" {
-		return nil, errors.New("server URL must use the root path")
+	if err := config.ValidateServerURL(options.ServerURL); err != nil {
+		return nil, err
 	}
 	origin, err := config.CanonicalOrigin(options.ServerURL)
 	if err != nil {
-		parsed, parseErr := url.Parse(options.ServerURL)
-		if !options.AllowInsecureLoopback || parseErr != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(options.ServerURL, "#") || parsed.Opaque != "" {
-			return nil, errors.New("server URL must be HTTPS without credentials, query or fragment")
-		}
-		address, err := netip.ParseAddr(parsed.Hostname())
-		if err != nil || !address.IsLoopback() {
-			return nil, errors.New("test HTTP requires a literal loopback address")
-		}
-		origin = "http://" + parsed.Host
+		return nil, err
+	}
+	secure := strings.HasPrefix(origin, "https://")
+	if !secure && options.CAFile != "" {
+		return nil, errors.New("configured CA file requires an HTTPS server URL")
 	}
 	client := options.HTTPClient
 	if client == nil {
-		roots, err := x509.SystemCertPool()
-		if err != nil {
-			roots = x509.NewCertPool()
-		}
-		if options.CAFile != "" {
-			file, err := openCABundle(options.CAFile, 0)
+		var tlsConfig *tls.Config
+		if secure {
+			roots, err := x509.SystemCertPool()
 			if err != nil {
-				return nil, err
+				roots = x509.NewCertPool()
 			}
-			pem, readErr := io.ReadAll(io.LimitReader(file, maxCABundleSize+1))
-			closeErr := file.Close()
-			if readErr != nil || closeErr != nil || len(pem) > maxCABundleSize {
-				return nil, errors.New("read configured CA file failed or exceeded 1 MiB")
+			if options.CAFile != "" {
+				file, err := openCABundle(options.CAFile, 0)
+				if err != nil {
+					return nil, err
+				}
+				pem, readErr := io.ReadAll(io.LimitReader(file, maxCABundleSize+1))
+				closeErr := file.Close()
+				if readErr != nil || closeErr != nil || len(pem) > maxCABundleSize {
+					return nil, errors.New("read configured CA file failed or exceeded 1 MiB")
+				}
+				if !roots.AppendCertsFromPEM(pem) {
+					return nil, errors.New("configured CA file contains no certificates")
+				}
 			}
-			if !roots.AppendCertsFromPEM(pem) {
-				return nil, errors.New("configured CA file contains no certificates")
-			}
+			tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
 		}
 		client = &http.Client{Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-			TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots},
+			TLSClientConfig:       tlsConfig,
 			TLSHandshakeTimeout:   5 * time.Second,
 			ResponseHeaderTimeout: 5 * time.Second,
 			MaxIdleConns:          2, MaxIdleConnsPerHost: 2, MaxConnsPerHost: 2,
