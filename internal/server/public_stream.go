@@ -7,12 +7,15 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/nodes"
 )
+
+var liveOriginPatternEscaper = strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`, `]`, `\]`)
 
 // Capture only the accepted socket so the HTTP handshake deadline can be
 // cleared after the registry takes ownership. RFC 6455 remains the library's.
@@ -133,7 +136,7 @@ func (h *handler) serveLiveWebSocket(w http.ResponseWriter, r *http.Request, str
 	err := stream.write(stream.ctx, false, func() error {
 		var acceptErr error
 		connection, acceptErr = websocket.Accept(upgradeWriter, r, &websocket.AcceptOptions{
-			OriginPatterns:  []string{h.origin},
+			OriginPatterns:  []string{liveOriginPatternEscaper.Replace(h.origin)},
 			CompressionMode: websocket.CompressionDisabled,
 		})
 		return acceptErr

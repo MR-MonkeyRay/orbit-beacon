@@ -49,7 +49,7 @@ Agent 本地掌握采集/正常上报周期（同一周期）、磁盘周期、�
 
 浏览器共用 WS → SSE → HTTP 状态机：首份快照/每次 HTTP 请求限时 8 秒，流 30 秒无有效 snapshot/heartbeat 则回退；HTTP 等待按服务端周期，不受流 watchdog 约束。SSE/HTTP 每 300 秒重新优选 WS；隐藏/pagehide 停止通道和 timer，旧 generation/abort 回调不得写回。只有有效快照恢复数据，心跳只校时。
 
-WS 精确校验配置 Origin，关闭压缩，1 KiB 读限制，不接受应用写消息；写限时 10 秒。WS/SSE 共享每 IP 4、全局 200、最长 15 分钟的 admission。关闭时先停止准入、取消查询并中断写入，等待实际退出后才排空 ingest/关闭数据库。`coder/websocket v1.8.15` 的 CloseRead 拒绝消息会自等待；使用其 Reader 结束只读通道，并在释放容量前 cancel、CloseNow、join reader，不自行实现帧解析。
+WS 精确校验配置 Origin，再对库的匹配模式转义元字符，支持反向代理更改 Host 时的 IPv6 Origin；关闭压缩，1 KiB 读限制，不接受应用写消息，写限时 10 秒。WS/SSE 共享每 IP 4、全局 200、最长 15 分钟的 admission。关闭时先停止准入、取消查询并中断写入，等待实际退出后才排空 ingest/关闭数据库。`coder/websocket v1.8.15` 的 CloseRead 拒绝消息会自等待；使用其 Reader 结束只读通道，并在释放容量前 cancel、CloseNow、join reader，不自行实现帧解析。
 
 管理端 `/api/v1/live`、`/stream`、`/ws` 复用相同 frame、周期和准入；可选 `node_id` 选择单节点。fleet 一次批量读取紧凑身份/状态，匹配凭据、绑定 epoch、代次和会话后合并内存接收时间，不逐节点解码完整报告；detail 才读取一个最新样本与 runtime。`node=null` 表示删除，`latest=null` 只表示没有当前样本。每份 snapshot/heartbeat 前复核 Cookie 会话，寿命取 15 分钟与 expires_at 较早者；失效发送 `error:unauthenticated` 并停止，不作普通降级。
 
@@ -132,10 +132,6 @@ Agent 每节点最多探测 5 个本地目标，默认每 60 秒检查、单次�
 - **通知密钥与出站**：通道凭据和完整 Webhook URL 用 `secrets.key` 派生的 AES-256-GCM 密钥加密，密文绑定通道身份；读取 API 不返回明文。默认拒绝私网、回环及元数据目标，拨号前解析并直接连接检查过的 IP；HTTP 不使用代理、不跟随重定向。SMTP 要求 STARTTLS 或 465 隐式 TLS。放宽出站策略的开关及风险见部署说明，元数据地址始终禁止。
 - **反向代理**：只有配置的可信代理可提供转发客户端地址；TLS 可由 Server 或前置代理终止，对外仍须使用 HTTPS。
 
-## 公开更新与关闭
+## 关闭
 
-公开查询仅选择显式发布、已注册、有凭据且未禁用的节点。公开分页缓存 2 秒；发布设置、启停、删除或注册身份变化提交后递增可见性版本，使旧缓存失效。内存指标仍须与持久身份匹配。
-
-`/api/public/v1/stream` 使用与分页 API 相同的投影，首帧立即发送，变化帧最多每 2 秒一次，无变化时约每 10 秒发送。每 IP 最多 4 条、全局最多 200 条流，连接最长 15 分钟；到期或关闭时发送 `close` 事件。公开页优先 SSE，建流失败时降级为每 10 秒轮询；反向代理须关闭流缓冲。
-
-收到 `SIGINT`/`SIGTERM` 或 HTTP 服务退出后，Server 取消根 context、标记 readiness 不可用并关闭公开流。在共享的 10 秒期限内关闭 HTTP listener 并等待 handler，然后分别给 ingest 排空、通知停止最多 5 秒；等待告警、通知、备份和保留任务退出后，再给历史队列刷新最多 5 秒，最后关闭数据库并释放目录锁。HTTP 关闭超时会强制断开连接，ingest、通知或历史排空超时会记录告警；强制终止不能保证内存中的合并状态和历史已写入。
+收到 `SIGINT`/`SIGTERM` 或 HTTP 服务退出后，Server 取消根 context、标记 readiness 不可用并关闭全部只读实时流。在共享的 10 秒期限内关闭 HTTP listener 并等待 handler，然后分别给 ingest 排空、通知停止最多 5 秒；等待告警、通知、备份和保留任务退出后，再给历史队列刷新最多 5 秒，最后关闭数据库并释放目录锁。HTTP 关闭超时会强制断开连接，ingest、通知或历史排空超时会记录告警；强制终止不能保证内存中的合并状态和历史已写入。
