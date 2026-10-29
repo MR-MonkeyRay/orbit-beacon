@@ -17,7 +17,9 @@ info:
     (80 for HTTP, 443 for HTTPS); request Host and forwarded headers do not establish
     Origin trust. Real IP/domain deployments must explicitly configure public_url
     to match the browser's origin exactly, including nondefault ports. public_url
-    accepts only absolute HTTP/HTTPS root URLs without credentials, query or fragment. Client IP
+    accepts absolute HTTP/HTTPS URLs without credentials, query or fragment. Paths
+    do not participate in Origin comparison or enable subpath deployment; Agent
+    and health client server URLs must be root URLs. Client IP
     policies use X-Forwarded-For only when the direct peer matches trusted_proxies
     (default empty), scanning right to left past trusted hops. Missing, malformed
     or all-trusted chains fall back to the direct peer. X-Forwarded-Proto is ignored.

@@ -1,10 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -20,8 +20,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"golang.org/x/term"
 
 	"orbitbeacon/internal/buildinfo"
 	"orbitbeacon/internal/bundle"
@@ -47,14 +45,14 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("expected subcommand: serve, bootstrap, restore, version, health or verify-bundle")
+		return errors.New("expected subcommand: serve, restore, version, health or verify-bundle")
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stdout, "Usage: orbitbeacon-server {serve|bootstrap|restore|version|health|verify-bundle} --help")
+		fmt.Fprintln(os.Stdout, "Usage: orbitbeacon-server {serve|restore|version|health|verify-bundle} --help")
 		return nil
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
-	var configPath, dataDir, input, username string
+	var configPath, dataDir, input string
 	var bundleDir, publicKey string
 	var healthURL, healthCA string
 	var passwordFile string
@@ -77,8 +75,6 @@ func run(args []string) error {
 		fs.Int("max-nodes", 500, "positive node capacity, including pending and disabled nodes")
 		fs.Int("web-update-interval-seconds", 10, "browser update cadence in seconds (2-60, restart to apply)")
 		fs.String("trusted-proxies", "", "comma-separated trusted proxy IP addresses or CIDR prefixes")
-	case "bootstrap":
-		fs.StringVar(&username, "username", "", "first administrator username; prompted if omitted")
 	case "restore":
 		fs.StringVar(&input, "input", "", "source restore archive")
 		fs.BoolVar(&replace, "replace", false, "replace selected categories in an existing data directory")
@@ -92,7 +88,7 @@ func run(args []string) error {
 		fs.StringVar(&bundleDir, "directory", "", "signed bundle directory")
 		fs.StringVar(&publicKey, "public-key", "", "Ed25519 public key PEM or raw file")
 	default:
-		return fmt.Errorf("unknown subcommand %q; expected serve, bootstrap, restore, version, health or verify-bundle", args[0])
+		return fmt.Errorf("unknown subcommand %q; expected serve, restore, version, health or verify-bundle", args[0])
 	}
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -145,7 +141,7 @@ func run(args []string) error {
 	}
 	flags := make(map[string]string)
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name != "config" && f.Name != "username" {
+		if f.Name != "config" {
 			flags[strings.ReplaceAll(f.Name, "-", "_")] = f.Value.String()
 		}
 	})
@@ -173,38 +169,8 @@ func run(args []string) error {
 	}
 	defer db.Close()
 	authService := auth.NewService(db, auth.Options{})
-	if args[0] == "bootstrap" {
-		reader := bufio.NewReader(io.LimitReader(os.Stdin, 4096))
-		if username == "" {
-			fmt.Fprint(os.Stderr, "Administrator username: ")
-			line, err := reader.ReadString('\n')
-			if err != nil && !errors.Is(err, io.EOF) {
-				return err
-			}
-			username = strings.TrimSpace(line)
-		}
-		fmt.Fprint(os.Stderr, "Administrator password (8–1024 UTF-8 bytes): ")
-		var password []byte
-		if term.IsTerminal(int(os.Stdin.Fd())) {
-			password, err = term.ReadPassword(int(os.Stdin.Fd()))
-			fmt.Fprintln(os.Stderr)
-		} else {
-			line, readErr := reader.ReadString('\n')
-			if readErr != nil && !errors.Is(readErr, io.EOF) {
-				return readErr
-			}
-			password = []byte(strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r"))
-		}
-		if err != nil {
-			return fmt.Errorf("read password: %w", err)
-		}
-		_, err = authService.BootstrapAdministrator(ctx, username, string(password))
-		clear(password)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintln(os.Stdout, "First administrator created.")
-		return nil
+	if err := initializeAdministrator(ctx, db, authService, os.LookupEnv); err != nil {
+		return err
 	}
 	publicReader, err := storage.OpenReader(ctx, databasePath)
 	if err != nil {
@@ -372,6 +338,29 @@ func run(args []string) error {
 		cancelHistory()
 	}
 	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
+}
+
+func initializeAdministrator(ctx context.Context, db *sql.DB, service *auth.Service, lookupEnv func(string) (string, bool)) error {
+	var exists bool
+	if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users)").Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	username, set := lookupEnv("ORBITBEACON_ADMIN_USERNAME")
+	if !set {
+		username = "orbitbeacon"
+	}
+	password, set := lookupEnv("ORBITBEACON_ADMIN_PASSWORD")
+	if !set {
+		password = "orbitbeacon"
+	}
+	_, err := service.BootstrapAdministrator(ctx, username, password)
+	if errors.Is(err, auth.ErrAdminExists) {
 		return nil
 	}
 	return err

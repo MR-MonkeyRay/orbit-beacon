@@ -4,6 +4,8 @@ services:
     environment:
       ORBITBEACON_LISTEN_ADDR: "${ORBITBEACON_LISTEN_ADDR:-0.0.0.0:8080}"
       ORBITBEACON_PUBLIC_URL: "${ORBITBEACON_PUBLIC_URL:-http://localhost:8080}"
+      ORBITBEACON_ADMIN_USERNAME: "${ORBITBEACON_ADMIN_USERNAME-orbitbeacon}"
+      ORBITBEACON_ADMIN_PASSWORD: "${ORBITBEACON_ADMIN_PASSWORD-orbitbeacon}"
     ports:
       - "127.0.0.1:8080:8080"
     volumes:

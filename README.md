@@ -30,7 +30,7 @@
 
 需要 Linux 和 Go（版本见 [go.mod](go.mod)），不需要 Node.js。以下在仓库根目录以普通用户执行，使用新的数据目录。数据目录及祖先须归 root 或当前用户所有，且不可被组或其他用户写入；不要直接使用权限不符合要求的仓库目录。
 
-### 1. 编译并创建管理员
+### 1. 编译
 
 ```sh
 umask 077
@@ -38,16 +38,17 @@ mkdir -p build "$HOME/orbitbeacon-demo"
 chmod 700 "$HOME/orbitbeacon-demo"
 go build -o build/orbitbeacon-server ./cmd/orbitbeacon-server
 go build -o build/orbitbeacon-agent ./cmd/orbitbeacon-agent
-build/orbitbeacon-server bootstrap --data-dir "$HOME/orbitbeacon-demo" --username admin
 ```
 
-按提示输入密码（8–1024 个 UTF-8 字节，终端不回显）。没有默认密码或网页初始化入口；已有管理员不会被覆盖。自动化可从标准输入传入一行密码，不要放进命令参数。
+首次启动空用户库会创建 `orbitbeacon` / `orbitbeacon` 管理员。可用 `ORBITBEACON_ADMIN_USERNAME`、`ORBITBEACON_ADMIN_PASSWORD` 分别覆盖，未设置的一项保留默认值；显式空值或不符合规则的凭据使启动失败。密码为 8–1024 个 UTF-8 字节，不裁剪空格。已有用户时忽略这两个变量，不重置密码或新增账户；初始化凭据不写入 JSON 配置或备份。
 
 ### 2. 启动 HTTP
 
 ```sh
 build/orbitbeacon-server serve --data-dir "$HOME/orbitbeacon-demo"
 ```
+
+自定义初始化凭据须在首次 `serve` 前设置环境变量；不要将密码放入命令参数。默认凭据只用于本机或受控网络初始化，公网访问前应配置外置 HTTPS 并修改密码。
 
 默认监听 `127.0.0.1:8080`，公开源为 `http://localhost:8080`。另开终端检查：
 

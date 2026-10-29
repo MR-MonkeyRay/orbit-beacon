@@ -8,7 +8,7 @@
 - SQLite 数据必须放在支持文件锁的本地文件系统，不要共用数据目录运行多个 Server。
 - 数据目录由运行用户所有、权限 `0700`；数据库、SQLite sidecar 和 `secrets.key` 为该用户所有的 `0600` 普通文件。路径不得经过符号链接，祖先目录不可被组或其他用户写入。
 - Server 只提供 HTTP，不生成或加载入站 TLS 证书。默认监听回环地址；采用外置 HTTPS 代理时，不对公网开放业务端口 `8080`。
-- `public_url` 默认 `http://localhost:8080`。使用真实 IP 或域名时须显式设置，使规范化后的协议、主机、端口与浏览器 Origin 精确一致，包含非默认端口；只接受 HTTP / HTTPS 根地址，无凭据、查询或片段。HTTP 的 80、HTTPS 的 443 会规范化省略，不从请求 Host 或转发头推断公开源。配置优先级为 CLI > `ORBITBEACON_*` 环境变量 > JSON > 默认值；未知 JSON 键会报错。
+- `public_url` 默认 `http://localhost:8080`。使用真实 IP 或域名时须显式设置，使规范化后的协议、主机、端口与浏览器 Origin 精确一致，包含非默认端口；无凭据、查询或片段，路径不参与 Origin 比较，也不提供子路径部署。HTTP 的 80、HTTPS 的 443 会规范化省略，不从请求 Host 或转发头推断公开源。配置优先级为 CLI > `ORBITBEACON_*` 环境变量 > JSON > 默认值；未知 JSON 键会报错。
 
 配置示例分别为 [`systemd/server.json`](systemd/server.json) 和 [`docker/server.json`](docker/server.json)。原生示例监听 `127.0.0.1:8080`，容器监听 `0.0.0.0:8080`，但只发布到宿主机回环地址；数据目录均为 `/var/lib/orbitbeacon`。
 
@@ -39,17 +39,15 @@ sudoedit /etc/orbitbeacon/server.json
 
 非本机访问须修改 `public_url`；直接 HTTP 访问还须调整监听地址并限制网络访问。若更改数据目录，需同步调整 unit 的可写路径和目录权限。unit 不授予 capabilities；HTTPS 应由代理绑定 `443`，不要直接改成低端口。
 
+首次 `serve` 在空用户库自动创建 `orbitbeacon` / `orbitbeacon`。可在 unit drop-in 的 `[Service]` 中使用 `Environment=` 或 `EnvironmentFile=` 传入 `ORBITBEACON_ADMIN_USERNAME`、`ORBITBEACON_ADMIN_PASSWORD`，在首次启动前配置；凭据文件须限制读取权限。这两个变量可单项覆盖，未设置使用默认值，显式空值拒绝启动。用户名遵守现有规则，密码为 8–1024 个 UTF-8 字节且不裁剪空格。已有用户时完全忽略初始化变量，不重置或新增账户，也不纳入配置备份。恢复前先停服并以服务账号执行；在线导出及计划备份由运行中的 Server 执行。
+
 ```sh
-sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server bootstrap \
-  --config /etc/orbitbeacon/server.json --username admin
 sudo systemctl daemon-reload
 sudo systemctl enable --now orbitbeacon-server
 sudo journalctl -u orbitbeacon-server -n 100 --no-pager
 ```
 
-按提示输入管理员密码；已有管理员时不能重复初始化。初始化和恢复使用服务账号并先停服；导出及计划备份由运行中的 Server 执行。
-
-没有密码找回或代改密功能。保留可用的管理员账户；丢失密码需另一管理员删除重建，`bootstrap` 不能重置已有账户。
+没有密码找回或代改密功能。保留可用的管理员账户；丢失密码需另一管理员删除重建，重启和初始化变量不能重置已有账户。
 
 ## Docker Compose
 
@@ -61,15 +59,12 @@ export ORBITBEACON_IMAGE_TAG="$(cat VERSION)"  # 先确认该版本已发布
 # 私有包需先执行 docker login ghcr.io。
 docker compose -f deploy/docker/compose.yaml pull
 
-docker compose -f deploy/docker/compose.yaml run --rm --no-deps \
-  --entrypoint /usr/local/bin/orbitbeacon-server orbitbeacon \
-  bootstrap --config /etc/orbitbeacon/server.json --username admin
 docker compose -f deploy/docker/compose.yaml up -d
 docker compose -f deploy/docker/compose.yaml ps
 docker compose -f deploy/docker/compose.yaml logs --tail=100 orbitbeacon
 ```
 
-仅首次部署执行 `bootstrap`。数据卷固定名为 `orbitbeacon-data`，不要执行 `down -v` 或删除该卷。容器以 `65532:65532` 运行；改用 bind mount 时，数据目录须归该身份所有、权限为 `0700`。
+`up -d` 首次启动空用户库会自动初始化；Compose 显式转发上述管理员变量，未设置时默认 `orbitbeacon`，显式空值仍传入并拒绝启动。自定义凭据须在首次启动前设置，可单项覆盖；已有用户时不再生效。数据卷固定名为 `orbitbeacon-data`，不要执行 `down -v` 或删除该卷。容器以 `65532:65532` 运行；改用 bind mount 时，数据目录须归该身份所有、权限为 `0700`。
 
 `deploy/docker/server.json` 在构建时复制进镜像，并非运行时挂载。修改仓库中的该文件不会改变现有容器；额外设置需在 Compose 的 `environment` 中传入对应 `ORBITBEACON_*`，或只读挂载完整配置到 `/etc/orbitbeacon/server.json`。宿主机 `export` 的变量只有被 Compose 引用或显式传入时才会进入容器。环境或镜像标签变更后执行 `up -d` 重建容器。
 
