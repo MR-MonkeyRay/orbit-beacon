@@ -2,10 +2,13 @@ package v1
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 )
+
+const maxMetricSeries = 8
 
 // UnmarshalJSON drops extensions before decoding typed metadata. Known scalar
 // keys and disk/network families still use the complete validation contract.
@@ -19,6 +22,9 @@ func (m *Metrics) UnmarshalJSON(data []byte) error {
 	}{values: &decoded}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
+	}
+	if len(decoded.Disks) > maxMetricSeries || len(decoded.Networks) > maxMetricSeries {
+		return errors.New("too many metric series")
 	}
 	knownSeries := func(key string) (bool, error) {
 		if strings.HasPrefix(key, "disk:") {

@@ -300,7 +300,7 @@ func (m Metrics) Validate() error {
 	if m.SwapTotalBytes != nil && m.SwapUsedBytes != nil && *m.SwapUsedBytes > *m.SwapTotalBytes {
 		return errors.New("used swap exceeds total")
 	}
-	if len(m.Disks) > 8 || len(m.Networks) > 8 {
+	if len(m.Disks) > maxMetricSeries || len(m.Networks) > maxMetricSeries {
 		return errors.New("too many metric series")
 	}
 	disks := make(map[string]bool, len(m.Disks))
