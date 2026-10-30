@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"mime"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"orbitbeacon/internal/server/webui"
 	"orbitbeacon/internal/uuid"
 )
 
@@ -124,6 +126,32 @@ func etagMatches(value, etag string) bool {
 	return false
 }
 
+// The embedded manifest is generated from the browser router's definitions.
+var consolePaths = func() []string {
+	data, err := fs.ReadFile(webui.Assets(), "console-routes.json")
+	if err != nil {
+		panic(err)
+	}
+	var paths []string
+	if err := json.Unmarshal(data, &paths); err != nil {
+		panic(err)
+	}
+	return paths
+}()
+
+func consoleRoute(p string) bool {
+	for _, pattern := range consolePaths {
+		if prefix, dynamic := strings.CutSuffix(pattern, "{id}"); dynamic {
+			if strings.HasPrefix(p, prefix) && uuid.ValidUUID(strings.TrimPrefix(p, prefix)) {
+				return true
+			}
+		} else if p == pattern {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *handler) static(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
@@ -135,7 +163,7 @@ func (h *handler) static(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimPrefix(p, "/")
-	uiRoute := p == "/login" || p == "/change-password" || p == "/overview" || p == "/nodes" || p == "/alerts" || p == "/settings" || (strings.HasPrefix(p, "/nodes/") && uuid.ValidUUID(strings.TrimPrefix(p, "/nodes/")))
+	uiRoute := consoleRoute(p)
 	if uiRoute {
 		name = "200.html"
 	}

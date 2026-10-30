@@ -72,7 +72,7 @@ func routingContractResponse(t *testing.T, w *httptest.ResponseRecorder, method 
 }
 
 // OpenAPI supplies the inventory; this order pins the literal Allow wire value
-// independently of routeMethods and its shared method slices.
+// independently of the route table.
 func routingContractAllow(t *testing.T, methods []string) string {
 	t.Helper()
 	var ordered []string
@@ -232,19 +232,17 @@ func TestRoutingContractAcceptedPathSpellings(t *testing.T) {
 	}
 }
 
-func TestRoutingContractEncodedSeparatorQuirk(t *testing.T) {
+func TestRoutingContractEncodedSeparatorsAreNotRouteBoundaries(t *testing.T) {
 	h := routingContractHandler(t)
-	// Undocumented quirk: routing uses decoded r.URL.Path, so %2F can act as
-	// a path separator. A ServeMux migration may deliberately tighten these
-	// cases to JSON 404/not_found by explicitly changing this table.
+	// ServeMux matches escaped segments: encoded separators cannot create routes.
 	for _, tc := range []struct {
 		path   string
 		status int
 		code   string
 	}{
-		{"/api%2Fv1%2Fnodes", 401, "unauthenticated"},
-		{"/api/v1/nodes%2F" + routingContractID, 401, "unauthenticated"},
-		{"/api/v1/nodes/" + routingContractID + "%2Fruntime", 401, "unauthenticated"},
+		{"/api%2Fv1%2Fnodes", 404, "not_found"},
+		{"/api/v1/nodes%2F" + routingContractID, 404, "not_found"},
+		{"/api/v1/nodes/" + routingContractID + "%2Fruntime", 404, "not_found"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			routingContractResponse(t, routingContractRequest(h, http.MethodGet, tc.path), http.MethodGet, tc.status, tc.code, "")

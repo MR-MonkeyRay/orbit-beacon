@@ -10,22 +10,19 @@ import (
 	"orbitbeacon/internal/uuid"
 )
 
-func (h *handler) inboxRoute(w http.ResponseWriter, r *http.Request, requestID string, user auth.User) bool {
+func (h *handler) inboxRoute(w http.ResponseWriter, r *http.Request, requestID string, session auth.Session) {
 	const collection = "/api/v1/notifications"
 	path := r.URL.Path
-	if path != collection && !strings.HasPrefix(path, collection+"/") {
-		return false
-	}
 	if h.inbox == nil {
 		fail(w, http.StatusServiceUnavailable, "not_available", "Inbox service is unavailable", requestID)
-		return true
+		return
 	}
 	filter, err := inboxQuery(r, path == collection)
 	if err != nil {
 		h.serviceError(w, err, requestID)
-		return true
+		return
 	}
-	who := inbox.Identity{UserID: user.ID}
+	who := inbox.Identity{UserID: session.User.ID}
 	switch path {
 	case collection:
 		page, err := h.inbox.List(r.Context(), who, filter)
@@ -46,11 +43,11 @@ func (h *handler) inboxRoute(w http.ResponseWriter, r *http.Request, requestID s
 			Through string `json:"through"`
 		}
 		if !decode(w, r, &body, requestID) {
-			return true
+			return
 		}
 		if !uuid.ValidUUID(body.Through) {
 			h.serviceError(w, &validation.Error{Fields: map[string]string{"through": "must be a notification UUID"}}, requestID)
-			return true
+			return
 		}
 		if err := h.inbox.MarkAllRead(r.Context(), who, body.Through, h.now()); err != nil {
 			h.serviceError(w, err, requestID)
@@ -65,11 +62,11 @@ func (h *handler) inboxRoute(w http.ResponseWriter, r *http.Request, requestID s
 				Read *bool `json:"read"`
 			}
 			if !decode(w, r, &body, requestID) {
-				return true
+				return
 			}
 			if body.Read == nil || !*body.Read {
 				h.serviceError(w, &validation.Error{Fields: map[string]string{"read": "must be true"}}, requestID)
-				return true
+				return
 			}
 			if err := h.inbox.MarkRead(r.Context(), who, id, h.now()); err != nil {
 				h.serviceError(w, err, requestID)
@@ -85,7 +82,6 @@ func (h *handler) inboxRoute(w http.ResponseWriter, r *http.Request, requestID s
 			}
 		}
 	}
-	return true
 }
 
 func inboxQuery(r *http.Request, list bool) (inbox.Filter, error) {

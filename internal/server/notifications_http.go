@@ -8,14 +8,11 @@ import (
 	"orbitbeacon/internal/server/validation"
 )
 
-func (h *handler) notificationsRoute(w http.ResponseWriter, r *http.Request, requestID string) bool {
+func (h *handler) notificationsRoute(w http.ResponseWriter, r *http.Request, requestID string) {
 	p := r.URL.Path
-	if p != "/api/v1/notification-deliveries" && p != "/api/v1/notification-channels" && !strings.HasPrefix(p, "/api/v1/notification-channels/") {
-		return false
-	}
 	if h.notifications == nil {
 		fail(w, http.StatusServiceUnavailable, "not_available", "Notification service is unavailable", requestID)
-		return true
+		return
 	}
 	if p == "/api/v1/notification-deliveries" {
 		const suppliedOnce = "must be supplied once and nonempty"
@@ -26,7 +23,7 @@ func (h *handler) notificationsRoute(w http.ResponseWriter, r *http.Request, req
 		limit := parseLimit(query, fields, 50, "must be an integer")
 		if len(fields) > 0 {
 			h.serviceError(w, &validation.Error{Fields: fields}, requestID)
-			return true
+			return
 		}
 		page, e := h.notifications.Deliveries(r.Context(), limit, query.Get("before"))
 		if e != nil {
@@ -34,7 +31,7 @@ func (h *handler) notificationsRoute(w http.ResponseWriter, r *http.Request, req
 		} else {
 			writeJSON(w, http.StatusOK, page)
 		}
-		return true
+		return
 	}
 	collection := p == "/api/v1/notification-channels"
 	id := strings.TrimPrefix(p, "/api/v1/notification-channels/")
@@ -45,7 +42,7 @@ func (h *handler) notificationsRoute(w http.ResponseWriter, r *http.Request, req
 		} else {
 			writeJSON(w, http.StatusOK, result)
 		}
-		return true
+		return
 	}
 	switch r.Method {
 	case http.MethodGet:
@@ -73,7 +70,7 @@ func (h *handler) notificationsRoute(w http.ResponseWriter, r *http.Request, req
 	default:
 		var patch notify.Patch
 		if !decode(w, r, &patch, requestID) {
-			return true
+			return
 		}
 		if collection {
 			id = ""
@@ -89,5 +86,4 @@ func (h *handler) notificationsRoute(w http.ResponseWriter, r *http.Request, req
 			writeJSON(w, status, channel)
 		}
 	}
-	return true
 }

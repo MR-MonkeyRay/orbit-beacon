@@ -32,8 +32,7 @@ func (h *handler) loginSession(w http.ResponseWriter, r *http.Request, requestID
 	return
 }
 
-func (h *handler) sessionGate(w http.ResponseWriter, r *http.Request, requestID string) (*http.Request, string, auth.Session, bool) {
-	p := r.URL.Path
+func (h *handler) sessionGate(w http.ResponseWriter, r *http.Request, requestID string, level authLevel) (*http.Request, string, auth.Session, bool) {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
 		fail(w, http.StatusUnauthorized, "unauthenticated", "A valid session is required", requestID)
@@ -44,19 +43,8 @@ func (h *handler) sessionGate(w http.ResponseWriter, r *http.Request, requestID 
 		h.serviceError(w, err, requestID)
 		return nil, "", auth.Session{}, false
 	}
-	passwordRoute := (p == "/api/v1/me" && r.Method == http.MethodGet) ||
-		(p == "/api/v1/me/password" && r.Method == http.MethodPatch) ||
-		(p == "/api/v1/session" && r.Method == http.MethodDelete)
-	if session.User.MustChangePassword && !passwordRoute {
+	if session.User.MustChangePassword && level != pendingPasswordAllowed {
 		h.serviceError(w, auth.ErrPasswordChangeRequired, requestID)
-		return nil, "", auth.Session{}, false
-	}
-	if p == "/api/v1/live" || p == "/api/v1/live/stream" || p == "/api/v1/live/ws" {
-		h.consoleLive(w, r, requestID, c.Value, session)
-		return nil, "", auth.Session{}, false
-	}
-	if p == "/api/v1/me" {
-		writeJSON(w, http.StatusOK, session)
 		return nil, "", auth.Session{}, false
 	}
 	mutation := r.Method != http.MethodGet && r.Method != http.MethodHead

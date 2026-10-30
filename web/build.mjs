@@ -11,6 +11,7 @@ import {mkdtemp, mkdir, readdir, readFile, rm, writeFile} from 'node:fs/promises
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {consoleRoutes} from './src/console/routes.js';
 import {ICONS} from './src/shared/icons.js';
 import {themeBootstrap} from './theme-bootstrap.mjs';
 
@@ -45,6 +46,7 @@ async function build(outDir) {
     charset: 'utf8',
     logLevel: 'warning'
   });
+  await writeFile(path.join(outDir, 'console-routes.json'), JSON.stringify(consoleRoutes.map(({path}) => path)) + '\n');
   const sprite = iconSprite();
   for (const page of pages) {
     const [file, output] = Object.entries(result.metafile.outputs).find(([, item]) => item.entryPoint === `src/${page.entry}/main.js`);

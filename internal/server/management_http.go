@@ -7,135 +7,35 @@ import (
 	"strings"
 
 	"orbitbeacon/internal/server/auth"
-	"orbitbeacon/internal/uuid"
 )
 
-var (
-	readMethods           = []string{http.MethodGet}
-	createMethods         = []string{http.MethodGet, http.MethodPost}
-	itemMethods           = []string{http.MethodGet, http.MethodPatch, http.MethodDelete}
-	settingsMethods       = []string{http.MethodGet, http.MethodPatch}
-	postMethods           = []string{http.MethodPost}
-	patchMethods          = []string{http.MethodPatch}
-	sessionMethods        = []string{http.MethodPost, http.MethodDelete}
-	enrollmentItemMethods = []string{http.MethodGet, http.MethodDelete}
-	deleteMethods         = []string{http.MethodDelete}
-)
-
-// routeMethods establishes route existence and method support before session
-// authentication, Origin or CSRF checks.
-func routeMethods(p string) []string {
-	switch p {
-	case "/api/v1/session":
-		return sessionMethods
-	case "/api/v1/me", "/api/v1/audit", "/api/v1/alerts", "/api/v1/alerts/summary", "/api/v1/notification-deliveries", "/api/public/v1/nodes", "/api/public/v1/stream", "/api/public/v1/ws":
-		return readMethods
-	case "/api/v1/live", "/api/v1/live/stream", "/api/v1/live/ws":
-		return readMethods
-	case "/api/v1/me/password":
-		return patchMethods
-	case "/api/v1/settings/public-page":
-		return settingsMethods
-	case "/api/v1/users", "/api/v1/groups", "/api/v1/nodes", "/api/v1/alert-rules", "/api/v1/notification-channels":
-		return createMethods
-	case "/api/v1/nodes/batch", "/api/agent/v1/enroll", "/api/agent/v1/enroll/check", "/api/agent/v1/report", "/api/agent/v1/recover":
-		return postMethods
-	case "/api/v1/enrollments":
-		return createMethods
-	case "/api/v1/backups/exports", "/api/v1/backup-plans/preview", "/api/v1/notifications/read-all":
-		return postMethods
-	case "/api/v1/backup-plans":
-		return createMethods
-	case "/api/v1/tasks", "/api/v1/notifications", "/api/v1/notifications/summary":
-		return readMethods
+func (h *handler) changePassword(w http.ResponseWriter, r *http.Request, requestID string, session auth.Session) {
+	var input struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
 	}
-	if !strings.HasPrefix(p, "/api/v1/") {
-		return nil
+	if !decode(w, r, &input, requestID) {
+		return
 	}
-	parts := strings.Split(strings.TrimPrefix(p, "/api/v1/"), "/")
-	if len(parts) < 2 || !uuid.ValidUUID(parts[1]) {
-		return nil
+	if err := h.auth.ChangePassword(r.Context(), session.User.ID, input.OldPassword, input.NewPassword); err != nil {
+		h.serviceError(w, err, requestID)
+		return
 	}
-	if len(parts) == 2 {
-		switch parts[0] {
-		case "backup-plans":
-			return itemMethods
-		case "tasks", "notifications", "alerts":
-			return readMethods
-		}
-	}
-	if len(parts) == 3 {
-		if parts[0] == "tasks" {
-			switch parts[2] {
-			case "download":
-				return readMethods
-			case "password":
-				return postMethods
-			}
-		}
-		if parts[0] == "notifications" && parts[2] == "read" {
-			return patchMethods
-		}
-	}
-	if len(parts) == 2 && parts[0] == "enrollments" {
-		return enrollmentItemMethods
-	}
-	if len(parts) == 2 && (parts[0] == "notification-channels" || parts[0] == "alert-rules" || parts[0] == "users" || parts[0] == "groups" || parts[0] == "nodes") {
-		return itemMethods
-	}
-	if len(parts) == 3 && parts[0] == "notification-channels" && parts[2] == "test" {
-		return postMethods
-	}
-	if len(parts) == 3 && parts[0] == "nodes" && (parts[2] == "traffic-settings" || parts[2] == "public-settings") {
-		return settingsMethods
-	}
-	if len(parts) == 3 && parts[0] == "nodes" && (parts[2] == "runtime" || parts[2] == "latest" || parts[2] == "history" || parts[2] == "traffic" || parts[2] == "probes") {
-		return readMethods
-	}
-	if len(parts) == 3 && parts[0] == "nodes" && parts[2] == "credential" {
-		return deleteMethods
-	}
-	return nil
+	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *handler) managementRoute(w http.ResponseWriter, r *http.Request, requestID string, user auth.User) bool {
-	p := r.URL.Path
-	switch {
-	case p == "/api/v1/settings/public-page":
-		h.publicPageSettings(w, r, requestID)
-	case p == "/api/v1/me/password":
-		var input struct {
-			OldPassword string `json:"old_password"`
-			NewPassword string `json:"new_password"`
-		}
-		if !decode(w, r, &input, requestID) {
-			return true
-		}
-		if err := h.auth.ChangePassword(r.Context(), user.ID, input.OldPassword, input.NewPassword); err != nil {
-			h.serviceError(w, err, requestID)
-			return true
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case p == "/api/v1/users" || strings.HasPrefix(p, "/api/v1/users/"):
-		h.users(w, r, requestID)
-	case p == "/api/v1/groups" || strings.HasPrefix(p, "/api/v1/groups/"):
-		h.groups(w, r, requestID)
-	case p == "/api/v1/audit":
-		limit, offset, before, err := paginationQuery(r, true)
-		if err != nil {
-			h.serviceError(w, err, requestID)
-			return true
-		}
-		page, err := h.management.Events(r.Context(), limit, offset, before)
-		if err != nil {
-			h.serviceError(w, err, requestID)
-			return true
-		}
-		writeJSON(w, http.StatusOK, page)
-	default:
-		return false
+func (h *handler) auditEvents(w http.ResponseWriter, r *http.Request, requestID string) {
+	limit, offset, before, err := paginationQuery(r, true)
+	if err != nil {
+		h.serviceError(w, err, requestID)
+		return
 	}
-	return true
+	page, err := h.management.Events(r.Context(), limit, offset, before)
+	if err != nil {
+		h.serviceError(w, err, requestID)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (h *handler) users(w http.ResponseWriter, r *http.Request, requestID string) {

@@ -137,9 +137,15 @@ func concreteOpenAPIPath(path string) string {
 	return strings.ReplaceAll(path, "{id}", "00000000-0000-4000-8000-000000000001")
 }
 
-func TestOpenAPIOperationsMatchRouteMethods(t *testing.T) {
+func TestOpenAPIOperationsMatchRouteTable(t *testing.T) {
 	for path, expected := range openAPIPathOperations(t) {
-		actual := append([]string(nil), routeMethods(concreteOpenAPIPath(path))...)
+		var actual []string
+		for _, entry := range routes {
+			method, pattern, _ := strings.Cut(entry.pattern, " ")
+			if pattern == path {
+				actual = append(actual, method)
+			}
+		}
 		slices.Sort(actual)
 		if !slices.Equal(actual, expected) {
 			t.Errorf("%s OpenAPI methods=%v, route methods=%v", path, expected, actual)

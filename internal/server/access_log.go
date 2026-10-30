@@ -3,6 +3,7 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -58,7 +59,10 @@ func (h *handler) observeRequest(w http.ResponseWriter, r *http.Request, next ht
 			}
 		}
 		duration := time.Since(start)
-		route := requestRoute(r.URL.Path)
+		route := r.Pattern
+		if route == "" {
+			route = staticRequestRoute(r.URL.Path)
+		}
 		if h.metrics != nil {
 			h.metrics.observe(r.Method, route, status, duration, r.URL.Path)
 		}
@@ -82,35 +86,13 @@ func healthProbe(p string) bool { return p == "/healthz/live" || p == "/healthz/
 // Only known route templates enter logs or labels. Unknown paths, arbitrary
 // filenames, and malformed IDs may contain secrets, so never echo them back.
 func requestRoute(p string) string {
-	if healthProbe(p) {
-		return p
+	if entry := apiRoutes.match(&http.Request{URL: &url.URL{Path: p}}); entry != nil {
+		return entry.label
 	}
-	if len(routeMethods(p)) != 0 {
-		parts := strings.Split(p, "/")
-		if len(parts) >= 5 && parts[1] == "api" && parts[2] == "v1" {
-			switch parts[3] {
-			case "nodes", "users", "groups", "enrollments", "alert-rules", "notification-channels":
-				if parts[4] != "batch" {
-					parts[4] = "{id}"
-				}
-			case "backup-plans":
-				if parts[4] != "preview" {
-					parts[4] = "{id}"
-				}
-			case "notifications":
-				if parts[4] != "summary" && parts[4] != "read-all" {
-					parts[4] = "{id}"
-				}
-			case "alerts":
-				if parts[4] != "summary" {
-					parts[4] = "{id}"
-				}
-			case "tasks":
-				parts[4] = "{id}"
-			}
-		}
-		return strings.Join(parts, "/")
-	}
+	return staticRequestRoute(p)
+}
+
+func staticRequestRoute(p string) string {
 	switch p {
 	case "/", "/login", "/change-password", "/overview", "/nodes", "/alerts", "/settings":
 		return p

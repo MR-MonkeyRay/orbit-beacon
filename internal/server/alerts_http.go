@@ -8,7 +8,7 @@ import (
 	"orbitbeacon/internal/server/validation"
 )
 
-func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID string) bool {
+func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID string) {
 	p := r.URL.Path
 	if p == "/api/v1/alerts/summary" {
 		summary, err := h.alerts.Summary(r.Context())
@@ -17,12 +17,12 @@ func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID 
 		} else {
 			writeJSON(w, http.StatusOK, summary)
 		}
-		return true
+		return
 	}
 	if strings.HasPrefix(p, "/api/v1/alerts/") {
 		if r.URL.RawQuery != "" {
 			h.serviceError(w, &validation.Error{Fields: map[string]string{"query": "unknown parameter"}}, requestID)
-			return true
+			return
 		}
 		event, err := h.alerts.Event(r.Context(), strings.TrimPrefix(p, "/api/v1/alerts/"))
 		if err != nil {
@@ -30,7 +30,7 @@ func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID 
 		} else {
 			writeJSON(w, http.StatusOK, event)
 		}
-		return true
+		return
 	}
 	if p == "/api/v1/alerts" {
 		const suppliedOnce = "must be supplied once and nonempty"
@@ -42,18 +42,15 @@ func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID 
 		limit := parseLimit(query, fields, 50, "must be an integer")
 		if len(fields) > 0 {
 			h.serviceError(w, &validation.Error{Fields: fields}, requestID)
-			return true
+			return
 		}
 		page, err := h.alerts.Events(r.Context(), query.Get("state"), limit, query.Get("before"))
 		if err != nil {
 			h.serviceError(w, err, requestID)
-			return true
+			return
 		}
 		writeJSON(w, http.StatusOK, page)
-		return true
-	}
-	if p != "/api/v1/alert-rules" && !strings.HasPrefix(p, "/api/v1/alert-rules/") {
-		return false
+		return
 	}
 	collection := p == "/api/v1/alert-rules"
 	id := ""
@@ -76,7 +73,7 @@ func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID 
 				writeJSON(w, http.StatusOK, rule)
 			}
 		}
-		return true
+		return
 	}
 	if r.Method == http.MethodDelete {
 		if err := h.alerts.Delete(r.Context(), id); err != nil {
@@ -84,21 +81,20 @@ func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID 
 		} else {
 			w.WriteHeader(http.StatusNoContent)
 		}
-		return true
+		return
 	}
 	var patch alerts.Patch
 	if !decode(w, r, &patch, requestID) {
-		return true
+		return
 	}
 	rule, err := h.alerts.Save(r.Context(), id, patch)
 	if err != nil {
 		h.serviceError(w, err, requestID)
-		return true
+		return
 	}
 	status := http.StatusOK
 	if collection {
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, rule)
-	return true
 }

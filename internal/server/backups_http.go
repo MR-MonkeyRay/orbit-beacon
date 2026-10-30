@@ -19,20 +19,17 @@ import (
 
 // backupsRoute is reached only after route existence, method, session and CSRF
 // checks. All console accounts have the same access to backup operations.
-func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID string, user auth.User) bool {
+func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID string, session auth.Session) {
 	p := r.URL.Path
-	if p != "/api/v1/backups/exports" && p != "/api/v1/backup-plans" && !strings.HasPrefix(p, "/api/v1/backup-plans/") && p != "/api/v1/tasks" && !strings.HasPrefix(p, "/api/v1/tasks/") {
-		return false
-	}
 	list := r.Method == http.MethodGet && (p == "/api/v1/tasks" || p == "/api/v1/backup-plans")
 	limit, before, err := backupQuery(r, list)
 	if err != nil {
 		h.backupError(w, err, requestID)
-		return true
+		return
 	}
 	if h.backups == nil {
 		h.backupError(w, errors.New("backup service is unavailable"), requestID)
-		return true
+		return
 	}
 	switch p {
 	case "/api/v1/backups/exports":
@@ -40,16 +37,16 @@ func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID
 			Categories []backup.Category `json:"categories"`
 		}
 		if !decode(w, r, &input, requestID) {
-			return true
+			return
 		}
 		if _, err := backup.ValidateCategories(input.Categories); err != nil {
 			h.backupError(w, &validation.Error{Fields: map[string]string{"categories": "Select one or more distinct data categories."}}, requestID)
-			return true
+			return
 		}
-		task, err := h.backups.CreateExport(r.Context(), user.ID, input.Categories)
+		task, err := h.backups.CreateExport(r.Context(), session.User.ID, input.Categories)
 		if err != nil {
 			h.backupError(w, err, requestID)
-			return true
+			return
 		}
 		w.Header().Set("Location", "/api/v1/tasks/"+task.ID)
 		writeJSON(w, http.StatusAccepted, task)
@@ -58,10 +55,10 @@ func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID
 			page, err := h.backups.Plans(r.Context(), limit, before)
 			if err != nil {
 				h.backupError(w, err, requestID)
-				return true
+				return
 			}
 			writeJSON(w, http.StatusOK, page)
-			return true
+			return
 		}
 		h.backupPlanSave(w, r, requestID, "")
 	case "/api/v1/backup-plans/preview":
@@ -69,19 +66,19 @@ func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID
 			Cron string `json:"cron"`
 		}
 		if !decode(w, r, &input, requestID) {
-			return true
+			return
 		}
 		preview, err := h.backups.PreviewCron(input.Cron, h.now())
 		if err != nil {
 			h.backupError(w, err, requestID)
-			return true
+			return
 		}
 		writeJSON(w, http.StatusOK, preview)
 	case "/api/v1/tasks":
 		page, err := h.backups.Tasks(r.Context(), limit, before)
 		if err != nil {
 			h.backupError(w, err, requestID)
-			return true
+			return
 		}
 		writeJSON(w, http.StatusOK, page)
 	default:
@@ -93,18 +90,18 @@ func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID
 			case http.MethodDelete:
 				if err := h.backups.DeletePlan(r.Context(), id); err != nil {
 					h.backupError(w, err, requestID)
-					return true
+					return
 				}
 				w.WriteHeader(http.StatusNoContent)
 			default:
 				plan, err := h.backups.Plan(r.Context(), id)
 				if err != nil {
 					h.backupError(w, err, requestID)
-					return true
+					return
 				}
 				writeJSON(w, http.StatusOK, plan)
 			}
-			return true
+			return
 		}
 		parts := strings.Split(strings.TrimPrefix(p, "/api/v1/tasks/"), "/")
 		id := parts[0]
@@ -117,20 +114,19 @@ func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID
 				result, err := h.backups.Password(r.Context(), id)
 				if err != nil {
 					h.backupError(w, err, requestID)
-					return true
+					return
 				}
 				writeJSON(w, http.StatusOK, result)
 			}
-			return true
+			return
 		}
 		task, err := h.backups.Task(r.Context(), id)
 		if err != nil {
 			h.backupError(w, err, requestID)
-			return true
+			return
 		}
 		writeJSON(w, http.StatusOK, task)
 	}
-	return true
 }
 
 // Only list endpoints accept a cursor and limit. ParseQuery errors are not

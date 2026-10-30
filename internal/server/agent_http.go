@@ -94,38 +94,35 @@ func (h *handler) agentRoute(w http.ResponseWriter, r *http.Request, requestID s
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, requestID string) bool {
-	if r.URL.Path != "/api/v1/enrollments" && !strings.HasPrefix(r.URL.Path, "/api/v1/enrollments/") {
-		return false
-	}
+func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.URL.Path != "/api/v1/enrollments" {
 		id := strings.TrimPrefix(r.URL.Path, "/api/v1/enrollments/")
 		if r.Method == http.MethodDelete {
 			if err := h.enrollments.Revoke(r.Context(), id); err != nil {
 				h.agentError(w, err, requestID)
-				return true
+				return
 			}
 			w.WriteHeader(http.StatusNoContent)
-			return true
+			return
 		}
 		result, err := h.enrollments.Get(r.Context(), id)
 		if err != nil {
 			h.agentError(w, err, requestID)
-			return true
+			return
 		}
 		writeJSON(w, http.StatusOK, result)
-		return true
+		return
 	}
 	if r.Method == http.MethodGet {
 		limit, offset, err := pagination(r)
 		if err != nil {
 			h.agentError(w, enrollment.ErrInvalidInput, requestID)
-			return true
+			return
 		}
 		result, err := h.enrollments.List(r.Context(), limit+1, offset)
 		if err != nil {
 			h.agentError(w, err, requestID)
-			return true
+			return
 		}
 		hasMore := len(result) > limit
 		response := map[string]any{"has_more": hasMore}
@@ -135,7 +132,7 @@ func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, reques
 		}
 		response["enrollments"] = result
 		writeJSON(w, http.StatusOK, response)
-		return true
+		return
 	}
 	var input struct {
 		NodeID  string `json:"node_id"`
@@ -143,7 +140,7 @@ func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, reques
 		Mode    string `json:"mode"`
 	}
 	if !decode(w, r, &input, requestID) {
-		return true
+		return
 	}
 	var result enrollment.CreatedTicket
 	var err error
@@ -157,8 +154,7 @@ func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, reques
 	}
 	if err != nil {
 		h.agentError(w, err, requestID)
-		return true
+		return
 	}
 	writeJSON(w, http.StatusCreated, result)
-	return true
 }
