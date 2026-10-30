@@ -46,7 +46,7 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := ingest.NewService(db, ingest.Options{Now: clock})
-	out, err := s.PublicNode(ctx, n.ID, now)
+	out, err := publicNode(ctx, ns, s, n.ID, now)
 	if err != nil || out.Status != "unknown" || out.CPUPercent != nil {
 		t.Fatalf("before reports: %+v %v", out, err)
 	}
@@ -65,10 +65,10 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 	source.MeasurementWindowMS = &window
 	m.Sources["cpu"] = source
 	report := v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "private-session", Seq: 1, SampledAt: now, Runtime: v1.DefaultRuntimeSettings(), Metrics: m, Traffic: []v1.Traffic{}}
-	if _, err := s.Accept(ctx, n.ID, report); err != nil {
+	if _, err := acceptReport(ctx, s, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", report); err != nil {
 		t.Fatal(err)
 	}
-	out, err = s.PublicNode(ctx, n.ID, now)
+	out, err = publicNode(ctx, ns, s, n.ID, now)
 	if err != nil || out.Status != "online" || out.CPUPercent == nil || *out.CPUPercent != 25 || out.MemoryPercent == nil || *out.MemoryPercent != 75 {
 		t.Fatalf("after report: %+v %v", out, err)
 	}
@@ -78,22 +78,22 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 		status string
 		cpu    bool
 	}{{45 * time.Second, "online", true}, {45*time.Second + time.Millisecond, "online", true}, {180 * time.Second, "online", true}, {180*time.Second + time.Nanosecond, "offline", true}, {-time.Nanosecond, "unknown", false}} {
-		out, err = s.PublicNode(ctx, n.ID, committed.Add(test.delta))
+		out, err = publicNode(ctx, ns, s, n.ID, committed.Add(test.delta))
 		if err != nil || out.Status != test.status || (out.CPUPercent != nil) != test.cpu {
 			t.Fatalf("at %v: %+v %v", test.delta, out, err)
 		}
 	}
 	restarted := ingest.NewService(db, ingest.Options{Now: clock})
-	out, err = restarted.PublicNode(ctx, n.ID, now)
+	out, err = publicNode(ctx, ns, restarted, n.ID, now)
 	if err != nil || out.Status != "online" || out.CPUPercent != nil {
 		t.Fatalf("restart: %+v %v", out, err)
 	}
 	now = now.Add(20 * time.Second)
 	cpu = 99
-	if _, err := s.Accept(ctx, n.ID, report); err != nil {
+	if _, err := acceptReport(ctx, s, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", report); err != nil {
 		t.Fatal(err)
 	}
-	out, err = s.PublicNode(ctx, n.ID, now)
+	out, err = publicNode(ctx, ns, s, n.ID, now)
 	if err != nil || out.CPUPercent == nil || *out.CPUPercent != 25 {
 		t.Fatalf("duplicate replaced snapshot: %+v %v", out, err)
 	}
@@ -103,10 +103,10 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 		t.Fatal(err)
 	}
 	report.Seq = 2
-	if _, err := s.Accept(ctx, n.ID, report); err == nil {
+	if _, err := acceptReport(ctx, s, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", report); err == nil {
 		t.Fatal("failed write accepted")
 	}
-	out, err = s.PublicNode(ctx, n.ID, now)
+	out, err = publicNode(ctx, ns, s, n.ID, now)
 	if err != nil || out.CPUPercent == nil || *out.CPUPercent != 25 {
 		t.Fatalf("failed write replaced snapshot: %+v %v", out, err)
 	}
@@ -118,10 +118,10 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 		t.Fatalf("page before commit: %+v %v", records, err)
 	}
 	report.Metrics.MetricStatus["cpu_percent"] = "error"
-	if _, err := s.Accept(ctx, n.ID, report); err != nil {
+	if _, err := acceptReport(ctx, s, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", report); err != nil {
 		t.Fatal(err)
 	}
-	out, err = s.PublicNode(ctx, n.ID, now)
+	out, err = publicNode(ctx, ns, s, n.ID, now)
 	if err != nil || out.CPUPercent != nil || out.MemoryPercent == nil {
 		t.Fatalf("unavailable new metric retained old CPU: %+v %v", out, err)
 	}
@@ -135,7 +135,7 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 		if _, err := db.Exec("UPDATE nodes SET last_seen=? WHERE id=?", timestamp, n.ID); err != nil {
 			t.Fatal(err)
 		}
-		out, err = s.PublicNode(ctx, n.ID, now)
+		out, err = publicNode(ctx, ns, s, n.ID, now)
 		if timestamp == "broken" {
 			if err == nil {
 				t.Fatal("corrupt timestamp accepted")

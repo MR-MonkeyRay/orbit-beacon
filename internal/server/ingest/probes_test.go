@@ -30,7 +30,7 @@ func probeResult(target string, checkedAt time.Time, ok bool) v1.ProbeResult {
 
 func probeAccept(t *testing.T, f *coalesceFixture) (v1.ReportResponse, error) {
 	t.Helper()
-	return f.service.accept(context.Background(), f.id, nil, 0, f.report, false)
+	return f.service.accept(context.Background(), f.id, nil, 0, f.report)
 }
 
 func probeTotals(t *testing.T, f *coalesceFixture, target string) (checks, failures int, latest string) {
@@ -285,7 +285,7 @@ func TestProbeOverlappingWritersRebasePartialQueue(t *testing.T) {
 	report := f.report
 	report.Seq++
 	report.ProbeResults = []v1.ProbeResult{probeResult(target, t1, false)}
-	if _, err := other.accept(context.Background(), f.id, nil, 0, report, false); err != nil {
+	if _, err := other.accept(context.Background(), f.id, nil, 0, report); err != nil {
 		t.Fatal(err)
 	}
 	if err := other.Shutdown(context.Background()); err != nil {

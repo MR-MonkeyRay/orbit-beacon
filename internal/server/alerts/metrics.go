@@ -22,10 +22,7 @@ func metricValue(latest ingest.LatestReport, metric string, now time.Time) *floa
 		if m.MetricStatus[key] != "ok" || !s.Fresh() {
 			return false
 		}
-		if s.SourceIntervalMS > math.MaxInt64/3 {
-			return true
-		}
-		return elapsed <= max(3*s.SourceIntervalMS, int64(45000))-s.AgeMS
+		return s.FreshAfter(elapsed)
 	}
 	valid := func(v float64) *float64 {
 		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || (metric != "load1" && v > 100) {

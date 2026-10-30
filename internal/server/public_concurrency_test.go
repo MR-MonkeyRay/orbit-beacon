@@ -25,7 +25,7 @@ func TestPublicProjectionConcurrentReportsRotationAndDeletion(t *testing.T) {
 		defer wg.Done()
 		<-start
 		for range 50 {
-			out, err := f.ingest.PublicNode(context.Background(), id, f.now)
+			out, err := publicNode(context.Background(), f.nodes, f.ingest, id, f.now)
 			if err != nil && !errors.Is(err, nodes.ErrNotFound) {
 				t.Errorf("concurrent public read: %v", err)
 			}
@@ -42,7 +42,7 @@ func TestPublicProjectionConcurrentReportsRotationAndDeletion(t *testing.T) {
 			if err := json.Unmarshal([]byte(reportBody(1, seq, "race-session", 20)), &report); err != nil {
 				panic(err)
 			}
-			_, _ = f.ingest.AcceptToken(context.Background(), token, report)
+			_, _ = acceptReport(context.Background(), f.ingest, token, report)
 		}
 	}()
 	close(start)
@@ -53,7 +53,7 @@ func TestPublicProjectionConcurrentReportsRotationAndDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	wg.Wait()
-	if _, err := f.ingest.PublicNode(context.Background(), id, f.now); !errors.Is(err, nodes.ErrNotFound) {
+	if _, err := publicNode(context.Background(), f.nodes, f.ingest, id, f.now); !errors.Is(err, nodes.ErrNotFound) {
 		t.Fatalf("deleted concurrent node exposed: %v", err)
 	}
 }

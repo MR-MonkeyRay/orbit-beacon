@@ -76,14 +76,10 @@ func snapshotPublic(m v1.Metrics, now time.Time) publicMetrics {
 }
 
 func (m publicMetric) fresh(elapsedMS int64) bool {
-	if !m.valid || m.status == "stale" || m.ageMS < 0 || m.intervalMS <= 0 {
+	if !m.valid || m.status == "stale" {
 		return false
 	}
-	if m.intervalMS > math.MaxInt64/3 {
-		return true
-	}
-	limit := max(3*m.intervalMS, int64(45000))
-	return m.ageMS <= limit && elapsedMS <= limit-m.ageMS
+	return (v1.SourceMetadata{AgeMS: m.ageMS, SourceIntervalMS: m.intervalMS}).FreshAfter(elapsedMS)
 }
 
 func (p publicMetrics) project(out *PublicNode, now time.Time) {
@@ -107,16 +103,6 @@ func (m publicMetric) project(elapsedMS int64) (*float64, string) {
 		status = "ok"
 	}
 	return new(m.value), status
-}
-
-// PublicNode reads durable identity before taking any ingest state lock.
-// It never creates state or decodes raw reports.
-func (s *Service) PublicNode(ctx context.Context, nodeID string, now time.Time) (PublicNode, error) {
-	record, err := nodes.ReadPublicRecord(ctx, s.db, nodeID)
-	if err != nil {
-		return PublicNode{}, err
-	}
-	return s.ProjectPublicRecord(record, now), nil
 }
 
 // ProjectPublicRecord overlays reception time only for the same durable identity.

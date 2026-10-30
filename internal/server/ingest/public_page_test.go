@@ -46,7 +46,7 @@ func (c *publicPageConn) QueryContext(ctx context.Context, query string, args []
 	if c.connector.entered != nil {
 		c.connector.entered <- struct{}{}
 	}
-	if len(args) != 2 && len(args) != 1 {
+	if len(args) != 2 {
 		return nil, fmt.Errorf("unexpected per-node query: %s", query)
 	}
 	if c.connector.gate != nil {
@@ -56,10 +56,7 @@ func (c *publicPageConn) QueryContext(ctx context.Context, query string, args []
 		case <-c.connector.gate:
 		}
 	}
-	remaining := 1
-	if len(args) == 2 {
-		remaining = int(args[0].Value.(int64))
-	}
+	remaining := int(args[0].Value.(int64))
 	return &publicPageRows{remaining: remaining, now: c.connector.now}, nil
 }
 
@@ -200,7 +197,7 @@ func TestProjectPublicRecordChecksEveryFenceWithoutCreatingState(t *testing.T) {
 	}
 }
 
-func TestPublicNodeQueriesBeforeTakingStateLock(t *testing.T) {
+func TestPublicPageQueriesBeforeTakingStateLock(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
@@ -214,7 +211,10 @@ func TestPublicNodeQueriesBeforeTakingStateLock(t *testing.T) {
 	var unlock sync.Once
 	defer unlock.Do(state.mu.Unlock)
 	done := make(chan error, 1)
-	go func() { _, err := s.PublicNode(ctx, "public-1", now); done <- err }()
+	go func() {
+		_, err := s.PublicPage(ctx, nodes.NewService(db, nodes.Options{}), 1, 0, time.Second, func() time.Time { return now })
+		done <- err
+	}()
 	select {
 	case <-connector.entered:
 	case <-ctx.Done():

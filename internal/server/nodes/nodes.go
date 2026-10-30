@@ -240,14 +240,6 @@ func (s *Service) Get(ctx context.Context, id string) (Node, error) {
 	return scanNode(s.db.QueryRowContext(ctx, "SELECT "+nodeColumns+" FROM nodes WHERE id = ?", id), s.now())
 }
 
-// List retains the bounded inventory API for existing callers.
-func (s *Service) List(ctx context.Context, limit, offset int) ([]Node, error) {
-	if limit < 1 || limit > 100 || offset < 0 {
-		return nil, ErrInvalidInput
-	}
-	return s.list(ctx, limit, offset)
-}
-
 // ListPage fetches one lookahead row in the same query as the requested page.
 func (s *Service) ListPage(ctx context.Context, limit, offset int) ([]Node, bool, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
@@ -547,11 +539,8 @@ func (s *Service) GetRuntime(ctx context.Context, id string) (*v1.RuntimeSetting
 	if raw == "" {
 		return nil, nil
 	}
-	var runtime v1.RuntimeSettings
-	if err := json.Unmarshal([]byte(raw), &runtime); err != nil {
-		return nil, err
-	}
-	if err := runtime.Validate(); err != nil {
+	runtime, err := v1.DecodeRuntimeSettings(raw)
+	if err != nil {
 		return nil, err
 	}
 	return &runtime, nil

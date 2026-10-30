@@ -310,10 +310,10 @@ func TestReportGenerationSessionAndSequenceOrdering(t *testing.T) {
 	}
 	// A new server service loses only transient seq deduplication, not the process fence.
 	restarted := ingest.NewService(f.db, ingest.Options{Now: func() time.Time { return f.now }})
-	if _, err := restarted.Accept(context.Background(), id, mustReport(t, reportBody(5, 1000, "current", 99))); err == nil {
+	if _, err := acceptReport(context.Background(), restarted, token, mustReport(t, reportBody(5, 1000, "current", 99))); err == nil {
 		t.Fatal("generation fence lost on server restart")
 	}
-	if _, err := restarted.Accept(context.Background(), id, mustReport(t, reportBody(6, 2, "other-session", 99))); err == nil {
+	if _, err := acceptReport(context.Background(), restarted, token, mustReport(t, reportBody(6, 2, "other-session", 99))); err == nil {
 		t.Fatal("session fence lost on server restart")
 	}
 }

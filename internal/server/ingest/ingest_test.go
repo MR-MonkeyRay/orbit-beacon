@@ -48,7 +48,7 @@ func TestNonFiniteMetricsRejectedBeforeStateMutation(t *testing.T) {
 			if err := json.Unmarshal([]byte(`{"protocol_version":1,"run_generation":1,"session_id":"one","seq":1,"sampled_at":"2026-10-26T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]},"metrics":{"cpu_percent":10,"load1":0,"load5":0,"load15":0,"memory_total_bytes":100,"memory_available_bytes":50,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":10,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000}}},"traffic":[]}`), &report); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.Accept(ctx, node.ID, report); err != nil {
+			if _, err := acceptReport(ctx, s, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", report); err != nil {
 				t.Fatal(err)
 			}
 			var before string
@@ -59,7 +59,7 @@ func TestNonFiniteMetricsRejectedBeforeStateMutation(t *testing.T) {
 			report.Seq = 2
 			report.RunGeneration = 2
 			report.Metrics.CPUPercent = &value
-			if _, err := s.Accept(ctx, node.ID, report); err == nil {
+			if _, err := acceptReport(ctx, s, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", report); err == nil {
 				t.Fatal("nonfinite metric accepted through typed ingestion")
 			}
 			var after string
@@ -74,9 +74,30 @@ func TestNonFiniteMetricsRejectedBeforeStateMutation(t *testing.T) {
 			report.RunGeneration = 1
 			cpu := 20.0
 			report.Metrics.CPUPercent = &cpu
-			if _, err := s.Accept(ctx, node.ID, report); err != nil {
+			if _, err := acceptReport(ctx, s, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", report); err != nil {
 				t.Fatalf("invalid generation advanced process fence: %v", err)
 			}
 		})
 	}
+}
+
+func acceptReport(ctx context.Context, s *ingest.Service, token string, report v1.Report) (v1.ReportResponse, error) {
+	admission, err := s.AdmitToken(ctx, token)
+	if err != nil {
+		return v1.ReportResponse{}, err
+	}
+	return s.AcceptAdmitted(ctx, admission, report)
+}
+
+func publicNode(ctx context.Context, ns *nodes.Service, s *ingest.Service, id string, now time.Time) (ingest.PublicNode, error) {
+	records, _, err := ns.ListPublicRecords(ctx, 100, 0)
+	if err != nil {
+		return ingest.PublicNode{}, err
+	}
+	for _, record := range records {
+		if record.ID == id {
+			return s.ProjectPublicRecord(record, now), nil
+		}
+	}
+	return ingest.PublicNode{}, nodes.ErrNotFound
 }

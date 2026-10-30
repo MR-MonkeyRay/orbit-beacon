@@ -70,18 +70,6 @@ func (s *Service) loginAdmission(ctx context.Context, username string, charge bo
 	return nil
 }
 
-// Eligibility checks never charge or allocate limiter state.
-func (s *Service) checkLoginUsername(ctx context.Context, username string) error {
-	name := sha256.Sum256([]byte(username))
-	key := loginIdentityKey{peer: loginRatePeer(ctx), name: name}
-	s.rateMu.Lock()
-	defer s.rateMu.Unlock()
-	if !s.loginUsernameAllowedLocked(key, name, s.now()) {
-		return ErrRateLimited
-	}
-	return nil
-}
-
 func (s *Service) loginUsernameAllowedLocked(key loginIdentityKey, name [sha256.Size]byte, now time.Time) bool {
 	if key.peer.IsValid() {
 		if last, ok := s.loginSuccesses[key]; ok {
@@ -95,7 +83,7 @@ func (s *Service) loginUsernameAllowedLocked(key loginIdentityKey, name [sha256.
 	return bucket.tokens >= 1
 }
 
-func (s *Service) recordLoginFailure(_ context.Context, username string) {
+func (s *Service) recordLoginFailure(username string) {
 	name := sha256.Sum256([]byte(username))
 	s.rateMu.Lock()
 	defer s.rateMu.Unlock()

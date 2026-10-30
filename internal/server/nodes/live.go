@@ -3,7 +3,6 @@ package nodes
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"strconv"
 	"time"
@@ -136,11 +135,8 @@ func (s *Service) LiveDetail(ctx context.Context, id string) (LiveDetailRecord, 
 		return record, err
 	}
 	if record.Identity.HasCredential && record.Identity.Generation != 0 && record.Identity.Session != "" && runtime != "" {
-		var settings v1.RuntimeSettings
-		if err := json.Unmarshal([]byte(runtime), &settings); err != nil {
-			return record, err
-		}
-		if err := settings.Validate(); err != nil {
+		settings, err := v1.DecodeRuntimeSettings(runtime)
+		if err != nil {
 			return record, err
 		}
 		record.Runtime = &settings

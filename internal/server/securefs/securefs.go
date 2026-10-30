@@ -1,6 +1,7 @@
 package securefs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -129,4 +130,13 @@ func OpenRegular(path string) (*os.File, error) {
 		return nil, err
 	}
 	return file, nil
+}
+
+// SyncDirectory makes directory entry changes durable and closes the handle.
+func SyncDirectory(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return errors.Join(dir.Sync(), dir.Close())
 }

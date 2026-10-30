@@ -274,11 +274,7 @@ func WriteArchive(ctx context.Context, output string, manifest Manifest, files [
 	if err = file.Close(); err != nil {
 		return info, err
 	}
-	directory, err := os.Open(filepath.Dir(output))
-	if err != nil {
-		return info, err
-	}
-	if err = errors.Join(directory.Sync(), directory.Close()); err != nil {
+	if err = securefs.SyncDirectory(filepath.Dir(output)); err != nil {
 		return info, err
 	}
 	finished, err := securefs.OpenFile(output, os.O_RDONLY, 0)
@@ -295,12 +291,16 @@ func WriteArchive(ctx context.Context, output string, manifest Manifest, files [
 	return info, nil
 }
 
+func canonicalUUID(value string) bool {
+	id, err := uuid.Parse(value)
+	return err == nil && id != uuid.Nil && id.String() == value
+}
+
 func validateManifest(m Manifest) error {
 	if m.Format != "orbitbeacon-backup" || m.Version != 1 || m.SchemaVersion != storage.CurrentSchemaVersion || m.HistorySchemaVersion != 1 {
 		return invalidArchive(nil)
 	}
-	id, err := uuid.Parse(m.ArchiveID)
-	if err != nil || id == uuid.Nil || id.String() != m.ArchiveID {
+	if !canonicalUUID(m.ArchiveID) {
 		return invalidArchive(nil)
 	}
 	if m.CreatedAt.IsZero() || m.Snapshots.MainAt.IsZero() || m.ServerVersion == "" {
@@ -331,7 +331,8 @@ func validateManifest(m Manifest) error {
 		if f.Path != names[i] || f.Bytes < 0 || len(f.SHA256) != 64 || strings.ToLower(f.SHA256) != f.SHA256 {
 			return invalidArchive(nil)
 		}
-		if _, err := hex.DecodeString(f.SHA256); err != nil {
+		if !validSHA256(f.SHA256) {
+			_, err := hex.DecodeString(f.SHA256)
 			return invalidArchive(err)
 		}
 		if f.Bytes > maxArchiveBytes-total {

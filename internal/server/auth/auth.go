@@ -337,7 +337,7 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 		// Unknown usernames consume the same Argon2 work as incorrect passwords.
 		var salt [16]byte
 		_ = argon2.IDKey([]byte(password), salt[:], passwordIterations, passwordMemory, passwordParallelism, 32)
-		s.recordLoginFailure(ctx, username)
+		s.recordLoginFailure(username)
 		return Session{}, ErrUnauthenticated
 	}
 	if err != nil {
@@ -345,7 +345,7 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 	}
 	ok, current, err := verifyPassword(password, hash)
 	if err != nil || !ok {
-		s.recordLoginFailure(ctx, username)
+		s.recordLoginFailure(username)
 		return Session{}, ErrUnauthenticated
 	}
 	user.CreatedAt, err = timekey.Parse(created)

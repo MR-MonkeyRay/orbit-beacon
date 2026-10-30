@@ -226,7 +226,7 @@ func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int) ([]P
 	defer rows.Close()
 	records := make([]PublicRecord, 0, limit)
 	for rows.Next() {
-		// The extra row only establishes has_more, as in ListPublicIDs.
+		// The extra row only establishes has_more.
 		if len(records) == limit {
 			return records, true, nil
 		}
@@ -237,18 +237,6 @@ func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int) ([]P
 		records = append(records, record)
 	}
 	return records, false, rows.Err()
-}
-
-func (s *Service) ListPublicIDs(ctx context.Context, limit, offset int) ([]string, bool, error) {
-	records, more, err := s.ListPublicRecords(ctx, limit, offset)
-	if err != nil {
-		return nil, false, err
-	}
-	ids := make([]string, 0, len(records))
-	for _, record := range records {
-		ids = append(ids, record.ID)
-	}
-	return ids, more, nil
 }
 
 // PublicRecord is an internal identity fence, never an HTTP representation.
@@ -269,10 +257,6 @@ func (p PublicRecord) LatestSeen(receivedAt time.Time) time.Time {
 		return receivedAt
 	}
 	return p.LastSeen
-}
-
-func ReadPublicRecord(ctx context.Context, db *sql.DB, id string) (PublicRecord, error) {
-	return scanPublicRecord(db.QueryRowContext(ctx, "SELECT id,public_settings,last_seen,token_hash,credential_epoch,run_generation,report_session_id FROM nodes WHERE id = ? AND "+publicVisibility, id))
 }
 
 func scanPublicRecord(row interface{ Scan(...any) error }) (PublicRecord, error) {

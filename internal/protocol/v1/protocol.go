@@ -191,10 +191,20 @@ func (s SourceMetadata) Fresh() bool {
 	if s.Validate() != nil {
 		return false
 	}
+	return s.FreshAfter(0)
+}
+
+// FreshAfter includes elapsed reception time without overflowing the source age.
+// Callers apply their own source and metric validation before using it.
+func (s SourceMetadata) FreshAfter(elapsedMS int64) bool {
+	if s.AgeMS < 0 || s.SourceIntervalMS <= 0 {
+		return false
+	}
 	if s.SourceIntervalMS > math.MaxInt64/3 {
 		return true
 	}
-	return s.AgeMS <= max(3*s.SourceIntervalMS, 45000)
+	limit := max(3*s.SourceIntervalMS, int64(45000))
+	return s.AgeMS <= limit && elapsedMS <= limit-s.AgeMS
 }
 
 type DiskMetrics struct {

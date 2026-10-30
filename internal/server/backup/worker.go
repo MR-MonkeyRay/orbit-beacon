@@ -175,16 +175,9 @@ func privateDirectory(path string) error {
 		return check
 	}
 	if err == nil {
-		return syncWorkerDirectory(filepath.Dir(path))
+		return securefs.SyncDirectory(filepath.Dir(path))
 	}
 	return nil
-}
-func syncWorkerDirectory(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	return errors.Join(f.Sync(), f.Close())
 }
 
 func (s *Service) execute(ctx context.Context, task Task) {
@@ -346,12 +339,12 @@ func (s *Service) execute(ctx context.Context, task Task) {
 			fail(err, "internal_error")
 			return
 		}
-		if err = syncWorkerDirectory(outputDir); err != nil {
+		if err = securefs.SyncDirectory(outputDir); err != nil {
 			warning = "storage_outcome_unknown"
 			fail(err, "internal_error")
 			return
 		}
-		if err = syncWorkerDirectory(filepath.Dir(outputDir)); err != nil {
+		if err = securefs.SyncDirectory(filepath.Dir(outputDir)); err != nil {
 			warning = "storage_outcome_unknown"
 			fail(err, "internal_error")
 			return

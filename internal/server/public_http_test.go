@@ -27,22 +27,28 @@ type publicListFixture struct {
 
 func agentHTTPCall(t *testing.T, f *agentFixture, method, route, body string, cookie *http.Cookie, csrf, origin string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, publicURL+route, strings.NewReader(body))
-	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
+	return request(t, f.handler, method, route, body, cookie, csrf, origin)
+}
+
+func acceptReport(ctx context.Context, s *ingest.Service, token string, report v1.Report) (v1.ReportResponse, error) {
+	admission, err := s.AdmitToken(ctx, token)
+	if err != nil {
+		return v1.ReportResponse{}, err
 	}
-	if cookie != nil {
-		req.AddCookie(cookie)
+	return s.AcceptAdmitted(ctx, admission, report)
+}
+
+func publicNode(ctx context.Context, ns *nodes.Service, s *ingest.Service, id string, now time.Time) (ingest.PublicNode, error) {
+	records, _, err := ns.ListPublicRecords(ctx, 100, 0)
+	if err != nil {
+		return ingest.PublicNode{}, err
 	}
-	if csrf != "" {
-		req.Header.Set("X-CSRF-Token", csrf)
+	for _, record := range records {
+		if record.ID == id {
+			return s.ProjectPublicRecord(record, now), nil
+		}
 	}
-	if origin != "" {
-		req.Header.Set("Origin", origin)
-	}
-	response := httptest.NewRecorder()
-	f.handler.ServeHTTP(response, req)
-	return response
+	return ingest.PublicNode{}, nodes.ErrNotFound
 }
 
 func loginAgent(t *testing.T, f *agentFixture, username string) (*http.Cookie, string) {

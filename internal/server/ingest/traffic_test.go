@@ -19,7 +19,7 @@ func trafficEntry(epoch string, period time.Time, rx, tx string) v1.Traffic {
 
 func trafficAccept(t *testing.T, f *coalesceFixture) (v1.ReportResponse, error) {
 	t.Helper()
-	return f.service.accept(context.Background(), f.id, nil, 0, f.report, false)
+	return f.service.accept(context.Background(), f.id, nil, 0, f.report)
 }
 
 func TestTrafficCoalescesAcksAfterCommitAndMaxUpsert(t *testing.T) {
@@ -323,7 +323,7 @@ func TestTrafficShutdownAttemptsEveryNodeAfterFailure(t *testing.T) {
 	if _, err := f.db.Exec(`UPDATE nodes SET token_hash=?,status='unknown' WHERE id=?`, credential[:], node.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.service.accept(context.Background(), node.ID, nil, 0, f.report, false); err != nil {
+	if _, err := f.service.accept(context.Background(), node.ID, nil, 0, f.report); err != nil {
 		t.Fatal(err)
 	}
 	f.now = f.now.Add(time.Second)
@@ -334,7 +334,7 @@ func TestTrafficShutdownAttemptsEveryNodeAfterFailure(t *testing.T) {
 	}
 	second := f.report
 	second.Traffic = []v1.Traffic{trafficEntry("b", f.now.Truncate(time.Hour), "10", "20")}
-	if _, err := f.service.accept(context.Background(), node.ID, nil, 0, second, false); err != nil {
+	if _, err := f.service.accept(context.Background(), node.ID, nil, 0, second); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.db.Exec(`CREATE TRIGGER fail_one_node_traffic BEFORE INSERT ON traffic_hourly WHEN NEW.rx_bytes=13 BEGIN SELECT RAISE(ABORT,'one node failed'); END`); err != nil {

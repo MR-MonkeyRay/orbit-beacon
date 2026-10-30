@@ -50,7 +50,7 @@ func newCoalesceFixture(t *testing.T, interval time.Duration, targets ...string)
 		t.Fatal(err)
 	}
 	f.id = node.ID
-	credential := sha256.Sum256([]byte("coalesce-test-credential"))
+	credential := sha256.Sum256([]byte(coalesceToken))
 	if _, err := db.Exec(`UPDATE nodes SET token_hash=?,status='unknown',first_enrolled_at=?,public_settings='{"enabled":true,"name":"Coalesce"}' WHERE id=?`, credential[:], timekey.Format(f.now), f.id); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func newCoalesceFixture(t *testing.T, interval time.Duration, targets ...string)
 	if len(targets) != 0 {
 		f.report.Runtime.ProbeTargets = targets
 	}
-	if _, err := f.service.Accept(context.Background(), f.id, f.report); err != nil {
+	if _, err := acceptReport(context.Background(), f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -112,7 +112,7 @@ func TestCoalesceDurabilityConditions(t *testing.T) {
 			f.now = f.now.Add(time.Second)
 			f.report.Seq++
 			test.mutate(t, f)
-			_, err := f.service.Accept(context.Background(), f.id, f.report)
+			_, err := acceptReport(context.Background(), f.service, coalesceToken, f.report)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -137,13 +137,13 @@ func TestCoalesceRuntimeChangeAndDuplicate(t *testing.T) {
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
 	f.report.Runtime.ReportIntervalSeconds = 5
-	if _, err := f.service.Accept(ctx, f.id, f.report); err != nil {
+	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
 	f.report.Runtime.ReportIntervalSeconds = 10
-	if _, err := f.service.Accept(ctx, f.id, f.report); err != nil {
+	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
 	if f.writes(t) != 3 {
@@ -155,7 +155,7 @@ func TestCoalesceRuntimeChangeAndDuplicate(t *testing.T) {
 	}
 	f.now = f.now.Add(time.Second)
 	f.report.Seq--
-	response, err := f.service.Accept(ctx, f.id, f.report)
+	response, err := acceptReport(ctx, f.service, coalesceToken, f.report)
 	if err != nil || response.AcceptedSeq != latest.Seq {
 		t.Fatalf("duplicate response=%+v err=%v", response, err)
 	}
@@ -167,7 +167,7 @@ func TestCoalesceRuntimeChangeAndDuplicate(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.report.Seq = 4
-	if _, err := f.service.Accept(ctx, f.id, f.report); err != ErrServiceClosed {
+	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != ErrServiceClosed {
 		t.Fatalf("closed fast path returned %v", err)
 	}
 }
@@ -186,7 +186,7 @@ func TestCoalesceConcurrentReportsReadersAndPruning(t *testing.T) {
 			<-start
 			report := f.report
 			report.Seq = seq
-			if _, err := f.service.Accept(ctx, f.id, report); err != nil {
+			if _, err := acceptReport(ctx, f.service, coalesceToken, report); err != nil {
 				errors <- err
 			}
 		}()
@@ -212,7 +212,7 @@ func TestCoalesceConcurrentReportsReadersAndPruning(t *testing.T) {
 					errors <- err
 					return
 				}
-				out, err := f.service.PublicNode(ctx, f.id, f.now)
+				out, err := publicNode(ctx, f.nodes, f.service, f.id, f.now)
 				if err != nil || out.Status != "online" {
 					errors <- fmt.Errorf("projection=%+v err=%v", out, err)
 					return
@@ -265,9 +265,9 @@ func TestCoalesceConcurrentMutationBeforeAuthentication(t *testing.T) {
 				}
 			}()
 			result := make(chan error, 1)
-			credential := sha256.Sum256([]byte("coalesce-test-credential"))
+			credential := sha256.Sum256([]byte(coalesceToken))
 			go func() {
-				_, err := f.service.accept(ctx, f.id, credential[:], 0, f.report, false)
+				_, err := f.service.accept(ctx, f.id, credential[:], 0, f.report)
 				result <- err
 			}()
 			// Hold the report before its current-state SELECT, then commit the
@@ -368,9 +368,9 @@ func TestCoalesceLatestFencesMutationAfterFastPathRead(t *testing.T) {
 				return f.now
 			}
 			result := make(chan error, 1)
-			credential := sha256.Sum256([]byte("coalesce-test-credential"))
+			credential := sha256.Sum256([]byte(coalesceToken))
 			go func() {
-				_, err := f.service.accept(ctx, f.id, credential[:], 0, f.report, false)
+				_, err := f.service.accept(ctx, f.id, credential[:], 0, f.report)
 				result <- err
 			}()
 			select {
@@ -427,7 +427,7 @@ func TestCoalesceCredentialABAReclaimsBeforeAndAfterRead(t *testing.T) {
 				t.Fatal(err)
 			}
 			f.report.Seq = 100
-			if _, err := f.service.accept(ctx, f.id, nil, 0, f.report, false); err != nil {
+			if _, err := f.service.accept(ctx, f.id, nil, 0, f.report); err != nil {
 				t.Fatal(err)
 			}
 			f.now = f.now.Add(time.Second)
@@ -456,12 +456,12 @@ func TestCoalesceCredentialABAReclaimsBeforeAndAfterRead(t *testing.T) {
 				reenroll()
 			}
 			f.report.Seq = 2
-			response, err := f.service.accept(ctx, f.id, nil, 0, f.report, false)
+			response, err := f.service.accept(ctx, f.id, nil, 0, f.report)
 			if resetAfterRead {
 				if !errors.Is(err, ErrIdentityConflict) {
 					t.Fatalf("queued pre-reset report error=%v", err)
 				}
-				response, err = f.service.accept(ctx, f.id, nil, 0, f.report, false)
+				response, err = f.service.accept(ctx, f.id, nil, 0, f.report)
 			}
 			if err != nil || response.AcceptedSeq != 2 {
 				t.Fatalf("ABA report deduplicated: response=%+v err=%v", response, err)
@@ -474,7 +474,7 @@ func TestCoalesceCredentialABAReclaimsBeforeAndAfterRead(t *testing.T) {
 				t.Fatalf("identity not reclaimed: generation=%s session=%q", generation, session)
 			}
 			f.report.Seq++
-			if response, err := f.service.accept(ctx, f.id, nil, 0, f.report, false); err != nil || response.AcceptedSeq != 3 {
+			if response, err := f.service.accept(ctx, f.id, nil, 0, f.report); err != nil || response.AcceptedSeq != 3 {
 				t.Fatalf("sequence history survived ABA: response=%+v err=%v", response, err)
 			}
 			if latest, err := f.service.Latest(ctx, f.id); err != nil || latest.Seq != 3 {
@@ -515,7 +515,7 @@ func TestFreshCredentialEpochRejectsQueuedExactABA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	releaseWrite, err := f.service.beginWrite(ctx)
+	releaseWrite, err := holdWriter(ctx, f.service)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -566,7 +566,7 @@ func TestFreshCredentialEpochRejectsQueuedExactABA(t *testing.T) {
 	f.report.ProbeResults = nil
 	f.report.Runtime.ProbeTargets = nil
 	f.report.System.Hostname = "fresh-host"
-	response, err := f.service.AcceptToken(ctx, coalesceToken, f.report)
+	response, err := acceptReport(ctx, f.service, coalesceToken, f.report)
 	if err != nil || response.AcceptedSeq != 1 || len(response.TrafficAcks) != 0 {
 		t.Fatalf("fresh report response=%+v err=%v", response, err)
 	}
@@ -586,7 +586,7 @@ func TestCoalesceCanceledSameNodeWaiterDoesNotBlockShutdown(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	// Occupy writer admission so a durable report holds the node gate.
-	releaseWrite, err := f.service.beginWrite(ctx)
+	releaseWrite, err := holdWriter(ctx, f.service)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -598,7 +598,7 @@ func TestCoalesceCanceledSameNodeWaiterDoesNotBlockShutdown(t *testing.T) {
 	defer cancelSlow()
 	slow := make(chan error, 1)
 	go func() {
-		_, err := f.service.accept(slowCtx, f.id, nil, 0, f.report, false)
+		_, err := f.service.accept(slowCtx, f.id, nil, 0, f.report)
 		slow <- err
 	}()
 	for len(f.service.writerQueue) != 2 {
@@ -617,7 +617,7 @@ func TestCoalesceCanceledSameNodeWaiterDoesNotBlockShutdown(t *testing.T) {
 	defer cancelWaiter()
 	waiter := make(chan error, 1)
 	go func() {
-		_, err := f.service.accept(waiterCtx, f.id, nil, 0, f.report, false)
+		_, err := f.service.accept(waiterCtx, f.id, nil, 0, f.report)
 		waiter <- err
 	}()
 	state := f.service.acquireExistingState(f.id)
@@ -680,7 +680,7 @@ func TestTypedRuntimeSelectionsStayCanonicalWithoutAnotherDurableWrite(t *testin
 	f.report.Runtime.Interfaces = nil
 	f.report.Runtime.DiskPaths = nil
 	f.report.Runtime.ProbeTargets = nil
-	if _, err := f.service.accept(context.Background(), f.id, nil, 0, f.report, false); err != nil {
+	if _, err := f.service.accept(context.Background(), f.id, nil, 0, f.report); err != nil {
 		t.Fatal(err)
 	}
 	latest, err := f.service.Latest(context.Background(), f.id)
@@ -694,4 +694,35 @@ func TestTypedRuntimeSelectionsStayCanonicalWithoutAnotherDurableWrite(t *testin
 	if f.writes(t) != 1 {
 		t.Fatal("equivalent empty runtime selections caused another durable write")
 	}
+}
+
+// holdWriter occupies writer admission the way a durable report does: it is
+// tracked by Shutdown and reserves one writer slot.
+func holdWriter(ctx context.Context, s *Service) (func(), error) {
+	finish, err := s.beginUse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.queueWrite(ctx, finish)
+}
+
+func acceptReport(ctx context.Context, s *Service, token string, report v1.Report) (v1.ReportResponse, error) {
+	admission, err := s.AdmitToken(ctx, token)
+	if err != nil {
+		return v1.ReportResponse{}, err
+	}
+	return s.AcceptAdmitted(ctx, admission, report)
+}
+
+func publicNode(ctx context.Context, ns *nodes.Service, s *Service, id string, now time.Time) (PublicNode, error) {
+	records, _, err := ns.ListPublicRecords(ctx, 100, 0)
+	if err != nil {
+		return PublicNode{}, err
+	}
+	for _, record := range records {
+		if record.ID == id {
+			return s.ProjectPublicRecord(record, now), nil
+		}
+	}
+	return PublicNode{}, nodes.ErrNotFound
 }

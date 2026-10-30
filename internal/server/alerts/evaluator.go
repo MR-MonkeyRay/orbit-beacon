@@ -100,7 +100,6 @@ func NewEvaluator(service *Service, latest LatestReader, opts EvaluatorOptions) 
 	}
 	return &Evaluator{service: service, latest: latest, opts: opts, pending: make(map[pair]pending), resolutions: make(map[pair]pendingResolution), queue: make(chan Notification, opts.QueueSize)}
 }
-func (e *Evaluator) NotificationsDropped() uint64 { return e.dropped.Load() }
 
 // Run owns the evaluation and notification workers and returns after both stop.
 // The caller cancels ctx and waits for Run before closing the database.

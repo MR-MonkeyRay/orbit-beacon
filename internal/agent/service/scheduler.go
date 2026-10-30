@@ -34,12 +34,11 @@ type SchedulerOptions struct {
 	RuntimeSettings func() v1.RuntimeSettings
 	Reload          <-chan struct{}
 	// ReloadConfig validates completely before changing any active component.
-	ReloadConfig       func(context.Context) error
-	Collect            func(context.Context) (v1.Metrics, error)
-	Report             func(context.Context, v1.Report) (v1.ReportResponse, error)
-	RandomFloat        func() float64
-	System             *v1.System
-	CredentialsChanged func(bool)
+	ReloadConfig func(context.Context) error
+	Collect      func(context.Context) (v1.Metrics, error)
+	Report       func(context.Context, v1.Report) (v1.ReportResponse, error)
+	RandomFloat  func() float64
+	System       *v1.System
 }
 
 type Scheduler struct {
@@ -55,16 +54,6 @@ func NewScheduler(options SchedulerOptions) *Scheduler {
 		options.Logger = slog.New(slog.DiscardHandler)
 	}
 	return &Scheduler{options: options}
-}
-
-func (s *Scheduler) CredentialsInvalid() bool { return s.credentialsInvalid.Load() }
-
-func (s *Scheduler) setCredentialsInvalid(invalid bool) bool {
-	changed := s.credentialsInvalid.Swap(invalid) != invalid
-	if changed && s.options.CredentialsChanged != nil {
-		s.options.CredentialsChanged(invalid)
-	}
-	return changed
 }
 
 // Run owns exactly one collection loop and one reporting worker. No offline
@@ -201,7 +190,7 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 				}
 				sent = report.Seq
 				backoff.Reset()
-				credentialsRecovered := s.setCredentialsInvalid(false)
+				credentialsRecovered := s.credentialsInvalid.Swap(false)
 				if consecutiveFailures > 0 {
 					event := "report_delivery_recovered"
 					if credentialsRecovered {
@@ -223,7 +212,7 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 			}
 			credentialsBecameInvalid := false
 			if status == http.StatusUnauthorized {
-				credentialsBecameInvalid = s.setCredentialsInvalid(true)
+				credentialsBecameInvalid = !s.credentialsInvalid.Swap(true)
 			}
 			now := time.Now()
 			delay := backoff.Next(status, retryAfter, now)

@@ -146,12 +146,7 @@ func CreateSnapshotPayloads(ctx context.Context, dataDir, work string, categorie
 		result.Files = append(result.Files, ArchiveInput{Name: name, Path: path})
 		if category == Configuration {
 			keyPath := filepath.Join(work, "secrets.key")
-			file, err := securefs.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-			if err != nil {
-				return SnapshotPayloads{}, err
-			}
-			_, writeErr := file.Write(key)
-			if err = errors.Join(writeErr, file.Sync(), file.Close()); err != nil {
+			if err = writeRestoreKey(keyPath, key); err != nil {
 				return SnapshotPayloads{}, err
 			}
 			result.Files = append(result.Files, ArchiveInput{Name: "secrets.key", Path: keyPath})

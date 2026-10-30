@@ -73,12 +73,7 @@ func osFSOps() fsOps {
 			if err := securefs.ValidateDirectory(path); err != nil {
 				return err
 			}
-			dir, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			syncErr := dir.Sync()
-			return errors.Join(syncErr, dir.Close())
+			return securefs.SyncDirectory(path)
 		},
 		rename: func(_ string, source, destination string) error { return os.Rename(source, destination) },
 		remove: func(_ string, path string) error {
@@ -457,8 +452,7 @@ func readRestoreJournal(path string) (restoreJournal, error) {
 	if err := decoder.Decode(&journal); err != nil {
 		return journal, err
 	}
-	id, err := uuid.Parse(journal.ID)
-	if err != nil || id == uuid.Nil || id.String() != journal.ID || journal.Version != 1 || (journal.State != "prepared" && journal.State != "committed") {
+	if !canonicalUUID(journal.ID) || journal.Version != 1 || (journal.State != "prepared" && journal.State != "committed") {
 		return journal, errors.New("invalid restore journal header")
 	}
 	var originals []json.RawMessage
@@ -480,8 +474,7 @@ func readRestoreJournal(path string) (restoreJournal, error) {
 				return journal, errors.New("invalid absent restore file")
 			}
 		} else {
-			digest, err := hex.DecodeString(original.SHA256)
-			if err != nil || len(digest) != sha256.Size || hex.EncodeToString(digest) != original.SHA256 {
+			if !validSHA256(original.SHA256) {
 				return journal, errors.New("invalid restore journal digest")
 			}
 		}

@@ -281,6 +281,71 @@ func (h *handler) runPublicLive(ctx context.Context, request context.Context, st
 	}, send)
 }
 
+func writeLiveFrame[T any](h *handler, ctx context.Context, stream *liveStream, authenticate func(context.Context) error, send func(context.Context, []byte) error, projectionVersion uint64, frame liveFrame[T], terminal bool) error {
+	body, err := json.Marshal(frame)
+	if err != nil {
+		return err
+	}
+	if frame.Type == "snapshot" && h.nodes.PublicVisibilityVersion() != projectionVersion {
+		return errSnapshotBusy
+	}
+	writeCtx := ctx
+	if terminal {
+		writeCtx = context.Background()
+	}
+	writeCtx, cancel := context.WithTimeout(writeCtx, 10*time.Second)
+	defer cancel()
+	return stream.write(writeCtx, terminal, func() error {
+		if !terminal && authenticate != nil {
+			if err := authenticate(writeCtx); err != nil {
+				return err
+			}
+		}
+		if frame.Type == "snapshot" && h.nodes.PublicVisibilityVersion() != projectionVersion {
+			return errSnapshotBusy
+		}
+		return send(writeCtx, body)
+	})
+}
+
+func liveTerminalState(ctx context.Context, authenticate func(context.Context) error, err error) (string, error) {
+	if code := liveTerminalCode(err); code != "" {
+		return code, err
+	}
+	if code := liveTerminalCode(context.Cause(ctx)); code != "" {
+		return code, context.Cause(ctx)
+	}
+	if authenticate != nil {
+		// Safety withdrawal may have canceled the projection/write context.
+		// Recheck policy independently so cancellation cannot hide its cause.
+		checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err = authenticate(checkCtx)
+		cancel()
+		return liveTerminalCode(err), err
+	}
+	return "", nil
+}
+
+func liveTerminalError[T any](h *handler, ctx context.Context, authenticate func(context.Context) error, write func(liveFrame[T], bool) error, err error) bool {
+	code, _ := liveTerminalState(ctx, authenticate, err)
+	if code == "" {
+		return false
+	}
+	_ = write(controlFrame[T](h, "error", code), true)
+	return true
+}
+
+func closeLiveFrame[T any](h *handler, ctx context.Context, authenticate func(context.Context) error, write func(liveFrame[T], bool) error, code string) {
+	terminal, err := liveTerminalState(ctx, authenticate, nil)
+	if terminal != "" {
+		_ = write(controlFrame[T](h, "error", terminal), true)
+		return
+	}
+	if err == nil {
+		_ = write(controlFrame[T](h, "close", code), true)
+	}
+}
+
 // Subscribe before the first query: identity/visibility withdrawal cannot fall
 // in the gap between the initial projection and waiting for notifications.
 func runLive[T any](h *handler, ctx context.Context, request context.Context, stream *liveStream, source liveSource[T], send func(context.Context, []byte) error) {
@@ -309,66 +374,10 @@ func runLive[T any](h *handler, ctx context.Context, request context.Context, st
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	write := func(frame liveFrame[T], terminal bool) error {
-		body, err := json.Marshal(frame)
-		if err != nil {
-			return err
-		}
-		if frame.Type == "snapshot" && h.nodes.PublicVisibilityVersion() != projectionVersion {
-			return errSnapshotBusy
-		}
-		writeCtx := ctx
-		if terminal {
-			writeCtx = context.Background()
-		}
-		writeCtx, cancel := context.WithTimeout(writeCtx, 10*time.Second)
-		defer cancel()
-		return stream.write(writeCtx, terminal, func() error {
-			if !terminal && source.authenticate != nil {
-				if err := source.authenticate(writeCtx); err != nil {
-					return err
-				}
-			}
-			if frame.Type == "snapshot" && h.nodes.PublicVisibilityVersion() != projectionVersion {
-				return errSnapshotBusy
-			}
-			return send(writeCtx, body)
-		})
+		return writeLiveFrame(h, ctx, stream, source.authenticate, send, projectionVersion, frame, terminal)
 	}
-	terminalState := func(err error) (string, error) {
-		if code := liveTerminalCode(err); code != "" {
-			return code, err
-		}
-		if code := liveTerminalCode(context.Cause(ctx)); code != "" {
-			return code, context.Cause(ctx)
-		}
-		if source.authenticate != nil {
-			// Safety withdrawal may have canceled the projection/write context.
-			// Recheck policy independently so cancellation cannot hide its cause.
-			checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			err = source.authenticate(checkCtx)
-			cancel()
-			return liveTerminalCode(err), err
-		}
-		return "", nil
-	}
-	terminalError := func(err error) bool {
-		code, _ := terminalState(err)
-		if code == "" {
-			return false
-		}
-		_ = write(controlFrame[T](h, "error", code), true)
-		return true
-	}
-	closeFrame := func(code string) {
-		terminal, err := terminalState(nil)
-		if terminal != "" {
-			_ = write(controlFrame[T](h, "error", terminal), true)
-			return
-		}
-		if err == nil {
-			_ = write(controlFrame[T](h, "close", code), true)
-		}
-	}
+	terminalError := func(err error) bool { return liveTerminalError(h, ctx, source.authenticate, write, err) }
+	closeFrame := func(code string) { closeLiveFrame(h, ctx, source.authenticate, write, code) }
 	for {
 		if ctx.Err() != nil {
 			if terminalError(context.Cause(ctx)) {

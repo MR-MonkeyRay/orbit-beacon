@@ -50,10 +50,6 @@ func eventCursor(event Event) string {
 	return EncodeEventCursor(event.CreatedAt, event.ID)
 }
 
-func parseEventCursor(cursor string) (string, string, error) {
-	return DecodeEventCursor(cursor)
-}
-
 // EncodeEventCursor encodes a timestamp/UUID keyset position shared by event APIs.
 func EncodeEventCursor(created time.Time, id string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(timekey.Format(created) + "|" + id))
@@ -198,7 +194,7 @@ func (s *Service) Events(ctx context.Context, limit, offset int, before string) 
 	query := "SELECT id, actor_id, action, target_id, created_at, details FROM audit_events"
 	var args []any
 	if before != "" {
-		created, id, err := parseEventCursor(before)
+		created, id, err := DecodeEventCursor(before)
 		if err != nil {
 			return EventPage{}, err
 		}

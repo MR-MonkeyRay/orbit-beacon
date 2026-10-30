@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
@@ -26,6 +27,7 @@ import (
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/storage"
+	"orbitbeacon/internal/timekey"
 )
 
 type consoleLiveFixture struct {
@@ -211,6 +213,16 @@ func TestConsoleLiveShutdownInterruptsWriterAndJoinsProjection(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("projection did not block")
 		}
+		token := strings.Repeat("A", 43)
+		digest := sha256.Sum256([]byte(token))
+		if _, err := f.db.Exec("INSERT INTO nodes(id,name,status,token_hash,created_at) VALUES('probe','probe','unknown',?,?)", digest[:], timekey.Format(time.Now())); err != nil {
+			t.Fatal(err)
+		}
+		admission, err := f.h.ingest.AdmitToken(context.Background(), token)
+		if err != nil {
+			t.Fatal(err)
+		}
+
 		shutdown := make(chan error, 1)
 		go func() { shutdown <- f.h.Shutdown(context.Background()) }()
 		select {
@@ -223,7 +235,7 @@ func TestConsoleLiveShutdownInterruptsWriterAndJoinsProjection(t *testing.T) {
 			t.Fatalf("shutdown did not join projection: %v", err)
 		default:
 		}
-		if _, err := f.h.ingest.Accept(context.Background(), "unused", v1.Report{}); !errors.Is(err, ingest.ErrProtocolUnsupported) {
+		if _, err := f.h.ingest.AcceptAdmitted(context.Background(), admission, v1.Report{}); !errors.Is(err, ingest.ErrProtocolUnsupported) {
 			t.Fatalf("ingest drained early: %v", err)
 		}
 		release()

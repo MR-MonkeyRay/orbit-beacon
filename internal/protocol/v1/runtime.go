@@ -1,6 +1,9 @@
 package v1
 
-import "errors"
+import (
+	"encoding/json"
+	"errors"
+)
 
 // RuntimeSettings is the agent-owned collection and reporting configuration.
 // Defaults are applied only at the local configuration boundary, never to reports.
@@ -124,4 +127,13 @@ func (c RuntimeSettings) ValidateSelection() error {
 		return &ValidationError{Fields: fields}
 	}
 	return nil
+}
+
+// DecodeRuntimeSettings decodes and validates an observed runtime configuration.
+func DecodeRuntimeSettings(raw string) (RuntimeSettings, error) {
+	var runtime RuntimeSettings
+	if err := json.Unmarshal([]byte(raw), &runtime); err != nil {
+		return runtime, err
+	}
+	return runtime, runtime.Validate()
 }

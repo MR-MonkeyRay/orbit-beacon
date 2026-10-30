@@ -269,9 +269,6 @@ func mailMessage(cfg Config, p Payload, now time.Time) (string, error) {
 		}
 	}
 	subject := "OrbitBeacon alert notification"
-	if strings.ContainsAny(subject, "\r\n") {
-		return "", errSMTPProtocol
-	}
 	id, e := uuid.UUID(rand.Reader)
 	if e != nil {
 		return "", e

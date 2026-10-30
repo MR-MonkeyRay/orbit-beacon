@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -397,7 +398,7 @@ func TestNotifierIsBoundedAfterCommitAndStopsWithContext(t *testing.T) {
 	// A blocked notifier cannot hold the evaluator. Its queue stays bounded.
 	f.e.enqueue(Notification{})
 	f.e.enqueue(Notification{})
-	if f.e.NotificationsDropped() != 1 {
+	if f.e.dropped.Load() != 1 {
 		t.Fatal("queue not bounded")
 	}
 	cancel()
@@ -742,7 +743,14 @@ func TestRealIngestIdentityFence(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &report); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := real.Accept(context.Background(), f.node, report); err != nil {
+	token := strings.Repeat("A", 43)
+	credential := sha256.Sum256([]byte(token))
+	f.exec(t, "UPDATE nodes SET token_hash=? WHERE id=?", credential[:], f.node)
+	admission, err := real.AdmitToken(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := real.AcceptAdmitted(context.Background(), admission, report); err != nil {
 		t.Fatal(err)
 	}
 	// Rotating the credential fences the old in-memory metric before evaluation.

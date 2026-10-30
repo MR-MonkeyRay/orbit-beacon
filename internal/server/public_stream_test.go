@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/nodes"
 )
@@ -53,7 +54,14 @@ func (publicStreamConn) Prepare(string) (driver.Stmt, error) { return nil, drive
 func (publicStreamConn) Close() error                        { return nil }
 func (publicStreamConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
 
-func (c publicStreamConn) QueryContext(ctx context.Context, _ string, _ []driver.NamedValue) (driver.Rows, error) {
+func (c publicStreamConn) QueryContext(ctx context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	if strings.HasPrefix(query, "SELECT id, status, credential_epoch") {
+		return &streamAdmissionRows{}, nil
+	}
+	if query == "SELECT id FROM nodes" {
+		return &streamAdmissionRows{done: true}, nil
+	}
+
 	c.store.mu.Lock()
 	c.store.queries++
 	visible := c.store.visible
@@ -618,4 +626,27 @@ func TestPublicStreamRoutingValidationAndMetrics(t *testing.T) {
 	if !strings.Contains(logs.String(), `"route":"/api/public/v1/stream"`) || !strings.Contains(logs.String(), `"status":200`) {
 		t.Fatalf("stream access log = %s", logs.String())
 	}
+}
+
+type streamAdmissionRows struct{ done bool }
+
+func (*streamAdmissionRows) Columns() []string { return []string{"id", "status", "credential_epoch"} }
+func (*streamAdmissionRows) Close() error      { return nil }
+func (r *streamAdmissionRows) Next(dest []driver.Value) error {
+	if r.done {
+		return io.EOF
+	}
+	r.done = true
+	copy(dest, []driver.Value{"unused", "unknown", int64(0)})
+	return nil
+}
+
+func probeIngestLifecycle(t *testing.T, s *ingest.Service) error {
+	t.Helper()
+	admission, err := s.AdmitToken(context.Background(), strings.Repeat("A", 43))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.AcceptAdmitted(context.Background(), admission, v1.Report{})
+	return err
 }

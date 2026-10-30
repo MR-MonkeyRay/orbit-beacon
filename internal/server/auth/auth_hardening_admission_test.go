@@ -69,10 +69,10 @@ func TestLoginUsernameFailuresOnlyAndRejectedAdmissionDoesNotCharge(t *testing.T
 	name := sha256.Sum256([]byte("admin"))
 	key := loginIdentityKey{peer: loginRatePeer(ctx), name: name}
 	for range 20 {
-		if err := s.checkLoginUsername(ctx, "admin"); err != nil {
+		if err := s.checkLogin(ctx, "admin"); err != nil {
 			t.Fatalf("eligibility check charged failure budget: %v", err)
 		}
-		s.recordLoginFailure(ctx, "admin")
+		s.recordLoginFailure("admin")
 	}
 	if err := s.admitLogin(ctx, "admin"); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("exhausted username admitted: %v", err)
@@ -84,7 +84,7 @@ func TestLoginUsernameFailuresOnlyAndRejectedAdmissionDoesNotCharge(t *testing.T
 		t.Fatal("username rejection charged source budget")
 	}
 	now = now.Add(60 * time.Second)
-	if err := s.checkLoginUsername(ctx, "admin"); err != nil {
+	if err := s.checkLogin(ctx, "admin"); err != nil {
 		t.Fatalf("username failure budget did not refill: %v", err)
 	}
 }
@@ -96,19 +96,19 @@ func TestLoginUsernameTrustedSourceExemptionExpires(t *testing.T) {
 	attacker := WithLoginPeer(context.Background(), "[2001:db8:9:9::1]:1234")
 	s.recordLoginSuccess(trusted, "admin")
 	for range 20 {
-		s.recordLoginFailure(attacker, "admin")
+		s.recordLoginFailure("admin")
 	}
-	if err := s.checkLoginUsername(attacker, "admin"); !errors.Is(err, ErrRateLimited) {
+	if err := s.checkLogin(attacker, "admin"); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("untrusted source bypassed exhausted username: %v", err)
 	}
-	if err := s.checkLoginUsername(trusted, "admin"); err != nil {
+	if err := s.checkLogin(trusted, "admin"); err != nil {
 		t.Fatalf("trusted source was locked out: %v", err)
 	}
 	now = now.Add(24 * time.Hour)
 	for range 20 {
-		s.recordLoginFailure(attacker, "admin")
+		s.recordLoginFailure("admin")
 	}
-	if err := s.checkLoginUsername(trusted, "admin"); !errors.Is(err, ErrRateLimited) {
+	if err := s.checkLogin(trusted, "admin"); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("expired trusted source bypassed username limit: %v", err)
 	}
 }
@@ -117,10 +117,10 @@ func TestLoginSuccessResetsUsernameFailures(t *testing.T) {
 	s := NewService(nil, Options{})
 	ctx := WithLoginPeer(context.Background(), "192.0.2.1:1234")
 	for range 20 {
-		s.recordLoginFailure(ctx, "admin")
+		s.recordLoginFailure("admin")
 	}
 	s.recordLoginSuccess(ctx, "admin")
-	if err := s.checkLoginUsername(context.Background(), "admin"); err != nil {
+	if err := s.checkLogin(context.Background(), "admin"); err != nil {
 		t.Fatalf("success did not reset username failures: %v", err)
 	}
 	if len(s.loginFailures) != 0 {
@@ -133,9 +133,9 @@ func TestInvalidPeerNeverGetsTrustedExemption(t *testing.T) {
 	ctx := context.Background()
 	s.recordLoginSuccess(ctx, "admin")
 	for range 20 {
-		s.recordLoginFailure(ctx, "admin")
+		s.recordLoginFailure("admin")
 	}
-	if err := s.checkLoginUsername(ctx, "admin"); !errors.Is(err, ErrRateLimited) {
+	if err := s.checkLogin(ctx, "admin"); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("invalid peer gained trusted exemption: %v", err)
 	}
 	if len(s.loginSuccesses) != 0 {
@@ -148,7 +148,7 @@ func TestLoginAdmissionStateIsBounded(t *testing.T) {
 	s := NewService(nil, Options{Now: func() time.Time { return now }})
 	for i := range 1100 {
 		username := fmt.Sprintf("user-%d", i)
-		s.recordLoginFailure(context.Background(), username)
+		s.recordLoginFailure(username)
 		now = now.Add(time.Nanosecond)
 	}
 	if len(s.loginFailures) != 1024 {

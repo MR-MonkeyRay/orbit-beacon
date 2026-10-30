@@ -18,7 +18,7 @@ func TestRetainedLastSampleLifecycle(t *testing.T) {
 	*f.report.Metrics.UptimeSeconds = 3600
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
-	if _, err := f.service.Accept(ctx, f.id, f.report); err != nil {
+	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
 	received := f.now
@@ -35,7 +35,7 @@ func TestRetainedLastSampleLifecycle(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f.now = received.Add(test.delta)
-			node, err := f.service.PublicNode(ctx, f.id, f.now)
+			node, err := publicNode(ctx, f.nodes, f.service, f.id, f.now)
 			if err != nil || node.Status != test.status || node.CPUPercent == nil || *node.CPUPercent != 25 || node.UptimeSeconds == nil || *node.UptimeSeconds != 3600 {
 				t.Fatalf("retained node=%+v err=%v", node, err)
 			}
@@ -48,26 +48,26 @@ func TestRetainedLastSampleLifecycle(t *testing.T) {
 		})
 	}
 	// A new Server process retains the asset and durable liveness, not numbers.
-	durable, err := nodes.ReadPublicRecord(ctx, f.db, f.id)
-	if err != nil {
-		t.Fatal(err)
+	records, _, err := f.nodes.ListPublicRecords(ctx, 100, 0)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("durable page=%+v err=%v", records, err)
 	}
 	restarted := NewService(f.db, Options{Now: func() time.Time { return f.now }})
-	node, err := restarted.PublicNode(ctx, f.id, f.now)
+	node, err := publicNode(ctx, f.nodes, restarted, f.id, f.now)
 	if err != nil || node.Status != "offline" || node.Name != "Coalesce" || node.CPUPercent != nil || node.UptimeSeconds != nil {
 		t.Fatalf("restart node=%+v err=%v", node, err)
 	}
 	assertPublicStatuses(t, node, "unavailable", "unavailable", "unavailable", "unavailable")
-	assertPublicLastSeen(t, node, durable.LastSeen)
+	assertPublicLastSeen(t, node, records[0].LastSeen)
 	// Reconnection replaces the whole sample, without advancing uptime locally.
 	f.now = received.Add(181 * time.Second)
 	f.report.Seq++
 	*f.report.Metrics.CPUPercent = 50
 	*f.report.Metrics.UptimeSeconds = 7200
-	if _, err := f.service.Accept(ctx, f.id, f.report); err != nil {
+	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
-	node, err = f.service.PublicNode(ctx, f.id, f.now)
+	node, err = publicNode(ctx, f.nodes, f.service, f.id, f.now)
 	if err != nil || node.Status != "online" || node.CPUPercent == nil || *node.CPUPercent != 50 || node.UptimeSeconds == nil || *node.UptimeSeconds != 7200 {
 		t.Fatalf("reconnected node=%+v err=%v", node, err)
 	}
@@ -78,10 +78,10 @@ func TestRetainedLastSampleLifecycle(t *testing.T) {
 	f.report.Seq++
 	f.report.Metrics.MetricStatus["cpu_percent"] = "error"
 	f.report.Metrics.MetricStatus["uptime_seconds"] = "stale"
-	if _, err := f.service.Accept(ctx, f.id, f.report); err != nil {
+	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
-	node, err = f.service.PublicNode(ctx, f.id, f.now)
+	node, err = publicNode(ctx, f.nodes, f.service, f.id, f.now)
 	if err != nil || node.CPUPercent != nil || node.UptimeSeconds == nil || *node.UptimeSeconds != 7200 {
 		t.Fatalf("failed field reused old value=%+v err=%v", node, err)
 	}
@@ -89,10 +89,10 @@ func TestRetainedLastSampleLifecycle(t *testing.T) {
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
 	f.report.Metrics.UptimeSeconds = nil
-	if _, err := f.service.Accept(ctx, f.id, f.report); err != nil {
+	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
-	node, err = f.service.PublicNode(ctx, f.id, f.now)
+	node, err = publicNode(ctx, f.nodes, f.service, f.id, f.now)
 	if err != nil || node.UptimeSeconds != nil {
 		t.Fatalf("missing field reused old value=%+v err=%v", node, err)
 	}
@@ -129,7 +129,7 @@ func TestRetainedPublicSnapshotStillHonorsIdentityAndVisibility(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			node, err := f.service.PublicNode(ctx, f.id, f.now)
+			node, err := publicNode(ctx, f.nodes, f.service, f.id, f.now)
 			if mutation == "withdraw" || mutation == "disable" || mutation == "delete" || mutation == "revoke" {
 				if !errors.Is(err, nodes.ErrNotFound) {
 					t.Fatalf("excluded node=%+v err=%v", node, err)
@@ -157,7 +157,7 @@ func TestPublicRetentionNeverBackfillsHistory(t *testing.T) {
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
 	f.report.Metrics.MetricStatus["cpu_percent"] = "stale"
-	if _, err := f.service.Accept(ctx, f.id, f.report); err != nil {
+	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
 	sample := <-samples
@@ -165,7 +165,7 @@ func TestPublicRetentionNeverBackfillsHistory(t *testing.T) {
 		t.Fatal("reported stale CPU entered history")
 	}
 	for _, elapsed := range []time.Duration{0, 45*time.Second + time.Millisecond, 181 * time.Second} {
-		node, err := f.service.PublicNode(ctx, f.id, f.now.Add(elapsed))
+		node, err := publicNode(ctx, f.nodes, f.service, f.id, f.now.Add(elapsed))
 		if err != nil || node.CPUPercent == nil || *node.CPUPercent != 10 {
 			t.Fatalf("retained stale CPU=%+v err=%v", node, err)
 		}

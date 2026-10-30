@@ -58,7 +58,7 @@ func TestReportCoalescingFastPathAdvancesLatestAndPublicLiveness(t *testing.T) {
 	// Public liveness must follow the in-memory receive time even when the
 	// durable last_seen is older than the public offline threshold.
 	f.now = f.now.Add(180 * time.Second)
-	public, err := f.ingest.PublicNode(context.Background(), id, f.now)
+	public, err := publicNode(context.Background(), f.nodes, f.ingest, id, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}

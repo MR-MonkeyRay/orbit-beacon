@@ -124,3 +124,22 @@ func TestMaximumAdmittedRuntimeReportFitsWireLimit(t *testing.T) {
 		t.Fatalf("admitted runtime generated %d-byte report", len(encoded))
 	}
 }
+
+func TestDecodeRuntimeSettingsPreservesSelectionShape(t *testing.T) {
+	for _, selection := range []string{"[]", "null"} {
+		raw := fmt.Sprintf(`{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":%s,"disk_paths":%s,"probe_targets":%s}`, selection, selection, selection)
+		runtime, err := v1.DecodeRuntimeSettings(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantNil := selection == "null"
+		if (runtime.Interfaces == nil) != wantNil || (runtime.DiskPaths == nil) != wantNil || (runtime.ProbeTargets == nil) != wantNil {
+			t.Fatalf("selection=%s runtime=%+v", selection, runtime)
+		}
+	}
+	for _, raw := range []string{"", "null", "{", `{"report_interval_seconds":1,"disk_interval_seconds":60}`} {
+		if _, err := v1.DecodeRuntimeSettings(raw); err == nil {
+			t.Fatalf("accepted invalid runtime %q", raw)
+		}
+	}
+}
