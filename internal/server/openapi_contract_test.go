@@ -153,31 +153,6 @@ func TestOpenAPIOperationsMatchRouteTable(t *testing.T) {
 	}
 }
 
-func TestOpenAPIVersionMatchesReleaseVersion(t *testing.T) {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	root := filepath.Join(filepath.Dir(filename), "../..")
-	data, err := os.ReadFile(filepath.Join(root, "api/openapi.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var document struct {
-		Info struct{ Version string } `yaml:"info"`
-	}
-	if err := yaml.Unmarshal(data, &document); err != nil {
-		t.Fatal(err)
-	}
-	release, err := os.ReadFile(filepath.Join(root, "VERSION"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := strings.TrimSpace(string(release)); document.Info.Version != want {
-		t.Fatalf("OpenAPI info.version = %q, want VERSION %q", document.Info.Version, want)
-	}
-}
-
 func TestOpenAPIParserHandlesQuotedPathsCommentsFlowAndExtensions(t *testing.T) {
 	operations := parseOpenAPIPathOperations(t, []byte(`
 openapi: 3.1.0

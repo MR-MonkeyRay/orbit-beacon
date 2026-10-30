@@ -1,15 +1,14 @@
 openapi: 3.1.0
 info:
   title: OrbitBeacon Server and Agent API
-  version: 0.2.2
+  version: 0.3.0
   description: |
-    服务器提供 Agent 注册与上报、指标历史、告警和通知、加密导出及备份 API。
-    管理接口、Agent 接口与匿名接口使用各自的认证边界，详见各端点说明。
-    JSON 请求限单个对象、64 KiB。字符串限制按 UTF-8 字节计算；
-    x-minLengthBytes / x-maxLengthBytes 是扩展，客户端验证器须显式支持，服务器校验为准。
-    [状态、实时传输与安全边界](../docs/architecture.md)；
-    [部署、配置与恢复](../deploy/README.md)；
-    [Agent 操作](../docs/agent.md)；[术语与日志约定](../docs/conventions.md)。
+    定义管理、Agent 与匿名 API 的字段、认证和错误码；各端点说明各自的访问要求。
+    info.version 是接口契约版本，独立于程序发布版本，仅随契约变更更新；说明文字修订不升版。
+    JSON 请求限单个对象、64 KiB；字符串长度按 UTF-8 字节计算。
+    x-minLengthBytes / x-maxLengthBytes 为扩展，客户端须显式支持，服务端仍执行校验。
+    使用与安全边界见[架构](../docs/architecture.md)、[部署](../deploy/README.md)、
+    [Agent](../docs/agent.md)及[术语与约定](../docs/conventions.md)。
   license:
     name: GNU General Public License v3.0
     identifier: GPL-3.0

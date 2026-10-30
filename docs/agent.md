@@ -181,7 +181,7 @@ Ctrl+C 或 SIGTERM 停止。额外的 Agent JSON 配置非必需。若需要 sys
 
 ## API 签发
 
-- 在可信管理机登录，取得会话与 CSRF，按 [OpenAPI](../api/openapi.yaml) 调用 `POST /api/v1/enrollments`。
+- 在可信管理机登录，取得会话与 CSRF，按[接口契约（OpenAPI）](../api/openapi.yaml) 调用 `POST /api/v1/enrollments`。
 - 单节点请求为 `{"node_id":"节点 UUID","mode":"single"}`；批量为 `{"group_id":"分组 UUID","mode":"batch"}`，不能同时提供两个 ID。
 - `token` 字段通过安全通道传给安装步骤；妥善清理临时 Cookie 与票据副本，结束后注销会话。Origin 规则见[配置参考](../deploy/README.md#配置参考)。
 
@@ -205,4 +205,4 @@ Ctrl+C 或 SIGTERM 停止。额外的 Agent JSON 配置非必需。若需要 sys
 
 HTTP 探测不使用 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`，不能依赖代理做出口限制。Linux ICMP 要求 Agent 的组 ID 位于 `net.ipv4.ping_group_range`；用 `sysctl net.ipv4.ping_group_range` 检查，按主机或容器策略配置允许范围。权限不足报告 `unsupported`，不会提权，也不需要 `CAP_NET_RAW`。
 
-更多字段和错误码见 [OpenAPI](../api/openapi.yaml)。
+字段与错误码见[接口契约（OpenAPI）](../api/openapi.yaml)。

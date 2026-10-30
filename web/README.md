@@ -44,4 +44,4 @@ npm test
 - 取消导航、隐藏或退出时停止请求与计时器；阻止迟到响应回写。通知摘要共用单个 controller，失败保留旧数并标记已过期。
 - 保留页签哈希与详情直达：任务 `/settings?task=<uuid>#data`，告警 `/alerts?event=<uuid>#history`；详情不依赖列表当前页。
 - 下载用普通同源附件链接。恢复密码仅主动请求，30 秒无交互遮罩，关闭或导航时清除，不放入列表、日志或初始 HTML；归档操作见[部署指南](../deploy/README.md#导出与备份)。
-- API 字段、错误码及传输结构以 [OpenAPI](../api/openapi.yaml) 为准，不在本文件重复协议规格。
+- 字段、认证、错误码与实时帧格式见[接口契约（OpenAPI）](../api/openapi.yaml)，此处不重复。

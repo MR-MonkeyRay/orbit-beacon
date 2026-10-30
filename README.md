@@ -72,11 +72,13 @@ build/orbitbeacon-server health --url http://localhost:8080
 - [数据流、状态、保留与安全边界](docs/architecture.md)
 - [Web 开发](web/README.md)
 - [术语、日志与文案约定](docs/conventions.md)
-- [HTTP API](api/openapi.yaml)
+- [接口契约（OpenAPI）](api/openapi.yaml)
 
 ## 开发与发布
 
 入口在 [`cmd/`](cmd/)，实现在 [`internal/`](internal/)；界面修改与产物同步见 [Web 开发](web/README.md)。
+
+接口字段、认证与错误码见[接口契约（OpenAPI）](api/openapi.yaml)。`info.version` 仅随接口契约变更更新，独立于程序发布版本 `VERSION`；仅修改说明文字不升版。
 
 ```sh
 go mod verify
