@@ -360,7 +360,7 @@ unit_tmp=$(mktemp "$unit_dir/.orbitbeacon-agent.XXXXXXXX")
 # Keep this embedded unit exactly in sync with deploy/systemd/orbitbeacon-agent.service.
 cat > "$unit_tmp" <<'UNIT'
 [Unit]
-Description=OrbitBeacon monitoring agent
+Description=OrbitBeacon Agent
 After=network-online.target
 Wants=network-online.target
 

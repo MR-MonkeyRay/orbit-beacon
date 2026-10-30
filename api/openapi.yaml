@@ -1,86 +1,15 @@
 openapi: 3.1.0
 info:
-  title: OrbitBeacon control plane and agent protocol
-  version: 0.1.0
+  title: OrbitBeacon Server and Agent API
+  version: 0.2.2
   description: |
-    The control plane supports enrollment, agent telemetry, metric history,
-    alert rules, encrypted notification channels, encrypted data exports, backup
-    plans and a shared notification inbox. Agent upgrades are not available.
-    Browser reads require a session unless explicitly marked otherwise; agent
-    routes use separate Bearer credentials and never accept browser sessions.
-    Every console account is an equal administrator, but must_change_password=true
-    restricts an established session to GET /api/v1/me, PATCH /api/v1/me/password
-    and DELETE /api/v1/session. Every other recognized management endpoint,
-    including reads, backup downloads/passwords, notifications and HTTP/SSE/WS
-    live transports, returns 403 password_change_required before business data.
-    Public and Agent routes are unaffected. All browser mutations require the
-    configured HTTP/HTTPS Origin and a session-bound CSRF token; login requires
-    Origin. These checks also apply to allowed restricted-session mutations.
-    Backup plans, tasks, downloads, recovery passwords and shared task/alert
-    notifications require an unrestricted administrator session. Notification
-    read state is independent for each account.
-    Canonical origins lowercase DNS names, normalize IPv6 and omit default ports
-    (80 for HTTP, 443 for HTTPS); request Host and forwarded headers do not establish
-    Origin trust. Real IP/domain deployments must explicitly configure public_url
-    to match the browser's origin exactly, including nondefault ports. public_url
-    accepts absolute HTTP/HTTPS URLs without credentials, query or fragment. Paths
-    do not participate in Origin comparison or enable subpath deployment; Agent
-    and health client server URLs must be root URLs. Client IP
-    policies use X-Forwarded-For only when the direct peer matches trusted_proxies
-    (default empty), scanning right to left past trusted hops. Missing, malformed
-    or all-trusted chains fall back to the direct peer. X-Forwarded-Proto is ignored.
-    JSON requests must contain one object and are limited to 64 KiB. Telemetry
-    reports discard unknown fields, including unknown metric/status/source keys;
-    known fields and unmatched disk/network metadata remain validated. Enrollment,
-    recovery and management writes reject unknown fields. String limits enforced
-    by the server are UTF-8 byte limits.
-    Byte-constrained strings use x-minLengthBytes/x-maxLengthBytes, not JSON Schema
-    character-count bounds. Validators must opt into these extensions; the Server
-    remains authoritative. For example, four CJK characters can satisfy an
-    eight-byte password minimum.
-    Unsupported methods return 405 with Allow before authentication is checked;
-    unknown API routes return structured 404, never the UI shell.
-    State changes and actor-attributed audit insertion share one transaction;
-    failed audit insertion rolls back the change. Batch nodes use one transaction
-    per node and report individual failures rather than committing unaudited changes.
-    Sessions expire after 12 hours. Successful login and an hourly retention task
-    perform bounded expired-session cleanup; other requests, including anonymous
-    public reads, never trigger cleanup. Login (session.create) and logout
-    (session.delete) are audited; agent enrollment claims are audited without an
-    actor_id and with details.actor_kind "agent". Empty-user startup initializes
-    one administrator using orbitbeacon/orbitbeacon or the independently optional
-    ORBITBEACON_ADMIN_USERNAME and ORBITBEACON_ADMIN_PASSWORD environment variables;
-    explicit empty values are invalid, and existing-user databases ignore them.
-    Initialized accounts always require a password change, including custom
-    environment credentials. New administrators may optionally require one.
-    Password changes atomically clear must_change_password and revoke every
-    session of the affected user. Success is 204 without Set-Cookie or a new
-    session; log in again. Renaming an account preserves its sessions.
-    HTML responses use a self-only CSP with per-file SHA-256 hashes for inline
-    scripts, data images, no inline styles, no objects or base URI, same-origin
-    forms, frame-ancestors 'none' and X-Frame-Options DENY. The Server serves only
-    HTTP, defaulting to 127.0.0.1:8080 with public_url http://localhost:8080.
-    External proxies provide HTTPS with normally trusted CA certificates and set
-    HSTS; the Server does not generate or load inbound TLS certificates. HTTP is
-    unencrypted; use externally terminated HTTPS for public deployments. Agent
-    clients accept HTTP/HTTPS; HTTP cannot be combined with a custom CA file.
-    The data directory must be effective-user-owned and private (0700); SQLite,
-    its sidecars and secrets.key must be owned regular 0600 files, never symlinks.
-    Linux validates that the backing mount is local and writable.
-    The main database and archives require schema 21 exactly; previous schemas,
-    including schema 20, are rejected without migration or automatic removal of
-    existing files. Configuration archives preserve each user's password-change
-    requirement as integer 0/1, but configuration restore never imports sessions.
-    They whitelist only settings.public_page_enabled with text true/false; missing
-    is valid and defaults to enabled. Configuration restore replaces this setting,
-    while Monitoring/Events-only restore preserves the current value.
-    The global public page is enabled by default. GET/HEAD / and /public.html
-    serve public HTML to every session while enabled; while disabled they redirect
-    anonymous/invalid sessions to /login, normal sessions to /overview and restricted
-    sessions to /change-password. These responses are no-store and the gate runs
-    before conditional/ETag handling. Static assets remain accessible. Disabling
-    stops every anonymous data endpoint and existing public streams independently
-    of cookies; management/Agent authorization and per-node publication are unchanged.
+    服务器提供 Agent 注册与上报、指标历史、告警和通知、加密导出及备份 API。
+    管理接口、Agent 接口与匿名接口使用各自的认证边界，详见各端点说明。
+    JSON 请求限单个对象、64 KiB。字符串限制按 UTF-8 字节计算；
+    x-minLengthBytes / x-maxLengthBytes 是扩展，客户端验证器须显式支持，服务器校验为准。
+    [状态、实时传输与安全边界](../docs/architecture.md)；
+    [部署、配置与恢复](../deploy/README.md)；
+    [Agent 操作](../docs/agent.md)；[术语与日志约定](../docs/conventions.md)。
   license:
     name: GNU General Public License v3.0
     identifier: GPL-3.0
