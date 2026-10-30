@@ -51,6 +51,17 @@ test('translation interpolates named values as plain text and selects English pl
   } finally { if (originalStorage) Object.defineProperty(globalThis, 'localStorage', originalStorage); else delete globalThis.localStorage; }
 });
 
+test('display lists follow the active locale', () => {
+  const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  let preference = 'en';
+  Object.defineProperty(globalThis, 'localStorage', {configurable: true, value: {getItem: () => preference, setItem(_key, value) { preference = value; }}});
+  try {
+    assert.equal(i18n.formatList(['one', 'two', 'three']), 'one, two, and three');
+    i18n.setLocalePreference('zh-CN');
+    assert.equal(i18n.formatList(['一', '二', '三']), '一、二和三');
+  } finally { if (originalStorage) Object.defineProperty(globalThis, 'localStorage', originalStorage); else delete globalThis.localStorage; }
+});
+
 test('an active document retains one locale until its explicit change and reload', () => {
   const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');

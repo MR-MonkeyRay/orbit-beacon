@@ -2,7 +2,7 @@
 .history-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit,minmax(min(100%,420px),1fr));
-  gap: 24px 20px;
+  gap: var(--sp-5) 20px;
   margin-top: 18px;
 }
 
@@ -17,7 +17,7 @@
 }
 
 .history-metric>.muted {
-  padding: 24px 0;
+  padding: var(--sp-5) 0;
 }
 
 .history-error {
@@ -31,7 +31,7 @@
 .chart-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 16px;
+  gap: 6px var(--sp-4);
   font-size: var(--fs-xs);
   color: var(--ink-2);
   margin-bottom: 6px;
@@ -136,7 +136,7 @@
   z-index: 2;
   width: max-content;
   max-width: min(280px,calc(100% - 8px));
-  padding: 8px 10px;
+  padding: var(--sp-2) 10px;
   border: 1px solid var(--line-2);
   border-radius: var(--r-sm);
   background: var(--panel);
@@ -153,5 +153,5 @@
   color: var(--ink-2);
   font-size: var(--fs-2xs);
   font-weight: 550;
-  margin-bottom: 3px;
+  margin-bottom: var(--sp-1);
 }

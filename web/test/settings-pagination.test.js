@@ -373,14 +373,14 @@ test('public-page settings confirm disabling, block duplicate writes, and restor
     cancel.click(); await flush();
     assert.equal(control.checked, true); assert.equal(writes.length, 0);
     toggle(); await flush();
-    elements(dom.body.querySelector('dialog')).find((element) => element.tagName === 'button' && element.textContent === 'Disable public page').click();
+    elements(dom.body.querySelector('dialog')).find((element) => element.tagName === 'button' && element.textContent === 'Disable status page').click();
     await flush();
     assert.equal(control.disabled, true); assert.deepEqual(writes, [{enabled: false}]);
     resolveWrite(new Response(JSON.stringify({code: 'internal_error', message: 'Could not save setting.'}), {status: 500}));
     await flush();
     assert.equal(control.checked, true); assert.equal(control.disabled, false);
     toggle(); await flush();
-    elements(dom.body.querySelector('dialog')).find((element) => element.tagName === 'button' && element.textContent === 'Disable public page').click();
+    elements(dom.body.querySelector('dialog')).find((element) => element.tagName === 'button' && element.textContent === 'Disable status page').click();
     await flush(); resolveWrite(new Response(JSON.stringify({enabled: false}))); await flush();
     assert.equal(control.checked, false);
     toggle(); await flush();

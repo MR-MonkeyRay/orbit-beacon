@@ -35,7 +35,7 @@ test('one HTML translation pass handles text, ARIA labels, and meta content in b
       assert.equal(meta.attributes.get('content'), description);
     }
     assert.equal(statusLabels().unknown, '未知');
-    assert.equal(statusLabels({unknown: 'public.status.unknown'}).unknown, '状态未知');
+    assert.equal(statusLabels({unknown: 'public.status.unknown'}).unknown, '未知');
   } finally {
     if (previous) Object.defineProperty(globalThis, 'localStorage', previous);
     else delete globalThis.localStorage;

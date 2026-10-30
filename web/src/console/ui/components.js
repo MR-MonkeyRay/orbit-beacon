@@ -57,11 +57,15 @@ export function patchStatusBadge(element, status) {
 export function liveStatus() {
   const element = h('span', {class: 'live-status', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true'}, t('controls.live.connecting'));
   let previous = 'connecting';
+  let wasLive = false;
   return {element, update({state}) {
     if (state === previous) return;
     previous = state;
+    if (state === 'live') wasLive = true;
     element.dataset.state = state;
-    element.textContent = t(state === 'live' ? 'controls.live.live' : state === 'connecting' ? 'controls.live.connecting' : 'controls.live.stale');
+    element.textContent = t(state === 'live' ? 'controls.live.live'
+      : state === 'connecting' && wasLive ? 'controls.live.reconnecting'
+        : state === 'connecting' ? 'controls.live.connecting' : 'controls.live.stale');
   }};
 }
 

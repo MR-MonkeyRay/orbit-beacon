@@ -55,6 +55,24 @@ test('status badge creation and patching use the same labels', async () => {
   } finally { dom.restore(); }
 });
 
+test('live status distinguishes an initial connection from reconnection after live data', async () => {
+  const dom = installDOM();
+  try {
+    const {liveStatus} = await import('../src/console/ui/components.js');
+    const status = liveStatus();
+    assert.equal(status.element.textContent, 'Connecting…');
+    status.update({state: 'stale'});
+    status.update({state: 'connecting'});
+    assert.equal(status.element.textContent, 'Connecting…');
+    status.update({state: 'live'});
+    assert.equal(status.element.textContent, 'Live');
+    status.update({state: 'stale'});
+    assert.equal(status.element.textContent, 'Stale');
+    status.update({state: 'connecting'});
+    assert.equal(status.element.textContent, 'Reconnecting…');
+  } finally { dom.restore(); }
+});
+
 test('data table preserves wrapper properties, class, colgroup and table structure', async () => {
   const dom = installDOM();
   try {

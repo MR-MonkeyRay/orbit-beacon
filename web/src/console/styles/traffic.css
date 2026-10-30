@@ -5,20 +5,20 @@
 
 .traffic-content {
   display: grid;
-  gap: 24px;
+  gap: var(--sp-5);
 }
 
 .traffic-content h3 {
   font-size: var(--fs-md);
   font-weight: 650;
-  margin-bottom: 8px;
+  margin-bottom: var(--sp-2);
 }
 
 .traffic-cycle .facts {
   display: grid;
   grid-template-columns: repeat(3,minmax(0,1fr));
-  gap: 12px;
-  margin-top: 12px;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
 }
 
 .traffic-cycle .facts>div {
@@ -29,7 +29,7 @@
 }
 
 .traffic-cycle .facts dd {
-  margin-top: 4px;
+  margin-top: var(--sp-1);
   overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
 }

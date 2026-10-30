@@ -1,4 +1,5 @@
 export default {
+  'controls.live.reconnecting': 'Reconnecting…',
   'controls.language': 'Language',
   'controls.language.preference': 'Language: {preference}',
   'controls.followSystem': 'Follow system',
@@ -30,7 +31,7 @@ export default {
   'controls.confirmation.type': 'Type {expected} to confirm',
   'controls.notification.dismiss': 'Dismiss notification',
   'controls.deleted': 'Deleted',
-  'controls.live.connecting': 'Reconnecting…',
+  'controls.live.connecting': 'Connecting…',
   'controls.live.live': 'Live',
   'controls.live.stale': 'Stale',
   'controls.notSet': 'Not set',

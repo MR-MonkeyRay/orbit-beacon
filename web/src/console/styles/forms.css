@@ -1,7 +1,7 @@
 /* Forms */
 .form {
   display: grid;
-  gap: 16px;
+  gap: var(--sp-4);
   max-width: 560px;
 }
 
@@ -12,7 +12,7 @@
 .form-row {
   display: grid;
   grid-template-columns: repeat(auto-fit,minmax(min(100%,200px),1fr));
-  gap: 16px;
+  gap: var(--sp-4);
 }
 
 .field {
@@ -41,7 +41,7 @@
 .input {
   width: 100%;
   min-height: var(--control-h);
-  padding: 8px 12px;
+  padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--line-2);
   border-radius: var(--r-md);
   background: var(--panel-2);
@@ -110,7 +110,7 @@ select.input {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  padding-top: 4px;
+  padding-top: var(--sp-1);
 }
 
 .dirty-note {
@@ -127,7 +127,7 @@ select.input {
 .switch {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--sp-3);
   cursor: pointer;
 }
 
@@ -156,7 +156,7 @@ select.input {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--control-knob);
   box-shadow: 0 1px 3px rgba(0,0,0,.25);
   transition: transform .25s var(--ease);
 }
@@ -186,8 +186,8 @@ select.input {
 
 .callout {
   display: flex;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 14px;
   border-radius: var(--r-md);
   background: var(--warn-bg);
   color: var(--ink);
@@ -214,7 +214,7 @@ select.input {
   align-items: center;
   gap: 6px;
   min-height: var(--control-h-lg);
-  padding: 6px 8px;
+  padding: 6px var(--sp-2);
   border: 1px solid var(--line-2);
   border-radius: var(--r-md);
   background: var(--panel-2);
@@ -233,16 +233,16 @@ select.input {
   min-width: 120px;
   border: 0;
   background: transparent;
-  padding: 4px;
+  padding: var(--sp-1);
   outline: none;
 }
 
 .tag {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-1);
   max-width: 100%;
-  padding: 3px 4px 3px 10px;
+  padding: var(--sp-1) var(--sp-1) var(--sp-1) 10px;
   border-radius: 999px;
   background: var(--orbit-soft);
   color: var(--ink);

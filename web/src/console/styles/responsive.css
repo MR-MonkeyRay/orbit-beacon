@@ -53,13 +53,13 @@
   }
 
   .sidebar {
-    padding: 16px 10px;
+    padding: var(--sp-4) 10px;
     overflow: visible;
   }
 
   .sidebar .brand {
     justify-content: center;
-    padding: 4px 0 18px;
+    padding: var(--sp-1) 0 18px;
   }
 
   .nav a,.nav-public,.nav .notification-entry {
@@ -82,7 +82,7 @@
     left: calc(100% + 12px);
     top: 50%;
     z-index: var(--z-toast);
-    padding: 5px 10px;
+    padding: var(--sp-1) 10px;
     border-radius: var(--r-sm);
     background: var(--ink);
     color: var(--bg);
@@ -123,7 +123,7 @@
     right: 4px;
     min-width: 18px;
     margin: 0;
-    padding: 0 5px;
+    padding: 0 var(--sp-1);
     font-size: var(--fs-2xs);
     line-height: 16px;
   }
@@ -134,7 +134,7 @@
 
   .account {
     justify-items: center;
-    padding: 12px 0 4px;
+    padding: var(--sp-3) 0 var(--sp-1);
   }
 
   .account .who-text {
@@ -147,7 +147,7 @@
   }
 
   .account-locale select {
-    padding-inline: 3px;
+    padding-inline: var(--sp-1);
     font-size: var(--fs-2xs);
   }
 
@@ -166,7 +166,7 @@
 
 @media (max-width:1023px) {
   .main {
-    padding: 26px 24px 56px;
+    padding: 26px var(--sp-5) 56px;
   }
 
   .hide-compact {

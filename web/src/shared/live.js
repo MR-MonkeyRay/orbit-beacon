@@ -27,7 +27,6 @@ export function connectLive({urls, signal, credentials = 'same-origin', validate
   let channel;
   let closed = false;
   let pageHidden = false;
-  let hasSnapshot = false;
   let intervalSeconds = DEFAULT_INTERVAL_SECONDS;
   let previousState;
   let httpNotBefore = 0;
@@ -142,7 +141,6 @@ export function connectLive({urls, signal, credentials = 'same-origin', validate
     if (frame.type === 'close') { control(active, frame.code); return false; }
     if (frame.type === 'snapshot') {
       active.received = true;
-      hasSnapshot = true;
       clear(active.first);
       if (active.transport !== 'http') watchdog(active);
       onSnapshot(frame.data, frame);
@@ -251,7 +249,7 @@ export function connectLive({urls, signal, credentials = 'same-origin', validate
     stop();
     if (!available()) return;
     const active = channel = {generation, transport, controller: new AbortController(), opened: false, received: false};
-    state(hasSnapshot || previousState?.state === 'stale' ? 'stale' : 'connecting', transport, null, true);
+    state('connecting', transport, null, true);
     if (!current(active)) return;
     if (transport !== 'ws') later(() => { if (current(active)) start('ws'); }, PREFER_WS_MS);
     if (transport === 'http') poll(active);

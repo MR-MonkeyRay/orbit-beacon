@@ -7,7 +7,7 @@ export default {
   'notifications.notificationStale': 'Notifications could not be refreshed. Previously loaded information may be out of date.',
   'notifications.stale': 'Stale',
   'notifications.alert': 'Alert',
-  'notifications.unknownState': 'Unknown state',
+  'notifications.unknownState': 'Unknown',
   'notifications.received': 'Received',
   'notifications.status': 'Status',
   'notifications.rule': 'Rule',
@@ -26,6 +26,8 @@ export default {
   'notifications.failureCode': 'Failure code',
   'notifications.warningCode': 'Warning code',
   'notifications.notificationSnapshot': 'Notification snapshot',
+  'notifications.alertSummary': '{source} · {state}',
+  'notifications.taskSummary': '{source} · {state}',
   'notifications.storageUnknown': 'The storage outcome is unknown. A file or object may have been saved; this is not a confirmed success.',
   'notifications.retentionWarning': 'The backup succeeded, but older local archives could not all be removed.',
   'notifications.all': 'All',
@@ -48,9 +50,9 @@ export default {
   'notifications.viewAlert': 'View alert',
   'notifications.currentTask': 'Current task',
   'notifications.alertDetails': 'Alert details',
-  'notifications.sourceLoadFailed': 'Current source details could not be loaded. The notification snapshot above remains available. Reopen the notification to try again. {error}',
+  'notifications.sourceLoadFailed': 'Could not load current details. The notification snapshot remains available; reopen it to retry. {error}',
   'notifications.notificationMissing': 'Notification not found. It may have expired.',
   'notifications.notificationLoadFailed': 'Could not load this notification. Its read status was not changed. Go back and try again. {error}',
-  'notifications.taskUnavailable': 'Task details are no longer available. The notification snapshot above is retained.',
-  'notifications.alertUnavailable': 'Alert details are no longer available. The notification snapshot above is retained.'
+  'notifications.taskUnavailable': 'Task details are unavailable. The notification snapshot is retained.',
+  'notifications.alertUnavailable': 'Alert details are unavailable. The notification snapshot is retained.'
 };

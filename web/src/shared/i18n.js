@@ -8,6 +8,7 @@ let cachedNavigator;
 let cachedLocale;
 let catalogs = {en, 'zh-CN': zhCN};
 const plurals = new Map();
+const listFormats = new Map();
 
 // The public entry uses the small synchronous catalogs above. The console
 // installs its full catalogs before any console labels or formatters are built.
@@ -56,7 +57,17 @@ export function setLocalePreference(preference) {
   cachedLocale = undefined;
 }
 
-export function t(key, params = {}) {
+export function formatList(values = []) {
+  const locale = getLocale();
+  let formatter = listFormats.get(locale);
+  if (!formatter) {
+    formatter = new Intl.ListFormat(locale);
+    listFormats.set(locale, formatter);
+  }
+  return formatter.format(values.map(String));
+}
+
+function message(key, params) {
   const locale = getLocale();
   let value = catalogs[locale][key];
   if (value === undefined) throw new Error(`Unknown translation key: ${key}`);
@@ -67,8 +78,19 @@ export function t(key, params = {}) {
     value = value[rules.select(Number.isFinite(count) ? count : 0)] ?? value.other;
   }
   if (typeof value !== 'string') throw new Error(`Invalid translation value: ${key}`);
-  return value.replace(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, (_match, name) => {
+  return value;
+}
+
+function interpolate(key, params, value) {
+  return message(key, params).split(/(\{[A-Za-z][A-Za-z0-9_]*\})/).filter(Boolean).map((part) => {
+    if (!/^\{[A-Za-z][A-Za-z0-9_]*\}$/.test(part)) return part;
+    const name = part.slice(1, -1);
     if (!Object.hasOwn(params, name)) throw new Error(`Missing translation parameter ${name} for ${key}`);
-    return String(params[name]);
+    return value(params[name]);
   });
 }
+
+export function t(key, params = {}) { return interpolate(key, params, String).join(''); }
+
+// Preserve links and live time elements while translations control word order.
+export function tParts(key, params = {}) { return interpolate(key, params, (value) => value); }

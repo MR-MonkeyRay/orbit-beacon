@@ -1,5 +1,5 @@
 import {h} from '../../shared/dom.js';
-import {t, getLocale} from '../i18n.js';
+import {t, tParts, getLocale} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {api, getNavigationSignal} from '../api.js';
 import {when} from '../format.js';
@@ -14,7 +14,8 @@ import {categoryNames, knownTaskState, taskState} from '../lib/task-labels.js';
 import {showTask} from './backup-task.js';
 
 const PHASES = {snapshot: 'data.phase.snapshot', packaging: 'data.phase.packaging', storing: 'data.phase.storing'};
-const stateLabel = (task) => `${taskState(task)}${task.state === 'running' && PHASES[task.phase] ? ` · ${t(PHASES[task.phase])}` : ''}`;
+const stateLabel = (task) => task.state === 'running' && PHASES[task.phase]
+  ? t('data.task.statePhase', {state: taskState(task), phase: t(PHASES[task.phase])}) : taskState(task);
 const taskStatus = (task) => h('span', {class: `data-state data-state-${knownTaskState(task.state) ? task.state : 'unknown'}`}, stateLabel(task));
 
 function planLocation(plan) {
@@ -48,7 +49,7 @@ function planCard(plan, {openTask, editPlan, deletePlan}) {
       h('div', null, h('dt', null, t('data.plan.nextRun')), h('dd', null, plan.enabled && next ? localRun(next) : t('data.plan.notScheduled'))),
       h('div', null, h('dt', null, t('data.categories')), h('dd', null, categoryNames(plan.categories))),
       h('div', null, h('dt', null, t('data.plan.retention')), h('dd', null, plan.kind === 'local' ? t('data.plan.retainArchives', {count: plan.retain_count, value: new Intl.NumberFormat(getLocale()).format(plan.retain_count)}) : t('data.plan.cloudRetention'))),
-      h('div', null, h('dt', null, t('data.plan.lastTask')), h('dd', null, last ? h('span', null, taskStatus(last), ' ', when(last.created_at), last.warning_code ? t('data.task.warningSuffix') : '') : t('data.plan.noTask')))),
+      h('div', null, h('dt', null, t('data.plan.lastTask')), h('dd', null, last ? h('span', null, tParts(last.warning_code ? 'data.plan.lastTaskWarning' : 'data.plan.lastTaskSummary', {state: taskStatus(last), time: when(last.created_at)})) : t('data.plan.noTask')))),
     h('div', {class: 'data-actions'},
       button(t('data.plan.edit'), {onClick: () => editPlan(plan)}),
       button(t('data.plan.delete'), {variant: 'danger', onClick: () => deletePlan(plan)}),

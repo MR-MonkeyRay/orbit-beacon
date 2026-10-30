@@ -13,9 +13,9 @@ const ERRORS = {
   unsupported: t('nodes.probe.unsupported'), error: t('nodes.probe.error')
 };
 
-export function probeErrorText(error, statusCode) {
+export function probeErrorText(error) {
   if (!error) return '';
-  if (error === 'http_status') return Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599 ? `HTTP ${statusCode}` : t('nodes.probe.http');
+  if (error === 'http_status') return t('nodes.probe.http');
   return ERRORS[error] || t('nodes.probe.error');
 }
 
@@ -36,7 +36,7 @@ function probeContent(probes) {
   return h('div', {class: 'stack'},
     h('ul', {class: 'probe-list'}, probes.map((probe) => {
       const status = {up: ['online', t('nodes.probe.up')], down: ['offline', t('nodes.probe.down')], pending: ['pending', t('common.status.pending')]}[probe.status] || ['pending', t('common.status.pending')];
-      const error = probeErrorText(probe.error, probe.status_code);
+      const error = probeErrorText(probe.error);
       return h('li', {class: 'probe-row'},
         h('div', {class: 'probe-heading'}, h('span', {class: `badge ${status[0]}`}, status[1]),
           h('code', {class: 'probe-target mono'}, probe.target)),

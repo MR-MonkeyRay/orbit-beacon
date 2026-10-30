@@ -72,7 +72,7 @@ export async function nodePage() {
   signal?.addEventListener('abort', unsubscribe, {once: true});
   if (signal?.aborted) unsubscribe();
   const tabs = tabSet([
-    {id: 'details', label: t('nodes.details'), icon: 'server', build: () => {
+    {id: 'details', label: t('nodes.details'), icon: 'info', build: () => {
       detailsView = detailsTab(node, groups, sample.element,
         history ||= historyPanel(id, signal), traffic ||= trafficPanel(id, signal),
         probes ||= probesPanel(id, signal),
@@ -89,7 +89,7 @@ export async function nodePage() {
       agent.snapshot(node, observedRuntime);
       return agent;
     }},
-    {id: 'enrollment', label: t('nodes.enrollAgent'), icon: 'server', build: () => enrollmentTab(node)}
+    {id: 'enrollment', label: t('nodes.enrollAgent'), icon: 'key', build: () => enrollmentTab(node)}
   ], t('nodes.sections'));
   const head = pageHead(node.name, null, connection.element, actions);
   const title = head.querySelector('h1');

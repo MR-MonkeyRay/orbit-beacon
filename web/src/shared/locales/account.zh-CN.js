@@ -13,6 +13,6 @@ export default {
   'account.sessionExpires': '会话到期时间',
   'account.changePassword': '修改密码',
   'account.passwordSignOutHint': '修改密码会退出所有会话，包括当前会话。',
-  'account.changePasswordTitle': '修改你的密码',
-  'account.changePasswordDescription': '必须修改初始密码后才能访问管理控制台。修改密码会退出所有会话。'
+  'account.changePasswordTitle': '密码修改',
+  'account.changePasswordDescription': '设置新密码后可访问控制台，所有会话将退出登录。'
 };

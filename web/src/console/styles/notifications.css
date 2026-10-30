@@ -8,14 +8,14 @@
 
 .nav .notification-entry {
   flex-wrap: wrap;
-  gap: 8px 11px;
-  padding-block: 8px;
+  gap: var(--sp-2) var(--sp-3);
+  padding-block: var(--sp-2);
 }
 
 .notification-count {
   margin-left: auto;
   min-width: 24px;
-  padding: 1px 7px;
+  padding: 1px var(--sp-2);
   border-radius: 999px;
   background: var(--orbit-soft);
   color: var(--orbit);
@@ -46,7 +46,7 @@
 
 .notification-inbox {
   display: grid;
-  gap: 16px;
+  gap: var(--sp-4);
   padding-bottom: 22px;
   min-width: 0;
 }
@@ -55,7 +55,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .notification-toolbar {
@@ -76,30 +76,30 @@
 .notification-status {
   color: var(--warn);
   background: var(--warn-bg);
-  padding: 10px 12px;
+  padding: 10px var(--sp-3);
   border-radius: var(--r-md);
 }
 
 .notification-error {
   color: var(--bad);
   background: var(--bad-bg);
-  padding: 10px 12px;
+  padding: 10px var(--sp-3);
   border-radius: var(--r-md);
 }
 
 .notification-list {
   display: grid;
-  gap: 8px;
+  gap: var(--sp-2);
   min-width: 0;
 }
 
 .notification-list .notification-row {
   display: grid;
   justify-items: start;
-  gap: 4px;
+  gap: var(--sp-1);
   width: 100%;
   min-height: 76px;
-  padding: 12px;
+  padding: var(--sp-3);
   text-align: left;
   white-space: normal;
   background: var(--panel-2);
@@ -117,7 +117,7 @@
 .notification-row-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 12px;
+  gap: 6px var(--sp-3);
   font-size: var(--fs-xs);
   color: var(--ink-3);
 }
@@ -136,7 +136,7 @@
 }
 
 .notification-empty {
-  padding: 24px 12px;
+  padding: var(--sp-5) var(--sp-3);
   text-align: center;
   color: var(--ink-3);
 }
@@ -155,7 +155,7 @@
 
 .notification-snapshot,.notification-source {
   border-top: 1px solid var(--line);
-  padding-top: 16px;
+  padding-top: var(--sp-4);
 }
 
 .notification-inbox .facts {

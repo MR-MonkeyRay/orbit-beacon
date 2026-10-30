@@ -1,5 +1,5 @@
 import {h} from '../../shared/dom.js';
-import {getLocale, t} from '../i18n.js';
+import {getLocale, t, tParts} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {api} from '../api.js';
 import {when} from '../format.js';
@@ -10,6 +10,12 @@ import {panelLifecycle} from '../ui/polling-panel.js';
 
 export const severityPill = (severity) => h('span', {class: `badge alert-${['info', 'warning', 'critical'].includes(severity) ? severity : 'unknown'}`}, severityLabel(severity));
 export const eventTime = (iso) => h('div', {class: 'alert-time'}, when(iso), h('small', {class: 'muted'}, Number.isFinite(Date.parse(iso)) ? new Date(iso).toLocaleString(getLocale()) : t('alerts.unknownTime')));
+const eventSummary = (event) => {
+  return tParts('alerts.events.summary', {
+    node: link(`/nodes/${encodeURIComponent(event.node_id)}`, event.node_name || event.node_id),
+    value: formatMetricValue(event.metric, event.value), time: when(event.started_at)
+  });
+};
 export function eventRows(events) {
   return events.map((event) => h('tr', null,
     h('td', null, severityPill(event.severity)),
@@ -85,6 +91,6 @@ export function activeAlertsSummary({firing, newest}) {
     firing.total ? [h('div', {class: 'alert-counts'}, counts),
       h('ul', {class: 'rows'}, newest.map((event) => h('li', null,
         h('div', {class: 'grow'}, h('div', {class: 'title'}, link(`/alerts?event=${encodeURIComponent(event.id)}#history`, event.rule_name || t('alerts.deletedRule'))),
-          h('div', {class: 'sub'}, link(`/nodes/${encodeURIComponent(event.node_id)}`, event.node_name || event.node_id), ' · ', formatMetricValue(event.metric, event.value), ' · ', when(event.started_at))),
+          h('div', {class: 'sub'}, eventSummary(event))),
         severityPill(event.severity))))] : h('p', {class: 'muted'}, t('alerts.events.noActive')));
 }

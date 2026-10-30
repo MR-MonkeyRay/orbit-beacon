@@ -1,4 +1,4 @@
-import {t} from '../i18n.js';
+import {t, tParts} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h} from '../../shared/dom.js';
 import {api} from '../api.js';
@@ -10,7 +10,7 @@ import {panelLifecycle} from '../ui/polling-panel.js';
 const STORAGE_KEY = 'orbitbeacon.history.range';
 const RANGES = ['1h', '6h', '24h', '7d', '30d'];
 const CHARTS = [
-  {title: 'CPU', unit: 'percent', metrics: [['cpu_percent', 'CPU']]},
+  {title: t('nodes.cpu'), unit: 'percent', metrics: [['cpu_percent', t('nodes.cpu')]]},
   {title: t('nodes.memory'), unit: 'percent', metrics: [['memory_used_percent', t('nodes.memory')]]},
   {title: t('nodes.load1'), unit: 'load', metrics: [['load1', t('nodes.load')]]},
   {title: t('nodes.disk'), unit: 'percent', metrics: [['disk_used_percent', t('nodes.disk')]]},
@@ -71,7 +71,7 @@ export function historyPanel(id, signal) {
           selector.hidden = true;
           charts.replaceChildren();
           charts.setAttribute('aria-busy', 'false');
-          status.replaceChildren(t('nodes.nodeMissingPrefix'), link('/nodes', t('nodes.goNodes')));
+          status.replaceChildren(...tParts('nodes.nodeMissingPrefix', {link: link('/nodes', t('nodes.goNodes'))}));
         }
       }
     }));

@@ -25,6 +25,29 @@ test('full and public catalog sets have matching English and Chinese keys', () =
   assert.equal(zhCN['nodes.details'], '详情');
 });
 
+test('catalog placeholders match and UI copy follows the glossary', () => {
+  const forms = (value) => typeof value === 'string' ? [value] : Object.values(value);
+  const placeholders = (value) => [...new Set(forms(value).flatMap((text) =>
+    [...text.matchAll(/\{([A-Za-z][A-Za-z0-9_]*)\}/g)].map((match) => match[1])))].sort();
+  for (const [key, value] of Object.entries(en)) {
+    assert.deepEqual(placeholders(value), placeholders(zhCN[key]), key);
+    for (const text of forms(value)) {
+      assert.doesNotMatch(text, /public (?:status )?page/i, key);
+      // Filenames in install instructions retain their literal spelling.
+      assert.doesNotMatch(text, /(?<![-/])\bagents?\b(?![-.])/, key);
+    }
+    for (const text of forms(zhCN[key])) {
+      assert.doesNotMatch(text, /服务端|控制平面|管理控制台|公开页|公开状态页|公开节点页|接入票据|通知渠道|还原/, key);
+    }
+  }
+  assert.equal(en['public.heading'], 'Node status');
+  assert.equal(zhCN['public.heading'], '节点状态');
+  assert.equal(en['settings.publicPage'], 'Status page');
+  assert.equal(zhCN['settings.publicPage'], '状态页');
+  assert.equal(en['nodes.publicPage'], 'Status page listing');
+  assert.equal(zhCN['nodes.publicPage'], '状态页展示');
+});
+
 test('public entry bundles only its synchronous catalogs', async () => {
   const result = await build({
     absWorkingDir: fileURLToPath(new URL('..', import.meta.url)),

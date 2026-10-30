@@ -12,7 +12,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-3);
   min-height: 72px;
   border-bottom: 1px solid var(--line);
 }
@@ -52,7 +52,7 @@
 }
 
 .locale-error {
-  margin-top: 12px;
+  margin-top: var(--sp-3);
   color: var(--bad);
   font-size: var(--fs-sm);
   overflow-wrap: anywhere;
@@ -62,7 +62,7 @@
   display: inline-flex;
   align-items: center;
   min-height: var(--control-h);
-  padding: 0 16px;
+  padding: 0 var(--sp-4);
   border: 1px solid var(--line-2);
   border-radius: 999px;
   color: var(--ink);
@@ -78,8 +78,8 @@
   display: grid;
   grid-template-columns: minmax(0,1.1fr) minmax(0,.9fr);
   align-items: center;
-  gap: 24px 40px;
-  padding: 44px 0 32px;
+  gap: var(--sp-5) 40px;
+  padding: 44px 0 var(--sp-6);
 }
 
 .hero h1 {
@@ -101,9 +101,9 @@
 .live {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-3);
   margin-top: 28px;
-  padding: 8px 8px 8px 10px;
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--panel);
@@ -209,7 +209,7 @@
   justify-content: center;
   gap: 6px;
   min-height: var(--control-h);
-  padding: 0 15px;
+  padding: 0 var(--sp-4);
   border: 1px solid var(--line-2);
   border-radius: 999px;
   background: var(--panel-2);
@@ -347,8 +347,8 @@ a,button {
 .filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin: 4px 0 20px;
+  gap: var(--sp-2);
+  margin: var(--sp-1) 0 20px;
 }
 
 .filters button {
@@ -393,7 +393,7 @@ a,button {
 .nodes {
   display: grid;
   grid-template-columns: repeat(auto-fill,minmax(min(100%,300px),1fr));
-  gap: 16px;
+  gap: var(--sp-4);
 }
 
 .node {
@@ -445,7 +445,7 @@ a,button {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-3);
 }
 
 .card h2 {
@@ -468,7 +468,7 @@ a,button {
 .where {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 14px;
+  gap: var(--sp-1) 14px;
   margin-top: 6px;
   font-size: var(--fs-sm);
   color: var(--ink-3);
@@ -477,7 +477,7 @@ a,button {
 .where>span {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--sp-1);
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -498,7 +498,7 @@ a,button {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-3);
   font-size: var(--fs-sm);
   color: var(--ink-2);
 }
@@ -512,7 +512,7 @@ a,button {
 .track {
   display: block;
   height: 6px;
-  margin-top: 7px;
+  margin-top: var(--sp-2);
   border-radius: 999px;
   background: var(--line);
   overflow: hidden;
@@ -538,7 +538,7 @@ a,button {
 
 .gauge .na {
   display: none;
-  margin-top: 5px;
+  margin-top: var(--sp-1);
   font-size: var(--fs-xs);
   color: var(--ink-3);
 }
@@ -555,7 +555,7 @@ a,button {
 .stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: var(--sp-3);
   margin-top: auto;
   padding-top: 14px;
   border-top: 1px solid var(--line);
@@ -583,8 +583,8 @@ a,button {
 }
 
 .last-report {
-  margin-top: 16px;
-  padding-top: 12px;
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-3);
   border-top: 1px solid var(--line);
   font-size: var(--fs-xs);
   line-height: 1.6;
@@ -599,7 +599,7 @@ a,button {
 .sk {
   display: block;
   height: 12px;
-  margin: 12px 0;
+  margin: var(--sp-3) 0;
   border-radius: 6px;
 }
 
@@ -638,8 +638,8 @@ a,button {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 16px;
-  margin-top: 32px;
+  gap: var(--sp-4);
+  margin-top: var(--sp-6);
 }
 
 .pagination span {
@@ -657,7 +657,7 @@ footer {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
-  gap: 8px 24px;
+  gap: var(--sp-2) var(--sp-5);
   margin-top: 56px;
   padding: 22px 0 calc(40px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
@@ -695,7 +695,7 @@ footer {
 /* Tablets keep the headline beside a smaller constellation. */
 @media (max-width:1023px) {
   .hero {
-    gap: 24px 28px;
+    gap: var(--sp-5) 28px;
     padding-top: 36px;
   }
 
@@ -709,7 +709,7 @@ footer {
 @media (max-width:719px) {
   .top {
     flex-wrap: wrap;
-    padding: 12px 0;
+    padding: var(--sp-3) 0;
   }
 
   .top-actions {
@@ -718,8 +718,8 @@ footer {
 
   .hero {
     grid-template-columns: minmax(0,1fr);
-    gap: 12px;
-    padding: 20px 0 24px;
+    gap: var(--sp-3);
+    padding: 20px 0 var(--sp-5);
   }
 
   .constellation {
@@ -737,8 +737,8 @@ footer {
     overflow-x: auto;
     scroll-snap-type: x proximity;
     scrollbar-width: none;
-    margin: 0 calc(-1 * var(--gutter)) 16px;
-    padding: 4px var(--gutter);
+    margin: 0 calc(-1 * var(--gutter)) var(--sp-4);
+    padding: var(--sp-1) var(--gutter);
     scroll-padding-inline: var(--gutter);
     mask-image: linear-gradient(90deg,#000 calc(100% - 24px),transparent);
   }

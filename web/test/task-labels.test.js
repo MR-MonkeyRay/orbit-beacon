@@ -14,8 +14,8 @@ test('backup task state and category labels share the console locale', async () 
     assert.equal(taskCategoryKey('events'), 'common.events');
     assert.equal(taskCategoryKey('other'), undefined);
     assert.equal(taskState({state: 'running'}), 'Running');
-    assert.equal(taskState({state: 'other'}), 'Unknown state');
-    assert.equal(categoryNames(['configuration', 'events']), 'Configuration, Events');
+    assert.equal(taskState({state: 'other'}), 'Unknown');
+    assert.equal(categoryNames(['configuration', 'events']), 'Configuration and Events');
     assert.equal(categoryNames(['other']), 'Unknown category');
   } finally {
     if (originalStorage) Object.defineProperty(globalThis, 'localStorage', originalStorage); else delete globalThis.localStorage;

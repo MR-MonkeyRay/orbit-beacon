@@ -436,7 +436,13 @@ test('detail heartbeat changes only freshness and navigation closes the one live
   await env.advance(1); assert.equal(value.classList.contains('metric-stale'), true); assert.equal(value.textContent, '1%');
   env.socket.message(frame('heartbeat', {server_time: '2026-10-28T00:01:00Z'}));
   assert.equal(sampleFact(env.root, 'CPU').querySelector('.sample-value'), value); assert.equal(env.document.activeElement, input);
-  env.socket.end(); await flush(); assert.equal(env.root.querySelector('.live-status').textContent, 'Stale'); assert.equal(value.textContent, '1%');
+  env.socket.end(); await flush(); assert.equal(env.root.querySelector('.live-status').textContent, 'Reconnecting…'); assert.equal(value.textContent, '1%');
+  env.fallback.frame(frame('snapshot', {data: {node: env.inventory[0], latest: latest(), runtime}})); await flush();
+  assert.equal(env.root.querySelector('.live-status').textContent, 'Live');
+  env.document.hidden = true; env.document.dispatchEvent(new Event('visibilitychange'));
+  assert.equal(env.root.querySelector('.live-status').textContent, 'Stale');
+  env.document.hidden = false; env.document.dispatchEvent(new Event('visibilitychange')); await flush();
+  assert.equal(env.root.querySelector('.live-status').textContent, 'Reconnecting…');
   env.scope.abort(); assert.equal(env.socket.closed, true);
 });
 
@@ -472,7 +478,7 @@ test('overview deferred refresh keeps newer fleet status, deleted links and unkn
   assert.match(removed.textContent, /Deleted/); assert.equal(removed.querySelector('a').hasAttribute('href'), false);
   assert.match(newest.querySelectorAll('li').find((item) => item.textContent.includes('Node 002')).textContent, /Offline/);
   assert.equal(section('Fleet').querySelector('.num').textContent, '2');
-  assert.equal(section('Fleet').querySelector('.fleet-bar').getAttribute('aria-label'), '1 online, 1 offline');
+  assert.equal(section('Fleet').querySelector('.fleet-bar').getAttribute('aria-label'), '1 online and 1 offline');
   assert.equal(button(env.root, 'Refresh list').parentElement.hidden, false);
   assert.equal(section('Recent activity'), activity); assert.equal(section('Groups'), groups);
   env.replaceInventory([survivor, node(4)]); button(env.root, 'Refresh list').click(); await flush();

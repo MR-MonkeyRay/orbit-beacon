@@ -67,7 +67,6 @@ export function connectConsoleLive({nodeID, signal = getNavigationSignal(), onSn
   let generation = 0;
   let closed = false;
   let pageHidden = false;
-  let seen = false;
   let state = {state: 'connecting', transport: 'ws', intervalSeconds: 10, retryAt: null};
   const active = () => !closed && !signal?.aborted && !sessionSignal.aborted && epoch === getSessionEpoch() && Boolean(session.user && !session.user.must_change_password);
   const visible = () => active() && !document.hidden && !pageHidden;
@@ -101,7 +100,7 @@ export function connectConsoleLive({nodeID, signal = getNavigationSignal(), onSn
   const start = async () => {
     stop();
     if (!visible()) return;
-    emit({...state, state: seen ? 'stale' : 'connecting', retryAt: null});
+    emit({...state, state: 'connecting', retryAt: null});
     const token = generation;
     if (!visible() || token !== generation) return;
     const controller = gate = new AbortController();
@@ -115,7 +114,6 @@ export function connectConsoleLive({nodeID, signal = getNavigationSignal(), onSn
         signal: sessionSignal, credentials: 'same-origin', validateSnapshot: (data) => validSnapshot(data, nodeID),
         onSnapshot(data, frame) {
           if (!visible() || token !== generation) return;
-          seen = true;
           onSnapshot(data, frame);
         },
         onClock(serverTime) {

@@ -14,7 +14,7 @@ export default {
   'common.signOut': '退出登录',
   'common.status.never': '从未上报',
   'common.status.unknown': '未知',
-  'common.status.pending': '待接入',
+  'common.status.pending': '待注册',
   'common.status.disabled': '已禁用',
   'common.unavailable': '不可用',
   'common.none': '无',

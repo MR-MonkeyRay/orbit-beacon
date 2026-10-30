@@ -1,5 +1,5 @@
 import {h} from '../../shared/dom.js';
-import {t} from '../i18n.js';
+import {formatList, t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {api, session} from '../api.js';
 import {busy, button, dataTable, iconButton, panel} from '../ui/components.js';
@@ -131,7 +131,7 @@ export function channelsPanel({channels, signal, saved}) {
       } finally { busy(test, false); }
     }});
     const destination = channel.kind === 'webhook' ? channel.config.url_redacted || t('alerts.channels.urlNotSet')
-      : channel.kind === 'telegram' ? channel.config.chat_id : `${channel.config.host}:${channel.config.port} → ${channel.config.to.join(', ')}`;
+      : channel.kind === 'telegram' ? channel.config.chat_id : `${channel.config.host}:${channel.config.port} → ${formatList(channel.config.to)}`;
     return h('tr', null, h('td', null, channel.name), h('td', null, KINDS.find(([kind]) => kind === channel.kind)?.[1] || t('alerts.kind.unknown')),
       h('td', {class: 'alert-destination'}, destination, h('div', {class: 'hint'}, t(channel.secret_set ? 'alerts.channels.secretSet' : 'alerts.channels.secretNotSet')), status),
       h('td', null, t(channel.enabled ? 'alerts.state.enabled' : 'alerts.state.disabled')),

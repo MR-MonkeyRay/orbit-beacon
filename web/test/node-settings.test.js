@@ -118,6 +118,7 @@ test('node tabs show reported local settings through #agent without the removed 
     const tabs = elements(env.root).filter((element) => element.getAttribute('role') === 'tab');
     assert.equal(tabs.length, 4);
     assert.deepEqual(tabs.map((tab) => tab.id), ['tab-details', 'tab-public', 'tab-agent', 'tab-enrollment']);
+    assert.deepEqual(tabs.map((tab) => tab.querySelector('use').getAttribute('href')), ['#i-info', '#i-globe', '#i-sliders', '#i-key']);
     assert.equal(env.root.querySelector('#tab-agent').getAttribute('aria-selected'), 'true');
     assert.equal(env.root.querySelector('#tab-config'), null);
     const values = factValues(env.root);

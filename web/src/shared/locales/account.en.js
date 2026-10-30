@@ -13,6 +13,6 @@ export default {
   'account.sessionExpires': 'Session expires',
   'account.changePassword': 'Change password',
   'account.passwordSignOutHint': 'Changing your password signs out every session, including this one.',
-  'account.changePasswordTitle': 'Change your password',
-  'account.changePasswordDescription': 'You must change your initial password before accessing the console. Changing it signs out every session.'
+  'account.changePasswordTitle': 'Password change',
+  'account.changePasswordDescription': 'Set a new password to access the Console; all sessions will be signed out.'
 };

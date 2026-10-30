@@ -1,7 +1,7 @@
 import {h, icon} from '../shared/dom.js';
 import {statusLabels} from '../shared/status.js';
 import {timestampMillis} from '../shared/freshness.js';
-import {getLocale, t} from '../shared/i18n.js';
+import {getLocale, t, tParts} from '../shared/i18n.js';
 import {formatLoadNumber} from '../shared/format.js';
 
 const reportFormat = new Intl.DateTimeFormat(getLocale(), {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
@@ -100,7 +100,7 @@ export function createCard() {
     uptime.textContent = duration(node.uptime_seconds);
     const received = timestampMillis(node.last_seen);
     lastReport.replaceChildren(...(Number.isFinite(received)
-      ? [t('public.lastReport'), h('time', {datetime: node.last_seen, title: node.last_seen}, reportFormat.format(new Date(received)))] : []));
+      ? tParts('public.lastReport', {time: h('time', {datetime: node.last_seen, title: node.last_seen}, reportFormat.format(new Date(received)))}) : []));
     paintFreshness();
   };
   item.setStale = (stale = true) => { connectionStale = stale; paintFreshness(); };

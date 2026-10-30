@@ -1,4 +1,4 @@
-import {getLocale, t} from '../i18n.js';
+import {getLocale, t, tParts} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h, svg} from '../../shared/dom.js';
 import {api} from '../api.js';
@@ -50,7 +50,7 @@ function quotaMeter(used, quota) {
   const label = t('nodes.trafficQuotaDescription', {used: formatBytes(used), quota: formatBytes(quota), percent: formatPercent(percent)});
   return h('section', {class: `traffic-quota ${state}`, 'aria-label': t('nodes.trafficQuota')},
     h('h3', null, t('nodes.quota')),
-    h('p', {class: 'num'}, `${formatBytes(used)} / ${formatBytes(quota)} · ${formatPercent(percent)}`),
+    h('p', {class: 'num'}, t('nodes.traffic.usage', {used: formatBytes(used), quota: formatBytes(quota), percent: formatPercent(percent)})),
     h('meter', {min: 0, max: 100, low: 0, high: 80, optimum: 0, value: Math.min(100, percent),
       'aria-label': label, 'aria-valuetext': label}, label),
     state === 'normal' ? null : h('p', null, state === 'over' ? t('nodes.quotaExceeded') : t('nodes.quotaWarning')));
@@ -137,7 +137,7 @@ function trafficContent(data) {
     // A quota of 0 means unlimited, matching the Traffic billing form.
     parseTrafficBytes(data.quota_bytes) > 0n ? quotaMeter(total, parseTrafficBytes(data.quota_bytes)) : null,
     empty ? h('p', {class: 'muted', role: 'status'}, t('nodes.trafficEmpty')) : dailyChart(fillTrafficDays(daily)),
-    data.updated_at ? h('p', {class: 'note'}, t('nodes.updated'), when(data.updated_at)) : null);
+    data.updated_at ? h('p', {class: 'note'}, tParts('nodes.updated', {time: when(data.updated_at)})) : null);
 }
 
 // Retained with the Details tab; billing changes refresh this panel only.

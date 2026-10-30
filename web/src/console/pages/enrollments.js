@@ -1,4 +1,4 @@
-import {t} from '../i18n.js';
+import {t, tParts} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h} from '../../shared/dom.js';
 import {copyElementText} from '../../shared/clipboard.js';
@@ -32,7 +32,7 @@ export async function issueEnrollment(target, title, isDeleted = () => false) {
       h('p', {class: 'lede'}, target.mode === 'batch'
         ? t('nodes.enrollment.batchIntro')
         : t('nodes.enrollment.singleIntro')),
-      h('p', null, countdown, t('nodes.enrollment.expires'), when(ticket.expires_at)),
+      h('p', null, tParts('nodes.enrollment.expiry', {countdown, time: when(ticket.expires_at)})),
       h('pre', {class: 'code enrollment-token'}, token),
       button(t('nodes.enrollment.copyToken'), {icon: 'copy', onClick: () => copyText(token, status)}),
       h('p', {class: 'lede'}, t('nodes.enrollment.installIntro')),
@@ -69,7 +69,7 @@ export function enrollmentTab(node) {
         columns: [t('nodes.enrollment.ticket'), t('nodes.enrollment.expiresHeader'), t('nodes.enrollment.uses'), t('nodes.enrollment.state'), t('nodes.enrollment.actions')],
         body: h('tbody', null, tickets.map((ticket) => h('tr', null,
             h('td', {class: 'mono', title: ticket.id}, shortID(ticket.id)),
-            h('td', null, when(ticket.expires_at)), h('td', null, `${ticket.uses} / ${ticket.max_uses}`),
+            h('td', null, when(ticket.expires_at)), h('td', null, t('nodes.enrollment.usesValue', {used: ticket.uses, total: ticket.max_uses})),
             h('td', null, enrollmentState(ticket), ticket.revoked_at ? h('div', {class: 'muted'}, when(ticket.revoked_at)) : null),
             h('td', {class: 'actions'}, ticket.revoked_at ? null : button(t('nodes.enrollment.revoke'), {small: true, variant: 'danger', onClick: async (event) => {
               const control = event.currentTarget;

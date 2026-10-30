@@ -36,7 +36,8 @@ export function timezoneText(info) {
   const offset = info.utc_offset_seconds;
   const sign = offset < 0 ? '−' : '+';
   const minutes = Math.abs(offset) / 60;
-  return `${info.timezone_name} · UTC${sign}${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(Math.floor(minutes % 60)).padStart(2, '0')}`;
+  const formattedOffset = `${sign}${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(Math.floor(minutes % 60)).padStart(2, '0')}`;
+  return t('data.timezone.value', {timezone: info.timezone_name, offset: formattedOffset});
 }
 
 export function localRun(run) {

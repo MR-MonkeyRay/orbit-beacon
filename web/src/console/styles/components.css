@@ -4,7 +4,7 @@
   flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 16px 24px;
+  gap: var(--sp-4) var(--sp-5);
   margin-bottom: 26px;
 }
 
@@ -25,13 +25,13 @@
 .head-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .live-status {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-2);
   min-height: 32px;
   padding: 0 10px;
   border: 1px solid var(--line);
@@ -70,8 +70,8 @@
 .back {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin-bottom: 12px;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-3);
   color: var(--ink-3);
   font-size: var(--fs-md);
   text-decoration: none;
@@ -100,7 +100,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-3);
   padding: 18px 22px 0;
 }
 
@@ -160,7 +160,7 @@
 
 .sample-series {
   display: grid;
-  gap: 5px;
+  gap: var(--sp-1);
 }
 
 .sample-value.metric-stale {
@@ -186,9 +186,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--sp-2);
   min-height: var(--control-h);
-  padding: 0 15px;
+  padding: 0 var(--sp-4);
   border: 1px solid var(--line-2);
   border-radius: var(--r-md);
   background: var(--panel);
@@ -227,7 +227,7 @@
   background: var(--beacon);
   border-color: transparent;
   color: var(--beacon-ink);
-  box-shadow: 0 1px 0 rgba(255,255,255,.35) inset,0 6px 16px -8px rgba(242,181,58,.8);
+  box-shadow: var(--shadow-primary);
 }
 
 @media (hover:hover) {
@@ -283,7 +283,7 @@
 
 .btn-sm {
   min-height: var(--control-h-sm);
-  padding: 0 11px;
+  padding: 0 var(--sp-3);
   font-size: var(--fs-sm);
 }
 
@@ -345,7 +345,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  padding: 14px 16px;
+  padding: 14px var(--sp-4);
   border-bottom: 1px solid var(--line);
 }
 
@@ -376,9 +376,9 @@
   right: 10px;
   top: 50%;
   transform: translateY(-50%);
-  padding: 1px 7px;
+  padding: 1px var(--sp-2);
   border: 1px solid var(--line-2);
-  border-radius: 5px;
+  border-radius: 6px;
   font: var(--fs-xs) var(--mono);
   color: var(--ink-3);
 }
@@ -391,7 +391,7 @@
   display: inline-flex;
   flex-wrap: wrap;
   gap: 2px;
-  padding: 3px;
+  padding: var(--sp-1);
   border-radius: var(--r-md);
   background: var(--panel-2);
   border: 1px solid var(--line);
@@ -422,7 +422,7 @@
 .segmented button[aria-pressed="true"] {
   background: var(--panel);
   color: var(--ink);
-  box-shadow: 0 1px 3px rgba(10,20,40,.15);
+  box-shadow: var(--shadow-control);
 }
 
 .segmented .count {
@@ -446,7 +446,7 @@
 }
 
 .table th {
-  padding: 10px 16px;
+  padding: 10px var(--sp-4);
   text-align: left;
   font-size: var(--fs-xs);
   font-weight: 600;
@@ -459,7 +459,7 @@
 .table th button {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-1);
   padding: 0;
   border: 0;
   background: none;
@@ -490,7 +490,7 @@
 }
 
 .table td {
-  padding: 12px 16px;
+  padding: var(--sp-3) var(--sp-4);
   border-bottom: 1px solid var(--line);
   vertical-align: middle;
 }
@@ -545,13 +545,13 @@
 
 .cell-tags {
   display: flex;
-  gap: 4px;
+  gap: var(--sp-1);
   flex-wrap: wrap;
 }
 
 .cell-tags .tag {
   font-size: var(--fs-xs);
-  padding: 1px 8px;
+  padding: 1px var(--sp-2);
   animation: none;
 }
 
@@ -561,7 +561,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 12px 16px;
+  padding: var(--sp-3) var(--sp-4);
   border-top: 1px solid var(--line);
   font-size: var(--fs-sm);
   color: var(--ink-3);
@@ -577,7 +577,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 16px;
+  gap: var(--sp-2) var(--sp-4);
   width: 100%;
   color: var(--ink-2);
 }
@@ -614,7 +614,7 @@ mark {
   display: grid;
   justify-items: center;
   gap: 10px;
-  padding: 56px 24px;
+  padding: 56px var(--sp-5);
   text-align: center;
   color: var(--ink-2);
 }
@@ -636,7 +636,7 @@ mark {
 }
 
 .empty .btn {
-  margin-top: 8px;
+  margin-top: var(--sp-2);
 }
 
 .empty .head-actions {
@@ -670,7 +670,7 @@ mark {
 .sk-title {
   height: 30px;
   width: 220px;
-  margin-bottom: 12px;
+  margin-bottom: var(--sp-3);
 }
 
 .sk-block {
@@ -699,7 +699,7 @@ dialog.closing {
 }
 
 dialog::backdrop {
-  background: rgba(8,14,28,.5);
+  background: var(--backdrop);
   backdrop-filter: blur(3px);
   animation: fade-only .25s ease;
 }
@@ -725,7 +725,7 @@ dialog.closing::backdrop {
 .dialog-head {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--sp-3);
   padding: 20px 22px 0;
 }
 
@@ -752,13 +752,13 @@ dialog.closing::backdrop {
 }
 
 .form .dialog-foot {
-  padding: 8px 0 22px;
+  padding: var(--sp-2) 0 22px;
 }
 
 .form-error {
   display: flex;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 10px var(--sp-3);
   border-radius: var(--r-md);
   background: var(--bad-bg);
   color: var(--bad);
@@ -799,7 +799,7 @@ dialog.closing::backdrop {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 12px 12px 12px 14px;
+  padding: var(--sp-3) var(--sp-3) var(--sp-3) 14px;
   border-radius: var(--r-md);
   background: var(--ink);
   color: var(--bg);

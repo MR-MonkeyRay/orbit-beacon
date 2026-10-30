@@ -1,4 +1,4 @@
-import {t} from '../i18n.js';
+import {formatList, t, tParts} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h, icon} from '../../shared/dom.js';
 import {allNodes, api, getNavigationSignal, groupsList, invalidate, nameLookup, usersList} from '../api.js';
@@ -43,7 +43,7 @@ function fleetPanel(nodes) {
       count.textContent = value;
       if (value) description.push(`${value} ${STATUS[status].toLowerCase()}`);
     }
-    bar.setAttribute('aria-label', description.join(', '));
+    bar.setAttribute('aria-label', formatList(description));
   };
   element.snapshot(nodes);
   return element;
@@ -64,7 +64,7 @@ function newestPanel(nodes, groupNames) {
       refs.set(node.id, {name, seen, badge});
       return h('li', null,
         h('div', {class: 'grow'}, h('div', {class: 'title'}, name), h('div', {class: 'sub'},
-          node.group_id ? groupNames.get(node.group_id) || t('nodes.unknownGroup') : t('nodes.ungrouped'), seen)), badge);
+          seen)), badge);
     }));
     list.hidden = newest.length === 0;
     empty.hidden = newest.length !== 0;
@@ -80,7 +80,11 @@ function newestPanel(nodes, groupNames) {
         delete name.dataset.link;
         name.setAttribute('aria-disabled', 'true');
         name.setAttribute('tabindex', '-1');
-      } else seen.replaceChildren(...(node.last_seen ? [t('nodes.lastSeenPrefix'), absoluteWhen(node.last_seen)] : [t('nodes.neverSeenSuffix')]));
+      } else {
+        const group = node.group_id ? groupNames.get(node.group_id) || t('nodes.unknownGroup') : t('nodes.ungrouped');
+        seen.replaceChildren(...tParts(node.last_seen ? 'nodes.lastSeenPrefix' : 'nodes.neverSeenSuffix',
+          {group, time: node.last_seen ? absoluteWhen(node.last_seen) : ''}));
+      }
     }
   };
   element.reload(nodes);

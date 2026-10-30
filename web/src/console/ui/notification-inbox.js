@@ -1,5 +1,5 @@
 import {errorText} from '../../shared/errors.js';
-import {t, getLocale} from '../i18n.js';
+import {formatList, t, getLocale} from '../i18n.js';
 import {h} from '../../shared/dom.js';
 import {formatBytes, when} from '../format.js';
 import {formatMetricValue, metricLabel, severityLabel} from '../lib/alert-utils.js';
@@ -27,13 +27,13 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
   const alive = () => !closed && isActive();
   const stateLabels = {firing: t('notifications.firing'), resolved: t('notifications.resolved')};
   const stateLabel = (value) => stateLabels[value] || (taskStateKey(value) ? t(taskStateKey(value)) : undefined);
-  const categories = (values) => (values || []).map((value) => taskCategoryKey(value) ? t(taskCategoryKey(value)) : value).join(', ');
+  const categories = (values) => formatList((values || []).map((value) => taskCategoryKey(value) ? t(taskCategoryKey(value)) : value));
   const sourceName = (details) => details.destination?.plan_name || details.destination?.actor_name || (details.kind === 'backup_export' ? t('notifications.manualExport') : t('notifications.deletedPlan'));
   const notificationTitle = (notification) => {
     const details = notification.details || {};
     return notification.kind === 'alert'
-      ? `${details.rule_name || t('notifications.alert')} · ${stateLabel(notification.transition) || notification.transition}`
-      : `${sourceName(details)} · ${stateLabel(details.state || notification.transition) || t('notifications.unknownState')}`;
+      ? t('notifications.alertSummary', {source: details.rule_name || t('notifications.alert'), state: stateLabel(notification.transition) || notification.transition})
+      : t('notifications.taskSummary', {source: sourceName(details), state: stateLabel(details.state || notification.transition) || t('notifications.unknownState')});
   };
   const snapshot = (notification) => {
     const details = notification.details || {};

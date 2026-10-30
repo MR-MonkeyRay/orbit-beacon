@@ -1,5 +1,5 @@
 import {h} from '../../shared/dom.js';
-import {t} from '../i18n.js';
+import {formatList, t} from '../i18n.js';
 import {api, session} from '../api.js';
 import {button, dataTable, iconButton, panel} from '../ui/components.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
@@ -99,7 +99,7 @@ export function rulesPanel({rules, groups, nodes, channels, signal, saved}) {
         h('td', null, rule.name),
         h('td', null, t('alerts.rules.conditionDuration', {condition: rule.metric === 'offline' ? metricLabel(rule.metric) : t('alerts.rules.metricCondition', {metric: metricLabel(rule.metric), comparator: rule.comparator, value: formatMetricValue(rule.metric, rule.threshold)}), duration: formatRuleDuration(rule.for_seconds)})),
         h('td', null, scopeLabel(rule, groups, nodes)), h('td', null, severityPill(rule.severity)), h('td', null, t(rule.enabled ? 'alerts.state.enabled' : 'alerts.state.disabled')),
-        h('td', null, rule.channel_ids.map((id) => channels.find((channel) => channel.id === id)?.name || id).join(', ') || t('common.none')),
+        h('td', null, formatList(rule.channel_ids.map((id) => channels.find((channel) => channel.id === id)?.name || id)) || t('common.none')),
         h('td', {class: 'actions'}, iconButton('edit', t('alerts.editNamed', {name: rule.name}), () => edit(rule)), iconButton('trash', t('alerts.deleteAction', {name: rule.name}), () => remove(rule))))))})
       : h('p', {class: 'muted'}, t('alerts.rules.empty')));
 }
