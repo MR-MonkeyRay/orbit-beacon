@@ -121,8 +121,9 @@ function render(result) {
   nextOffset = result.next_offset;
   next.disabled = nextOffset === null;
   pagination.hidden = offset === 0 && nextOffset === null;
-  empty.hidden = nodes.length !== 0;
-  emptyText.textContent = t(partial ? 'public.empty.page' : 'public.empty.all');
+  // An empty collection is already stated by the headline; the box is reserved
+  // for empty filter results and load failures.
+  empty.hidden = true;
   retry.hidden = true;
   applyFilter();
 }

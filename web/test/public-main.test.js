@@ -82,9 +82,10 @@ test('public broken channel retains values and online presence until the next va
   assert.equal(card.querySelector('.last-report').hidden, false);
   sse.frame(snapshot(payload('', {nodes: []}))); await flush();
   assert.equal(ui.elements.nodes.children.length, 0);
-  assert.notEqual(ui.elements['empty-text'].textContent, '');
+  assert.notEqual(ui.elements.headline.textContent, '');
   assert.equal(ui.elements.retry.hidden, true);
-  assert.equal(ui.elements.empty.hidden, false);
+  // The headline states the empty collection once; the empty box stays hidden.
+  assert.equal(ui.elements.empty.hidden, true);
 });
 
 test('public invalid snapshot cannot clear an accepted collection or change its values', async (t) => {
@@ -138,6 +139,18 @@ test('public filters survive valid patches and keep filtering the current page',
   ui.sockets[0].message(snapshot(data));
   assert.equal(ui.elements.filters.children[2].getAttribute('aria-pressed'), 'true');
   assert.equal(ui.elements.nodes.children[0].hidden, true);
+});
+
+test('public empty box explains an empty filter but not an empty collection', async (t) => {
+  const ui = await setup(t); ui.sockets[0].open();
+  const data = payload('online'); data.nodes.push({...data.nodes[0], name: 'offline', status: 'offline'});
+  ui.sockets[0].message(snapshot(data));
+  ui.elements.filters.children[2].click();
+  ui.sockets[0].message(snapshot(payload('online')));
+  assert.equal(ui.elements.empty.hidden, false);
+  assert.equal(ui.elements['empty-text'].textContent, 'No offline nodes on this page.');
+  ui.sockets[0].message(snapshot(payload('', {nodes: []})));
+  assert.equal(ui.elements.empty.hidden, true);
 });
 
 test('public hide and BFCache preserve stale values and resume with a fresh WS scope', async (t) => {
