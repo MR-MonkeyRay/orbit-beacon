@@ -125,7 +125,7 @@ jobs:
 
       - name: Run Go vulnerability scan
         run: |
-          GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+          GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
           "$RUNNER_TEMP/bin/govulncheck" ./...
 
   installer:

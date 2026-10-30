@@ -201,12 +201,12 @@ sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore --data-dir /var/li
 
 ## 升级
 
-**主库 schema 21、指标库 schema 1、归档格式 v1 必须精确匹配；无历史迁移或跨 schema 恢复。** 旧主库/归档（含 schema 20）及更高版本会被拒绝，不自动改写或删除原数据。改用新的私有目录，保留旧目录、备份和原版本程序；历史库单独降级行为见[状态与历史](../docs/architecture.md#状态与历史)。
+数据库结构调整直接更新对应的建库、建表 SQL。升级前保留数据备份和原版本程序。
 
-同 schema 升级：
+升级步骤：
 
 1. 完成所需类别备份，另存密码、部署配置和证书，停止服务器。
 2. systemd 替换二进制；Compose 设置目标镜像标签，执行 `pull orbitbeacon`、`up -d orbitbeacon`。
-3. 启动并检查 readiness，确认数据库格式匹配，再升级 Agent。
+3. 启动并检查 readiness、登录和节点上报，再升级 Agent。
 
 先升级服务器，再升级 Agent；升级或降级前核对数据库及归档兼容性，遥测字段兼容不代表完整协议兼容。

@@ -196,14 +196,14 @@ if [ -n "$local_binary" ]; then
     cp -- "$local_binary" "$tmp/agent"
 else
     say "Downloading release v$version for $arch..."
-    archive=orbitbeacon-$version-linux.tar.gz
+    agent_asset=orbitbeacon-agent-linux-$arch
     release=https://github.com/mr-monkeyray/orbit-beacon/releases/download/v$version
-    for asset in "$archive" SHA256SUMS; do
+    for asset in "$agent_asset" SHA256SUMS; do
         curl --fail --silent --show-error --location --proto '=https' \
             --proto-redir '=https' --tlsv1.2 --output "$tmp/$asset" "$release/$asset"
     done
     # Select exactly one entry, never trust unrelated manifest paths/options.
-    awk -v name="$archive" '
+    awk -v name="$agent_asset" '
         ($2 == name || $2 == "*" name) {
             if (NF != 2 || length($1) != 64 || $1 !~ /^[[:xdigit:]]+$/) bad=1
             print $1 "  " name
@@ -213,8 +213,7 @@ else
     ' "$tmp/SHA256SUMS" > "$tmp/verify.sha256" || die 'Missing or malformed release checksum.'
     say 'Verifying release checksum...'
     (cd "$tmp" && sha256sum -c verify.sha256) || die 'Checksum verification failed; nothing installed.'
-    # Output only this exact member, never extract archive paths or permissions.
-    tar -xzOf "$tmp/$archive" "orbitbeacon-$version/orbitbeacon-agent-linux-$arch" > "$tmp/agent"
+    mv -- "$tmp/$agent_asset" "$tmp/agent"
     [ -s "$tmp/agent" ] || die 'Release binary is empty or missing.'
 fi
 

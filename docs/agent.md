@@ -44,7 +44,7 @@ unset TOKEN
 ```
 
 - `--server` 与 CA 要求见[配置参考](../deploy/README.md#配置参考)和 [HTTPS](../deploy/README.md#https-与反向代理)；私有 CA 加 `--ca-file /安全路径/ca.pem`。
-- 脚本与发布包下载仅用 HTTPS；`SHA256SUMS` 校验不是独立签名验证。
+- 脚本自动选择 `orbitbeacon-agent-linux-amd64` 或 `orbitbeacon-agent-linux-arm64`，只下载 Agent 二进制和 `SHA256SUMS`，校验后安装并赋予执行权限，无需 `tar`。新脚本需配套提供独立二进制附件的版本，不兼容旧压缩包发布；旧版本可手动解压后通过 `--binary` 安装。脚本与二进制下载仅用 HTTPS；`SHA256SUMS` 校验不是独立签名验证。
 - 离线安装用 `--binary /安全路径/orbitbeacon-agent-linux-amd64`，可省略版本，自行核对来源与架构。
 
 脚本创建专用账号 `orbitbeacon-agent`，固定实际 UID/GID，不保证是 `1000:1000`。安装路径：

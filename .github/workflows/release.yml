@@ -48,10 +48,12 @@ jobs:
           set -eu
           skip=false
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
-          package="orbitbeacon-${VERSION}-linux.tar.gz"
           if docker buildx imagetools inspect "$image:$VERSION" >/dev/null 2>&1; then
             release_assets="$(gh release view "v$VERSION" --json assets --jq '.assets[].name' 2>/dev/null || true)"
-            if printf '%s\n' "$release_assets" | grep -Fxq "$package" && \
+            if printf '%s\n' "$release_assets" | grep -Fxq orbitbeacon-server-linux-amd64 && \
+              printf '%s\n' "$release_assets" | grep -Fxq orbitbeacon-server-linux-arm64 && \
+              printf '%s\n' "$release_assets" | grep -Fxq orbitbeacon-agent-linux-amd64 && \
+              printf '%s\n' "$release_assets" | grep -Fxq orbitbeacon-agent-linux-arm64 && \
               printf '%s\n' "$release_assets" | grep -Fxq SHA256SUMS; then
               skip=true
               echo "version $VERSION already has its image and release assets; skipping publication"
@@ -66,26 +68,23 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build release package
+      - name: Build release binaries
         if: steps.publication-state.outputs.skip != 'true'
         run: |
           set -eu
-          package_dir="$RUNNER_TEMP/orbitbeacon-$VERSION"
           output_dir="$RUNNER_TEMP/release"
-          mkdir -p "$package_dir" "$output_dir"
-          printf '%s\n' "$VERSION" > "$package_dir/VERSION"
+          mkdir -p "$output_dir"
           build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           for arch in amd64 arm64; do
             for kind in server agent; do
               CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
                 go build -trimpath \
                 -ldflags "-s -w -X orbitbeacon/internal/buildinfo.Version=$VERSION -X orbitbeacon/internal/buildinfo.Commit=$GITHUB_SHA -X orbitbeacon/internal/buildinfo.BuildDate=$build_date" \
-                -o "$package_dir/orbitbeacon-$kind-linux-$arch" \
+                -o "$output_dir/orbitbeacon-$kind-linux-$arch" \
                 "./cmd/orbitbeacon-$kind"
             done
           done
-          tar -C "$RUNNER_TEMP" -czf "$output_dir/orbitbeacon-$VERSION-linux.tar.gz" "orbitbeacon-$VERSION"
-          (cd "$output_dir" && sha256sum "orbitbeacon-$VERSION-linux.tar.gz" > SHA256SUMS)
+          (cd "$output_dir" && sha256sum orbitbeacon-*-linux-* > SHA256SUMS)
 
       - name: Build and push image
         if: steps.publication-state.outputs.skip != 'true'
@@ -106,19 +105,29 @@ jobs:
             --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             .
 
-      - name: Publish GitHub release package
-        if: steps.publication-state.outputs.skip != 'true'
+      - name: Publish GitHub release binaries
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SKIP_PUBLICATION: ${{ steps.publication-state.outputs.skip }}
         run: |
           set -eu
           tag="v$VERSION"
-          assets=("$RUNNER_TEMP/release/orbitbeacon-$VERSION-linux.tar.gz" "$RUNNER_TEMP/release/SHA256SUMS")
+          assets=("$RUNNER_TEMP/release/orbitbeacon-server-linux-amd64" "$RUNNER_TEMP/release/orbitbeacon-server-linux-arm64" "$RUNNER_TEMP/release/orbitbeacon-agent-linux-amd64" "$RUNNER_TEMP/release/orbitbeacon-agent-linux-arm64" "$RUNNER_TEMP/release/SHA256SUMS")
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "${assets[@]}" --clobber
+            gh release edit "$tag" --title "$VERSION"
+            if [ "$SKIP_PUBLICATION" != 'true' ]; then
+              gh release upload "$tag" "${assets[@]}" --clobber
+            fi
           else
             gh release create "$tag" "${assets[@]}" \
               --target "$GITHUB_SHA" \
-              --title "OrbitBeacon $VERSION" \
+              --title "$VERSION" \
               --notes "OrbitBeacon $VERSION release. See SHA256SUMS for artifact verification."
           fi
+          release_assets="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+          for arch in amd64 arm64; do
+            legacy_asset="orbitbeacon-$VERSION-linux-$arch.tar.gz"
+            if printf '%s\n' "$release_assets" | grep -Fxq "$legacy_asset"; then
+              gh release delete-asset "$tag" "$legacy_asset" --yes
+            fi
+          done

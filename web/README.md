@@ -4,7 +4,7 @@
 
 ## 开发流程
 
-需要 Node.js 22+，仓库版本见 [.nvmrc](.nvmrc)。从仓库根目录执行：
+需要 Node.js 22+，CI 使用的当前 LTS 版本见 [.nvmrc](.nvmrc)（26.13.0）。从仓库根目录执行：
 
 ```sh
 cd web

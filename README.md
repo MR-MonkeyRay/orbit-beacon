@@ -86,7 +86,7 @@ go vet ./...
 go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 ```
 
-[CI](.github/workflows/ci.yml) 检查 Go、Web、漏洞及安装脚本；`main` push 全部通过后调用[发布流程](.github/workflows/release.yml)，按 [`VERSION`](VERSION) 发布 Linux amd64/arm64 包与镜像。使用前确认目标版本已发布。
+[CI](.github/workflows/ci.yml) 检查 Go、Web、漏洞及安装脚本；`main` push 全部通过后调用[发布流程](.github/workflows/release.yml)。Release 标题直接使用 [`VERSION`](VERSION)（如 `0.1.0`），Git 标签仍为 `v0.1.0`。直接上传 `orbitbeacon-<server|agent>-linux-<amd64|arm64>` 四个独立二进制及统一的 `SHA256SUMS`，文件名不重复版本号、不再打压缩包；镜像仍支持两种架构。手动下载后先核对校验和，再用 `chmod +x` 赋予执行权限。重跑同版本发布会在二进制上传成功后移除该版本原有的分架构压缩包。使用前确认目标版本已发布。
 
 ## 许可证
 
