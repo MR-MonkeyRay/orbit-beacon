@@ -29,7 +29,6 @@ func (h *handler) loginSession(w http.ResponseWriter, r *http.Request, requestID
 	}
 	http.SetCookie(w, h.cookie(session.Token, session.ExpiresAt, int(auth.SessionLifetime.Seconds())))
 	writeJSON(w, http.StatusOK, session)
-	return
 }
 
 func (h *handler) sessionGate(w http.ResponseWriter, r *http.Request, requestID string, level authLevel) (*http.Request, string, auth.Session, bool) {
