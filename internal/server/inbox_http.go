@@ -4,10 +4,10 @@ import (
 	"net/http"
 	"strings"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/inbox"
 	"orbitbeacon/internal/server/validation"
+	"orbitbeacon/internal/uuid"
 )
 
 func (h *handler) inboxRoute(w http.ResponseWriter, r *http.Request, requestID string, user auth.User) bool {
@@ -48,7 +48,7 @@ func (h *handler) inboxRoute(w http.ResponseWriter, r *http.Request, requestID s
 		if !decode(w, r, &body, requestID) {
 			return true
 		}
-		if !identity.ValidUUID(body.Through) {
+		if !uuid.ValidUUID(body.Through) {
 			h.serviceError(w, &validation.Error{Fields: map[string]string{"through": "must be a notification UUID"}}, requestID)
 			return true
 		}

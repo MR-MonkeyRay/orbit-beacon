@@ -20,7 +20,7 @@ func TestNotificationHTTPCRUDRoutingAuthzAndSecretSafety(t *testing.T) {
 	box, _ := secretbox.New(bytes.Repeat([]byte{9}, 32), "orbitbeacon notification channel v1")
 	notifications := notify.New(f.db, box, notify.Options{})
 	var logs bytes.Buffer
-	h, e := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Notifications: notifications, PublicURL: publicURL, AccessLog: true, Logger: slog.New(slog.NewJSONHandler(&logs, nil))})
+	h, e := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Notifications: notifications, PublicURL: publicURL, AccessLog: true, Logger: slog.New(slog.NewJSONHandler(&logs, nil))}))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -103,7 +103,7 @@ func TestNotificationHTTP405AndCapacity(t *testing.T) {
 	f := newHTTP(t, 1)
 	box, _ := secretbox.New(bytes.Repeat([]byte{1}, 32), "orbitbeacon notification channel v1")
 	ns := notify.New(f.db, box, notify.Options{})
-	h, e := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Notifications: ns, PublicURL: publicURL})
+	h, e := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Notifications: ns, PublicURL: publicURL}))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -134,7 +134,7 @@ func TestWebhookURLPrivacyAndKeyMismatchRepairHTTP(t *testing.T) {
 	var logs bytes.Buffer
 	makeHandler := func(n *notify.Service) {
 		t.Helper()
-		h, e := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Notifications: n, PublicURL: publicURL, AccessLog: true, Logger: slog.New(slog.NewJSONHandler(&logs, nil))})
+		h, e := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Notifications: n, PublicURL: publicURL, AccessLog: true, Logger: slog.New(slog.NewJSONHandler(&logs, nil))}))
 		if e != nil {
 			t.Fatal(e)
 		}

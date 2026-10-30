@@ -12,12 +12,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/secretbox"
 	"orbitbeacon/internal/server/securefs"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 	"sync"
 	"sync/atomic"
 )
@@ -105,11 +105,11 @@ func (s *Service) CreateExport(ctx context.Context, actorID string, categories [
 	if err != nil {
 		return Task{}, err
 	}
-	if !identity.ValidUUID(actorID) {
+	if !uuid.ValidUUID(actorID) {
 		return Task{}, &Error{Code: "invalid_actor"}
 	}
 	s.randomMu.Lock()
-	id, err := identity.UUID(s.opts.Random)
+	id, err := uuid.UUID(s.opts.Random)
 	s.randomMu.Unlock()
 	if err != nil {
 		return Task{}, &Error{Code: "internal_error", Err: err}

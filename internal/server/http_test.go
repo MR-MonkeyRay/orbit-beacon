@@ -54,14 +54,14 @@ func newHTTP(t *testing.T, capacity int) fixture {
 	if _, err := authService.CreateUser(context.Background(), "admin-two", password, false); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := server.NewHandler(server.Options{
+	handler, err := server.NewHandler(testHandlerOptions(t, server.Options{
 		Auth: authService, Nodes: nodeService, PublicURL: publicURL,
 		Assets: fstest.MapFS{
 			"200.html":               &fstest.MapFile{Data: []byte("<!doctype html><main>regression SPA shell</main>")},
 			"public.html":            &fstest.MapFile{Data: []byte("<!doctype html><main>regression public shell</main>")},
 			"_app/immutable/main.js": &fstest.MapFile{Data: []byte("export const fixture = true;")},
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}

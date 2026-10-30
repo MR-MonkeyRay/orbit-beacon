@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"orbitbeacon/internal/identity"
+	"orbitbeacon/internal/uuid"
 )
 
 type headResponseWriter struct{ http.ResponseWriter }
@@ -21,7 +21,7 @@ func (h *handler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodHead {
 		w = headResponseWriter{w}
 	}
-	requestID, err := identity.UUID(rand.Reader)
+	requestID, err := uuid.UUID(rand.Reader)
 	if err != nil {
 		h.logInternalError(err, "")
 		http.Error(w, "Unable to generate request identity", http.StatusInternalServerError)

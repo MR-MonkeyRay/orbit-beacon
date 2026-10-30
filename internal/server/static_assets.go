@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"orbitbeacon/internal/identity"
+	"orbitbeacon/internal/uuid"
 )
 
 type staticAsset struct {
@@ -135,7 +135,7 @@ func (h *handler) static(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimPrefix(p, "/")
-	uiRoute := p == "/login" || p == "/change-password" || p == "/overview" || p == "/nodes" || p == "/alerts" || p == "/settings" || (strings.HasPrefix(p, "/nodes/") && identity.ValidUUID(strings.TrimPrefix(p, "/nodes/")))
+	uiRoute := p == "/login" || p == "/change-password" || p == "/overview" || p == "/nodes" || p == "/alerts" || p == "/settings" || (strings.HasPrefix(p, "/nodes/") && uuid.ValidUUID(strings.TrimPrefix(p, "/nodes/")))
 	if uiRoute {
 		name = "200.html"
 	}

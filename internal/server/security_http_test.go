@@ -32,10 +32,10 @@ func TestBrowserCanonicalOriginInteroperatesOrConfigurationIsRejected(t *testing
 				LookupEnv: func(string) (string, bool) { return "", false },
 				Flags:     map[string]string{"public_url": tt.configured},
 			})
-			handler, handlerErr := server.NewHandler(server.Options{
+			handler, handlerErr := server.NewHandler(testHandlerOptions(t, server.Options{
 				Auth: f.auth, Nodes: f.nodes, PublicURL: tt.configured,
 				Assets: fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte("<!doctype html><main>shell</main>")}, "public.html": &fstest.MapFile{Data: []byte("public shell")}},
-			})
+			}))
 			if configErr != nil || handlerErr != nil {
 				if configErr == nil || handlerErr == nil {
 					t.Errorf("noncanonical URL rejection inconsistent: config=%v handler=%v", configErr, handlerErr)

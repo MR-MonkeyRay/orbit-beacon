@@ -145,7 +145,7 @@ func TestPublicPageStartupPersistenceCorruptionAndRootDatabaseFailure(t *testing
 	f := newHTTP(t, 2)
 	admin, csrf := login(t, f, "admin")
 	assertHTTPStatus(t, request(t, f.handler, http.MethodPatch, publicPageRoute, `{"enabled":false}`, admin, csrf, publicURL), 200)
-	h, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL})
+	h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestPublicPageStartupPersistenceCorruptionAndRootDatabaseFailure(t *testing
 	if _, err := f.db.Exec("UPDATE settings SET value='TRUE' WHERE key='public_page_enabled'"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL}); err == nil {
+	if _, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL})); err == nil {
 		t.Fatal("corrupt public setting allowed startup")
 	}
 	if err := f.db.Close(); err != nil {

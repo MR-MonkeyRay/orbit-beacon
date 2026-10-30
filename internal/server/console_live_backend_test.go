@@ -56,7 +56,7 @@ func newConsoleLiveFixture(t *testing.T) *consoleLiveFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.h, err = NewHandler(Options{Auth: a, Nodes: nodes.NewService(db, nodes.Options{Now: now}), PublicURL: "https://beacon.test", Now: now, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	f.h, err = NewHandler(testHandlerOptions(t, Options{Auth: a, Nodes: nodes.NewService(db, nodes.Options{Now: now}), PublicURL: "https://beacon.test", Now: now, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}))
 	if err != nil {
 		t.Fatal(err)
 	}

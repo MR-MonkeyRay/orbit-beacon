@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"orbitbeacon/internal/logging"
 	"orbitbeacon/internal/server/storage"
 )
 
@@ -99,9 +100,6 @@ func Open(ctx context.Context, dataDir string, nodes *sql.DB, opts Options) (*Se
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	if opts.Logger == nil {
-		opts.Logger = slog.Default()
-	}
 	workCtx, cancel := context.WithCancel(context.Background())
 	s := &Service{db: db, reader: reader, nodes: nodes, samples: make(chan Sample, SampleBufferSize), retention: make(chan retentionRequest), stop: make(chan context.Context, 1), done: make(chan struct{}), cancel: cancel, now: opts.Now, logger: opts.Logger, pending: make(map[bucketKey]map[string]aggregate)}
 	go s.run(workCtx)
@@ -168,7 +166,9 @@ func (s *Service) run(ctx context.Context) {
 			err := s.flush(flushCtx, s.now(), false)
 			cancel()
 			if err != nil {
-				s.logger.Warn("metric history flush failed", "error", err)
+				if s.logger != nil {
+					s.logger.LogAttrs(ctx, slog.LevelWarn, "metric_history_flush_failed", logging.ErrorAttrs(err, "flush_failed")...)
+				}
 			}
 		case request := <-s.retention:
 			s.drain()
@@ -353,6 +353,12 @@ func (s *Service) Shutdown(ctx context.Context) error {
 func (s *Service) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	return s.CloseContext(ctx)
+}
+
+// CloseContext shuts down the writer and closes both history database pools
+// within the caller's shared shutdown budget.
+func (s *Service) CloseContext(ctx context.Context) error {
 	err := s.Shutdown(ctx)
 	return errors.Join(err, s.reader.Close(), s.db.Close())
 }

@@ -3,10 +3,9 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"slices"
 	"time"
@@ -21,6 +20,7 @@ import (
 // Runtime wires the durable identity, local settings, collector and client.
 // Enrollment tokens are never part of runtime state.
 type Runtime struct {
+	logger      *slog.Logger
 	identity    *identity.Store
 	settings    v1.RuntimeSettings
 	collector   *collect.Collector
@@ -29,7 +29,10 @@ type Runtime struct {
 	installMode string
 }
 
-func OpenRuntime(ctx context.Context, cfg config.Agent) (*Runtime, error) {
+func OpenRuntime(ctx context.Context, cfg config.Agent, logger *slog.Logger) (*Runtime, error) {
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
 	state, err := identity.Open(ctx, filepath.Join(cfg.StateDir, "identity.json"), identity.Options{})
 	if err != nil {
 		return nil, err
@@ -52,7 +55,7 @@ func OpenRuntime(ctx context.Context, cfg config.Agent) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{identity: state, settings: initial, collector: collector, client: client, system: system, installMode: cfg.InstallMode}, nil
+	return &Runtime{logger: logger, identity: state, settings: initial, collector: collector, client: client, system: system, installMode: cfg.InstallMode}, nil
 }
 
 func (r *Runtime) Close() { r.client.Close() }
@@ -95,18 +98,10 @@ func (r *Runtime) Run(ctx context.Context, reload <-chan struct{}, loadSettings 
 	done := make(chan struct{})
 	go func() { defer close(done); _ = probes.Run(ctx) }()
 	defer func() { cancel(); <-done }()
-	scheduler := NewScheduler(SchedulerOptions{Probes: probes, Traffic: r.collector.Traffic(), Identity: r.identity,
+	scheduler := NewScheduler(SchedulerOptions{Logger: r.logger, Probes: probes, Traffic: r.collector.Traffic(), Identity: r.identity,
 		RuntimeSettings: func() v1.RuntimeSettings { return r.settings }, Reload: reload,
 		ReloadConfig: func(ctx context.Context) error { return r.reloadSettings(ctx, probes, loadSettings) },
-		Collect:      r.collector.Collect, Report: r.client.Report, System: &r.system, CredentialsChanged: func(invalid bool) {
-			if invalid {
-				fmt.Fprintln(os.Stderr, "orbitbeacon-agent: credentials_invalid; rechecking in 60 seconds")
-			} else {
-				fmt.Fprintln(os.Stderr, "orbitbeacon-agent: credentials recovered")
-			}
-		}, Log: func(message string) {
-			fmt.Fprintln(os.Stderr, "orbitbeacon-agent:", message)
-		}})
+		Collect:      r.collector.Collect, Report: r.client.Report, System: &r.system})
 	return scheduler.Run(ctx)
 }
 

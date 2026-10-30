@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 type actorKey struct{}
@@ -57,7 +57,7 @@ func InsertDetails(ctx context.Context, tx *sql.Tx, action, targetID string, now
 			return err
 		}
 	}
-	id, err := identity.UUID(rand.Reader)
+	id, err := uuid.UUID(rand.Reader)
 	if err != nil {
 		return err
 	}

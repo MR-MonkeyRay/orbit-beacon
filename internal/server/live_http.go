@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/uuid"
 )
 
 type consoleFleetData struct {
@@ -33,7 +33,7 @@ func consoleNodeID(r *http.Request) (string, error) {
 		return "", nodes.ErrInvalidInput
 	}
 	for key, values := range query {
-		if key != "node_id" || len(values) != 1 || !identity.ValidUUID(values[0]) {
+		if key != "node_id" || len(values) != 1 || !uuid.ValidUUID(values[0]) {
 			return "", nodes.ErrInvalidInput
 		}
 	}

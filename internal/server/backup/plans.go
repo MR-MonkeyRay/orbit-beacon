@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/server/securefs"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 // PlanPatch preserves omitted values. Credentials are an explicit full replacement;
@@ -150,7 +150,7 @@ func (s *Service) projectPlan(ctx context.Context, p planRecord, now time.Time) 
 	return p.Plan, nil
 }
 func (s *Service) Plan(ctx context.Context, id string) (Plan, error) {
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return Plan{}, &Error{Code: "backup_plan_not_found"}
 	}
 	p, err := scanPlan(s.db.QueryRowContext(ctx, planSelect+` WHERE id=?`, id))
@@ -302,13 +302,13 @@ func validatePlanDirectory(raw json.RawMessage) error {
 }
 func (s *Service) SavePlan(ctx context.Context, id string, patch PlanPatch) (Plan, error) {
 	creating := id == ""
-	if !creating && !identity.ValidUUID(id) {
+	if !creating && !uuid.ValidUUID(id) {
 		return Plan{}, &Error{Code: "backup_plan_not_found"}
 	}
 	if creating {
 		s.randomMu.Lock()
 		var err error
-		id, err = identity.UUID(s.opts.Random)
+		id, err = uuid.UUID(s.opts.Random)
 		s.randomMu.Unlock()
 		if err != nil {
 			return Plan{}, &Error{Code: "internal_error"}
@@ -452,7 +452,7 @@ func (s *Service) SavePlan(ctx context.Context, id string, patch PlanPatch) (Pla
 }
 func maskedCredential(value string) bool { return strings.Trim(value, "*• ") == "" }
 func (s *Service) DeletePlan(ctx context.Context, id string) error {
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return &Error{Code: "backup_plan_not_found"}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

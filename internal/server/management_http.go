@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/auth"
+	"orbitbeacon/internal/uuid"
 )
 
 var (
@@ -53,7 +53,7 @@ func routeMethods(p string) []string {
 		return nil
 	}
 	parts := strings.Split(strings.TrimPrefix(p, "/api/v1/"), "/")
-	if len(parts) < 2 || !identity.ValidUUID(parts[1]) {
+	if len(parts) < 2 || !uuid.ValidUUID(parts[1]) {
 		return nil
 	}
 	if len(parts) == 2 {

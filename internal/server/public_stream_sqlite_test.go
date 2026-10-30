@@ -59,7 +59,7 @@ func TestPublicStreamSQLiteAcceptedReportAndUnpublish(t *testing.T) {
 	id, token := publishCacheNode(t, f)
 	base, started := f.now, time.Now()
 	var err error
-	f.handler, err = server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return base.Add(time.Since(started)) }, WebUpdateIntervalSeconds: 2})
+	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return base.Add(time.Since(started)) }, WebUpdateIntervalSeconds: 2}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestPublicStreamReprojectsSourceAndPresenceExpiryWithoutNewReports(t *testi
 	base := f.now
 	var elapsedMS atomic.Int64
 	var err error
-	f.handler, err = server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return base.Add(time.Duration(elapsedMS.Load()) * time.Millisecond) }, WebUpdateIntervalSeconds: 2})
+	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return base.Add(time.Duration(elapsedMS.Load()) * time.Millisecond) }, WebUpdateIntervalSeconds: 2}))
 	if err != nil {
 		t.Fatal(err)
 	}

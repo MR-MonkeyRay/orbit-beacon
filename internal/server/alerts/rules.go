@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 var (
@@ -155,7 +155,7 @@ func ValidateRuleSyntax(r Rule) error {
 	default:
 		return validation.Invalid("scope_kind", "must be all, group or node")
 	}
-	if r.ScopeID == nil || !identity.ValidUUID(*r.ScopeID) {
+	if r.ScopeID == nil || !uuid.ValidUUID(*r.ScopeID) {
 		return validation.Invalid("scope_id", "must identify an existing scope")
 	}
 	return nil
@@ -252,7 +252,7 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Rule, error) {
 		if count >= MaxRules {
 			return r, ErrCapacity
 		}
-		r.ID, err = identity.UUID(rand.Reader)
+		r.ID, err = uuid.UUID(rand.Reader)
 		if err != nil {
 			return r, err
 		}
@@ -291,7 +291,7 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Rule, error) {
 		}
 		seen := map[string]bool{}
 		for _, channelID := range r.ChannelIDs {
-			if !identity.ValidUUID(channelID) || seen[channelID] {
+			if !uuid.ValidUUID(channelID) || seen[channelID] {
 				return Rule{}, validation.Invalid("channel_ids", "must contain unique existing channel IDs")
 			}
 			seen[channelID] = true

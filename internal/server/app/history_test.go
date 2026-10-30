@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -48,7 +48,7 @@ func TestNewerHistorySchemaDisablesHistoryWithoutChangingFiles(t *testing.T) {
 		service.Close()
 		t.Fatal("opened newer schema")
 	}
-	if log := output.String(); !strings.Contains(log, "level=WARN") || !strings.Contains(log, "history disabled") || !strings.Contains(log, "newer than supported") {
+	if log := output.String(); !strings.Contains(log, "level=WARN") || !strings.Contains(log, "history_disabled") || !strings.Contains(log, "history_open_failed") {
 		t.Fatalf("log=%s", log)
 	}
 	var count int

@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/securefs"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 func cleanupLimit(limit int) int {
@@ -228,7 +228,7 @@ func (s *Service) CleanupOrphans(ctx context.Context, limit int) (int64, error) 
 				return count, err
 			}
 			entry := entries[0]
-			if !identity.ValidUUID(entry.Name()) || !entry.IsDir() {
+			if !uuid.ValidUUID(entry.Name()) || !entry.IsDir() {
 				continue
 			}
 			var active bool
@@ -317,7 +317,7 @@ func archiveEntryID(name string) string {
 }
 
 func (s *Service) PruneLocal(ctx context.Context, path, planID string, retain int) error {
-	if !filepath.IsAbs(path) || !identity.ValidUUID(planID) || retain < 1 || retain > 1000 {
+	if !filepath.IsAbs(path) || !uuid.ValidUUID(planID) || retain < 1 || retain > 1000 {
 		return &Error{Code: "retention_cleanup_failed"}
 	}
 	if err := securefs.ValidateDirectory(path); err != nil {
@@ -437,7 +437,7 @@ func (s *Service) CleanupLocalTemps(ctx context.Context, limit int) (int64, erro
 			return count, err
 		}
 		s.localTempAfter = c.id
-		if !identity.ValidUUID(c.id) || !identity.ValidUUID(c.planID) || !c.name.Valid || !validArtifactName(c.name.String, c.id) {
+		if !uuid.ValidUUID(c.id) || !uuid.ValidUUID(c.planID) || !c.name.Valid || !validArtifactName(c.name.String, c.id) {
 			continue
 		}
 		var snapshot struct {

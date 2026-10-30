@@ -13,7 +13,7 @@ import (
 
 func TestPublicEmbeddedAssetsAndRequiredShell(t *testing.T) {
 	f := newHTTP(t, 2)
-	h, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL})
+	h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestPublicEmbeddedAssetsAndRequiredShell(t *testing.T) {
 			t.Fatalf("HEAD %s: %d %d", asset.path, head.Code, head.Body.Len())
 		}
 	}
-	if _, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, Assets: fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte("admin")}}}); err == nil || !strings.Contains(err.Error(), "public") {
+	if _, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, Assets: fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte("admin")}}})); err == nil || !strings.Contains(err.Error(), "public") {
 		t.Fatalf("missing public shell: %v", err)
 	}
 	assertHTTPStatus(t, request(t, h, http.MethodGet, "/_app/public-missing.js", "", nil, "", ""), http.StatusNotFound)

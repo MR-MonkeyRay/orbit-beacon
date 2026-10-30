@@ -17,10 +17,10 @@ func TestInternalFailureLogsCorrelatedCodeWithoutPrivateValues(t *testing.T) {
 	f := newHTTP(t, 5)
 	var logs bytes.Buffer
 	var err error
-	f.handler, err = server.NewHandler(server.Options{
+	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{
 		Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL,
 		Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,10 +64,10 @@ func TestNonSQLiteInternalFailureDoesNotLogErrorText(t *testing.T) {
 	var logs bytes.Buffer
 	const privateFailure = "/private/credential-file: token=private-entropy-secret"
 	failingNodes := nodes.NewService(f.db, nodes.Options{MaxNodes: 5, Random: privateFailureReader{errors.New(privateFailure)}})
-	handler, err := server.NewHandler(server.Options{
+	handler, err := server.NewHandler(testHandlerOptions(t, server.Options{
 		Auth: f.auth, Nodes: failingNodes, PublicURL: publicURL,
 		Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}

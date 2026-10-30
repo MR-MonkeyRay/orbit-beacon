@@ -52,8 +52,8 @@ func TestHistoryHTTPIngestFlushTiersAndDeleteVisibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer hs.Close()
-	// NewHandler wires its default ingest service to the history sink.
-	h, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, History: hs, PublicURL: publicURL, Now: func() time.Time { return f.now }})
+	// The test fixture wires its ingest service to the history sink.
+	h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, History: hs, PublicURL: publicURL, Now: func() time.Time { return f.now }}))
 	if err != nil {
 		t.Fatal(err)
 	}

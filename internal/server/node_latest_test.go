@@ -105,7 +105,7 @@ func TestManagementLatestSample(t *testing.T) {
 		t.Fatalf("sample=%s", got.Body)
 	}
 	// A restarted service has no report cache despite durable node metadata.
-	restarted, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: ingest.NewService(f.db, ingest.Options{}), PublicURL: publicURL})
+	restarted, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: ingest.NewService(f.db, ingest.Options{}), PublicURL: publicURL}))
 	if err != nil {
 		t.Fatal(err)
 	}

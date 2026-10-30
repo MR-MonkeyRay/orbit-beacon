@@ -18,7 +18,6 @@ import (
 
 	"github.com/robfig/cron/v3"
 
-	"orbitbeacon/internal/identity"
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/alerts"
 	"orbitbeacon/internal/server/auth"
@@ -28,6 +27,7 @@ import (
 	"orbitbeacon/internal/server/notify"
 	"orbitbeacon/internal/server/secretbox"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 // ValidatePayloadData reads only the registry's named columns. Callers validate
@@ -130,7 +130,7 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 
 func invalidPayload(table, id string) error {
 	// Only fixed registry names and syntactically valid UUIDs reach diagnostics.
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		id = ""
 	}
 	if id != "" {
@@ -215,7 +215,7 @@ func validText(s string, max int) bool { return strings.TrimSpace(s) != "" && le
 func invalidRow() error                { return errors.New("invalid row") }
 
 func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *secretbox.Box) error {
-	if r["id"] != nil && !identity.ValidUUID(r.text("id")) {
+	if r["id"] != nil && !uuid.ValidUUID(r.text("id")) {
 		return invalidRow()
 	}
 	switch table {
@@ -238,7 +238,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 	case "nodes":
 		return validateNode(r)
 	case "node_tags":
-		if !identity.ValidUUID(r.text("node_id")) || !validText(r.text("tag"), 255) {
+		if !uuid.ValidUUID(r.text("node_id")) || !validText(r.text("tag"), 255) {
 			return invalidRow()
 		}
 	case "alert_rules":
@@ -249,7 +249,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 	case "notification_channels":
 		return validateChannel(r, notificationBox)
 	case "alert_rule_channels":
-		if !identity.ValidUUID(r.text("rule_id")) || !identity.ValidUUID(r.text("channel_id")) {
+		if !uuid.ValidUUID(r.text("rule_id")) || !uuid.ValidUUID(r.text("channel_id")) {
 			return invalidRow()
 		}
 	case "backup_plans":
@@ -334,7 +334,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 			return invalidRow()
 		}
 	case "inbox_reads":
-		if !identity.ValidUUID(r.text("user_id")) || !identity.ValidUUID(r.text("notification_id")) {
+		if !uuid.ValidUUID(r.text("user_id")) || !uuid.ValidUUID(r.text("notification_id")) {
 			return invalidRow()
 		}
 	case "backup_tasks":
@@ -346,7 +346,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 }
 
 func validateNode(r payloadRow) error {
-	if !validText(r.text("name"), 255) || !oneOf(r.text("status"), "disabled", "unknown", "pending") || (r["group_id"] != nil && !identity.ValidUUID(r.text("group_id"))) || r.integer("credential_epoch") < 0 {
+	if !validText(r.text("name"), 255) || !oneOf(r.text("status"), "disabled", "unknown", "pending") || (r["group_id"] != nil && !uuid.ValidUUID(r.text("group_id"))) || r.integer("credential_epoch") < 0 {
 		return invalidRow()
 	}
 	if err := v1.DecimalUint64(r.text("run_generation")).Validate(); err != nil {

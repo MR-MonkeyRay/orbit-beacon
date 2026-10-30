@@ -7,9 +7,9 @@ import (
 	"errors"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 type TimezoneInfo struct {
@@ -123,7 +123,7 @@ func (s *Service) Tick(ctx context.Context, now time.Time) error {
 			return e
 		}
 		s.randomMu.Lock()
-		id, e := identity.UUID(s.opts.Random)
+		id, e := uuid.UUID(s.opts.Random)
 		s.randomMu.Unlock()
 		if e != nil {
 			return &Error{Code: "internal_error"}

@@ -10,11 +10,12 @@ import (
 	"sync"
 	"time"
 
-	"orbitbeacon/internal/identity"
+	"orbitbeacon/internal/logging"
 	"orbitbeacon/internal/server/alerts"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 const MaxPendingPerChannel = 100
@@ -41,8 +42,8 @@ func (s *Service) Notify(ctx context.Context, n alerts.Notification) {
 	defer cancel()
 	stop := context.AfterFunc(s.stopCtx, cancel)
 	defer stop()
-	if e := s.enqueue(ctx, n); e != nil && ctx.Err() == nil {
-		slog.Warn("notification enqueue failed", "error_code", "storage_error")
+	if e := s.enqueue(ctx, n); e != nil && ctx.Err() == nil && s.logger != nil {
+		s.logger.LogAttrs(ctx, slog.LevelWarn, "notification_enqueue_failed", logging.ErrorAttrs(e, "storage_error")...)
 	}
 }
 func (s *Service) enqueue(ctx context.Context, n alerts.Notification) error {
@@ -97,7 +98,7 @@ func (s *Service) enqueue(ctx context.Context, n alerts.Notification) error {
 				return e
 			}
 		}
-		deliveryID, e := identity.UUID(rand.Reader)
+		deliveryID, e := uuid.UUID(rand.Reader)
 		if e != nil {
 			return e
 		}
@@ -300,7 +301,9 @@ func (s *Service) deliver(ctx context.Context, channel string) {
 		}
 	}
 	if e = tx.Commit(); e != nil {
-		slog.Warn("notification result persistence failed", "error_code", "storage_error")
+		if s.logger != nil {
+			s.logger.LogAttrs(ctx, slog.LevelWarn, "notification_result_persistence_failed", logging.ErrorAttrs(e, "storage_error")...)
+		}
 	}
 }
 
@@ -321,7 +324,9 @@ func (s *Service) warnSecretUnreadable(channel string) {
 	}
 	s.secretWarnings[channel] = now
 	s.mu.Unlock()
-	slog.Warn("notification credentials unreadable; restore key or replace credentials", "channel_id", channel, "error_code", "secret_unreadable")
+	if s.logger != nil {
+		s.logger.Warn("notification_credentials_unreadable", "channel_id", channel, "error_kind", "secret_unreadable", "error_code", "secret_unreadable")
+	}
 }
 
 // Shutdown rejects new queue writes and cancels sends immediately. The caller

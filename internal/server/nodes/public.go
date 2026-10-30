@@ -16,10 +16,10 @@ import (
 
 	"modernc.org/sqlite"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 // OnlineWindow is the shared management and public recent-report window.
@@ -115,7 +115,7 @@ func (s *Service) GetPublicSettings(ctx context.Context, id string) (PublicSetti
 }
 
 func (s *Service) PatchPublicSettings(ctx context.Context, id string, patch PublicSettingsPatch) (PublicSettings, error) {
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return PublicSettings{}, ErrInvalidInput
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

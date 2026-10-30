@@ -19,10 +19,10 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 type serviceError string
@@ -297,7 +297,7 @@ func (s *Service) prepareUser(username, password string, mustChangePassword bool
 	if err != nil {
 		return User{}, "", err
 	}
-	id, err := identity.UUID(s.random)
+	id, err := uuid.UUID(s.random)
 	if err != nil {
 		return User{}, "", err
 	}

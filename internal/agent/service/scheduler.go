@@ -3,13 +3,14 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"orbitbeacon/internal/agent/identity"
+	oblogging "orbitbeacon/internal/logging"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -24,6 +25,7 @@ type ProbeReporter interface {
 }
 
 type SchedulerOptions struct {
+	Logger   *slog.Logger
 	Probes   ProbeReporter
 	Traffic  TrafficReporter
 	Identity *identity.Store
@@ -38,7 +40,6 @@ type SchedulerOptions struct {
 	RandomFloat        func() float64
 	System             *v1.System
 	CredentialsChanged func(bool)
-	Log                func(string)
 }
 
 type Scheduler struct {
@@ -49,14 +50,21 @@ type Scheduler struct {
 	latest             v1.Report
 }
 
-func NewScheduler(options SchedulerOptions) *Scheduler { return &Scheduler{options: options} }
+func NewScheduler(options SchedulerOptions) *Scheduler {
+	if options.Logger == nil {
+		options.Logger = slog.New(slog.DiscardHandler)
+	}
+	return &Scheduler{options: options}
+}
 
 func (s *Scheduler) CredentialsInvalid() bool { return s.credentialsInvalid.Load() }
 
-func (s *Scheduler) setCredentialsInvalid(invalid bool) {
-	if s.credentialsInvalid.Swap(invalid) != invalid && s.options.CredentialsChanged != nil {
+func (s *Scheduler) setCredentialsInvalid(invalid bool) bool {
+	changed := s.credentialsInvalid.Swap(invalid) != invalid
+	if changed && s.options.CredentialsChanged != nil {
 		s.options.CredentialsChanged(invalid)
 	}
+	return changed
 }
 
 // Run owns exactly one collection loop and one reporting worker. No offline
@@ -106,21 +114,19 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 				continue
 			}
 			before := s.options.RuntimeSettings()
-			if s.options.ReloadConfig == nil || s.options.ReloadConfig(ctx) != nil {
-				if s.options.Log != nil {
-					s.options.Log("configuration reload rejected")
-				}
+			reloadErr := errors.New("configuration loader unavailable")
+			if s.options.ReloadConfig != nil {
+				reloadErr = s.options.ReloadConfig(ctx)
+			}
+			if reloadErr != nil {
+				s.options.Logger.LogAttrs(ctx, slog.LevelWarn, "configuration_reload_rejected", oblogging.ErrorAttrs(reloadErr, "configuration_reload_rejected")...)
 				continue
 			}
 			if sameRuntimeSettings(before, s.options.RuntimeSettings()) {
-				if s.options.Log != nil {
-					s.options.Log("configuration unchanged")
-				}
+				s.options.Logger.InfoContext(ctx, "configuration_unchanged")
 				continue
 			}
-			if s.options.Log != nil {
-				s.options.Log("configuration reloaded")
-			}
+			s.options.Logger.InfoContext(ctx, "configuration_reloaded")
 			timer.Reset(0)
 		case <-timer.C:
 			started := time.Now()
@@ -195,9 +201,13 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 				}
 				sent = report.Seq
 				backoff.Reset()
-				s.setCredentialsInvalid(false)
-				if consecutiveFailures > 0 && s.options.Log != nil {
-					s.options.Log(fmt.Sprintf("report recovered after %d consecutive failures", consecutiveFailures))
+				credentialsRecovered := s.setCredentialsInvalid(false)
+				if consecutiveFailures > 0 {
+					event := "report_delivery_recovered"
+					if credentialsRecovered {
+						event = "credentials_recovered"
+					}
+					s.options.Logger.InfoContext(ctx, event, "consecutive_failures", consecutiveFailures)
 				}
 				consecutiveFailures = 0
 				lastFailureLog = time.Time{}
@@ -211,21 +221,29 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 					return err
 				}
 			}
-			if status == 401 {
-				s.setCredentialsInvalid(true)
+			credentialsBecameInvalid := false
+			if status == http.StatusUnauthorized {
+				credentialsBecameInvalid = s.setCredentialsInvalid(true)
 			}
 			now := time.Now()
 			delay := backoff.Next(status, retryAfter, now)
 			consecutiveFailures++
-			if s.options.Log != nil && (consecutiveFailures == 1 || now.Sub(lastFailureLog) >= 5*time.Minute) {
-				state := fmt.Sprintf("error=%s", reportFailureKind(err))
+			if consecutiveFailures == 1 || credentialsBecameInvalid || now.Sub(lastFailureLog) >= 5*time.Minute {
+				errorCode := reportFailureKind(err)
 				if status != 0 {
-					state = fmt.Sprintf("status=%d", status)
+					errorCode = "http_error"
 				}
-				if consecutiveFailures == 1 {
-					s.options.Log(fmt.Sprintf("report failed: %s; retrying in %s", state, delay))
+				attrs := oblogging.ErrorAttrs(err, errorCode)
+				if status != 0 {
+					attrs = append(attrs, slog.Int("status", status))
+				}
+				attrs = append(attrs, slog.Uint64("consecutive_failures", consecutiveFailures), slog.Int64("retry_after_ms", delay.Milliseconds()))
+				if credentialsBecameInvalid {
+					s.options.Logger.LogAttrs(ctx, slog.LevelWarn, "credentials_invalid", attrs...)
+				} else if consecutiveFailures == 1 {
+					s.options.Logger.LogAttrs(ctx, slog.LevelWarn, "report_delivery_failed", attrs...)
 				} else {
-					s.options.Log(fmt.Sprintf("report still failing: consecutive_failures=%d; %s; retrying in %s", consecutiveFailures, state, delay))
+					s.options.Logger.LogAttrs(ctx, slog.LevelWarn, "report_delivery_still_failing", attrs...)
 				}
 				lastFailureLog = now
 			}

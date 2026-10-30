@@ -14,11 +14,11 @@ import (
 	"syscall"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/inbox"
 	"orbitbeacon/internal/server/securefs"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 // Run owns the scheduler and the sole execution slot. Scheduling remains live
@@ -140,7 +140,7 @@ func (s *Service) claim(ctx context.Context) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
-	if !identity.ValidUUID(task.ID) {
+	if !uuid.ValidUUID(task.ID) {
 		return Task{}, &Error{Code: "internal_error"}
 	}
 	now := s.opts.Now().UTC()
@@ -259,7 +259,7 @@ func (s *Service) execute(ctx context.Context, task Task) {
 		}
 	case "backup_local":
 		if err = decodeStrictObject(task.Destination.Target, &local); err == nil {
-			if task.PlanID == nil || !identity.ValidUUID(*task.PlanID) || !filepath.IsAbs(local.Path) || local.RetainCount < 1 || local.RetainCount > 1000 {
+			if task.PlanID == nil || !uuid.ValidUUID(*task.PlanID) || !filepath.IsAbs(local.Path) || local.RetainCount < 1 || local.RetainCount > 1000 {
 				err = &Error{Code: "internal_error"}
 			} else if err = securefs.ValidateDirectory(local.Path); err == nil {
 				outputDir = filepath.Join(local.Path, "orbitbeacon-"+*task.PlanID)
@@ -287,7 +287,7 @@ func (s *Service) execute(ctx context.Context, task Task) {
 			err = &Error{Code: "storage_upload_failed"}
 		}
 		if err == nil {
-			if task.PlanID == nil || !identity.ValidUUID(*task.PlanID) {
+			if task.PlanID == nil || !uuid.ValidUUID(*task.PlanID) {
 				err = &Error{Code: "internal_error"}
 			} else {
 				objectKey = strings.TrimPrefix(destination.Prefix+"/orbitbeacon/"+*task.PlanID+"/"+name, "/")
@@ -490,7 +490,7 @@ func (s *Service) cleanupWork(ctx context.Context) error {
 			return first
 		}
 		id := names[0]
-		if identity.ValidUUID(id) {
+		if uuid.ValidUUID(id) {
 			var active bool
 			if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM backup_tasks WHERE id=? AND state IN ('queued','running') AND restored=0)`, id).Scan(&active); err != nil {
 				return err

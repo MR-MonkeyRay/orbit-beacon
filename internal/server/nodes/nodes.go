@@ -14,13 +14,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/change"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 type serviceError string
@@ -160,7 +160,7 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 		return Node{}, ErrInvalidInput
 	}
 	s.randomMu.Lock()
-	id, err := identity.UUID(s.random)
+	id, err := uuid.UUID(s.random)
 	s.randomMu.Unlock()
 	if err != nil {
 		return Node{}, err
@@ -284,7 +284,7 @@ func (s *Service) list(ctx context.Context, limit, offset int) ([]Node, error) {
 
 // PatchMetadata changes only supplied metadata and replaces tags only when present.
 func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPatch) (Node, error) {
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return Node{}, ErrInvalidInput
 	}
 	fields := make(map[string]string)
@@ -293,7 +293,7 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 	}
 	var groupID *string
 	if patch.GroupID != nil {
-		if err := json.Unmarshal(patch.GroupID, &groupID); err != nil || (groupID != nil && !identity.ValidUUID(*groupID)) {
+		if err := json.Unmarshal(patch.GroupID, &groupID); err != nil || (groupID != nil && !uuid.ValidUUID(*groupID)) {
 			fields["group_id"] = "must be a group UUID or null"
 		}
 	}
@@ -386,7 +386,7 @@ func (s *Service) SetDisabled(ctx context.Context, id string, disabled bool) err
 // credential can be cut off without losing metadata or public settings. A new
 // single-node enrollment ticket can bind a fresh installation afterwards.
 func (s *Service) RevokeCredential(ctx context.Context, id string) error {
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return ErrInvalidInput
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -506,7 +506,7 @@ func (s *Service) Batch(ctx context.Context, req BatchRequest) ([]BatchResult, e
 	}
 	seen := make(map[string]bool, len(req.NodeIDs))
 	for _, id := range req.NodeIDs {
-		if !identity.ValidUUID(id) || seen[id] {
+		if !uuid.ValidUUID(id) || seen[id] {
 			return nil, ErrInvalidInput
 		}
 		seen[id] = true

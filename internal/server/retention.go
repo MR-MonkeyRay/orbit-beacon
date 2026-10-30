@@ -3,9 +3,10 @@ package server
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
-	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/logging"
 )
 
 const (
@@ -37,6 +38,54 @@ type RetentionResult struct {
 	Sessions          int64
 	TrafficRows       int64
 	ProbeRows         int64
+}
+
+// RunRetention performs the bounded cleanup pass on the same hourly schedule
+// used by the server process. The caller owns cancellation and waits for return.
+func (h *handler) RunRetention(ctx context.Context) {
+	ticker := time.NewTicker(RetentionInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			result, err := h.CleanupRetention(ctx, now)
+			if err != nil {
+				if h.logger != nil {
+					h.logger.LogAttrs(ctx, slog.LevelWarn, "retention_cleanup_failed", logging.ErrorAttrs(err, "cleanup_failed")...)
+				}
+				continue
+			}
+			if retentionChanged(result) && h.logger != nil {
+				h.logger.LogAttrs(ctx, slog.LevelInfo, "retention_cleanup_complete", retentionAttrs(result)...)
+			}
+		}
+	}
+}
+
+func retentionChanged(result RetentionResult) bool {
+	return result.NotificationDeliveries != 0 || result.InboxNotifications != 0 ||
+		result.BackupTasks != 0 || result.BackupOrphanFiles != 0 || result.BackupLocalTemps != 0 ||
+		result.AlertEvents != 0 || result.HistoryBuckets != 0 || result.AuditEvents != 0 ||
+		result.EnrollmentTickets != 0 || result.Sessions != 0 || result.TrafficRows != 0 || result.ProbeRows != 0
+}
+
+func retentionAttrs(result RetentionResult) []slog.Attr {
+	return []slog.Attr{
+		slog.Int64("notification_deliveries", result.NotificationDeliveries),
+		slog.Int64("inbox_notifications", result.InboxNotifications),
+		slog.Int64("backup_tasks", result.BackupTasks),
+		slog.Int64("backup_orphan_files", result.BackupOrphanFiles),
+		slog.Int64("backup_local_temps", result.BackupLocalTemps),
+		slog.Int64("alert_events", result.AlertEvents),
+		slog.Int64("history_buckets", result.HistoryBuckets),
+		slog.Int64("audit_events", result.AuditEvents),
+		slog.Int64("enrollment_tickets", result.EnrollmentTickets),
+		slog.Int64("sessions", result.Sessions),
+		slog.Int64("traffic_rows", result.TrafficRows),
+		slog.Int64("probe_rows", result.ProbeRows),
+	}
 }
 
 func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (RetentionResult, error) {
@@ -108,7 +157,10 @@ func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (Retentio
 			return result, fmt.Errorf("cleanup traffic: %w", err)
 		}
 	}
-	result.ProbeRows, err = cleanupRetentionBacklog(ctx, now.Add(-7*24*time.Hour), h.cleanupProbeHourly)
+	if h.nodes == nil {
+		return result, fmt.Errorf("cleanup probe history: probe retention is unavailable")
+	}
+	result.ProbeRows, err = cleanupRetentionBacklog(ctx, now.Add(-7*24*time.Hour), h.nodes.CleanupProbeHistory)
 	if err != nil {
 		return result, fmt.Errorf("cleanup probe history: %w", err)
 	}
@@ -119,20 +171,6 @@ func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (Retentio
 		}
 	}
 	return result, nil
-}
-
-func (h *handler) cleanupProbeHourly(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
-	if h.nodes == nil || limit < 1 {
-		return 0, fmt.Errorf("probe retention is unavailable")
-	}
-	result, err := h.nodes.Database().ExecContext(ctx, `DELETE FROM probe_hourly
-WHERE (node_id,target,hour) IN (
- SELECT node_id,target,hour FROM probe_hourly WHERE hour < ? ORDER BY hour LIMIT ?
-)`, timekey.Format(cutoff), limit)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
 }
 
 func cleanupRetentionBacklog(ctx context.Context, cutoff time.Time, cleanup func(context.Context, time.Time, int) (int64, error)) (int64, error) {

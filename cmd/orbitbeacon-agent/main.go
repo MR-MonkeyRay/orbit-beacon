@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"os/user"
@@ -36,13 +37,19 @@ func exitCode(err error) int {
 }
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	if err := runWithLogger(os.Args[1:], logger); err != nil {
+		// Command errors are operator-facing CLI output, not structured logs.
 		fmt.Fprintln(os.Stderr, "orbitbeacon-agent:", err)
 		os.Exit(exitCode(err))
 	}
 }
 
 func run(args []string) error {
+	return runWithLogger(args, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+}
+
+func runWithLogger(args []string, logger *slog.Logger) error {
 	if len(args) == 0 {
 		return errors.New("expected subcommand: run, enroll, doctor or version")
 	}
@@ -50,35 +57,24 @@ func run(args []string) error {
 		fmt.Fprintln(os.Stdout, "Usage: orbitbeacon-agent {run|enroll|doctor|version} --help")
 		return nil
 	}
-	var reload <-chan struct{}
-	if args[0] == "run" {
-		var stopReload func()
-		reload, stopReload = reloadSignals()
-		defer stopReload()
-	}
-	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
-	var file, policyPath, tokenFile string
-	runtimeFlags := make(map[string]*string)
-	var asJSON bool
 	switch args[0] {
 	case "version":
-		fs.BoolVar(&asJSON, "json", false, "print machine-readable build information")
-	case "run", "enroll", "doctor":
-		fs.StringVar(&file, "config", "", "agent JSON configuration file")
-		fs.StringVar(&policyPath, "install-policy", "", "administrator-owned immutable install policy JSON file")
-		for _, key := range []string{"report_interval_seconds", "disk_interval_seconds", "interfaces", "disk_paths", "probe_targets"} {
-			runtimeFlags[key] = fs.String(strings.ReplaceAll(key, "_", "-"), "", "local runtime override; lists use a JSON array of strings")
-		}
-		if args[0] == "enroll" {
-			fs.StringVar(&tokenFile, "token-file", "", "optional enrollment token file; omit to recover saved node credentials")
-		}
-		if args[0] == "doctor" {
-			fs.BoolVar(&asJSON, "json", false, "print machine-readable diagnostics")
-		}
+		return runVersion(args[1:])
+	case "run":
+		return runAgent(args[1:], logger)
+	case "enroll":
+		return runEnroll(args[1:], logger)
+	case "doctor":
+		return runDoctor(args[1:], logger)
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
-	if err := fs.Parse(args[1:]); err != nil {
+}
+
+func runVersion(args []string) error {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "print machine-readable build information")
+	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -87,20 +83,52 @@ func run(args []string) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected positional argument %q", fs.Arg(0))
 	}
-	if args[0] == "version" {
-		if asJSON {
-			return json.NewEncoder(os.Stdout).Encode(buildinfo.Current())
+	info := buildinfo.Current()
+	if *asJSON {
+		return json.NewEncoder(os.Stdout).Encode(info)
+	}
+	fmt.Fprintf(os.Stdout, "OrbitBeacon agent %s (%s/%s, commit %s, built %s, %s)\n", info.Version, info.OS, info.Arch, info.Commit, info.BuildDate, info.GoVersion)
+	return nil
+}
+
+type runtimeCommand struct {
+	ctx       context.Context
+	cancel    context.CancelFunc
+	loadAgent func() (config.Agent, error)
+	cfg       config.Agent
+}
+
+func prepareRuntimeCommand(name string, args []string, configure func(*flag.FlagSet) error) (*runtimeCommand, error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	file := fs.String("config", "", "agent JSON configuration file")
+	policyPath := fs.String("install-policy", "", "administrator-owned immutable install policy JSON file")
+	runtimeFlags := map[string]*string{
+		"report_interval_seconds": fs.String("report-interval-seconds", "", "override the metric report interval in seconds"),
+		"disk_interval_seconds":   fs.String("disk-interval-seconds", "", "override the disk collection interval in seconds"),
+		"interfaces":              fs.String("interfaces", "", "override monitored interfaces with a JSON array of strings"),
+		"disk_paths":              fs.String("disk-paths", "", "override monitored disk paths with a JSON array of strings"),
+		"probe_targets":           fs.String("probe-targets", "", "override probe targets with a JSON array of strings"),
+	}
+	if configure != nil {
+		if err := configure(fs); err != nil {
+			return nil, err
 		}
-		info := buildinfo.Current()
-		fmt.Fprintf(os.Stdout, "OrbitBeacon agent %s (%s/%s, commit %s, built %s, %s)\n", info.Version, info.OS, info.Arch, info.Commit, info.BuildDate, info.GoVersion)
-		return nil
 	}
-	if policyPath == "" {
-		return errors.New("--install-policy is required; trust policy is never inferred")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil, nil
+		}
+		return nil, err
 	}
-	policy, err := config.ReadInstallPolicy(policyPath, 0)
+	if fs.NArg() != 0 {
+		return nil, fmt.Errorf("unexpected positional argument %q", fs.Arg(0))
+	}
+	if *policyPath == "" {
+		return nil, errors.New("--install-policy is required; trust policy is never inferred")
+	}
+	policy, err := config.ReadInstallPolicy(*policyPath, 0)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	flags := make(map[string]string)
 	fs.Visit(func(f *flag.Flag) {
@@ -109,14 +137,27 @@ func run(args []string) error {
 			flags[key] = *value
 		}
 	})
-	loadAgent, err := agentLoader(file, flags, policy)
+	loadAgent, err := agentLoader(*file, flags, policy)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cfg, err := loadAgent()
 	if err != nil {
-		return err
+		return nil, err
 	}
+	if err := validateRuntimeIdentity(cfg); err != nil {
+		return nil, err
+	}
+	if err := os.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"); err != nil {
+		return nil, err
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	return &runtimeCommand{ctx: ctx, cancel: cancel, loadAgent: loadAgent, cfg: cfg}, nil
+}
+
+func (c *runtimeCommand) close() { c.cancel() }
+
+func validateRuntimeIdentity(cfg config.Agent) error {
 	if runtime.GOOS == "windows" {
 		return errors.New("runtime_identity_unsupported: Windows account enforcement is not implemented; no runtime command was performed")
 	}
@@ -129,63 +170,95 @@ func run(args []string) error {
 			return errors.New("runtime_identity_mismatch: account differs from install policy")
 		}
 	}
-	if err := os.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"); err != nil {
+	return nil
+}
+
+func runAgent(args []string, logger *slog.Logger) error {
+	reload, stopReload := reloadSignals()
+	defer stopReload()
+	command, err := prepareRuntimeCommand("run", args, nil)
+	if err != nil || command == nil {
 		return err
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	if args[0] == "run" {
-		unlock, err := lockRun(ctx, cfg.StateDir)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return nil
-			}
-			return err
-		}
-		defer unlock()
-	}
-	agent, err := service.OpenRuntime(ctx, cfg)
+	defer command.close()
+	unlock, err := lockRun(command.ctx, command.cfg.StateDir)
 	if err != nil {
-		if args[0] == "run" && errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return err
+	}
+	defer unlock()
+	agent, err := service.OpenRuntime(command.ctx, command.cfg, logger)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
 			return nil
 		}
 		return err
 	}
 	defer agent.Close()
-	switch args[0] {
-	case "run":
-		err := agent.Run(ctx, reload, func() (v1.RuntimeSettings, error) {
-			next, err := loadAgent()
-			return next.RuntimeSettings, err
-		})
-		if errors.Is(err, context.Canceled) {
-			return nil
-		}
+	err = agent.Run(command.ctx, reload, func() (v1.RuntimeSettings, error) {
+		next, err := command.loadAgent()
+		return next.RuntimeSettings, err
+	})
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
+}
+
+func runEnroll(args []string, logger *slog.Logger) error {
+	var tokenFile string
+	command, err := prepareRuntimeCommand("enroll", args, func(fs *flag.FlagSet) error {
+		fs.StringVar(&tokenFile, "token-file", "", "optional enrollment token file; omit to recover saved node credentials")
+		return nil
+	})
+	if err != nil || command == nil {
 		return err
-	case "enroll":
-		requestCtx, stop := context.WithTimeout(ctx, 5*time.Second)
-		defer stop()
-		result, err := runEnrollment(requestCtx, tokenFile, agent.Enroll)
-		if err != nil {
+	}
+	defer command.close()
+	agent, err := service.OpenRuntime(command.ctx, command.cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer agent.Close()
+	requestCtx, stop := context.WithTimeout(command.ctx, 5*time.Second)
+	defer stop()
+	result, err := runEnrollment(requestCtx, tokenFile, agent.Enroll)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "Enrolled node %s\n", result.NodeID)
+	return nil
+}
+
+func runDoctor(args []string, logger *slog.Logger) error {
+	var asJSON bool
+	command, err := prepareRuntimeCommand("doctor", args, func(fs *flag.FlagSet) error {
+		fs.BoolVar(&asJSON, "json", false, "print machine-readable diagnostics")
+		return nil
+	})
+	if err != nil || command == nil {
+		return err
+	}
+	defer command.close()
+	agent, err := service.OpenRuntime(command.ctx, command.cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer agent.Close()
+	result, checkErr := agent.Doctor(command.ctx)
+	if asJSON {
+		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stdout, "Enrolled node %s\n", result.NodeID)
-		return nil
-	case "doctor":
-		result, checkErr := agent.Doctor(ctx)
-		if asJSON {
-			if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
-				return err
-			}
-		} else {
-			fmt.Fprintf(os.Stdout, "Configuration: %s\nIdentity file: %s\nConnectivity: %s\nNode authentication: %s\nCollection: %s\nInstall mode: %s\n", result.Configuration, result.Identity, result.Connectivity, result.Authentication, result.Collection, result.InstallMode)
-			for metric, status := range result.MetricStatus {
-				fmt.Fprintf(os.Stdout, "%s: %s\n", metric, status)
-			}
+	} else {
+		fmt.Fprintf(os.Stdout, "Configuration: %s\nIdentity file: %s\nConnectivity: %s\nNode authentication: %s\nCollection: %s\nInstall mode: %s\n", result.Configuration, result.Identity, result.Connectivity, result.Authentication, result.Collection, result.InstallMode)
+		for metric, status := range result.MetricStatus {
+			fmt.Fprintf(os.Stdout, "%s: %s\n", metric, status)
 		}
-		return checkErr
 	}
-	return errors.New("unsupported agent command")
+	return checkErr
 }
 
 // Capture the verified policy, environment and explicit flags once. Reload only

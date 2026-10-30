@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/mail"
 	"net/url"
@@ -19,11 +20,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/secretbox"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 var (
@@ -75,6 +76,7 @@ type Options struct {
 	AllowInsecureWebhooks bool
 	AllowPrivateNetworks  bool
 	Now                   func() time.Time
+	Logger                *slog.Logger
 }
 type Service struct {
 	db             *sql.DB
@@ -88,6 +90,7 @@ type Service struct {
 	stopCtx        context.Context
 	stop           context.CancelFunc
 	secretWarnings map[string]time.Time
+	logger         *slog.Logger
 }
 
 func New(db *sql.DB, box *secretbox.Box, opts Options) *Service {
@@ -95,7 +98,7 @@ func New(db *sql.DB, box *secretbox.Box, opts Options) *Service {
 		opts.Now = time.Now
 	}
 	stopCtx, stop := context.WithCancel(context.Background())
-	return &Service{db: db, box: box, opts: opts, sender: newSender(opts), done: make(chan struct{}), stopCtx: stopCtx, stop: stop, secretWarnings: make(map[string]time.Time)}
+	return &Service{db: db, box: box, opts: opts, sender: newSender(opts), done: make(chan struct{}), stopCtx: stopCtx, stop: stop, secretWarnings: make(map[string]time.Time), logger: opts.Logger}
 }
 
 var chatIDPattern = regexp.MustCompile(`^(?:-?[0-9]{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$`)
@@ -255,7 +258,7 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 		if p.Name == nil || p.Kind == nil || p.Enabled == nil || len(p.Config) == 0 {
 			return c, validation.Invalid("channel", "name, kind, enabled and config required")
 		}
-		c.ID, e = identity.UUID(rand.Reader)
+		c.ID, e = uuid.UUID(rand.Reader)
 		if e != nil {
 			return c, e
 		}

@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"orbitbeacon/internal/identity"
+	"orbitbeacon/internal/uuid"
 )
 
 type smtpError struct{ code int }
@@ -272,7 +272,7 @@ func mailMessage(cfg Config, p Payload, now time.Time) (string, error) {
 	if strings.ContainsAny(subject, "\r\n") {
 		return "", errSMTPProtocol
 	}
-	id, e := identity.UUID(rand.Reader)
+	id, e := uuid.UUID(rand.Reader)
 	if e != nil {
 		return "", e
 	}

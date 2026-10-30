@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/inbox"
 	"orbitbeacon/internal/server/secretbox"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 const retainedTaskColumns = "id,kind,state,phase,plan_id,actor_id,categories_json,destination_json,input_credentials_ciphertext,scheduled_at,created_at,started_at,finished_at,artifact_name,artifact_bytes,artifact_sha256,artifact_expires_at,artifact_deleted_at,artifact_cleanup_after,result_location,password_ciphertext,password_expires_at,error_code,warning_code,restored"
@@ -90,7 +90,7 @@ func (e *DependencyConflict) Error() string {
 
 func dependencyConflict(kind string, id any) error {
 	safe, _ := id.(string)
-	if !identity.ValidUUID(safe) {
+	if !uuid.ValidUUID(safe) {
 		safe = ""
 	}
 	return &Error{Code: "restore_dependency_conflict", Err: &DependencyConflict{Type: kind, ID: safe}}

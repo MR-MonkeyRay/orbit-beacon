@@ -6,10 +6,10 @@ import (
 	"errors"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 const taskLifetime = 90 * 24 * time.Hour
@@ -56,7 +56,7 @@ func (s *Service) projectTask(task Task, now time.Time) Task {
 }
 
 func (s *Service) Task(ctx context.Context, id string) (Task, error) {
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return Task{}, &Error{Code: "task_not_found"}
 	}
 	task, err := s.loadTask(ctx, id)
@@ -126,7 +126,7 @@ func (s *Service) Tasks(ctx context.Context, limit int, before string) (TaskPage
 // Password is an explicit audited read. Neither Task nor Tasks decrypts secrets.
 func (s *Service) Password(ctx context.Context, id string) (PasswordResult, error) {
 	var result PasswordResult
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return result, &Error{Code: "task_not_found"}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

@@ -9,9 +9,9 @@ import (
 	"errors"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 var (
@@ -76,12 +76,12 @@ func Insert(ctx context.Context, tx *sql.Tx, event Event) error {
 	}
 	if event.ID == "" {
 		var err error
-		event.ID, err = identity.UUID(rand.Reader)
+		event.ID, err = uuid.UUID(rand.Reader)
 		if err != nil {
 			return err
 		}
 	}
-	if !identity.ValidUUID(event.ID) {
+	if !uuid.ValidUUID(event.ID) {
 		return ErrInvalidInput
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO inbox_notifications(id,kind,source_id,transition,severity,created_at,details_json) VALUES(?,?,?,?,?,?,?) ON CONFLICT(kind,source_id,transition) DO NOTHING`, event.ID, event.Kind, event.SourceID, event.Transition, event.Severity, timekey.Format(event.CreatedAt), string(event.Details))

@@ -123,9 +123,7 @@ func TestUnreadableDeliveryBackoffAndKeyRestoration(t *testing.T) {
 	wrong, _ := secretbox.New(bytes.Repeat([]byte{8}, 32), "orbitbeacon notification channel v1")
 	f.s.box = wrong
 	var logs bytes.Buffer
-	logger := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
-	t.Cleanup(func() { slog.SetDefault(logger) })
+	f.s.logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	for i := range 2 {
 		f.s.process(context.Background())
 		st, attempts, code, next := state(t, f.db)
@@ -138,7 +136,7 @@ func TestUnreadableDeliveryBackoffAndKeyRestoration(t *testing.T) {
 		}
 		f.now = stamp
 	}
-	if strings.Count(logs.String(), "notification credentials unreadable") != 1 || !strings.Contains(logs.String(), f.channel.ID) {
+	if strings.Count(logs.String(), "notification_credentials_unreadable") != 1 || !strings.Contains(logs.String(), f.channel.ID) {
 		t.Fatalf("unbounded/missing log: %s", logs.String())
 	}
 	// Restart with the restored key and persisted pending work.
@@ -154,7 +152,7 @@ func TestUnreadableDeliveryBackoffAndKeyRestoration(t *testing.T) {
 	}
 	f.now = f.now.Add(time.Hour)
 	f.s.warnSecretUnreadable(f.channel.ID)
-	if strings.Count(logs.String(), "notification credentials unreadable") != 2 {
+	if strings.Count(logs.String(), "notification_credentials_unreadable") != 2 {
 		t.Fatal("hourly warning missing")
 	}
 }

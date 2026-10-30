@@ -12,10 +12,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"orbitbeacon/internal/identity"
+	"orbitbeacon/internal/logging"
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 type Notification struct {
@@ -97,9 +98,6 @@ func NewEvaluator(service *Service, latest LatestReader, opts EvaluatorOptions) 
 	if opts.QueueSize <= 0 {
 		opts.QueueSize = 256
 	}
-	if opts.Logger == nil {
-		opts.Logger = slog.Default()
-	}
 	return &Evaluator{service: service, latest: latest, opts: opts, pending: make(map[pair]pending), resolutions: make(map[pair]pendingResolution), queue: make(chan Notification, opts.QueueSize)}
 }
 func (e *Evaluator) NotificationsDropped() uint64 { return e.dropped.Load() }
@@ -125,7 +123,9 @@ func (e *Evaluator) Run(ctx context.Context) {
 	defer func() { <-workerDone }()
 	tick := func() {
 		if err := e.Evaluate(ctx, e.opts.Now()); err != nil && ctx.Err() == nil {
-			e.opts.Logger.Warn("alert evaluation failed", "error", err)
+			if e.opts.Logger != nil {
+				e.opts.Logger.LogAttrs(ctx, slog.LevelWarn, "alert_evaluation_failed", logging.ErrorAttrs(err, "evaluation_failed")...)
+			}
 		}
 	}
 	tick()
@@ -145,7 +145,9 @@ func (e *Evaluator) enqueue(n Notification) {
 	case e.queue <- n:
 	default:
 		e.dropped.Add(1)
-		e.opts.Logger.Warn("alert notification queue full")
+		if e.opts.Logger != nil {
+			e.opts.Logger.Warn("alert_notification_queue_full")
+		}
 	}
 }
 func definition(r Rule) string {
@@ -387,7 +389,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 	return evaluationErr
 }
 func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *float64, since time.Time) error {
-	id, err := identity.UUID(rand.Reader)
+	id, err := uuid.UUID(rand.Reader)
 	if err != nil {
 		return err
 	}

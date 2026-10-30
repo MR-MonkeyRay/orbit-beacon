@@ -1,10 +1,11 @@
-package main
+package app
 
 import (
 	"context"
 	"database/sql"
 	"log/slog"
 
+	"orbitbeacon/internal/logging"
 	"orbitbeacon/internal/server/history"
 )
 
@@ -13,7 +14,7 @@ import (
 func openMetricHistory(ctx context.Context, dataDir string, nodes *sql.DB, logger *slog.Logger) *history.Service {
 	service, err := history.Open(ctx, dataDir, nodes, history.Options{Logger: logger})
 	if err != nil {
-		logger.Warn("metric history disabled: cannot open metrics.db; the main database remains available", "error", err)
+		logger.LogAttrs(ctx, slog.LevelWarn, "history_disabled", logging.ErrorAttrs(err, "history_open_failed")...)
 		return nil
 	}
 	return service

@@ -19,10 +19,10 @@ import (
 
 func TestRetentionDrainsAlertAndNotificationBacklogs(t *testing.T) {
 	f := newHTTP(t, 1)
-	h, err := server.NewHandler(server.Options{
+	h, err := server.NewHandler(testHandlerOptions(t, server.Options{
 		Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL,
 		Notifications: notify.New(f.db, nil, notify.Options{}),
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestRetentionDeletesOnlyProbeHourlyRowsOlderThanSevenDays(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL})
+	h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestRetentionDrainsInboxAndBackupHistoryPreservingActivePasswords(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, Backups: backups})
+	h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, Backups: backups}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestRetentionSweepsOnlyOwnedOrphanExportsAndLocalTemps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, Backups: backups})
+	h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, Backups: backups}))
 	if err != nil {
 		t.Fatal(err)
 	}

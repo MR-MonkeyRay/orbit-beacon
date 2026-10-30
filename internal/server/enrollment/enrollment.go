@@ -14,11 +14,11 @@ import (
 	"sync"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 type serviceError string
@@ -97,7 +97,7 @@ type CreatedTicket struct {
 }
 
 func (s *Service) CreateSingle(ctx context.Context, nodeID string) (CreatedTicket, error) {
-	if !identity.ValidUUID(nodeID) {
+	if !uuid.ValidUUID(nodeID) {
 		return CreatedTicket{}, ErrInvalidInput
 	}
 	return s.create(ctx, &nodeID, nil, 15*time.Minute, 1)
@@ -112,7 +112,7 @@ func (s *Service) CreateBatch(ctx context.Context, groupID string) (CreatedTicke
 
 func (s *Service) create(ctx context.Context, nodeID, groupID *string, lifetime time.Duration, maxUses int) (CreatedTicket, error) {
 	s.randomMu.Lock()
-	id, err := identity.UUID(s.random)
+	id, err := uuid.UUID(s.random)
 	var secret [32]byte
 	if err == nil {
 		_, err = io.ReadFull(s.random, secret[:])
@@ -388,7 +388,7 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 			return v1.EnrollmentResponse{}, nodes.ErrCapacityReached
 		}
 		s.randomMu.Lock()
-		nodeID, err = identity.UUID(s.random)
+		nodeID, err = uuid.UUID(s.random)
 		s.randomMu.Unlock()
 		if err != nil {
 			return v1.EnrollmentResponse{}, err

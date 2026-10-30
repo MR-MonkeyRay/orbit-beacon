@@ -374,7 +374,7 @@ func TestPublicHTTPRotationRestartPaginationAndWithdrawal(t *testing.T) {
 	// Reconstructing ingest loses only the in-memory resource snapshot; durable
 	// last_seen still supplies liveness.
 	f.ingest = ingest.NewService(f.db, ingest.Options{Now: func() time.Time { return f.now }})
-	f.handler, err = server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return f.now }, WebUpdateIntervalSeconds: 2})
+	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return f.now }, WebUpdateIntervalSeconds: 2}))
 	if err != nil {
 		t.Fatal(err)
 	}

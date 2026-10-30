@@ -83,8 +83,23 @@ type handler struct {
 }
 
 func NewHandler(opts Options) (*handler, error) {
-	if opts.Auth == nil || opts.Nodes == nil {
-		return nil, errors.New("auth and nodes services are required")
+	for _, required := range []struct {
+		name    string
+		present bool
+	}{
+		{"auth", opts.Auth != nil},
+		{"nodes", opts.Nodes != nil},
+		{"management", opts.Management != nil},
+		{"enrollments", opts.Enrollments != nil},
+		{"ingest", opts.Ingest != nil},
+		{"alerts", opts.Alerts != nil},
+		{"traffic", opts.Traffic != nil},
+		{"inbox", opts.Inbox != nil},
+		{"logger", opts.Logger != nil},
+	} {
+		if !required.present {
+			return nil, fmt.Errorf("%s service is required", required.name)
+		}
 	}
 	origin, err := config.CanonicalOrigin(opts.PublicURL)
 	if err != nil {
@@ -96,46 +111,12 @@ func NewHandler(opts Options) (*handler, error) {
 	if opts.WebUpdateIntervalSeconds < 2 || opts.WebUpdateIntervalSeconds > 60 {
 		return nil, errors.New("web_update_interval_seconds must be between 2 and 60")
 	}
-	if opts.Management == nil {
-		opts.Management = opts.Auth.Management()
-	}
 	publicPage, err := opts.Management.PublicPageSettings(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("public page settings: %w", err)
 	}
-	if opts.Enrollments == nil {
-		opts.Enrollments = enrollment.NewService(opts.Nodes.Database(), enrollment.Options{MaxNodes: opts.Nodes.Capacity()})
-	}
-	// Wire invalidation here so injected services cannot serve stale public metrics.
-	nodeService := opts.Nodes
-	opts.Enrollments.OnIdentityChange(func(replacedActiveCredential bool) {
-		if replacedActiveCredential {
-			nodeService.InvalidatePublicSafety()
-		} else {
-			nodeService.InvalidatePublic()
-		}
-	})
-	if opts.Ingest == nil {
-		ingestOptions := ingest.Options{Now: opts.Now}
-		if opts.History != nil {
-			ingestOptions.Samples = opts.History.Samples()
-		}
-		opts.Ingest = ingest.NewService(opts.Nodes.Database(), ingestOptions)
-	}
-	if opts.Alerts == nil {
-		opts.Alerts = alerts.NewService(opts.Nodes.Database(), opts.Now)
-	}
-	if opts.Traffic == nil {
-		opts.Traffic = traffic.NewService(opts.Nodes.Database())
-	}
-	if opts.Inbox == nil {
-		opts.Inbox = inbox.New(opts.Nodes.Database())
-	}
 	if opts.Assets == nil {
 		opts.Assets = webui.Assets()
-	}
-	if opts.Logger == nil {
-		opts.Logger = slog.Default()
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 var (
@@ -70,7 +70,7 @@ func DecodeEventCursor(cursor string) (string, string, error) {
 		return "", "", ErrInvalidInput
 	}
 	created, id, ok := strings.Cut(string(raw), "|")
-	if !ok || !identity.ValidUUID(id) {
+	if !ok || !uuid.ValidUUID(id) {
 		return "", "", ErrInvalidInput
 	}
 	parsed, err := timekey.Parse(created)
@@ -118,7 +118,7 @@ func (s *Service) SaveGroup(ctx context.Context, id, name string) (Group, error)
 	create := id == ""
 	if create {
 		var err error
-		id, err = identity.UUID(rand.Reader)
+		id, err = uuid.UUID(rand.Reader)
 		if err != nil {
 			return Group{}, err
 		}
