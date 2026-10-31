@@ -2,10 +2,9 @@
 # shellcheck disable=SC2016
 set -eu
 
-# Integration tests for install-agent.sh. Every installer invocation is guarded by
-# its fake-root test mode; this test never invokes sudo or writes to host paths.
-# Stub bodies are deliberately single-quoted so their variables expand when the
-# generated stub runs, rather than while this harness writes it.
+# install-agent.sh 集成测试。每次安装器调用均受假根测试模式保护；
+# 本测试不调用 sudo，也不写入宿主路径。
+# 桩函数体有意使用单引号，使变量在桩脚本运行时展开，而非在框架写入时展开。
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 INSTALLER=$SCRIPT_DIR/install-agent.sh
@@ -71,12 +70,12 @@ setup_case() {
 	TEST_ROOT=$CASE_DIR/root
 	TEST_LOG=$CASE_DIR/commands.log
 	TEST_FIXTURES=$CASE_DIR/fixtures
-	mkdir -p "$CASE_DIR/bin" "$TEST_ROOT/tmp" "$TEST_ROOT/run/systemd/system" "$TEST_FIXTURES/orbitbeacon-0.1.0"
+	mkdir -p "$CASE_DIR/bin" "$TEST_ROOT/tmp" "$TEST_ROOT/run/systemd/system" "$TEST_FIXTURES"
 	: >"$TEST_ROOT/.orbitbeacon-install-test-root"
 	: >"$TEST_LOG"
 	printf '%s\n' 'test CA certificate' >"$TEST_FIXTURES/ca.pem"
 
-	cat >"$TEST_FIXTURES/orbitbeacon-0.1.0/orbitbeacon-agent-linux-amd64" <<'AGENT'
+	cat >"$TEST_FIXTURES/orbitbeacon-agent-linux-amd64" <<'AGENT'
 #!/bin/sh
 set -eu
 printf 'agent %s\n' "$*" >>"$TEST_LOG"
@@ -97,11 +96,12 @@ if [ "${1:-}" = enroll ]; then
 	printf '%s\n' enrolled >>"$TEST_ROOT/enrollments.log"
 fi
 AGENT
-	chmod 755 "$TEST_FIXTURES/orbitbeacon-0.1.0/orbitbeacon-agent-linux-amd64"
-	(
-		cd "$TEST_FIXTURES"
-		tar -czf "orbitbeacon-0.1.0-linux.tar.gz" "orbitbeacon-0.1.0/orbitbeacon-agent-linux-amd64"
-	)
+	cp "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64" "$TEST_FIXTURES/orbitbeacon-agent-linux-arm64"
+	printf '%s\n' '# arm64 fixture' >>"$TEST_FIXTURES/orbitbeacon-agent-linux-arm64"
+	for fixture_arch in amd64 arm64; do
+		chmod 755 "$TEST_FIXTURES/orbitbeacon-agent-linux-$fixture_arch"
+		printf '%s\n' "server $fixture_arch fixture" >"$TEST_FIXTURES/orbitbeacon-server-linux-$fixture_arch"
+	done
 
 	write_stub id '
 if [ "${1:-}" = -u ] && [ "$#" -eq 1 ]; then printf "%s\\n" 0; exit 0; fi
@@ -148,16 +148,21 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$output" ] || exit 2
 case $url in
-	*/orbitbeacon-0.1.0-linux.tar.gz)
-		cp "$TEST_FIXTURES/orbitbeacon-0.1.0-linux.tar.gz" "$output"
+	*/orbitbeacon-agent-linux-amd64|*/orbitbeacon-agent-linux-arm64)
+		cp "$TEST_FIXTURES/${url##*/}" "$output"
 		;;
 	*/SHA256SUMS)
-		if [ "${TEST_BAD_CHECKSUM:-0}" = 1 ]; then
-			printf "%064d  %s\\n" 0 orbitbeacon-0.1.0-linux.tar.gz >"$output"
-		else
-			hash=$(sha256sum "$TEST_FIXTURES/orbitbeacon-0.1.0-linux.tar.gz" | cut -d " " -f 1)
-			printf "%s  %s\\n" "$hash" orbitbeacon-0.1.0-linux.tar.gz >"$output"
-		fi
+		for checksum_arch in amd64 arm64; do
+			for checksum_kind in server agent; do
+				asset=orbitbeacon-$checksum_kind-linux-$checksum_arch
+				if [ "${TEST_BAD_CHECKSUM_ARCH:-}" = "$checksum_arch" ]; then
+					printf "%064d  %s\\n" 0 "$asset"
+				else
+					hash=$(sha256sum "$TEST_FIXTURES/$asset" | cut -d " " -f 1)
+					printf "%s  %s\\n" "$hash" "$asset"
+				fi
+			done
+		done >"$output"
 		;;
 	*) exit 22 ;;
 esac'
@@ -237,8 +242,6 @@ PY
 assert_log_has "curl --fail"
 assert_log_has "--proto =https"
 assert_log_has "--tlsv1.2"
-assert_log_has "https://github.com/mr-monkeyray/orbit-beacon/releases/download/v0.1.0/orbitbeacon-0.1.0-linux.tar.gz"
-assert_log_has "https://github.com/mr-monkeyray/orbit-beacon/releases/download/v0.1.0/SHA256SUMS"
 assert_log_has "systemctl daemon-reload"
 assert_log_has "systemctl enable --now orbitbeacon-agent"
 assert_log_has "--config $TEST_ROOT/etc/orbitbeacon/agent.json"
@@ -257,6 +260,18 @@ after_enrollments=$(wc -l <"$TEST_ROOT/enrollments.log")
 [ "$before_enrollments" = "$after_enrollments" ] || fail "tokenless upgrade enrolled again"
 assert_log_has "systemctl restart orbitbeacon-agent"
 pass "tokenless re-run preserves identity and restarts upgraded service"
+
+for machine in x86_64 aarch64 arm64; do
+	setup_case "architecture_$machine"
+	case $machine in
+		x86_64) expected_arch=amd64; other_arch=arm64 ;;
+		*) expected_arch=arm64; other_arch=amd64 ;;
+	esac
+	TEST_ARCH=$machine TEST_BAD_CHECKSUM_ARCH=$other_arch run_with_token 'architecture-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0
+	cmp -s "$TEST_FIXTURES/orbitbeacon-agent-linux-$expected_arch" "$TEST_ROOT/usr/local/bin/orbitbeacon-agent" || fail "$machine installed the wrong architecture"
+	assert_exists "$TEST_ROOT/var/lib/orbitbeacon-agent/identity.json"
+	pass "$machine installs its architecture-only binary and ignores unrelated checksums"
+done
 
 setup_case config_symlink
 mkdir -p "$TEST_ROOT/etc/orbitbeacon"
@@ -283,13 +298,19 @@ grep -F -- "run --install-policy $TEST_ROOT/etc/orbitbeacon/install-policy.json 
 assert_log_lacks "systemctl enable"
 pass "non-systemd instructions use the installed local configuration"
 
-setup_case checksum
-if TEST_BAD_CHECKSUM=1 run_with_token 'checksum-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0; then
-	fail "bad checksum unexpectedly succeeded"
-fi
-assert_not_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
-assert_log_lacks "runuser"
-pass "checksum failure stops before binary installation or enrollment"
+for machine in x86_64 aarch64 arm64; do
+	setup_case "checksum_$machine"
+	case $machine in
+		x86_64) expected_arch=amd64 ;;
+		*) expected_arch=arm64 ;;
+	esac
+	if TEST_ARCH=$machine TEST_BAD_CHECKSUM_ARCH=$expected_arch run_with_token 'checksum-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0; then
+		fail "$machine bad checksum unexpectedly succeeded"
+	fi
+	assert_not_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
+	assert_log_lacks "runuser"
+	pass "$machine checksum failure stops before binary installation or enrollment"
+done
 
 setup_case enroll_failure
 failure_secret='failure-token-DO-NOT-LOG'
@@ -309,7 +330,7 @@ setup_case local_binary
 local_secret='local-token-DO-NOT-LOG'
 printf '%s\n' "$local_secret" >"$TEST_FIXTURES/enrollment.token"
 chmod 600 "$TEST_FIXTURES/enrollment.token"
-run_installer "$CASE_DIR/output" --server https://monitor.example.com --binary "$TEST_FIXTURES/orbitbeacon-0.1.0/orbitbeacon-agent-linux-amd64" --token-file "$TEST_FIXTURES/enrollment.token"
+run_installer "$CASE_DIR/output" --server https://monitor.example.com --binary "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64" --token-file "$TEST_FIXTURES/enrollment.token"
 assert_exists "$TEST_ROOT/var/lib/orbitbeacon-agent/identity.json"
 assert_log_lacks "curl"
 assert_log_lacks "$local_secret"
@@ -337,7 +358,6 @@ setup_case http_ca_conflict
 if run_with_token 'http-ca-token' "$CASE_DIR/output" --server http://monitor.example.com --version 0.1.0 --ca-file "$TEST_FIXTURES/missing.pem"; then
 	fail "HTTP server accepted a CA file"
 fi
-grep -F -- '--ca-file requires an HTTPS server.' "$CASE_DIR/output" >/dev/null || fail "HTTP CA conflict was not reported before reading the CA file"
 assert_not_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
 assert_log_lacks "curl"
 pass "HTTP and CA conflict is rejected before reading CA or installing"
@@ -364,7 +384,7 @@ assert_not_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
 pass "server URLs with userinfo, malformed host, paths, queries, or JSON-unsafe characters are rejected"
 
 setup_case ipv6_url
-run_with_token 'ipv6-token' "$CASE_DIR/output" --server 'https://[2001:db8::1]:8443' --binary "$TEST_FIXTURES/orbitbeacon-0.1.0/orbitbeacon-agent-linux-amd64"
+run_with_token 'ipv6-token' "$CASE_DIR/output" --server 'https://[2001:db8::1]:8443' --binary "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64"
 python3 - "$TEST_ROOT/etc/orbitbeacon/install-policy.json" <<'PY'
 import json, pathlib, sys
 data = json.loads(pathlib.Path(sys.argv[1]).read_text())

@@ -12,7 +12,7 @@ test('rule editor toggles offline fields, scopes and channel routing for every a
   const dom = installDOM();
   setNavigationSignal(null);
   try {
-    // Previous tests import dialogs with a minimal document; reuse the same module.
+    // 前面的测试用最小 document 导入了 dialogs；复用同一模块。
     const {ruleEditor} = await import('../src/console/pages/alert-rules.js');
     const context = {groups: [{id, name: 'Group'}], nodes: [{id, name: 'Node'}], channels: [{id, name: 'Hook', enabled: true}], signal: new AbortController().signal, saved: async () => {}};
     admin();

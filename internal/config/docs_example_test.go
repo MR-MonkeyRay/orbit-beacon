@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// The agent guide is copied verbatim by operators, so its install policy example
-// must decode under the same strict rules as ReadInstallPolicy.
+// 运维会逐字复制 Agent 指南，因此其中的安装策略示例必须能在与
+// ReadInstallPolicy 相同的严格规则下解码。
 func TestAgentGuideInstallPolicyExampleDecodes(t *testing.T) {
 	data, err := os.ReadFile("../../docs/agent.md")
 	if err != nil {

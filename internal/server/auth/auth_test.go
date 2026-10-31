@@ -111,7 +111,7 @@ func TestBootstrapRefusesToReplaceExistingAdministrator(t *testing.T) {
 	if original.ID == "" || original.Username != "first-admin" {
 		t.Fatalf("bootstrap user = %+v", original)
 	}
-	// Reconstructing the service must not reopen the bootstrap window.
+	// 重建服务绝不能重新打开引导窗口。
 	service = auth.NewService(db, auth.Options{
 		Now:    func() time.Time { return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) },
 		Random: rand.NewChaCha8([32]byte{18}),
@@ -301,7 +301,7 @@ func TestSuccessfulLoginReclaimsExpiredSessionsAndPreservesActiveSessions(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Seed a backlog without repeated password hashing or pinning a cleanup batch size.
+	// 在不重复哈希密码、也不固定清理批次大小的情况下预置积压。
 	for i := range 256 {
 		digest := sha256.Sum256([]byte(fmt.Sprintf("expired-session-%d", i)))
 		owner := admin.ID
@@ -316,8 +316,8 @@ func TestSuccessfulLoginReclaimsExpiredSessionsAndPreservesActiveSessions(t *tes
 	if _, err := db.ExecContext(ctx, "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES (?,?,?)", boundary[:], admin.ID, now.UnixNano()); err != nil {
 		t.Fatal(err)
 	}
-	// Repeated successful logins must drain even a backlog larger than one batch.
-	// Moving the clock avoids coupling this assertion to the login rate limit.
+	// 重复的成功登录必须清空积压，即使积压超过一个批次。
+	// 移动时钟可避免该断言与登录限流耦合。
 	previous := 257
 	for range 257 {
 		if _, err := service.Login(ctx, "admin", initialPassword); err != nil {
@@ -351,7 +351,7 @@ func TestSuccessfulLoginReclaimsExpiredSessionsAndPreservesActiveSessions(t *tes
 func TestSessionExpirationHasLeadingIndex(t *testing.T) {
 	_, db, _ := newAuth(t)
 	var indexed int
-	// Check index semantics, not a migration's chosen index name or SQL text.
+	// 检查索引语义，而不是迁移所选的索引名或 SQL 文本。
 	if err := db.QueryRow(`SELECT count(*) FROM pragma_index_list('sessions') AS indexes
 		JOIN pragma_index_info(indexes.name) AS columns
 		WHERE columns.seqno = 0 AND columns.name = 'expires_at' AND indexes.partial = 0`).Scan(&indexed); err != nil {

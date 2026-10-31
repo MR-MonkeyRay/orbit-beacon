@@ -3,10 +3,9 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"slices"
 	"time"
@@ -18,9 +17,10 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
-// Runtime wires the durable identity, local settings, collector and client.
-// Enrollment tokens are never part of runtime state.
+// Runtime 串联持久身份、本地配置、采集器与客户端。
+// 注册票据绝不属于运行时状态。
 type Runtime struct {
+	logger      *slog.Logger
 	identity    *identity.Store
 	settings    v1.RuntimeSettings
 	collector   *collect.Collector
@@ -29,7 +29,10 @@ type Runtime struct {
 	installMode string
 }
 
-func OpenRuntime(ctx context.Context, cfg config.Agent) (*Runtime, error) {
+func OpenRuntime(ctx context.Context, cfg config.Agent, logger *slog.Logger) (*Runtime, error) {
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
 	state, err := identity.Open(ctx, filepath.Join(cfg.StateDir, "identity.json"), identity.Options{})
 	if err != nil {
 		return nil, err
@@ -52,7 +55,7 @@ func OpenRuntime(ctx context.Context, cfg config.Agent) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{identity: state, settings: initial, collector: collector, client: client, system: system, installMode: cfg.InstallMode}, nil
+	return &Runtime{logger: logger, identity: state, settings: initial, collector: collector, client: client, system: system, installMode: cfg.InstallMode}, nil
 }
 
 func (r *Runtime) Close() { r.client.Close() }
@@ -65,7 +68,7 @@ func sameRuntimeSettings(a, b v1.RuntimeSettings) bool {
 	return a.ReportIntervalSeconds == b.ReportIntervalSeconds && a.DiskIntervalSeconds == b.DiskIntervalSeconds && slices.Equal(a.Interfaces, b.Interfaces) && slices.Equal(a.DiskPaths, b.DiskPaths) && slices.Equal(a.ProbeTargets, b.ProbeTargets)
 }
 
-// Arrays belong to an immutable settings snapshot and are copied only on change.
+// 切片属于不可变的配置快照，只在变化时复制。
 func cloneRuntimeSettings(next, current v1.RuntimeSettings) v1.RuntimeSettings {
 	if slices.Equal(next.Interfaces, current.Interfaces) && current.Interfaces != nil {
 		next.Interfaces = current.Interfaces
@@ -95,18 +98,10 @@ func (r *Runtime) Run(ctx context.Context, reload <-chan struct{}, loadSettings 
 	done := make(chan struct{})
 	go func() { defer close(done); _ = probes.Run(ctx) }()
 	defer func() { cancel(); <-done }()
-	scheduler := NewScheduler(SchedulerOptions{Probes: probes, Traffic: r.collector.Traffic(), Identity: r.identity,
+	scheduler := NewScheduler(SchedulerOptions{Logger: r.logger, Probes: probes, Traffic: r.collector.Traffic(), Identity: r.identity,
 		RuntimeSettings: func() v1.RuntimeSettings { return r.settings }, Reload: reload,
 		ReloadConfig: func(ctx context.Context) error { return r.reloadSettings(ctx, probes, loadSettings) },
-		Collect:      r.collector.Collect, Report: r.client.Report, System: &r.system, CredentialsChanged: func(invalid bool) {
-			if invalid {
-				fmt.Fprintln(os.Stderr, "orbitbeacon-agent: credentials_invalid; rechecking in 60 seconds")
-			} else {
-				fmt.Fprintln(os.Stderr, "orbitbeacon-agent: credentials recovered")
-			}
-		}, Log: func(message string) {
-			fmt.Fprintln(os.Stderr, "orbitbeacon-agent:", message)
-		}})
+		Collect:      r.collector.Collect, Report: r.client.Report, System: &r.system})
 	return scheduler.Run(ctx)
 }
 
@@ -128,8 +123,8 @@ func (r *Runtime) reloadSettings(ctx context.Context, probes *probe.Runner, load
 		return nil
 	}
 	next = cloneRuntimeSettings(next, r.settings)
-	// Full validation precedes either mutation. Both setters accept every
-	// validated RuntimeSettings and cannot fail during application.
+	// 修改任何组件前先完成完整校验。两个设置方法均接受所有已通过校验的
+	// RuntimeSettings，应用过程中不会失败。
 	if err := r.collector.SetConfig(next); err != nil {
 		return err
 	}
@@ -150,9 +145,9 @@ type Diagnostics struct {
 	MetricStatus   map[string]string `json:"metric_status"`
 }
 
-// Doctor never sends an enrollment/report or advances the durable generation.
-// A method-only request exercises DNS, endpoint connectivity and HTTPS trust
-// when configured, without checking node authentication or accepting a sample.
+// Doctor 不发送注册或指标上报请求，也不推进持久化的 RunGeneration。
+// 通过 HEAD 请求检查 DNS 和端点连通性；使用 HTTPS 时还检查证书信任，
+// 但不验证节点凭据，也不提交采样数据。
 func (r *Runtime) Doctor(ctx context.Context) (Diagnostics, error) {
 	result := Diagnostics{Configuration: "valid", Identity: "valid", Connectivity: "error", Authentication: "not_checked", Collection: "error", InstallMode: r.installMode}
 	request, err := http.NewRequestWithContext(ctx, http.MethodHead, r.client.baseURL+"/api/agent/v1/report", nil)

@@ -56,7 +56,7 @@ func newBackupHTTP(t *testing.T) backupHTTPFixture {
 		t.Fatal(err)
 	}
 	logs := new(bytes.Buffer)
-	h, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Backups: s, PublicURL: publicURL, Now: func() time.Time { return now }, Logger: slog.New(slog.NewTextHandler(logs, nil)), AccessLog: true})
+	h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Backups: s, PublicURL: publicURL, Now: func() time.Time { return now }, Logger: slog.New(slog.NewTextHandler(logs, nil)), AccessLog: true}))
 	if err != nil {
 		t.Fatal(err)
 	}

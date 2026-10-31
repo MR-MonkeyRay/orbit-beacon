@@ -10,8 +10,8 @@ function deferred() {
   let resolve;
   let reject;
   const promise = new Promise((accept, fail) => { resolve = accept; reject = fail; });
-  // Keep a failed implementation's ignored browser promise from leaking into
-  // another test; navigation's own result must still expose unexpected errors.
+  // 防止失败实现中被忽略的浏览器 promise 泄漏到
+  // 其他测试；导航自身的结果仍须暴露意外错误。
   promise.catch(() => {});
   return {promise, resolve, reject};
 }

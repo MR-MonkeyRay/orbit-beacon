@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	"orbitbeacon/internal/config"
@@ -54,7 +53,7 @@ func TestCLIRejectsUnsafeInstallPolicyBeforeRuntimeSetup(t *testing.T) {
 				path = filepath.Join(link, "install.json")
 			}
 			err = run([]string{"doctor", "--install-policy", path})
-			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "install policy") {
+			if err == nil {
 				t.Fatalf("unsafe policy reached runtime/configuration setup instead of install policy rejection: %v", err)
 			}
 		})

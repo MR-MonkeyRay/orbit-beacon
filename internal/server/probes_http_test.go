@@ -17,7 +17,7 @@ import (
 func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 	f := newHTTP(t, 5)
 	now := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
-	handler, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, Now: func() time.Time { return now }})
+	handler, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, Now: func() time.Time { return now }}))
 	if err != nil {
 		t.Fatal(err)
 	}

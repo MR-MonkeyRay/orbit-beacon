@@ -1,4 +1,5 @@
 import './public.css';
+import {translateHTML} from '../shared/translate-html.js';
 import {h} from '../shared/dom.js';
 import {themeButton} from '../shared/theme.js';
 import {createCard, skeletonCards, STATUS} from './cards.js';
@@ -9,14 +10,7 @@ import {getLocale, t} from '../shared/i18n.js';
 import {localeSelect} from '../shared/locale-select.js';
 import {errorText} from '../shared/errors.js';
 
-document.documentElement.lang = getLocale();
-for (const [attribute, target] of [['data-i18n', null], ['data-i18n-aria-label', 'aria-label'], ['data-i18n-content', 'content']]) {
-  for (const element of document.querySelectorAll(`[${attribute}]`)) {
-    const text = t(element.getAttribute(attribute));
-    if (target) element.setAttribute(target, text);
-    else element.textContent = text;
-  }
-}
+translateHTML();
 
 const PAGE = 50;
 const $ = (id) => document.getElementById(id);
@@ -61,7 +55,7 @@ $('top-actions').prepend(localeSelect({onError(error) {
   localeError.hidden = false;
 }}));
 
-// ------------------------------------------------------------------ filters
+// ------------------------------------------------------------------ 筛选
 
 const filterButtons = new Map(['', 'online', 'offline', 'unknown'].map((status) => {
   const button = h('button', {type: 'button', 'aria-pressed': String(status === ''), onclick: () => { filter = status; applyFilter(); }},
@@ -90,7 +84,7 @@ function applyFilter() {
   } else if (current.length) empty.hidden = true;
 }
 
-// ------------------------------------------------------------------ rendering
+// ------------------------------------------------------------------ 渲染
 
 function render(result) {
   const nodes = result.nodes;
@@ -127,8 +121,9 @@ function render(result) {
   nextOffset = result.next_offset;
   next.disabled = nextOffset === null;
   pagination.hidden = offset === 0 && nextOffset === null;
-  empty.hidden = nodes.length !== 0;
-  emptyText.textContent = t(partial ? 'public.empty.page' : 'public.empty.all');
+  // 空集合已由标题说明；此区域仅用于
+  // 筛选结果为空和加载失败。
+  empty.hidden = true;
   retry.hidden = true;
   applyFilter();
 }
@@ -159,7 +154,7 @@ function restartCountdown(running, milliseconds = 0) {
   countdown.classList.add('running');
 }
 
-// ------------------------------------------------------------------ updates
+// ------------------------------------------------------------------ 更新
 
 function begin() {
   refresh.classList.add('loading');
@@ -216,7 +211,7 @@ function paintConnection(state) {
   } else {
     countdown.dataset.state = 'connecting';
   }
-  // Transport changes, heartbeats and HTTP countdown ticks are not announcements.
+  // 传输变化、心跳和 HTTP 倒计时不属于需要播报的事件。
   if (announcedState !== state.state) {
     announcedState = state.state;
     announcement.textContent = state.state === 'live' ? t('public.announce.updated')

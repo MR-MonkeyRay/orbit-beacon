@@ -1,11 +1,11 @@
 import {h} from '../../shared/dom.js';
-import {t} from '../../shared/i18n.js';
+import {formatList, t} from '../i18n.js';
 import {api, session} from '../api.js';
-import {button, iconButton, panel} from '../ui/components.js';
+import {button, dataTable, iconButton, panel} from '../ui/components.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, select, validateBytes} from '../ui/forms.js';
-import {durationSeconds, formatMetricValue, formatRuleDuration, METRICS, metricLabel, metricMax, scopeLabel, SEVERITIES, validateRule, validationError} from './alert-utils.js';
+import {durationSeconds, formatMetricValue, formatRuleDuration, METRICS, metricLabel, metricMax, scopeLabel, SEVERITIES, validateRule, validationError} from '../lib/alert-utils.js';
 import {severityPill} from './alert-events.js';
 
 export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
@@ -33,7 +33,7 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
         threshold.required = !offline;
         offlineHint.hidden = !offline;
         threshold.max = metricMax(metric.value);
-        // Defaults such as 80% are out of range for a count; 0 means any failure.
+        // 80% 之类的默认值对计数无意义；0 表示任意一次失败。
         if (Number(threshold.value) > threshold.max) threshold.value = metric.value === 'probes_down' ? '0' : String(threshold.max);
         thresholdLabel.textContent = t(metric.value === 'load1' ? 'alerts.rules.thresholdLoad' : metric.value === 'probes_down' ? 'alerts.rules.thresholdProbes' : 'alerts.rules.thresholdPercent');
         minutes.min = offline ? 3 : 0;
@@ -93,14 +93,13 @@ export function rulesPanel({rules, groups, nodes, channels, signal, saved}) {
   };
   return panel(t('alerts.tab.rules'), {action: button(t('alerts.rules.add'), {small: true, variant: 'primary', onClick: () => edit(null)})},
     h('p', {class: 'lede'}, t('alerts.rules.evaluationHint')),
-    rules.length ? h('div', {class: 'table-wrap'}, h('table', {class: 'table'},
-      h('caption', {class: 'sr'}, t('alerts.rules.caption')),
-      h('thead', null, h('tr', null, ['name', 'condition', 'scope', 'severity', 'state', 'channels', 'actions'].map((key) => h('th', {scope: 'col'}, t(`alerts.column.${key}`))))),
-      h('tbody', null, rules.map((rule) => h('tr', null,
+    rules.length ? dataTable({caption: t('alerts.rules.caption'),
+      columns: ['name', 'condition', 'scope', 'severity', 'state', 'channels', 'actions'].map((key) => t(`alerts.column.${key}`)),
+      body: h('tbody', null, rules.map((rule) => h('tr', null,
         h('td', null, rule.name),
         h('td', null, t('alerts.rules.conditionDuration', {condition: rule.metric === 'offline' ? metricLabel(rule.metric) : t('alerts.rules.metricCondition', {metric: metricLabel(rule.metric), comparator: rule.comparator, value: formatMetricValue(rule.metric, rule.threshold)}), duration: formatRuleDuration(rule.for_seconds)})),
         h('td', null, scopeLabel(rule, groups, nodes)), h('td', null, severityPill(rule.severity)), h('td', null, t(rule.enabled ? 'alerts.state.enabled' : 'alerts.state.disabled')),
-        h('td', null, rule.channel_ids.map((id) => channels.find((channel) => channel.id === id)?.name || id).join(', ') || t('common.none')),
-        h('td', {class: 'actions'}, iconButton('edit', t('alerts.editNamed', {name: rule.name}), () => edit(rule)), iconButton('trash', t('alerts.deleteAction', {name: rule.name}), () => remove(rule))))))))
+        h('td', null, formatList(rule.channel_ids.map((id) => channels.find((channel) => channel.id === id)?.name || id)) || t('common.none')),
+        h('td', {class: 'actions'}, iconButton('edit', t('alerts.editNamed', {name: rule.name}), () => edit(rule)), iconButton('trash', t('alerts.deleteAction', {name: rule.name}), () => remove(rule))))))})
       : h('p', {class: 'muted'}, t('alerts.rules.empty')));
 }

@@ -12,10 +12,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"orbitbeacon/internal/identity"
+	"orbitbeacon/internal/logging"
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 type Notification struct {
@@ -29,8 +30,7 @@ type Notification struct {
 	ResolvedAt *time.Time
 }
 
-// Notifier runs on a separate bounded worker after commit. Implementations must
-// honor context cancellation. Delivery/retries are intentionally left to part 2.
+// Notifier 在事务提交后由独立、队列有界的后台任务调用；实现必须响应 context 取消。
 type Notifier interface {
 	Notify(context.Context, Notification)
 }
@@ -77,7 +77,7 @@ type Evaluator struct {
 	service     *Service
 	latest      LatestReader
 	opts        EvaluatorOptions
-	mu          sync.Mutex // Evaluate is serialized, including explicit test/manual ticks.
+	mu          sync.Mutex // Evaluate 串行执行，包括显式的测试/手动 tick。
 	pending     map[pair]pending
 	resolutions map[pair]pendingResolution
 	queue       chan Notification
@@ -97,15 +97,11 @@ func NewEvaluator(service *Service, latest LatestReader, opts EvaluatorOptions) 
 	if opts.QueueSize <= 0 {
 		opts.QueueSize = 256
 	}
-	if opts.Logger == nil {
-		opts.Logger = slog.Default()
-	}
 	return &Evaluator{service: service, latest: latest, opts: opts, pending: make(map[pair]pending), resolutions: make(map[pair]pendingResolution), queue: make(chan Notification, opts.QueueSize)}
 }
-func (e *Evaluator) NotificationsDropped() uint64 { return e.dropped.Load() }
 
-// Run owns the evaluation and notification workers and returns after both stop.
-// The caller cancels ctx and waits for Run before closing the database.
+// Run 持有评估和通知两个 worker，二者都停止后才返回。
+// 调用方须先取消 ctx 并等待 Run 结束，再关闭数据库。
 func (e *Evaluator) Run(ctx context.Context) {
 	workerDone := make(chan struct{})
 	go func() {
@@ -125,7 +121,9 @@ func (e *Evaluator) Run(ctx context.Context) {
 	defer func() { <-workerDone }()
 	tick := func() {
 		if err := e.Evaluate(ctx, e.opts.Now()); err != nil && ctx.Err() == nil {
-			e.opts.Logger.Warn("alert evaluation failed", "error", err)
+			if e.opts.Logger != nil {
+				e.opts.Logger.LogAttrs(ctx, slog.LevelWarn, "alert_evaluation_failed", logging.ErrorAttrs(err, "evaluation_failed")...)
+			}
 		}
 	}
 	tick()
@@ -145,13 +143,15 @@ func (e *Evaluator) enqueue(n Notification) {
 	case e.queue <- n:
 	default:
 		e.dropped.Add(1)
-		e.opts.Logger.Warn("alert notification queue full")
+		if e.opts.Logger != nil {
+			e.opts.Logger.Warn("alert_notification_queue_full")
+		}
 	}
 }
 func definition(r Rule) string {
-	// Names/severity and timestamps do not restart pending timers. Condition and
-	// scope changes start a new episode and resolve any previous firing episode.
-	// Routing changes must not reset pending timers or open episodes.
+	// 名称、严重级别和时间戳变更不重置待触发计时。条件或范围变更
+	// 会开始新一轮告警，并结束此前仍在触发中的事件。
+	// 通知路由变更不得重置待触发计时或未结束的事件。
 	r.ChannelIDs = nil
 	r.ID = ""
 	r.Name = ""
@@ -234,9 +234,8 @@ func matches(r Rule, n evaluationNode) bool {
 	return false
 }
 
-// Evaluate performs one deterministic tick. Pending state and resolution intents
-// are bounded by current rule/node pairs; open state is reloaded so restart never
-// duplicates episodes.
+// Evaluate 执行一次确定性的评估。待触发状态和待重试的恢复操作数量受当前规则/节点对数限制；
+// 每次重新加载未结束的事件，避免重启后重复创建事件。
 func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -261,8 +260,8 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 	for _, n := range inventory {
 		nodeMap[n.id] = n
 	}
-	// Prune from the current inventory before any write can fail. Observations
-	// below update each pair directly so unrelated failures cannot undo resets.
+	// 在任何写入可能失败之前，先按当前清单修剪。后续的观测会直接更新各个规则/节点对，
+	// 因此不相关的失败不会撤销已重置的状态。
 	for key := range e.pending {
 		r, exists := ruleMap[key.rule]
 		n, present := nodeMap[key.node]
@@ -271,14 +270,14 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 		}
 	}
 	var evaluationErr error
-	// Each resolution intent belongs to one open event. Retry it before evaluating
-	// current conditions so a re-breach cannot erase an observed recovery.
+	// 每个待重试的恢复操作都对应一个未结束的事件。先重试再评估当前条件，
+	// 避免再次越限抹掉已观测到的恢复。
 	for key, intent := range e.resolutions {
 		if o, exists := open[key]; !exists || o.ID != intent.eventID {
 			delete(e.resolutions, key)
 		}
 	}
-	// This also handles deletions while the process was stopped.
+	// 这也能处理进程停机期间被删除的情况。
 	for key, o := range open {
 		r, exists := ruleMap[key.rule]
 		n, present := nodeMap[key.node]
@@ -287,8 +286,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 			delete(e.pending, key)
 			if err := e.resolve(ctx, o, nil, now); err != nil {
 				if !exists || !present {
-					// Orphans are retried from open events without retaining intents
-					// for removed rule/node pairs.
+					// 已移除的规则/节点对不保留恢复意图，后续直接从未结束的事件重试。
 					delete(e.resolutions, key)
 				}
 				evaluationErr = errors.Join(evaluationErr, err)
@@ -321,7 +319,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 			if firing {
 				delete(e.pending, key)
 				if _, retry := e.resolutions[key]; retry {
-					// Resolution failed above; retry this episode next tick.
+					// 上方恢复操作失败，下一次评估继续重试此事件。
 					continue
 				}
 			}
@@ -343,7 +341,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 				if latestErr == nil {
 					value = metricValue(latest, r.Metric, now)
 				}
-				// Missing/stale data breaks pending continuity, but cannot establish recovery.
+				// 数据缺失或过期会打断持续越限计时，但不能据此判定告警已恢复。
 				if value == nil {
 					delete(e.pending, key)
 					continue
@@ -373,9 +371,8 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 					continue
 				}
 			}
-			// Preserve elapsed condition time if a concurrent metadata edit or
-			// identity change makes the transaction skip this snapshot. The next
-			// tick compares definitions/identity before reusing this entry.
+			// 若并发修改元数据或身份导致事务跳过此快照，保留条件已持续的时间。
+			// 下一次评估会先比较规则定义和身份，再决定是否复用该计时状态。
 			if r.Metric != "offline" {
 				e.pending[key] = pending{since: since, definition: pendingDefinition(r, n, latest)}
 			}
@@ -387,7 +384,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 	return evaluationErr
 }
 func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *float64, since time.Time) error {
-	id, err := identity.UUID(rand.Reader)
+	id, err := uuid.UUID(rand.Reader)
 	if err != nil {
 		return err
 	}
@@ -400,8 +397,8 @@ func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *f
 		return err
 	}
 	defer tx.Rollback()
-	// Revalidate rule version, inventory and scope under the writer lock. A rule
-	// edit/deletion or node disable committed before this transaction cannot fire.
+	// 在写锁之下重新验证规则版本、清单和范围。在本事务之前已提交的规则编辑/删除
+	// 或节点停用均不会触发。
 	result, err := tx.ExecContext(ctx, `INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,rule_name,node_name,rule_snapshot)
  SELECT ?,r.id,n.id,'firing',?,?,r.name,n.name,? FROM alert_rules r,nodes n
  WHERE r.id=? AND r.updated_at=? AND r.enabled=1 AND n.id=? AND n.status!='disabled'
@@ -435,7 +432,7 @@ func (e *Evaluator) resolve(ctx context.Context, o openEvent, value *float64, no
 		intent = pendingResolution{eventID: o.ID, observedAt: now, value: value}
 		e.resolutions[key] = intent
 	}
-	// Keep the first observed recovery even if a later tick breaches again.
+	// 即使后续某个 tick 再次越限，也保留最初观测到的恢复。
 	now, value = intent.observedAt, intent.value
 	tx, err := e.service.db.BeginTx(ctx, nil)
 	if err != nil {

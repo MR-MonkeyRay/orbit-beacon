@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
@@ -26,6 +27,7 @@ import (
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/storage"
+	"orbitbeacon/internal/timekey"
 )
 
 type consoleLiveFixture struct {
@@ -56,7 +58,7 @@ func newConsoleLiveFixture(t *testing.T) *consoleLiveFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.h, err = NewHandler(Options{Auth: a, Nodes: nodes.NewService(db, nodes.Options{Now: now}), PublicURL: "https://beacon.test", Now: now, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	f.h, err = NewHandler(testHandlerOptions(t, Options{Auth: a, Nodes: nodes.NewService(db, nodes.Options{Now: now}), PublicURL: "https://beacon.test", Now: now, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,6 +213,16 @@ func TestConsoleLiveShutdownInterruptsWriterAndJoinsProjection(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("projection did not block")
 		}
+		token := strings.Repeat("A", 43)
+		digest := sha256.Sum256([]byte(token))
+		if _, err := f.db.Exec("INSERT INTO nodes(id,name,status,token_hash,created_at) VALUES('probe','probe','unknown',?,?)", digest[:], timekey.Format(time.Now())); err != nil {
+			t.Fatal(err)
+		}
+		admission, err := f.h.ingest.AdmitToken(context.Background(), token)
+		if err != nil {
+			t.Fatal(err)
+		}
+
 		shutdown := make(chan error, 1)
 		go func() { shutdown <- f.h.Shutdown(context.Background()) }()
 		select {
@@ -223,7 +235,7 @@ func TestConsoleLiveShutdownInterruptsWriterAndJoinsProjection(t *testing.T) {
 			t.Fatalf("shutdown did not join projection: %v", err)
 		default:
 		}
-		if _, err := f.h.ingest.Accept(context.Background(), "unused", v1.Report{}); !errors.Is(err, ingest.ErrProtocolUnsupported) {
+		if _, err := f.h.ingest.AcceptAdmitted(context.Background(), admission, v1.Report{}); !errors.Is(err, ingest.ErrProtocolUnsupported) {
 			t.Fatalf("ingest drained early: %v", err)
 		}
 		release()
@@ -322,8 +334,8 @@ func TestConsoleLiveWrappedHTTPSSENonemptyWebSocketHaveSameDataAndExactOrigin(t 
 		if string(frame["code"]) == `"unauthenticated"` && frame["data"] == nil {
 			break
 		}
-		// A heartbeat already authorized before the durable revocation may be
-		// buffered in the socket. Frames built afterward must not stay live.
+		// 在持久化撤销之前已授权的心跳可能已缓冲在套接字中。
+		// 之后构建的帧绝不能保持存活。
 		var emitted time.Time
 		if err := json.Unmarshal(frame["server_time"], &emitted); err != nil {
 			t.Fatal(err)
@@ -711,7 +723,7 @@ func TestConsoleLiveRejectedWebSocketHandshakeNeverAcquiresPrivateData(t *testin
 	}
 }
 
-// A real interrupted socket rejects subsequent terminal writes immediately.
+// 真正被中断的套接字会立即拒绝后续的终止写入。
 type expiredConsoleWriter struct{ *blockedLiveWriter }
 
 func (w expiredConsoleWriter) Write(body []byte) (int, error) {

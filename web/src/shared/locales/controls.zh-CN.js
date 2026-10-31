@@ -1,4 +1,5 @@
 export default {
+  'controls.live.reconnecting': '重新连接中…',
   'controls.language': '语言',
   'controls.language.preference': '语言：{preference}',
   'controls.followSystem': '跟随系统',
@@ -30,9 +31,9 @@ export default {
   'controls.confirmation.type': '输入 {expected} 以确认',
   'controls.notification.dismiss': '关闭通知',
   'controls.deleted': '已删除',
-  'controls.live.connecting': '正在重新连接…',
+  'controls.live.connecting': '连接中…',
   'controls.live.live': '实时',
-  'controls.live.stale': '数据已过期',
+  'controls.live.stale': '已过期',
   'controls.notSet': '未设置',
   'controls.loading': '正在加载',
   'controls.tags.label': '标签',

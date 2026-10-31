@@ -22,7 +22,7 @@ func enrollmentAttempt(f *agentFixture, peer, token string, body io.Reader) *htt
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	// Untrusted forwarding headers must not create a fresh direct-peer bucket.
+	// 不可信的转发头绝不能创建新的直接对端桶。
 	req.Header.Set("X-Forwarded-For", token)
 	req.Header.Set("Forwarded", "for="+token)
 	response := httptest.NewRecorder()
@@ -76,8 +76,8 @@ func TestEnrollmentInvalidDirectPeerBurstIsBoundedAndCannotChargeValidTicket(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A direct peer gets at most 32 immediate invalid attempts, regardless of
-	// source port, supplied credential, or attacker-controlled forwarding header.
+	// 无论源端口、提供的凭据或攻击者可控的转发头如何，
+	// 一个直接对端最多立即获得 32 次无效尝试。
 	for attempt := range 33 {
 		body := strings.NewReader(enrollBody("attacker", agentSecret(99)))
 		response := enrollmentAttempt(f, fmt.Sprintf("192.0.2.10:%d", 1000+attempt), agentSecret(byte(attempt)), body)
@@ -91,8 +91,8 @@ func TestEnrollmentInvalidDirectPeerBurstIsBoundedAndCannotChargeValidTicket(t *
 			}
 		}
 	}
-	// Another direct peer retains its own allowance while the global budget is
-	// not exhausted. Invalid peers never consume a legitimate ticket's budget.
+	// 在全局预算未耗尽时，另一个直接对端保留自己的配额。
+	// 无效对端绝不消耗合法票据的预算。
 	assertHTTPStatus(t, enrollmentAttempt(f, "192.0.2.11:1234", agentSecret(98), strings.NewReader(`{`)), http.StatusUnauthorized)
 	assertHTTPStatus(t, enrollmentAttempt(f, "192.0.2.10:9999", ticket.Token, strings.NewReader(enrollBody("legitimate-installation", agentSecret(1)))), http.StatusOK)
 	stored, err := f.enrollments.Get(context.Background(), ticket.ID)
@@ -111,8 +111,8 @@ func TestEnrollmentInvalidGlobalBurstIsBoundedAcrossFreshPeers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Bound aggregate unauthenticated work even when each attempt has a new
-	// direct peer address and thus cannot hit a previously used peer bucket.
+	// 即使每次尝试都有新的直接对端地址、因而无法命中先前用过的对端桶，
+	// 也要限制未认证工作的总量。
 	for attempt := range 257 {
 		peer := fmt.Sprintf("198.18.%d.%d:1234", attempt/256, attempt%256)
 		body := strings.NewReader(enrollBody("attacker", agentSecret(99)))
@@ -132,8 +132,7 @@ func TestEnrollmentInvalidGlobalBurstIsBoundedAcrossFreshPeers(t *testing.T) {
 
 func TestEnrollmentUnknownCredentialDoesNotWaitForWriterLock(t *testing.T) {
 	f := newAgentHTTP(t, 1)
-	// Open two pooled connections before holding the writer, so the measured
-	// path cannot accidentally include connection establishment or migration.
+	// 获取写锁前先打开连接池中的两个连接，避免被测路径包含连接建立或迁移。
 	reader, err := f.db.Conn(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -157,8 +156,7 @@ func TestEnrollmentUnknownCredentialDoesNotWaitForWriterLock(t *testing.T) {
 	case response := <-done:
 		assertHTTPStatus(t, response, http.StatusUnauthorized)
 	case <-time.After(500 * time.Millisecond):
-		// Release the writer before reporting failure; never leave a blocked
-		// request behind to exhaust the database's five-second busy timeout.
+		// 报告失败前先释放写锁，避免遗留的阻塞请求等满数据库五秒的忙等超时。
 		_ = writer.Rollback()
 		select {
 		case <-done:

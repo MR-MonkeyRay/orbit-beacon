@@ -80,8 +80,8 @@ func columnNames(spec tableSpec) string {
 	return strings.Join(names, ",")
 }
 
-// The transfer format has one fixed DDL per table. Reject archive-controlled
-// expressions before integrity_check can evaluate CHECK constraints.
+// 传输格式中每张表只有一种固定 DDL。在 integrity_check 能够求值
+// CHECK 约束之前，先拒绝归档可控的表达式。
 func payloadTableDDL(spec tableSpec) string {
 	columns := make([]string, 0, len(spec.Columns)+1)
 	var keys []string
@@ -147,8 +147,8 @@ func openPayload(ctx context.Context, path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// ValidatePayloadSchema inspects only SQLite's metadata before any row query.
-// Archive SQL never supplies identifiers or DDL for the final database.
+// ValidatePayloadSchema 在任何行查询之前只检查 SQLite 的元数据。
+// 归档 SQL 绝不为最终数据库提供标识符或 DDL。
 func ValidatePayloadSchema(ctx context.Context, db *sql.DB, category Category) error {
 	specs := tablesFor(category)
 	if len(specs) == 0 {

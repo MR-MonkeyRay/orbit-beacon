@@ -18,8 +18,8 @@ func TestEnrollWithoutTokenFileReachesRuntimePolicyBoundary(t *testing.T) {
 	}
 }
 
-// runEnrollment is the command's enrollment operation, after policy and runtime
-// identity validation. Its callback is Runtime.Enroll in the real command.
+// runEnrollment 是命令在策略与运行时身份校验之后的注册操作。
+// 真实命令中其回调为 Runtime.Enroll。
 func TestEnrollmentCommandRecoversWithoutReadingTicketFile(t *testing.T) {
 	called := false
 	result, err := runEnrollment(context.Background(), "", func(_ context.Context, token string) (v1.EnrollmentResponse, error) {

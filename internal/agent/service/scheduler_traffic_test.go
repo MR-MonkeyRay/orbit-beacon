@@ -41,12 +41,12 @@ func TestSchedulerSendsTrafficAndAppliesOnlySuccessfulAcks(t *testing.T) {
 				if attempt == 1 {
 					return v1.ReportResponse{TrafficAcks: report.Traffic}, errors.New("offline")
 				}
-				if report.Seq == 1 { // Older servers omit acks, including on retry.
+				if report.Seq == 1 { // 旧版服务器不发确认，重试时也一样。
 					return v1.ReportResponse{}, nil
 				}
 				if report.Seq == 2 {
 					acks := append([]v1.Traffic(nil), report.Traffic...)
-					acks[1].RxBytes = "99" // Too old to acknowledge the 100-byte bucket.
+					acks[1].RxBytes = "99" // 旧确认值不足以确认当前的 100 字节累计量。
 					return v1.ReportResponse{TrafficAcks: acks}, nil
 				}
 				return v1.ReportResponse{TrafficAcks: report.Traffic}, nil

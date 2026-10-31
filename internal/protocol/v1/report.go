@@ -20,8 +20,8 @@ type Report struct {
 	ProbeResults    []ProbeResult   `json:"probe_results,omitzero"`
 }
 
-// UnmarshalJSON enforces complete runtime observations without making local
-// configuration defaults or partial local JSON part of the report contract.
+// UnmarshalJSON 强制上报包含完整的运行时观测，且不会把本地配置默认值或
+// 部分本地 JSON 纳入上报契约。
 func (r *Report) UnmarshalJSON(data []byte) error {
 	type report Report
 	var decoded report

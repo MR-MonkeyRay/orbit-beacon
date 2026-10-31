@@ -1,13 +1,21 @@
 import {h} from '../../shared/dom.js';
-import {getLocale, t} from '../../shared/i18n.js';
+import {getLocale, t, tParts} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {api} from '../api.js';
 import {when} from '../format.js';
-import {busy, button, link, panel} from '../ui/components.js';
-import {formatMetricValue, severityLabel} from './alert-utils.js';
+import {busy, button, dataTable, link, panel} from '../ui/components.js';
+import {nextCursor} from '../ui/pager.js';
+import {formatMetricValue, severityLabel} from '../lib/alert-utils.js';
+import {panelLifecycle} from '../ui/polling-panel.js';
 
 export const severityPill = (severity) => h('span', {class: `badge alert-${['info', 'warning', 'critical'].includes(severity) ? severity : 'unknown'}`}, severityLabel(severity));
 export const eventTime = (iso) => h('div', {class: 'alert-time'}, when(iso), h('small', {class: 'muted'}, Number.isFinite(Date.parse(iso)) ? new Date(iso).toLocaleString(getLocale()) : t('alerts.unknownTime')));
+const eventSummary = (event) => {
+  return tParts('alerts.events.summary', {
+    node: link(`/nodes/${encodeURIComponent(event.node_id)}`, event.node_name || event.node_id),
+    value: formatMetricValue(event.metric, event.value), time: when(event.started_at)
+  });
+};
 export function eventRows(events) {
   return events.map((event) => h('tr', null,
     h('td', null, severityPill(event.severity)),
@@ -22,9 +30,8 @@ export function eventRows(events) {
 export function eventsPanel(state, signal) {
   const active = state === 'firing';
   const rows = h('tbody');
-  const table = h('div', {class: 'table-wrap', hidden: true}, h('table', {class: 'table'},
-    h('caption', {class: 'sr'}, t(active ? 'alerts.events.activeCaption' : 'alerts.events.historyCaption')),
-    h('thead', null, h('tr', null, ['severity', 'rule', 'node', 'value', 'state', 'started', 'resolved'].map((key) => h('th', {scope: 'col'}, t(`alerts.column.${key}`))))), rows));
+  const table = dataTable({hidden: true, caption: t(active ? 'alerts.events.activeCaption' : 'alerts.events.historyCaption'),
+    columns: ['severity', 'rule', 'node', 'value', 'state', 'started', 'resolved'].map((key) => t(`alerts.column.${key}`)), body: rows});
   const status = h('p', {class: 'muted', role: 'status'}, t('alerts.events.loading'));
   let cursor = '';
   let loading = false;
@@ -43,7 +50,7 @@ export function eventsPanel(state, signal) {
     try {
       const page = await api(`/alerts?state=${state}&limit=50${!reset && cursor ? `&before=${encodeURIComponent(cursor)}` : ''}`, {signal: request.signal});
       if (stopped || signal?.aborted) return;
-      if (page.has_more && (!page.next_cursor || (!reset && cursors.has(page.next_cursor)))) throw Object.assign(new Error('Invalid alert cursor'), {code: 'unreadable_response'});
+      const next = nextCursor(page, reset ? null : cursor, reset ? null : cursors);
       if (reset) { rows.replaceChildren(); seen.clear(); cursors.clear(); }
       const fresh = page.events.filter((event) => !seen.has(event.id));
       fresh.forEach((event) => seen.add(event.id));
@@ -51,7 +58,7 @@ export function eventsPanel(state, signal) {
       const newRows = eventRows(fresh);
       rows.append(...newRows);
       if (focusedMore && newRows.length) { newRows[0].tabIndex = -1; newRows[0].focus(); }
-      cursor = page.next_cursor || '';
+      cursor = next || '';
       if (cursor) cursors.add(cursor);
       more.hidden = !page.has_more;
       table.hidden = seen.size === 0;
@@ -65,21 +72,13 @@ export function eventsPanel(state, signal) {
       table.setAttribute('aria-busy', 'false');
     }
   };
-  const more = button(t('alerts.events.loadMore'), {onClick: () => load(), small: true});
+  const more = button(t('common.loadMore'), {onClick: () => load(), small: true});
   more.hidden = true;
   const reload = button(t('common.refresh'), {small: true, icon: 'refresh', onClick: () => load(true)});
   const root = panel(t(active ? 'alerts.events.activeTitle' : 'alerts.tab.history'), {action: reload}, status, table, more);
-  const stop = () => { stopped = true; request?.abort(); observer?.disconnect(); signal?.removeEventListener('abort', stop); };
-  // A tab can detach without navigation. Cancel its pending request as well.
-  let attached = false;
-  const observer = typeof MutationObserver === 'function' ? new MutationObserver(() => {
-    if (root.isConnected) attached = true;
-    else if (attached) stop();
-  }) : null;
-  observer?.observe(document.body, {childList: true, subtree: true});
-  signal?.addEventListener('abort', stop, {once: true});
-  if (signal?.aborted) stop();
-  else load();
+  // 标签页可以在不导航的情况下卸载，其等待中的请求同样要取消。
+  panelLifecycle({root, signal, load, poll: false, resume: false,
+    cancel: () => { stopped = true; request?.abort(); }});
   return root;
 }
 
@@ -92,6 +91,6 @@ export function activeAlertsSummary({firing, newest}) {
     firing.total ? [h('div', {class: 'alert-counts'}, counts),
       h('ul', {class: 'rows'}, newest.map((event) => h('li', null,
         h('div', {class: 'grow'}, h('div', {class: 'title'}, link(`/alerts?event=${encodeURIComponent(event.id)}#history`, event.rule_name || t('alerts.deletedRule'))),
-          h('div', {class: 'sub'}, link(`/nodes/${encodeURIComponent(event.node_id)}`, event.node_name || event.node_id), ' · ', formatMetricValue(event.metric, event.value), ' · ', when(event.started_at))),
+          h('div', {class: 'sub'}, eventSummary(event))),
         severityPill(event.severity))))] : h('p', {class: 'muted'}, t('alerts.events.noActive')));
 }

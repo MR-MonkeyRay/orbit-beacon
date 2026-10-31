@@ -61,7 +61,7 @@ test('latest sample expires just after the 45-second boundary without changing n
   assert.equal(uptime.textContent, originalUptime);
   const last = ui.view.element.querySelector('.last-report');
   assert.equal(last.hidden, false);
-  assert.match(last.textContent, /Last report ·/);
+  assert.match(last.textContent, /Last report Oct 28, 2026/);
   assert.equal(last.querySelector('time').getAttribute('datetime'), received);
   assert.equal(ui.timers.size, 0);
 });

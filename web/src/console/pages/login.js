@@ -1,4 +1,4 @@
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h, icon} from '../../shared/dom.js';
 import {api, getNavigationSignal, revalidateSession, session, setSession} from '../api.js';
@@ -22,14 +22,14 @@ export async function loginPage() {
   try {
     await revalidateSession();
     return session.user.must_change_password ? '/change-password' : nextPath();
-  } catch { /* not signed in */ }
+  } catch { /* 未登录 */ }
   const errorBox = h('div', {class: 'form-error', role: 'alert', hidden: true});
   const username = input({name: 'username', autocomplete: 'username', required: true, autocapitalize: 'none', dataset: {autofocus: ''}});
   const password = passwordInput({name: 'password', autocomplete: 'current-password', required: true});
-  validateBytes(username, 1, 128, t('shell.username'));
-  validateBytes(password, 8, 1024, t('shell.password'));
+  validateBytes(username, 1, 128, t('account.username'));
+  validateBytes(password, 8, 1024, t('account.password'));
   const submit = button(t('shell.signIn'), {type: 'submit', variant: 'primary'});
-  const form = h('form', {class: 'form'}, errorBox, field(t('shell.username'), username), field(t('shell.password'), password, {inner: password.wrapper}), submit);
+  const form = h('form', {class: 'form'}, errorBox, field(t('account.username'), username), field(t('account.password'), password, {inner: password.wrapper}), submit);
   trackFormDirty(form);
   getNavigationSignal()?.addEventListener('abort', () => { password.value = ''; }, {once: true});
   window.addEventListener('pagehide', () => { password.value = ''; }, {once: true, signal: getNavigationSignal() || undefined});

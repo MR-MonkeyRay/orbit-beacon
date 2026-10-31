@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildChannelPayload, durationSeconds, formatMetricValue, formatRuleDuration, metricUnit, scopeLabel, validateChannel, validateRule, validHost} from '../src/console/pages/alert-utils.js';
+import {buildChannelPayload, durationSeconds, formatMetricValue, formatRuleDuration, metricUnit, scopeLabel, validateChannel, validateRule, validHost} from '../src/console/lib/alert-utils.js';
 
 const id = '00000000-0000-4000-8000-000000000001';
 const valid = () => ({name: 'High CPU', enabled: true, scope_kind: 'all', scope_id: null, metric: 'cpu_percent', comparator: '>', threshold: 80, for_seconds: 60, severity: 'warning', channel_ids: []});
@@ -31,8 +31,10 @@ test('rule validation covers bounds, offline semantics, UUIDs and UTF-8 names', 
 test('metric values preserve precision, durations preserve components and scope labels preserve user content', () => {
   assert.equal(metricUnit('cpu_percent'), '%');
   assert.equal(formatMetricValue('memory_used_percent', 80.25), '80.3%');
+  assert.match(formatMetricValue('memory_used_percent', 1000), /1,000%/);
   assert.equal(parseFloat(formatMetricValue('load1', 1.125)), 1.13);
   assert.match(formatMetricValue('load1', .001), /^< 0\.01\b/);
+  assert.match(formatMetricValue('load1', 1000), /1,000\.00/);
   assert.equal(parseFloat(formatMetricValue('probes_down', 1)), 1);
   assert.equal(parseFloat(formatMetricValue('probes_down', 2)), 2);
   assert.equal(parseFloat(formatMetricValue('', 12)), 12);
@@ -46,6 +48,12 @@ test('metric values preserve precision, durations preserve components and scope 
   assert.ok(scopeLabel({scope_kind: 'group', scope_id: id}, [{id, name: 'Production'}]).includes('Production'));
   assert.ok(scopeLabel({scope_kind: 'node', scope_id: id}, [], [{id, name: 'Edge'}]).includes('Edge'));
   assert.ok(scopeLabel({scope_kind: 'group', scope_id: id}).includes(id));
+});
+
+test('alert metric values retain grouping and duration components distinct from sample formats', () => {
+  assert.equal(formatMetricValue('cpu_percent', 1234.5), '1,234.5%');
+  assert.equal(formatMetricValue('load1', 1234.5), '1,234.50 load');
+  assert.equal(formatRuleDuration(3665), '61m 5s');
 });
 test('channel PATCH omits untouched secrets and full webhook URL, including redacted response fields', () => {
   const values = {name: 'Hook', enabled: true, kind: 'webhook', url: '', secret: '', url_redacted: 'https://example.com/…', secret_set: true};

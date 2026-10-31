@@ -13,12 +13,12 @@ import (
 
 func TestPublicEmbeddedAssetsAndRequiredShell(t *testing.T) {
 	f := newHTTP(t, 2)
-	h, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL})
+	h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The shells reference content-hashed bundles built from web/; follow those
-	// references instead of hard-coding names that change with every build.
+	// shell 文件引用从 web/ 构建的内容哈希包；跟随这些引用，
+	// 而不是硬编码每次构建都会变化的名称。
 	assets := []struct{ path, mime string }{{"/", "text/html"}, {"/overview", "text/html"}}
 	for _, shell := range []string{"/", "/overview"} {
 		body := request(t, h, http.MethodGet, shell, "", nil, "", "").Body.String()
@@ -46,7 +46,7 @@ func TestPublicEmbeddedAssetsAndRequiredShell(t *testing.T) {
 			t.Fatalf("HEAD %s: %d %d", asset.path, head.Code, head.Body.Len())
 		}
 	}
-	if _, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, Assets: fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte("admin")}}}); err == nil || !strings.Contains(err.Error(), "public") {
+	if _, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, Assets: fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte("admin")}}})); err == nil || !strings.Contains(err.Error(), "public") {
 		t.Fatalf("missing public shell: %v", err)
 	}
 	assertHTTPStatus(t, request(t, h, http.MethodGet, "/_app/public-missing.js", "", nil, "", ""), http.StatusNotFound)

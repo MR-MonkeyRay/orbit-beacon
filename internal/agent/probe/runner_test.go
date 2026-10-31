@@ -63,7 +63,7 @@ func TestRunnerIntervalExplicitSelectionAndLatest(t *testing.T) {
 		if err := runner.SetTargets(nil); err != nil {
 			t.Fatal(err)
 		}
-		// Reading an older report's target set must not resurrect removed work.
+		// 按旧上报的目标集读取结果，不得重新启动已移除的探测。
 		runner.Results([]string{"tcp://second:443"})
 		synctest.Wait()
 		if latest := runner.Results(nil); len(latest) != 0 {
@@ -90,8 +90,8 @@ func TestRunnerBoundedConcurrencyAndNonblockingSnapshots(t *testing.T) {
 			}
 			calls.Add(1)
 			<-ctx.Done()
-			// Even a check that returns success on cancellation must not resurrect a
-			// removed target or populate its newly added incarnation.
+			// 即使探测在取消时返回成功，也不得恢复已删除的目标，
+			// 或将结果写入同名目标重新添加后的状态。
 			return successful(target)
 		}})
 		targets := []string{}

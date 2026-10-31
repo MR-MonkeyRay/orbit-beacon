@@ -6,9 +6,9 @@ import (
 	"time"
 )
 
-// ValidateDetails checks the immutable snapshot shapes used by notification
-// consumers without looking up live sources or performing any side effects.
-// Fields are optional for historical snapshots; unknown metadata is preserved.
+// ValidateDetails 校验通知消费方使用的不可变快照格式，
+// 不查询实时数据源，不产生任何副作用。
+// 历史快照中的字段可省略；未知元数据原样保留。
 func ValidateDetails(kind string, data json.RawMessage) error {
 	if len(data) > 64<<10 {
 		return ErrInvalidInput
@@ -30,8 +30,7 @@ func ValidateDetails(kind string, data json.RawMessage) error {
 			if json.Unmarshal(raw, &categories) != nil || categories == nil {
 				return ErrInvalidInput
 			}
-			// These are the archive protocol's three independent categories. The
-			// inbox must not import backup (which inserts task notifications).
+			// 归档协议的三个独立分类。inbox 不得导入 backup（由它插入任务通知）。
 			for _, category := range categories {
 				if category != "configuration" && category != "monitoring" && category != "events" {
 					return ErrInvalidInput
@@ -60,15 +59,15 @@ func ValidateDetails(kind string, data json.RawMessage) error {
 			}
 		}
 	case "alert":
-		// IDs are historical display references, not live foreign keys. Empty
-		// IDs and unknown string metric/severity metadata retain UI fallbacks.
+		// ID 仅用于历史展示，不要求对应实体仍然存在。ID 为空或 metric/severity
+		// 为未知字符串时，仍由界面使用默认展示值。
 		if !detailsStrings(fields, false, "rule_id", "rule_name", "node_id", "node_name", "metric", "severity", "transition") ||
 			!detailsTimes(fields, false, "started_at") || !detailsTimes(fields, true, "resolved_at") {
 			return ErrInvalidInput
 		}
 		if raw, present := fields["value"]; present {
 			var value *float64
-			// JSON decoding also rejects non-finite/overflowing float values.
+			// JSON 解码同时拒绝非有限/溢出的浮点值。
 			if json.Unmarshal(raw, &value) != nil {
 				return ErrInvalidInput
 			}
@@ -115,7 +114,7 @@ func detailsTimes(fields map[string]json.RawMessage, nullable bool, names ...str
 			if json.Unmarshal(raw, &value) != nil {
 				return false
 			}
-			// Producers marshal time.Time, not fixed-width database timekeys.
+			// 生产方序列化 time.Time，而非定长的数据库 timekey。
 			if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
 				return false
 			}

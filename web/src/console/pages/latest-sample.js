@@ -1,16 +1,16 @@
-import {t} from '../../shared/i18n.js';
+import {t, tParts} from '../i18n.js';
 import {h} from '../../shared/dom.js';
 import {createFreshnessController, sourceDeadline, timestampMillis} from '../../shared/freshness.js';
 import {absoluteWhen, formatDuration, formatLoad, formatPercent} from '../format.js';
 import {panel, readonlyFacts} from '../ui/components.js';
-import {diskSummary, memorySummary, networkSummary} from './latest-sample-helpers.js';
+import {diskSummary, memorySummary, networkSummary} from '../lib/latest-sample-helpers.js';
 
 const usableStatus = (value) => value === 'ok' || value === 'stale';
 const number = (value) => Number.isFinite(value) && value >= 0;
 const bytes = (value) => Number.isSafeInteger(value) && value >= 0;
 
-// The only mutable portion of this view is readonly sample facts. The clock
-// callback never rebuilds facts or touches a numeric value, input, or tab.
+// 此视图只更新只读的采样信息。时钟回调只更新过期标记，
+// 不重建采样信息，也不改动数值、输入框或标签页。
 export function latestSamplePanel(node, initial, {signal} = {}) {
   const sequence = h('span', {class: 'revision'});
   const body = h('div');
@@ -84,9 +84,9 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
       networkSummary([network])))) : '—';
     const sampled = timestampMillis(latest.sampled_at);
     const entries = [
-      ['CPU', metric(['cpu_percent'], 'cpu', number(metrics.cpu_percent) && metrics.cpu_percent <= 100, formatPercent(metrics.cpu_percent))],
+      [t('nodes.cpu'), metric(['cpu_percent'], 'cpu', number(metrics.cpu_percent) && metrics.cpu_percent <= 100, formatPercent(metrics.cpu_percent))],
       [t('nodes.memory'), metric(['memory_total_bytes', 'memory_available_bytes'], 'memory', memoryValid, memorySummary(metrics))],
-      [t('nodes.loadSeries'), h('span', {class: 'sample-load'}, load[0], ' / ', load[1], ' / ', load[2])],
+      [t('nodes.loadSeries'), h('span', {class: 'sample-load'}, tParts('nodes.loadValues', {one: load[0], five: load[1], fifteen: load[2]}))],
       [t('nodes.disk'), disks], [t('nodes.network'), networks],
       [t('nodes.uptime'), metric(['uptime_seconds'], 'uptime', number(metrics.uptime_seconds), formatDuration(metrics.uptime_seconds))],
       [t('nodes.agentVersion'), latest.system?.agent_version || node.agent_version || '—'],
@@ -95,7 +95,7 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
     const received = timestampMillis(latest.received_at);
     metricRecords = nextRecords;
     lastReport.replaceChildren(...(Number.isFinite(received)
-      ? [t('nodes.lastReport'), absoluteWhen(latest.received_at)] : []));
+      ? tParts('nodes.lastReport', {time: absoluteWhen(latest.received_at)}) : []));
     values.update(entries);
     if (!body.contains(values.element)) body.replaceChildren(values.element, lastReport);
     if (!freshness.clock(serverTime)) freshness.refresh();

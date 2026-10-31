@@ -95,8 +95,7 @@ func TestManagementLatestSample(t *testing.T) {
 	if !strings.Contains(node.Body.String(), `"presence":"online"`) || !strings.Contains(node.Body.String(), `"agent_version":"v1.2.3"`) {
 		t.Fatalf("node=%s", node.Body)
 	}
-	// Optional system on a later report produces explicit null, while inventory
-	// retains the previously persisted agent version.
+	// 后续报告中的可选 system 产生显式 null，而清单保留先前持久化的 Agent 版本。
 	f.now = f.now.Add(10 * time.Second)
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, reportBody(1, 2, "private-session", 30)), 2)
 	got = request(t, f.handler, http.MethodGet, path, "", second, "", "")
@@ -104,8 +103,8 @@ func TestManagementLatestSample(t *testing.T) {
 	if !strings.Contains(got.Body.String(), `"system":null`) {
 		t.Fatalf("sample=%s", got.Body)
 	}
-	// A restarted service has no report cache despite durable node metadata.
-	restarted, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: ingest.NewService(f.db, ingest.Options{}), PublicURL: publicURL})
+	// 尽管有持久化的节点元数据，重启后的服务没有报告缓存。
+	restarted, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: ingest.NewService(f.db, ingest.Options{}), PublicURL: publicURL}))
 	if err != nil {
 		t.Fatal(err)
 	}

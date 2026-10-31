@@ -44,6 +44,19 @@ test('history range changes abort stale requests and late responses cannot repai
     assert.doesNotMatch(env.root.textContent, /could not load/);
   } finally { env.cleanup(); }
 });
+test('history partial failures render a working retry without announcing each chart separately', async () => {
+  const env = setup();
+  try {
+    env.respond(env.requests[0], 503);
+    env.requests.slice(1).forEach((request) => env.respond(request));
+    await flush();
+    const retry = env.root.querySelector('#history-retry-cpu_percent');
+    assert.ok(retry);
+    assert.equal(retry.parentElement.querySelector('p').getAttribute('role'), null);
+    retry.click();
+    assert.equal(env.requests.length, 12);
+  } finally { env.cleanup(); }
+});
 test('history clears polling and aborts requests on disconnect, and resumes on reattach', async () => {
   const env = setup();
   try {

@@ -95,7 +95,7 @@ func TestPublicPageSettingRestoreCategorySemantics(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// A retained Configuration must filter unrelated target settings too.
+			// 保留的 Configuration 还必须过滤不相关的目标设置。
 			if _, err = db.Exec("INSERT INTO settings(key,value) VALUES('public_page_enabled','true'),('private_setting','target-only')"); err != nil {
 				t.Fatal(err)
 			}

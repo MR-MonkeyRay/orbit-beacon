@@ -1,7 +1,6 @@
 package server
 
 import (
-	"errors"
 	"net/http"
 	"strings"
 
@@ -59,8 +58,7 @@ func (h *handler) agentRoute(w http.ResponseWriter, r *http.Request, requestID s
 		return
 	}
 	if r.URL.Path == "/api/agent/v1/recover" {
-		// Reject unknown credentials before reading a recovery request, without
-		// charging report admission or taking the ingest writer.
+		// 在读取恢复请求前拒绝未知凭据，不消耗上报限流额度，也不占用 ingest 写入槽。
 		if _, err := h.nodes.AuthenticateToken(r.Context(), token); err != nil {
 			h.agentError(w, err, requestID)
 			return
@@ -77,7 +75,7 @@ func (h *handler) agentRoute(w http.ResponseWriter, r *http.Request, requestID s
 		writeJSON(w, http.StatusOK, result)
 		return
 	}
-	// Authentication and admission happen before any request body is read.
+	// 认证和准入在读取任何请求体之前完成。
 	admission, err := h.ingest.AdmitToken(r.Context(), token)
 	if err != nil {
 		h.agentError(w, err, requestID)
@@ -95,69 +93,35 @@ func (h *handler) agentRoute(w http.ResponseWriter, r *http.Request, requestID s
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (h *handler) agentError(w http.ResponseWriter, err error, requestID string) {
-	switch {
-	case errors.Is(err, ingest.ErrProtocolUnsupported), errors.Is(err, v1.ErrProtocolUnsupported):
-		fail(w, http.StatusUpgradeRequired, "protocol_unsupported", "Protocol version is not supported", requestID)
-	case errors.Is(err, enrollment.ErrConflict):
-		fail(w, http.StatusConflict, "enrollment_conflict", "Enrollment does not match the bound installation and credential", requestID)
-	case errors.Is(err, enrollment.ErrExpired), errors.Is(err, enrollment.ErrRevoked), errors.Is(err, enrollment.ErrUnauthenticated):
-		fail(w, http.StatusUnauthorized, "unauthenticated", "Enrollment credential is invalid, expired or revoked", requestID)
-	case errors.Is(err, enrollment.ErrNotFound):
-		fail(w, http.StatusNotFound, "enrollment_not_found", "Enrollment not found", requestID)
-	case errors.Is(err, enrollment.ErrInvalidInput), errors.Is(err, ingest.ErrInvalidReport):
-		fail(w, http.StatusBadRequest, "validation_failed", "Request values are invalid", requestID)
-	case errors.Is(err, ingest.ErrIdentityConflict):
-		fail(w, http.StatusConflict, "identity_conflict", "A newer generation or another session owns this identity", requestID)
-	case errors.Is(err, enrollment.ErrRateLimited):
-		w.Header().Set("Retry-After", "1")
-		fail(w, http.StatusTooManyRequests, "rate_limited", "Enrollment rate limit exceeded", requestID)
-	case errors.Is(err, ingest.ErrRateLimited):
-		w.Header().Set("Retry-After", "1")
-		fail(w, http.StatusTooManyRequests, "rate_limited", "Report rate limit exceeded", requestID)
-	case errors.Is(err, ingest.ErrWriterBusy):
-		w.Header().Set("Retry-After", "1")
-		fail(w, http.StatusServiceUnavailable, "report_busy", "Report writer is busy", requestID)
-	case errors.Is(err, ingest.ErrServiceClosed):
-		w.Header().Set("Retry-After", "1")
-		fail(w, http.StatusServiceUnavailable, "service_unavailable", "Report ingestion is shutting down", requestID)
-	default:
-		h.serviceError(w, err, requestID)
-	}
-}
-
-func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, requestID string) bool {
-	if r.URL.Path != "/api/v1/enrollments" && !strings.HasPrefix(r.URL.Path, "/api/v1/enrollments/") {
-		return false
-	}
+func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.URL.Path != "/api/v1/enrollments" {
 		id := strings.TrimPrefix(r.URL.Path, "/api/v1/enrollments/")
 		if r.Method == http.MethodDelete {
 			if err := h.enrollments.Revoke(r.Context(), id); err != nil {
 				h.agentError(w, err, requestID)
-				return true
+				return
 			}
 			w.WriteHeader(http.StatusNoContent)
-			return true
+			return
 		}
 		result, err := h.enrollments.Get(r.Context(), id)
 		if err != nil {
 			h.agentError(w, err, requestID)
-			return true
+			return
 		}
 		writeJSON(w, http.StatusOK, result)
-		return true
+		return
 	}
 	if r.Method == http.MethodGet {
 		limit, offset, err := pagination(r)
 		if err != nil {
 			h.agentError(w, enrollment.ErrInvalidInput, requestID)
-			return true
+			return
 		}
 		result, err := h.enrollments.List(r.Context(), limit+1, offset)
 		if err != nil {
 			h.agentError(w, err, requestID)
-			return true
+			return
 		}
 		hasMore := len(result) > limit
 		response := map[string]any{"has_more": hasMore}
@@ -167,7 +131,7 @@ func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, reques
 		}
 		response["enrollments"] = result
 		writeJSON(w, http.StatusOK, response)
-		return true
+		return
 	}
 	var input struct {
 		NodeID  string `json:"node_id"`
@@ -175,7 +139,7 @@ func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, reques
 		Mode    string `json:"mode"`
 	}
 	if !decode(w, r, &input, requestID) {
-		return true
+		return
 	}
 	var result enrollment.CreatedTicket
 	var err error
@@ -189,8 +153,7 @@ func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, reques
 	}
 	if err != nil {
 		h.agentError(w, err, requestID)
-		return true
+		return
 	}
 	writeJSON(w, http.StatusCreated, result)
-	return true
 }

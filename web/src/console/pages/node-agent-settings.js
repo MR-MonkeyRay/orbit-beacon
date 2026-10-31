@@ -1,4 +1,4 @@
-import {t} from '../../shared/i18n.js';
+import {t, tParts} from '../i18n.js';
 import {h} from '../../shared/dom.js';
 import {absoluteWhen} from '../format.js';
 import {panel, readonlyFacts} from '../ui/components.js';
@@ -13,7 +13,7 @@ export function agentSettingsTab(node, runtime) {
   element.snapshot = (current, observed) => {
     offline.hidden = !observed || current.presence !== 'offline';
     if (!offline.hidden) offline.replaceChildren(...(current.last_seen
-      ? [t('nodes.agentOfflinePrefix'), absoluteWhen(current.last_seen), '.'] : [t('nodes.agentOffline')]));
+      ? tParts('nodes.agentOfflinePrefix', {time: absoluteWhen(current.last_seen)}) : [t('nodes.agentOffline')]));
     if (!observed) {
       if (!body.contains(empty)) body.replaceChildren(empty);
       return;

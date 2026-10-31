@@ -22,8 +22,8 @@ import (
 	"orbitbeacon/internal/server/storage"
 )
 
-// A trigger supplies samples once per delete batch, exercising the same
-// non-blocking admission as ingest without relying on wall-clock scheduling.
+// 触发器在每个删除批次提供一次样本，验证与 ingest 相同的非阻塞准入，
+// 不依赖实时时钟调度。
 var cleanupProducer atomic.Pointer[func()]
 
 func init() {
@@ -196,7 +196,7 @@ func TestAggregationWeightedRollupsShutdownAndGaps(t *testing.T) {
 	} {
 		s.samples <- Sample{NodeID: "one", ReceivedAt: v.at, Values: map[string]float64{"cpu_percent": v.value}}
 	}
-	// A second node must never affect the first node's math.
+	// 第二个节点绝不能影响第一个节点的计算。
 	s.samples <- Sample{NodeID: "two", ReceivedAt: now, Values: map[string]float64{"cpu_percent": 99}}
 	stopped(t, s)
 	for _, test := range []struct {
@@ -218,7 +218,7 @@ func TestAggregationWeightedRollupsShutdownAndGaps(t *testing.T) {
 
 func TestFlushCompletedOnlyAndRestartMergesPartialMinute(t *testing.T) {
 	s, dir := testService(t, nil)
-	// Stop the writer before exercising the internal aggregation functions.
+	// 测试内部聚合函数前先停止后台写入任务。
 	stopped(t, s)
 	now := time.Date(2026, 10, 27, 12, 20, 0, 0, time.UTC)
 	s.add(Sample{"node", now.Add(-time.Minute), map[string]float64{"cpu_percent": 20}})
@@ -251,7 +251,7 @@ func TestFlushCompletedOnlyAndRestartMergesPartialMinute(t *testing.T) {
 	for _, point := range rollup.Points {
 		total += point.Avg
 	}
-	// Within the same hour, all three values are weighted together.
+	// 同一小时内，三个值一起加权。
 	if len(rollup.Points) != 1 || total != float64(140)/3 {
 		t.Fatalf("rollup=%+v", rollup)
 	}
@@ -464,7 +464,7 @@ func TestShutdownDeadlineInterruptsBlockedWriter(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("writer survived canceled shutdown")
 	}
-	// Deadline errors are expected; database closure still completes.
+	// 预期出现截止时间错误；数据库关闭仍会完成。
 	_ = s.Close()
 }
 
@@ -534,7 +534,7 @@ func TestRetentionPreservesIntersectingBoundaryBuckets(t *testing.T) {
 			t.Fatalf("step=%d count=%d err=%v", step, count, err)
 		}
 	}
-	// The same minute boundary is preserved in pending memory before flush.
+	// 刷写之前在待处理内存中保留相同的分钟边界。
 	cutoff := now.Add(-Retention1m).Truncate(time.Minute)
 	s.add(Sample{"pending", cutoff, map[string]float64{"cpu_percent": 10}})
 	s.add(Sample{"expired", cutoff.Add(-time.Minute), map[string]float64{"cpu_percent": 10}})

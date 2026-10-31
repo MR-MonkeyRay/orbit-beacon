@@ -25,21 +25,21 @@ const (
 	maxHTTPBody    = 64 << 10
 )
 
-// Checker performs individual service probes. It is safe for concurrent use.
+// Checker 执行单个服务探测，可并发使用。
 type Checker struct {
 	timeout   time.Duration
 	transport *http.Transport
 	client    *http.Client
 }
 
-// NewChecker returns a checker with the supplied per-probe timeout. A zero or
-// negative timeout selects the five second default.
+// NewChecker 创建探测器，使用给定的单次探测超时。
+// 超时为零或负数时默认使用五秒。
 func NewChecker(timeout time.Duration) *Checker {
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
-	// Each check dials afresh so latency and failures cover connect and TLS,
-	// and no idle connection outlives the 60 second probe interval.
+	// 每次探测都重新建立连接，将连接建立和 TLS 握手计入延迟及失败，
+	// 避免空闲连接跨越 60 秒的探测间隔。
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
 	client := &http.Client{
 		Transport: transport,
@@ -50,14 +50,14 @@ func NewChecker(timeout time.Duration) *Checker {
 	return &Checker{timeout: timeout, transport: transport, client: client}
 }
 
-// Close releases idle HTTP connections held by the checker.
+// Close 释放探测器持有的空闲 HTTP 连接。
 func (c *Checker) Close() {
 	if c != nil && c.transport != nil {
 		c.transport.CloseIdleConnections()
 	}
 }
 
-// Check probes target once and returns a wire-ready result.
+// Check 对目标探测一次，返回可直接上报的结果。
 func (c *Checker) Check(ctx context.Context, target string) v1.ProbeResult {
 	checkedAt := time.Now().UTC()
 	result := v1.ProbeResult{Target: target, CheckedAt: checkedAt}

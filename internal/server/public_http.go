@@ -13,8 +13,8 @@ import (
 
 var errSnapshotBusy = errors.New("public snapshot changed while reading")
 
-// publicSnapshotVersion bounds projection retries and retains the version for
-// the final post-serialization fence shared by HTTP, SSE and WebSocket.
+// publicSnapshotVersion 限制投影重试次数，并保留版本号，
+// 供 HTTP、SSE 和 WebSocket 共用的最终序列化后围栏使用。
 func (h *handler) publicSnapshotVersion(ctx context.Context, limit, offset int) (ingest.PublicPage, uint64, error) {
 	for range 3 {
 		if err := h.publicPageAccess(); err != nil {

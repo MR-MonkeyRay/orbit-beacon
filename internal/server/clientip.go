@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Keep the address in host:port form for admission services that discard ports.
+// 对丢弃端口的准入服务，以 host:port 形式保留地址。
 func (h *handler) clientAddr(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -23,7 +23,7 @@ func (h *handler) clientAddr(r *http.Request) string {
 	}
 	hops := strings.Split(strings.Join(values, ","), ",")
 	addresses := make([]netip.Addr, len(hops))
-	// Validate the entire chain before letting any part influence policy.
+	// 在让任何部分影响策略之前，验证整个链。
 	for i, hop := range hops {
 		address, err := netip.ParseAddr(strings.TrimSpace(hop))
 		if err != nil || address.Zone() != "" {

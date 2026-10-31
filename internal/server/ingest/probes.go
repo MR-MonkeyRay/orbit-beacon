@@ -15,8 +15,8 @@ import (
 
 const probeTargetLimit = 5
 
-// At the admitted one-report/second rate this exceeds a normal 30s persistence
-// interval, including bursts. Backpressure preserves accepted checks on overflow.
+// 在每秒一次上报的准入速率下，该限制超过正常的 30 秒持久化间隔（含突发）。
+// 溢出时通过背压保留已接受的检查。
 const probePendingLimit = 64
 const probeRetention = 7 * 24 * time.Hour
 
@@ -37,8 +37,8 @@ type probeQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-// The node's accept gate serializes buffer changes and commits. Identity is the
-// durable identity observed when buffering, including across a process advance.
+// 节点的接受闸门串行化缓冲区变更与提交。身份是缓冲时观测到的持久化身份，
+// 包括跨进程推进的情况。
 func (state *nodeState) fenceProbes(credential []byte, credentialEpoch int64, generation uint64, session string) {
 	b := &state.probes
 	if b.targets != nil && (subtle.ConstantTimeCompare(b.credential[:], credential) != 1 || b.credentialEpoch != credentialEpoch || b.generation != generation || b.session != session) {
@@ -120,7 +120,7 @@ func (b *probeBuffer) buffer(ctx context.Context, q probeQueryer, nodeID string,
 		if len(entry.pending) >= probePendingLimit {
 			return ErrWriterBusy
 		}
-		// Reports belong to their caller; take ownership of pointer values too.
+		// 报告属于其调用方；指针值也要取得所有权。
 		if result.LatencyMS != nil {
 			value := *result.LatencyMS
 			result.LatencyMS = &value
@@ -141,8 +141,8 @@ func (b *probeBuffer) persist(ctx context.Context, tx *sql.Tx, nodeID string, no
 		if len(entry.pending) == 0 {
 			continue
 		}
-		// Rebase inside the durable transaction as well as seeding on first use.
-		// Another writer may have committed part or all of this queue meanwhile.
+		// 在持久化事务内重设基线，首次使用时也如此。
+		// 期间可能有其他写入者提交了该队列的部分或全部。
 		counted, err := probeWatermark(ctx, tx, nodeID, target)
 		if err != nil {
 			return err
@@ -155,8 +155,8 @@ func (b *probeBuffer) persist(ctx context.Context, tx *sql.Tx, nodeID string, no
 				return err
 			}
 			counted = result.CheckedAt
-			// Late reports update the latest watermark but cannot resurrect expired
-			// hourly rows after retention has removed them.
+			// 迟到的报告会更新最新水位线，但无法在保留策略删除后
+			// 恢复已过期的按小时行。
 			hour := result.CheckedAt.UTC().Truncate(time.Hour)
 			if hour.Before(now.Add(-probeRetention)) {
 				continue

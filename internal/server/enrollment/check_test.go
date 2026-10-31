@@ -23,8 +23,8 @@ func TestClaimInspectionIsReadOnlyAndHonorsExactRetryBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := v1.EnrollmentCheckRequest{ProtocolVersion: v1.EnrollmentCheckVersion, InstallationID: "installation", NodeToken: nodeSecret(1)}
-	// Pin a writer connection; both unclaimed and claimed inspection must remain
-	// read-only and must not wait for SQLite writer admission.
+	// 固定一个写连接；未认领和已认领的检查都必须保持只读，
+	// 且不得等待 SQLite 写入准入。
 	writer, err := db.Conn(ctx)
 	if err != nil {
 		t.Fatal(err)

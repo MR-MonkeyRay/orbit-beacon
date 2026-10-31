@@ -1,4 +1,4 @@
-// Management API client, session state and a short-lived request cache.
+// 管理 API 客户端、会话状态与短时请求缓存。
 
 export class ApiError extends Error {
   constructor(status, body) {
@@ -9,6 +9,8 @@ export class ApiError extends Error {
     this.requestID = body && body.request_id;
   }
 }
+
+const unauthenticated = () => new ApiError(401, {code: 'unauthenticated'});
 
 export const session = {csrf: '', user: null, expires: ''};
 const sessionListeners = new Set();
@@ -59,7 +61,7 @@ export function invalidateSession(reason = 'unauthenticated') {
   notifySession({boundary: true, previousUser, reason});
 }
 
-export function requirePasswordChange() {
+function requirePasswordChange() {
   if (!session.user || session.user.must_change_password) return;
   const previousUser = session.user;
   advanceSession();
@@ -79,8 +81,8 @@ function scheduleExpiry() {
   expiryTimer = setTimeout(() => { if (epoch === sessionEpoch) scheduleExpiry(); }, Math.min(2147483647, Math.ceil(remaining)));
 }
 
-// Server timestamps only move this clock forwards. HTTP Date is rounded down to
-// seconds; its upper bound plus the measured request duration errs on privacy.
+// 服务端时间戳只会让此时钟前进。HTTP Date 向下取整到秒；
+// 其上限加上实测请求时长，宁可保守也不泄露隐私。
 export function calibrateSessionClock(serverTime) {
   const value = Date.parse(serverTime);
   if (!Number.isFinite(value)) return;
@@ -101,8 +103,8 @@ export function setSession(value) {
     || metadata && (typeof value.csrf_token !== 'string' || !value.csrf_token || !Number.isFinite(Date.parse(value.expires_at)))))) {
     throw new ApiError(200, {code: 'unreadable_response'});
   }
-  // Only a new login can restore management access after this credential was
-  // restricted. A delayed or inconsistent /me must never reopen private data.
+  // 凭据被限制后，只有重新登录才能恢复管理权限。
+  // 延迟或不一致的 /me 绝不能重新打开私有数据。
   if (!metadata?.login && session.user?.must_change_password && value.user?.id === session.user.id && !value.user.must_change_password) {
     value = {...value, user: {...value.user, must_change_password: true}};
   }
@@ -110,7 +112,7 @@ export function setSession(value) {
   const nextProof = proofKey(value);
   if (value.user && nextProof === rejectedProof && metadata && !metadata.login) {
     if (session.user) invalidateSession('expired');
-    throw new ApiError(401, {code: 'unauthenticated', message: 'Sign in again to continue.'});
+    throw unauthenticated();
   }
   const boundary = currentProof() !== nextProof || Boolean(metadata?.login);
   if (boundary) {
@@ -136,8 +138,8 @@ export function updateUser(patch) {
   notifySession();
 }
 
-// Visibility gates notifications and live subscriptions together. Retained DOM
-// stays stale while /me is unavailable, but the known expiry timer keeps running.
+// 页面可见性同时控制通知与实时订阅。/me 不可用时不刷新保留的 DOM，
+// 但会话过期计时器继续运行。
 export function pauseSessionVerification() {
   verification?.controller.abort();
   verification = undefined;
@@ -147,11 +149,11 @@ export function pauseSessionVerification() {
 }
 let navigationSignal = null;
 
-// Capture the current page lifetime before awaiting data or building lazy tabs.
+// 在等待数据或构建懒加载标签页前，先捕获当前页面生命周期。
 export const getNavigationSignal = () => navigationSignal;
 
-// Requests still pending were tied to the previous page's signal and are about
-// to be aborted; drop them so the next page fetches afresh. Settled results stay.
+// 仍在等待的请求绑定的是上一页的信号，即将被中止；丢弃它们，
+// 让下一页重新获取。已完成的结果保留。
 export function setNavigationSignal(signal) {
   navigationSignal = signal;
   for (const [key, entry] of cache) if (!entry.settled) cache.delete(key);
@@ -179,12 +181,12 @@ function assertActive(signal) {
   throw signal.reason || new DOMException('The request was cancelled.', 'AbortError');
 }
 
-// Writes carry the current CSRF proof. Management401s end the whole private
-// lifetime; rejected credentials on the public login form remain form errors.
+// 写请求携带当前 CSRF 凭证。管理接口的 401 会终结整个私有生命周期；
+// 公开登录表单上的凭据拒绝仍只是表单错误。
 export async function api(path, options = {}) {
   if (session.user) {
     scheduleExpiry();
-    if (!session.user) throw new ApiError(401, {code: 'unauthenticated', message: 'Sign in again to continue.'});
+    if (!session.user) throw unauthenticated();
   }
   const method = options.method || 'GET';
   const started = monotonicNow();
@@ -205,7 +207,7 @@ export async function api(path, options = {}) {
     if (response.status === 401 && !(path === '/session' && method === 'POST')) {
       if (response.body && !response.body.locked) void response.body.cancel().catch(() => {});
       invalidateSession('unauthenticated');
-      throw new ApiError(401, {code: 'unauthenticated', message: 'Sign in again to continue.'});
+      throw unauthenticated();
     }
     if (response.status === 204) return null;
     let value = null;
@@ -233,8 +235,8 @@ export async function api(path, options = {}) {
 }
 
 export async function signOut() {
-  // Revoke with the current CSRF proof, but never leave private data visible
-  // while that request waits for the network. Only this revoke owns its timer.
+  // 用当前 CSRF 凭证撤销会话，但该请求等待网络期间绝不能让私有数据继续可见。
+  // 只有此撤销操作拥有自己的计时器。
   const headers = {'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf};
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
@@ -257,11 +259,11 @@ export async function revalidateSession({signal} = {}) {
   const value = await api('/me', {signal, noRedirect: true, navigation: false});
   if (epoch !== sessionEpoch || signal?.aborted) throw cancelled();
   setSession(value);
-  if (!session.user) throw new ApiError(401, {code: 'unauthenticated', message: 'Sign in again to continue.'});
+  if (!session.user) throw unauthenticated();
   return session.user;
 }
 
-// Multiple foreground consumers share one auth gate, not one live channel.
+// 多个前台消费者共享同一个鉴权关卡，而非同一个实时通道。
 export function verifySession({signal, fresh = false} = {}) {
   if (signal?.aborted) return Promise.reject(signal.reason || cancelled());
   if (fresh && verification) {
@@ -306,15 +308,15 @@ export function cached(key, ttl, fetcher) {
 
 export function invalidate(...keys) { for (const key of keys) cache.delete(key); }
 
-// A continuation must move forward, or a bad envelope would loop forever.
+// 下一页偏移量必须递增，否则异常响应会导致分页死循环。
 export function nextOffset(page, offset) {
   const next = page.next_offset;
   if (!Number.isSafeInteger(next) || next <= offset) throw new ApiError(200, {code: 'unreadable_response'});
   return next;
 }
 
-// The console works with the whole inventory so search, filters and counts are
-// instant; max_nodes keeps this bounded.
+// 控制台持有全量节点清单，搜索、筛选和计数都是即时的；
+// max_nodes 保证规模有界。
 export function allNodes() {
   return cached('nodes', 15000, async () => {
     const nodes = [];

@@ -18,8 +18,8 @@ type invalidBucket struct {
 	refilled time.Time
 }
 
-// AdmitToken performs only indexed reads before the handler touches the body.
-// Admission is not authorization: Enroll repeats every check in its transaction.
+// AdmitToken 在处理程序触碰请求体之前只做索引读取。
+// 准入不是授权：Enroll 在其事务中重复每一项检查。
 func (s *Service) AdmitToken(ctx context.Context, token, directPeer string) error {
 	err := s.usableTicket(ctx, token)
 	if err == nil {
@@ -53,9 +53,9 @@ func (s *Service) usableTicket(ctx context.Context, token string) error {
 	if now.Before(ticket.ExpiresAt) {
 		return nil
 	}
-	// An expired ticket may still authenticate an exact retry. Without reading
-	// its body we cannot select a receipt, so admit only if a live one exists;
-	// the transaction verifies installation and credential, quota, and expiry.
+	// 过期票据仍可能认证一次精确重试。不读取请求体就无法选择回执，
+	// 因此仅在存在活跃回执时才准入；
+	// 事务会验证安装实例、凭据、配额和过期时间。
 	rows, err := s.db.QueryContext(ctx, "SELECT claimed_at FROM enrollment_claims WHERE enrollment_id = ?", ticket.ID)
 	if err != nil {
 		return err
@@ -92,8 +92,8 @@ func refillInvalid(bucket invalidBucket, now time.Time, burst float64) invalidBu
 }
 
 func (s *Service) chargeInvalid(remote string) bool {
-	// The HTTP layer supplies the connection peer, or the client derived through
-	// configured trusted proxies; ports must never create new buckets. Malformed peers share one bounded bucket.
+	// HTTP 层提供连接对端，或通过配置的可信代理推导的客户端；
+	// 端口绝不能创建新桶。格式错误的对端共享一个有界桶。
 	peer := "unknown"
 	if host, _, err := net.SplitHostPort(remote); err == nil {
 		if address, err := netip.ParseAddr(host); err == nil {

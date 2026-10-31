@@ -383,3 +383,24 @@ func TestSelectionRejectsAggregateReportExpansion(t *testing.T) {
 		t.Fatalf("probe target budget error missing probe_targets field: %v", err)
 	}
 }
+
+func TestSourceFreshAfterReceptionBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		age, interval, elapsed int64
+		want                   bool
+	}{
+		{10000, 10000, 35000, true},
+		{10000, 10000, 35001, false},
+		{45001, 10000, 0, false},
+		{math.MaxInt64, math.MaxInt64, math.MaxInt64, true},
+		{math.MaxInt64, 10000, 1, false},
+		{-1, 10000, 0, false},
+		{0, 0, 0, false},
+		{0, math.MaxInt64 / 3, math.MaxInt64, false},
+	} {
+		source := v1.SourceMetadata{AgeMS: test.age, SourceIntervalMS: test.interval}
+		if got := source.FreshAfter(test.elapsed); got != test.want {
+			t.Errorf("source=%+v elapsed=%d got=%v want=%v", source, test.elapsed, got, test.want)
+		}
+	}
+}

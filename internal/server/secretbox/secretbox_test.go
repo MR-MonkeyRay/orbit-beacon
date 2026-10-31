@@ -49,8 +49,8 @@ func TestChannelBoundCiphertext(t *testing.T) {
 }
 
 func TestLegacyNotificationCiphertext(t *testing.T) {
-	// Fixed pre-purpose format: HKDF-SHA256 notification key, nonce 00..0b,
-	// version 1 and channel ID as AAD. Never regenerate with New/Seal here.
+	// 用途隔离之前的固定格式：HKDF-SHA256 通知密钥、nonce 00..0b、
+	// 版本 1，以通道 ID 作为 AAD。此测试数据绝不能用 New/Seal 重新生成。
 	raw, err := hex.DecodeString("01000102030405060708090a0bae37bd2f4705a08aac0bd5dfaca29029e05238f91500c2cbddf32b1a2ff4de4280407962de7a7d5ef5f685961aec")
 	if err != nil {
 		t.Fatal(err)

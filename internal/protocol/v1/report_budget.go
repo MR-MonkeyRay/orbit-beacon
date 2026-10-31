@@ -5,21 +5,19 @@ import (
 	"unicode/utf8"
 )
 
-// MaxMessageBytes bounds agent requests and responses, including JSON escaping.
+// MaxMessageBytes 限定 Agent 请求与响应的编码字节数，含 JSON 转义。
 const MaxMessageBytes = 64 * 1024
 
-// ErrReportBudget identifies a local selection exceeding the report wire limit.
+// ErrReportBudget 表示本地采集配置超出了上报编码大小限制。
 var ErrReportBudget = errors.New("selection exceeds report encoding budget")
 
-// Selected paths/names occur in series, two metadata keys and runtime. The
-// collector's bounded ASCII source IDs (at most 35 bytes, 21 sources), scalar
-// metrics, maximally escaped System, 24 traffic buckets and envelope fit 13 KiB.
-// Probe result envelopes are reserved separately below. Arbitrary producers
-// must still enforce the final encoded-message limit before sending.
+// 选定的路径和名称会出现在指标序列、两个元数据键和运行时配置中。采集器的 ASCII
+// 来源 ID（至多 35 字节、21 个来源）、标量指标、按最坏情况转义的 System、24 个流量桶
+// 及消息外围字段合计不超过 13 KiB。探测结果的固定字段在下方另行预留。
+// 其他上报实现仍须在发送前检查最终编码大小。
 const reportEnvelopeBytes = 13 * 1024
 
-// Reserve the fixed fields around each encoded probe target. The target itself
-// is accounted for below with encoding/json-compatible escaping.
+// 为每个探测结果的固定字段预留空间；目标本身在下方按 encoding/json 的转义规则计入。
 const probeResultEnvelopeBytes = 160
 
 func selectionFitsReport(c RuntimeSettings) bool {
@@ -37,10 +35,10 @@ func selectionFitsReport(c RuntimeSettings) bool {
 	return 4*bytes+probeBytes+reportEnvelopeBytes <= MaxMessageBytes
 }
 
-// jsonStringBytes matches encoding/json's default HTML-safe string escaping
-// without allocating an encoded copy of every configured series identifier.
+// jsonStringBytes 与 encoding/json 默认的 HTML 安全字符串转义一致，
+// 且无需为每个配置的序列标识符分配编码副本。
 func jsonStringBytes(value string) int {
-	size := 2 // quotes
+	size := 2 // 引号
 	for i := 0; i < len(value); {
 		b := value[i]
 		if b < utf8.RuneSelf {

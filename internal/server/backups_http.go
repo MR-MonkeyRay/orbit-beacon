@@ -8,34 +8,28 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/backup"
-	"orbitbeacon/internal/server/management"
-	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/validation"
 )
 
-// backupsRoute is reached only after route existence, method, session and CSRF
-// checks. All console accounts have the same access to backup operations.
-func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID string, user auth.User) bool {
+// backupsRoute 只在路由存在性、方法、会话和 CSRF 检查通过后才可达。
+// 所有控制台账户对备份操作拥有相同权限。
+func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID string, session auth.Session) {
 	p := r.URL.Path
-	if p != "/api/v1/backups/exports" && p != "/api/v1/backup-plans" && !strings.HasPrefix(p, "/api/v1/backup-plans/") && p != "/api/v1/tasks" && !strings.HasPrefix(p, "/api/v1/tasks/") {
-		return false
-	}
 	list := r.Method == http.MethodGet && (p == "/api/v1/tasks" || p == "/api/v1/backup-plans")
 	limit, before, err := backupQuery(r, list)
 	if err != nil {
 		h.backupError(w, err, requestID)
-		return true
+		return
 	}
 	if h.backups == nil {
 		h.backupError(w, errors.New("backup service is unavailable"), requestID)
-		return true
+		return
 	}
 	switch p {
 	case "/api/v1/backups/exports":
@@ -43,16 +37,16 @@ func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID
 			Categories []backup.Category `json:"categories"`
 		}
 		if !decode(w, r, &input, requestID) {
-			return true
+			return
 		}
 		if _, err := backup.ValidateCategories(input.Categories); err != nil {
-			h.backupError(w, &nodes.ValidationError{Fields: map[string]string{"categories": "Select one or more distinct data categories."}}, requestID)
-			return true
+			h.backupError(w, &validation.Error{Fields: map[string]string{"categories": "Select one or more distinct data categories."}}, requestID)
+			return
 		}
-		task, err := h.backups.CreateExport(r.Context(), user.ID, input.Categories)
+		task, err := h.backups.CreateExport(r.Context(), session.User.ID, input.Categories)
 		if err != nil {
 			h.backupError(w, err, requestID)
-			return true
+			return
 		}
 		w.Header().Set("Location", "/api/v1/tasks/"+task.ID)
 		writeJSON(w, http.StatusAccepted, task)
@@ -61,10 +55,10 @@ func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID
 			page, err := h.backups.Plans(r.Context(), limit, before)
 			if err != nil {
 				h.backupError(w, err, requestID)
-				return true
+				return
 			}
 			writeJSON(w, http.StatusOK, page)
-			return true
+			return
 		}
 		h.backupPlanSave(w, r, requestID, "")
 	case "/api/v1/backup-plans/preview":
@@ -72,19 +66,19 @@ func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID
 			Cron string `json:"cron"`
 		}
 		if !decode(w, r, &input, requestID) {
-			return true
+			return
 		}
 		preview, err := h.backups.PreviewCron(input.Cron, h.now())
 		if err != nil {
 			h.backupError(w, err, requestID)
-			return true
+			return
 		}
 		writeJSON(w, http.StatusOK, preview)
 	case "/api/v1/tasks":
 		page, err := h.backups.Tasks(r.Context(), limit, before)
 		if err != nil {
 			h.backupError(w, err, requestID)
-			return true
+			return
 		}
 		writeJSON(w, http.StatusOK, page)
 	default:
@@ -96,18 +90,18 @@ func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID
 			case http.MethodDelete:
 				if err := h.backups.DeletePlan(r.Context(), id); err != nil {
 					h.backupError(w, err, requestID)
-					return true
+					return
 				}
 				w.WriteHeader(http.StatusNoContent)
 			default:
 				plan, err := h.backups.Plan(r.Context(), id)
 				if err != nil {
 					h.backupError(w, err, requestID)
-					return true
+					return
 				}
 				writeJSON(w, http.StatusOK, plan)
 			}
-			return true
+			return
 		}
 		parts := strings.Split(strings.TrimPrefix(p, "/api/v1/tasks/"), "/")
 		id := parts[0]
@@ -115,60 +109,47 @@ func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID
 			if parts[1] == "download" {
 				h.backupDownload(w, r, requestID, id)
 			} else {
-				// No plaintext is fetched by task/list GETs or ordinary page loads.
+				// 任务/列表的 GET 或普通页面加载不会获取明文。
 				w.Header().Set("Cache-Control", "no-store")
 				result, err := h.backups.Password(r.Context(), id)
 				if err != nil {
 					h.backupError(w, err, requestID)
-					return true
+					return
 				}
 				writeJSON(w, http.StatusOK, result)
 			}
-			return true
+			return
 		}
 		task, err := h.backups.Task(r.Context(), id)
 		if err != nil {
 			h.backupError(w, err, requestID)
-			return true
+			return
 		}
 		writeJSON(w, http.StatusOK, task)
 	}
-	return true
 }
 
-// Only list endpoints accept a cursor and limit. ParseQuery errors are not
-// discarded: malformed encodings must not silently remove an unwanted field.
+// 仅列表端点接受 cursor 和 limit。ParseQuery 的错误不可丢弃：
+// 畸形编码不得导致不允许的字段被静默忽略。
 func backupQuery(r *http.Request, list bool) (int, string, error) {
 	invalid := &backup.Error{Code: "invalid_input"}
-	values, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		return 0, "", invalid
+	allowed := map[string]queryParameter{}
+	if list {
+		const suppliedOnce = "must be supplied once and nonempty"
+		allowed["limit"] = queryParameter{nonempty: true, repeated: suppliedOnce}
+		allowed["before"] = queryParameter{nonempty: true, repeated: suppliedOnce}
 	}
-	limit, before := 50, ""
-	for key, items := range values {
-		if !list || len(items) != 1 || items[0] == "" {
-			return 0, "", invalid
-		}
-		switch key {
-		case "limit":
-			limit, err = strconv.Atoi(items[0])
-			if err != nil || limit < 1 || limit > 100 {
-				return 0, "", invalid
-			}
-		case "before":
-			before = items[0]
-			if _, _, err := management.DecodeEventCursor(before); err != nil {
-				return 0, "", invalid
-			}
-		default:
-			return 0, "", invalid
-		}
+	values, fields := parseQuery(r.URL.RawQuery, "invalid query string", allowed)
+	limit := parseLimit(values, fields, 50, "must be an integer from 1 to 100")
+	before, err := parseCursor(values, "before")
+	if len(fields) != 0 || err != nil {
+		return 0, "", invalid
 	}
 	return limit, before, nil
 }
 
-// PlanPatch's pointers distinguish omission but not explicit JSON null. Keep
-// null rejection at this HTTP boundary without changing the service patch API.
+// PlanPatch 的指针能区分省略，但无法区分显式 JSON null。
+// 在此 HTTP 边界拒绝 null，不改动服务层的 patch API。
 type backupPlanInput struct{ patch backup.PlanPatch }
 
 func (input *backupPlanInput) UnmarshalJSON(data []byte) error {
@@ -178,7 +159,7 @@ func (input *backupPlanInput) UnmarshalJSON(data []byte) error {
 	}
 	for key, raw := range fields {
 		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return &nodes.ValidationError{Fields: map[string]string{key: "Must not be null; omit this field to retain its value."}}
+			return &validation.Error{Fields: map[string]string{key: "Must not be null; omit this field to retain its value."}}
 		}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -236,45 +217,6 @@ func (h *handler) backupDownload(w http.ResponseWriter, r *http.Request, request
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", "application/octet-stream")
 	http.ServeContent(w, r, *task.ArtifactName, info.ModTime(), backupArtifactReader{File: file, ctx: r.Context()})
-}
-
-func (h *handler) backupError(w http.ResponseWriter, err error, requestID string) {
-	var validation *nodes.ValidationError
-	if errors.As(err, &validation) {
-		writeJSON(w, http.StatusBadRequest, apiError{Code: "validation_failed", Message: validation.Error(), RequestID: requestID, Fields: validation.Fields})
-		return
-	}
-	var coded *backup.Error
-	if errors.As(err, &coded) {
-		status := http.StatusInternalServerError
-		message := "The backup operation could not be completed"
-		switch coded.Code {
-		case "invalid_input", "invalid_actor":
-			status, message = http.StatusBadRequest, "The request contains invalid parameters"
-		case "forbidden":
-			status, message = http.StatusForbidden, "Administrator access is required"
-		case "backup_queue_full":
-			status, message = http.StatusTooManyRequests, "The backup queue is full; try again after a task finishes"
-		case "backup_plan_busy":
-			status, message = http.StatusConflict, "This plan has a queued or running backup; try again after it finishes"
-		case "backup_plan_not_found", "task_not_found", "password_unavailable":
-			status, message = http.StatusNotFound, "The requested backup resource is unavailable"
-		case "artifact_not_ready":
-			status, message = http.StatusConflict, "The download is not ready"
-		case "artifact_expired", "artifact_missing", "password_expired":
-			status, message = http.StatusGone, "The requested backup artifact or password is no longer available"
-		case "secret_unreadable":
-			status, message = http.StatusConflict, "The backup secret cannot be read with the server key"
-		}
-		if status != http.StatusInternalServerError {
-			fail(w, status, coded.Code, message, requestID)
-			return
-		}
-	}
-	// Raw SQLite/filesystem/SDK errors may include private paths or credentials.
-	// Log only a fixed diagnostic, never the wrapped error supplied by a service.
-	h.logInternalError(errors.New("backup operation failed"), requestID)
-	fail(w, http.StatusInternalServerError, "internal_error", "The backup operation could not be completed", requestID)
 }
 
 var _ io.ReadSeeker = backupArtifactReader{}

@@ -1,9 +1,12 @@
 package v1
 
-import "errors"
+import (
+	"encoding/json"
+	"errors"
+)
 
-// RuntimeSettings is the agent-owned collection and reporting configuration.
-// Defaults are applied only at the local configuration boundary, never to reports.
+// RuntimeSettings 是由 Agent 管理的采集与上报配置。
+// 默认值仅在读取本地配置时补齐，不用于补齐收到的上报。
 type RuntimeSettings struct {
 	ReportIntervalSeconds int      `json:"report_interval_seconds"`
 	DiskIntervalSeconds   int      `json:"disk_interval_seconds"`
@@ -66,8 +69,7 @@ func (c RuntimeSettings) Validate() error {
 	return nil
 }
 
-// ValidateSelection applies the bounded device selection and encoded-report
-// budget contract before any collector or probe configuration is changed.
+// ValidateSelection 在变更采集器或探测配置前，校验设备选择范围与上报编码大小。
 func (c RuntimeSettings) ValidateSelection() error {
 	var fields map[string]string
 	for _, selection := range [...]struct {
@@ -124,4 +126,13 @@ func (c RuntimeSettings) ValidateSelection() error {
 		return &ValidationError{Fields: fields}
 	}
 	return nil
+}
+
+// DecodeRuntimeSettings 解码并校验观测到的运行时配置。
+func DecodeRuntimeSettings(raw string) (RuntimeSettings, error) {
+	var runtime RuntimeSettings
+	if err := json.Unmarshal([]byte(raw), &runtime); err != nil {
+		return runtime, err
+	}
+	return runtime, runtime.Validate()
 }

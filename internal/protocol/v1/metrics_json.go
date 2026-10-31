@@ -10,8 +10,8 @@ import (
 
 const maxMetricSeries = 8
 
-// UnmarshalJSON drops extensions before decoding typed metadata. Known scalar
-// keys and disk/network families still use the complete validation contract.
+// UnmarshalJSON 在将元数据解码为结构体前丢弃扩展字段。已知标量键和
+// disk/network 序列仍执行完整校验。
 func (m *Metrics) UnmarshalJSON(data []byte) error {
 	type values Metrics
 	var decoded values

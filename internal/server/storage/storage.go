@@ -15,10 +15,10 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-// ErrSchemaTooNew reports a database written by a newer OrbitBeacon release.
+// ErrSchemaTooNew 报告由更新版本的 OrbitBeacon 写入的数据库。
 var ErrSchemaTooNew = errors.New("database schema is newer than this binary")
 
-// ErrSchemaIncompatible requires a new data directory rather than an upgrade.
+// ErrSchemaIncompatible 需要新的数据目录，而不是升级。
 var ErrSchemaIncompatible = errors.New("database schema is incompatible; initialize a new data directory")
 
 type Migration struct {
@@ -26,11 +26,11 @@ type Migration struct {
 	SQL     string
 }
 
-// CurrentSchemaVersion is the highest schema version produced by this binary.
+// CurrentSchemaVersion 是本二进制生成的最高 schema 版本。
 const CurrentSchemaVersion = 21
 
-// Open opens a persistent local database. The driver applies connection-local
-// pragmas to every pooled connection, not just the migration connection.
+// Open 打开持久化本地数据库。驱动对池中每个连接应用连接级 pragma，
+// 而不仅是迁移连接。
 func Open(ctx context.Context, path string) (*sql.DB, error) {
 	db, err := openDatabase(ctx, path)
 	if err != nil {
@@ -43,8 +43,8 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// OpenWithMigrations applies an independent schema using the same secure file
-// checks and SQLite connection settings as the main database.
+// OpenWithMigrations 使用与主数据库相同的安全文件检查和 SQLite 连接设置，
+// 应用独立的 schema。
 func OpenWithMigrations(ctx context.Context, path string, migrations []Migration) (*sql.DB, error) {
 	db, err := openDatabase(ctx, path)
 	if err != nil {
@@ -62,8 +62,8 @@ func openDatabase(ctx context.Context, path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	// SQLite derives WAL and shared-memory permissions from the main database.
-	// Create it privately before the driver can apply its default creation mode.
+	// SQLite 从主数据库派生 WAL 和共享内存的权限。
+	// 在驱动应用其默认创建模式之前，先以私有方式创建它。
 	file, err := securefs.OpenFile(absolute, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 	if errors.Is(err, os.ErrExist) {
 		file, err = securefs.OpenFile(absolute, os.O_RDWR, 0)
@@ -132,8 +132,8 @@ func initializeMainSchema(ctx context.Context, db *sql.DB) error {
 
 const mainSchema = foundationSchema + alertsSchema + notificationsSchema + trafficSchema + probesSchema + backupsSchema
 
-// OpenReader opens an existing database through a separate read-only pool.
-// Open must run first so the database exists and its schema is initialized.
+// OpenReader 通过独立的只读池打开已有数据库。
+// 必须先运行 Open，使数据库存在且 schema 已初始化。
 func OpenReader(ctx context.Context, path string) (*sql.DB, error) {
 	absolute, exists, err := validateDatabasePath(path)
 	if err != nil {
@@ -172,7 +172,7 @@ func validateDatabasePath(path string) (string, bool, error) {
 		return "", false, err
 	}
 	exists := false
-	// Inspect every existing component before opening or creating the database.
+	// 在打开或创建数据库之前，检查每个已有组件。
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		componentExists, err := securefs.ValidateFile(absolute + suffix)
 		if err != nil {
@@ -185,13 +185,13 @@ func validateDatabasePath(path string) (string, bool, error) {
 	return absolute, exists, nil
 }
 
-// Migrate atomically applies each unapplied version together with its ledger row.
+// Migrate 原子地应用每个未应用的版本及其台账行。
 func Migrate(ctx context.Context, db *sql.DB, migrations []Migration) error {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
 		return err
 	}
-	// An older binary must not run against a schema written by a newer one: it
-	// would silently ignore columns and invariants it does not know about.
+	// 旧二进制绝不能运行在由新二进制写入的 schema 上：
+	// 它会悄悄忽略自己不知道的列和不变量。
 	known := 0
 	for _, migration := range migrations {
 		known = max(known, migration.Version)

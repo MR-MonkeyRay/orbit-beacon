@@ -19,10 +19,10 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 type serviceError string
@@ -74,8 +74,8 @@ type Service struct {
 	db     *sql.DB
 	now    func() time.Time
 	random io.Reader
-	// The gate bounds expensive password calculations to one per service and
-	// protects injectable entropy readers, which need not be concurrency-safe.
+	// 每个服务同时只进行一次昂贵的密码计算，也保护注入的随机源，
+	// 因此随机源不必支持并发读取。
 	gate                   chan struct{}
 	waiters                chan struct{}
 	rateMu                 sync.Mutex
@@ -134,8 +134,8 @@ func VerifyPassword(password, encoded string) (bool, error) {
 	return matches, err
 }
 
-// ValidatePasswordHash checks the same encoding and work bounds as login,
-// without allocating Argon2 memory or evaluating a password.
+// ValidatePasswordHash 检查与登录相同的编码和计算量边界，
+// 但不分配 Argon2 内存，也不计算密码。
 func ValidatePasswordHash(encoded string) error {
 	_, _, _, _, _, err := parsePasswordHash(encoded)
 	return err
@@ -162,7 +162,7 @@ func parsePasswordHash(encoded string) (memory, iterations uint32, parallelism u
 		}
 	}
 	memory, iterations, parallelism = uint32(costs[0]), uint32(costs[1]), uint8(costs[2])
-	// Bound work before Argon2 allocates memory or starts worker goroutines.
+	// 在 Argon2 分配内存或启动工作协程之前限制计算量。
 	if costs[0] < 19456 || costs[0] > 262144 || costs[1] < 1 || costs[1] > 10 || costs[2] < 1 || costs[2] > 4 {
 		return 0, 0, 0, nil, nil, errors.New("unsafe password parameters")
 	}
@@ -177,7 +177,7 @@ func parsePasswordHash(encoded string) (memory, iterations uint32, parallelism u
 	return memory, iterations, parallelism, salt, digest, nil
 }
 
-// current reports whether a verified encoding needs a parameter upgrade.
+// verifyPassword 校验密码；current 表示编码中的参数是否与当前设置一致。
 func verifyPassword(password, encoded string) (matches, current bool, err error) {
 	memory, iterations, parallelism, salt, digest, err := parsePasswordHash(encoded)
 	if err != nil {
@@ -297,7 +297,7 @@ func (s *Service) prepareUser(username, password string, mustChangePassword bool
 	if err != nil {
 		return User{}, "", err
 	}
-	id, err := identity.UUID(s.random)
+	id, err := uuid.UUID(s.random)
 	if err != nil {
 		return User{}, "", err
 	}
@@ -326,7 +326,7 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 		return Session{}, err
 	}
 	defer func() { <-s.gate }()
-	// Charge only admitted work, rechecking budgets after queued work completes.
+	// 仅对通过准入的操作扣减限流额度；排队结束后重新检查额度。
 	if err := s.admitLogin(ctx, username); err != nil {
 		return Session{}, err
 	}
@@ -334,10 +334,10 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 	var hash, created string
 	err := s.db.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password, password_hash FROM users WHERE username = ?", username).Scan(&user.ID, &user.Username, &created, &user.MustChangePassword, &hash)
 	if errors.Is(err, sql.ErrNoRows) {
-		// Unknown usernames consume the same Argon2 work as incorrect passwords.
+		// 未知用户名消耗与错误密码相同的 Argon2 计算。
 		var salt [16]byte
 		_ = argon2.IDKey([]byte(password), salt[:], passwordIterations, passwordMemory, passwordParallelism, 32)
-		s.recordLoginFailure(ctx, username)
+		s.recordLoginFailure(username)
 		return Session{}, ErrUnauthenticated
 	}
 	if err != nil {
@@ -345,7 +345,7 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 	}
 	ok, current, err := verifyPassword(password, hash)
 	if err != nil || !ok {
-		s.recordLoginFailure(ctx, username)
+		s.recordLoginFailure(username)
 		return Session{}, ErrUnauthenticated
 	}
 	user.CreatedAt, err = timekey.Parse(created)
@@ -384,8 +384,7 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 			return Session{}, ErrUnauthenticated
 		}
 	}
-	// A password change or deletion from another service must not race stale
-	// verified credentials into a new session after revocation has committed.
+	// 若其他服务已提交密码修改或用户删除，不能再用先前验证的旧凭据创建会话。
 	result, err := tx.ExecContext(ctx, "INSERT INTO sessions(token_hash, user_id, expires_at) SELECT ?, id, ? FROM users WHERE id = ? AND password_hash = ?", digest[:], session.ExpiresAt.UnixNano(), user.ID, newHash)
 	if err != nil {
 		return Session{}, err
@@ -404,7 +403,7 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 	if err := audit.InsertDetails(audit.WithActor(ctx, user.ID), tx, "session.create", user.ID, now, details); err != nil {
 		return Session{}, err
 	}
-	// Reclaim a bounded batch only when a new session can commit successfully.
+	// 只在新会话能够成功提交时回收有界批次。
 	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE token_hash IN (SELECT token_hash FROM sessions WHERE expires_at <= ? ORDER BY expires_at LIMIT 128)", now.UnixNano()); err != nil {
 		return Session{}, err
 	}
@@ -434,8 +433,8 @@ func (s *Service) Authenticate(ctx context.Context, token string) (User, error) 
 	return user, nil
 }
 
-// CurrentSession recovers a stable session-bound CSRF token without exposing the
-// HttpOnly credential or rotating another tab's token.
+// CurrentSession 恢复稳定的会话绑定 CSRF 令牌，不暴露 HttpOnly 凭据，
+// 也不轮换其他标签页的令牌。
 func (s *Service) CurrentSession(ctx context.Context, token string) (Session, error) {
 	user, expiry, err := s.lookupSession(ctx, token)
 	if err != nil {
@@ -467,9 +466,8 @@ func (s *Service) lookupSession(ctx context.Context, token string) (User, int64,
 	return user, expiry, err
 }
 
-// CleanupExpiredSessions removes at most one bounded batch and reports how many
-// sessions it removed. The periodic retention task calls it, so request
-// handling never takes the SQLite writer just to reclaim sessions.
+// CleanupExpiredSessions 最多删除一个有界批次，并报告删除的会话数量。
+// 由定期清理任务调用，避免请求处理仅为回收会话而占用 SQLite 写锁。
 func (s *Service) CleanupExpiredSessions(ctx context.Context) (int64, error) {
 	result, err := s.db.ExecContext(ctx, "DELETE FROM sessions WHERE token_hash IN (SELECT token_hash FROM sessions WHERE expires_at <= ? ORDER BY expires_at LIMIT 128)", s.now().UnixNano())
 	if err != nil {
@@ -544,7 +542,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID, oldPassword, newPa
 		return err
 	}
 	defer func() { <-s.gate }()
-	// Charge only admitted work: gate rejections and cancellations are free.
+	// 仅对通过准入的操作扣减限流额度；被闸门拒绝或取消的请求不扣减。
 	if err := s.admitPasswordChange(userID); err != nil {
 		return err
 	}
@@ -577,7 +575,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID, oldPassword, newPa
 		return err
 	}
 	if count != 1 {
-		// A concurrent change invalidated the old credential; roll back and report it.
+		// 并发修改使旧凭据失效；回滚并报告。
 		return ErrWrongPassword
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ?", userID); err != nil {

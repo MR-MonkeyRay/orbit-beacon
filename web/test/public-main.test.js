@@ -82,9 +82,10 @@ test('public broken channel retains values and online presence until the next va
   assert.equal(card.querySelector('.last-report').hidden, false);
   sse.frame(snapshot(payload('', {nodes: []}))); await flush();
   assert.equal(ui.elements.nodes.children.length, 0);
-  assert.notEqual(ui.elements['empty-text'].textContent, '');
+  assert.notEqual(ui.elements.headline.textContent, '');
   assert.equal(ui.elements.retry.hidden, true);
-  assert.equal(ui.elements.empty.hidden, false);
+  // 空集合只由标题说明一次；空态盒子保持隐藏。
+  assert.equal(ui.elements.empty.hidden, true);
 });
 
 test('public invalid snapshot cannot clear an accepted collection or change its values', async (t) => {
@@ -140,6 +141,18 @@ test('public filters survive valid patches and keep filtering the current page',
   assert.equal(ui.elements.nodes.children[0].hidden, true);
 });
 
+test('public empty box explains an empty filter but not an empty collection', async (t) => {
+  const ui = await setup(t); ui.sockets[0].open();
+  const data = payload('online'); data.nodes.push({...data.nodes[0], name: 'offline', status: 'offline'});
+  ui.sockets[0].message(snapshot(data));
+  ui.elements.filters.children[2].click();
+  ui.sockets[0].message(snapshot(payload('online')));
+  assert.equal(ui.elements.empty.hidden, false);
+  assert.equal(ui.elements['empty-text'].textContent, 'No offline nodes on this page.');
+  ui.sockets[0].message(snapshot(payload('', {nodes: []})));
+  assert.equal(ui.elements.empty.hidden, true);
+});
+
 test('public hide and BFCache preserve stale values and resume with a fresh WS scope', async (t) => {
   const ui = await setup(t); ui.sockets[0].open(); ui.sockets[0].message(snapshot(payload('visible')));
   ui.document.hidden = true; ui.document.dispatchEvent(new Event('visibilitychange'));
@@ -185,4 +198,20 @@ test('public-page disable clears rendered data and timers before replacing the r
   await flush(); await ui.advance(600000);
   assert.deepEqual(redirects, ['/']);
   assert.equal(ui.requests.length, 0);
+});
+
+test('public gauges clear both ARIA values when a metric becomes missing', async (t) => {
+  const ui = await setup(t);
+  const socket = ui.sockets[0]; socket.open();
+  const data = payload();
+  data.nodes[0].cpu_percent = 80;
+  socket.message(snapshot(data));
+  const meter = ui.elements.nodes.querySelector('.track');
+  assert.equal(meter.getAttribute('aria-valuenow'), '80.0');
+  assert.equal(meter.getAttribute('aria-valuetext'), '80.0%');
+  data.nodes[0].cpu_percent = null;
+  data.nodes[0].metric_status.cpu_percent = 'unavailable';
+  socket.message(snapshot(data));
+  assert.equal(meter.getAttribute('aria-valuenow'), null);
+  assert.equal(meter.getAttribute('aria-valuetext'), null);
 });

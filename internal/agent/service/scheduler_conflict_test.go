@@ -36,7 +36,8 @@ func TestSchedulerIdentityConflictStopsRun(t *testing.T) {
 				release := make(chan struct{})
 				var collections, activeCollections, reports, activeReports atomic.Int64
 				var reportContext context.Context
-				scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
+				logs := &testLogSink{}
+				scheduler := service.NewScheduler(service.SchedulerOptions{Logger: logs.logger(), Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 					Collect: func(ctx context.Context) (v1.Metrics, error) {
 						activeCollections.Add(1)
 						defer activeCollections.Add(-1)
@@ -91,8 +92,10 @@ func TestSchedulerIdentityConflictStopsRun(t *testing.T) {
 				if collections.Load() != wantCollections || reports.Load() != 1 {
 					t.Fatalf("work continued after identity conflict: collections=%d reports=%d", collections.Load(), reports.Load())
 				}
-				if scheduler.CredentialsInvalid() {
-					t.Fatal("identity conflict was incorrectly treated as invalid credentials")
+				for _, record := range logs.snapshot() {
+					if record.message == "credentials_invalid" {
+						t.Fatal("identity conflict was incorrectly treated as invalid credentials")
+					}
 				}
 			})
 		})

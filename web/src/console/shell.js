@@ -1,4 +1,4 @@
-import {t} from '../shared/i18n.js';
+import {t} from './i18n.js';
 import {localeSelect} from '../shared/locale-select.js';
 import {confirmLocaleChange, reloadAfterConfirmation} from './router.js';
 import {h} from '../shared/dom.js';
@@ -8,9 +8,9 @@ import {busy, button} from './ui/components.js';
 import {toastError} from './ui/feedback.js';
 import {initNotifications, syncNotifications} from './notifications.js';
 
-// Sidebar navigation and account block. The markup is static in index.html so
-// navigation paints before the script loads. Below 1200px the sidebar is an
-// always-visible icon rail; the console does not support phone widths.
+// 侧边栏导航与账户区块。标记是 index.html 中的静态内容，
+// 导航在脚本加载前即可呈现。1200px 以下侧边栏为常驻图标栏；
+// 控制台不支持手机宽度。
 let sidebar;
 let account;
 function shellElements() {
@@ -23,7 +23,7 @@ function renderAccount() {
   shellElements();
   if (session.user?.must_change_password) document.documentElement.classList.add('route-login');
   if (!session.user || session.user.must_change_password) { account.replaceChildren(); return; }
-  // In the icon rail the label span becomes the button's tooltip.
+  // 图标栏中，标签 span 充当按钮的工具提示。
   const exit = button(h('span', {class: 'nav-label'}, t('common.signOut')), {id: 'sign-out', icon: 'logout', small: true, onClick: async () => {
     busy(exit, true);
     try { await signOut(); } catch (error) { busy(exit, false); toastError(error); }
@@ -41,8 +41,8 @@ export function consoleLocaleSelect({navigation = false} = {}) {
     signal: navigation ? getNavigationSignal() : undefined});
 }
 
-// Marks the active section; the pill element carries a view-transition-name so
-// it glides between items during page transitions.
+// 标记当前激活区块；pill 元素带有 view-transition-name，
+// 页面过渡时在各条目间平滑滑动。
 export function setActiveNav(nav) {
   shellElements();
   let pill = sidebar.querySelector('.nav-pill');

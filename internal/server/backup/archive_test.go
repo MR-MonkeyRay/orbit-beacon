@@ -505,3 +505,36 @@ func TestArchiveRejectsSymlinkAncestorsAndPreservesExistingStage(t *testing.T) {
 		t.Fatal("existing stage permissions changed")
 	}
 }
+
+func TestManifestCanonicalUUIDAndSHA256(t *testing.T) {
+	base := framingManifest([]Category{Events})
+	base.Files = []ManifestFile{{Path: "events.sqlite", Bytes: 1, SHA256: strings.Repeat("a", 64)}}
+	for _, id := range []string{base.ArchiveID, "00000000-0000-0000-0000-000000000001"} {
+		manifest := base
+		manifest.ArchiveID = id
+		if err := validateManifest(manifest); err != nil {
+			t.Fatalf("valid UUID %q: %v", id, err)
+		}
+	}
+	for _, id := range []string{"00000000-0000-0000-0000-000000000000", strings.ToUpper(base.ArchiveID), strings.ReplaceAll(base.ArchiveID, "-", ""), "urn:uuid:" + base.ArchiveID} {
+		manifest := base
+		manifest.ArchiveID = id
+		if err := validateManifest(manifest); err == nil {
+			t.Fatalf("accepted UUID %q", id)
+		}
+	}
+	for _, digest := range []string{strings.Repeat("a", 64), strings.Repeat("0", 64), strings.Repeat("A", 64), strings.Repeat("g", 64), strings.Repeat("0", 63), ""} {
+		manifest := base
+		manifest.Files = []ManifestFile{{Path: "events.sqlite", Bytes: 1, SHA256: digest}}
+		err := validateManifest(manifest)
+		if (err == nil) != validSHA256(digest) {
+			t.Fatalf("digest %q error=%v", digest, err)
+		}
+		if digest == strings.Repeat("g", 64) {
+			var invalid hex.InvalidByteError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("lost hex error: %v", err)
+			}
+		}
+	}
+}

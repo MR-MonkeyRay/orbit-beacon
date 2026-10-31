@@ -58,7 +58,7 @@ func TestPublicCollectionExcludesInactiveNodesAndRawSeries(t *testing.T) {
 		report.Metrics.MetricStatus[key] = "ok"
 		report.Metrics.Sources[key] = v1.SourceMetadata{SampleID: "private-source-2001:db8::99", SourceIntervalMS: 10000, MeasurementWindowMS: &window}
 	}
-	if _, err := f.ingest.AcceptToken(ctx, token, report); err != nil {
+	if _, err := acceptReport(ctx, f.ingest, token, report); err != nil {
 		t.Fatal(err)
 	}
 	result, raw := publicList(t, f, "/api/public/v1/nodes", nil)
@@ -70,15 +70,15 @@ func TestPublicCollectionExcludesInactiveNodesAndRawSeries(t *testing.T) {
 			t.Fatalf("private raw series/identity leaked %q", secret)
 		}
 	}
-	ids, _, err := f.nodes.ListPublicIDs(ctx, 50, 0)
-	if err != nil || len(ids) != 1 {
-		t.Fatalf("candidates: %v %v", ids, err)
+	records, _, err := f.nodes.ListPublicRecords(ctx, 50, 0)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("candidates: %v %v", records, err)
 	}
 	enabled = false
 	if _, err := f.nodes.PatchPublicSettings(ctx, visible, nodes.PublicSettingsPatch{Enabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.ingest.PublicNode(ctx, ids[0], f.now); !errors.Is(err, nodes.ErrNotFound) {
+	if _, err := publicNode(ctx, f.nodes, f.ingest, records[0].ID, f.now); !errors.Is(err, nodes.ErrNotFound) {
 		t.Fatalf("withdrawn candidate retained projection: %v", err)
 	}
 }

@@ -3,7 +3,7 @@ import {t} from './i18n.js';
 const errorKeys = new Set([
   'unauthenticated', 'forbidden', 'password_change_required', 'password_unchanged', 'public_page_disabled',
   'invalid_old_password', 'rate_limited', 'validation_failed', 'invalid_json', 'network', 'timeout',
-  'unreadable_response', 'locale_save_failed', 'not_found', 'node_not_found', 'node_disabled',
+  'unreadable_response', 'not_found', 'node_not_found', 'node_disabled',
   'node_capacity_reached', 'username_conflict', 'last_administrator', 'storage_busy', 'not_available',
   'body_too_large', 'internal_error', 'secret_unreadable', 'backup_plan_busy', 'backup_queue_full',
   'notification_channel_capacity_reached', 'alert_rule_capacity_reached', 'enrollment_not_found',

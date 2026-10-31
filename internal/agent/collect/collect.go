@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Package collect reads a bounded selection of host metrics. The caller owns one
-// sampling loop; uncancellable disk reads use at most one in-flight slow worker.
+// Package collect 采集数量有限的主机指标。调用方负责单一采样循环；
+// 不可取消的磁盘读取最多使用一个尚未完成的后台任务。
 package collect
 
 import (
@@ -43,8 +43,8 @@ type networkSample struct {
 	at          time.Time
 }
 
-// Collector retains only the latest disk/network samples and differential
-// baselines. All elapsed times come from Go's monotonic time component.
+// Collector 只保留最新的磁盘/网络样本和差分基线。
+// 所有耗时均通过 Go 的单调时钟计算。
 type Collector struct {
 	mu            sync.Mutex
 	config        v1.RuntimeSettings
@@ -75,14 +75,13 @@ func New(options Options) (*Collector, error) {
 	return c, nil
 }
 
-// SetConfig changes selection atomically. Missing devices are collection
-// failures, not configuration failures, so other sources can keep working.
+// SetConfig 原子地切换采集项。设备缺失属于采集失败而非配置错误，
+// 不影响其他数据源继续工作。
 func (c *Collector) SetConfig(config v1.RuntimeSettings) error {
 	if err := config.Validate(); err != nil {
 		return err
 	}
-	// Preserve owned selections when unchanged; the runtime applies settings
-	// only at initialization and explicit reload boundaries.
+	// 采集项不变时复用已有切片；仅在初始化和显式重载时应用配置。
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if slices.Equal(c.config.DiskPaths, config.DiskPaths) {
@@ -113,8 +112,8 @@ func (c *Collector) SetConfig(config v1.RuntimeSettings) error {
 	return nil
 }
 
-// System intentionally avoids host.Info: that broader API can inspect process
-// data and invoke distribution helpers. Enrollment needs only these safe fields.
+// System 有意不用 host.Info：该 API 采集范围更广，可能读取进程数据并调用
+// 发行版辅助程序。注册只需要以下安全字段。
 func System(ctx context.Context) (v1.System, error) {
 	if err := ctx.Err(); err != nil {
 		return v1.System{}, err
@@ -129,8 +128,8 @@ func System(ctx context.Context) (v1.System, error) {
 	return v1.System{Hostname: name, OS: runtime.GOOS, Arch: runtime.GOARCH, AgentVersion: buildinfo.Version}, nil
 }
 
-// Collect returns independent failures as null values with explicit statuses.
-// Cancellation retains the complete snapshot, including configured series.
+// Collect 将采集失败的指标设为 null，并分别标明状态。
+// 取消时仍保留完整快照，包括已配置的指标序列。
 func (c *Collector) Collect(parent context.Context) (v1.Metrics, error) {
 	ctx, cancel := context.WithTimeout(parent, collectionTimeout)
 	defer cancel()
@@ -262,7 +261,7 @@ func (c *Collector) collectCPU(ctx context.Context, m *v1.Metrics) {
 }
 
 func cpuTimes(t cpu.TimesStat) (total, busy float64) {
-	// Linux guest times are already included in User/Nice; do not double count.
+	// Linux 的 guest 时间已计入 User/Nice，不重复累加。
 	total = t.User + t.System + t.Idle + t.Nice + t.Iowait + t.Irq + t.Softirq + t.Steal
 	if runtime.GOOS != "linux" {
 		total += t.Guest + t.GuestNice
@@ -271,7 +270,7 @@ func cpuTimes(t cpu.TimesStat) (total, busy float64) {
 }
 
 func cpuCountersContinuous(previous, current cpu.TimesStat) bool {
-	// Linux iowait may decrease on SMP; idle+iowait remains the idle total.
+	// Linux 的 iowait 在 SMP 上可能减少；仍以 idle+iowait 计算空闲总时间。
 	previousIdle := previous.Idle + previous.Iowait
 	currentIdle := current.Idle + current.Iowait
 	if !validCPUCounter(previous.Idle) || !validCPUCounter(current.Idle) ||
@@ -356,7 +355,7 @@ func (c *Collector) collectUptime(ctx context.Context, m *v1.Metrics) {
 	m.Sources[v1.SourceUptime] = c.source(v1.SourceUptime, time.Now(), c.baseInterval())
 }
 
-// Traffic exposes the concurrency-safe cumulative traffic state to reporting.
+// Traffic 为上报提供可安全并发访问的累计流量状态。
 func (c *Collector) Traffic() *TrafficAccumulator { return c.traffic }
 
 func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
@@ -386,8 +385,8 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 	if c.traffic != nil {
 		c.traffic.Observe(names, nil)
 	}
-	// gopsutil Darwin invokes system netstat (and sometimes ifconfig).
-	// Cache its real observations for 30 seconds; never relabel a replay as new.
+	// gopsutil 在 Darwin 上会调用系统 netstat（有时还有 ifconfig）。
+	// 真实观测缓存 30 秒；重放的观测不标记为新样本。
 	due := runtime.GOOS != "darwin" || c.networkAt.IsZero() || time.Since(c.networkAt) >= c.networkInterval()
 	if due {
 		var counters []gnet.IOCountersStat
@@ -426,8 +425,7 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 	for _, name := range names {
 		sample, exists := c.networks[name]
 		if !exists {
-			// A changed automatic route needs its own baseline, never the old
-			// interface's cached rate.
+			// 自动路由切换后需要自己的基线，绝不复用旧网卡的缓存速率。
 			m.Networks = append(m.Networks, v1.NetworkMetrics{Name: name})
 			networkKey := v1.NetworkMetricKey(name)
 			m.MetricStatus[networkKey] = "stale"

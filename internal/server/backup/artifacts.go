@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/securefs"
+	"orbitbeacon/internal/uuid"
 )
 
 func validArtifactName(name, id string) bool {
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return false
 	}
 	stem, ok := strings.CutPrefix(name, "orbitbeacon-")
@@ -49,7 +49,7 @@ func artifactEligible(task Task, now time.Time) error {
 }
 
 func (s *Service) exportDirectory(id string) (string, error) {
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return "", &Error{Code: "artifact_missing"}
 	}
 	dir := filepath.Join(s.opts.DataDir, "exports", id)
@@ -84,10 +84,10 @@ func (s *Service) openTaskArtifact(task Task) (*os.File, error) {
 	return file, nil
 }
 
-// OpenArtifact exposes a seekable descriptor, not a buffered archive. The stored
-// result_location is display-only and never participates in file selection.
+// OpenArtifact 暴露可定位的描述符，而非缓冲后的归档。存储的
+// result_location 仅供展示，绝不参与文件选择。
 func (s *Service) OpenArtifact(ctx context.Context, id string) (*os.File, Task, error) {
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return nil, Task{}, &Error{Code: "task_not_found"}
 	}
 	task, err := s.loadTask(ctx, id)

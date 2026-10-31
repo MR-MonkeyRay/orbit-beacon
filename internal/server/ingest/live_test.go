@@ -13,7 +13,7 @@ func TestLiveFleetProjectsIdentityAwareMemoryWithoutDecodingReports(t *testing.T
 	f := newCoalesceFixture(t, 30*time.Second)
 	f.now = f.now.Add(10 * time.Second)
 	f.report.Seq++
-	if _, err := f.service.Accept(context.Background(), f.id, f.report); err != nil {
+	if _, err := acceptReport(context.Background(), f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
 	records, err := f.nodes.LiveRecords(context.Background())
@@ -107,7 +107,7 @@ func TestLiveDetailUsesOneAcceptedSamplesRuntimeAcrossDurableCommit(t *testing.T
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
 	f.report.Runtime.ReportIntervalSeconds = 5
-	if _, err := f.service.Accept(context.Background(), f.id, f.report); err != nil {
+	if _, err := acceptReport(context.Background(), f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
 	latest, err := f.service.ProjectLiveDetail(&record, f.now)
@@ -135,8 +135,8 @@ func TestLiveFleetRejectsLateFastPathMemoryAfterCredentialReset(t *testing.T) {
 	entered, resume := make(chan struct{}), make(chan struct{})
 	f.service.now = func() time.Time { close(entered); <-resume; return f.now }
 	result := make(chan error, 1)
-	credential := sha256.Sum256([]byte("coalesce-test-credential"))
-	go func() { _, err := f.service.accept(ctx, f.id, credential[:], 0, f.report, false); result <- err }()
+	credential := sha256.Sum256([]byte(coalesceToken))
+	go func() { _, err := f.service.accept(ctx, f.id, credential[:], 0, f.report); result <- err }()
 	<-entered
 	if err := f.nodes.RevokeCredential(ctx, f.id); err != nil {
 		close(resume)
@@ -166,9 +166,8 @@ func TestLiveFleetRejectsLateFastPathMemoryAfterCredentialReset(t *testing.T) {
 
 func TestLiveDetailPrefersAcceptedSampleRuntimeDuringDurablePublicationGap(t *testing.T) {
 	f := newCoalesceFixture(t, 30*time.Second)
-	// The next report's durable transaction has committed, but its accepted
-	// memory snapshot is not published yet. The previous accepted sample is
-	// still valid under the same full process identity.
+	// 下一条报告的持久化事务已提交，但其已接受的内存快照尚未发布。
+	// 上一份已接受样本在相同完整进程身份下仍然有效。
 	f.now = f.now.Add(time.Second)
 	if _, err := f.db.Exec(`UPDATE nodes SET last_seen=?,agent_runtime='{"report_interval_seconds":5,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]}' WHERE id=?`, timekey.Format(f.now), f.id); err != nil {
 		t.Fatal(err)

@@ -27,8 +27,9 @@ func TestSchedulerReloadAppliesAtSampleBoundary(t *testing.T) {
 		reports := make(chan v1.Report, 8)
 		var reject bool
 		candidate := settings
-		var logs []string
+		logs := &testLogSink{}
 		scheduler := service.NewScheduler(service.SchedulerOptions{
+			Logger:   logs.logger(),
 			Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return settings }, Reload: reload,
 			ReloadConfig: func(context.Context) error {
 				if reject {
@@ -42,7 +43,6 @@ func TestSchedulerReloadAppliesAtSampleBoundary(t *testing.T) {
 				reports <- report
 				return v1.ReportResponse{AcceptedSeq: report.Seq}, nil
 			},
-			Log: func(message string) { logs = append(logs, message) },
 		})
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
@@ -75,8 +75,16 @@ func TestSchedulerReloadAppliesAtSampleBoundary(t *testing.T) {
 		if third.Runtime.ReportIntervalSeconds != 5 || third.Seq != 3 {
 			t.Fatalf("reload changed cadence or snapshot: %+v", third)
 		}
-		if !reflect.DeepEqual(logs, []string{"configuration unchanged", "configuration reloaded", "configuration reload rejected"}) {
-			t.Fatalf("reload logs = %q", logs)
+		gotLogs := logs.snapshot()
+		messages := make([]string, len(gotLogs))
+		for i, record := range gotLogs {
+			messages[i] = record.message
+		}
+		if !reflect.DeepEqual(messages, []string{"configuration_unchanged", "configuration_reloaded", "configuration_reload_rejected"}) {
+			t.Fatalf("reload logs = %+v", gotLogs)
+		}
+		if gotLogs[2].attrs["error_code"] != "configuration_reload_rejected" {
+			t.Fatalf("rejected reload attrs = %+v", gotLogs[2].attrs)
 		}
 		cancel()
 		synctest.Wait()
@@ -148,8 +156,8 @@ func TestSchedulerReloadWaitsForCollectionAndKeepsSnapshotRuntime(t *testing.T) 
 		if loads.Load() != 1 || collections.Load() != 2 {
 			t.Fatalf("boundary reload loads=%d samples=%d", loads.Load(), collections.Load())
 		}
-		// The worker may collapse the first notification, but whichever snapshot
-		// it sends must carry its own target set, never a newer global selection.
+		// 上报任务可能合并第一个通知，但每份快照都必须使用自己的目标集，
+		// 不能使用更新后的全局配置。
 		for len(reports) > 0 {
 			report := <-reports
 			targets := requestedTargets[0]

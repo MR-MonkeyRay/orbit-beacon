@@ -2,9 +2,9 @@ import {h, icon} from '../../shared/dom.js';
 import {confirmDiscard} from './dialogs.js';
 import {getNavigationSignal} from '../api.js';
 
-// ARIA tabs (arrow keys, Home, End) whose selection is mirrored in the URL hash,
-// so reloads, links such as /settings#audit and quiet refreshes keep the tab.
-// Scrolls only the tab strip, never the page.
+// ARIA 标签页（方向键、Home、End），选中状态同步到 URL hash，
+// 因此刷新、/settings#audit 之类的链接和静默刷新都能保持标签页。
+// 只滚动标签条，不滚动页面。
 function reveal(button) {
   const strip = button.parentElement;
   if (!strip) return;
@@ -50,9 +50,9 @@ export function tabSet(tabs, label) {
   });
   select(initial);
   holder.append(panelFor(tabs[initial], false));
-  // On narrow screens the tab strip scrolls; keep a deep-linked tab visible.
+  // 窄屏下标签条可滚动；保持深链接的标签页可见。
   const list = h('div', {class: 'tabs', role: 'tablist', 'aria-label': label}, buttons);
-  // Pages are built before the router attaches them, so wait for layout.
+  // 页面在路由器挂载前就已构建，因此须等待布局完成。
   const revealInitial = (frames) => {
     if (buttons[initial].isConnected) reveal(buttons[initial]);
     else if (frames > 0) requestAnimationFrame(() => revealInitial(frames - 1));

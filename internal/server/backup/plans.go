@@ -9,16 +9,16 @@ import (
 	"strings"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/management"
-	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/securefs"
+	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
-// PlanPatch preserves omitted values. Credentials are an explicit full replacement;
-// an omitted session token in a replacement clears the previous token.
+// PlanPatch 保留被省略的值。凭据为显式整体替换；
+// 替换时省略会话令牌即清除之前的令牌。
 type PlanPatch struct {
 	Name        *string            `json:"name,omitempty"`
 	Enabled     *bool              `json:"enabled,omitempty"`
@@ -98,7 +98,7 @@ func scanPlan(row taskScanner) (planRecord, error) {
 	return p, nil
 }
 func planField(field, message string) error {
-	return &nodes.ValidationError{Fields: map[string]string{field: message}}
+	return validation.Invalid(field, message)
 }
 func planMissing(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
@@ -133,8 +133,8 @@ func (s *Service) projectPlan(ctx context.Context, p planRecord, now time.Time) 
 		return Plan{}, err
 	}
 	p.NextRuns = preview.NextRuns
-	// An enabled plan's persisted due time is authoritative, including an overdue
-	// coalesced cycle. Future entries still use the same location-aware helper.
+	// 已启用计划以持久化的应执行时间为准，包括合并后的逾期周期。
+	// 后续执行时间仍通过同一个按时区计算的辅助函数生成。
 	if p.Enabled && p.NextRunAt != nil {
 		p.NextRuns, err = s.nextRuns(p.Cron, *p.NextRunAt, true)
 		if err != nil {
@@ -150,7 +150,7 @@ func (s *Service) projectPlan(ctx context.Context, p planRecord, now time.Time) 
 	return p.Plan, nil
 }
 func (s *Service) Plan(ctx context.Context, id string) (Plan, error) {
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return Plan{}, &Error{Code: "backup_plan_not_found"}
 	}
 	p, err := scanPlan(s.db.QueryRowContext(ctx, planSelect+` WHERE id=?`, id))
@@ -302,13 +302,13 @@ func validatePlanDirectory(raw json.RawMessage) error {
 }
 func (s *Service) SavePlan(ctx context.Context, id string, patch PlanPatch) (Plan, error) {
 	creating := id == ""
-	if !creating && !identity.ValidUUID(id) {
+	if !creating && !uuid.ValidUUID(id) {
 		return Plan{}, &Error{Code: "backup_plan_not_found"}
 	}
 	if creating {
 		s.randomMu.Lock()
 		var err error
-		id, err = identity.UUID(s.opts.Random)
+		id, err = uuid.UUID(s.opts.Random)
 		s.randomMu.Unlock()
 		if err != nil {
 			return Plan{}, &Error{Code: "internal_error"}
@@ -452,7 +452,7 @@ func (s *Service) SavePlan(ctx context.Context, id string, patch PlanPatch) (Pla
 }
 func maskedCredential(value string) bool { return strings.Trim(value, "*• ") == "" }
 func (s *Service) DeletePlan(ctx context.Context, id string) error {
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return &Error{Code: "backup_plan_not_found"}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

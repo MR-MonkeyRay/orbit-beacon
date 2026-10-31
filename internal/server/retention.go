@@ -3,17 +3,18 @@ package server
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
-	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/logging"
 )
 
 const (
-	// Audit retention is deliberately long enough for operational investigation;
-	// cleanup is incremental so it cannot monopolize the SQLite writer.
+	// 审计保留期特意设置得足够长，以便运维调查；
+	// 增量清理避免长期占用 SQLite 写锁。
 	auditRetentionPeriod = 90 * 24 * time.Hour
-	// Enrollment retries are accepted for 24 hours after ticket expiry. Keep the
-	// token and its receipt for that exact grace period before cascading cleanup.
+	// 票据过期后 24 小时内仍接受注册重试。在该宽限期结束前保留令牌及其回执，
+	// 然后再级联清理。
 	enrollmentRetentionPeriod = 24 * time.Hour
 	RetentionInterval         = time.Hour
 	retentionBatchSize        = 128
@@ -25,8 +26,8 @@ const (
 type RetentionResult struct {
 	NotificationDeliveries int64
 	InboxNotifications     int64
-	// BackupTasks counts processed task cleanup mutations, including secrets
-	// cleared and deferred artifact unlinks as well as deleted task rows.
+	// BackupTasks 统计任务清理的处理次数，包括清除敏感数据、
+	// 删除文件失败后延迟重试，以及删除任务行。
 	BackupTasks       int64
 	BackupOrphanFiles int64
 	BackupLocalTemps  int64
@@ -37,6 +38,54 @@ type RetentionResult struct {
 	Sessions          int64
 	TrafficRows       int64
 	ProbeRows         int64
+}
+
+// RunRetention 按服务器进程使用的同一每小时计划执行有界清理。
+// 调用方拥有取消权并等待返回。
+func (h *handler) RunRetention(ctx context.Context) {
+	ticker := time.NewTicker(RetentionInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			result, err := h.CleanupRetention(ctx, now)
+			if err != nil {
+				if h.logger != nil {
+					h.logger.LogAttrs(ctx, slog.LevelWarn, "retention_cleanup_failed", logging.ErrorAttrs(err, "cleanup_failed")...)
+				}
+				continue
+			}
+			if retentionChanged(result) && h.logger != nil {
+				h.logger.LogAttrs(ctx, slog.LevelInfo, "retention_cleanup_complete", retentionAttrs(result)...)
+			}
+		}
+	}
+}
+
+func retentionChanged(result RetentionResult) bool {
+	return result.NotificationDeliveries != 0 || result.InboxNotifications != 0 ||
+		result.BackupTasks != 0 || result.BackupOrphanFiles != 0 || result.BackupLocalTemps != 0 ||
+		result.AlertEvents != 0 || result.HistoryBuckets != 0 || result.AuditEvents != 0 ||
+		result.EnrollmentTickets != 0 || result.Sessions != 0 || result.TrafficRows != 0 || result.ProbeRows != 0
+}
+
+func retentionAttrs(result RetentionResult) []slog.Attr {
+	return []slog.Attr{
+		slog.Int64("notification_deliveries", result.NotificationDeliveries),
+		slog.Int64("inbox_notifications", result.InboxNotifications),
+		slog.Int64("backup_tasks", result.BackupTasks),
+		slog.Int64("backup_orphan_files", result.BackupOrphanFiles),
+		slog.Int64("backup_local_temps", result.BackupLocalTemps),
+		slog.Int64("alert_events", result.AlertEvents),
+		slog.Int64("history_buckets", result.HistoryBuckets),
+		slog.Int64("audit_events", result.AuditEvents),
+		slog.Int64("enrollment_tickets", result.EnrollmentTickets),
+		slog.Int64("sessions", result.Sessions),
+		slog.Int64("traffic_rows", result.TrafficRows),
+		slog.Int64("probe_rows", result.ProbeRows),
+	}
 }
 
 func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (RetentionResult, error) {
@@ -72,10 +121,9 @@ func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (Retentio
 		}
 	}
 	if h.backups != nil {
-		// The hourly retention pass also runs on startup. Sweeps resume their
-		// cursors, visit at most 500 entries each, and never traverse arbitrary
-		// destinations from restored task history. Sweep before expiring tasks
-		// so recorded local temporary files can still be located.
+		// 每小时保留清理也在启动时运行。清扫从游标处继续，
+		// 每次最多访问 500 个条目，且绝不遍历恢复的任务历史中的任意目标。
+		// 先清扫再使任务过期，这样已记录的本地临时文件仍可被定位。
 		result.BackupOrphanFiles, err = cleanupRetentionSweep(ctx, h.backups.CleanupOrphans)
 		if err != nil {
 			return result, fmt.Errorf("cleanup orphan exports: %w", err)
@@ -89,8 +137,8 @@ func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (Retentio
 			return result, fmt.Errorf("cleanup backup tasks: %w", err)
 		}
 	}
-	// Sessions expire after 12 hours; a few bounded batches per hour keep up
-	// with heavy login traffic without monopolizing the writer.
+	// 会话 12 小时后过期；每小时几个有界批次即可跟上高频登录，
+	// 且不会长期占用写锁。
 	for range retentionSessionBatches {
 		removed, err := h.auth.CleanupExpiredSessions(ctx)
 		result.Sessions += removed
@@ -108,7 +156,10 @@ func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (Retentio
 			return result, fmt.Errorf("cleanup traffic: %w", err)
 		}
 	}
-	result.ProbeRows, err = cleanupRetentionBacklog(ctx, now.Add(-7*24*time.Hour), h.cleanupProbeHourly)
+	if h.nodes == nil {
+		return result, fmt.Errorf("cleanup probe history: probe retention is unavailable")
+	}
+	result.ProbeRows, err = cleanupRetentionBacklog(ctx, now.Add(-7*24*time.Hour), h.nodes.CleanupProbeHistory)
 	if err != nil {
 		return result, fmt.Errorf("cleanup probe history: %w", err)
 	}
@@ -121,34 +172,19 @@ func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (Retentio
 	return result, nil
 }
 
-func (h *handler) cleanupProbeHourly(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
-	if h.nodes == nil || limit < 1 {
-		return 0, fmt.Errorf("probe retention is unavailable")
-	}
-	result, err := h.nodes.Database().ExecContext(ctx, `DELETE FROM probe_hourly
-WHERE (node_id,target,hour) IN (
- SELECT node_id,target,hour FROM probe_hourly WHERE hour < ? ORDER BY hour LIMIT ?
-)`, timekey.Format(cutoff), limit)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 func cleanupRetentionBacklog(ctx context.Context, cutoff time.Time, cleanup func(context.Context, time.Time, int) (int64, error)) (int64, error) {
-	// The budget bounds each batch too: a slow DELETE or busy wait is cancelled
-	// at the deadline rather than overrunning it.
+	// 预算同样限制每个批次：缓慢的 DELETE 或忙等会在截止时间被取消，
+	// 而不是超时运行。
 	budget, cancel := context.WithTimeout(ctx, retentionCatchupBudget)
 	defer cancel()
 	var total int64
 	for {
-		// Each call commits its own short batch, releasing the SQLite writer
-		// before the next batch or the time-budget check.
+		// 每次调用独立提交短事务，在下一批次或时间预算检查前释放 SQLite 写锁。
 		removed, err := cleanup(budget, cutoff, retentionCatchupBatchSize)
 		total += removed
 		if err != nil {
 			if budget.Err() != nil && ctx.Err() == nil {
-				// Out of budget: the remainder waits for the next pass.
+				// 预算耗尽：剩余部分等待下一轮。
 				return total, nil
 			}
 			return total, err

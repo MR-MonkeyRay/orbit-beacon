@@ -14,15 +14,15 @@ import (
 	"syscall"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/inbox"
 	"orbitbeacon/internal/server/securefs"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
-// Run owns the scheduler and the sole execution slot. Scheduling remains live
-// during compression/upload; all mutation and completion events share one wake.
+// Run 持有调度器和唯一执行槽。压缩/上传期间调度保持活跃；
+// 所有变更与完成事件共用一次唤醒。
 func (s *Service) Run(ctx context.Context) {
 	if !s.running.CompareAndSwap(false, true) {
 		return
@@ -140,7 +140,7 @@ func (s *Service) claim(ctx context.Context) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
-	if !identity.ValidUUID(task.ID) {
+	if !uuid.ValidUUID(task.ID) {
 		return Task{}, &Error{Code: "internal_error"}
 	}
 	now := s.opts.Now().UTC()
@@ -175,16 +175,9 @@ func privateDirectory(path string) error {
 		return check
 	}
 	if err == nil {
-		return syncWorkerDirectory(filepath.Dir(path))
+		return securefs.SyncDirectory(filepath.Dir(path))
 	}
 	return nil
-}
-func syncWorkerDirectory(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	return errors.Join(f.Sync(), f.Close())
 }
 
 func (s *Service) execute(ctx context.Context, task Task) {
@@ -259,7 +252,7 @@ func (s *Service) execute(ctx context.Context, task Task) {
 		}
 	case "backup_local":
 		if err = decodeStrictObject(task.Destination.Target, &local); err == nil {
-			if task.PlanID == nil || !identity.ValidUUID(*task.PlanID) || !filepath.IsAbs(local.Path) || local.RetainCount < 1 || local.RetainCount > 1000 {
+			if task.PlanID == nil || !uuid.ValidUUID(*task.PlanID) || !filepath.IsAbs(local.Path) || local.RetainCount < 1 || local.RetainCount > 1000 {
 				err = &Error{Code: "internal_error"}
 			} else if err = securefs.ValidateDirectory(local.Path); err == nil {
 				outputDir = filepath.Join(local.Path, "orbitbeacon-"+*task.PlanID)
@@ -287,7 +280,7 @@ func (s *Service) execute(ctx context.Context, task Task) {
 			err = &Error{Code: "storage_upload_failed"}
 		}
 		if err == nil {
-			if task.PlanID == nil || !identity.ValidUUID(*task.PlanID) {
+			if task.PlanID == nil || !uuid.ValidUUID(*task.PlanID) {
 				err = &Error{Code: "internal_error"}
 			} else {
 				objectKey = strings.TrimPrefix(destination.Prefix+"/orbitbeacon/"+*task.PlanID+"/"+name, "/")
@@ -335,8 +328,8 @@ func (s *Service) execute(ctx context.Context, task Task) {
 			return
 		}
 	} else {
-		// Hard-link installation is atomic and refuses an existing destination.
-		// Both names are in the final directory: no full archive copy is required.
+		// 硬链接安装是原子的，且拒绝已存在的目标。
+		// 两个文件名都在最终目录：无需复制整个归档。
 		if err = os.Link(temporary, location); err != nil {
 			fail(err, "storage_permission_denied")
 			return
@@ -346,12 +339,12 @@ func (s *Service) execute(ctx context.Context, task Task) {
 			fail(err, "internal_error")
 			return
 		}
-		if err = syncWorkerDirectory(outputDir); err != nil {
+		if err = securefs.SyncDirectory(outputDir); err != nil {
 			warning = "storage_outcome_unknown"
 			fail(err, "internal_error")
 			return
 		}
-		if err = syncWorkerDirectory(filepath.Dir(outputDir)); err != nil {
+		if err = securefs.SyncDirectory(filepath.Dir(outputDir)); err != nil {
 			warning = "storage_outcome_unknown"
 			fail(err, "internal_error")
 			return
@@ -363,8 +356,8 @@ func (s *Service) execute(ctx context.Context, task Task) {
 		}
 	}
 	_ = os.RemoveAll(work)
-	// From this point an external publication has definitely succeeded. Never
-	// return to packaging or publication, even if the database is unavailable.
+	// 从此刻起对外发布必定已成功。即使数据库不可用，
+	// 也绝不回退到打包或发布阶段。
 	s.finish(ctx, task, "succeeded", "", warning)
 }
 
@@ -376,8 +369,8 @@ func (s *Service) finish(ctx context.Context, task Task, state, code, warning st
 			s.signal()
 			return true
 		}
-		// Commit errors may mean the commit succeeded. Read both durable facts; a
-		// terminal task without its notification is never accepted as completion.
+		// 提交报错可能实际已提交成功。读取两个持久事实；
+		// 缺少通知的终态任务绝不视为完成。
 		var current string
 		var notifications int
 		readErr := s.db.QueryRowContext(ctx, `SELECT state,(SELECT count(*) FROM inbox_notifications WHERE kind='task' AND source_id=backup_tasks.id AND transition=?) FROM backup_tasks WHERE id=?`, state, task.ID).Scan(&current, &notifications)
@@ -416,7 +409,7 @@ func (s *Service) finishTransaction(ctx context.Context, task Task, state, code,
 	if err != nil {
 		return err
 	}
-	// Snapshot only safe Task fields; password is explicitly availability-only.
+	// 只快照安全的 Task 字段；密码字段明确仅用于可用性展示。
 	details, err := json.Marshal(struct {
 		Task
 		HasPassword bool `json:"has_password"`
@@ -465,8 +458,8 @@ func safeWorkerCode(err error, fallback string) string {
 	return fallback
 }
 
-// cleanupWork only runs before claiming any task. UUID directories with live
-// queued/running references are left untouched; no user-selected paths enter it.
+// cleanupWork 只在认领任何任务之前运行。仍有 queued/running 引用的 UUID
+// 目录保持不动；不涉及任何用户选择的路径。
 func (s *Service) cleanupWork(ctx context.Context) error {
 	root := filepath.Join(s.opts.DataDir, "backup-work")
 	dir, err := openCleanupDirectory(root)
@@ -490,7 +483,7 @@ func (s *Service) cleanupWork(ctx context.Context) error {
 			return first
 		}
 		id := names[0]
-		if identity.ValidUUID(id) {
+		if uuid.ValidUUID(id) {
 			var active bool
 			if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM backup_tasks WHERE id=? AND state IN ('queued','running') AND restored=0)`, id).Scan(&active); err != nil {
 				return err

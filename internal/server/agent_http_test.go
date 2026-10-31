@@ -52,7 +52,7 @@ func newAgentHTTP(t *testing.T, capacity int) *agentFixture {
 	f.enrollments = enrollment.NewService(db, enrollment.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{22})})
 	f.ingest = ingest.NewService(db, ingest.Options{Now: clock})
 	f.auth = auth.NewService(db, auth.Options{Now: clock})
-	f.handler, err = server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: clock, WebUpdateIntervalSeconds: 2})
+	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: clock, WebUpdateIntervalSeconds: 2}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,12 +308,12 @@ func TestReportGenerationSessionAndSequenceOrdering(t *testing.T) {
 	if err != nil || latest.RunGeneration != 6 || latest.SessionID != "replacement" || latest.Seq != 1 {
 		t.Fatalf("replacement not authoritative: %+v %v", latest, err)
 	}
-	// A new server service loses only transient seq deduplication, not the process fence.
+	// 重建服务只丢失内存中的 seq 去重状态，不丢失持久化的进程隔离边界。
 	restarted := ingest.NewService(f.db, ingest.Options{Now: func() time.Time { return f.now }})
-	if _, err := restarted.Accept(context.Background(), id, mustReport(t, reportBody(5, 1000, "current", 99))); err == nil {
+	if _, err := acceptReport(context.Background(), restarted, token, mustReport(t, reportBody(5, 1000, "current", 99))); err == nil {
 		t.Fatal("generation fence lost on server restart")
 	}
-	if _, err := restarted.Accept(context.Background(), id, mustReport(t, reportBody(6, 2, "other-session", 99))); err == nil {
+	if _, err := acceptReport(context.Background(), restarted, token, mustReport(t, reportBody(6, 2, "other-session", 99))); err == nil {
 		t.Fatal("session fence lost on server restart")
 	}
 }

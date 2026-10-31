@@ -9,7 +9,7 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-// UserPatch updates only public user metadata; passwords have a separate flow.
+// UserPatch 仅更新非敏感的用户元数据；密码通过独立流程修改。
 type UserPatch struct {
 	Username *string `json:"username"`
 }
@@ -113,8 +113,7 @@ func (s *Service) DeleteUser(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
-// The immediate write transaction keeps concurrent deletions from
-// independently deciding that they can remove the final administrators.
+// 立即写事务可防止并发删除各自独立地决定删除最后一名管理员。
 func preserveAdministrator(ctx context.Context, tx *sql.Tx) error {
 	var count int
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM users").Scan(&count); err != nil {

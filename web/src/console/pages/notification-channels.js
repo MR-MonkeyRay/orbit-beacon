@@ -1,12 +1,12 @@
 import {h} from '../../shared/dom.js';
-import {t} from '../../shared/i18n.js';
+import {formatList, t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {api, session} from '../api.js';
-import {busy, button, iconButton, panel} from '../ui/components.js';
+import {busy, button, dataTable, iconButton, panel} from '../ui/components.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, passwordInput, select, textarea, validateBytes} from '../ui/forms.js';
-import {buildChannelPayload, errorCodeMessage, validateChannel, validationError} from './alert-utils.js';
+import {buildChannelPayload, errorCodeMessage, validateChannel, validationError} from '../lib/alert-utils.js';
 import {eventTime} from './alert-events.js';
 
 const KINDS = [['webhook', t('alerts.kind.webhook')], ['telegram', 'Telegram'], ['email', t('alerts.kind.email')]];
@@ -73,8 +73,8 @@ export function channelEditor(item, {signal, saved}) {
       replaceSecret.addEventListener('change', () => { if (!replaceSecret.checked) secret.value = ''; sync(); if (replaceSecret.checked) secret.focus(); });
       controls.username.addEventListener('input', sync);
       sync();
-      // A server error about the retained secret must not land in the hidden
-      // field: open the replacement control so the admin sees and fixes it.
+      // 服务端若报告已保存凭据的错误，须展开替换控件，
+      // 以免错误留在隐藏字段中，管理员无法修正。
       const showSecretError = secret.showError;
       secret.showError = (message) => {
         if (message && secret.disabled && item) { replaceSecret.checked = true; sync(); }
@@ -131,7 +131,7 @@ export function channelsPanel({channels, signal, saved}) {
       } finally { busy(test, false); }
     }});
     const destination = channel.kind === 'webhook' ? channel.config.url_redacted || t('alerts.channels.urlNotSet')
-      : channel.kind === 'telegram' ? channel.config.chat_id : `${channel.config.host}:${channel.config.port} → ${channel.config.to.join(', ')}`;
+      : channel.kind === 'telegram' ? channel.config.chat_id : `${channel.config.host}:${channel.config.port} → ${formatList(channel.config.to)}`;
     return h('tr', null, h('td', null, channel.name), h('td', null, KINDS.find(([kind]) => kind === channel.kind)?.[1] || t('alerts.kind.unknown')),
       h('td', {class: 'alert-destination'}, destination, h('div', {class: 'hint'}, t(channel.secret_set ? 'alerts.channels.secretSet' : 'alerts.channels.secretNotSet')), status),
       h('td', null, t(channel.enabled ? 'alerts.state.enabled' : 'alerts.state.disabled')),
@@ -139,10 +139,9 @@ export function channelsPanel({channels, signal, saved}) {
   };
   return panel(t('alerts.tab.channels'), {action: button(t('alerts.channels.add'), {small: true, variant: 'primary', onClick: () => edit(null)})},
     h('p', {class: 'lede'}, t('alerts.channels.writeOnlyHint')),
-    channels.length ? h('div', {class: 'table-wrap'}, h('table', {class: 'table'},
-      h('caption', {class: 'sr'}, t('alerts.channels.title')),
-      h('thead', null, h('tr', null, ['name', 'kind', 'destinationSecret', 'state', 'actions'].map((key) => h('th', {scope: 'col'}, t(`alerts.column.${key}`))))),
-      h('tbody', null, channels.map(row)))) : h('p', {class: 'muted'}, t('alerts.channels.empty')));
+    channels.length ? dataTable({caption: t('alerts.channels.title'),
+      columns: ['name', 'kind', 'destinationSecret', 'state', 'actions'].map((key) => t(`alerts.column.${key}`)),
+      body: h('tbody', null, channels.map(row))}) : h('p', {class: 'muted'}, t('alerts.channels.empty')));
 }
 
 export function deliveriesPanel(channels, signal) {
@@ -155,14 +154,13 @@ export function deliveriesPanel(channels, signal) {
     try {
       const {deliveries} = await api('/notification-deliveries?limit=10', {signal});
       if (signal?.aborted) return;
-      content.replaceChildren(deliveries.length ? h('div', {class: 'table-wrap'}, h('table', {class: 'table'},
-        h('caption', {class: 'sr'}, t('alerts.deliveries.caption')),
-        h('thead', null, h('tr', null, ['state', 'channel', 'attempts', 'lastErrorCode', 'time'].map((key) => h('th', {scope: 'col'}, t(`alerts.column.${key}`))))),
-        h('tbody', null, deliveries.map((delivery) => h('tr', null,
+      content.replaceChildren(deliveries.length ? dataTable({caption: t('alerts.deliveries.caption'),
+        columns: ['state', 'channel', 'attempts', 'lastErrorCode', 'time'].map((key) => t(`alerts.column.${key}`)),
+        body: h('tbody', null, deliveries.map((delivery) => h('tr', null,
           h('td', null, t(['pending', 'sent', 'failed'].includes(delivery.state) ? `alerts.deliveryState.${delivery.state}` : 'alerts.unknown'), delivery.coalesced_count > 1 ? h('div', {class: 'hint'}, t('alerts.deliveries.coalesced', {count: delivery.coalesced_count})) : null),
           h('td', null, channels.find((channel) => channel.id === delivery.channel_id)?.name || delivery.channel_id),
           h('td', null, String(delivery.attempts)), h('td', {title: delivery.last_error_code ? errorCodeMessage(delivery.last_error_code) : ''}, delivery.last_error_code || t('common.none')),
-          h('td', null, eventTime(delivery.updated_at))))))) : h('p', {class: 'muted'}, t('alerts.deliveries.empty')));
+          h('td', null, eventTime(delivery.updated_at)))))}) : h('p', {class: 'muted'}, t('alerts.deliveries.empty')));
       status.textContent = t('alerts.deliveries.loaded', {count: deliveries.length});
     } catch (error) { if (!signal?.aborted && error.name !== 'AbortError') status.textContent = t('alerts.deliveries.loadFailed', {error: errorText(error)}); }
     finally { busy(retry, false); }

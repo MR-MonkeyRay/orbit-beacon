@@ -1,4 +1,4 @@
-import {getLocale, t} from '../../shared/i18n.js';
+import {getLocale, t} from '../i18n.js';
 import {h, svg} from '../../shared/dom.js';
 import {formatLoad, formatPercent, formatRate} from '../format.js';
 
@@ -11,10 +11,9 @@ const BOTTOM = 38;
 const timestamp = (point) => Date.parse(point.t);
 const coordinate = (value) => Number(value.toFixed(2));
 
-// SVG text scales with the view box, so --chart-k (view box units per CSS
-// pixel) keeps axis labels at a fixed CSS size however wide a chart renders.
-// A chart removed after it was laid out reports a zero size once, which
-// releases its observation; one built before insertion keeps waiting.
+// SVG 文字随 viewBox 缩放，--chart-k（viewBox 单位 / CSS 像素）保证坐标轴标签
+// 在任何渲染宽度下保持固定 CSS 字号。已布局后移除的图表上报一次零宽即释放观察；
+// 插入前构建的图表持续等待。
 let textFitter;
 const viewBoxWidths = new WeakMap();
 const laidOut = new WeakSet();
@@ -32,7 +31,7 @@ export function fitChartText(drawing, viewBoxWidth) {
   textFitter.observe(drawing);
 }
 
-// Three equal intervals give four labelled gridlines, even for very small loads.
+// 三等分得到四条带标签的网格线，即使负载极小也适用。
 export function niceMax(value) {
   if (!Number.isFinite(value) || value <= 0) return 1;
   const roughStep = value / 3;
@@ -60,8 +59,8 @@ export function chartScales(points, unit) {
   return {start, end, max, x, y};
 }
 
-// Each disconnected segment closes its own area down to zero. A lone sample
-// has a zero-length line with round caps so it remains visible as a dot.
+// 每个断开的线段各自闭合面积到零。孤立样本用圆头端点的零长度线段表示，
+// 保证仍以圆点可见。
 export function chartPaths(points, scales, stepSeconds, valueKey = 'avg') {
   const segments = [];
   for (let index = 0; index < points.length; index += 1) {
@@ -81,7 +80,7 @@ export function chartPaths(points, scales, stepSeconds, valueKey = 'avg') {
   return {line: lines.join(''), area: areas.join('')};
 }
 
-// Axis ticks add decimals for small scales so near-idle charts keep distinct labels.
+// 小量程时刻度增加小数位，保证接近空闲的图表标签互不相同。
 export function formatAxisValue(value, unit, max) {
   if (unit === 'percent' || !(max > 0) || !Number.isFinite(value)) return formatChartValue(value, unit);
   const step = max / 3;
@@ -97,8 +96,8 @@ export function formatChartValue(value, unit) {
   return value > 0 && value < 0.01 ? t('nodes.chart.belowLoad') : formatLoad(value);
 }
 
-// Sorted points and a time-based x scale keep omitted buckets as real gaps.
-// Ties go to the earlier sample; coordinates outside the plot clamp to an end.
+// 按时间排序的采样点与时间轴保留缺失采样区间的空隙。
+// 距离相同时取较早的样本；超出绘图区的坐标限制在端点。
 export function pointIndexAtX(points, x, scales) {
   if (!points.length || !Number.isFinite(x)) return -1;
   let low = 0;
@@ -132,13 +131,13 @@ function legendKey(label, classes) {
   return h('span', {class: 'chart-key'}, h('i', {class: classes, 'aria-hidden': 'true'}), label);
 }
 
-// series: [{label, points, stepSeconds}], ordered by t as returned by history.
-// All DOM is built without HTML strings.
+// series: [{label, points, stepSeconds}]，按 history 返回的 t 排序。
+// 全部 DOM 不使用 HTML 字符串构建。
 export function chart({title, unit, series, id, selectedTime}) {
   const timeline = [...new Map(series.flatMap((item) => item.points).map((point) => [timestamp(point), point])).values()]
     .sort((a, b) => timestamp(a) - timestamp(b));
   if (!timeline.length) return h('p', {class: 'muted'}, t('nodes.chart.empty'));
-  // Include both network series' peaks even where their timestamps overlap.
+  // 时间戳重叠时也包含两个网络序列各自的峰值。
   const scales = chartScales(series.flatMap((item) => item.points), unit);
   const descriptionID = `${id}-description`;
   const tooltipID = `${id}-tooltip`;
@@ -173,7 +172,7 @@ export function chart({title, unit, series, id, selectedTime}) {
   const tooltip = h('div', {class: 'chart-tooltip', id: tooltipID, role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true', hidden: true});
   const plot = h('div', {class: 'chart-plot', id, tabindex: 0, role: 'group', 'aria-label': t('nodes.chart.explore', {title}),
     'aria-describedby': `${descriptionID} ${tooltipID}`}, drawing, tooltip);
-  // A rebuilt chart keeps the reader's selected sample when it still exists.
+  // 重建图表时，若用户选中的样本仍存在，则保留选择。
   const kept = timeline.findIndex((point) => timestamp(point) === selectedTime);
   let selected = kept >= 0 ? kept : timeline.length - 1;
   const byTime = series.map((item) => new Map(item.points.map((point) => [timestamp(point), point])));
@@ -190,8 +189,7 @@ export function chart({title, unit, series, id, selectedTime}) {
       const point = byTime[position].get(time);
       return h('div', null, t('nodes.chart.tooltip', {label: item.label, avg: formatChartValue(point?.avg, unit), max: formatChartValue(point?.max, unit)}));
     }));
-    // Place beside the crosshair, flipping and clamping with measured sizes so
-    // the tooltip always stays inside the plot.
+    // 放在十字线旁，按实测尺寸翻转并钳制，保证提示始终留在绘图区内。
     const plotWidth = plot.clientWidth;
     const anchor = x / WIDTH * plotWidth;
     const width = tooltip.offsetWidth;

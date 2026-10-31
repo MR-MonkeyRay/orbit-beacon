@@ -11,8 +11,8 @@ import (
 	"orbitbeacon/internal/server/securefs"
 )
 
-// Prepare validates all existing managed files before creating the private data
-// directory or its persistent secrets key. Unsafe metadata is never repaired.
+// Prepare 在创建私有数据目录或持久密钥文件之前，校验全部已有托管文件。
+// 不安全的元数据绝不自动修复。
 func Prepare(path string) error {
 	dir, err := filepath.Abs(path)
 	if err != nil {
@@ -38,9 +38,8 @@ func Prepare(path string) error {
 	return ensureSecretsKey(keyPath)
 }
 
-// ValidateRestore checks only filesystem metadata, without creating files,
-// changing permissions, or interpreting key or database contents. Missing
-// directories and managed files are allowed for an empty restore target.
+// ValidateRestore 仅检查文件系统元数据，不创建文件、不修改权限、
+// 不解析密钥或数据库内容。空的恢复目标允许缺少目录和托管文件。
 func ValidateRestore(path string) error {
 	dir, err := filepath.Abs(path)
 	if err != nil {
@@ -77,8 +76,8 @@ func validateSecretsKey(path string) error {
 	return err
 }
 
-// LoadKey reads an owner-only, non-symlink secrets key containing exactly 32
-// bytes that are not all zero. The caller must clear the returned key when done.
+// LoadKey 读取仅属主可访问、非符号链接的 secrets key，
+// 内容须恰为 32 字节且非全零。调用方用完后须清除返回的密钥。
 func LoadKey(path string) ([]byte, error) {
 	file, err := securefs.OpenFile(path, os.O_RDONLY, 0)
 	if err != nil {

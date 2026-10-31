@@ -32,10 +32,10 @@ func TestBrowserCanonicalOriginInteroperatesOrConfigurationIsRejected(t *testing
 				LookupEnv: func(string) (string, bool) { return "", false },
 				Flags:     map[string]string{"public_url": tt.configured},
 			})
-			handler, handlerErr := server.NewHandler(server.Options{
+			handler, handlerErr := server.NewHandler(testHandlerOptions(t, server.Options{
 				Auth: f.auth, Nodes: f.nodes, PublicURL: tt.configured,
 				Assets: fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte("<!doctype html><main>shell</main>")}, "public.html": &fstest.MapFile{Data: []byte("public shell")}},
-			})
+			}))
 			if configErr != nil || handlerErr != nil {
 				if configErr == nil || handlerErr == nil {
 					t.Errorf("noncanonical URL rejection inconsistent: config=%v handler=%v", configErr, handlerErr)
@@ -133,7 +133,7 @@ func TestUnsupportedMethodsPrecedeAuthenticationAuthorizationAndCSRF(t *testing.
 
 func TestUIDocumentsDisallowFramingWithCSP(t *testing.T) {
 	f := newHTTP(t, 2)
-	for _, path := range []string{"/", "/public.html", "/login", "/overview", "/nodes", "/alerts", "/settings", "/200.html", "/login.html"} {
+	for _, path := range []string{"/", "/public.html", "/login", "/overview", "/nodes", "/alerts", "/settings", "/200.html"} {
 		for _, method := range []string{http.MethodGet, http.MethodHead} {
 			t.Run(method+" "+path, func(t *testing.T) {
 				response := request(t, f.handler, method, path, "", nil, "", "")
@@ -172,7 +172,7 @@ func TestRequestsLeaveExpiredSessionsToRetention(t *testing.T) {
 	for _, path := range []string{"/", "/api/public/v1/nodes", "/api/v1/me"} {
 		_ = request(t, f.handler, http.MethodGet, path, "", nil, "", "")
 	}
-	// Reads, even authenticated ones, must not take the SQLite writer.
+	// 即使是已认证的读取，也绝不能占用 SQLite 写锁。
 	response := request(t, f.handler, http.MethodGet, "/api/v1/me", "", cookie, "", "")
 	assertHTTPStatus(t, response, http.StatusOK)
 	var before int

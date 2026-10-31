@@ -445,6 +445,37 @@ test('successful account password change invalidates the shared session and remo
   }
 });
 
+test('account password errors focus the mapped field and clear every secret', async (t) => {
+  let failure = 'invalid_old_password';
+  const env = setup(t, (request) => {
+    if (request.url === '/api/v1/me/password') return response({code: failure, message: 'private backend wording'}, {status: failure === 'rate_limited' ? 429 : 400});
+    return assert.fail(`Unexpected request ${request.url}`);
+  });
+  const originals = new Map(['history', 'requestAnimationFrame', 'matchMedia'].map((key) => [key, globalThis[key]]));
+  globalThis.history = {state: {}, replaceState() {}};
+  globalThis.requestAnimationFrame = () => 0;
+  globalThis.matchMedia = () => ({matches: true, addEventListener() {}});
+  location.pathname = '/settings'; location.hash = '#account';
+  try {
+    client.setSession(proof());
+    const {settingsPage} = await import('../src/console/pages/settings.js');
+    const page = await settingsPage(); env.body.append(page);
+    const form = page.querySelector('form');
+    const controls = form.querySelectorAll('input');
+    for (const code of ['invalid_old_password', 'password_unchanged', 'rate_limited']) {
+      failure = code;
+      controls.forEach((control) => { control.value = 'a sufficiently long password'; });
+      form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+      assert.equal(document.activeElement, controls[code === 'password_unchanged' ? 1 : 0]);
+      assert.equal(controls.every((control) => control.value === ''), true);
+      assert.equal(client.session.user.must_change_password, false);
+    }
+  } finally {
+    env.clean();
+    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+  }
+});
+
 test('notifications resume only after the shared me gate and keep one summary request per restoration', async (t) => {
   let release;
   const env = setup(t, (request) => request.url === '/api/v1/me' ? new Promise((resolve) => { release = resolve; })
@@ -545,8 +576,8 @@ async function actionPage(t, respond, expires_at = '2026-10-28T00:10:00Z', load)
   client.setSession(proof({expires_at}));
   const routerURL = new URL(`../src/console/router.js?action-${encodeURIComponent(t.name)}`, import.meta.url);
   const {startRouter} = await import(routerURL.href);
-  // Load the real action against this fixture's router instance, not a router
-  // retained by an earlier fixture's document. No action behavior is replaced.
+  // 真实操作须使用本测试环境的路由器，而非先前测试文档保留的实例。
+  // 不替换操作本身的任何行为。
   const lifecycleURL = new URL('../src/console/pages/node-lifecycle.js', import.meta.url);
   const lifecycleSource = (await readFile(lifecycleURL, 'utf8')).replace(/from '(\.[^']+)'/g,
     (_match, path) => `from '${path === '../router.js' ? routerURL.href : new URL(path, lifecycleURL).href}'`);

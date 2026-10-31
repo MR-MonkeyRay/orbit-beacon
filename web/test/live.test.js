@@ -161,9 +161,11 @@ test('renew reconnects the same adapter immediately; shutdown retains data and b
   const ui = consumer(); env.sockets[0].open(); env.sockets[0].message(frame());
   env.sockets[0].message(frame('close', {code: 'renew'}));
   assert.equal(env.sockets[0].closed, true); assert.equal(env.sockets.length, 2);
+  assert.equal(ui.states.at(-1).state, 'connecting');
   env.sockets[1].open(); env.sockets[1].message(frame('close', {code: 'shutdown'}));
   assert.equal(ui.states.at(-1).state, 'stale'); assert.equal(env.sockets.length, 2);
   await env.advance(10000); assert.equal(env.sockets.length, 3);
+  assert.equal(ui.states.at(-1).state, 'connecting');
   assert.equal(ui.snapshots.length, 1); ui.live.close();
 });
 

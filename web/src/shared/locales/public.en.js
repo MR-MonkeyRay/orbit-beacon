@@ -1,22 +1,18 @@
 export default {
   'public.title': 'Node status – OrbitBeacon',
   'public.description': 'Availability and resource usage of public nodes',
-  'public.signIn': 'Admin sign in',
+  'public.signIn': 'Sign in',
   'public.heading': 'Node status',
   'public.loading': 'Loading nodes…',
   'public.notUpdated': 'Not updated yet',
-  'public.refresh': 'Refresh',
-  'public.retry': 'Retry',
   'public.filterLabel': 'Filter nodes on this page by status',
   'public.nodesLabel': 'Public nodes',
   'public.paginationLabel': 'Node pages',
   'public.previous': 'Previous',
   'public.next': 'Next',
   'public.page': 'Page {page}',
-  'public.presenceNote': 'Online means a valid report was received within the last 3 minutes. Resource data may be unavailable and shown as —.',
+  'public.presenceNote': 'Online means a valid report arrived in the last 3 minutes; — means resource data is unavailable.',
   'public.poweredBy': 'Powered by OrbitBeacon',
-  'public.status.online': 'Online',
-  'public.status.offline': 'Offline',
   'public.status.unknown': 'Unknown',
   'public.filter.all': 'All',
   'public.filter.empty.online': 'No online nodes on this page.',
@@ -54,5 +50,5 @@ export default {
   'public.metric.memory': 'Memory',
   'public.metric.load': '1-minute load',
   'public.metric.uptime': 'Uptime',
-  'public.lastReport': 'Last data · '
+  'public.lastReport': 'Last report {time}'
 };

@@ -229,8 +229,8 @@ func TestRestoreJournalEveryCommitOperation(t *testing.T) {
 						t.Fatalf("unsafe error: %v", err)
 					}
 				}
-				// Hooks run before each operation; only a completed committed
-				// journal rename authorizes the complete new group.
+				// 钩子在每次操作前运行；只有完成的已提交
+				// journal 重命名才授权整个新文件组。
 				committed := expectNew
 				if err := RecoverRestore(data); err != nil {
 					t.Fatal(err)

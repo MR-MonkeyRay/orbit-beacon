@@ -1,12 +1,20 @@
-// Node resolves the explicit test/ entry to this file. Keep the suite imports
-// static so the built-in runner registers every test before execution starts.
+// Node 将显式的 test/ 入口解析到此文件。保持套件导入为静态，
+// 使内置运行器在执行前注册所有测试。
 import './i18n.test.js';
+import './copy-templates.test.js';
+import './navigation-icons.test.js';
+import './catalogs.test.js';
+import './translate-html.test.js';
+import './clipboard.test.js';
+import './nodes-filters.test.js';
 import './i18n-errors.test.js';
 import './contrast.test.js';
 import './dom.test.js';
 import './controls-i18n.test.js';
 import './format.test.js';
+import './shared-reuse.test.js';
 import './theme.test.js';
+import './theme-bootstrap.test.js';
 import './validate.test.js';
 import './stream.test.js';
 import './http-error.test.js';
@@ -17,16 +25,22 @@ import './confirmation.test.js';
 import './enrollment.test.js';
 import './node-settings.test.js';
 import './forms.test.js';
+import './components.test.js';
 import './node-traffic-settings.test.js';
 import './latest-sample.test.js';
 import './latest-sample-freshness.test.js';
 import './pagination.test.js';
+import './pager.test.js';
+import './data-operations.test.js';
 import './settings-pagination.test.js';
 import './chart.test.js';
 import './alert-utils.test.js';
+import './task-labels.test.js';
+import './detail-dialog.test.js';
 import './node-history.test.js';
 import './node-traffic.test.js';
 import './node-probes.test.js';
+import './polling-panel.test.js';
 import './alert-events.test.js';
 import './alert-editors.test.js';
 import './notifications-lifecycle.test.js';

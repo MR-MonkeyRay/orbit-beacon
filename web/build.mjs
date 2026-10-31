@@ -1,17 +1,19 @@
-// Builds the embedded web UI into internal/server/webui/dist.
+// 将内嵌 Web UI 构建到 internal/server/webui/dist。
 //
-//   node build.mjs           production build (minified, content-hashed)
-//   node build.mjs --watch   rebuild on change
-//   node build.mjs --check   build into a temporary directory and fail if dist differs
+//   node build.mjs           生产构建（压缩，按内容哈希命名）
+//   node build.mjs --watch   变更时重新构建
+//   node build.mjs --check   构建到临时目录，若与 dist 不一致则报错
 //
-// HTML shells are served with no-store; scripts and styles land in
-// _app/immutable/ under content-hashed names, which the server caches for a year.
+// HTML 外壳以 no-store 下发；脚本和样式落在 _app/immutable/ 下，
+// 按内容哈希命名，服务端缓存一年。
 import * as esbuild from 'esbuild';
 import {mkdtemp, mkdir, readdir, readFile, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {consoleRoutes} from './src/console/routes.js';
 import {ICONS} from './src/shared/icons.js';
+import {themeBootstrap} from './theme-bootstrap.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.resolve(root, '../internal/server/webui/dist');
@@ -44,12 +46,14 @@ async function build(outDir) {
     charset: 'utf8',
     logLevel: 'warning'
   });
+  await writeFile(path.join(outDir, 'console-routes.json'), JSON.stringify(consoleRoutes.map(({path}) => path)) + '\n');
   const sprite = iconSprite();
   for (const page of pages) {
     const [file, output] = Object.entries(result.metafile.outputs).find(([, item]) => item.entryPoint === `src/${page.entry}/main.js`);
     const asset = (name) => `/${path.relative(outDir, path.resolve(root, name)).split(path.sep).join('/')}`;
     const template = await readFile(path.join(root, page.template), 'utf8');
     const html = template
+      .replace('<!--theme-->', themeBootstrap(page.entry === 'console'))
       .replace('<!--icons-->', sprite)
       .replace('%STYLE%', asset(output.cssBundle))
       .replace('%SCRIPT%', asset(file));
@@ -89,7 +93,9 @@ if (mode === '--check') {
   let timer;
   const rebuild = () => build(dist).then(() => console.log(`rebuilt ${new Date().toLocaleTimeString()}`), (error) => console.error(error.message));
   await rebuild();
-  watch(path.join(root, 'src'), {recursive: true}, () => { clearTimeout(timer); timer = setTimeout(rebuild, 80); });
+  for (const input of ['src', 'theme-bootstrap.mjs']) {
+    watch(path.join(root, input), {recursive: input === 'src'}, () => { clearTimeout(timer); timer = setTimeout(rebuild, 80); });
+  }
 } else {
   await build(dist);
   console.log(`Built web UI into ${path.relative(process.cwd(), dist) || dist}`);

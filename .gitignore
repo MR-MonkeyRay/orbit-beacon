@@ -1,4 +1,5 @@
 .omx/
+# Root build output; internal/server/webui/dist remains tracked.
 /dist/
 /build/*
 !/build/server.Dockerfile
@@ -15,6 +16,6 @@
 /web/.svelte-kit/
 .env
 *.key
-# The minimal embedded UI distribution is intentionally tracked.
 *.test
 temp/
+.smoke-*/

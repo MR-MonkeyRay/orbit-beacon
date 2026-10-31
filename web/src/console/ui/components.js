@@ -1,9 +1,9 @@
 import {h, icon, svg} from '../../shared/dom.js';
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {STATUS} from '../format.js';
 
-// IDs restart on every page render, so a quiet refresh rebuilds the same IDs
-// and the router can return focus to the element that had it.
+// ID 在每次页面渲染时重新开始，静默刷新会重建相同的 ID，
+// 路由器因此能把焦点归还给之前持有焦点的元素。
 let idCounter = 0;
 export function resetIDs() { idCounter = 0; }
 export function uid(prefix) { idCounter += 1; return `${prefix}-${idCounter}`; }
@@ -43,41 +43,58 @@ export function pageHead(title, subtitle, ...actions) {
     actions.length ? h('div', {class: 'head-actions'}, actions) : null);
 }
 
-export const statusBadge = (status) => h('span', {class: `badge ${status}`}, status === 'deleted' ? t('controls.deleted') : STATUS[status] || status);
+const statusLabel = (status) => status === 'deleted' ? t('controls.deleted') : STATUS[status] || status;
+
+export const statusBadge = (status) => h('span', {class: `badge ${status}`}, statusLabel(status));
 
 export function patchStatusBadge(element, status) {
   element.className = `badge ${status}`;
-  const label = status === 'deleted' ? t('controls.deleted') : STATUS[status] || status;
+  const label = statusLabel(status);
   if (element.textContent !== label) element.textContent = label;
 }
 
-// Transport names stay out of the UI. Only transitions update the live region.
+// UI 不显示传输方式名称；仅在状态变化时更新 ARIA live 区域。
 export function liveStatus() {
   const element = h('span', {class: 'live-status', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true'}, t('controls.live.connecting'));
   let previous = 'connecting';
+  let wasLive = false;
   return {element, update({state}) {
     if (state === previous) return;
     previous = state;
+    if (state === 'live') wasLive = true;
     element.dataset.state = state;
-    element.textContent = t(state === 'live' ? 'controls.live.live' : state === 'connecting' ? 'controls.live.connecting' : 'controls.live.stale');
+    element.textContent = t(state === 'live' ? 'controls.live.live'
+      : state === 'connecting' && wasLive ? 'controls.live.reconnecting'
+        : state === 'connecting' ? 'controls.live.connecting' : 'controls.live.stale');
   }};
 }
 
 export function facts(entries) {
-  return h('dl', {class: 'facts'}, entries.map(([label, value]) => h('div', null, h('dt', null, label),
-    value === null || value === undefined || value === '' ? h('dd', {class: 'none'}, t('controls.notSet')) : h('dd', null, value))));
+  return buildReadonlyFacts(entries, true).element;
 }
 
-// Keep the list and its cells stable; callers patch readonly values, never forms.
+// 保持列表及其单元格稳定；调用方只修补只读值，不改表单。
 export function readonlyFacts(entries = []) {
+  return buildReadonlyFacts(entries, false);
+}
+
+function buildReadonlyFacts(entries, flattenChildren) {
   const element = h('dl', {class: 'facts'});
   const cells = new Map();
   const update = (values) => {
+    const occurrences = new Map();
     for (const [label, value] of values) {
-      let cell = cells.get(label);
+      const occurrence = occurrences.get(label) || 0;
+      occurrences.set(label, occurrence + 1);
+      let group = cells.get(label);
+      if (!group) {
+        group = [];
+        cells.set(label, group);
+      }
+      let cell = group[occurrence];
       if (!cell) {
         cell = h('dd');
-        cells.set(label, cell);
+        group.push(cell);
         element.append(h('div', null, h('dt', null, label), cell));
       }
       const empty = value === null || value === undefined || value === '';
@@ -85,11 +102,23 @@ export function readonlyFacts(entries = []) {
       const content = empty ? t('controls.notSet') : value;
       if (content instanceof Node && cell.firstElementChild === content) continue;
       if (!(content instanceof Node) && !Array.isArray(content) && cell.textContent === String(content)) continue;
-      cell.replaceChildren(...(Array.isArray(content) ? content : [content]));
+      const children = flattenChildren
+        ? (Array.isArray(content) ? content.flat(Infinity) : [content])
+          .filter((child) => child !== null && child !== undefined && child !== false)
+          .map((child) => child instanceof Node ? child : String(child))
+        : (Array.isArray(content) ? content : [content]);
+      cell.replaceChildren(...children);
     }
   };
   update(entries);
   return {element, update};
+}
+
+export function dataTable({caption, columns, body, className = '', colgroup, hidden = false, ...wrapperProps}) {
+  return h('div', {class: 'table-wrap', hidden, ...wrapperProps}, h('table', {class: `table ${className}`.trim()},
+    caption ? h('caption', {class: 'sr'}, caption) : null,
+    colgroup,
+    h('thead', null, h('tr', null, columns.map((label) => h('th', {scope: 'col'}, label)))), body));
 }
 
 export function note(text) { return h('p', {class: 'note'}, icon('info'), h('span', null, text)); }

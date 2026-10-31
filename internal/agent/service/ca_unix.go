@@ -13,8 +13,8 @@ import (
 
 const maxCABundleSize = 1 << 20
 
-// openCABundle pins every component before inspecting it. The caller must read
-// this descriptor, never reopen the configured path after validation.
+// openCABundle 逐级打开并固定路径中的文件和目录，再检查其属性。
+// 调用方必须读取返回的文件描述符，校验后不得重新打开配置的路径。
 func openCABundle(path string, expectedOwner int) (*os.File, error) {
 	invalid := errors.New("configured CA file must be an absolute administrator-owned regular file with safe non-writable ancestry")
 	if !filepath.IsAbs(path) || expectedOwner < 0 {

@@ -1,9 +1,46 @@
-/* Alert views share the console's semantic status tokens. */
-.badge.alert-critical{color:var(--bad);background:var(--bad-bg)}
-.badge.alert-warning{color:var(--warn);background:var(--warn-bg)}
-.badge.alert-info{color:var(--orbit);background:var(--orbit-soft)}
-.alert-time{display:grid;gap:2px;white-space:nowrap}
-.alert-counts{display:flex;flex-wrap:wrap;gap:16px;margin-bottom:12px}
-.alert-count{display:inline-flex;align-items:center;gap:8px}
-.alert-destination{max-width:340px;overflow-wrap:anywhere}
-select.alert-multiselect{appearance:auto;background-image:none;padding:8px 12px;min-height:90px}
+/* 告警视图复用控制台的状态色变量。 */
+.badge.alert-critical {
+  color: var(--bad);
+  background: var(--bad-bg);
+}
+
+.badge.alert-warning {
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.badge.alert-info {
+  color: var(--orbit);
+  background: var(--orbit-soft);
+}
+
+.alert-time {
+  display: grid;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.alert-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-3);
+}
+
+.alert-count {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.alert-destination {
+  max-width: 340px;
+  overflow-wrap: anywhere;
+}
+
+select.alert-multiselect {
+  appearance: auto;
+  background-image: none;
+  padding: var(--sp-2) var(--sp-3);
+  min-height: 90px;
+}

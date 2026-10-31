@@ -1,16 +1,17 @@
-import {getLocale, t} from '../../shared/i18n.js';
+import {getLocale, t, tParts} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h, svg} from '../../shared/dom.js';
 import {api} from '../api.js';
 import {formatBytes, formatPercent, when} from '../format.js';
 import {fitChartText, niceMax} from '../ui/chart.js';
-import {button, facts, panel} from '../ui/components.js';
+import {facts, panel} from '../ui/components.js';
+import {historyError} from '../ui/history-error.js';
 
 const DAY = 86400000;
 const dateFormat = new Intl.DateTimeFormat(getLocale(), {dateStyle: 'medium', timeZone: 'UTC'});
 const shortDateFormat = new Intl.DateTimeFormat(getLocale(), {month: 'short', day: 'numeric', timeZone: 'UTC'});
 
-// Never coerce floats, exponent notation or malformed API values into bytes.
+// 不将浮点数、科学计数法或格式错误的 API 值强制转为字节。
 export function parseTrafficBytes(value) {
   return typeof value === 'string' && value.length > 0 && !/[^0-9]/.test(value) ? BigInt(value) : 0n;
 }
@@ -38,7 +39,7 @@ export function trafficQuota(usedValue, quotaValue) {
   const used = bytes(usedValue);
   const quota = bytes(quotaValue);
   const state = used > 0n && used >= quota ? 'over' : quota > 0n && used * 100n >= quota * 80n ? 'warning' : 'normal';
-  // Keep comparisons exact and convert only the final, bounded display ratio.
+  // 比较保持精确，只在最终有界的显示比例处转换。
   const tenths = quota > 0n ? used * 1000n / quota : used > 0n ? 1000n : 0n;
   const percent = Number(tenths > BigInt(Number.MAX_SAFE_INTEGER) ? BigInt(Number.MAX_SAFE_INTEGER) : tenths) / 10;
   return {percent, state};
@@ -49,7 +50,7 @@ function quotaMeter(used, quota) {
   const label = t('nodes.trafficQuotaDescription', {used: formatBytes(used), quota: formatBytes(quota), percent: formatPercent(percent)});
   return h('section', {class: `traffic-quota ${state}`, 'aria-label': t('nodes.trafficQuota')},
     h('h3', null, t('nodes.quota')),
-    h('p', {class: 'num'}, `${formatBytes(used)} / ${formatBytes(quota)} · ${formatPercent(percent)}`),
+    h('p', {class: 'num'}, t('nodes.traffic.usage', {used: formatBytes(used), quota: formatBytes(quota), percent: formatPercent(percent)})),
     h('meter', {min: 0, max: 100, low: 0, high: 80, optimum: 0, value: Math.min(100, percent),
       'aria-label': label, 'aria-valuetext': label}, label),
     state === 'normal' ? null : h('p', null, state === 'over' ? t('nodes.quotaExceeded') : t('nodes.quotaWarning')));
@@ -67,10 +68,10 @@ function dailyChart(days) {
     const total = day.rx_bytes + day.tx_bytes;
     return total > max ? total : max;
   }, 0n);
-  // Round in the binary unit the axis displays, so ticks read 50/100/150 GiB.
+  // 按坐标轴显示的二进制单位取整，刻度读作 50/100/150 GiB。
   let unit = 1n;
   while (peak >= unit * 1024n) unit *= 1024n;
-  // Only a bounded ratio enters Number; byte totals and axis ticks stay exact.
+  // 只有有界的比例进入 Number；字节总量和刻度保持精确。
   const precision = 1000000000000n;
   const normalized = Number((peak * precision + unit - 1n) / unit) / 1e12;
   const rounded = BigInt(Math.ceil(niceMax(normalized) * 1e12));
@@ -78,7 +79,7 @@ function dailyChart(days) {
   const upper = proposed > peak ? proposed : peak;
   const max = upper > 3n ? upper : 3n;
   const scaledHeight = (value) => Number(value * 1000000n / max) / 1000000 * plotHeight;
-  // h() creates HTML elements; use the same namespace-aware svg() as history.
+  // h() 创建 HTML 元素；与历史图表一样使用带命名空间的 svg()。
   const drawing = svg('svg', {class: 'chart-svg traffic-svg', viewBox: `0 0 ${width} ${height}`,
     role: 'group', 'aria-label': t('nodes.dailyTrafficAria')});
   const text = (value, attributes) => {
@@ -88,7 +89,7 @@ function dailyChart(days) {
   };
   for (let index = 0; index <= 3; index += 1) {
     const y = baseline - index / 3 * plotHeight;
-    // History's formatAxisValue handles rates and loads; these are byte totals.
+    // history 的 formatAxisValue 处理速率和负载；这里是字节总量。
     drawing.append(svg('line', {class: 'chart-gridline', x1: left, x2: width - right, y1: y, y2: y}),
       text(formatBytes(max * BigInt(index) / 3n), {class: 'chart-axis', x: left - 10, y: y + 4, 'text-anchor': 'end'}));
   }
@@ -107,7 +108,7 @@ function dailyChart(days) {
       svg('rect', {class: 'traffic-tx', x, y: baseline - rxHeight - txHeight, width: slot - 4, height: txHeight}));
     drawing.append(group);
   });
-  // Sparse date ticks stay readable when the full 30-day plot shrinks on mobile.
+  // 30 天图在移动端缩小时，稀疏的日期刻度仍保持可读。
   for (const index of [0, 14, 29]) {
     drawing.append(text(shortDateFormat.format(Date.parse(days[index].day)), {class: 'chart-axis',
       x: left + (index + 0.5) * slot, y: height - 10, 'text-anchor': index === 0 ? 'start' : index === 29 ? 'end' : 'middle'}));
@@ -133,13 +134,13 @@ function trafficContent(data) {
     h('section', {class: 'traffic-cycle', 'aria-label': t('nodes.currentCycle')}, h('h3', null, t('nodes.currentCycle')),
       h('p', {class: 'muted'}, cycleDateLabel(cycle)),
       facts([[t('nodes.received'), formatBytes(rx)], [t('nodes.sent'), formatBytes(tx)], [t('nodes.total'), formatBytes(total)]])),
-    // A quota of 0 means unlimited, matching the Traffic billing form.
+    // 配额为 0 表示无限制，与流量计费表单一致。
     parseTrafficBytes(data.quota_bytes) > 0n ? quotaMeter(total, parseTrafficBytes(data.quota_bytes)) : null,
     empty ? h('p', {class: 'muted', role: 'status'}, t('nodes.trafficEmpty')) : dailyChart(fillTrafficDays(daily)),
-    data.updated_at ? h('p', {class: 'note'}, t('nodes.updated'), when(data.updated_at)) : null);
+    data.updated_at ? h('p', {class: 'note'}, tParts('nodes.updated', {time: when(data.updated_at)})) : null);
 }
 
-// Retained with the Details tab; billing changes refresh this panel only.
+// 切换详情标签页时保留面板；流量计费设置变更只刷新此面板。
 export function trafficPanel(id, signal) {
   const content = h('div', {class: 'traffic-body'});
   const root = panel(t('nodes.traffic'), {}, content);
@@ -180,9 +181,9 @@ export function trafficPanel(id, signal) {
         alignLatest();
       }
     } catch (error) {
-      if (!signal?.aborted && version === loadVersion && error.name !== 'AbortError') content.replaceChildren(h('div', {class: 'history-error'},
-        h('p', {class: 'muted', role: 'status'}, t('nodes.trafficLoadError', {error: errorText(error)})),
-        button(t('nodes.retry'), {small: true, id: 'traffic-retry', onClick: load})));
+      if (!signal?.aborted && version === loadVersion && error.name !== 'AbortError') content.replaceChildren(
+        historyError(t('nodes.trafficLoadError', {error: errorText(error)}),
+          {retryID: 'traffic-retry', onRetry: load, status: true}));
     } finally {
       if (!signal?.aborted && version === loadVersion) content.setAttribute('aria-busy', 'false');
     }

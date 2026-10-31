@@ -1,4 +1,4 @@
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {h} from '../../shared/dom.js';
 import {api} from '../api.js';
 import {panel} from '../ui/components.js';

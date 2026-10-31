@@ -25,8 +25,8 @@ var metricStatusFields = [...]string{
 
 var sourceFamilies = [...]string{SourceCPU, SourceLoad, SourceMemory, SourceSwap, SourceUptime}
 
-// MetricStatusFields and SourceFamilies are the read-only wire-contract lists.
-// They return arrays by value so callers cannot mutate the package contract.
+// MetricStatusFields 和 SourceFamilies 是只读的传输协议字段清单。
+// 两者都按值返回数组，调用方无法改动包级契约。
 func MetricStatusFields() [9]string { return metricStatusFields }
 func SourceFamilies() [5]string     { return sourceFamilies }
 

@@ -1,4 +1,4 @@
-// Package notify manages encrypted channels and durable notification delivery.
+// Package notify 管理加密通道与持久化的通知投递。
 package notify
 
 import (
@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/mail"
 	"net/url"
@@ -19,11 +20,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
-	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/secretbox"
+	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 var (
@@ -34,7 +35,7 @@ var (
 )
 
 type Config struct {
-	URL         string   `json:"url,omitempty"` // Write-only; populated internally only for validation and sending.
+	URL         string   `json:"url,omitempty"` // 只写字段；仅在内部填充，用于校验和发送。
 	URLRedacted string   `json:"url_redacted,omitempty"`
 	URLSet      bool     `json:"url_set,omitempty"`
 	ChatID      string   `json:"chat_id,omitempty"`
@@ -55,15 +56,15 @@ type Channel struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// MarshalJSON keeps delivery-only URL material out of every channel response.
+// MarshalJSON 保证仅投递用的 URL 内容不出现在任何通道响应中。
 func (c Channel) MarshalJSON() ([]byte, error) {
 	type channel Channel
 	c.Config.URL = ""
 	return json.Marshal(channel(c))
 }
 
-// Secret is write-only: signing key, bot token or SMTP password by channel kind.
-// Omit to retain, empty string to clear; kind is immutable after creation.
+// Secret 只写：按通道类型分别是签名密钥、机器人令牌或 SMTP 密码。
+// 省略则保留原值，空字符串则清除；kind 创建后不可变。
 type Patch struct {
 	Name    *string         `json:"name,omitempty"`
 	Kind    *string         `json:"kind,omitempty"`
@@ -75,6 +76,7 @@ type Options struct {
 	AllowInsecureWebhooks bool
 	AllowPrivateNetworks  bool
 	Now                   func() time.Time
+	Logger                *slog.Logger
 }
 type Service struct {
 	db             *sql.DB
@@ -88,6 +90,7 @@ type Service struct {
 	stopCtx        context.Context
 	stop           context.CancelFunc
 	secretWarnings map[string]time.Time
+	logger         *slog.Logger
 }
 
 func New(db *sql.DB, box *secretbox.Box, opts Options) *Service {
@@ -95,10 +98,7 @@ func New(db *sql.DB, box *secretbox.Box, opts Options) *Service {
 		opts.Now = time.Now
 	}
 	stopCtx, stop := context.WithCancel(context.Background())
-	return &Service{db: db, box: box, opts: opts, sender: newSender(opts), done: make(chan struct{}), stopCtx: stopCtx, stop: stop, secretWarnings: make(map[string]time.Time)}
-}
-func invalid(field, message string) error {
-	return &nodes.ValidationError{Fields: map[string]string{field: message}}
+	return &Service{db: db, box: box, opts: opts, sender: newSender(opts), done: make(chan struct{}), stopCtx: stopCtx, stop: stop, secretWarnings: make(map[string]time.Time), logger: opts.Logger}
 }
 
 var chatIDPattern = regexp.MustCompile(`^(?:-?[0-9]{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$`)
@@ -108,69 +108,69 @@ func (s *Service) validate(c Channel, secret string) error {
 	return ValidateChannel(c, secret, s.opts.AllowInsecureWebhooks)
 }
 
-// ValidateChannel checks channel syntax only; it performs no DNS or I/O.
+// ValidateChannel 仅检查通道语法；不执行 DNS 或 I/O。
 func ValidateChannel(c Channel, secret string, allowInsecureWebhooks bool) error {
 	if strings.TrimSpace(c.Name) == "" || len(c.Name) > 100 {
-		return invalid("name", "must contain 1..100 UTF-8 bytes")
+		return validation.Invalid("name", "must contain 1..100 UTF-8 bytes")
 	}
 	cfg := c.Config
 	switch c.Kind {
 	case "webhook":
 		if cfg.ChatID != "" || cfg.Host != "" || cfg.Port != 0 || cfg.Username != "" || cfg.From != "" || len(cfg.To) > 0 {
-			return invalid("config", "unexpected fields for webhook")
+			return validation.Invalid("config", "unexpected fields for webhook")
 		}
 		if cfg.URL == "" && cfg.URLSet {
 			break
 		}
 		u, err := url.Parse(cfg.URL)
 		if err != nil || !validHost(u.Hostname()) || u.User != nil || u.Fragment != "" || u.Opaque != "" || strings.ContainsAny(cfg.URL, "\r\n") {
-			return invalid("config", "requires an absolute webhook URL without credentials or fragment")
+			return validation.Invalid("config", "requires an absolute webhook URL without credentials or fragment")
 		}
 		if u.Port() != "" {
 			p, e := strconv.Atoi(u.Port())
 			if e != nil || p < 1 || p > 65535 {
-				return invalid("config", "invalid webhook port")
+				return validation.Invalid("config", "invalid webhook port")
 			}
 		}
 		if strings.HasSuffix(u.Host, ":") {
-			return invalid("config", "invalid webhook port")
+			return validation.Invalid("config", "invalid webhook port")
 		}
 		if u.Scheme != "https" {
 			ip := net.ParseIP(u.Hostname())
 			if u.Scheme != "http" || !allowInsecureWebhooks || ip == nil || !ip.IsLoopback() {
-				return invalid("config", "HTTPS required; explicit insecure setting permits literal loopback HTTP only")
+				return validation.Invalid("config", "HTTPS required; explicit insecure setting permits literal loopback HTTP only")
 			}
 		}
 	case "telegram":
 		if cfg.URL != "" || cfg.Host != "" || cfg.Port != 0 || cfg.Username != "" || cfg.From != "" || len(cfg.To) > 0 || !chatIDPattern.MatchString(cfg.ChatID) {
-			return invalid("config", "requires a valid chat_id only")
+			return validation.Invalid("config", "requires a valid chat_id only")
 		}
 		if !tokenPattern.MatchString(secret) {
-			return invalid("secret", "requires a bot token")
+			return validation.Invalid("secret", "requires a bot token")
 		}
 	case "email":
 		if cfg.URL != "" || cfg.ChatID != "" || !validHost(cfg.Host) || cfg.Port < 1 || cfg.Port > 65535 || !validAddress(cfg.From) || len(cfg.To) < 1 || len(cfg.To) > 20 || len(cfg.Username) > 100 || strings.ContainsAny(cfg.Username, "\r\n\x00") {
-			return invalid("config", "requires SMTP host, port 1..65535, from and 1..20 recipients")
+			return validation.Invalid("config", "requires SMTP host, port 1..65535, from and 1..20 recipients")
 		}
 		for _, to := range cfg.To {
 			if !validAddress(to) {
-				return invalid("config", "invalid recipient address")
+				return validation.Invalid("config", "invalid recipient address")
 			}
 		}
 		if strings.ContainsRune(secret, 0) {
-			return invalid("secret", "cannot contain NUL")
+			return validation.Invalid("secret", "cannot contain NUL")
 		}
 		if len(cfg.Username)+len(secret) > 360 {
-			return invalid("secret", "SMTP credentials exceed command size limit")
+			return validation.Invalid("secret", "SMTP credentials exceed command size limit")
 		}
 		if cfg.Username != "" && secret == "" {
-			return invalid("secret", "password required with username")
+			return validation.Invalid("secret", "password required with username")
 		}
 	default:
-		return invalid("kind", "must be webhook, telegram or email")
+		return validation.Invalid("kind", "must be webhook, telegram or email")
 	}
 	if len(secret) > 4096 {
-		return invalid("secret", "must be at most 4096 bytes")
+		return validation.Invalid("secret", "must be at most 4096 bytes")
 	}
 	return nil
 }
@@ -256,9 +256,9 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 			return c, ErrCapacity
 		}
 		if p.Name == nil || p.Kind == nil || p.Enabled == nil || len(p.Config) == 0 {
-			return c, invalid("channel", "name, kind, enabled and config required")
+			return c, validation.Invalid("channel", "name, kind, enabled and config required")
 		}
-		c.ID, e = identity.UUID(rand.Reader)
+		c.ID, e = uuid.UUID(rand.Reader)
 		if e != nil {
 			return c, e
 		}
@@ -277,18 +277,18 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 	}
 	if p.Kind != nil {
 		if !create && *p.Kind != c.Kind {
-			return c, invalid("kind", "cannot change kind")
+			return c, validation.Invalid("kind", "cannot change kind")
 		}
 		c.Kind = *p.Kind
 	}
 	urlReplaced := false
 	if len(p.Config) > 0 {
 		if bytes.Equal(bytes.TrimSpace(p.Config), []byte("null")) {
-			return c, invalid("config", "cannot be null")
+			return c, validation.Invalid("config", "cannot be null")
 		}
 		var fields map[string]json.RawMessage
 		if json.Unmarshal(p.Config, &fields) != nil || fields == nil {
-			return c, invalid("config", "must be an object")
+			return c, validation.Invalid("config", "must be an object")
 		}
 		allowed := map[string]bool{}
 		switch c.Kind {
@@ -303,7 +303,7 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 		}
 		for key, value := range fields {
 			if !allowed[key] || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-				return c, invalid("config", "unexpected or null configuration field")
+				return c, validation.Invalid("config", "unexpected or null configuration field")
 			}
 		}
 		d := json.NewDecoder(bytes.NewReader(p.Config))
@@ -311,12 +311,12 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 		oldConfig := c.Config
 		c.Config = Config{}
 		if d.Decode(&c.Config) != nil {
-			return c, invalid("config", "invalid configuration fields")
+			return c, validation.Invalid("config", "invalid configuration fields")
 		}
 		if c.Kind == "webhook" {
 			_, urlReplaced = fields["url"]
 			if urlReplaced && c.Config.URL == "" {
-				return c, invalid("config", "webhook URL cannot be empty")
+				return c, validation.Invalid("config", "webhook URL cannot be empty")
 			}
 			if !urlReplaced {
 				c.Config.URLRedacted = oldConfig.URLRedacted
@@ -324,12 +324,12 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 			}
 		}
 	}
-	// An explicit replacement/clear never opens the old ciphertext. URL and
-	// signing key are independent so either credential can be repaired alone.
+	// 显式替换/清除绝不打开旧密文。URL 与签名密钥相互独立，
+	// 因此可单独修复任一凭据。
 	secret := ""
 	if len(p.Secret) > 0 {
 		if bytes.Equal(bytes.TrimSpace(p.Secret), []byte("null")) || json.Unmarshal(p.Secret, &secret) != nil {
-			return c, invalid("secret", "must be a string; omit to retain or empty to clear")
+			return c, validation.Invalid("secret", "must be a string; omit to retain or empty to clear")
 		}
 	} else if len(cipher) > 0 && c.Kind != "webhook" {
 		plain, err := s.openSecret(c.ID, cipher)
@@ -356,7 +356,7 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 		if e != nil {
 			return c, e
 		}
-		u, _ := url.Parse(c.Config.URL) // validated above
+		u, _ := url.Parse(c.Config.URL) // 已在上方校验
 		c.Config.URLRedacted = u.Scheme + "://" + u.Host + "/…"
 		c.Config.URLSet = true
 	}
@@ -438,7 +438,7 @@ func (s *Service) load(ctx context.Context, id string) (Channel, string, error) 
 	return c, secret, nil
 }
 
-// Reject explicit null for scalar patch fields while preserving omission.
+// 对标量 patch 字段，拒绝显式 null，同时保留省略语义。
 func (p *Patch) UnmarshalJSON(data []byte) error {
 	type patch Patch
 	var fields map[string]json.RawMessage
@@ -449,16 +449,16 @@ func (p *Patch) UnmarshalJSON(data []byte) error {
 		switch key {
 		case "name", "kind", "enabled", "config", "secret":
 		default:
-			return invalid("channel", "unknown field")
+			return validation.Invalid("channel", "unknown field")
 		}
 		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return invalid(key, "cannot be null")
+			return validation.Invalid(key, "cannot be null")
 		}
 	}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	if e := d.Decode((*patch)(p)); e != nil && e != io.EOF {
-		return invalid("channel", "invalid field type")
+		return validation.Invalid("channel", "invalid field type")
 	}
 	return nil
 }

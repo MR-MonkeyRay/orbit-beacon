@@ -5,13 +5,14 @@ import test from 'node:test';
 const css = readFileSync(new URL('../src/shared/tokens.css', import.meta.url), 'utf8');
 
 function declarations(selector) {
-  const start = css.indexOf(`${selector}{`);
+  const pattern = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replaceAll('\\{', '\\s*\\{\\s*');
+  const start = css.search(new RegExp(`${pattern}\\s*\\{`));
   assert.notEqual(start, -1, `missing ${selector}`);
   return css.slice(start, css.indexOf('}', start));
 }
 
 function token(block, name) {
-  const value = block.match(new RegExp(`--${name}:(#[0-9a-f]{3,6})`, 'i'))?.[1];
+  const value = block.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{3,6})`, 'i'))?.[1];
   assert.ok(value, `missing --${name}`);
   return value;
 }
@@ -65,8 +66,8 @@ test('chart series have graphical contrast against both theme surfaces', () => {
   }
 });
 
-// Safari 16.4 lacks light-dark(), so the dark palette is written twice: once for
-// the system preference and once for the explicit toggle. Keep them identical.
+// Safari 16.4 不支持 light-dark()，暗色色板写了两遍：一遍用于
+// 系统偏好，一遍用于显式切换。两者须保持一致。
 test('system and explicit dark palettes declare the same tokens', () => {
   const system = declarations('@media (prefers-color-scheme:dark){:root:not([data-theme="light"])');
   const normalize = (block) => block.slice(block.lastIndexOf('{') + 1).split(';').map((item) => item.trim()).filter(Boolean).sort();

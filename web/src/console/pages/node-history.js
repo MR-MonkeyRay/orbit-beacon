@@ -1,14 +1,16 @@
-import {t} from '../../shared/i18n.js';
+import {t, tParts} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h} from '../../shared/dom.js';
 import {api} from '../api.js';
 import {chart} from '../ui/chart.js';
-import {button, link, note, panel} from '../ui/components.js';
+import {link, note, panel} from '../ui/components.js';
+import {historyError} from '../ui/history-error.js';
+import {panelLifecycle} from '../ui/polling-panel.js';
 
 const STORAGE_KEY = 'orbitbeacon.history.range';
 const RANGES = ['1h', '6h', '24h', '7d', '30d'];
 const CHARTS = [
-  {title: 'CPU', unit: 'percent', metrics: [['cpu_percent', 'CPU']]},
+  {title: t('nodes.cpu'), unit: 'percent', metrics: [['cpu_percent', t('nodes.cpu')]]},
   {title: t('nodes.memory'), unit: 'percent', metrics: [['memory_used_percent', t('nodes.memory')]]},
   {title: t('nodes.load1'), unit: 'load', metrics: [['load1', t('nodes.load')]]},
   {title: t('nodes.disk'), unit: 'percent', metrics: [['disk_used_percent', t('nodes.disk')]]},
@@ -23,13 +25,12 @@ function savedRange() {
   return '24h';
 }
 
-// One panel per page lifetime, reused when switching back to the Details tab.
-// The router's abort signal also disposes the timer on refresh/navigation.
+// 每个页面生命周期一个面板，切回详情标签页时复用。
+// 路由器的中止信号在刷新/导航时也会销毁计时器。
 export function historyPanel(id, signal) {
   let range = savedRange();
   let controller;
-  let gone = false;
-  let timer;
+  let lifecycle;
   const status = h('p', {class: 'muted', role: 'status'});
   const charts = h('div', {class: 'history-grid'});
   const controls = RANGES.map((value) => h('button', {type: 'button', id: `history-range-${value}`, dataset: {range: value},
@@ -44,36 +45,16 @@ export function historyPanel(id, signal) {
   const root = panel(t('nodes.history'), {action: selector},
     h('p', {class: 'lede'}, t('nodes.historyIntro')),
     status, charts, note(t('nodes.historyHint')));
-  const stop = () => { controller?.abort(); clearInterval(timer); timer = undefined; };
-  const dispose = () => {
-    gone = true;
-    stop();
-    observer?.disconnect();
-    signal?.removeEventListener('abort', dispose);
-  };
-  // Details reuses this panel across tabs. Detaching pauses its requests/timer;
-  // reattaching resumes them, while navigation and 404 dispose it permanently.
-  let attached = false;
-  const observer = typeof MutationObserver === 'function' ? new MutationObserver(() => {
-    if (gone || signal?.aborted) return;
-    if (root.isConnected) {
-      attached = true;
-      if (timer === undefined) { startTimer(); load(); }
-    } else if (attached) stop();
-  }) : null;
-  observer?.observe(document.body, {childList: true, subtree: true});
-  signal?.addEventListener('abort', dispose, {once: true});
-
   async function load() {
-    if (gone || signal?.aborted) return;
+    if (lifecycle?.disposed || signal?.aborted) return;
     controller?.abort();
     const request = new AbortController();
     controller = request;
     const requestedRange = range;
     status.textContent = t('nodes.historyLoading');
     charts.setAttribute('aria-busy', 'true');
-    // Clear charts when the selected range changes so stale data cannot be
-    // mistaken for the new range. Refreshes keep focused charts while loading.
+    // 所选范围变化时清空图表，避免旧数据被误认为新范围的数据。
+    // 刷新时保留已聚焦的图表直到加载完成。
     if (charts.dataset.range !== range) charts.replaceChildren();
     charts.dataset.range = range;
     const metrics = CHARTS.flatMap((item) => item.metrics.map(([metric]) => metric));
@@ -86,28 +67,28 @@ export function historyPanel(id, signal) {
       } catch (error) {
         results.set(metric, {error});
         if (error.status === 404 && !request.signal.aborted && !signal?.aborted && controller === request) {
-          dispose();
+          lifecycle.dispose();
           selector.hidden = true;
           charts.replaceChildren();
           charts.setAttribute('aria-busy', 'false');
-          status.replaceChildren(t('nodes.nodeMissingPrefix'), link('/nodes', t('nodes.goNodes')));
+          status.replaceChildren(...tParts('nodes.nodeMissingPrefix', {link: link('/nodes', t('nodes.goNodes'))}));
         }
       }
     }));
     if (request.signal.aborted || signal?.aborted || controller !== request) return;
-    // Read focus at completion: the reader may have focused a chart while this request ran.
+    // 请求完成后再读取焦点，因为用户可能已在等待期间聚焦某个图表。
     const focusedID = charts.contains(document.activeElement) ? document.activeElement.id : null;
     const selectedTime = Number(document.activeElement?.dataset?.selectedTime) || undefined;
     charts.replaceChildren(...CHARTS.map((item) => {
       const error = item.metrics.map(([metric]) => results.get(metric).error).find(Boolean);
       const content = error
-        ? h('div', {class: 'history-error'}, h('p', {class: 'muted'}, t('nodes.historyLoadError', {error: errorText(error)})),
-          button(t('nodes.retry'), {small: true, id: `history-retry-${item.metrics[0][0]}`, onClick: load}))
+        ? historyError(t('nodes.historyLoadError', {error: errorText(error)}),
+          {retryID: `history-retry-${item.metrics[0][0]}`, onRetry: load})
         : chart({title: item.title, unit: item.unit, id: `history-chart-${item.metrics[0][0]}`,
           selectedTime: focusedID === `history-chart-${item.metrics[0][0]}` ? selectedTime : undefined,
           series: item.metrics.map(([metric, label]) => {
             const data = results.get(metric).data;
-            // Render only well-formed points; anything else is treated as a gap.
+            // 只渲染格式正确的点；其余一律视为空隙。
             const points = Array.isArray(data.points) ? data.points.filter((point) => point && Number.isFinite(Date.parse(point.t))
               && Number.isFinite(point.avg) && Number.isFinite(point.max)) : [];
             return {label, points, stepSeconds: Number.isFinite(data.step_seconds) && data.step_seconds > 0 ? data.step_seconds : 60};
@@ -123,13 +104,6 @@ export function historyPanel(id, signal) {
     }
   }
 
-  function startTimer() {
-    timer = setInterval(() => {
-      if (!root.isConnected) { stop(); return; }
-      if (!document.hidden && !gone) load();
-    }, 60000);
-  }
-  if (!signal?.aborted) { startTimer(); load(); }
-  else dispose();
+  lifecycle = panelLifecycle({root, signal, load, cancel: () => controller?.abort(), loadWhenHidden: true});
   return root;
 }

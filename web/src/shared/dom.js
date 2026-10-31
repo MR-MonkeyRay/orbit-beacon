@@ -1,5 +1,5 @@
-// Minimal element factory shared by the console and the public page.
-export const SVG = 'http://www.w3.org/2000/svg';
+// 控制台与公开页共用的极简元素工厂。
+const SVG = 'http://www.w3.org/2000/svg';
 let motionQuery;
 export const reducedMotion = {
   get matches() {
@@ -8,9 +8,9 @@ export const reducedMotion = {
   }
 };
 
-// h('button', {type: 'button', onclick}, 'Label'): known DOM properties are
-// assigned directly, everything else (aria-*, data via `dataset`) as attributes.
-// Children are appended first so properties such as select.value apply to them.
+// h('button', {type: 'button', onclick}, 'Label')：已知 DOM property 直接赋值，
+// aria-* 等其余项设为 attribute，dataset 写入 data-* 属性。
+// 先追加子元素，使 select.value 等属性能作用于它们。
 export function h(tag, props, ...children) {
   const element = document.createElement(tag);
   append(element, children);
@@ -27,7 +27,7 @@ export function h(tag, props, ...children) {
   return element;
 }
 
-export function append(parent, children) {
+function append(parent, children) {
   for (const child of children.flat(Infinity)) {
     if (child === null || child === undefined || child === false) continue;
     parent.append(child instanceof Node ? child : String(child));
@@ -35,7 +35,7 @@ export function append(parent, children) {
   return parent;
 }
 
-// References a symbol from the sprite the build inlines into each HTML shell.
+// 引用构建时内联到每个 HTML 外壳中的 sprite 里的 symbol。
 export function icon(name, extra = '') {
   const svg = document.createElementNS(SVG, 'svg');
   svg.setAttribute('class', `icon ${extra}`.trim());

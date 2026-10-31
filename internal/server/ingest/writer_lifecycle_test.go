@@ -2,7 +2,6 @@ package ingest
 
 import (
 	"context"
-
 	"errors"
 	"sync"
 	"testing"
@@ -13,14 +12,18 @@ func TestWriterRejectsCanceledContextBeforeAdmission(t *testing.T) {
 	service := NewService(nil, Options{})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := service.beginWrite(ctx); !errors.Is(err, context.Canceled) {
+	if _, err := service.beginUse(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled writer admission returned %v", err)
 	}
 }
 
 func TestWriterQueueIsBoundedAndShutdownWaitsForCommittedWork(t *testing.T) {
 	service := NewService(nil, Options{})
-	firstRelease, err := service.beginWrite(context.Background())
+	finish, err := service.beginUse(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRelease, err := service.queueWrite(context.Background(), finish)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +33,12 @@ func TestWriterQueueIsBoundedAndShutdownWaitsForCommittedWork(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			release, err := service.beginWrite(context.Background())
+			finish, err := service.beginUse(context.Background())
+			if err != nil {
+				results <- err
+				return
+			}
+			release, err := service.queueWrite(context.Background(), finish)
 			results <- err
 			if err == nil {
 				release()
@@ -44,7 +52,11 @@ func TestWriterQueueIsBoundedAndShutdownWaitsForCommittedWork(t *testing.T) {
 	if len(service.writerQueue) != writerQueueCapacity {
 		t.Fatalf("writer queue was not filled to its bound: got %d want %d", len(service.writerQueue), writerQueueCapacity)
 	}
-	if _, err := service.beginWrite(context.Background()); !errors.Is(err, ErrWriterBusy) {
+	finish, err = service.beginUse(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.queueWrite(context.Background(), finish); !errors.Is(err, ErrWriterBusy) {
 		t.Fatalf("overflow was not rejected as writer busy: %v", err)
 	}
 	firstRelease()
@@ -58,7 +70,7 @@ func TestWriterQueueIsBoundedAndShutdownWaitsForCommittedWork(t *testing.T) {
 	if err := service.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.beginWrite(context.Background()); !errors.Is(err, ErrServiceClosed) {
+	if _, err := service.beginUse(context.Background()); !errors.Is(err, ErrServiceClosed) {
 		t.Fatalf("closed writer accepted new work: %v", err)
 	}
 }

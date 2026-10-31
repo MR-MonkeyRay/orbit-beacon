@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -61,7 +61,7 @@ func TestPlansDefaultsAndInvalidCronAtomic(t *testing.T) {
 	}
 	for _, raw := range []string{"@daily", "CRON_TZ=UTC 0 3 * * *", "0 0 3 * * *", "0 3 ? * *", "0 3 * * * sh"} {
 		_, err = s.SavePlan(ctx, p.ID, PlanPatch{Cron: &raw})
-		var fields *nodes.ValidationError
+		var fields *validation.Error
 		if !errors.As(err, &fields) || fields.Fields["cron"] == "" {
 			t.Fatalf("invalid cron %q: %v", raw, err)
 		}
@@ -86,7 +86,7 @@ func TestPlansDefaultsAndInvalidCronAtomic(t *testing.T) {
 		t.Fatalf("cron not reset %+v %v", p, err)
 	}
 	_, err = s.SavePlan(ctx, p.ID, PlanPatch{Kind: new("object")})
-	var fields *nodes.ValidationError
+	var fields *validation.Error
 	if !errors.As(err, &fields) {
 		t.Fatalf("kind mutable %v", err)
 	}

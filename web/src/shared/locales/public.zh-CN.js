@@ -1,23 +1,19 @@
 export default {
   'public.title': '节点状态 – OrbitBeacon',
   'public.description': '已公开节点的可用性与资源使用情况',
-  'public.signIn': '管理登录',
+  'public.signIn': '登录',
   'public.heading': '节点状态',
   'public.loading': '正在加载节点…',
   'public.notUpdated': '尚未更新',
-  'public.refresh': '刷新',
-  'public.retry': '重试',
   'public.filterLabel': '按状态筛选本页节点',
   'public.nodesLabel': '公开节点',
   'public.paginationLabel': '节点分页',
   'public.previous': '上一页',
   'public.next': '下一页',
   'public.page': '第 {page} 页',
-  'public.presenceNote': '在线表示最近 3 分钟内收到有效上报；资源数据可能暂不可用，显示为 —。',
+  'public.presenceNote': '在线表示最近 3 分钟内收到有效上报；— 表示资源数据暂不可用。',
   'public.poweredBy': '由 OrbitBeacon 提供',
-  'public.status.online': '在线',
-  'public.status.offline': '离线',
-  'public.status.unknown': '状态未知',
+  'public.status.unknown': '未知',
   'public.filter.all': '全部',
   'public.filter.empty.online': '本页没有在线的节点',
   'public.filter.empty.offline': '本页没有离线的节点',
@@ -54,5 +50,5 @@ export default {
   'public.metric.memory': '内存',
   'public.metric.load': '1分钟负载',
   'public.metric.uptime': '运行时长',
-  'public.lastReport': '最后数据 · '
+  'public.lastReport': '最后上报 {time}'
 };

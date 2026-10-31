@@ -98,9 +98,9 @@ func (c *Collector) collectDisks(ctx context.Context, m *v1.Metrics) {
 					reading.at = time.Now()
 				}
 			}()
-			// Only a newly started read may use this snapshot's remaining budget.
-			// A previous hung syscall is never awaited again or replaced by more
-			// workers. Closing done publishes all readings without sharing cache.
+			// 只有本次新启动的读取才等待至当前快照的截止时间。
+			// 不再等待之前阻塞的系统调用，也不额外启动任务来替代它。
+			// 关闭 done 后才读取全部结果，后台任务不访问共享缓存。
 			select {
 			case <-job.done:
 				c.finishDisks(job)
@@ -121,8 +121,8 @@ func diskUsagePath(path string) string {
 	if root == "" {
 		return path
 	}
-	// Clean as an absolute path first so parent components cannot escape the
-	// host mount after the volume and leading separator are removed.
+	// 先清理绝对路径中的 .. 等路径分量，再去掉卷名与前导分隔符，
+	// 防止路径逃出宿主机挂载目录。
 	clean := filepath.Clean(path)
 	clean = strings.TrimPrefix(clean[len(filepath.VolumeName(clean)):], string(filepath.Separator))
 	return filepath.Join(root, clean)

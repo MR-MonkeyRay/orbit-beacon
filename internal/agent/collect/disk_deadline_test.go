@@ -26,7 +26,7 @@ func TestBlockedDiskCannotBlockCancellationOrSpawnMoreReaders(t *testing.T) {
 		if calls.Add(1) == 1 {
 			close(entered)
 		}
-		<-release // Like statfs, this deliberately ignores context cancellation.
+		<-release // 与 statfs 一样，这里故意忽略 context 取消。
 		return &disk.UsageStat{Total: 100, Used: 20}, nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())

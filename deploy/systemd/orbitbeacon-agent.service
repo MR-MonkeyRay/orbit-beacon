@@ -1,11 +1,11 @@
 [Unit]
-Description=OrbitBeacon monitoring agent
+Description=OrbitBeacon Agent
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-# These accounts must match expected_uid/expected_gid in the install policy.
+# 该账户须与安装策略中的 expected_uid/expected_gid 一致。
 User=orbitbeacon-agent
 Group=orbitbeacon-agent
 StateDirectory=orbitbeacon-agent
@@ -14,13 +14,13 @@ ExecStart=/usr/local/bin/orbitbeacon-agent run --install-policy /etc/orbitbeacon
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10s
-# A clone must be enrolled separately instead of reclaiming the same identity.
+# 克隆主机须单独注册，不得复用同一身份。
 RestartPreventExitStatus=3
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
-# Keep home mounts visible so their disk statistics describe the actual host.
+# 保留 home 挂载可见，使磁盘统计反映真实主机。
 ProtectHome=read-only
 ProtectKernelTunables=true
 ProtectKernelModules=true
@@ -36,7 +36,7 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
-# Interface lookups need netlink; host CPU statistics also need all of /proc.
+# 网卡查询需要 netlink；主机 CPU 统计还需要完整的 /proc。
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 UMask=0077
 MemoryMax=128M

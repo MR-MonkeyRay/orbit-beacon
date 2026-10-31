@@ -31,11 +31,11 @@ var (
 const writerQueueCapacity = 8
 
 type Options struct {
-	// Samples receives owned accepted snapshots via non-blocking sends. A full
-	// buffer drops history without delaying report acceptance.
+	// Samples 通过非阻塞发送接收独立的已接受样本副本；缓冲区满时丢弃历史样本，
+	// 不延迟上报处理。
 	Samples chan<- history.Sample
 	Now     func() time.Time
-	// PersistInterval bounds durable last_seen lag; nonpositive means 30 seconds.
+	// PersistInterval 限定持久化 last_seen 的滞后；非正数表示 30 秒。
 	PersistInterval time.Duration
 }
 
@@ -60,8 +60,7 @@ type nodeState struct {
 	refilled          time.Time
 }
 
-// These helpers require state.mu to be held. Rate history is independent
-// of process identity and survives invalidation.
+// 这些辅助函数要求持有 state.mu。限流历史独立于进程身份，失效后仍然保留。
 func (state *nodeState) matchesIdentity(credential []byte, credentialEpoch int64, generation uint64, session string) bool {
 	return len(state.latest) != 0 && subtle.ConstantTimeCompare(state.credential[:], credential) == 1 && state.credentialEpoch == credentialEpoch && state.generation == generation && state.session == session
 }
@@ -115,15 +114,7 @@ func NewService(db *sql.DB, opts Options) *Service {
 	return &Service{samples: opts.Samples, db: db, now: opts.Now, persistInterval: opts.PersistInterval, states: make(map[string]*nodeState), writerQueue: make(chan struct{}, writerQueueCapacity), writer: make(chan struct{}, 1), done: make(chan struct{})}
 }
 
-func (s *Service) beginWrite(ctx context.Context) (func(), error) {
-	finish, err := s.beginUse(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return s.queueWrite(ctx, finish)
-}
-
-// beginUse covers in-memory acceptance too, so Shutdown drains both paths.
+// beginUse 也覆盖内存中的接受，因此 Shutdown 会排空两条路径。
 func (s *Service) beginUse(ctx context.Context) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -220,7 +211,7 @@ func (s *Service) AdmitToken(ctx context.Context, token string) (*Admission, err
 		}
 		return nil, err
 	}
-	// Disabling stops ingestion before any request body is read or rate charged.
+	// 禁用节点在读取请求体或扣减限流额度之前就会被拒绝。
 	if status == "disabled" {
 		return nil, nodes.ErrDisabled
 	}
@@ -253,15 +244,7 @@ func (s *Service) AcceptAdmitted(ctx context.Context, admission *Admission, repo
 	}
 	admission.used = true
 	admission.usedMu.Unlock()
-	return s.accept(ctx, admission.nodeID, admission.credential[:], admission.credentialEpoch, report, false)
-}
-
-func (s *Service) AcceptToken(ctx context.Context, token string, report v1.Report) (v1.ReportResponse, error) {
-	admission, err := s.AdmitToken(ctx, token)
-	if err != nil {
-		return v1.ReportResponse{}, err
-	}
-	return s.AcceptAdmitted(ctx, admission, report)
+	return s.accept(ctx, admission.nodeID, admission.credential[:], admission.credentialEpoch, report)
 }
 
 func (s *Service) acquireState(nodeID string) *nodeState {
@@ -297,7 +280,7 @@ func (s *Service) releaseState(state *nodeState) {
 	s.mu.Unlock()
 }
 
-// charge must be called with rateMu held.
+// charge 必须在持有 rateMu 时调用。
 func (s *Service) charge(state *nodeState) error {
 	now := s.now().UTC()
 	if state.refilled.IsZero() {
@@ -316,26 +299,22 @@ func (s *Service) charge(state *nodeState) error {
 	return nil
 }
 
-// Accept fences process identity durably; sequence deduplication and snapshots
-// intentionally last only for this server process.
-func (s *Service) Accept(ctx context.Context, nodeID string, report v1.Report) (v1.ReportResponse, error) {
-	return s.accept(ctx, nodeID, nil, 0, report, true)
+type normalizedReport struct {
+	v1.Report
+	body, runtimeJSON []byte
+	system            any
+	systemHash        [sha256.Size]byte
 }
 
-func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, credentialEpoch int64, report v1.Report, charge bool) (v1.ReportResponse, error) {
-	finish, err := s.beginUse(ctx)
-	if err != nil {
-		return v1.ReportResponse{}, err
-	}
-	defer finish()
+func normalizeReport(report v1.Report) (normalizedReport, error) {
 	if report.ProtocolVersion != 1 {
-		return v1.ReportResponse{}, ErrProtocolUnsupported
+		return normalizedReport{}, ErrProtocolUnsupported
 	}
 	if err := report.Validate(); err != nil {
-		return v1.ReportResponse{}, fmt.Errorf("%w: %v", ErrInvalidReport, err)
+		return normalizedReport{}, fmt.Errorf("%w: %v", ErrInvalidReport, err)
 	}
 	if err := validateTraffic(report.Traffic); err != nil {
-		return v1.ReportResponse{}, fmt.Errorf("%w: %v", ErrInvalidReport, err)
+		return normalizedReport{}, fmt.Errorf("%w: %v", ErrInvalidReport, err)
 	}
 	runtime := report.Runtime
 	if runtime.Interfaces == nil {
@@ -350,26 +329,54 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	report.Runtime = runtime
 	body, err := json.Marshal(report)
 	if err != nil {
-		return v1.ReportResponse{}, fmt.Errorf("%w: %v", ErrInvalidReport, err)
+		return normalizedReport{}, fmt.Errorf("%w: %v", ErrInvalidReport, err)
 	}
 	runtimeJSON, err := json.Marshal(runtime)
 	if err != nil {
-		return v1.ReportResponse{}, err
+		return normalizedReport{}, err
 	}
 	var system any
 	var systemHash [sha256.Size]byte
 	if report.System != nil {
 		encoded, err := json.Marshal(report.System)
 		if err != nil {
-			return v1.ReportResponse{}, err
+			return normalizedReport{}, err
 		}
 		system = string(encoded)
 		systemHash = sha256.Sum256(encoded)
 	}
+	return normalizedReport{Report: report, body: body, runtimeJSON: runtimeJSON, system: system, systemHash: systemHash}, nil
+}
+
+type acceptanceSnapshot struct {
+	credential           []byte
+	epoch                int64
+	generationText       string
+	generation           uint64
+	session, runtime     string
+	cachedCredential     [sha256.Size]byte
+	cachedEpoch          int64
+	cachedGeneration     uint64
+	cachedSession        string
+	cachedSeq            uint64
+	hasLatest, duplicate bool
+}
+
+func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, credentialEpoch int64, report v1.Report) (v1.ReportResponse, error) {
+	finish, err := s.beginUse(ctx)
+	if err != nil {
+		return v1.ReportResponse{}, err
+	}
+	defer finish()
+	normalized, err := normalizeReport(report)
+	if err != nil {
+		return v1.ReportResponse{}, err
+	}
+	report = normalized.Report
 	state := s.acquireState(nodeID)
 	defer s.releaseState(state)
-	// Serialize reports without making a cancelled request wait for a slow
-	// same-node writer. mu protects only the short snapshot copies below.
+	// 同一节点的上报串行处理，但已取消的请求无需等待该节点的慢写入操作。
+	// mu 只用于保护下面短暂的快照复制。
 	select {
 	case state.acceptGate <- struct{}{}:
 		defer func() { <-state.acceptGate }()
@@ -379,9 +386,9 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	if err := ctx.Err(); err != nil {
 		return v1.ReportResponse{}, err
 	}
-	// The read-only authentication fence is linearized at the SELECT below.
-	// A credential/status change committed before it is always observed; a
-	// change committed after it takes effect after this concurrent request.
+	// 只读认证围栏在下面的 SELECT 处线性化。
+	// 在它之前提交的凭据/状态变更总能被观察到；
+	// 在它之后提交的变更在这个并发请求之后才生效。
 	var generationText, session, status, storedSystem, storedRuntime string
 	var lastSeenText sql.NullString
 	var storedCredential []byte
@@ -418,60 +425,65 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 			return v1.ReportResponse{}, err
 		}
 	}
-	// Dedupe belongs to the durable process fence as well as the credential:
-	// revoke/re-enroll may reuse a credential while resetting that fence (ABA).
+	// 去重既属于凭据也属于持久化进程围栏：
+	// 撤销/重新注册可能复用凭据同时重置该围栏（ABA）。
 	sameState := hasLatest && subtle.ConstantTimeCompare(cachedCredential[:], storedCredential) == 1 && cachedEpoch == storedEpoch &&
 		cachedGeneration == generation && cachedSession == session &&
 		cachedGeneration == report.RunGeneration && cachedSession == report.SessionID
 	storedSystemHash := sha256.Sum256([]byte(storedSystem))
-	sameSystem := report.System == nil || subtle.ConstantTimeCompare(storedSystemHash[:], systemHash[:]) == 1
+	sameSystem := report.System == nil || subtle.ConstantTimeCompare(storedSystemHash[:], normalized.systemHash[:]) == 1
 	intervalDue := persistedLastSeen.IsZero() || now.Sub(persistedLastSeen) >= s.persistInterval
 	duplicate := sameState && report.Seq <= cachedSeq
 	durable := !sameState || generation != report.RunGeneration || session != report.SessionID ||
-		(!duplicate && (storedRuntime != string(runtimeJSON) || !sameSystem)) || intervalDue
+		(!duplicate && (storedRuntime != string(normalized.runtimeJSON) || !sameSystem)) || intervalDue
 	response := v1.ReportResponse{NodeID: nodeID, AcceptedSeq: report.Seq, ServerTime: now}
+	fence := acceptanceSnapshot{credential: storedCredential, epoch: storedEpoch, generationText: generationText, generation: generation, session: session, runtime: storedRuntime,
+		cachedCredential: cachedCredential, cachedEpoch: cachedEpoch, cachedGeneration: cachedGeneration, cachedSession: cachedSession, cachedSeq: cachedSeq, hasLatest: hasLatest, duplicate: duplicate}
 	if !durable {
-		if charge {
-			s.rateMu.Lock()
-			err := s.charge(state)
-			s.rateMu.Unlock()
-			if err != nil {
-				return v1.ReportResponse{}, err
-			}
-		}
-		probes := state.copyProbes(storedCredential, storedEpoch, generation, session)
-		currentRuntime := runtime
-		if duplicate {
-			currentRuntime, err = decodeRuntime(storedRuntime)
-			if err != nil {
-				return v1.ReportResponse{}, err
-			}
-		}
-		probes.retainTargets(currentRuntime.ProbeTargets)
-		if err := probes.buffer(ctx, s.db, nodeID, report.ProbeResults, currentRuntime.ProbeTargets); err != nil {
+		return s.acceptInMemory(ctx, nodeID, state, normalized, fence, response)
+	}
+	return s.persistReport(ctx, nodeID, credential, state, normalized, fence, response)
+}
+
+func (s *Service) acceptInMemory(ctx context.Context, nodeID string, state *nodeState, report normalizedReport, fence acceptanceSnapshot, response v1.ReportResponse) (v1.ReportResponse, error) {
+	now := response.ServerTime
+	var err error
+	probes := state.copyProbes(fence.credential, fence.epoch, fence.generation, fence.session)
+	currentRuntime := report.Runtime
+	if fence.duplicate {
+		currentRuntime, err = decodeRuntime(fence.runtime)
+		if err != nil {
 			return v1.ReportResponse{}, err
 		}
-		state.commitProbes(probes, generation, session)
-		state.bufferTraffic(storedCredential, storedEpoch, report, generation, session, now)
-		response.TrafficAcks = state.trafficAcks(report.Traffic, now)
-		if duplicate {
-			response.AcceptedSeq = cachedSeq
-			return response, nil
-		}
-		state.mu.Lock()
-		state.seq, state.latest, state.receivedAt = report.Seq, body, now
-		state.public = snapshotPublic(report.Metrics, now)
-		state.mu.Unlock()
-		s.recordSample(nodeID, now, report.Metrics)
+	}
+	probes.retainTargets(currentRuntime.ProbeTargets)
+	if err := probes.buffer(ctx, s.db, nodeID, report.ProbeResults, currentRuntime.ProbeTargets); err != nil {
+		return v1.ReportResponse{}, err
+	}
+	state.commitProbes(probes, fence.generation, fence.session)
+	state.bufferTraffic(fence.credential, fence.epoch, report.Report, fence.generation, fence.session, now)
+	response.TrafficAcks = state.trafficAcks(report.Traffic, now)
+	if fence.duplicate {
+		response.AcceptedSeq = fence.cachedSeq
 		return response, nil
 	}
-	// This report is already tracked by beginUse; only reserve writer capacity.
+	state.mu.Lock()
+	state.seq, state.latest, state.receivedAt = report.Seq, report.body, now
+	state.public = snapshotPublic(report.Metrics, now)
+	state.mu.Unlock()
+	s.recordSample(nodeID, now, report.Metrics)
+	return response, nil
+}
+
+func (s *Service) persistReport(ctx context.Context, nodeID string, credential []byte, state *nodeState, report normalizedReport, fence acceptanceSnapshot, response v1.ReportResponse) (v1.ReportResponse, error) {
+	now := response.ServerTime
+	// 该报告已被 beginUse 跟踪；仅预留写入容量。
 	releaseWrite, err := s.queueWrite(ctx, func() {})
 	if err != nil {
 		return v1.ReportResponse{}, err
 	}
 	defer releaseWrite()
-	state.stageTraffic(storedCredential, storedEpoch, report, generation, session, now)
+	state.stageTraffic(fence.credential, fence.epoch, report.Report, fence.generation, fence.session, now)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return v1.ReportResponse{}, err
@@ -486,51 +498,43 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 		}
 		return v1.ReportResponse{}, err
 	}
-	// Recheck in the write transaction so rotation cannot race authentication.
-	if len(txCredential) == 0 || subtle.ConstantTimeCompare(txCredential, storedCredential) != 1 || (credential != nil && subtle.ConstantTimeCompare(txCredential, credential) != 1) {
+	// 在写事务中重新检查，使轮换无法与认证竞争。
+	if len(txCredential) == 0 || subtle.ConstantTimeCompare(txCredential, fence.credential) != 1 || (credential != nil && subtle.ConstantTimeCompare(txCredential, credential) != 1) {
 		return v1.ReportResponse{}, nodes.ErrUnauthenticated
 	}
-	if txEpoch != storedEpoch || txGenerationText != generationText || txSession != session {
+	if txEpoch != fence.epoch || txGenerationText != fence.generationText || txSession != fence.session {
 		return v1.ReportResponse{}, ErrIdentityConflict
 	}
 	if txStatus == "disabled" {
 		return v1.ReportResponse{}, nodes.ErrDisabled
 	}
-	generation, err = strconv.ParseUint(txGenerationText, 10, 64)
+	fence.generation, err = strconv.ParseUint(txGenerationText, 10, 64)
 	if err != nil {
 		return v1.ReportResponse{}, err
 	}
 	state.mu.Lock()
-	state.invalidateIdentity(txCredential, txEpoch, generation, txSession)
-	hasLatest = hasLatest && len(state.latest) != 0
+	state.invalidateIdentity(txCredential, txEpoch, fence.generation, txSession)
+	fence.hasLatest = fence.hasLatest && len(state.latest) != 0
 	state.mu.Unlock()
-	if report.RunGeneration < generation || (report.RunGeneration == generation && txSession != "" && txSession != report.SessionID) {
+	if report.RunGeneration < fence.generation || (report.RunGeneration == fence.generation && txSession != "" && txSession != report.SessionID) {
 		return v1.ReportResponse{}, ErrIdentityConflict
 	}
-	if charge {
-		s.rateMu.Lock()
-		err := s.charge(state)
-		s.rateMu.Unlock()
-		if err != nil {
-			return v1.ReportResponse{}, err
-		}
-	}
-	state.stageTraffic(txCredential, txEpoch, report, generation, txSession, now)
-	duplicate = hasLatest && subtle.ConstantTimeCompare(cachedCredential[:], txCredential) == 1 && cachedEpoch == txEpoch &&
-		cachedGeneration == generation && cachedSession == txSession &&
-		cachedGeneration == report.RunGeneration && cachedSession == report.SessionID && report.Seq <= cachedSeq
-	currentRuntime := runtime
-	if duplicate {
+	state.stageTraffic(txCredential, txEpoch, report.Report, fence.generation, txSession, now)
+	fence.duplicate = fence.hasLatest && subtle.ConstantTimeCompare(fence.cachedCredential[:], txCredential) == 1 && fence.cachedEpoch == txEpoch &&
+		fence.cachedGeneration == fence.generation && fence.cachedSession == txSession &&
+		fence.cachedGeneration == report.RunGeneration && fence.cachedSession == report.SessionID && report.Seq <= fence.cachedSeq
+	currentRuntime := report.Runtime
+	if fence.duplicate {
 		currentRuntime, err = decodeRuntime(txRuntime)
 		if err != nil {
 			return v1.ReportResponse{}, err
 		}
 	}
-	probes := state.copyProbes(txCredential, txEpoch, generation, txSession)
+	probes := state.copyProbes(txCredential, txEpoch, fence.generation, txSession)
 	probes.retainTargets(currentRuntime.ProbeTargets)
-	if !duplicate && txRuntime != string(runtimeJSON) {
+	if !fence.duplicate && txRuntime != string(report.runtimeJSON) {
 		for _, table := range []string{"probe_latest", "probe_hourly"} {
-			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE node_id=? AND target NOT IN (SELECT value FROM json_each(?, '$.probe_targets'))", nodeID, string(runtimeJSON)); err != nil {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE node_id=? AND target NOT IN (SELECT value FROM json_each(?, '$.probe_targets'))", nodeID, string(report.runtimeJSON)); err != nil {
 				return v1.ReportResponse{}, err
 			}
 		}
@@ -544,8 +548,8 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	if err := probes.persist(ctx, tx, nodeID, now); err != nil {
 		return v1.ReportResponse{}, err
 	}
-	if duplicate {
-		response.AcceptedSeq = cachedSeq
+	if fence.duplicate {
+		response.AcceptedSeq = fence.cachedSeq
 		committed, err := state.persistTraffic(ctx, tx, nodeID, now)
 		if err != nil {
 			return v1.ReportResponse{}, err
@@ -554,17 +558,17 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 			return v1.ReportResponse{}, err
 		}
 		state.commitTraffic(committed, now)
-		state.commitProbes(probes, generation, txSession)
+		state.commitProbes(probes, fence.generation, txSession)
 		response.TrafficAcks = state.trafficAcks(report.Traffic, now)
 		return response, nil
 	}
-	// The transaction's identity read fenced both traffic buffers above. Flush
-	// the old run and incoming run before advancing the durable process fence.
+	// 已按事务内读取的身份校验上方两个流量缓冲区。
+	// 推进持久化的进程隔离边界前，先写入旧运行和新运行的流量数据。
 	committed, err := state.persistTraffic(ctx, tx, nodeID, now)
 	if err != nil {
 		return v1.ReportResponse{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET run_generation = ?, report_session_id = ?, last_seen = ?, system = COALESCE(?, system), agent_runtime = ? WHERE id = ?`, strconv.FormatUint(report.RunGeneration, 10), report.SessionID, timekey.Format(now), system, string(runtimeJSON), nodeID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET run_generation = ?, report_session_id = ?, last_seen = ?, system = COALESCE(?, system), agent_runtime = ? WHERE id = ?`, strconv.FormatUint(report.RunGeneration, 10), report.SessionID, timekey.Format(now), report.system, string(report.runtimeJSON), nodeID); err != nil {
 		return v1.ReportResponse{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -574,7 +578,7 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	state.commitProbes(probes, report.RunGeneration, report.SessionID)
 	response.TrafficAcks = state.trafficAcks(report.Traffic, now)
 	state.mu.Lock()
-	state.generation, state.seq, state.latest, state.receivedAt = report.RunGeneration, report.Seq, body, now
+	state.generation, state.seq, state.latest, state.receivedAt = report.RunGeneration, report.Seq, report.body, now
 	state.public = snapshotPublic(report.Metrics, now)
 	copy(state.credential[:], txCredential)
 	state.credentialEpoch = txEpoch
@@ -636,25 +640,21 @@ func (s *Service) pruneStates(live map[string]bool, candidates map[string]stateC
 }
 
 func decodeRuntime(raw string) (v1.RuntimeSettings, error) {
-	var runtime v1.RuntimeSettings
 	if raw == "" {
-		return runtime, nil
+		return v1.RuntimeSettings{}, nil
 	}
-	if err := json.Unmarshal([]byte(raw), &runtime); err != nil {
-		return runtime, err
-	}
-	return runtime, runtime.Validate()
+	return v1.DecodeRuntimeSettings(raw)
 }
 
-// LatestReport owns a report snapshot and its server reception time.
+// LatestReport 拥有报告快照及其服务端接收时间。
 type LatestReport struct {
 	v1.Report
 	ReceivedAt time.Time `json:"received_at"`
 }
 
 func (s *Service) Latest(ctx context.Context, nodeID string) (LatestReport, error) {
-	// Read before taking the snapshot mutex, matching the public projection's fence.
-	// This is a plain SELECT and never waits for writer admission.
+	// 在获取快照互斥锁之前读取，与公开投影的围栏保持一致。
+	// 这是普通 SELECT，从不等待写入准入。
 	var credential []byte
 	var credentialEpoch int64
 	var status, generationText, session string
@@ -694,7 +694,7 @@ func (s *Service) Latest(ctx context.Context, nodeID string) (LatestReport, erro
 	return LatestReport{Report: report, ReceivedAt: receivedAt}, nil
 }
 
-// SamplesDropped counts accepted reports omitted from best-effort history.
+// SamplesDropped 统计未写入历史记录的已接受上报数。
 func (s *Service) SamplesDropped() uint64 { return s.samplesDropped.Load() }
 
 func (s *Service) recordSample(nodeID string, now time.Time, metrics v1.Metrics) {

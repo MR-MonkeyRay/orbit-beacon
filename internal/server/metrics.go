@@ -107,8 +107,8 @@ func (m *httpMetrics) observe(method, route string, status int, elapsed time.Dur
 	}
 }
 
-// MetricsHandler is deliberately separate from ServeHTTP: the public listener
-// never exposes /metrics. The caller controls whether a metrics listener exists.
+// MetricsHandler 有意与 ServeHTTP 分离：公开监听器绝不暴露 /metrics。
+// 调用方决定是否存在 metrics 监听器。
 func (h *handler) MetricsHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/metrics" {
@@ -146,7 +146,7 @@ func (m *httpMetrics) exposition() string {
 	runtime.ReadMemStats(&mem)
 	fmt.Fprintln(&b, "# HELP orbitbeacon_http_requests_total Completed HTTP requests.\n# TYPE orbitbeacon_http_requests_total counter")
 	m.mu.Lock()
-	// Sort complete sample lines to make exposition stable for operators and tests.
+	// 对完整的样本行排序，使输出对运维人员和测试保持稳定。
 	var samples []string
 	for key, count := range m.requests {
 		samples = append(samples, fmt.Sprintf("orbitbeacon_http_requests_total{method=%q,route=%q,status_class=%q} %d\n", key.method, key.route, key.status, count))

@@ -1,6 +1,6 @@
 import {h} from '../../shared/dom.js';
-import {t} from '../../shared/i18n.js';
-import {allNodes, api, ensureSession, getNavigationSignal, groupsList} from '../api.js';
+import {t} from '../i18n.js';
+import {allNodes, api, getNavigationSignal, groupsList} from '../api.js';
 import {refresh} from '../router.js';
 import {pageHead} from '../ui/components.js';
 import {tabSet} from '../ui/tabs.js';
@@ -11,7 +11,6 @@ import {showAlert} from './alert-detail.js';
 
 export async function alertsPage() {
   const signal = getNavigationSignal();
-  await ensureSession();
   const [{rules}, {channels}, groups, nodes] = await Promise.all([
     api('/alert-rules', {signal}), api('/notification-channels', {signal}), groupsList(), allNodes()
   ]);

@@ -15,7 +15,7 @@ const edit = (form, name, value) => {
   const input = control(form, name);
   input.value = value;
   input.dispatchEvent(new Event('input'));
-  // The small console harness does not simulate DOM event propagation.
+  // 小型控制台测试工具不模拟 DOM 事件传播。
   form.dispatchEvent(new Event('input'));
   return input;
 };
@@ -118,6 +118,7 @@ test('node tabs show reported local settings through #agent without the removed 
     const tabs = elements(env.root).filter((element) => element.getAttribute('role') === 'tab');
     assert.equal(tabs.length, 4);
     assert.deepEqual(tabs.map((tab) => tab.id), ['tab-details', 'tab-public', 'tab-agent', 'tab-enrollment']);
+    assert.deepEqual(tabs.map((tab) => tab.querySelector('use').getAttribute('href')), ['#i-info', '#i-globe', '#i-sliders', '#i-key']);
     assert.equal(env.root.querySelector('#tab-agent').getAttribute('aria-selected'), 'true');
     assert.equal(env.root.querySelector('#tab-config'), null);
     const values = factValues(env.root);

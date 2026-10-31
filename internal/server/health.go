@@ -11,11 +11,6 @@ type healthStatus struct {
 }
 
 func (h *handler) health(w http.ResponseWriter, r *http.Request, requestID string) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", http.MethodGet)
-		fail(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not supported for this route", requestID)
-		return
-	}
 	if r.URL.Path == "/healthz/live" {
 		writeJSON(w, http.StatusOK, healthStatus{Status: "ok"})
 		return
@@ -24,13 +19,13 @@ func (h *handler) health(w http.ResponseWriter, r *http.Request, requestID strin
 		http.NotFound(w, r)
 		return
 	}
-	if !h.readyState() || h.nodes == nil || h.nodes.Database() == nil {
+	if !h.readyState() || h.nodes == nil {
 		writeJSON(w, http.StatusServiceUnavailable, healthStatus{Status: "not_ready"})
 		return
 	}
 	pingContext, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-	pingErr := h.nodes.Database().PingContext(pingContext)
+	pingErr := h.nodes.Ping(pingContext)
 	if pingErr != nil || !h.readyState() {
 		writeJSON(w, http.StatusServiceUnavailable, healthStatus{Status: "not_ready"})
 		return

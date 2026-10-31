@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const i18n = await import('../src/shared/i18n.js');
+const i18n = await import('../src/console/i18n.js');
 
 test('locale resolution respects language priority and Simplified Chinese fallback', () => {
   for (const [preference, languages, expected] of [
@@ -48,6 +48,17 @@ test('translation interpolates named values as plain text and selects English pl
     assert.throws(() => i18n.t('missing.key'));
     i18n.setLocalePreference('zh-CN');
     assert.equal(i18n.t('alerts.value.failingProbes', {count: 2}), '2 个探测失败');
+  } finally { if (originalStorage) Object.defineProperty(globalThis, 'localStorage', originalStorage); else delete globalThis.localStorage; }
+});
+
+test('display lists follow the active locale', () => {
+  const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  let preference = 'en';
+  Object.defineProperty(globalThis, 'localStorage', {configurable: true, value: {getItem: () => preference, setItem(_key, value) { preference = value; }}});
+  try {
+    assert.equal(i18n.formatList(['one', 'two', 'three']), 'one, two, and three');
+    i18n.setLocalePreference('zh-CN');
+    assert.equal(i18n.formatList(['一', '二', '三']), '一、二和三');
   } finally { if (originalStorage) Object.defineProperty(globalThis, 'localStorage', originalStorage); else delete globalThis.localStorage; }
 });
 

@@ -1,6 +1,6 @@
 import {setImmediate as nextTurn} from 'node:timers/promises';
 
-// Minimal DOM for asynchronous console panels; deliberately no HTML parsing.
+// 异步控制台面板的最小 DOM；刻意不解析 HTML。
 export class TestElement extends EventTarget {
   constructor(tagName = '') {
     super();
@@ -82,7 +82,7 @@ export class TestElement extends EventTarget {
   click() { this.dispatchEvent(new Event('click')); }
 }
 export const elements = (node) => [node, ...node.children.filter((child) => child instanceof TestElement).flatMap(elements)];
-// Yield past the microtask checkpoint without advancing the mocked timers.
+// 让出到下一轮事件循环，等待微任务执行完毕，但不推进模拟计时器。
 export const flush = () => nextTurn();
 export function installDOM() {
   const originals = new Map();

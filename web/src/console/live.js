@@ -1,8 +1,8 @@
 import {timestampMillis} from '../shared/freshness.js';
 import {connectLive} from '../shared/live.js';
 import {api, ApiError, calibrateSessionClock, getNavigationSignal, getSessionEpoch, getSessionSignal, invalidateSession, pauseSessionVerification, session, verifySession} from './api.js';
+import {uuid} from '../shared/uuid.js';
 
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const time = (value) => Number.isFinite(timestampMillis(value));
 const stringList = (value, max = Infinity) => Array.isArray(value) && value.length <= max && value.every((item) => typeof item === 'string');
@@ -41,8 +41,8 @@ function validSnapshot(data, nodeID) {
   return node(data.node) && data.node.id === nodeID && latest(data.latest) && runtime(data.runtime);
 }
 
-// Explicit metadata reloads confirm membership with a causally later projection.
-// The caller pauses its old channel so delayed frames cannot supersede this read.
+// 元数据重载后再读取状态快照，确认当前节点清单。
+// 调用方暂停旧通道，防止延迟帧覆盖本次读取。
 export async function readConsoleFleet(signal) {
   const epoch = getSessionEpoch();
   const frame = await api('/live', {signal});
@@ -54,9 +54,8 @@ export async function readConsoleFleet(signal) {
   return frame.data;
 }
 
-// The inner controller owns transport fallback. This wrapper owns private auth
-// and the page lifetime: it is removed on hide, so its auto-resume can never race
-// ahead of the unconditional foreground /me gate.
+// 内层控制器负责传输回退；此包装层负责鉴权与页面生命周期。
+// 页面隐藏时关闭内层通道，确保恢复前先通过 /me 会话校验。
 export function connectConsoleLive({nodeID, signal = getNavigationSignal(), onSnapshot, onState = () => {}, onClock = () => {}}) {
   if (nodeID !== undefined && (typeof nodeID !== 'string' || !uuid.test(nodeID))) throw new Error('Invalid node ID');
   const epoch = getSessionEpoch();
@@ -67,7 +66,6 @@ export function connectConsoleLive({nodeID, signal = getNavigationSignal(), onSn
   let generation = 0;
   let closed = false;
   let pageHidden = false;
-  let seen = false;
   let state = {state: 'connecting', transport: 'ws', intervalSeconds: 10, retryAt: null};
   const active = () => !closed && !signal?.aborted && !sessionSignal.aborted && epoch === getSessionEpoch() && Boolean(session.user && !session.user.must_change_password);
   const visible = () => active() && !document.hidden && !pageHidden;
@@ -93,15 +91,15 @@ export function connectConsoleLive({nodeID, signal = getNavigationSignal(), onSn
   const unauthorized = async (reason) => {
     if (!active()) return false;
     if (reason === 'unauthenticated') { invalidateSession('unauthenticated'); return false; }
-    // WebSocket deliberately hides handshake status. Never infer that an
-    // unopened socket is only a transport failure; verify its cookie via HTTP.
+    // WebSocket 刻意隐藏握手状态。不能把未打开的 socket
+    // 推断为仅是传输故障；须通过 HTTP 验证其 cookie。
     try { await verifySession({signal, fresh: true}); return active(); }
     catch (error) { return error.status === 401 || !active() ? false : true; }
   };
   const start = async () => {
     stop();
     if (!visible()) return;
-    emit({...state, state: seen ? 'stale' : 'connecting', retryAt: null});
+    emit({...state, state: 'connecting', retryAt: null});
     const token = generation;
     if (!visible() || token !== generation) return;
     const controller = gate = new AbortController();
@@ -115,7 +113,6 @@ export function connectConsoleLive({nodeID, signal = getNavigationSignal(), onSn
         signal: sessionSignal, credentials: 'same-origin', validateSnapshot: (data) => validSnapshot(data, nodeID),
         onSnapshot(data, frame) {
           if (!visible() || token !== generation) return;
-          seen = true;
           onSnapshot(data, frame);
         },
         onClock(serverTime) {

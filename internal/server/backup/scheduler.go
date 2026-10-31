@@ -7,9 +7,9 @@ import (
 	"errors"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 type TimezoneInfo struct {
@@ -30,8 +30,8 @@ func (s *Service) timezoneInfo(now time.Time) TimezoneInfo {
 	local := now.In(s.serverLocation)
 	zone, offset := local.Zone()
 	name := s.serverLocation.String()
-	// "Local" is Go's process-local sentinel, not an IANA identifier. The actual
-	// current zone abbreviation is an honest display label in that case.
+	// "Local" 是 Go 表示进程本地时区的特殊值，不是 IANA 标识。
+	// 此时显示当前时区的缩写。
 	if name == "Local" || name == "" {
 		name = zone
 	}
@@ -74,8 +74,8 @@ func (s *Service) PreviewCron(raw string, now time.Time) (CronPreview, error) {
 	return result, err
 }
 
-// Tick atomically coalesces each due plan into at most one task. Blocked plans
-// retain their original due timestamp; the merged wake retries them on completion.
+// Tick 将每个到期计划原子地合并为至多一个任务。被阻塞的计划
+// 保留其原始到期时间戳；合并后的唤醒会在完成时重试它们。
 func (s *Service) Tick(ctx context.Context, now time.Time) error {
 	now = now.UTC()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -123,7 +123,7 @@ func (s *Service) Tick(ctx context.Context, now time.Time) error {
 			return e
 		}
 		s.randomMu.Lock()
-		id, e := identity.UUID(s.opts.Random)
+		id, e := uuid.UUID(s.opts.Random)
 		s.randomMu.Unlock()
 		if e != nil {
 			return &Error{Code: "internal_error"}
@@ -170,8 +170,8 @@ func (s *Service) Tick(ctx context.Context, now time.Time) error {
 		if e != nil {
 			return e
 		}
-		// The uniqueness constraint is a second durable barrier against replaying a
-		// scheduled UTC instant, including repeated local wall times during DST.
+		// 唯一性约束是防止重放已调度 UTC 时刻的第二道持久屏障，
+		// 也涵盖夏令时切换时重复出现的本地时间。
 		result, e := tx.ExecContext(ctx, `INSERT INTO backup_tasks(id,kind,state,plan_id,categories_json,destination_json,input_credentials_ciphertext,scheduled_at,created_at) VALUES(?,?,'queued',?,?,?,?,?,?) ON CONFLICT(plan_id,scheduled_at) DO NOTHING`, id, kind, p.ID, string(cats), string(target), cipher, timekey.Format(*p.NextRunAt), timekey.Format(now))
 		if e != nil {
 			return e
@@ -200,9 +200,8 @@ func (s *Service) Tick(ctx context.Context, now time.Time) error {
 	return nil
 }
 
-// Past due plans can be blocked by capacity or their own active task. Never
-// reset a timer to their past timestamp: completion/mutation wakes them, while
-// this bounded fallback also covers transient database failures.
+// 到期未执行的计划可能被容量或自身的活跃任务阻塞。绝不为它们设置过去时间戳的定时器：
+// 完成/变更会唤醒它们，这个有界兜底同时覆盖瞬时的数据库故障。
 func (s *Service) schedulerWait(ctx context.Context, now time.Time) (time.Duration, error) {
 	var raw string
 	err := s.db.QueryRowContext(ctx, `SELECT next_run_at FROM backup_plans WHERE enabled=1 AND next_run_at>? ORDER BY next_run_at,id LIMIT 1`, timekey.Format(now)).Scan(&raw)

@@ -265,7 +265,7 @@ func TestNodeMetadataPatchPersistsGroupAndTagsWithoutExposingCredentials(t *test
 	if err := f.db.QueryRow("SELECT count(*) FROM node_tags WHERE node_id = ? AND tag IN ('production','database')", node.ID).Scan(&tags); err != nil || tags != 2 {
 		t.Errorf("node tags not persisted: count=%d err=%v", tags, err)
 	}
-	// Invalid references must not partially apply otherwise-valid metadata or tags.
+	// 无效引用绝不能部分应用其他有效的元数据或标签。
 	response = request(t, f.handler, http.MethodPatch, path, `{"notes":"must roll back","group_id":"00000000-0000-4000-8000-000000000999","tags":["wrong"]}`, admin, csrf, publicURL)
 	if response.Code != http.StatusBadRequest && response.Code != http.StatusNotFound {
 		t.Errorf("unknown group returned %d", response.Code)

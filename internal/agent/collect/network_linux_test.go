@@ -50,7 +50,7 @@ func TestLinuxHostSysInterfaceFlags(t *testing.T) {
 			}
 		})
 	}
-	// Even a valid local NIC must not bypass the selected host sysfs view.
+	// 即使是有效的本地网卡，也不得绕过选定的宿主 sysfs 视图。
 	if usableInterface("lo") || usableInterface("missing0") {
 		t.Fatal("missing host interface used the process network namespace")
 	}

@@ -18,8 +18,8 @@ func TestInitialAdministratorRequiresPasswordChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Inspect the wire contract as well as the stored state: false must never
-	// disappear from responses, and initialization must never default to false.
+	// 同时检查传输契约和存储状态：false 绝不能从响应中消失，
+	// 初始化也绝不能默认为 false。
 	encoded, err := json.Marshal(user)
 	if err != nil {
 		t.Fatal(err)

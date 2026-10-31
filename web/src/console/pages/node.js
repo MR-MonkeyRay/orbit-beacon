@@ -1,10 +1,11 @@
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {h, icon} from '../../shared/dom.js';
-import {api, ensureSession, getNavigationSignal, groupsList, invalidate, onSession, session} from '../api.js';
+import {copyElementText} from '../../shared/clipboard.js';
+import {api, getNavigationSignal, groupsList, invalidate, onSession, session} from '../api.js';
 import {absoluteWhen, shortID, when} from '../format.js';
 import {connectConsoleLive} from '../live.js';
 import {ignoreNavigationCancellation, refresh} from '../router.js';
-import {callout, iconButton, link, liveStatus, panel, patchStatusBadge, readonlyFacts, statusBadge} from '../ui/components.js';
+import {callout, iconButton, link, liveStatus, pageHead, panel, patchStatusBadge, readonlyFacts, statusBadge} from '../ui/components.js';
 import {toast} from '../ui/feedback.js';
 import {field, input, onSubmit, saveBar, select, tagEditor, textarea, trackDirty, validateBytes} from '../ui/forms.js';
 import {tabSet} from '../ui/tabs.js';
@@ -16,12 +17,10 @@ import {historyPanel} from './node-history.js';
 import {trafficPanel} from './node-traffic.js';
 import {trafficSettingsPanel} from './node-traffic-settings.js';
 import {probesPanel} from './node-probes.js';
-
-export const NODE_PATH = /^\/nodes\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+import {NODE_PATH} from '../routes.js';
 
 export async function nodePage() {
   const signal = getNavigationSignal();
-  await ensureSession();
   const id = location.pathname.match(NODE_PATH)[1];
   const path = `/nodes/${encodeURIComponent(id)}`;
   const [node, runtime, trafficSettings, groups, publicSettings, latest] = await Promise.all([
@@ -37,24 +36,14 @@ export async function nodePage() {
     setTimeout(() => copy.replaceChildren(icon('copy')), 1600);
   };
   const copy = iconButton('copy', t('nodes.copyID'), async () => {
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable');
-      await navigator.clipboard.writeText(node.id);
+    const result = await copyElementText(idText);
+    if (result === 'clipboard') {
       showCopied();
       toast(t('nodes.copiedID'));
-    } catch {
-      const range = document.createRange();
-      range.selectNodeContents(idText);
-      const selection = getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
-      let copied = false;
-      try { copied = document.execCommand('copy'); } catch {}
-      if (copied) {
-        showCopied();
-        toast(t('nodes.copiedIDFallback'));
-      } else toast(t('nodes.copyIDManual'), {error: true});
-    }
+    } else if (result === 'fallback') {
+      showCopied();
+      toast(t('nodes.copiedIDFallback'));
+    } else toast(t('nodes.copyIDManual'), {error: true});
   });
   const back = link('/nodes', icon('left'), t('nodes.allNodes'));
   back.className = 'back';
@@ -65,7 +54,6 @@ export async function nodePage() {
   let observedRuntime = runtime.runtime;
   let detailsView;
   let agent;
-  const title = h('h1', {tabindex: '-1'}, node.name);
   const badge = statusBadge(node.presence);
   const connection = liveStatus();
   const actions = lifecycleActions(node);
@@ -82,7 +70,7 @@ export async function nodePage() {
   signal?.addEventListener('abort', unsubscribe, {once: true});
   if (signal?.aborted) unsubscribe();
   const tabs = tabSet([
-    {id: 'details', label: t('nodes.audit.details'), icon: 'server', build: () => {
+    {id: 'details', label: t('nodes.details'), icon: 'info', build: () => {
       detailsView = detailsTab(node, groups, sample.element,
         history ||= historyPanel(id, signal), traffic ||= trafficPanel(id, signal),
         probes ||= probesPanel(id, signal),
@@ -99,12 +87,14 @@ export async function nodePage() {
       agent.snapshot(node, observedRuntime);
       return agent;
     }},
-    {id: 'enrollment', label: t('nodes.enrollAgent'), icon: 'server', build: () => enrollmentTab(node)}
+    {id: 'enrollment', label: t('nodes.enrollAgent'), icon: 'key', build: () => enrollmentTab(node)}
   ], t('nodes.sections'));
-  const root = h('div', null,
-    h('header', {class: 'page-head'}, h('div', null, back,
-      h('div', {class: 'detail-head'}, title, badge),
-      h('div', {class: 'id-chip'}, idText, copy)), h('div', {class: 'detail-actions'}, connection.element, actions)),
+  const head = pageHead(node.name, null, connection.element, actions);
+  const title = head.querySelector('h1');
+  head.lastElementChild.className = 'detail-actions';
+  head.firstElementChild.replaceChildren(back,
+    h('div', {class: 'detail-head'}, title, badge), h('div', {class: 'id-chip'}, idText, copy));
+  const root = h('div', null, head,
     deletedNotice, tabs);
   const lockDeleted = () => {
     if (!node.deleted) return;
@@ -123,7 +113,7 @@ export async function nodePage() {
     if (node.deleted) { event.preventDefault(); event.stopImmediatePropagation(); }
   }, true);
   root.addEventListener('input', lockDeleted);
-  // Lazy tabs and their independent async readers can add controls after deletion.
+  // 懒加载标签页及其独立的异步读取器可能在删除后仍添加控件。
   const deletionObserver = new MutationObserver(lockDeleted);
   signal?.addEventListener('abort', () => deletionObserver.disconnect(), {once: true});
   connectConsoleLive({nodeID: id, signal, onState: connection.update, onClock: sample.clock,
@@ -155,7 +145,7 @@ export async function nodePage() {
   return root;
 }
 
-// Wires the shared save/discard behaviour of the editable sections.
+// 接入可编辑区块共享的保存/放弃行为。
 function editableForm(form, controls, save, node) {
   trackDirty(form, controls);
   const syncDirty = form.syncDirty;
@@ -238,7 +228,7 @@ function publicPreview() {
 
 function publicTab(node, settings) {
   const hidden = node.status === 'pending' || node.status === 'disabled'
-    ? callout(t('nodes.publicUnavailable', {status: t(`nodes.status.${node.status}`)})) : null;
+    ? callout(t('nodes.publicUnavailable', {status: t(`common.status.${node.status}`)})) : null;
   const privacy = callout(t('nodes.privacy'), 'info');
   const preview = publicPreview();
   const previewPanel = panel(t('nodes.preview'), {action: h('a', {class: 'btn btn-sm', href: '/'}, icon('external'), t('nodes.viewPublic'))}, preview);
@@ -252,7 +242,7 @@ function publicTab(node, settings) {
   const checkName = validateBytes(name, 0, 255, t('nodes.publicName'));
   validateBytes(region, 0, 128, t('nodes.publicRegion'));
   validateBytes(provider, 0, 128, t('nodes.publicProvider'));
-  // The server trims text, so the preview and the required check do too.
+  // 与服务端一致，预览和必填检查都先去除文本首尾空白。
   const sync = () => {
     name.required = enabled.checked;
     if (enabled.checked && name.value.trim() === '') name.setCustomValidity(t('nodes.publicNameRequired'));

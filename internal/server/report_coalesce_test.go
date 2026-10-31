@@ -55,10 +55,10 @@ func TestReportCoalescingFastPathAdvancesLatestAndPublicLiveness(t *testing.T) {
 		t.Fatalf("fast-path ReceivedAt=%s want %s", latest.ReceivedAt, f.now)
 	}
 
-	// Public liveness must follow the in-memory receive time even when the
-	// durable last_seen is older than the public offline threshold.
+	// 即使持久化 last_seen 比公开离线阈值更旧，
+	// 公开活跃性也必须跟随内存接收时间。
 	f.now = f.now.Add(180 * time.Second)
-	public, err := f.ingest.PublicNode(context.Background(), id, f.now)
+	public, err := publicNode(context.Background(), f.nodes, f.ingest, id, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@ import (
 
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/validation"
 )
 
 func TestPublicSettingsRemainIndependentAndValidateAtomically(t *testing.T) {
@@ -30,8 +31,8 @@ func TestPublicSettingsRemainIndependentAndValidateAtomically(t *testing.T) {
 	original := got
 	for _, name := range []string{"", strings.Repeat("中", 86), "control\x00", string([]byte{0xff})} {
 		_, err := s.PatchPublicSettings(ctx, n.ID, nodes.PublicSettingsPatch{Name: &name})
-		var validation *nodes.ValidationError
-		if !errors.As(err, &validation) || validation.Fields["name"] == "" {
+		var fields *validation.Error
+		if !errors.As(err, &fields) || fields.Fields["name"] == "" {
 			t.Fatalf("invalid name %q: %v", name, err)
 		}
 		after, err := s.GetPublicSettings(ctx, n.ID)
@@ -39,7 +40,7 @@ func TestPublicSettingsRemainIndependentAndValidateAtomically(t *testing.T) {
 			t.Fatalf("invalid patch changed settings: %+v %v", after, err)
 		}
 	}
-	// Decode a fresh patch: omitted/null fields preserve the stored value.
+	// 解码新补丁：省略或为 null 的字段保留已存储的值。
 	patch = nodes.PublicSettingsPatch{}
 	_ = json.Unmarshal([]byte(`{"name":null,"region":"","enabled":false}`), &patch)
 	got, err = s.PatchPublicSettings(ctx, n.ID, patch)
@@ -67,31 +68,39 @@ func TestPublicVisibilityAndMalformedSettings(t *testing.T) {
 		if _, err := db.Exec(`UPDATE nodes SET public_settings=?, status='unknown', token_hash=randomblob(32), first_enrolled_at=created_at WHERE id=?`, settings, n.ID); err != nil {
 			t.Fatal(err)
 		}
-		record, err := nodes.ReadPublicRecord(ctx, db, n.ID)
+		records, _, err := s.ListPublicRecords(ctx, 100, 0)
+		var record nodes.PublicRecord
+		found := false
+		for _, candidate := range records {
+			if candidate.ID == n.ID {
+				record, found = candidate, true
+				break
+			}
+		}
 		if i == 0 {
-			if err != nil || record.Settings.Name != "Public" {
+			if err != nil || !found || record.Settings.Name != "Public" {
 				t.Fatalf("visible record: %+v %v", record, err)
 			}
-		} else if !errors.Is(err, nodes.ErrNotFound) {
+		} else if err != nil || found {
 			t.Fatalf("invalid settings %q exposed: %+v %v", settings, record, err)
 		}
 	}
-	ids, more, err := s.ListPublicIDs(ctx, 1, 0)
-	if err != nil || len(ids) != 1 || more {
-		t.Fatalf("public list: %v %v %v", ids, more, err)
+	records, more, err := s.ListPublicRecords(ctx, 1, 0)
+	if err != nil || len(records) != 1 || more {
+		t.Fatalf("public list: %v %v %v", records, more, err)
 	}
-	if err := s.SetDisabled(ctx, ids[0], true); err != nil {
+	if err := s.SetDisabled(ctx, records[0].ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := nodes.ReadPublicRecord(ctx, db, ids[0]); !errors.Is(err, nodes.ErrNotFound) {
-		t.Fatalf("disabled exposed: %v", err)
+	if records, _, err := s.ListPublicRecords(ctx, 100, 0); err != nil || len(records) != 0 {
+		t.Fatalf("disabled exposed: %+v %v", records, err)
 	}
-	ids, _, err = s.ListPublicIDs(ctx, 100, 0)
-	if err != nil || len(ids) != 0 {
-		t.Fatalf("invalid or disabled exposed: %v %v", ids, err)
+	records, _, err = s.ListPublicRecords(ctx, 100, 0)
+	if err != nil || len(records) != 0 {
+		t.Fatalf("invalid or disabled exposed: %v %v", records, err)
 	}
 	for _, args := range [][2]int{{0, 0}, {101, 0}, {1, -1}} {
-		if _, _, err := s.ListPublicIDs(ctx, args[0], args[1]); !errors.Is(err, nodes.ErrInvalidInput) {
+		if _, _, err := s.ListPublicRecords(ctx, args[0], args[1]); !errors.Is(err, nodes.ErrInvalidInput) {
 			t.Fatalf("pagination %v: %v", args, err)
 		}
 	}

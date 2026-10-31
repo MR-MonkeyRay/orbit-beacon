@@ -346,7 +346,7 @@ func TestServerValidatesOnlyResolvedOrdinaryConfiguration(t *testing.T) {
 					}
 				})
 			}
-			// A valid lower layer must not conceal an invalid resolved value.
+			// 有效的低优先级层不得掩盖已解析出的无效值。
 			if _, err := config.LoadServer(config.LoadOptions{
 				File:      configFile(t, map[string]any{"data_dir": t.TempDir(), tt.key: tt.valid}),
 				LookupEnv: lookup(map[string]string{tt.env: tt.validText}),

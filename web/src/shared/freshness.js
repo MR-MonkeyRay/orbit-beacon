@@ -1,5 +1,5 @@
-// Freshness is measured against the response's server clock, never the browser's
-// wall clock. Source age belongs to the accepted report and is not reset by a tick.
+// 数据是否过期以响应中的服务端时钟为准，不依赖浏览器本地时钟。
+// 数据源的 age_ms 属于已接受的上报，不因计时器触发而重置。
 export function timestampMillis(value) {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
     ? Date.parse(value) : NaN;
@@ -12,8 +12,8 @@ export function sourceDeadline(receivedAt, source) {
   return received + Math.max(3 * source.source_interval_ms, 45000) - source.age_ms;
 }
 
-// One deadline timer per page. onChange patches freshness only and returns the
-// next server-clock deadline, or null when nothing else can become stale.
+// 每页一个到期计时器。onChange 只修补新鲜度，并返回
+// 下一个服务端时钟到期时间；没有更多会过期的内容时返回 null。
 export function createFreshnessController({signal, onChange}) {
   let serverAt = NaN;
   let monotonicAt = 0;
@@ -32,7 +32,7 @@ export function createFreshnessController({signal, onChange}) {
     const deadline = onChange(time);
     if (!Number.isFinite(time) || !Number.isFinite(deadline) || deadline < time) return;
     const current = generation;
-    // At equality the source is still fresh. Cross it by at least one full ms.
+    // 相等时数据源仍算新鲜。至少超过一整毫秒才算越过。
     timer = setTimeout(() => { if (current === generation && active()) refresh(); }, Math.min(2147483647, Math.max(1, Math.ceil(deadline - time) + 1)));
   };
   const visibility = () => { if (document.hidden) cancel(); else refresh(); };

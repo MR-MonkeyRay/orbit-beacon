@@ -1,4 +1,4 @@
-// Package history stores best-effort telemetry independently of the main writer.
+// Package history 独立存储遥测历史，写入失败不影响主库接收上报。
 package history
 
 import (
@@ -9,21 +9,21 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
-// Sample owns its scalar values; it retains no pointers, slices, credentials or
-// process identity from the accepted report. Missing/failed metrics are omitted.
+// Sample 拥有自己的标量值；不保留已接受报告中的指针、切片、凭据或进程身份。
+// 缺失/失败的指标会被省略。
 type Sample struct {
 	NodeID     string
 	ReceivedAt time.Time
 	Values     map[string]float64
 }
 
-// ValidValue exposes admission bounds for persisted monitoring validation.
+// ValidValue 暴露准入边界，供持久化监控校验使用。
 func ValidValue(metric string, value float64) bool { return validValue(metric, value) }
 
-// Bounded nonnegative values keep sums finite even at an int64 sample count.
-// Apply the same limits at admission and aggregation for direct Sample callers.
+// 有界的非负值确保即使样本计数达到 int64 时总和仍然有限。
+// 对直接构造 Sample 的调用方，在准入和聚合时使用相同的限制。
 func validValue(metric string, value float64) bool {
-	limit := float64(math.MaxUint64) // byte counters/capacities
+	limit := float64(math.MaxUint64) // 字节计数器/容量
 	switch {
 	case strings.HasSuffix(metric, "_percent"):
 		limit = 100
@@ -37,8 +37,8 @@ func validValue(metric string, value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= limit
 }
 
-// Snapshot copies only successful, fresh scalar measurements. Network values
-// are already rates in protocol v1; a sample sums successful interfaces.
+// Snapshot 只复制成功的、新鲜的标量测量值。网络值在协议 v1 中已是速率；
+// 样本对成功接口的值求和。
 func Snapshot(nodeID string, receivedAt time.Time, m v1.Metrics) Sample {
 	s := Sample{NodeID: nodeID, ReceivedAt: receivedAt, Values: make(map[string]float64)}
 	ok := func(key, source string) bool { return m.MetricStatus[key] == "ok" && m.Sources[source].Fresh() }

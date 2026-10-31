@@ -22,13 +22,12 @@ function setup() {
     cleanup: () => { page.abort(); setNavigationSignal(null); globalThis.fetch = originalFetch; dom.restore(); }};
 }
 
-test('probe error kinds have human-readable text and safe HTTP status fallbacks', () => {
+test('probe errors describe the outcome', () => {
   const messages = {timeout: 'Timed out', refused: 'Connection refused', dns: 'DNS lookup failed',
-    tls: 'TLS handshake failed', unreachable: 'Network unreachable', unsupported: 'Not supported on this agent', error: 'Probe failed'};
+    tls: 'TLS handshake failed', unreachable: 'Network unreachable', unsupported: 'Not supported on this Agent', error: 'Probe failed'};
   for (const [kind, text] of Object.entries(messages)) assert.equal(probeErrorText(kind), text);
   assert.equal(probeErrorText(''), '');
-  assert.equal(probeErrorText('http_status', 503), 'HTTP 503');
-  for (const code of [null, undefined, '500', 0, 600, 200.5]) assert.equal(probeErrorText('http_status', code), 'HTTP request failed');
+  for (const code of [503, null, undefined, '500', 0, 600, 200.5]) assert.equal(probeErrorText('http_status', code), 'HTTP request failed');
   assert.equal(probeErrorText('unexpected'), 'Probe failed');
 });
 
@@ -59,7 +58,7 @@ test('probe pending rows explain the first-check requirement and render targets 
     assert.match(env.root.textContent, /Pending/);
     assert.match(env.root.textContent, /Not checked yet/);
     assert.match(env.root.textContent, /Unavailable · 0 checks/);
-    assert.match(env.root.textContent, /Results appear after the agent runs its first check \(requires an agent version with probe support\)\./);
+    assert.match(env.root.textContent, /Results appear after the Agent’s first check; upgrade the Agent if probes are unsupported\./);
     assert.equal(env.root.querySelector('.probe-target').textContent, target);
     assert.equal(env.root.querySelectorAll('a').length, 0);
     assert.equal(env.root.querySelectorAll('img').length, 0);
@@ -83,7 +82,8 @@ test('probe up and down rows retain server order, badges, latency, error, timest
     assert.match(rows[0].textContent, /Up.*12.5 ms.*99.5% · 1440 checks/);
     assert.equal(rows[0].querySelector('time').getAttribute('datetime'), checked);
     assert.equal(rows[1].querySelector('.badge').classList.contains('offline'), true);
-    assert.match(rows[1].textContent, /Down.*HTTP 503.*0% · 1 check/);
+    assert.match(rows[1].textContent, /Down.*HTTP request failed.*0% · 1 check/);
+    assert.doesNotMatch(rows[1].textContent, /503/);
     assert.doesNotMatch(env.root.textContent, /Results appear after/);
     assert.equal(env.root.querySelector('.probes-body').getAttribute('aria-busy'), 'false');
   } finally { env.cleanup(); }

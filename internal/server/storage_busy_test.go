@@ -26,7 +26,7 @@ func TestWriterContentionReturnsRetryable503WithoutPartialWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer writer.ExecContext(context.Background(), "ROLLBACK")
-	// Keep only the other pool connection available, with a short fixture wait.
+	// 只保留另一个池连接可用，并让夹具短暂等待。
 	waiter, err := f.db.Conn(context.Background())
 	if err != nil {
 		t.Fatal(err)

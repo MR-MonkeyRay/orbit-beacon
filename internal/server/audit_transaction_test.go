@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// Capture persisted state, including credentials and related rows, rather than
-// assuming the handler's error proves that an earlier write was rolled back.
+// 捕获持久化状态（包括凭据和相关行），而不是假设处理程序的错误
+// 就证明先前写入已回滚。
 func managementState(t *testing.T, f fixture) map[string][]string {
 	t.Helper()
 	state := make(map[string][]string)
@@ -92,8 +92,8 @@ func TestAdministrativeMutationsAndAuditInsertCommitOrRollbackTogether(t *testin
 				t.Run(name, func(t *testing.T) {
 					f := newHTTP(t, 10)
 					cookie, csrf := login(t, f, "admin")
-					// Use real schema and independent seed rows, so a missing management
-					// route does not prevent the other mutation cases from running.
+					// 使用真实 schema 和独立的种子行，使缺失的管理路由
+					// 不会阻止其他变更用例运行。
 					var actorID, hash string
 					if err := f.db.QueryRow("SELECT id,password_hash FROM users WHERE username='admin'").Scan(&actorID, &hash); err != nil {
 						t.Fatal(err)

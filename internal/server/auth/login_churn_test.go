@@ -27,7 +27,7 @@ func TestDepletedLoginBudgetsSurviveAdmittedKeyChurn(t *testing.T) {
 		}
 	}
 	for range 20 {
-		s.recordLoginFailure(context.Background(), "target-name")
+		s.recordLoginFailure("target-name")
 	}
 	now = now.Add(time.Nanosecond) // Make the protected history strictly oldest.
 	for i := range 2048 {
@@ -36,7 +36,7 @@ func TestDepletedLoginBudgetsSurviveAdmittedKeyChurn(t *testing.T) {
 		if err := s.admitLogin(ctx, name); err != nil && !errors.Is(err, ErrRateLimited) {
 			t.Fatal(err)
 		}
-		s.recordLoginFailure(ctx, name)
+		s.recordLoginFailure(name)
 	}
 	if len(s.loginNames) != 1024 || len(s.loginPeers) != 1024 || len(s.loginFailures) != 1024 {
 		t.Fatalf("unbounded maps: pairs=%d sources=%d names=%d", len(s.loginNames), len(s.loginPeers), len(s.loginFailures))
@@ -88,7 +88,7 @@ func TestLoginBucketOverflowIsSharedAndReclaimsOnlyFullBudgets(t *testing.T) {
 			if len(buckets) != 1024 {
 				t.Fatalf("overflow allocated new keys: %d", len(buckets))
 			}
-			// Partial refills still contain history; only a full refill is disposable.
+			// 部分补满仍保留历史；只有完全补满才可丢弃。
 			now = now.Add(time.Duration(budget.burst / budget.refill / 2 * float64(time.Second)))
 			if _, ok := reclaimableLoginBucket(buckets, now, budget.burst, budget.refill); ok {
 				t.Fatal("partially refilled history was reclaimable")
@@ -119,9 +119,9 @@ func TestLoginSuccessChurnPreservesTrustUntilExpiry(t *testing.T) {
 		s.recordLoginSuccess(ctx, fmt.Sprintf("user-%d", i))
 	}
 	for range 20 {
-		s.recordLoginFailure(context.Background(), "admin")
+		s.recordLoginFailure("admin")
 	}
-	if err := s.checkLoginUsername(target, "admin"); err != nil {
+	if err := s.checkLogin(target, "admin"); err != nil {
 		t.Fatalf("churn evicted unexpired trusted source: %v", err)
 	}
 	if len(s.loginSuccesses) != 1024 {

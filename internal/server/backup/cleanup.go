@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/securefs"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 func cleanupLimit(limit int) int {
@@ -24,9 +24,8 @@ func cleanupLimit(limit int) int {
 	return limit
 }
 
-// Cleanup performs bounded short database mutations, never holding a write
-// transaction while unlinking. Counts include deferred failures, so callers can
-// continue past a permanently inaccessible artifact in the next batch.
+// Cleanup 执行有界的短数据库变更，删除文件期间绝不持有写事务。
+// 计数包含延迟失败，因此调用方能在下一批越过永久不可访问的产物。
 func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64, error) {
 	budget := cleanupLimit(limit)
 	var count int64
@@ -80,8 +79,8 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64,
 	if budget == 0 {
 		return count, nil
 	}
-	// A failed unlink retains only a fixed, private export locator after the
-	// historical record expires. Ciphertext expiration is handled independently.
+	// 删除文件失败时，历史记录过期后仅保留固定的私有导出定位符。
+	// 密文过期另行处理。
 	result, err = s.db.ExecContext(ctx, `UPDATE backup_tasks SET plan_id=NULL,actor_id=NULL,categories_json='[]',destination_json='{}',input_credentials_ciphertext=NULL,scheduled_at=NULL,started_at=NULL,artifact_bytes=NULL,artifact_sha256=NULL,result_location=NULL,error_code='',warning_code='' WHERE id IN (SELECT id FROM backup_tasks WHERE state IN ('succeeded','failed') AND finished_at<=? AND kind='backup_export' AND restored=0 AND artifact_name IS NOT NULL AND artifact_deleted_at IS NULL AND (plan_id IS NOT NULL OR actor_id IS NOT NULL OR categories_json!='[]' OR destination_json!='{}' OR input_credentials_ciphertext IS NOT NULL OR scheduled_at IS NOT NULL OR started_at IS NOT NULL OR artifact_bytes IS NOT NULL OR artifact_sha256 IS NOT NULL OR result_location IS NOT NULL OR error_code!='' OR warning_code!='') ORDER BY finished_at,id LIMIT ?)`, timekey.Format(now.Add(-taskLifetime)), budget)
 	if err != nil {
 		return count, err
@@ -195,9 +194,8 @@ func ownArchiveEntry(name, id string, allowTemp bool) bool {
 	return validArtifactName(name, id)
 }
 
-// CleanupOrphans resumes a bounded directory scan across calls. Only fixed UUID
-// export directories and exact archive/temp names are eligible. Imported task
-// history deliberately does not acquire ownership of this machine's files.
+// CleanupOrphans 在多次调用之间续跑有界的目录扫描。只有固定 UUID 的导出目录和
+// 精确匹配的归档/临时文件名才符合条件。导入的任务历史刻意不接管本机文件的所有权。
 func (s *Service) CleanupOrphans(ctx context.Context, limit int) (int64, error) {
 	s.cleanupMu.Lock()
 	defer s.cleanupMu.Unlock()
@@ -228,7 +226,7 @@ func (s *Service) CleanupOrphans(ctx context.Context, limit int) (int64, error) 
 				return count, err
 			}
 			entry := entries[0]
-			if !identity.ValidUUID(entry.Name()) || !entry.IsDir() {
+			if !uuid.ValidUUID(entry.Name()) || !entry.IsDir() {
 				continue
 			}
 			var active bool
@@ -290,8 +288,8 @@ func (s *Service) CleanupOrphans(ctx context.Context, limit int) (int64, error) 
 	return count, nil
 }
 
-// retainedArchiveNames keeps only the newest retain names, bounding memory even
-// when a destination has accumulated many old archives.
+// retainedArchiveNames 只保留最新的 retain 个文件名，即使目标位置累积了
+// 大量旧归档，也能限制内存占用。
 type retainedArchiveNames []string
 
 func (h retainedArchiveNames) Len() int           { return len(h) }
@@ -317,7 +315,7 @@ func archiveEntryID(name string) string {
 }
 
 func (s *Service) PruneLocal(ctx context.Context, path, planID string, retain int) error {
-	if !filepath.IsAbs(path) || !identity.ValidUUID(planID) || retain < 1 || retain > 1000 {
+	if !filepath.IsAbs(path) || !uuid.ValidUUID(planID) || retain < 1 || retain > 1000 {
 		return &Error{Code: "retention_cleanup_failed"}
 	}
 	if err := securefs.ValidateDirectory(path); err != nil {
@@ -404,8 +402,8 @@ func (s *Service) PruneLocal(ctx context.Context, path, planID string, retain in
 	return nil
 }
 
-// CleanupLocalTemps visits only recorded, inactive, non-restored local task
-// destinations. It never recursively walks user paths or touches saved packages.
+// CleanupLocalTemps 只访问已记录的、不活跃的、未恢复的本地任务目标位置。
+// 绝不递归遍历用户路径，也不触碰已保存的包。
 func (s *Service) CleanupLocalTemps(ctx context.Context, limit int) (int64, error) {
 	s.cleanupMu.Lock()
 	defer s.cleanupMu.Unlock()
@@ -437,7 +435,7 @@ func (s *Service) CleanupLocalTemps(ctx context.Context, limit int) (int64, erro
 			return count, err
 		}
 		s.localTempAfter = c.id
-		if !identity.ValidUUID(c.id) || !identity.ValidUUID(c.planID) || !c.name.Valid || !validArtifactName(c.name.String, c.id) {
+		if !uuid.ValidUUID(c.id) || !uuid.ValidUUID(c.planID) || !c.name.Valid || !validArtifactName(c.name.String, c.id) {
 			continue
 		}
 		var snapshot struct {

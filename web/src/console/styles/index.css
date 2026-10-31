@@ -1,13 +1,24 @@
-/* Console stylesheet. Order matters: responsive overrides come last. */
+/* 控制台样式表。顺序重要：响应式覆盖放最后。 */
 @import "../../shared/tokens.css";
+
 @import "./shell.css";
+
 @import "./components.css";
+
 @import "./forms.css";
+
 @import "./pages.css";
+
 @import "./charts.css";
+
 @import "./traffic.css";
+
 @import "./alerts.css";
+
 @import "./notifications.css";
+
 @import "./data-operations.css";
+
 @import "./login.css";
+
 @import "./responsive.css";

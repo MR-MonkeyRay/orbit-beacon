@@ -26,9 +26,8 @@ import (
 
 const objectMinimumPartSize int64 = 16 * 1024 * 1024
 
-// ObjectUploader publishes one archive using static credentials and the S3
-// protocol. Security-sensitive transport overrides are intentionally private.
-// A single instance may be shared; each upload owns its client and connections.
+// ObjectUploader 使用静态凭据和 S3 协议发布单个归档。
+// 涉及安全的传输替换入口不导出。实例可共享，每次上传使用独立的客户端和连接。
 type ObjectUploader struct {
 	client func(ObjectDestination) *http.Client
 }
@@ -49,8 +48,8 @@ func newObjectTransport(d ObjectDestination, resolver egress.Resolver, dial func
 	}
 }
 
-// The OSS resolver changes only the resolved URI, before signing. Keeping the
-// default resolver's properties preserves the SDK's signing region/service.
+// OSS 解析器只在签名之前更改解析后的 URI。保持默认解析器的属性，
+// 从而保留 SDK 的签名区域/服务。
 type objectOSSResolver struct {
 	base     s3.EndpointResolverV2
 	endpoint url.URL
@@ -69,8 +68,8 @@ func objectOfficialOSS(host string) bool {
 	return strings.HasPrefix(host, "s3.oss-") && strings.HasSuffix(host, ".aliyuncs.com")
 }
 
-// Each operation has an independent dispatch record. A Create/UploadPart cannot
-// make a later Complete look dispatched, and an Abort cannot change its result.
+// 每个操作都有独立的派发记录。Create/UploadPart 不会让后续的
+// Complete 看起来像已派发，Abort 也不会改变其结果。
 type objectRequestState struct {
 	dispatched atomic.Bool
 	status     atomic.Int32
@@ -116,13 +115,13 @@ func objectUploadError(state *objectRequestState, err error, final bool) (Upload
 		return UploadResult{}, nil
 	}
 	status := state.status.Load()
-	// A 4xx (or redirect) explicitly rejects this request. A failed final write
-	// with no response, malformed success response, or a server-side 5xx cannot
-	// prove that the object was not committed. Never retry that external write.
+	// 4xx（或重定向）明确拒绝了本次请求。最终写入失败但无响应、
+	// 成功响应畸形或服务端 5xx，均无法证明对象未提交。
+	// 绝不重试该外部写入。
 	unknown := final && state.dispatched.Load() && (status == 0 || status >= 500 || status >= 200 && status < 300)
-	// CompleteMultipartUpload can return an explicit XML error inside HTTP
-	// 200. The SDK parses it as APIError; unlike a truncated success body,
-	// this is a definitive rejection, not an unconfirmed transport outcome.
+	// CompleteMultipartUpload 可能在 HTTP 200 内部返回显式的 XML 错误。
+	// SDK 将其解析为 APIError；与截断的成功响应体不同，
+	// 这是确定性的拒绝，而非未确认的传输结果。
 	var apiError smithy.APIError
 	if status >= 200 && status < 300 && errors.As(err, &apiError) {
 		unknown = false
@@ -133,8 +132,8 @@ func objectUploadError(state *objectRequestState, err error, final bool) (Upload
 	} else if status == 0 && !state.dispatched.Load() {
 		code = "storage_unreachable"
 	}
-	// Do not retain the SDK error: its unwrap chain may contain credentialed
-	// URLs, server-controlled messages or response bodies.
+	// 不保留 SDK 错误：其解包链可能包含带凭据的 URL、
+	// 服务端可控的消息或响应体。
 	return UploadResult{OutcomeUnknown: unknown}, &Error{Code: code}
 }
 
@@ -185,7 +184,7 @@ func (u *ObjectUploader) Upload(ctx context.Context, destination ObjectDestinati
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	}
-	endpoint, _ := url.Parse(destination.Endpoint) // Already validated above.
+	endpoint, _ := url.Parse(destination.Endpoint) // 已在上方校验。
 	if destination.Provider == "oss" && !objectOfficialOSS(endpoint.Hostname()) {
 		options.EndpointResolverV2 = objectOSSResolver{base: s3.NewDefaultEndpointResolverV2(), endpoint: *endpoint}
 	}
@@ -213,8 +212,7 @@ func (u *ObjectUploader) Upload(ctx context.Context, destination ObjectDestinati
 		if complete {
 			return
 		}
-		// No inherited cancellation/deadline: aborted uploads should not be left
-		// behind merely because the task or its failed request was canceled.
+		// 清理不继承取消或截止时间，避免任务或请求被取消后，未完成的分段上传无法清除。
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		_, _ = client.AbortMultipartUpload(cleanupCtx, &s3.AbortMultipartUploadInput{Bucket: aws.String(destination.Bucket), Key: aws.String(key), UploadId: created.UploadId})

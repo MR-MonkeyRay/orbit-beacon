@@ -8,8 +8,8 @@ import (
 	"orbitbeacon/internal/server/nodes"
 )
 
-// ProjectLiveRecord reads only the receipt clock under the existing state lock.
-// It neither allocates report copies nor decodes a report for fleet presence.
+// ProjectLiveRecord 在现有状态锁下仅读取服务端接收时间。
+// 计算节点列表的在线状态无需分配报告副本或解码报告。
 func (s *Service) ProjectLiveRecord(record *nodes.LiveRecord, now time.Time) nodes.LiveNode {
 	out := record.LiveNode
 	identity := &record.Identity
@@ -29,9 +29,8 @@ func (s *Service) ProjectLiveRecord(record *nodes.LiveRecord, now time.Time) nod
 	return out
 }
 
-// ProjectLiveDetail uses the identity and observations read in one durable row.
-// Runtime follows the same accepted sample even between a durable transaction's
-// commit and memory publication. After restart durable runtime can stand alone.
+// ProjectLiveDetail 使用同一持久化行中的身份和观测数据。即使新事务已提交但内存尚未发布，
+// runtime 也必须与返回的已接受样本一致。重启后无内存样本时可单独使用持久化 runtime。
 func (s *Service) ProjectLiveDetail(record *nodes.LiveDetailRecord, now time.Time) (*LatestReport, error) {
 	identity := &record.Identity
 	if !identity.HasCredential || identity.Generation == 0 || identity.Session == "" {
@@ -48,8 +47,8 @@ func (s *Service) ProjectLiveDetail(record *nodes.LiveDetailRecord, now time.Tim
 		state.mu.Unlock()
 		return nil, nil
 	}
-	// Published report buffers are immutable, so holding the reference is
-	// sufficient while decoding this one detail, even if a new report arrives.
+	// 已发布的报告缓冲区不可变，因此解码这一条 detail 时持有引用即可，
+	// 即使有新报告到达。
 	body := state.latest
 	received := state.receivedAt
 	state.mu.Unlock()

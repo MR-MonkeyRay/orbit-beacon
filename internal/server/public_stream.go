@@ -17,8 +17,8 @@ import (
 
 var liveOriginPatternEscaper = strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`, `]`, `\]`)
 
-// Capture only the accepted socket so the HTTP handshake deadline can be
-// cleared after the registry takes ownership. RFC 6455 remains the library's.
+// 只捕获已接受的套接字，这样注册表接管所有权后就能清除 HTTP 握手截止时间。
+// RFC 6455 仍由库负责。
 type liveUpgradeWriter struct {
 	http.ResponseWriter
 	connection net.Conn
@@ -105,8 +105,8 @@ func (h *handler) serveLiveSSE(w http.ResponseWriter, r *http.Request, stream *l
 }
 
 func (h *handler) trustedLiveOrigin(w http.ResponseWriter, r *http.Request, requestID string) bool {
-	// Compare the raw browser Origin with the configured canonical origin. Do
-	// not trust Host, normalize attacker input or accept an absent Origin.
+	// 将浏览器的原始 Origin 与配置的规范 Origin 比较。
+	// 不信任 Host，不规范化攻击者输入，也不接受缺失的 Origin。
 	if h.origin == "" || len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != h.origin {
 		fail(w, http.StatusForbidden, "forbidden", "A trusted Origin is required", requestID)
 		return false
@@ -157,16 +157,16 @@ func (h *handler) serveLiveWebSocket(w http.ResponseWriter, r *http.Request, str
 	}()
 	connection.SetReadLimit(1024)
 	stream.setWriter(nil, func() { _ = connection.CloseNow() })
-	// A bounded HTTP handshake must not leave an idle WS with a ten-second
-	// socket deadline. Subsequent library writes use individual contexts.
+	// 有界的 HTTP 握手不能让空闲 WS 带着十秒的套接字截止时间。
+	// 后续的库写入各自使用独立的 context。
 	if err := upgradeWriter.connection.SetDeadline(time.Time{}); err != nil {
 		return
 	}
 	ctx, cancel := h.liveStreamContext(r, stream, expires)
 	defer cancel()
-	// v1.8.15 CloseRead waits for its own goroutine on unexpected data.
-	// Use the library reader once: any application message ends this readonly
-	// channel without draining an untrusted payload or waiting for a handshake.
+	// v1.8.15 的 CloseRead 在收到意外数据时会等待自己的协程。
+	// 只使用一次库读取器：任何应用消息都会结束这个只读通道，
+	// 而无需排空不可信载荷或等待握手。
 	readCtx, stopRead := context.WithCancel(context.Background())
 	readDone = make(chan struct{})
 	go func() {
@@ -182,8 +182,7 @@ func (h *handler) serveLiveWebSocket(w http.ResponseWriter, r *http.Request, str
 
 func writePublicFrame(w http.ResponseWriter, body []byte) error {
 	controller := http.NewResponseController(w)
-	// Write framing separately instead of allocating and copying a second
-	// full page just to prepend the SSE event name.
+	// 分开写帧头，而不是为了加 SSE 事件名再分配并拷贝一份完整页面。
 	if n, err := io.WriteString(w, "event: message\ndata: "); err != nil || n != len("event: message\ndata: ") {
 		if err == nil {
 			err = io.ErrShortWrite
@@ -206,7 +205,7 @@ func writePublicFrame(w http.ResponseWriter, body []byte) error {
 	if err := controller.Flush(); err != nil {
 		return err
 	}
-	// HTTP/2 also applies deadlines while idle. Each frame gets its own
-	// deadline; heartbeats must not inherit the preceding frame's deadline.
+	// HTTP/2 在空闲时同样应用截止时间。每个帧有自己的截止时间；
+	// 心跳绝不能继承前一帧的截止时间。
 	return controller.SetWriteDeadline(time.Time{})
 }

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Retention defaults are deliberately named so configuration can be added later.
+// 保留默认值特意以此命名，以便日后添加配置。
 const (
 	Retention1m = 48 * time.Hour
 	Retention5m = 14 * 24 * time.Hour
@@ -58,7 +58,7 @@ type Response struct {
 	Points      []Point `json:"points"`
 }
 
-// Empty returns the same response shape when best-effort history is disabled.
+// Empty 在历史记录不可用时返回结构相同的空响应。
 func Empty(metric, requestedRange string) (Response, error) {
 	selection, err := SelectRange(requestedRange)
 	if err != nil {
@@ -77,8 +77,8 @@ func (s *Service) Query(ctx context.Context, nodeID, metric, requestedRange stri
 		return Response{}, err
 	}
 	selection, _ := SelectRange(requestedRange)
-	// Include the bucket intersecting the range's leading edge. No null gap rows
-	// or synthetic zeros are produced, and pending buckets become visible on flush.
+	// 包含与范围起点相交的桶；缺失数据不补 null 行或零值。
+	// 待写入的桶在落盘后才可查询。
 	start := now.Add(-selection.Duration).Truncate(time.Duration(selection.StepSeconds) * time.Second).Unix()
 	rows, err := s.reader.QueryContext(ctx, `SELECT t, total / samples, peak FROM buckets WHERE node_id=? AND metric=? AND step=? AND t>=? AND t<=? ORDER BY t`, nodeID, metric, selection.StepSeconds, start, now.Unix())
 	if err != nil {
@@ -91,8 +91,8 @@ func (s *Service) Query(ctx context.Context, nodeID, metric, requestedRange stri
 		if err := rows.Scan(&timestamp, &point.Avg, &point.Max); err != nil {
 			return Response{}, err
 		}
-		// Old or damaged stores may contain overflowing totals or peaks. Never
-		// let one such point make the whole response impossible to encode.
+		// 旧的或损坏的存储可能包含溢出的总和或峰值。
+		// 绝不让这样一个点导致整个响应无法编码。
 		if math.IsNaN(point.Avg) || math.IsInf(point.Avg, 0) || math.IsNaN(point.Max) || math.IsInf(point.Max, 0) {
 			continue
 		}

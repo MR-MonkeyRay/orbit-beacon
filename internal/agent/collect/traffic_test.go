@@ -38,7 +38,7 @@ func TestTrafficDeltasResetsAndSelection(t *testing.T) {
 		t.Fatal("independent processes share epoch")
 	}
 	observeTraffic(a, 150, 300)
-	observeTraffic(a, 5, 320) // RX reset must not discard TX's ordinary delta.
+	observeTraffic(a, 5, 320) // RX 复位不得丢弃 TX 的普通增量。
 	if got := a.Entries()[0]; got.RxBytes != "55" || got.TxBytes != "120" {
 		t.Fatalf("incorrect deltas/reset: %+v", got)
 	}
@@ -52,7 +52,7 @@ func TestTrafficDeltasResetsAndSelection(t *testing.T) {
 		t.Fatalf("reselected interface did not baseline: %+v", got)
 	}
 	before := a.Entries()
-	a.Observe([]string{"eth0", "eth1"}, nil) // A read failure does not consume counters.
+	a.Observe([]string{"eth0", "eth1"}, nil) // 读取失败不更新计数器基线。
 	if got := a.Entries(); !reflect.DeepEqual(got, before) {
 		t.Fatalf("read failure changed totals: %+v", got)
 	}
@@ -159,7 +159,7 @@ func TestTrafficClockRollbackWithinHour(t *testing.T) {
 	a.Acknowledge([]v1.Traffic{before})
 	*now = now.Add(-30 * time.Minute)
 	observeTraffic(a, 1010, 2020)
-	a.Acknowledge([]v1.Traffic{before}) // A stale ack cannot settle the new delta.
+	a.Acknowledge([]v1.Traffic{before}) // 过期确认不能结算新增量。
 	got := a.Entries()
 	if len(got) != 1 || got[0].Epoch != before.Epoch || got[0].PeriodStart != before.PeriodStart || got[0].RxBytes != "1010" || got[0].TxBytes != "2020" {
 		t.Fatalf("same-hour rollback reset cumulative totals: %+v", got)
@@ -193,7 +193,7 @@ func TestTrafficForwardJumpRecoveryUsesNewEpochForSettledHour(t *testing.T) {
 	settled := a.Entries()[0]
 	a.Acknowledge([]v1.Traffic{settled})
 	*now = now.AddDate(1, 0, 0)
-	observeTraffic(a, 110, 220) // closes and deletes the acknowledged hour
+	observeTraffic(a, 110, 220) // 关闭并删除已确认的小时
 	*now = now.AddDate(-1, 0, 0)
 	observeTraffic(a, 115, 230)
 	got := a.Entries()
@@ -212,7 +212,7 @@ func TestTrafficReportAfterForwardJumpRecoveryUsesNewEpoch(t *testing.T) {
 	*now = now.AddDate(1, 0, 0)
 	observeTraffic(a, 110, 220)
 	*now = now.AddDate(-1, 0, 0)
-	a.Entries() // a report built before the next sample must not reuse the old epoch
+	a.Entries() // 下一次采样前构建的上报不得复用旧 epoch
 	observeTraffic(a, 115, 230)
 	got := a.Entries()
 	last := got[len(got)-1]
@@ -229,7 +229,7 @@ func TestTrafficCapsOldestAt24(t *testing.T) {
 		*now = now.Add(time.Hour)
 	}
 	entries := a.Entries()
-	// The unsampled current hour must not evict the oldest sampled bucket.
+	// 未采样的当前小时不得挤掉最旧的已采样桶。
 	if len(entries) != 24 || !entries[0].PeriodStart.Equal(start.Add(6*time.Hour)) || !entries[23].PeriodStart.Equal(start.Add(29*time.Hour)) {
 		t.Fatalf("not bounded to newest 24 sampled hours: %+v", entries)
 	}
@@ -285,7 +285,7 @@ func TestTrafficUsesCapturedSampleTime(t *testing.T) {
 	a, now := trafficFixture()
 	observeTraffic(a, 100, 200)
 	sampledAt := *now
-	*now = now.Add(2 * time.Minute) // Processing/reporting happens in the next hour.
+	*now = now.Add(2 * time.Minute) // 处理/上报发生在下一小时。
 	a.ObserveAt(sampledAt, []string{"eth0"}, map[string]NetworkCounter{"eth0": {RxBytes: 110, TxBytes: 220}})
 	entries := a.Entries()
 	if len(entries) != 2 || entries[0].RxBytes != "10" || entries[0].TxBytes != "20" || entries[1].RxBytes != "0" {
@@ -302,7 +302,7 @@ func TestTrafficReportDoesNotEvictSampledBucketAfterForwardJump(t *testing.T) {
 	}
 	*now = now.Add(-time.Hour)
 	*now = now.AddDate(5, 0, 0)
-	a.Entries() // A report alone during a bogus jump.
+	a.Entries() // 模拟异常时钟前跳后，仅触发上报。
 	*now = now.AddDate(-5, 0, 0)
 	entries := a.Entries()
 	if len(entries) != 24 || !entries[0].PeriodStart.Equal(start.Add(time.Hour)) || entries[0].RxBytes != "1" {
