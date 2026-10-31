@@ -33,7 +33,7 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
         threshold.required = !offline;
         offlineHint.hidden = !offline;
         threshold.max = metricMax(metric.value);
-        // Defaults such as 80% are out of range for a count; 0 means any failure.
+        // 80% 之类的默认值对计数无意义；0 表示任意一次失败。
         if (Number(threshold.value) > threshold.max) threshold.value = metric.value === 'probes_down' ? '0' : String(threshold.max);
         thresholdLabel.textContent = t(metric.value === 'load1' ? 'alerts.rules.thresholdLoad' : metric.value === 'probes_down' ? 'alerts.rules.thresholdProbes' : 'alerts.rules.thresholdPercent');
         minutes.min = offline ? 3 : 0;

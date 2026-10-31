@@ -351,7 +351,7 @@ func TestVerifyPasswordRejectsOutOfBoundsAndMalformedParameters(t *testing.T) {
 
 func encodedPassword(password string, memory, iterations uint32, parallelism uint8) string {
 	salt := []byte("0123456789abcdef")
-	// Avoid invoking Argon2 with deliberately unsafe test parameters.
+	// 避免用故意不安全的测试参数调用 Argon2。
 	digest := make([]byte, 32)
 	if memory >= 19456 && memory <= 262144 && iterations >= 1 && iterations <= 10 && parallelism >= 1 && parallelism <= 4 {
 		digest = argon2.IDKey([]byte(password), salt, iterations, memory, parallelism, 32)

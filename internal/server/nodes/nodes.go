@@ -32,8 +32,7 @@ const (
 	ErrNotFound        serviceError = "node not found"
 	ErrUnauthenticated serviceError = "node authentication required"
 	ErrInvalidInput    serviceError = "invalid node request"
-	// ErrDisabled rejects agent traffic for a disabled node without treating
-	// its still-valid credential as unknown.
+	// ErrDisabled 拒绝已禁用节点的 Agent 流量，但不把它仍有效的凭据当作未知凭据。
 	ErrDisabled serviceError = "node is disabled"
 )
 
@@ -61,7 +60,7 @@ type MetadataPatch struct {
 	Notes    *string `json:"notes"`
 	Region   *string `json:"region"`
 	Provider *string `json:"provider"`
-	// A nil raw message leaves the group unchanged; JSON null clears it.
+	// 原始消息为 nil 时不改动分组；JSON null 表示清除。
 	GroupID json.RawMessage `json:"group_id"`
 	Tags    *[]string       `json:"tags"`
 }
@@ -120,21 +119,21 @@ func NewService(db *sql.DB, opts Options) *Service {
 	return &Service{db: db, maxNodes: opts.MaxNodes, now: opts.Now, random: opts.Random}
 }
 
-// Database and Capacity keep default HTTP services on the same storage policy.
+// Database 和 Capacity 让默认 HTTP 服务共用同一存储策略。
 func (s *Service) Database() *sql.DB { return s.db }
 
 func (s *Service) Capacity() int { return s.maxNodes }
 
-// InvalidatePublic expires projections after an ordinary committed data change.
-// Additions and text edits stay on the browser's configured update cadence.
+// InvalidatePublic 在普通数据变更提交后使投影过期。
+// 新增和文本编辑仍按浏览器配置的更新节奏刷新。
 func (s *Service) InvalidatePublic() {
 	s.publicMu.Lock()
 	s.publicVersion++
 	s.publicMu.Unlock()
 }
 
-// InvalidatePublicSafety expires data and immediately renews active streams.
-// Publish both versions under one lock so cache and egress cannot disagree.
+// InvalidatePublicSafety 使数据过期并立即刷新活跃流。
+// 两个版本号在同一把锁下发布，缓存和出口不会不一致。
 func (s *Service) InvalidatePublicSafety() {
 	s.publicMu.Lock()
 	s.publicVersion++
@@ -166,8 +165,8 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 		return Node{}, err
 	}
 	node := Node{ID: id, Name: req.Name, Status: "pending", Presence: "pending", Tags: []string{}, CreatedAt: s.now().UTC()}
-	// BEGIN IMMEDIATE reserves the writer before checking capacity, including
-	// across independent services using the same persistent database.
+	// BEGIN IMMEDIATE 在检查容量前先占住写锁，
+	// 对使用同一持久化数据库的多个独立服务也生效。
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Node{}, err
@@ -226,8 +225,7 @@ func scanNode(row scanner, now time.Time) (Node, error) {
 		}
 		node.LastSeen = &seen
 	}
-	// HTTP inventory uses durable observations; live reads overlay only a
-	// strictly matching in-memory process identity.
+	// HTTP 清单使用持久化观测结果；实时读取仅叠加严格匹配的内存进程标识。
 	node.Presence = Presence(node.Status, hasCredential.Bool, node.LastSeen, now)
 	var system v1.System
 	if json.Unmarshal([]byte(systemJSON), &system) == nil {
@@ -240,7 +238,7 @@ func (s *Service) Get(ctx context.Context, id string) (Node, error) {
 	return scanNode(s.db.QueryRowContext(ctx, "SELECT "+nodeColumns+" FROM nodes WHERE id = ?", id), s.now())
 }
 
-// ListPage fetches one lookahead row in the same query as the requested page.
+// ListPage 在同一条查询里多取一行，用于判断是否还有下一页。
 func (s *Service) ListPage(ctx context.Context, limit, offset int) ([]Node, bool, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, false, ErrInvalidInput
@@ -274,7 +272,7 @@ func (s *Service) list(ctx context.Context, limit, offset int) ([]Node, error) {
 	return result, rows.Err()
 }
 
-// PatchMetadata changes only supplied metadata and replaces tags only when present.
+// PatchMetadata 只更新提供的元数据，tags 仅在提供时整体替换。
 func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPatch) (Node, error) {
 	if !uuid.ValidUUID(id) {
 		return Node{}, ErrInvalidInput
@@ -351,7 +349,7 @@ func (s *Service) SetDisabled(ctx context.Context, id string, disabled bool) err
 		return err
 	}
 	defer tx.Rollback()
-	// Enabling cannot invent an enrolled identity: tokenless assets stay pending.
+	// 启用不能凭空造出已注册身份：没有凭据的资产保持 pending。
 	result, err := tx.ExecContext(ctx, `UPDATE nodes SET status = CASE WHEN ? THEN 'disabled' WHEN token_hash IS NULL THEN 'pending' ELSE 'unknown' END WHERE id = ?`, disabled, id)
 	if err := affected(result, err); err != nil {
 		return err
@@ -374,9 +372,8 @@ func (s *Service) SetDisabled(ctx context.Context, id string, disabled bool) err
 	return nil
 }
 
-// RevokeCredential detaches the agent identity but keeps the asset, so a leaked
-// credential can be cut off without losing metadata or public settings. A new
-// single-node enrollment ticket can bind a fresh installation afterwards.
+// RevokeCredential 解除 Agent 身份但保留资产，泄露的凭据可以被切断，
+// 元数据和公开设置不丢失。之后可用新的单节点注册票据绑定新安装。
 func (s *Service) RevokeCredential(ctx context.Context, id string) error {
 	if !uuid.ValidUUID(id) {
 		return ErrInvalidInput
@@ -386,8 +383,8 @@ func (s *Service) RevokeCredential(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	// Exhaustion must roll back, not let SQLite promote the identity fence to
-	// REAL. The existing NOT NULL constraint rejects only an actual increment.
+	// 耗尽时必须回滚，不能让 SQLite 把身份围栏提升为 REAL。
+	// 现有 NOT NULL 约束只拒绝实际的自增。
 	result, err := tx.ExecContext(ctx, `UPDATE nodes SET credential_epoch = CASE WHEN length(token_hash)>0 THEN CASE WHEN credential_epoch < 9223372036854775807 THEN credential_epoch + 1 ELSE NULL END ELSE credential_epoch END, token_hash = NULL, installation_id = NULL, run_generation = '0', report_session_id = '', agent_runtime = '', last_seen = NULL, system = '{}', status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'pending' END WHERE id = ?`, id)
 	if err := affected(result, err); err != nil {
 		return err
@@ -421,8 +418,8 @@ func affected(result sql.Result, err error) error {
 	return nil
 }
 
-// Authentication is the internal credential identity observed by one read.
-// It is not a node DTO and must not be exposed over the API.
+// Authentication 是一次读取得到的内部凭据身份。
+// 它不是节点 DTO，不得通过 API 暴露。
 type Authentication struct {
 	ID              string `json:"-"`
 	CredentialEpoch int64  `json:"-"`
@@ -452,8 +449,8 @@ func (s *Service) AuthenticateToken(ctx context.Context, token string) (Authenti
 	return identity, nil
 }
 
-// Delete revokes identity and cancels pending work in the same transaction as
-// asset deletion. Update results retain the deleted node ID for auditability.
+// Delete 在同一事务中撤销身份、取消待处理任务并删除资产。
+// 更新结果保留已删除节点的 ID 以便审计。
 func (s *Service) Delete(ctx context.Context, id string, confirm bool) error {
 	if !confirm {
 		return ErrInvalidInput
@@ -527,7 +524,7 @@ func (s *Service) Batch(ctx context.Context, req BatchRequest) ([]BatchResult, e
 	return results, nil
 }
 
-// GetRuntime returns the current identity's last observed agent settings.
+// GetRuntime 返回当前身份最近一次观测到的 Agent 设置。
 func (s *Service) GetRuntime(ctx context.Context, id string) (*v1.RuntimeSettings, error) {
 	var raw string
 	if err := s.db.QueryRowContext(ctx, "SELECT CASE WHEN length(token_hash)>0 AND run_generation!='0' AND report_session_id!='' THEN agent_runtime ELSE '' END FROM nodes WHERE id=?", id).Scan(&raw); err != nil {

@@ -39,7 +39,7 @@ func TestTrafficCoalescesAcksAfterCommitAndMaxUpsert(t *testing.T) {
 	if err != nil || len(response.TrafficAcks) != 1 || response.TrafficAcks[0].RxBytes != "15" {
 		t.Fatalf("committed response=%+v err=%v", response, err)
 	}
-	// Lower resends acknowledge the actual committed maxima without a write.
+	// 较低值的重发无需写入即可确认实际提交的最大值。
 	f.report.Seq++
 	f.report.Traffic[0].RxBytes = "1"
 	f.report.Traffic[0].TxBytes = "25"
@@ -53,7 +53,7 @@ func TestTrafficCoalescesAcksAfterCommitAndMaxUpsert(t *testing.T) {
 	if err != nil || len(response.TrafficAcks) != 1 || response.TrafficAcks[0].RxBytes != "15" || response.TrafficAcks[0].TxBytes != "25" {
 		t.Fatalf("max ack=%+v err=%v", response, err)
 	}
-	// A restart has no ack cache; RETURNING must recover existing maxima.
+	// 重启后没有 ack 缓存；必须由 RETURNING 恢复现有最大值。
 	f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }})
 	f.report.Seq++
 	response, err = trafficAccept(t, f)
@@ -90,7 +90,7 @@ func TestTrafficPersistFailureRetainsPendingAndNeverAcks(t *testing.T) {
 	if _, err := f.db.Exec(`DROP TRIGGER fail_traffic`); err != nil {
 		t.Fatal(err)
 	}
-	// Retry without traffic in the report still flushes the retained buffer.
+	// 报告中没有流量时重试，仍会刷写保留的缓冲区。
 	f.report.Traffic = nil
 	f.report.Seq++
 	if _, err := trafficAccept(t, f); err != nil {
@@ -229,7 +229,7 @@ func TestTrafficCommitFailureRetainsPending(t *testing.T) {
 	f.now = f.now.Add(31 * time.Second)
 	f.report.Seq++
 	f.report.Traffic = []v1.Traffic{trafficEntry("a", f.now.Truncate(time.Hour), "10", "20")}
-	// INSERT succeeds, but a deferred foreign-key violation makes COMMIT fail.
+	// INSERT 成功，但延迟的外键违例使 COMMIT 失败。
 	if _, err := f.db.Exec(`CREATE TABLE traffic_commit_guard(node_id TEXT REFERENCES nodes(id) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER fail_traffic_commit AFTER INSERT ON traffic_hourly BEGIN INSERT INTO traffic_commit_guard VALUES('missing-node'); END`); err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestTrafficCommitFailureRetainsPending(t *testing.T) {
 	if _, err := f.db.Exec(`DROP TRIGGER fail_traffic_commit`); err != nil {
 		t.Fatal(err)
 	}
-	// Shutdown retries the retained traffic even without another report.
+	// 即使没有新报告，Shutdown 也会重试保留的流量。
 	if err := f.service.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +400,7 @@ func TestTrafficStagesRestartWithoutReplacingAcceptedCounters(t *testing.T) {
 	if acks := state.trafficAcks(incoming.Traffic, now); len(acks) != 0 {
 		t.Fatalf("staged traffic acknowledged before commit: %+v", acks)
 	}
-	// Observing the same durable fence after a failed transaction preserves both.
+	// 在失败事务之后观测到相同的持久化围栏时，两者都保留。
 	state.fenceTraffic(credential[:], 0, 1, "old")
 	if state.traffic.pending[oldKey].rx != 150 || state.stagedTraffic == nil {
 		t.Fatal("rollback lost accepted counters")
@@ -524,7 +524,7 @@ func TestTrafficRestartDiscardsPendingAcrossCredentialOrDurableFenceChanges(t *t
 	for _, mutation := range []string{"credential", "credential_epoch", "generation", "session"} {
 		t.Run(mutation, func(t *testing.T) {
 			f := newTrafficRestartFixture(t)
-			// Stage a new run during a failed attempt before the external mutation.
+			// 在外部变更之前，于一次失败的尝试期间暂存新运行。
 			f.report.RunGeneration = 2
 			f.report.SessionID = "staged"
 			f.report.Seq = 1
@@ -609,8 +609,8 @@ func TestTrafficCredentialRotationAfterInitialReadCannotCarryPending(t *testing.
 	f.report.Traffic = []v1.Traffic{trafficEntry("b", f.now.Truncate(time.Hour), "25", "35")}
 	rotated := sha256.Sum256([]byte("rotated-during-traffic-read"))
 	var rotatedOnce bool
-	// accept samples this clock after its first node identity read, before the
-	// durable transaction. The transactional fence must see the replacement.
+	// accept 在首次节点身份读取之后、持久化事务之前采样该时钟。
+	// 事务围栏必须看到这次替换。
 	f.service.now = func() time.Time {
 		if !rotatedOnce {
 			rotatedOnce = true
@@ -642,8 +642,8 @@ func TestTrafficStagesRetryWhenOnlyIncomingBufferSurvivesFence(t *testing.T) {
 	incoming := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 2, SessionID: "new", Traffic: []v1.Traffic{trafficEntry("b", now, "25", "35")}}
 	state.bufferTraffic(credential[:], 0, old, 1, "old", now)
 	state.stageTraffic(credential[:], 0, incoming, 1, "old", now)
-	// Model an incoming buffer admitted under a newer observed identity than
-	// the accepted run, then independently fence away the older run.
+	// 模拟一个新到来的缓冲区，其准入时观测到的身份比已接受运行更新，
+	// 然后单独清除旧运行的数据。
 	state.stagedTraffic.observedSession = "external"
 	state.fenceTraffic(credential[:], 0, 1, "external")
 	incoming.Traffic = nil

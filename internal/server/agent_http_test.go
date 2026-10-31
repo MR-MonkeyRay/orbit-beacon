@@ -308,7 +308,7 @@ func TestReportGenerationSessionAndSequenceOrdering(t *testing.T) {
 	if err != nil || latest.RunGeneration != 6 || latest.SessionID != "replacement" || latest.Seq != 1 {
 		t.Fatalf("replacement not authoritative: %+v %v", latest, err)
 	}
-	// A new server service loses only transient seq deduplication, not the process fence.
+	// 重建服务只丢失内存中的 seq 去重状态，不丢失持久化的进程隔离边界。
 	restarted := ingest.NewService(f.db, ingest.Options{Now: func() time.Time { return f.now }})
 	if _, err := acceptReport(context.Background(), restarted, token, mustReport(t, reportBody(5, 1000, "current", 99))); err == nil {
 		t.Fatal("generation fence lost on server restart")

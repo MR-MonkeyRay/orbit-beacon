@@ -10,8 +10,8 @@ let catalogs = {en, 'zh-CN': zhCN};
 const plurals = new Map();
 const listFormats = new Map();
 
-// The public entry uses the small synchronous catalogs above. The console
-// installs its full catalogs before any console labels or formatters are built.
+// 公开入口使用上面的小型同步词条表。控制台
+// 在构建任何标签或格式化器之前先安装完整词条表。
 export function setCatalogs(value) { catalogs = value; }
 
 export function resolveLocale(preference, languages) {
@@ -35,9 +35,8 @@ export function getLocale() {
   let storage;
   try { storage = globalThis.localStorage; } catch {}
   const navigator = globalThis.navigator;
-  // Switching language is an explicit, dirty-checked full reload. A storage or
-  // browser-language change in another tab must not mix fresh labels with this
-  // document's existing shell and module-scoped Intl formatters.
+  // 切换语言须显式触发，检查未保存更改后整页重载。其他标签页修改语言偏好，
+  // 或浏览器语言发生变化，都不能让本页的文案、外壳与模块级 Intl 格式化器语言不一致。
   if (cachedLocale && storage === cachedStorage && navigator === cachedNavigator) return cachedLocale;
   cachedStorage = storage;
   cachedNavigator = navigator;
@@ -50,8 +49,8 @@ export function getLocale() {
 
 export function setLocalePreference(preference) {
   if (!preferences.has(preference)) throw new TypeError('Invalid locale preference');
-  // Storage is the sole persistence path. Failure must leave the current page
-  // and its unsaved values untouched, so never publish an in-memory fallback.
+  // 语言偏好只能通过 localStorage 持久化；写入失败时保持当前页面和未保存值不变，
+  // 不回退到仅在内存中修改偏好。
   if (!globalThis.localStorage) throw new Error('Locale storage unavailable');
   globalThis.localStorage.setItem(STORAGE_KEY, preference);
   cachedLocale = undefined;
@@ -92,5 +91,5 @@ function interpolate(key, params, value) {
 
 export function t(key, params = {}) { return interpolate(key, params, String).join(''); }
 
-// Preserve links and live time elements while translations control word order.
+// 保留链接和实时时间元素，词序由译文控制。
 export function tParts(key, params = {}) { return interpolate(key, params, (value) => value); }

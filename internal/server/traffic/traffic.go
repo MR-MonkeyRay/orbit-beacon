@@ -1,5 +1,4 @@
-// Package traffic reads retained traffic counters and rolls expired hourly
-// counters into daily totals.
+// Package traffic 读取保留的流量计数，并把过期的小时计数汇总为按天合计。
 package traffic
 
 import (
@@ -67,8 +66,8 @@ func saturatingAdd(left, right int64) int64 {
 	return left + right
 }
 
-// CycleBounds returns the current UTC billing cycle. Invalid or absent billing
-// days use the server default of the first day of the month.
+// CycleBounds 返回当前 UTC 计费周期。无效或缺失的计费日使用服务器默认值，
+// 即每月第一天。
 func CycleBounds(now time.Time, billingDay int) (time.Time, time.Time) {
 	now = now.UTC()
 	if billingDay < 1 || billingDay > 28 {
@@ -81,8 +80,8 @@ func CycleBounds(now time.Time, billingDay int) (time.Time, time.Time) {
 	return start, start.AddDate(0, 1, 0)
 }
 
-// Read merges hourly and rolled-up daily counters. It sums in Go with
-// saturation so SQLite's signed 64-bit aggregate limit cannot fail reads.
+// Read 合并小时计数和汇总后的按天计数。它在 Go 中带饱和地求和，
+// 这样 SQLite 有符号 64 位聚合的限制不会导致读取失败。
 func (s *Service) Read(ctx context.Context, nodeID string, days int, now time.Time) (Summary, error) {
 	if s == nil || s.db == nil || nodeID == "" || days < 1 || days > 400 {
 		return Summary{}, ErrInvalidInput
@@ -105,7 +104,7 @@ func (s *Service) Read(ctx context.Context, nodeID string, days int, now time.Ti
 		billingOutput = &value
 	}
 	var quotaOutput *string
-	// A stored quota of 0 means unlimited, which the API reports as null.
+	// 存储的配额为 0 表示不限量，API 将其报告为 null。
 	if quota.Valid && quota.String != "" && quota.String != "0" {
 		value := quota.String
 		quotaOutput = &value
@@ -132,9 +131,9 @@ func (s *Service) Read(ctx context.Context, nodeID string, days int, now time.Ti
 		}
 		value.add(rx, tx)
 	}
-	// UNION ALL runs under one SQLite read snapshot. A concurrent retention
-	// transaction therefore cannot make a row disappear between separate daily
-	// and hourly queries or make the same counters visible in both forms.
+	// UNION ALL 在同一个 SQLite 读取快照下运行。因此并发的保留事务
+	// 不会让某行在独立的按天和按小时查询之间消失，
+	// 也不会让同一计数同时以两种形式可见。
 	rows, err := s.db.QueryContext(ctx, `
 WITH counters(day,rx_bytes,tx_bytes) AS (
  SELECT day,rx_bytes,tx_bytes FROM traffic_daily WHERE node_id=? AND day>=? AND day<?
@@ -213,9 +212,9 @@ type dailyKey struct {
 	day    string
 }
 
-// Cleanup rolls at most limit expired hourly rows into daily counters and uses
-// any remaining batch capacity to delete expired daily rows. Each rollup and
-// its source deletion commit in one transaction, so retries cannot double count.
+// Cleanup 最多把 limit 行过期的小时计数汇总为按天计数，
+// 并用剩余的批次容量删除过期的按天行。每次汇总及其源行删除都在一个事务中提交，
+// 因此重试不会重复计数。
 func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64, error) {
 	if s == nil || s.db == nil || limit <= 0 {
 		return 0, ErrInvalidInput

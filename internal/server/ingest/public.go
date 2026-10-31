@@ -11,7 +11,7 @@ import (
 	"orbitbeacon/internal/server/nodes"
 )
 
-// PublicNode is a strict anonymous projection, independent of internal inventory.
+// PublicNode 是严格的匿名投影，独立于内部清单。
 type PublicNode struct {
 	Name          string             `json:"name"`
 	Region        string             `json:"region"`
@@ -105,8 +105,8 @@ func (m publicMetric) project(elapsedMS int64) (*float64, string) {
 	return new(m.value), status
 }
 
-// ProjectPublicRecord overlays reception time only for the same durable identity.
-// Metrics are omitted if a durable report committed after the page query.
+// ProjectPublicRecord 仅对相同持久化身份叠加上接收时间。
+// 若在页面查询之后提交了持久化报告，则省略指标。
 func (s *Service) ProjectPublicRecord(record nodes.PublicRecord, now time.Time) PublicNode {
 	out := PublicNode{Name: record.Settings.Name, Region: record.Settings.Region, Provider: record.Settings.Provider, Status: "unknown", MetricStatus: unavailablePublicMetrics()}
 	if record.Generation == 0 || record.Session == "" || record.LastSeen.IsZero() || record.LastSeen.After(now) {
@@ -138,7 +138,7 @@ func (s *Service) ProjectPublicRecord(record nodes.PublicRecord, now time.Time) 
 	return out
 }
 
-// PublicPage preserves the anonymous response's field order and null semantics.
+// PublicPage 保持匿名响应的字段顺序与 null 语义。
 type PublicPage struct {
 	Nodes       []PublicNode `json:"nodes"`
 	HasMore     bool         `json:"has_more"`
@@ -170,9 +170,8 @@ type publicPageCache struct {
 	calls   map[publicPageKey]*publicPageCall
 }
 
-// PublicPage coalesces concurrent misses and bounds cached pages. The visibility
-// version is captured before querying: a racing mutation cannot bless old data
-// with a new version. Returned pages are immutable while cached.
+// PublicPage 合并并发的缓存未命中，并限制缓存页数。可见性版本在查询前捕获：
+// 竞争的变更无法用新版本为旧数据背书。缓存期间的返回页面不可变。
 func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offset int, ttl time.Duration, clock func() time.Time) (PublicPage, error) {
 	key := publicPageKey{service: ns, limit: limit, offset: offset, ttl: ttl}
 	cache := &s.publicPages
@@ -194,7 +193,7 @@ func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offs
 			case <-ctx.Done():
 				return PublicPage{}, ctx.Err()
 			case <-call.done:
-				// The leader's own cancellation says nothing about this request.
+				// 发起共享查询的请求被取消，不代表当前请求也已取消。
 				if call.err != nil && !errors.Is(call.err, context.Canceled) && !errors.Is(call.err, context.DeadlineExceeded) {
 					return PublicPage{}, call.err
 				}

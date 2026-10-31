@@ -67,9 +67,8 @@ func NewService(db *sql.DB, opts Options) *Service {
 	return &Service{db: db, maxNodes: opts.MaxNodes, now: opts.Now, random: opts.Random, invalidPeers: make(map[string]invalidBucket)}
 }
 
-// OnIdentityChange runs after a credential claim commits. Its argument is true
-// only when an active credential was replaced; first or post-revocation binds
-// are ordinary additions, not safety withdrawals.
+// OnIdentityChange 在凭据认领提交后运行。参数仅在替换了活跃凭据时为 true；
+// 首次绑定或撤销后的绑定属于普通新增，不是安全撤回。
 func (s *Service) OnIdentityChange(hook func(replacedActiveCredential bool)) {
 	if hook == nil {
 		return
@@ -79,7 +78,7 @@ func (s *Service) OnIdentityChange(hook func(replacedActiveCredential bool)) {
 	s.identityHooks = append(s.identityHooks, hook)
 }
 
-// Ticket deliberately contains neither the enrollment secret nor its hash.
+// Ticket 有意不包含注册密钥或其哈希。
 type Ticket struct {
 	ID        string     `json:"id"`
 	NodeID    *string    `json:"node_id"`
@@ -90,7 +89,7 @@ type Ticket struct {
 	RevokedAt *time.Time `json:"revoked_at"`
 }
 
-// Only the creation result exposes the plaintext ticket, once.
+// 只有创建结果会一次性暴露明文票据。
 type CreatedTicket struct {
 	Ticket
 	Token string `json:"token"`
@@ -187,7 +186,7 @@ func (s *Service) Get(ctx context.Context, id string) (Ticket, error) {
 }
 
 func (s *Service) List(ctx context.Context, limit, offset int) ([]Ticket, error) {
-	// The HTTP page limit is 100; allow one extra row for its lookahead.
+	// HTTP 页大小上限为 100；多取一行用于前瞻。
 	if limit < 1 || limit > 101 || offset < 0 {
 		return nil, ErrInvalidInput
 	}
@@ -207,10 +206,9 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]Ticket, error)
 	return tickets, rows.Err()
 }
 
-// CleanupExpiredTickets removes at most limit tickets whose expiration is
-// older than before. Foreign-key cascade removes their enrollment receipts in
-// the same statement, so an exact retry is retained until the configured
-// receipt grace period has elapsed.
+// CleanupExpiredTickets 最多删除 limit 张过期时间早于 before 的票据。
+// 外键级联在同一条语句中删除其注册回执，因此在配置的回执宽限期结束之前，
+// 精确重试所需的回执仍然保留。
 func (s *Service) CleanupExpiredTickets(ctx context.Context, before time.Time, limit int) (int64, error) {
 	if limit < 1 {
 		return 0, ErrInvalidInput
@@ -251,8 +249,8 @@ func (s *Service) Revoke(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
-// Recover authenticates both credential and installation in one read-only
-// statement. It deliberately does not use the ingest writer or update liveness.
+// Recover 在一条只读语句中同时认证凭据和安装实例。
+// 不占用 ingest 写入槽，也不更新最近上报时间。
 func (s *Service) Recover(ctx context.Context, token string, req v1.RecoveryRequest) (v1.EnrollmentResponse, error) {
 	if err := req.Validate(); err != nil {
 		return v1.EnrollmentResponse{}, ErrInvalidInput
@@ -275,8 +273,8 @@ func (s *Service) Recover(ctx context.Context, token string, req v1.RecoveryRequ
 	return v1.EnrollmentResponse{NodeID: nodeID, ServerTime: s.now().UTC()}, nil
 }
 
-// Enroll serializes identity binding, capacity, quota and the retry receipt in
-// one BEGIN IMMEDIATE transaction, including across independent service instances.
+// Enroll 在一个 BEGIN IMMEDIATE 事务中串行化身份绑定、容量、配额和重试回执，
+// 对独立的服务实例同样有效。
 func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentRequest) (v1.EnrollmentResponse, error) {
 	if err := req.Validate(); err != nil {
 		if errors.Is(err, v1.ErrProtocolUnsupported) {
@@ -306,8 +304,8 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 		return v1.EnrollmentResponse{}, ErrRevoked
 	}
 
-	// A receipt precedes natural expiry/quota, but only an active credential
-	// can retry through the inclusive 24h edge. Superseded claims cannot revive it.
+	// 先检查重试回执，再检查票据过期和使用配额。只有仍有效的凭据能在认领后
+	// 24 小时内（含边界）重试，已被替换的认领不能重新激活旧凭据。
 	var claimNodeID, claimed string
 	var claimHash []byte
 	var claimActive bool
@@ -354,8 +352,8 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 		if installation.Valid && installation.String != req.InstallationID {
 			return v1.EnrollmentResponse{}, ErrConflict
 		}
-		// A ticket authorizes a change, not a stale overwrite. Concurrent
-		// candidates may share a parent, but only the current parent can win.
+		// 票据授权的是变更，而非陈旧覆盖。并发候选可以共享同一父代，
+		// 但只有当前父代能够获胜。
 		rotation = len(currentHash) != 0 && subtle.ConstantTimeCompare(currentHash, nodeHash[:]) != 1
 		identityChanged = len(currentHash) == 0 || rotation
 		if rotation {
@@ -368,7 +366,7 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 			}
 		}
 	} else if ticket.GroupID == nil {
-		// A deleted batch group must not silently turn into ungrouped admission.
+		// 已删除的批量分组绝不能悄悄变成无分组准入。
 		return v1.EnrollmentResponse{}, ErrConflict
 	}
 
@@ -412,8 +410,7 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 			}
 		}
 	}
-	// The unchanged active credential does not consume an epoch. A true bind
-	// at integer exhaustion violates NOT NULL and rolls back the whole claim.
+	// 凭据未变时不增加 epoch；需要增加但已达整数上限时，NOT NULL 约束使整个认领回滚。
 	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET credential_epoch = CASE WHEN token_hash = ? THEN credential_epoch WHEN credential_epoch < 9223372036854775807 THEN credential_epoch + 1 ELSE NULL END, run_generation = CASE WHEN token_hash = ? THEN run_generation ELSE '0' END, report_session_id = CASE WHEN token_hash = ? THEN report_session_id ELSE '' END, agent_runtime = CASE WHEN token_hash = ? THEN agent_runtime ELSE '' END, last_seen = CASE WHEN token_hash = ? THEN last_seen ELSE NULL END, system = CASE WHEN token_hash = ? THEN system ELSE ? END, token_hash = ?, installation_id = ?, first_enrolled_at = COALESCE(first_enrolled_at, ?), status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'unknown' END WHERE id = ?`, nodeHash[:], nodeHash[:], nodeHash[:], nodeHash[:], nodeHash[:], nodeHash[:], string(system), nodeHash[:], req.InstallationID, timekey.Format(now), nodeID); err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
@@ -423,7 +420,7 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 	if _, err := tx.ExecContext(ctx, "UPDATE enrollment_tokens SET uses = uses + 1 WHERE id = ?", ticket.ID); err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
-	// Agents have no session, so the claim is attributed to the ticket.
+	// Agent 没有会话，因此认领归属于票据。
 	details := audit.Details{"enrollment_id": ticket.ID, "new_node": ticket.NodeID == nil, "rotation": rotation}
 	if err := audit.InsertDetails(audit.WithSystemActor(ctx, "agent"), tx, "enrollment.claim", nodeID, now, details); err != nil {
 		return v1.EnrollmentResponse{}, err

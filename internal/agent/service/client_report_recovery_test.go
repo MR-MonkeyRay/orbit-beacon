@@ -52,8 +52,8 @@ func TestReportRecoveryPromotionPreservesConcurrentDurableRun(t *testing.T) {
 			w.WriteHeader(401)
 			return
 		}
-		// A separate process updates the durable generation after credential reload
-		// but before the successful response permits pending promotion.
+		// 另一个进程在凭据重载之后、成功响应允许提升待确认凭据之前，
+		// 更新了持久化的 RunGeneration。
 		var err error
 		concurrentRun, err = other.BeginRun(t.Context())
 		if err != nil {

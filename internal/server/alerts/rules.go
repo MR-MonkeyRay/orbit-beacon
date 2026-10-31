@@ -1,4 +1,4 @@
-// Package alerts owns rule validation, durable alert episodes and evaluation.
+// Package alerts 负责规则校验、持久化告警事件和评估。
 package alerts
 
 import (
@@ -41,8 +41,8 @@ type Rule struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-// Raw members distinguish omission from explicit null. Only scope_id,
-// comparator and threshold accept null. POST requires nonnullable members.
+// json.RawMessage 区分字段省略和显式 null；仅 scope_id、comparator 和 threshold 接受 null。
+// POST 必须提供不接受 null 的字段。
 type Patch struct {
 	ChannelIDs json.RawMessage `json:"channel_ids"`
 	Name       json.RawMessage `json:"name"`
@@ -96,8 +96,8 @@ func apply(r *Rule, p Patch, create bool) error {
 	return nil
 }
 
-// ParseRuleSnapshot shares the evaluator's persisted rule representation.
-// Scope IDs are checked syntactically, never against entities deleted since firing.
+// ParseRuleSnapshot 与 evaluator 共用持久化的规则表示。
+// 范围 ID 只做语法检查，绝不校验触发后已删除的实体。
 func ParseRuleSnapshot(raw []byte) (Rule, error) {
 	var r Rule
 	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
@@ -109,7 +109,7 @@ func ParseRuleSnapshot(raw []byte) (Rule, error) {
 	return r, ValidateRuleSyntax(r)
 }
 
-// ValidateRuleSyntax checks rule values without querying scope dependencies.
+// ValidateRuleSyntax 检查规则值，不查询范围依赖。
 func ValidateRuleSyntax(r Rule) error {
 	if strings.TrimSpace(r.Name) == "" || len(r.Name) > 100 {
 		return validation.Invalid("name", "must contain 1..100 UTF-8 bytes")
@@ -343,7 +343,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
-// Routing is saved with the rule and its audit record under the same writer lock.
+// 路由与规则及其审计记录在同一把写锁下保存。
 func ruleChannels(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }, id string) ([]string, error) {

@@ -1,4 +1,4 @@
-/* Alert views share the console's semantic status tokens. */
+/* 告警视图复用控制台的状态色变量。 */
 .badge.alert-critical {
   color: var(--bad);
   background: var(--bad-bg);

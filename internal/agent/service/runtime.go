@@ -17,8 +17,8 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
-// Runtime wires the durable identity, local settings, collector and client.
-// Enrollment tokens are never part of runtime state.
+// Runtime 串联持久身份、本地配置、采集器与客户端。
+// 注册票据绝不属于运行时状态。
 type Runtime struct {
 	logger      *slog.Logger
 	identity    *identity.Store
@@ -68,7 +68,7 @@ func sameRuntimeSettings(a, b v1.RuntimeSettings) bool {
 	return a.ReportIntervalSeconds == b.ReportIntervalSeconds && a.DiskIntervalSeconds == b.DiskIntervalSeconds && slices.Equal(a.Interfaces, b.Interfaces) && slices.Equal(a.DiskPaths, b.DiskPaths) && slices.Equal(a.ProbeTargets, b.ProbeTargets)
 }
 
-// Arrays belong to an immutable settings snapshot and are copied only on change.
+// 切片属于不可变的配置快照，只在变化时复制。
 func cloneRuntimeSettings(next, current v1.RuntimeSettings) v1.RuntimeSettings {
 	if slices.Equal(next.Interfaces, current.Interfaces) && current.Interfaces != nil {
 		next.Interfaces = current.Interfaces
@@ -123,8 +123,8 @@ func (r *Runtime) reloadSettings(ctx context.Context, probes *probe.Runner, load
 		return nil
 	}
 	next = cloneRuntimeSettings(next, r.settings)
-	// Full validation precedes either mutation. Both setters accept every
-	// validated RuntimeSettings and cannot fail during application.
+	// 修改任何组件前先完成完整校验。两个设置方法均接受所有已通过校验的
+	// RuntimeSettings，应用过程中不会失败。
 	if err := r.collector.SetConfig(next); err != nil {
 		return err
 	}
@@ -145,9 +145,9 @@ type Diagnostics struct {
 	MetricStatus   map[string]string `json:"metric_status"`
 }
 
-// Doctor never sends an enrollment/report or advances the durable generation.
-// A method-only request exercises DNS, endpoint connectivity and HTTPS trust
-// when configured, without checking node authentication or accepting a sample.
+// Doctor 不发送注册或指标上报请求，也不推进持久化的 RunGeneration。
+// 通过 HEAD 请求检查 DNS 和端点连通性；使用 HTTPS 时还检查证书信任，
+// 但不验证节点凭据，也不提交采样数据。
 func (r *Runtime) Doctor(ctx context.Context) (Diagnostics, error) {
 	result := Diagnostics{Configuration: "valid", Identity: "valid", Connectivity: "error", Authentication: "not_checked", Collection: "error", InstallMode: r.installMode}
 	request, err := http.NewRequestWithContext(ctx, http.MethodHead, r.client.baseURL+"/api/agent/v1/report", nil)

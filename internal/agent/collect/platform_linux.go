@@ -96,7 +96,7 @@ func usableInterface(name string) bool {
 		if name == "" || len(name) > 15 || name == "." || strings.Contains(name, "..") || strings.ContainsAny(name, "/\\\x00: \t\r\n") {
 			return false
 		}
-		// Sysfs NIC symlinks may reach devices/, but must stay inside HOST_SYS.
+		// sysfs 网卡符号链接可能指向 devices/，但必须留在 HOST_SYS 内。
 		file, err := os.OpenInRoot(root, filepath.Join("class", "net", name, "flags"))
 		if err != nil {
 			return false
@@ -114,8 +114,8 @@ func usableInterface(name string) bool {
 }
 
 func networkProcPath(name string) string {
-	// /proc/net follows self/net even on a host proc mount. Pin routes and
-	// counters to PID 1 so both describe the host init network namespace.
+	// 即使挂载的是宿主机 proc，/proc/net 仍指向 self/net。
+	// 从 PID 1 读取路由和计数，确保两者都来自宿主机 init 的网络命名空间。
 	if os.Getenv("HOST_PROC") != "" {
 		return procPath("1", "net", name)
 	}
@@ -153,7 +153,7 @@ func defaultInterface(ctx context.Context) (string, error) {
 			return best, nil
 		}
 	}
-	// IPv6-only hosts need their actual default route, not an arbitrary NIC.
+	// 纯 IPv6 主机需要真实的默认路由，不能随便选一个网卡。
 	v6, err := os.Open(networkProcPath("ipv6_route"))
 	if err != nil {
 		return "", noDefaultInterface()

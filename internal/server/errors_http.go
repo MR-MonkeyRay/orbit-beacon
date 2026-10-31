@@ -37,7 +37,7 @@ type errorMapping struct {
 	retry   bool
 }
 
-// Agent-specific responses precede the shared service mappings.
+// Agent 专属响应优先于共享的服务映射。
 var errorMappings = []errorMapping{
 	{agentErrors, matches(ingest.ErrProtocolUnsupported, v1.ErrProtocolUnsupported), http.StatusUpgradeRequired, "protocol_unsupported", "Protocol version is not supported", false},
 	{agentErrors, matches(enrollment.ErrConflict), http.StatusConflict, "enrollment_conflict", "Enrollment does not match the bound installation and credential", false},

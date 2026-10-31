@@ -34,7 +34,7 @@ type Client struct {
 	system   v1.System
 }
 
-// HTTPError never includes URLs, bearer values or server-controlled response text.
+// HTTPError 绝不包含 URL、Bearer 凭据或服务器可控的响应文本。
 type HTTPError struct {
 	StatusCode int
 	RetryAfter string
@@ -105,7 +105,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 			IdleConnTimeout: 90 * time.Second,
 		}}
 	}
-	// Preserve the caller's trusted transport, but never redirect a bearer request.
+	// 保留调用方可信的传输实现，但禁止携带 Bearer 凭据的请求重定向。
 	copy := *client
 	copy.Timeout = 5 * time.Second
 	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -139,9 +139,8 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 		return v1.EnrollmentResponse{}, err
 	}
 	if !exists {
-		// Older identities may have promoted a committed candidate via reporting
-		// before this ticket's response arrived. Inspect its receipt without
-		// consuming a fresh ticket or staging another candidate.
+		// 旧身份可能在此票据的响应到达前，就已通过上报提升了已提交的候选项。
+		// 只检查其回执，不消费新票据，也不暂存另一个候选项。
 		credential := state.NodeToken
 		if state.PendingNodeToken != "" {
 			credential = state.PendingNodeToken
@@ -151,8 +150,8 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 		err := c.post(ctx, "/api/agent/v1/enroll/check", token, check, &checked)
 		var conflict *HTTPError
 		if credential != state.NodeToken && errors.As(err, &conflict) && conflict.StatusCode == http.StatusConflict {
-			// A different uncommitted pending candidate must not hide an active
-			// receipt in a legacy file. Both reads are side-effect-free.
+			// 另一个未提交的待定候选项不得遮蔽遗留文件中的有效回执。
+			// 两次读取都没有副作用。
 			credential = state.NodeToken
 			check.NodeToken = credential
 			checked = v1.EnrollmentCheckResponse{}
@@ -220,7 +219,7 @@ func (c *Client) recoverEnrollment(ctx context.Context, state identity.Identity)
 	return response, nil
 }
 
-// Report authenticates using the durable node secret even after a lost enrollment response.
+// Report 使用持久节点密钥认证，即使注册响应丢失也不受影响。
 func (c *Client) Report(ctx context.Context, report v1.Report) (v1.ReportResponse, error) {
 	var response v1.ReportResponse
 	state := c.identity.Current()
@@ -247,8 +246,8 @@ func (c *Client) Report(ctx context.Context, report v1.Report) (v1.ReportRespons
 		return response, err
 	}
 	if state.NodeID == "" || credential != state.NodeToken || response.NodeID != state.NodeID {
-		// Avoid steady-state writes; bind first-report recovery and validate any
-		// changed credential/node pair against the latest durable identity.
+		// 正常运行时避免重复写入；首次上报恢复时补全节点绑定，
+		// 并将变化后的凭据/节点组合与最新的持久化身份核对。
 		if err := c.identity.ConfirmEnrollment(ctx, credential, response.NodeID); err != nil {
 			return v1.ReportResponse{}, err
 		}
@@ -286,8 +285,8 @@ func (c *Client) post(ctx context.Context, path, token string, body, result any)
 		var failure struct {
 			Code string `json:"code"`
 		}
-		// Error text is never propagated; only the fixed protocol code is used
-		// to distinguish permanent ownership loss from transient rejection.
+		// 错误文本绝不向外传播；只用固定的协议错误码区分
+		// 永久性的所有权丢失与临时拒绝。
 		_ = json.NewDecoder(io.LimitReader(response.Body, v1.MaxMessageBytes)).Decode(&failure)
 		code := ""
 		if failure.Code == "identity_conflict" {

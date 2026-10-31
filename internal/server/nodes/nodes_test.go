@@ -170,8 +170,7 @@ func TestBatchRequiresExplicitBoundedIDsAndReportsEachNode(t *testing.T) {
 	}
 }
 
-// The queued job is seeded directly because scheduling signed releases belongs
-// to a later slice; deletion must already honor persistent lifecycle state.
+// 直接预置排队任务，确保删除节点时也处理持久化的任务状态。
 func seedCredentialAndUpdate(t *testing.T, db *sql.DB, nodeID string) (string, string) {
 	t.Helper()
 	ctx := context.Background()

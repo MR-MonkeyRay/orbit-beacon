@@ -15,7 +15,7 @@ const edit = (form, name, value) => {
   const input = control(form, name);
   input.value = value;
   input.dispatchEvent(new Event('input'));
-  // The small console harness does not simulate DOM event propagation.
+  // 小型控制台测试工具不模拟 DOM 事件传播。
   form.dispatchEvent(new Event('input'));
   return input;
 };

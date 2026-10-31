@@ -11,8 +11,8 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-// LiveIdentity is an internal fence and is never serialized to a browser.
-// The epoch also rejects credential ABA after an old request was admitted.
+// LiveIdentity 是内部围栏，绝不序列化给浏览器。
+// epoch 还能在旧请求被放行后拒绝凭据的 ABA 问题。
 type LiveIdentity struct {
 	Credential      [32]byte
 	CredentialEpoch int64
@@ -21,7 +21,7 @@ type LiveIdentity struct {
 	HasCredential   bool
 }
 
-// LiveNode is the complete, deliberately compact fleet wire record.
+// LiveNode 是节点列表完整且紧凑的传输记录。
 type LiveNode struct {
 	ID           string     `json:"id"`
 	Status       string     `json:"status"`
@@ -41,7 +41,7 @@ type LiveDetailRecord struct {
 	Runtime  *v1.RuntimeSettings
 }
 
-// Presence is shared by durable inventory and identity-matched live overlays.
+// Presence 由持久化清单和身份匹配的实时叠加层共用。
 func Presence(status string, hasCredential bool, seen *time.Time, now time.Time) string {
 	switch {
 	case status == "disabled":
@@ -68,8 +68,8 @@ func liveIdentity(credential []byte, epoch int64, generation, session string) (L
 	return identity, err
 }
 
-// LiveRecords reads the entire bounded inventory in one query. SQLite extracts
-// the sole system field needed by fleet; no report, runtime or notes is decoded.
+// LiveRecords 用一条查询读取数量受限的完整节点清单。SQLite 只提取节点列表所需的
+// 单个 system 字段；不解码 report、runtime 或 notes。
 func (s *Service) LiveRecords(ctx context.Context) ([]LiveRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,status,last_seen,
 		CASE WHEN json_valid(system) THEN COALESCE(json_extract(system,'$.agent_version'),'') ELSE '' END,
@@ -104,8 +104,7 @@ func (s *Service) LiveRecords(ctx context.Context) ([]LiveRecord, error) {
 	return records, rows.Err()
 }
 
-// The ordinary node scanner remains unchanged; only detail appends its private
-// identity destinations to the same atomic SELECT.
+// 沿用普通节点扫描器，仅在详情读取时追加同一条 SELECT 返回的私有身份字段。
 type liveDetailScanner struct {
 	scanner
 	credential *[]byte

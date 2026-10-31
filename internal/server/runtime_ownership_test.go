@@ -271,8 +271,8 @@ func TestCredentialEpochExhaustionRollsBackIdentityMutation(t *testing.T) {
 			}
 			request := v1.EnrollmentRequest{ProtocolVersion: 1, InstallationID: "installation-epoch-limit", NodeToken: token, System: v1.System{Hostname: "new-enrollment", OS: "linux", Arch: "amd64"}}
 			if mutation != "bind" {
-				// Exhaustion does not turn an idempotent same-active-credential
-				// enrollment into a mutation or invalidate the active identity.
+				// epoch 耗尽时，以同一有效凭据进行的幂等注册仍不修改身份，
+				// 也不使当前身份失效。
 				ticket, err := f.enrollments.CreateSingle(ctx, id)
 				if err != nil {
 					t.Fatal(err)

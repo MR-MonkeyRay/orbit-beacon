@@ -62,7 +62,7 @@ func TestNotificationHTTPCRUDRoutingAuthzAndSecretSafety(t *testing.T) {
 	for _, query := range []string{"limit=0", "limit=101", "limit=x", "limit=", "limit=2&limit=3", "before=bad", "before=", "offset=0", "%zz=x"} {
 		assertHTTPStatus(t, request(t, h, "GET", "/api/v1/notification-deliveries?"+query, "", second, "", ""), 400)
 	}
-	// A test against a private address is denied before network I/O and audited.
+	// 针对私有地址的测试会在网络 I/O 之前被拒绝并被审计。
 	assertHTTPStatus(t, request(t, h, "PATCH", path, `{"config":{"url":"https://127.0.0.1"}}`, second, secondCSRF, publicURL), 200)
 	r = request(t, h, "POST", path+"/test", "", second, secondCSRF, publicURL)
 	assertHTTPStatus(t, r, 200)

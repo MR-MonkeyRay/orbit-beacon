@@ -66,8 +66,8 @@ func TestPublicPageCapturesVisibilityVersionBeforeRacingMutation(t *testing.T) {
 		}{page: page, err: err}
 	}()
 
-	// refs becomes one only after the page query returned its record and
-	// projection acquired the existing state before blocking on state.mu.
+	// 只有当页面查询返回了记录、且投影在阻塞于 state.mu 之前
+	// 已获取现有状态之后，refs 才变为 1。
 	for {
 		s.mu.Lock()
 		refs := state.refs

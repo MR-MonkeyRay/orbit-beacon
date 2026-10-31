@@ -27,7 +27,7 @@ func TestExplicitTicketIsNeverReplacedByCredentialRecovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			before := state.Current()
-			// Server committed, but no enrollment/report response reached the Agent.
+			// 服务器已提交，但注册/报告响应没有到达 Agent。
 			if _, err := f.enrollments.Enroll(ctx, initial.Token, v1.EnrollmentRequest{ProtocolVersion: 1, InstallationID: before.InstallationID, NodeToken: before.NodeToken}); err != nil {
 				t.Fatal(err)
 			}

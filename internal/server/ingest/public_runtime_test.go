@@ -97,7 +97,7 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 	if err != nil || out.CPUPercent == nil || *out.CPUPercent != 25 {
 		t.Fatalf("duplicate replaced snapshot: %+v %v", out, err)
 	}
-	// Cross the coalescing interval to exercise a failed durable write.
+	// 跨越合并间隔，以触发一次失败的持久化写入。
 	now = now.Add(11 * time.Second)
 	if _, err := db.Exec(`CREATE TRIGGER reject_report BEFORE UPDATE OF last_seen ON nodes BEGIN SELECT RAISE(ABORT,'reject report'); END`); err != nil {
 		t.Fatal(err)
@@ -125,8 +125,8 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 	if err != nil || out.CPUPercent != nil || out.MemoryPercent == nil {
 		t.Fatalf("unavailable new metric retained old CPU: %+v %v", out, err)
 	}
-	// The newer report committed between the page query and projection lock.
-	// Preserve durable liveness while suppressing every metric from the new snapshot.
+	// 更新的报告在页面查询与投影锁之间提交。
+	// 保留持久化活跃性，同时抑制新快照中的所有指标。
 	raced := s.ProjectPublicRecord(records[0], now)
 	if raced.Status != "online" || raced.CPUPercent != nil || raced.MemoryPercent != nil || raced.Load1 != nil || raced.UptimeSeconds != nil {
 		t.Fatalf("stale page record reused newer metrics: %+v", raced)

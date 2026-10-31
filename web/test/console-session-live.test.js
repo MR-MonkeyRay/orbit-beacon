@@ -576,8 +576,8 @@ async function actionPage(t, respond, expires_at = '2026-10-28T00:10:00Z', load)
   client.setSession(proof({expires_at}));
   const routerURL = new URL(`../src/console/router.js?action-${encodeURIComponent(t.name)}`, import.meta.url);
   const {startRouter} = await import(routerURL.href);
-  // Load the real action against this fixture's router instance, not a router
-  // retained by an earlier fixture's document. No action behavior is replaced.
+  // 真实操作须使用本测试环境的路由器，而非先前测试文档保留的实例。
+  // 不替换操作本身的任何行为。
   const lifecycleURL = new URL('../src/console/pages/node-lifecycle.js', import.meta.url);
   const lifecycleSource = (await readFile(lifecycleURL, 'utf8')).replace(/from '(\.[^']+)'/g,
     (_match, path) => `from '${path === '../router.js' ? routerURL.href : new URL(path, lifecycleURL).href}'`);

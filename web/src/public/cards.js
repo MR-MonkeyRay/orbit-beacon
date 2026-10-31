@@ -43,8 +43,8 @@ function gauge(label) {
   return element;
 }
 
-// A card is created once and patched for each validated snapshot. A connection
-// fault only changes freshness styling, never the node's presence or values.
+// 卡片只创建一次，后续根据已校验的快照增量更新。
+// 连接故障只标记数据可能过期，不改变节点的在线状态或数值。
 export function createCard() {
   const name = h('h2');
   const badge = h('span', {class: 'status'});
@@ -77,7 +77,7 @@ export function createCard() {
     if (event.target === article && event.animationName === 'status-changed') article.classList.remove('changed');
   });
   item.update = (node) => {
-    // A presence change on a card already showing data gets one brief ring in the new status colour.
+    // 已显示数据的卡片在线状态变化时，以新状态色短暂闪烁一圈。
     if (current && current.status !== node.status) {
       article.classList.remove('changed');
       void article.offsetWidth;

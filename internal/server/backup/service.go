@@ -31,12 +31,12 @@ type Options struct {
 	SecretBox     *secretbox.Box
 	ServerVersion string
 	Now           func() time.Time
-	// Location is captured at construction; nil uses the server process timezone.
+	// Location 在构造时捕获；nil 表示使用服务器进程所在时区。
 	Location       *time.Location
 	Random         io.Reader
 	Uploader       Uploader
 	removeArtifact func(string) error
-	// Fault hooks are instance-local and only exercise the short terminal transaction.
+	// 故障钩子仅作用于实例，且只检验简短的终态事务。
 	beforeTerminal      func(*sql.Tx) error
 	afterTerminalCommit func() error
 }
@@ -120,8 +120,7 @@ func (s *Service) CreateExport(ctx context.Context, actorID string, categories [
 		return Task{}, err
 	}
 	defer tx.Rollback()
-	// storage.Open uses immediate write transactions: the capacity check and
-	// enqueue are protected by the same reservation.
+	// storage.Open 使用 BEGIN IMMEDIATE，容量检查与入队受同一写锁保护。
 	var count int
 	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM backup_tasks WHERE state IN ('queued','running')`).Scan(&count); err != nil {
 		return Task{}, err

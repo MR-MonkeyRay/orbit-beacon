@@ -252,8 +252,8 @@ func TestSMTPImplicitTLSAndUntrustedSTARTTLS(t *testing.T) {
 			}
 		})
 	}
-	// Simulate port 465 over an ephemeral local listener while preserving the
-	// production implicit-TLS branch and hostname certificate verification.
+	// 用临时本地监听器模拟 465 端口，同时保留生产环境的
+	// 隐式 TLS 分支和主机名证书校验。
 	cert := httptest.NewTLSServer(nil)
 	defer cert.Close()
 	listener, e := tls.Listen("tcp", "127.0.0.1:0", cert.TLS)

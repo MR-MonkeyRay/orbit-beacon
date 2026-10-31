@@ -20,7 +20,7 @@ export async function issueEnrollment(target, title, isDeleted = () => false) {
   const token = h('code', null, ticket.token);
   const installer = h('code', null, installerCommand(ticket.token, location.origin));
   const command = h('code', null, enrollmentCommand(ticket.token));
-  // Plaintext is retained only by this dialog, never by ticket-list state.
+  // 明文只保留在此对话框中，绝不进入票据列表状态。
   delete ticket.token;
   const countdown = h('span', {class: 'mono', role: 'timer', 'aria-live': 'off'});
   const status = h('p', {class: 'hint', role: 'status'});

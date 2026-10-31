@@ -41,8 +41,8 @@ function validSnapshot(data, nodeID) {
   return node(data.node) && data.node.id === nodeID && latest(data.latest) && runtime(data.runtime);
 }
 
-// Explicit metadata reloads confirm membership with a causally later projection.
-// The caller pauses its old channel so delayed frames cannot supersede this read.
+// 元数据重载后再读取状态快照，确认当前节点清单。
+// 调用方暂停旧通道，防止延迟帧覆盖本次读取。
 export async function readConsoleFleet(signal) {
   const epoch = getSessionEpoch();
   const frame = await api('/live', {signal});
@@ -54,9 +54,8 @@ export async function readConsoleFleet(signal) {
   return frame.data;
 }
 
-// The inner controller owns transport fallback. This wrapper owns private auth
-// and the page lifetime: it is removed on hide, so its auto-resume can never race
-// ahead of the unconditional foreground /me gate.
+// 内层控制器负责传输回退；此包装层负责鉴权与页面生命周期。
+// 页面隐藏时关闭内层通道，确保恢复前先通过 /me 会话校验。
 export function connectConsoleLive({nodeID, signal = getNavigationSignal(), onSnapshot, onState = () => {}, onClock = () => {}}) {
   if (nodeID !== undefined && (typeof nodeID !== 'string' || !uuid.test(nodeID))) throw new Error('Invalid node ID');
   const epoch = getSessionEpoch();
@@ -92,8 +91,8 @@ export function connectConsoleLive({nodeID, signal = getNavigationSignal(), onSn
   const unauthorized = async (reason) => {
     if (!active()) return false;
     if (reason === 'unauthenticated') { invalidateSession('unauthenticated'); return false; }
-    // WebSocket deliberately hides handshake status. Never infer that an
-    // unopened socket is only a transport failure; verify its cookie via HTTP.
+    // WebSocket 刻意隐藏握手状态。不能把未打开的 socket
+    // 推断为仅是传输故障；须通过 HTTP 验证其 cookie。
     try { await verifySession({signal, fresh: true}); return active(); }
     catch (error) { return error.status === 401 || !active() ? false : true; }
   };

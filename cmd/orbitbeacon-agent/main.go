@@ -39,7 +39,7 @@ func exitCode(err error) int {
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := runWithLogger(os.Args[1:], logger); err != nil {
-		// Command errors are operator-facing CLI output, not structured logs.
+		// 命令错误面向运维，直接输出到 CLI，不写结构化日志。
 		fmt.Fprintln(os.Stderr, "orbitbeacon-agent:", err)
 		os.Exit(exitCode(err))
 	}
@@ -51,10 +51,10 @@ func run(args []string) error {
 
 func runWithLogger(args []string, logger *slog.Logger) error {
 	if len(args) == 0 {
-		return errors.New("expected subcommand: run, enroll, doctor or version")
+		return errors.New("缺少子命令：应为 run、enroll、doctor 或 version")
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stdout, "Usage: orbitbeacon-agent {run|enroll|doctor|version} --help")
+		fmt.Fprintln(os.Stdout, "用法: orbitbeacon-agent {run|enroll|doctor|version} --help")
 		return nil
 	}
 	switch args[0] {
@@ -67,13 +67,13 @@ func runWithLogger(args []string, logger *slog.Logger) error {
 	case "doctor":
 		return runDoctor(args[1:], logger)
 	default:
-		return fmt.Errorf("unknown subcommand %q", args[0])
+		return fmt.Errorf("未知子命令 %q", args[0])
 	}
 }
 
 func runVersion(args []string) error {
 	fs := flag.NewFlagSet("version", flag.ContinueOnError)
-	asJSON := fs.Bool("json", false, "print machine-readable build information")
+	asJSON := fs.Bool("json", false, "输出机器可读的构建信息")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -81,7 +81,7 @@ func runVersion(args []string) error {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("unexpected positional argument %q", fs.Arg(0))
+		return fmt.Errorf("多余的位置参数 %q", fs.Arg(0))
 	}
 	info := buildinfo.Current()
 	if *asJSON {
@@ -100,14 +100,14 @@ type runtimeCommand struct {
 
 func prepareRuntimeCommand(name string, args []string, configure func(*flag.FlagSet) error) (*runtimeCommand, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	file := fs.String("config", "", "agent JSON configuration file")
-	policyPath := fs.String("install-policy", "", "administrator-owned immutable install policy JSON file")
+	file := fs.String("config", "", "Agent 的 JSON 配置文件")
+	policyPath := fs.String("install-policy", "", "归管理员所有、运行时不可修改的安装策略 JSON 文件")
 	runtimeFlags := map[string]*string{
-		"report_interval_seconds": fs.String("report-interval-seconds", "", "override the metric report interval in seconds"),
-		"disk_interval_seconds":   fs.String("disk-interval-seconds", "", "override the disk collection interval in seconds"),
-		"interfaces":              fs.String("interfaces", "", "override monitored interfaces with a JSON array of strings"),
-		"disk_paths":              fs.String("disk-paths", "", "override monitored disk paths with a JSON array of strings"),
-		"probe_targets":           fs.String("probe-targets", "", "override probe targets with a JSON array of strings"),
+		"report_interval_seconds": fs.String("report-interval-seconds", "", "覆盖指标上报间隔（秒）"),
+		"disk_interval_seconds":   fs.String("disk-interval-seconds", "", "覆盖磁盘采集间隔（秒）"),
+		"interfaces":              fs.String("interfaces", "", "用 JSON 字符串数组覆盖受监控网卡"),
+		"disk_paths":              fs.String("disk-paths", "", "用 JSON 字符串数组覆盖受监控磁盘路径"),
+		"probe_targets":           fs.String("probe-targets", "", "用 JSON 字符串数组覆盖探测目标"),
 	}
 	if configure != nil {
 		if err := configure(fs); err != nil {
@@ -121,10 +121,10 @@ func prepareRuntimeCommand(name string, args []string, configure func(*flag.Flag
 		return nil, err
 	}
 	if fs.NArg() != 0 {
-		return nil, fmt.Errorf("unexpected positional argument %q", fs.Arg(0))
+		return nil, fmt.Errorf("多余的位置参数 %q", fs.Arg(0))
 	}
 	if *policyPath == "" {
-		return nil, errors.New("--install-policy is required; trust policy is never inferred")
+		return nil, errors.New("必须提供 --install-policy；不会自动推断信任策略")
 	}
 	policy, err := config.ReadInstallPolicy(*policyPath, 0)
 	if err != nil {
@@ -159,15 +159,15 @@ func (c *runtimeCommand) close() { c.cancel() }
 
 func validateRuntimeIdentity(cfg config.Agent) error {
 	if runtime.GOOS == "windows" {
-		return errors.New("runtime_identity_unsupported: Windows account enforcement is not implemented; no runtime command was performed")
+		return errors.New("runtime_identity_unsupported: 未实现 Windows 账户强制校验，未执行任何运行时命令")
 	}
 	if os.Geteuid() == 0 || os.Getegid() == 0 || os.Geteuid() != cfg.ExpectedUID || os.Getegid() != cfg.ExpectedGID {
-		return errors.New("runtime_identity_mismatch: run as the non-root UID/GID fixed by the install policy")
+		return errors.New("runtime_identity_mismatch: 须以安装策略固定的非 root UID/GID 运行")
 	}
 	if cfg.ExpectedAccount != "" {
 		account, err := user.LookupId(fmt.Sprint(os.Geteuid()))
 		if err != nil || account.Username != cfg.ExpectedAccount {
-			return errors.New("runtime_identity_mismatch: account differs from install policy")
+			return errors.New("runtime_identity_mismatch: 当前账户与安装策略不一致")
 		}
 	}
 	return nil
@@ -210,7 +210,7 @@ func runAgent(args []string, logger *slog.Logger) error {
 func runEnroll(args []string, logger *slog.Logger) error {
 	var tokenFile string
 	command, err := prepareRuntimeCommand("enroll", args, func(fs *flag.FlagSet) error {
-		fs.StringVar(&tokenFile, "token-file", "", "optional enrollment token file; omit to recover saved node credentials")
+		fs.StringVar(&tokenFile, "token-file", "", "可选的注册票据文件；省略则找回已保存的节点凭据")
 		return nil
 	})
 	if err != nil || command == nil {
@@ -228,14 +228,14 @@ func runEnroll(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "Enrolled node %s\n", result.NodeID)
+	fmt.Fprintf(os.Stdout, "节点 %s 注册成功\n", result.NodeID)
 	return nil
 }
 
 func runDoctor(args []string, logger *slog.Logger) error {
 	var asJSON bool
 	command, err := prepareRuntimeCommand("doctor", args, func(fs *flag.FlagSet) error {
-		fs.BoolVar(&asJSON, "json", false, "print machine-readable diagnostics")
+		fs.BoolVar(&asJSON, "json", false, "输出机器可读的诊断结果")
 		return nil
 	})
 	if err != nil || command == nil {
@@ -253,7 +253,7 @@ func runDoctor(args []string, logger *slog.Logger) error {
 			return err
 		}
 	} else {
-		fmt.Fprintf(os.Stdout, "Configuration: %s\nIdentity file: %s\nConnectivity: %s\nNode authentication: %s\nCollection: %s\nInstall mode: %s\n", result.Configuration, result.Identity, result.Connectivity, result.Authentication, result.Collection, result.InstallMode)
+		fmt.Fprintf(os.Stdout, "配置: %s\n身份文件: %s\n连通性: %s\n节点认证: %s\n采集: %s\n安装模式: %s\n", result.Configuration, result.Identity, result.Connectivity, result.Authentication, result.Collection, result.InstallMode)
 		for metric, status := range result.MetricStatus {
 			fmt.Fprintf(os.Stdout, "%s: %s\n", metric, status)
 		}
@@ -261,8 +261,8 @@ func runDoctor(args []string, logger *slog.Logger) error {
 	return checkErr
 }
 
-// Capture the verified policy, environment and explicit flags once. Reload only
-// reopens the same local JSON file; trust roots cannot change with the process env.
+// 启动时固定已校验的策略、环境变量和显式命令行参数。重载只重新读取同一个
+// 本地 JSON 文件，信任根不随进程环境变化。
 func agentLoader(file string, flags map[string]string, policy config.InstallPolicy) (func() (config.Agent, error), error) {
 	if file != "" {
 		var err error
@@ -294,14 +294,13 @@ func lockRun(ctx context.Context, stateDir string) (func(), error) {
 		return nil, err
 	}
 	if err := os.MkdirAll(stateDir, 0700); err != nil {
-		return nil, errors.New("cannot prepare agent state directory for run lock")
+		return nil, errors.New("无法准备 Agent 状态目录以创建运行锁")
 	}
 	return filelock.TryAcquire(ctx, filepath.Join(stateDir, "run.lock"))
 }
 
-// runEnrollment preserves the ticket on every unconfirmed outcome. Cleanup errors
-// return the confirmed response as well, so callers can distinguish local cleanup
-// failure from an enrollment that did not commit.
+// runEnrollment 在任何未确认结果下都保留票据。清理失败时同样返回已确认的
+// 响应，调用方据此可区分本地清理失败与注册未生效。
 func runEnrollment(ctx context.Context, tokenFile string, enroll func(context.Context, string) (v1.EnrollmentResponse, error)) (v1.EnrollmentResponse, error) {
 	if tokenFile == "" {
 		return enroll(ctx, "")
@@ -316,10 +315,10 @@ func runEnrollment(ctx context.Context, tokenFile string, enroll func(context.Co
 		return result, err
 	}
 	if result.NodeID == "" {
-		return result, errors.New("invalid enrollment response; enrollment ticket retained")
+		return result, errors.New("注册响应无效；已保留注册票据")
 	}
 	if err := ticket.remove(); err != nil {
-		return result, errors.New("enrollment succeeded but enrollment ticket cleanup failed; verify the original directory and securely remove any remaining ticket or .orbitbeacon-ticket-* recovery files")
+		return result, errors.New("注册成功但清理注册票据失败；请检查原目录并安全删除残留票据或 .orbitbeacon-ticket-* 恢复文件")
 	}
 	return result, nil
 }

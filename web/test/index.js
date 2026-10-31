@@ -1,5 +1,5 @@
-// Node resolves the explicit test/ entry to this file. Keep the suite imports
-// static so the built-in runner registers every test before execution starts.
+// Node 将显式的 test/ 入口解析到此文件。保持套件导入为静态，
+// 使内置运行器在执行前注册所有测试。
 import './i18n.test.js';
 import './copy-templates.test.js';
 import './navigation-icons.test.js';

@@ -164,7 +164,7 @@ export async function nodesPage() {
       live.close();
       connection.update({state: 'stale'});
       try {
-        // A queued post-mutation reload must not reuse its predecessor's cache.
+        // 排队中的变更后重载不得复用前一次的缓存。
         invalidate('nodes');
         const fresh = await allNodes();
         const currentFleet = await readConsoleFleet(signal);

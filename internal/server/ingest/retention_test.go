@@ -47,7 +47,7 @@ func TestRetainedLastSampleLifecycle(t *testing.T) {
 			}
 		})
 	}
-	// A new Server process retains the asset and durable liveness, not numbers.
+	// 新的 Server 进程保留资产和持久化活跃性，不保留数值。
 	records, _, err := f.nodes.ListPublicRecords(ctx, 100, 0)
 	if err != nil || len(records) != 1 {
 		t.Fatalf("durable page=%+v err=%v", records, err)
@@ -59,7 +59,7 @@ func TestRetainedLastSampleLifecycle(t *testing.T) {
 	}
 	assertPublicStatuses(t, node, "unavailable", "unavailable", "unavailable", "unavailable")
 	assertPublicLastSeen(t, node, records[0].LastSeen)
-	// Reconnection replaces the whole sample, without advancing uptime locally.
+	// 重连替换整个样本，不在本地推进 uptime。
 	f.now = received.Add(181 * time.Second)
 	f.report.Seq++
 	*f.report.Metrics.CPUPercent = 50
@@ -73,7 +73,7 @@ func TestRetainedLastSampleLifecycle(t *testing.T) {
 	}
 	assertPublicStatuses(t, node, "ok", "ok", "ok", "ok")
 	assertPublicLastSeen(t, node, f.now)
-	// Explicit failure with a value is unavailable; never borrow an old success.
+	// 带数值的显式失败标记为不可用；绝不借用旧的成功值。
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
 	f.report.Metrics.MetricStatus["cpu_percent"] = "error"

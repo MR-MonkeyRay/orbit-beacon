@@ -10,7 +10,7 @@
 cd web
 npm ci
 npm run build
-# Or use npm run watch to rebuild on source changes.
+# 也可用 npm run watch 在源码变更时自动重新构建。
 npm run check
 npm test
 ```

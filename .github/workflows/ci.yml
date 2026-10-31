@@ -9,7 +9,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  # Do not interrupt a main-branch run once publication may have started.
+  # 主分支运行可能已开始发布，不中断。
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
@@ -23,27 +23,27 @@ jobs:
     outputs:
       version: ${{ steps.project-version.outputs.version }}
     steps:
-      - name: Check out source
+      - name: 检出源码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Read project version
+      - name: 读取项目版本
         id: project-version
         run: |
           set -eu
           version="$(< VERSION)"
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo 'VERSION must contain one SemVer-like value such as 0.1.0' >&2
+            echo 'VERSION 必须包含一个类似 SemVer 的版本号，如 0.1.0' >&2
             exit 1
           fi
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
-      - name: Set up Go
+      - name: 配置 Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Check formatting
+      - name: 检查格式
         run: |
           if ! unformatted="$(gofmt -l cmd internal)"; then
             exit 1
@@ -53,30 +53,30 @@ jobs:
             exit 1
           fi
 
-      - name: Verify module contents
+      - name: 校验模块内容
         run: go mod verify
 
-      - name: Run tests without cache and report coverage
+      - name: 不使用缓存运行测试并报告覆盖率
         run: |
           go test -count=1 -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out
 
-      - name: Run race tests
+      - name: 运行竞态测试
         env:
           CGO_ENABLED: '1'
         run: go test -race -count=1 ./...
 
-      - name: Run vet
+      - name: 运行 vet
         run: go vet ./...
 
-      - name: Run cross-platform vet
+      - name: 运行跨平台 vet
         env:
           CGO_ENABLED: '0'
         run: |
           GOOS=darwin go vet ./...
           GOOS=windows go vet ./...
 
-      - name: Run Staticcheck
+      - name: 运行 Staticcheck
         run: |
           GOBIN="$RUNNER_TEMP/bin" go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
           "$RUNNER_TEMP/bin/staticcheck" ./...
@@ -89,24 +89,24 @@ jobs:
       run:
         working-directory: web
     steps:
-      - name: Check out source
+      - name: 检出源码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Node.js
+      - name: 配置 Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: web/.nvmrc
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Install dependencies
+      - name: 安装依赖
         run: npm ci --no-audit --no-fund
 
-      # Go builds embed the committed distribution without requiring Node.js.
-      - name: Verify embedded web UI matches its source
+      # Go 构建直接嵌入已提交的产物，无需 Node.js。
+      - name: 校验内嵌 Web 界面与源码一致
         run: npm run check
 
-      - name: Run web tests
+      - name: 运行 Web 测试
         run: npm test
 
   security:
@@ -114,16 +114,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Check out source
+      - name: 检出源码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Go
+      - name: 配置 Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Run Go vulnerability scan
+      - name: 运行 Go 漏洞扫描
         run: |
           GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
           "$RUNNER_TEMP/bin/govulncheck" ./...
@@ -133,13 +133,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Check out source
+      - name: 检出源码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Check shell scripts
+      - name: 检查 shell 脚本
         run: shellcheck deploy/install-agent.sh deploy/install-agent.test.sh
 
-      - name: Run installer regression tests
+      - name: 运行安装器回归测试
         run: sh deploy/install-agent.test.sh
 
   release:

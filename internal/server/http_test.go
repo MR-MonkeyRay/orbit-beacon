@@ -242,7 +242,7 @@ func TestMutationsRequireBothTrustedOriginAndSessionBoundCSRF(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("valid mutation rejected: %d %s", response.Code, response.Body)
 	}
-	// A client-controlled Host cannot redefine which Origin is trusted.
+	// 客户端可控的 Host 不能重新定义哪个 Origin 受信任。
 	req := httptest.NewRequest(http.MethodPost, "https://attacker.example.test/api/v1/nodes", strings.NewReader(`{"name":"host spoof"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "https://attacker.example.test")
@@ -337,7 +337,7 @@ func TestAPIFailuresHaveStructuredErrorsAndNeverSPAFallback(t *testing.T) {
 	if response.Header().Get("Allow") == "" {
 		t.Error("405 response does not declare allowed methods")
 	}
-	// There is deliberately no anonymous first-administrator registration route.
+	// 有意不提供匿名首个管理员注册路由。
 	response = request(t, f.handler, http.MethodPost, "/api/v1/bootstrap", `{"username":"attacker","password":"takeover"}`, nil, "", publicURL)
 	if response.Code != http.StatusNotFound {
 		t.Errorf("public bootstrap route returned %d, want 404", response.Code)

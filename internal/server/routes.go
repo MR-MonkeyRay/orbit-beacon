@@ -25,11 +25,11 @@ type route struct {
 	handle  routeHandler
 }
 
-// routeHandler receives the session and token that sessionGate authenticated;
-// both are empty for routes that do not use a session.
+// routeHandler 接收 sessionGate 已认证的会话和令牌；
+// 不使用会话的路由两者都为空。
 type routeHandler func(h *handler, w http.ResponseWriter, r *http.Request, requestID string, session auth.Session, token string)
 
-// Declaration order preserves the wire order of Allow for each path.
+// 声明顺序保持每个路径 Allow 列表的传输顺序。
 var routes = []route{
 	{"GET /healthz/live", anonymous, endpoint((*handler).health)},
 	{"GET /healthz/ready", anonymous, endpoint((*handler).health)},
@@ -133,8 +133,8 @@ type routeRegistry struct {
 
 var apiRoutes = newRouteRegistry()
 
-// The mux only resolves paths; methods are checked against the table so that
-// Allow lists stay exact and GET never implies HEAD.
+// mux 只解析路径；方法对照路由表检查，
+// 这样 Allow 列表保持精确，且 GET 绝不隐含 HEAD。
 func newRouteRegistry() *routeRegistry {
 	registry := &routeRegistry{paths: http.NewServeMux(), methods: make(map[string][]string), endpoints: make(map[string]*routeEndpoint)}
 	for _, entry := range routes {
@@ -158,8 +158,8 @@ func (endpoint *routeEndpoint) ServeHTTP(http.ResponseWriter, *http.Request) {
 	panic("routes are dispatched through routeRegistry.serve")
 }
 
-// Handler selects the ServeMux registration without running its redirect or
-// HTML error handlers. Reject noncanonical paths before asking the mux.
+// Handler 选择 ServeMux 注册，但不运行其重定向或 HTML 错误处理。
+// 在询问 mux 之前拒绝非规范路径。
 func (registry *routeRegistry) match(r *http.Request) *routeEndpoint {
 	if path.Clean(r.URL.EscapedPath()) != r.URL.EscapedPath() {
 		return nil
@@ -197,8 +197,8 @@ func (registry *routeRegistry) serve(h *handler, w http.ResponseWriter, r *http.
 	var token string
 	switch entry.auth {
 	case agent:
-		// Agent endpoints authenticate and admit their bearer credential before
-		// reading the body; enrollment tickets and node credentials differ.
+		// Agent 端点在读取请求体之前认证并准入其 Bearer 凭据；
+		// 注册票据和节点凭据不同。
 	case publicPageGated:
 		if err := h.publicPageAccess(); err != nil {
 			h.publicPageError(w, requestID)

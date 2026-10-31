@@ -172,7 +172,7 @@ func TestRequestsLeaveExpiredSessionsToRetention(t *testing.T) {
 	for _, path := range []string{"/", "/api/public/v1/nodes", "/api/v1/me"} {
 		_ = request(t, f.handler, http.MethodGet, path, "", nil, "", "")
 	}
-	// Reads, even authenticated ones, must not take the SQLite writer.
+	// 即使是已认证的读取，也绝不能占用 SQLite 写锁。
 	response := request(t, f.handler, http.MethodGet, "/api/v1/me", "", cookie, "", "")
 	assertHTTPStatus(t, response, http.StatusOK)
 	var before int

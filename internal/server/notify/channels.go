@@ -1,4 +1,4 @@
-// Package notify manages encrypted channels and durable notification delivery.
+// Package notify 管理加密通道与持久化的通知投递。
 package notify
 
 import (
@@ -35,7 +35,7 @@ var (
 )
 
 type Config struct {
-	URL         string   `json:"url,omitempty"` // Write-only; populated internally only for validation and sending.
+	URL         string   `json:"url,omitempty"` // 只写字段；仅在内部填充，用于校验和发送。
 	URLRedacted string   `json:"url_redacted,omitempty"`
 	URLSet      bool     `json:"url_set,omitempty"`
 	ChatID      string   `json:"chat_id,omitempty"`
@@ -56,15 +56,15 @@ type Channel struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// MarshalJSON keeps delivery-only URL material out of every channel response.
+// MarshalJSON 保证仅投递用的 URL 内容不出现在任何通道响应中。
 func (c Channel) MarshalJSON() ([]byte, error) {
 	type channel Channel
 	c.Config.URL = ""
 	return json.Marshal(channel(c))
 }
 
-// Secret is write-only: signing key, bot token or SMTP password by channel kind.
-// Omit to retain, empty string to clear; kind is immutable after creation.
+// Secret 只写：按通道类型分别是签名密钥、机器人令牌或 SMTP 密码。
+// 省略则保留原值，空字符串则清除；kind 创建后不可变。
 type Patch struct {
 	Name    *string         `json:"name,omitempty"`
 	Kind    *string         `json:"kind,omitempty"`
@@ -108,7 +108,7 @@ func (s *Service) validate(c Channel, secret string) error {
 	return ValidateChannel(c, secret, s.opts.AllowInsecureWebhooks)
 }
 
-// ValidateChannel checks channel syntax only; it performs no DNS or I/O.
+// ValidateChannel 仅检查通道语法；不执行 DNS 或 I/O。
 func ValidateChannel(c Channel, secret string, allowInsecureWebhooks bool) error {
 	if strings.TrimSpace(c.Name) == "" || len(c.Name) > 100 {
 		return validation.Invalid("name", "must contain 1..100 UTF-8 bytes")
@@ -324,8 +324,8 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 			}
 		}
 	}
-	// An explicit replacement/clear never opens the old ciphertext. URL and
-	// signing key are independent so either credential can be repaired alone.
+	// 显式替换/清除绝不打开旧密文。URL 与签名密钥相互独立，
+	// 因此可单独修复任一凭据。
 	secret := ""
 	if len(p.Secret) > 0 {
 		if bytes.Equal(bytes.TrimSpace(p.Secret), []byte("null")) || json.Unmarshal(p.Secret, &secret) != nil {
@@ -356,7 +356,7 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 		if e != nil {
 			return c, e
 		}
-		u, _ := url.Parse(c.Config.URL) // validated above
+		u, _ := url.Parse(c.Config.URL) // 已在上方校验
 		c.Config.URLRedacted = u.Scheme + "://" + u.Host + "/…"
 		c.Config.URLSet = true
 	}
@@ -438,7 +438,7 @@ func (s *Service) load(ctx context.Context, id string) (Channel, string, error) 
 	return c, secret, nil
 }
 
-// Reject explicit null for scalar patch fields while preserving omission.
+// 对标量 patch 字段，拒绝显式 null，同时保留省略语义。
 func (p *Patch) UnmarshalJSON(data []byte) error {
 	type patch Patch
 	var fields map[string]json.RawMessage

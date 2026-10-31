@@ -1,4 +1,4 @@
-// Package logging provides diagnostic attributes without disclosing error text.
+// Package logging 提供诊断属性，不泄露错误文本。
 package logging
 
 import (
@@ -10,8 +10,8 @@ import (
 	"modernc.org/sqlite"
 )
 
-// ErrorAttrs describes a failure using only its class and a caller-owned code.
-// Error messages may contain SQL, credentials or paths and are never inspected.
+// ErrorAttrs 仅用错误类别和调用方提供的错误码描述失败。
+// 错误消息可能包含 SQL、凭据或路径，一律不检查。
 func ErrorAttrs(err error, code string) []slog.Attr {
 	kind := "unknown"
 	if err != nil {

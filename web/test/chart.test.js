@@ -23,7 +23,7 @@ test('chart scales fix percent bounds and include peaks for other units', () => 
   assert.equal(percent.x(Date.parse(points[1].t)), 624);
   assert.equal(chartScales(points, 'load').max, 150);
   assert.equal(chartScales([], 'load').max, 1);
-  // Small peaks keep their own scale so near-idle variation stays visible.
+  // 小峰值保持自己的量程，使接近空闲时的波动仍可见。
   assert.equal(chartScales([point(0, 0.001, 0.003)], 'load').max, 0.003);
   const single = chartScales([point(0, 0, 0)], 'load');
   assert.equal(single.x(Date.parse(point(0).t)), 362);
@@ -37,7 +37,7 @@ test('chart scales fix percent bounds and include peaks for other units', () => 
 
 test('paths break only above 1.5 steps and close every area independently', () => {
   const points = [point(0), point(1.5), point(4)];
-  // Date.UTC truncates fractional minutes; use exact seconds for the boundary.
+  // Date.UTC 会截断分数分钟；边界处使用精确秒数。
   points[1].t = new Date(Date.parse(points[0].t) + 90000).toISOString();
   const scales = chartScales(points, 'percent');
   const paths = chartPaths(points, scales, 60);
@@ -85,8 +85,8 @@ test('point lookup uses time coordinates, clamps ends, and picks earlier ties', 
 });
 
 test('keyboard tooltip renders actual values and keeps missing network buckets unavailable', () => {
-  // Native replaceChildren stringifies an array rather than flattening it.
-  // Model that behavior so this catches accidental array/HTML string output.
+  // 原生 replaceChildren 会将数组转为字符串而非展开。
+  // 模拟该行为，以便捕获意外的数组/HTML 字符串输出。
   class Element extends EventTarget {
     children = [];
     attributes = new Map();
@@ -117,7 +117,7 @@ test('keyboard tooltip renders actual values and keeps missing network buckets u
     assert.match(image.getAttribute('aria-label'), /latest average 100 B\/s/);
     assert.match(image.getAttribute('aria-label'), /minimum average 10 B\/s/);
     assert.match(image.getAttribute('aria-label'), /peak maximum 200 B\/s/);
-    assert.match(root.textContent, /300 B\/s/); // Both series contribute to the y scale.
+    assert.match(root.textContent, /300 B\/s/); // 两个序列都参与 y 轴量程计算。
     const key = (value) => plot.dispatchEvent(Object.assign(new Event('keydown', {cancelable: true}), {key: value}));
     plot.dispatchEvent(new Event('focus'));
     key('Home');
@@ -133,7 +133,7 @@ test('keyboard tooltip renders actual values and keeps missing network buckets u
     assert.equal(tooltip.hidden, false);
     plot.dispatchEvent(new Event('blur'));
     assert.equal(tooltip.hidden, true);
-    // A refresh rebuild keeps the selected sample instead of jumping to the latest.
+    // 刷新重建时保留已选样本，而非跳到最新。
     assert.equal(plot.dataset.selectedTime, String(Date.parse(point(0).t)));
     const rebuilt = elements(chart({title: 'Network', unit: 'bytes_per_second', id: 'network-test', selectedTime: Number(plot.dataset.selectedTime), series: [
       {label: 'Receive (rx)', points: [point(0, 10, 20)], stepSeconds: 60},

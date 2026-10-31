@@ -95,7 +95,7 @@ func TestPublicPageDisableTerminatesIdleSSEAndWebSocket(t *testing.T) {
 			if _, _, err := c.Read(ctx); err != nil {
 				t.Fatal(err)
 			}
-			// Receiving a frame does not mean the server has left its active write.
+			// 收到一帧不代表服务器已离开其活跃写入。
 			for _, stream := range f.h.streams.snapshot(false) {
 				for {
 					stream.mu.Lock()

@@ -76,7 +76,7 @@ export function eventsPanel(state, signal) {
   more.hidden = true;
   const reload = button(t('common.refresh'), {small: true, icon: 'refresh', onClick: () => load(true)});
   const root = panel(t(active ? 'alerts.events.activeTitle' : 'alerts.tab.history'), {action: reload}, status, table, more);
-  // A tab can detach without navigation. Cancel its pending request as well.
+  // 标签页可以在不导航的情况下卸载，其等待中的请求同样要取消。
   panelLifecycle({root, signal, load, poll: false, resume: false,
     cancel: () => { stopped = true; request?.abort(); }});
   return root;

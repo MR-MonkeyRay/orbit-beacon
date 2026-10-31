@@ -56,7 +56,7 @@ function planCard(plan, {openTask, editPlan, deletePlan}) {
       last ? button(t('data.plan.lastDetails'), {onClick: () => openTask(last.id)}) : null));
 }
 
-// tabSet owns mounting. A detached tab has no requests or summary subscription.
+// tabSet 负责挂载。卸载的标签页没有请求和摘要订阅。
 export function dataOperationsTab() {
   const navigation = getNavigationSignal();
   let controller = null;

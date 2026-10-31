@@ -35,9 +35,9 @@ func TestRestoreRejectsMalformedInboxDetailsBeforeInstall(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Start from a valid current-schema projection, then alter only row JSON.
-			// WriteArchive authenticates the modified payload, exercising restore's
-			// data validation rather than a framing/hash rejection.
+			// 从符合当前 schema 的有效投影开始，只修改行中的 JSON。
+			// WriteArchive 会认证修改后的载荷，从而检验恢复流程的数据校验，
+			// 而不是在格式或哈希校验阶段就拒绝归档。
 			db, err := sql.Open("sqlite", filepath.Join(work, "payloads", "events.sqlite"))
 			if err != nil {
 				t.Fatal(err)

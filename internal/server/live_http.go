@@ -94,16 +94,15 @@ func consoleDetailsEqual(a, b consoleDetailData) bool {
 	if (a.Latest == nil) != (b.Latest == nil) || (a.Runtime == nil) != (b.Runtime == nil) {
 		return false
 	}
-	// Accepted sequence and receipt identify an immutable sample; there is no
-	// reason to walk all metric maps just to suppress an unchanged snapshot.
+	// 已接受的序列号和接收时间标识不可变样本，无需遍历所有指标映射来判断快照是否变化。
 	if a.Latest != nil && (a.Latest.Seq != b.Latest.Seq || !a.Latest.ReceivedAt.Equal(b.Latest.ReceivedAt) || !a.Latest.SampledAt.Equal(b.Latest.SampledAt)) {
 		return false
 	}
 	return a.Runtime == nil || a.Runtime.ReportIntervalSeconds == b.Runtime.ReportIntervalSeconds && a.Runtime.DiskIntervalSeconds == b.Runtime.DiskIntervalSeconds && slices.Equal(a.Runtime.Interfaces, b.Runtime.Interfaces) && slices.Equal(a.Runtime.DiskPaths, b.Runtime.DiskPaths) && slices.Equal(a.Runtime.ProbeTargets, b.Runtime.ProbeTargets)
 }
 
-// Identity changes share the public safety version: each projection is checked
-// both here and at egress. Ordinary metadata changes remain cadence-bound.
+// 身份变更共享公开安全版本：每个投影在此处和出口处都被检查。
+// 普通元数据变更仍按更新节奏。
 func consoleSnapshot[T any](h *handler, ctx context.Context, project func(context.Context) (T, error)) (T, uint64, error) {
 	for range 3 {
 		version := h.nodes.PublicVisibilityVersion()
@@ -158,7 +157,7 @@ func serveConsoleLive[T any](h *handler, w http.ResponseWriter, r *http.Request,
 			h.serviceError(w, err, requestID)
 			return
 		}
-		// Recheck after projection and encoding, immediately before private bytes.
+		// 投影和编码完成后、写出私有数据前再次认证。
 		if err := authenticate(r.Context()); err != nil {
 			h.serviceError(w, err, requestID)
 			return

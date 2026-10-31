@@ -85,8 +85,7 @@ func TestPublicStreamSQLiteAcceptedReportAndUnpublish(t *testing.T) {
 	if kind, _, page := sqliteStreamFrame(t, w.frames); kind != "snapshot" || len(page.Nodes) != 1 || string(page.Nodes[0]["cpu_percent"]) != "25" {
 		t.Fatalf("accepted report nodes: %+v", page)
 	}
-	// Withdrawal is a safety exception: close immediately, without waiting
-	// for the ordinary report interval or emitting another page.
+	// 撤回是安全例外：立即关闭，不等待普通的报告间隔，也不再发出另一页。
 	enabled := false
 	if _, err := f.nodes.PatchPublicSettings(context.Background(), id, nodes.PublicSettingsPatch{Enabled: &enabled}); err != nil {
 		t.Fatal(err)

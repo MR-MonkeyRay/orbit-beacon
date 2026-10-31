@@ -41,8 +41,8 @@ func (c *smtpClient) deadline() error {
 	return c.conn.SetDeadline(until)
 }
 
-// RFC 5321 reply lines are at most 512 octets, including CRLF. Bound both
-// individual lines and the number of continuation lines; never expose text.
+// RFC 5321 的应答行（含 CRLF）最多 512 个八位字节。
+// 同时限制单行长度和续行数量；绝不暴露原文。
 func (c *smtpClient) reply(want ...int) ([]string, error) {
 	if e := c.deadline(); e != nil {
 		return nil, e
@@ -157,8 +157,8 @@ func (c *smtpClient) data(raw string) error {
 	if e := c.deadline(); e != nil {
 		return e
 	}
-	// DotWriter normalizes LF to CRLF, stuffs leading dots, and writes the final
-	// terminator. Normalize bare CR too so no input can inject a DATA terminator.
+	// DotWriter 会把 LF 归一化为 CRLF、转义行首的点并写入结束符。
+	// 裸 CR 也要归一化，确保任何输入都无法注入 DATA 结束符。
 	raw = strings.ReplaceAll(strings.ReplaceAll(raw, "\r\n", "\n"), "\r", "\n")
 	writer := bufio.NewWriter(c.conn)
 	dot := textproto.NewWriter(writer).DotWriter()

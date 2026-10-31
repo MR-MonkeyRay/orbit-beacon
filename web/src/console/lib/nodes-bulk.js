@@ -49,8 +49,8 @@ export async function runNodeBatch({action, selected, nodes, signal, controls, r
   try {
     const response = await api('/nodes/batch', {method: 'POST', body: {node_ids: ids, action, ...(action === 'delete' ? {confirm: true} : {})}});
     if (signal?.aborted) return;
-    // Reload the authoritative statuses after per-node transactions complete;
-    // the batch endpoint may preserve a prior status when enabling a node.
+    // 逐节点事务完成后重新加载权威状态；
+    // 批量接口在启用节点时可能保留先前状态。
     try { await reloadNodes(); } catch {}
     if (signal?.aborted) return;
     onCompleted();

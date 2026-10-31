@@ -15,8 +15,8 @@ import (
 	"orbitbeacon/internal/server/ingest"
 )
 
-// liveFrame is the common read-only browser wire contract. Data is present only
-// for snapshots; control frames never include a page or fabricate sample time.
+// liveFrame 是通用的只读浏览器传输契约。数据仅存在于快照帧中；
+// 控制帧绝不携带页面，也不伪造采样时间。
 type liveFrame[T any] struct {
 	Type                  string    `json:"type"`
 	ServerTime            time.Time `json:"server_time"`
@@ -51,8 +51,8 @@ func controlFrame[T any](h *handler, kind, code string) liveFrame[T] {
 	return liveFrame[T]{Type: kind, ServerTime: h.now().UTC(), UpdateIntervalSeconds: h.liveSeconds(), Code: code}
 }
 
-// liveStreams owns admission and every read-only stream, including hijacked
-// sockets which net/http's Shutdown cannot see. A lease releases capacity once.
+// liveStreams 管理准入和所有只读流，包括已由 Hijack 接管、net/http.Shutdown 无法管理的
+// 套接字。每个租约只释放一次容量。
 type liveStreams struct {
 	mu      sync.Mutex
 	total   int
@@ -133,8 +133,8 @@ func (s *liveStream) setWriter(prepare func() error, interrupt func()) {
 func (s *liveStream) stop(force bool) {
 	s.mu.Lock()
 	s.cancel()
-	// Transport callbacks run under this lease's mutex, never the admission
-	// mutex. This serializes deadline arming, interruption and lease release.
+	// 传输回调在该租约自己的互斥锁下运行，绝不在准入互斥锁下运行。
+	// 这样截止时间设置、中断和租约释放都被串行化。
 	if force {
 		s.forced = true
 	}
@@ -187,16 +187,16 @@ func (s *liveStreams) snapshot(closeAdmission bool) []*liveStream {
 	return streams
 }
 
-// CloseLiveStreams closes admission, cancels queries and interrupts active
-// writes. Idle streams can send a shutdown frame before closing their socket.
+// CloseLiveStreams 关闭准入、取消查询并中断活跃写入。
+// 空闲流可以在关闭套接字之前发送关闭帧。
 func (h *handler) CloseLiveStreams() {
 	for _, stream := range h.streams.snapshot(true) {
 		stream.stop(false)
 	}
 }
 
-// WaitLiveStreams is an exit barrier, not just a cancellation notification. A
-// deadline actively closes sockets; the caller must not drain ingest on error.
+// WaitLiveStreams 是退出屏障，而不仅是取消通知。
+// 超时会主动关闭套接字；出错时调用方不得排空 ingest。
 func (h *handler) WaitLiveStreams(ctx context.Context) error {
 	h.streams.mu.Lock()
 	if h.streams.total == 0 {
@@ -227,8 +227,8 @@ func (h *handler) publicStreamIP(r *http.Request) string {
 	return address
 }
 
-// publicPagesEqual ignores projection/transport clocks. Its typed comparisons
-// avoid marshaling an unchanged 100-node page just to discover a heartbeat.
+// publicPagesEqual 忽略投影和传输时间，直接比较字段，
+// 避免仅为判断是否发送心跳就序列化未变化的 100 节点页面。
 func publicPagesEqual(a, b ingest.PublicPage) bool {
 	if a.HasMore != b.HasMore || !equalLiveValue(a.NextOffset, b.NextOffset) {
 		return false
@@ -250,16 +250,15 @@ func equalLiveTime(a, b *time.Time) bool {
 	return a == b || a != nil && b != nil && a.Equal(*b)
 }
 
-// liveSource keeps only projection, semantic equality and optional private
-// authentication in the shared read-only sender. Transport policy stays here.
+// liveSource 为共享的只读发送器提供投影、内容比较和可选的私有数据认证。
+// 具体传输策略由外层处理。
 type liveSource[T any] struct {
 	snapshot     func(context.Context) (T, uint64, error)
 	equal        func(T, T) bool
 	authenticate func(context.Context) error
 }
 
-// Only these sentinels are terminal protocol errors. Database and transport
-// failures must never masquerade as a policy decision or an expired session.
+// 只有这些哨兵值是终止协议错误。数据库和传输故障绝不能伪装成策略决定或会话过期。
 func liveTerminalCode(err error) string {
 	switch {
 	case errors.Is(err, errPublicPageDisabled):
@@ -316,8 +315,8 @@ func liveTerminalState(ctx context.Context, authenticate func(context.Context) e
 		return code, context.Cause(ctx)
 	}
 	if authenticate != nil {
-		// Safety withdrawal may have canceled the projection/write context.
-		// Recheck policy independently so cancellation cannot hide its cause.
+		// 安全撤回可能已取消了投影/写入上下文。
+		// 独立地重新检查策略，使取消无法掩盖其真实原因。
 		checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		err = authenticate(checkCtx)
 		cancel()
@@ -346,8 +345,7 @@ func closeLiveFrame[T any](h *handler, ctx context.Context, authenticate func(co
 	}
 }
 
-// Subscribe before the first query: identity/visibility withdrawal cannot fall
-// in the gap between the initial projection and waiting for notifications.
+// 先订阅再执行首次查询：身份/可见性撤回不能落在首次投影与等待通知之间的间隙里。
 func runLive[T any](h *handler, ctx context.Context, request context.Context, stream *liveStream, source liveSource[T], send func(context.Context, []byte) error) {
 	visibility, visibilityChanged := h.nodes.PublicSafetyChanges()
 	ctx, cancel := context.WithCancel(ctx)
@@ -419,8 +417,7 @@ func runLive[T any](h *handler, ctx context.Context, request context.Context, st
 				}
 				return
 			}
-			// Check again immediately before outbound data, not merely before
-			// caching it. A known obsolete page never reaches either transport.
+			// 发送数据前再次检查，而不只在缓存前检查；已知失效的页面不能通过任何传输方式发出。
 			if h.nodes.PublicSafetyVersion() != visibility {
 				closeFrame("renew")
 				return

@@ -140,8 +140,7 @@ func TestOpenConfiguresDurableSQLiteConnections(t *testing.T) {
 	if journal != "wal" {
 		t.Errorf("journal mode = %q, want wal", journal)
 	}
-	// Hold connections simultaneously so per-connection options cannot be satisfied
-	// only on the connection that happened to apply the migrations.
+	// 同时持有连接，确保按连接设置的选项不能只在恰好执行迁移的那个连接上满足。
 	var connections []*sql.Conn
 	defer func() {
 		for _, conn := range connections {

@@ -1,4 +1,4 @@
-// Alert and notification form logic, kept independent of the DOM.
+// 告警与通知表单逻辑，与 DOM 解耦。
 import {getLocale, t} from '../i18n.js';
 import {byteLength} from '../../shared/dom.js';
 import {uuid} from '../../shared/uuid.js';
@@ -11,9 +11,9 @@ export const SEVERITIES = [['info', t('alerts.severity.info')], ['warning', t('a
 export const metricLabel = (metric) => METRICS.find(([id]) => id === metric)?.[1] || t('alerts.metric.unknown');
 export const severityLabel = (severity) => SEVERITIES.find(([id]) => id === severity)?.[1] || t('alerts.severity.unknown');
 export const metricUnit = (metric = '') => metric.endsWith('_percent') ? '%' : metric === 'load1' ? t('alerts.unit.load') : metric === 'probes_down' ? t('alerts.unit.probes') : '';
-// Upper threshold bound per metric, mirroring the server's rule validation.
+// 各指标阈值上限，与服务端规则校验一致。
 export const metricMax = (metric) => metric === 'load1' ? 1000000 : metric === 'probes_down' ? 5 : 100;
-// Mirrors notify.validHost on the server: an IP literal or LDH labels.
+// 与服务端 notify.validHost 一致：IP 字面量或 LDH 标签。
 export function validHost(host) {
   if (!host || host.length > 253 || host.includes('%')) return false;
   if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) && host.split('.').every((part) => Number(part) <= 255)) return true;
@@ -89,7 +89,7 @@ export function errorCodeMessage(code) {
   return t(`alerts.error.${Object.hasOwn(ERROR_KEYS, code) ? ERROR_KEYS[code] : code ? 'unknown' : 'none'}`);
 }
 
-// Untouched write-only values must be absent: an empty secret explicitly clears it.
+// 未修改的只写字段必须省略；将 secret 设为空字符串表示显式清除。
 export function buildChannelPayload(values, {editing = false, replaceURL = false, replaceSecret = false} = {}) {
   const body = {name: values.name, enabled: values.enabled};
   if (!editing) body.kind = values.kind;

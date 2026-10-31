@@ -22,7 +22,7 @@ export async function loginPage() {
   try {
     await revalidateSession();
     return session.user.must_change_password ? '/change-password' : nextPath();
-  } catch { /* not signed in */ }
+  } catch { /* 未登录 */ }
   const errorBox = h('div', {class: 'form-error', role: 'alert', hidden: true});
   const username = input({name: 'username', autocomplete: 'username', required: true, autocapitalize: 'none', dataset: {autofocus: ''}});
   const password = passwordInput({name: 'password', autocomplete: 'current-password', required: true});

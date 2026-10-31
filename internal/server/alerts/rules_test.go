@@ -135,7 +135,7 @@ func TestScopedRulesCascadeAndEventsSurvive(t *testing.T) {
 			if len(resolved) != 1 {
 				t.Fatal("cascade erased history or failed to resolve")
 			}
-			// Display metadata comes from the firing snapshot, not the deleted rule.
+			// 展示元数据来自触发时的快照，而非已删除的规则。
 			if resolved[0].Metric != f.rule.Metric || resolved[0].Severity != f.rule.Severity || resolved[0].Metric == "" {
 				t.Fatalf("event lost rule snapshot metadata: %+v", resolved[0])
 			}
@@ -194,7 +194,7 @@ func TestEventCursorAndRetentionBatch(t *testing.T) {
 			}
 		}
 	}
-	// Cleanup uses resolution time, keeps recent resolutions and all firing rows.
+	// 按恢复时间清理，保留近期恢复的记录和所有仍在触发中的记录。
 	old := f.now.Add(-100 * 24 * time.Hour)
 	f.exec(t, "UPDATE alert_events SET resolved_at=? WHERE state='resolved'", timekey.Format(old))
 	resolved := f.events(t, "resolved")
@@ -210,7 +210,7 @@ func TestEventCursorAndRetentionBatch(t *testing.T) {
 	if _, err = f.s.Cleanup(context.Background(), f.now, 0); err == nil {
 		t.Fatal("zero limit")
 	}
-	// Keep the JSON envelope arrays and nullable values stable.
+	// 保持 JSON 响应中的数组结构和 null 语义稳定。
 	raw, err := json.Marshal(next)
 	if err != nil || !strings.Contains(string(raw), `"events":[`) {
 		t.Fatal(string(raw), err)

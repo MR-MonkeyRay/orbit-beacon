@@ -42,8 +42,8 @@ type Payload struct {
 	SummaryCount int        `json:"summary_count,omitempty"`
 }
 
-// ParsePayload is the common persisted delivery decoder. Historical entity
-// references are snapshots, not live dependencies or a source of new sends.
+// ParsePayload 是持久化投递的公共解码器。其中的历史实体引用
+// 只是快照，不是活跃依赖，也不会触发新的发送。
 func ParsePayload(raw []byte) (Payload, error) {
 	var p Payload
 	if !strings.HasPrefix(strings.TrimSpace(string(raw)), "{") {
@@ -67,7 +67,7 @@ type sender struct {
 	client                *http.Client
 	dialer                *egress.Dialer
 	tlsConfig             *tls.Config
-	// Deliberately unexported: only same-package tests may override Telegram/TLS.
+	// 刻意不导出：仅同包测试可覆盖 Telegram/TLS。
 	telegramBase string
 	now          func() time.Time
 }
@@ -76,7 +76,7 @@ func newSender(opts Options) *sender {
 	d := &net.Dialer{Timeout: SendTimeout}
 	safe := &egress.Dialer{Resolver: net.DefaultResolver, AllowPrivate: opts.AllowPrivateNetworks, DenyLocal: false, Dial: d.DialContext}
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	// Avoid idle-connection diagnostics in net/http logging unsolicited remote bytes.
+	// 避免 net/http 的空闲连接诊断把远端主动发来的字节写入日志。
 	transport := &http.Transport{DisableKeepAlives: true, Proxy: nil, DialContext: safe.DialContext, TLSClientConfig: tlsCfg, TLSHandshakeTimeout: SendTimeout, ResponseHeaderTimeout: SendTimeout, MaxIdleConns: 8, MaxIdleConnsPerHost: 2, IdleConnTimeout: 30 * time.Second}
 	return &sender{allowInsecureWebhooks: opts.AllowInsecureWebhooks, client: &http.Client{Timeout: SendTimeout, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, dialer: safe, tlsConfig: tlsCfg, telegramBase: "https://api.telegram.org", now: opts.Now}
 }
@@ -96,7 +96,7 @@ func (s *sender) Send(ctx context.Context, c Channel, secret string, p Payload) 
 		if err != nil {
 			return failure("invalid_destination", false)
 		}
-		// Recheck current policy when sending persisted channels after config changes.
+		// 配置变更后发送已持久化通道时，重新检查当前策略。
 		if u.Scheme != "https" {
 			ip := net.ParseIP(u.Hostname())
 			if u.Scheme != "http" || !s.allowInsecureWebhooks || ip == nil || !ip.IsLoopback() {
@@ -129,7 +129,7 @@ func (s *sender) Send(ctx context.Context, c Channel, secret string, p Payload) 
 		return networkFailure(e)
 	}
 	defer response.Body.Close()
-	// Bodies may contain credentials and are never returned, stored or logged.
+	// 响应体可能包含凭据，绝不返回、存储或记录。
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, 4096))
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		if readErr != nil {

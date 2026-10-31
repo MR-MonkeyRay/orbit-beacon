@@ -17,8 +17,8 @@ func TestPublicEmbeddedAssetsAndRequiredShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The shells reference content-hashed bundles built from web/; follow those
-	// references instead of hard-coding names that change with every build.
+	// shell 文件引用从 web/ 构建的内容哈希包；跟随这些引用，
+	// 而不是硬编码每次构建都会变化的名称。
 	assets := []struct{ path, mime string }{{"/", "text/html"}, {"/overview", "text/html"}}
 	for _, shell := range []string{"/", "/overview"} {
 		body := request(t, h, http.MethodGet, shell, "", nil, "", "").Body.String()

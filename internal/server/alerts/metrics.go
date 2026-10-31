@@ -9,8 +9,8 @@ import (
 	"orbitbeacon/internal/server/nodes"
 )
 
-// Metric freshness includes time elapsed since reception as well as the source
-// age at reception. Agent wall clocks do not establish report liveness.
+// 指标时效既考虑接收后经过的时间，也考虑接收时源数据已存在多久。
+// 上报是否仍有效不能由 Agent 的系统时间决定。
 func metricValue(latest ingest.LatestReport, metric string, now time.Time) *float64 {
 	if latest.ReceivedAt.IsZero() || latest.ReceivedAt.After(now) || now.Sub(latest.ReceivedAt) > nodes.OnlineWindow {
 		return nil

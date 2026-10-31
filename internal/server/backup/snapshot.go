@@ -16,8 +16,8 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-// SnapshotDatabase uses a dedicated mode=ro connection. Turning query_only off
-// permits VACUUM's private output, never writes to or migrates the live source.
+// SnapshotDatabase 使用专用 mode=ro 连接。关闭 query_only 是为了允许 VACUUM
+// 的内部输出，绝不写入或迁移在线源库。
 func SnapshotDatabase(ctx context.Context, source, output string, version int) error {
 	if err := securefs.ValidateDirectory(filepath.Dir(output)); err != nil {
 		return err
@@ -59,8 +59,8 @@ func SnapshotDatabase(ctx context.Context, source, output string, version int) e
 	return errors.Join(f.Sync(), f.Close())
 }
 
-// SnapshotPayloads contains only selected categories. Full private snapshots
-// never become archive entries and must be removed by the work-directory owner.
+// SnapshotPayloads 只含所选类别。完整私有快照不加入归档，
+// 由管理工作目录的调用方负责删除。
 type SnapshotPayloads struct {
 	Files     []ArchiveInput
 	Snapshots Snapshots
@@ -156,8 +156,8 @@ func CreateSnapshotPayloads(ctx context.Context, dataDir, work string, categorie
 }
 
 func projectCategory(ctx context.Context, destination, main, metrics *sql.DB, category Category, asOf time.Time) error {
-	// Buckets are from a separately consistent snapshot. The main snapshot's node
-	// set defines orphan exclusion; observations are not inferred from live memory.
+	// 桶来自另一个一致的快照。主快照的节点集合决定孤儿的排除；
+	// 观测数据不从活跃内存推断。
 	for _, spec := range tablesFor(category) {
 		source := main
 		if spec.Source == "metrics" {

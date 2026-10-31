@@ -1,4 +1,4 @@
-/* Forms */
+/* 表单 */
 .form {
   display: grid;
   gap: var(--sp-4);
@@ -207,7 +207,7 @@ select.input {
   color: var(--orbit);
 }
 
-/* Tag editor */
+/* 标签编辑器 */
 .tags {
   display: flex;
   flex-wrap: wrap;

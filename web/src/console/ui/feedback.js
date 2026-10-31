@@ -22,14 +22,13 @@ export function toast(message, options = {}) {
 }
 
 export function toastError(error) {
-  // Navigation/session cancellation has no action result to report. A managed
-  // unauthenticated response already cleared private UI at the central boundary;
-  // its initiating action must not recreate a stale toast on the login page.
+  // 导航或会话取消无需报告操作结果。未认证响应已由统一会话处理清除私有 UI，
+  // 发起请求的操作不得再在登录页弹出过时的提示。
   if (error.name === 'AbortError' || error.status === 401 && error.code === 'unauthenticated') return;
   toast(errorText(error), {error: true});
 }
 
-// Thin bar at the top of the viewport while a page loads.
+// 页面加载时视口顶部的细进度条。
 export const progress = {
   start() {
     const bar = document.getElementById('progress');

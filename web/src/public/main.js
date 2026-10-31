@@ -55,7 +55,7 @@ $('top-actions').prepend(localeSelect({onError(error) {
   localeError.hidden = false;
 }}));
 
-// ------------------------------------------------------------------ filters
+// ------------------------------------------------------------------ 筛选
 
 const filterButtons = new Map(['', 'online', 'offline', 'unknown'].map((status) => {
   const button = h('button', {type: 'button', 'aria-pressed': String(status === ''), onclick: () => { filter = status; applyFilter(); }},
@@ -84,7 +84,7 @@ function applyFilter() {
   } else if (current.length) empty.hidden = true;
 }
 
-// ------------------------------------------------------------------ rendering
+// ------------------------------------------------------------------ 渲染
 
 function render(result) {
   const nodes = result.nodes;
@@ -121,8 +121,8 @@ function render(result) {
   nextOffset = result.next_offset;
   next.disabled = nextOffset === null;
   pagination.hidden = offset === 0 && nextOffset === null;
-  // An empty collection is already stated by the headline; the box is reserved
-  // for empty filter results and load failures.
+  // 空集合已由标题说明；此区域仅用于
+  // 筛选结果为空和加载失败。
   empty.hidden = true;
   retry.hidden = true;
   applyFilter();
@@ -154,7 +154,7 @@ function restartCountdown(running, milliseconds = 0) {
   countdown.classList.add('running');
 }
 
-// ------------------------------------------------------------------ updates
+// ------------------------------------------------------------------ 更新
 
 function begin() {
   refresh.classList.add('loading');
@@ -211,7 +211,7 @@ function paintConnection(state) {
   } else {
     countdown.dataset.state = 'connecting';
   }
-  // Transport changes, heartbeats and HTTP countdown ticks are not announcements.
+  // 传输变化、心跳和 HTTP 倒计时不属于需要播报的事件。
   if (announcedState !== state.state) {
     announcedState = state.state;
     announcement.textContent = state.state === 'live' ? t('public.announce.updated')

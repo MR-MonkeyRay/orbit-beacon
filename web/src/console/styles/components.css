@@ -1,4 +1,4 @@
-/* Page header */
+/* 页头 */
 .page-head {
   display: flex;
   flex-wrap: wrap;
@@ -58,7 +58,7 @@
   background: var(--ink-3);
 }
 
-/* Connection state sits in the action row so the header reads as one line. */
+/* 连接状态放在操作行内，使页头视觉上为一行。 */
 .detail-actions {
   display: flex;
   flex-wrap: wrap;
@@ -88,7 +88,7 @@
   height: 16px;
 }
 
-/* Panels */
+/* 面板 */
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -181,7 +181,7 @@
   overflow-wrap: anywhere;
 }
 
-/* Buttons */
+/* 按钮 */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -263,7 +263,7 @@
   }
 }
 
-/* Quiet danger: irreversible actions stay visible without competing with the default action. */
+/* 低调危险样式：不可逆操作保持可见，但不与默认操作争夺注意力。 */
 .btn-danger.btn-quiet {
   border-color: transparent;
   background: transparent;
@@ -323,7 +323,7 @@
   height: 16px;
 }
 
-/* Status badges */
+/* 状态徽章 */
 .badge.pending {
   color: var(--pend);
   background: var(--pend-bg);
@@ -339,7 +339,7 @@
   background: var(--off-bg);
 }
 
-/* Toolbar + table */
+/* 工具栏 + 表格 */
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -609,7 +609,7 @@ mark {
   padding: 0 1px;
 }
 
-/* Empty + error + skeleton */
+/* 空态 + 错误 + 骨架屏 */
 .empty {
   display: grid;
   justify-items: center;
@@ -678,7 +678,7 @@ mark {
   border-radius: var(--r-lg);
 }
 
-/* Dialog */
+/* 对话框 */
 dialog {
   width: min(520px,calc(100vw - 32px));
   max-height: calc(100vh - 48px);
@@ -783,7 +783,7 @@ dialog.closing::backdrop {
   }
 }
 
-/* Toasts */
+/* Toast */
 .toasts {
   position: fixed;
   right: 20px;

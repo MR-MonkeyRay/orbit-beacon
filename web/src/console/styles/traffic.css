@@ -1,4 +1,4 @@
-/* Traffic uses the shared palette in both themes; all geometry stays in SVG. */
+/* 流量图在两种主题下均使用共享色板；几何全部留在 SVG 中。 */
 .traffic-body,.traffic-content,.traffic-chart {
   min-width: 0;
 }
@@ -118,7 +118,7 @@
   }
 }
 
-/* Swatches match the filled bars; the dashed inset mirrors the sent bars' pattern. */
+/* 色块与实心柱一致；虚线内嵌对应发送柱的样式。 */
 .chart-key .traffic-rx-key,.chart-key .traffic-tx-key {
   width: 12px;
   height: 12px;

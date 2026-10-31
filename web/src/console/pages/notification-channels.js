@@ -73,8 +73,8 @@ export function channelEditor(item, {signal, saved}) {
       replaceSecret.addEventListener('change', () => { if (!replaceSecret.checked) secret.value = ''; sync(); if (replaceSecret.checked) secret.focus(); });
       controls.username.addEventListener('input', sync);
       sync();
-      // A server error about the retained secret must not land in the hidden
-      // field: open the replacement control so the admin sees and fixes it.
+      // 服务端若报告已保存凭据的错误，须展开替换控件，
+      // 以免错误留在隐藏字段中，管理员无法修正。
       const showSecretError = secret.showError;
       secret.showError = (message) => {
         if (message && secret.disabled && item) { replaceSecret.checked = true; sync(); }

@@ -8,10 +8,10 @@ const dialogs = new Set();
 let dialogEpoch = 0;
 const activeActions = [];
 
-// Body-level secrets obey the same boundary even while routing is awaiting data.
+// body 级的秘密信息遵守同一边界，即使路由正在等待数据。
 onSession((_session, detail) => { if (detail.boundary && detail.previousUser) closeDialogs(); });
 
-// Navigation removes body-level dialogs before the view is replaced.
+// 导航在视图替换前移除 body 级对话框。
 export function closeDialogs() {
   dialogEpoch += 1;
   let focusID = '';
@@ -26,8 +26,8 @@ export const dialogActionStale = () => activeActions.some((epoch) => epoch !== d
 
 export const hasUnsavedDialogChanges = () => [...dialogs].some((entry) => entry.dirty());
 
-// Native modal <dialog> with enter/exit animation, Escape and backdrop close.
-// Resolves `closed` with the return value once the dialog is gone.
+// 原生模态 <dialog>，带进入/退出动画，支持 Escape 和点击背景关闭。
+// 对话框关闭后，closed Promise 以对话框返回值完成。
 export function modal(title, build) {
   const titleID = uid('dialog');
   const dialog = h('dialog', {'aria-labelledby': titleID});
@@ -64,7 +64,7 @@ export function modal(title, build) {
   const dismiss = async () => {
     if (finished || confirming || dialog.querySelector('button.busy')) return;
     if (snapshot() !== initial) {
-      // Only one discard prompt may sit above this form at a time.
+      // 此表单上方同时只能有一个放弃提示。
       confirming = true;
       const discard = await confirmDiscard();
       confirming = false;
@@ -100,8 +100,8 @@ export const confirmDiscard = () => confirmDialog({
   title: t('controls.discard.title'), message: t('controls.discard.message'), confirm: t('controls.discard'), danger: true
 });
 
-// Form in a dialog. build(form) adds fields; action(form) runs on submit and the
-// dialog closes when it resolves. Errors stay inside the dialog.
+// 对话框中的表单。build(form) 添加字段；提交时执行 action(form)，
+// 成功后关闭对话框，错误则显示在对话框内。
 export function formDialog({title, intro, submit, build, action}) {
   return modal(title, (close) => {
     const form = h('form', {class: 'form'});

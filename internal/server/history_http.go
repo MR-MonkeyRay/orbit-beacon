@@ -23,7 +23,7 @@ func (h *handler) nodeHistory(w http.ResponseWriter, r *http.Request, id, reques
 		h.serviceError(w, &validation.Error{Fields: fields}, requestID)
 		return
 	}
-	// Existence is checked even when best-effort history was disabled at startup.
+	// 即使启动时禁用了历史记录，仍须确认节点存在。
 	if _, err := h.nodes.Get(r.Context(), id); err != nil {
 		h.serviceError(w, err, requestID)
 		return

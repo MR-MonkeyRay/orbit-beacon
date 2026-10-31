@@ -175,7 +175,7 @@ func (w *streamRecorder) FlushError() error {
 	err := w.flushErr
 	w.mu.Unlock()
 	if err == nil {
-		// The body retains every frame; idle observers must not block the handler.
+		// 响应体保留所有帧；观察者未读取通知时也不能阻塞处理程序。
 		select {
 		case w.flushed <- snapshot:
 		default:
@@ -185,7 +185,7 @@ func (w *streamRecorder) FlushError() error {
 }
 func (w *streamRecorder) SetWriteDeadline(deadline time.Time) error {
 	w.mu.Lock()
-	// Count armed deadlines; zero clears the previous one between frames.
+	// 统计设置写入截止时间的次数；帧间传入零值以清除前一帧的截止时间。
 	if deadline.IsZero() {
 		w.cleared++
 	} else {
@@ -303,7 +303,7 @@ func TestPublicStreamFirstFrameImmediate(t *testing.T) {
 	if remaining := time.Until(recorder.Deadline()); remaining < 9*time.Second || remaining > 10*time.Second {
 		t.Fatalf("write deadline remaining = %v, want approximately 10s", remaining)
 	}
-	// An armed deadline left idle would reset HTTP/2 streams before the heartbeat.
+	// 闲置的已设置截止时间会在心跳之前重置 HTTP/2 流。
 	for wait := time.Now().Add(time.Second); recorder.ClearedCount() != 1; {
 		if time.Now().After(wait) {
 			t.Fatalf("cleared deadlines = %d, want 1", recorder.ClearedCount())
@@ -365,7 +365,7 @@ func TestPublicStreamDiscardsPageInvalidatedDuringQuery(t *testing.T) {
 			t.Fatal("PublicPage query did not start")
 		}
 	}
-	// The in-flight query already read the node as published.
+	// 进行中的查询已把该节点读取为已发布。
 	f.store.mu.Lock()
 	f.store.visible = false
 	f.store.queryWait = nil
@@ -439,7 +439,7 @@ func TestPublicStreamPerIPUsesCanonicalTrustedClientAddress(t *testing.T) {
 	f.h.ServeHTTP(response, request)
 	assertStreamBusy(t, response)
 
-	// Remote source ports never create distinct per-IP buckets.
+	// 同一远端 IP 更换源端口不能获得新的限流桶。
 	f.h.trustedProxies = nil
 	for range 4 {
 		reserveLiveTestStream(t, f.h, "192.0.2.1")

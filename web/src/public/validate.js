@@ -2,7 +2,7 @@ import {timestampMillis} from '../shared/freshness.js';
 
 const METRICS = ['cpu_percent', 'memory_percent', 'load1', 'uptime_seconds'];
 
-// Invalid data never replaces the last validated public collection.
+// 无效数据绝不替换最后一次校验通过的公开集合。
 export function validResponse(result, offset = 0) {
   if (!result || !Array.isArray(result.nodes) || result.nodes.length > 100 || typeof result.has_more !== 'boolean' || !Number.isFinite(timestampMillis(result.generated_at))) return false;
   if (result.has_more ? !Number.isSafeInteger(result.next_offset) || result.next_offset <= offset : result.next_offset !== null) return false;

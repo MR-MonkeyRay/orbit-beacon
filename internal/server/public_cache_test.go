@@ -44,7 +44,7 @@ func TestPublicPageCacheHitAndExpiry(t *testing.T) {
 	if expired.GeneratedAt == initial.GeneratedAt || string(expired.Nodes[0]["status"]) != `"online"` || string(expired.Nodes[0]["cpu_percent"]) != "25" {
 		t.Fatalf("cache did not expire at TTL: %s", expiredBytes)
 	}
-	// Pagination keys must not share a result, including an empty offset page.
+	// 分页键绝不能共享结果，包括空 offset 页。
 	other, _ := publicList(t, f, "/api/public/v1/nodes?limit=1&offset=1", nil)
 	if len(other.Nodes) != 0 || other.HasMore || other.NextOffset != nil {
 		t.Fatalf("offset page reused first page: %+v", other)
@@ -86,7 +86,7 @@ func TestPublicPageCacheImmediatelyExcludesWithdrawnNodes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Deliberately keep the clock fixed and reuse the populated cache key.
+			// 有意保持时钟固定并复用已填充的缓存键。
 			after, raw := publicList(t, f, "/api/public/v1/nodes?limit=1", nil)
 			if len(after.Nodes) != 0 || after.HasMore || after.NextOffset != nil {
 				t.Fatalf("withdrawal served cached node: %s", raw)
@@ -135,7 +135,7 @@ func TestPublicPageCacheImmediatelyForgetsRotatedCredentialMetrics(t *testing.T)
 	}
 	assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, string(request)), http.StatusOK)
 
-	// Keep the clock fixed so only identity invalidation can evict the page.
+	// 保持时钟固定，使只有身份失效才能逐出该页面。
 	after, afterBytes := publicList(t, f, "/api/public/v1/nodes?limit=1", nil)
 	if len(after.Nodes) != 1 || string(after.Nodes[0]["status"]) != `"unknown"` {
 		t.Fatalf("rotation served cached identity: %s", afterBytes)
@@ -156,8 +156,8 @@ func TestPublicPageCacheLivenessBoundaryLagsByAtMostTTL(t *testing.T) {
 	if len(boundary.Nodes) != 1 || string(boundary.Nodes[0]["status"]) != `"online"` {
 		t.Fatalf("exact online boundary: %s", boundaryBytes)
 	}
-	// A rendered page can briefly retain its computed online status after the
-	// durable 180-second boundary, including its original generated_at.
+	// 已渲染的页面可以在超过持久化 180 秒边界后短暂保留其计算的在线状态，
+	// 包括其原始 generated_at。
 	f.now = f.now.Add(2*time.Second - time.Nanosecond)
 	cached, cachedBytes := publicList(t, f, "/api/public/v1/nodes", nil)
 	if !reflect.DeepEqual(cached, boundary) {

@@ -25,8 +25,8 @@ func TestMetricsExpositionAndHTTPIsolation(t *testing.T) {
 	} {
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(target.method, target.path, nil))
 	}
-	// Successful report and throttled login status paths are observed at the same
-	// HTTP boundary; neither metric needs to inspect request or response bodies.
+	// 成功的报告和被限流的登录状态路径在同一个 HTTP 边界被观测；
+	// 两个指标都不需要检查请求或响应体。
 	h.metrics.observe(http.MethodPost, "/api/agent/v1/report", 200, 20*time.Millisecond, "/api/agent/v1/report")
 	h.metrics.observe(http.MethodPost, "/api/v1/session", 429, 600*time.Millisecond, "/api/v1/session")
 	h.metrics.observe(http.MethodPost, "/api/v1/session", 401, 600*time.Millisecond, "/api/v1/session")
@@ -63,7 +63,7 @@ func TestMetricsExpositionAndHTTPIsolation(t *testing.T) {
 			t.Errorf("metrics contain unbounded private input: %s", secret)
 		}
 	}
-	// Every sample must be a legal Prometheus name/label set and numeric value.
+	// 每个样本都必须是合法的 Prometheus 名称/标签集和数值。
 	sample := regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*(\{.*\})? ([^ ]+)$`)
 	for _, line := range strings.Split(strings.TrimSpace(body), "\n") {
 		if strings.HasPrefix(line, "#") {

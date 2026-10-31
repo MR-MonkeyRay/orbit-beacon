@@ -1,10 +1,10 @@
-/* Design tokens shared by the console and the public page.
-   Palette: deep "night sky" indigo surfaces, a sodium-amber beacon for brand and
-   primary actions, a periwinkle orbit for links and data, and status hues.
-   Breakpoints (media queries cannot read custom properties):
-     public page  480 small phone · 720 phone/tablet · 1024 tablet/desktop · 1600 · 2200 wide screens
-     console      1024 iPad portrait (compact tables) · 1200 icon rail · 1680 wide content
-   The console supports desktop and iPad widths only; the public page supports all devices. */
+/* 控制台与公开页共用的设计变量（design tokens）。
+   色板：夜空靛蓝用于背景，琥珀色信标用于品牌和主操作，
+   长春花蓝轨道用于链接和数据，其他状态使用对应的语义色。
+   断点（媒体查询无法读取自定义属性）：
+     公开页  480 小屏手机 · 720 手机/平板 · 1024 平板/桌面 · 1600 · 2200 宽屏
+     控制台  1024 iPad 竖屏（紧凑表格） · 1200 图标栏 · 1680 宽内容
+   控制台仅支持桌面和 iPad 宽度；公开页支持所有设备。 */
 :root {
   --bg:#f1f4f9;
   --rail:#e8edf5;
@@ -146,7 +146,7 @@
   color-scheme: dark;
 }
 
-/* Base shared by both pages */
+/* 两个页面共用的基础样式 */
 *,*::before,*::after {
   box-sizing: border-box;
 }
@@ -304,7 +304,7 @@ button,input,select,textarea {
   background: var(--bad-bg);
 }
 
-/* The shimmer moves a highlight with transform, so it composites instead of repainting every frame. */
+/* 微光用 transform 移动高光，走合成而非每帧重绘。 */
 .sk {
   position: relative;
   overflow: hidden;

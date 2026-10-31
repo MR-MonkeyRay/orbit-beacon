@@ -63,7 +63,7 @@ test('traffic days fill a 30-day UTC window across year and leap-day boundaries'
     {day: '2027-01-02', rx_bytes: '5', tx_bytes: '6'},
     {day: '2027-01-03', rx_bytes: '99', tx_bytes: '99'}
   ], new Date('2027-01-02T23:59:59-08:00'));
-  // The supplied instant is Jan 3 in UTC, and the window follows UTC dates.
+  // 给定的时间是 UTC 的 1 月 3 日，窗口按 UTC 日期计算。
   assert.equal(year.length, 30);
   assert.equal(year[0].day, '2026-12-05');
   assert.equal(year.at(-1).day, '2027-01-03');

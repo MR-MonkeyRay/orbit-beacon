@@ -74,8 +74,7 @@ func scanEvent(row scanner) (Event, error) {
 const eventColumns = "e.id,e.rule_id,e.node_id,COALESCE(r.name,e.rule_name),COALESCE(n.name,e.node_name),e.state,e.value,e.started_at,e.resolved_at,e.last_notified_at"
 const eventSelect = "SELECT " + eventColumns + ",COALESCE(json_extract(e.rule_snapshot,'$.metric'),''),COALESCE(json_extract(e.rule_snapshot,'$.severity'),'') FROM alert_events e LEFT JOIN alert_rules r ON r.id=e.rule_id LEFT JOIN nodes n ON n.id=e.node_id"
 
-// Event preserves the same live-name fallback and immutable snapshot fields as
-// event lists, without searching pages for a deep-linked historical episode.
+// Event 按 ID 直接读取历史事件，沿用列表中的当前名称回退规则和不可变快照字段。
 func (s *Service) Event(ctx context.Context, id string) (Event, error) {
 	event, err := scanEvent(s.db.QueryRowContext(ctx, eventSelect+" WHERE e.id=?", id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -84,10 +83,10 @@ func (s *Service) Event(ctx context.Context, id string) (Event, error) {
 	return event, err
 }
 
-// Summary reads the counts and newest episodes from one consistent snapshot.
+// Summary 从一个一致的快照中读取计数和最新事件。
 func (s *Service) Summary(ctx context.Context) (AlertSummary, error) {
-	// The SQLite driver uses plain BEGIN for ReadOnly transactions, bypassing
-	// the main pool's _txlock=immediate so this never reserves the writer.
+	// SQLite 驱动对 ReadOnly 事务使用普通的 BEGIN，绕过了主连接池的 _txlock=immediate，
+	// 因此这里绝不会占用写锁。
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return AlertSummary{}, err
@@ -138,8 +137,7 @@ func (s *Service) Events(ctx context.Context, state string, limit int, before st
 	if limit < 1 || limit > 100 {
 		return EventPage{}, validation.Invalid("limit", "must be between 1 and 100")
 	}
-	// Metric and severity come from the snapshot taken at firing, so history
-	// stays meaningful after the rule is edited or deleted.
+	// 指标和严重级别取自告警触发时的快照，避免规则修改或删除后改变历史含义。
 	query := eventSelect + " WHERE 1=1"
 	args := []any{}
 	if state != "all" {

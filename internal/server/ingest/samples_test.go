@@ -15,7 +15,7 @@ func TestSamplesDurableCoalescedDuplicateAndRejected(t *testing.T) {
 	samples := make(chan history.Sample, 4)
 	f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }, Samples: samples})
 	ctx := context.Background()
-	// New service durably reclaims this report; only the successful snapshot counts.
+	// 新服务通过持久化路径重新接受此上报；只有成功接受的快照才计数。
 	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestSamplesDurableCoalescedDuplicateAndRejected(t *testing.T) {
 	if second.Values["cpu_percent"] != 30 {
 		t.Fatal("snapshot aliases report")
 	}
-	// Duplicate on the fast path, then on the interval-due durable path.
+	// 先在快速路径上重复，再在到期的持久化路径上重复。
 	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}

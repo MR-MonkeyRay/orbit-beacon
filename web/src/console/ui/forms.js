@@ -4,7 +4,7 @@ import {errorText, fieldErrorText} from '../../shared/errors.js';
 import {busy, button, iconButton, uid} from './components.js';
 import {toastError} from './feedback.js';
 
-// API limits are UTF-8 byte counts, which the browser's maxlength cannot express.
+// API 限制是 UTF-8 字节数，浏览器的 maxlength 无法表达。
 export function validateBytes(control, min, max, label) {
   const check = () => {
     const size = byteLength(control.value);
@@ -33,8 +33,8 @@ export function select(choices, value, props = {}) {
   return element;
 }
 
-// Only customError is supplied by the application. Native browser messages may
-// use a different language from the selected interface locale.
+// 应用只提供 customError。浏览器原生消息
+// 可能与所选界面语言不同。
 function validationText(control) {
   const validity = control.validity;
   if (validity.valid) return '';
@@ -51,9 +51,9 @@ function validationText(control) {
   return t('controls.validation.invalid');
 }
 
-// Labelled control with hint and inline error. Validation messages appear after
-// the first submit attempt or once the user leaves a non-empty field.
-// options.inner replaces the control in the layout (e.g. a password wrapper).
+// 带标签、提示和内联错误的控件。校验消息在
+// 首次提交后，或用户离开非空字段时出现。
+// options.inner 在布局中替换控件本身（如密码包装器）。
 export function field(label, control, options = {}) {
   if (!control.id) control.id = uid('field');
   const hintID = options.hint ? `${control.id}-hint` : null;
@@ -101,8 +101,8 @@ export function passwordInput(props) {
 }
 
 
-// Applies validation_failed field messages to controls with matching
-// data-field or name attributes. Returns whether any control matched.
+// 将 validation_failed 字段消息应用到
+// data-field 或 name 匹配的控件。返回是否有控件匹配。
 function applyFieldErrors(form, error) {
   if (!error.fields) return false;
   let first = null;
@@ -117,8 +117,8 @@ function applyFieldErrors(form, error) {
   return Boolean(first);
 }
 
-// Runs action on submit with a busy button. Errors go to errorBox when given
-// (dialogs sit above the toast layer), otherwise to a toast.
+// 提交时运行 action 并使按钮进入忙碌状态。有 errorBox 时
+// 错误显示在其中（对话框位于 toast 层之上），否则显示为 toast。
 export function onSubmit(form, submitButton, action, errorBox) {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -144,7 +144,7 @@ export function onSubmit(form, submitButton, action, errorBox) {
   });
 }
 
-// Forms without save bars (including password forms) share the same baseline.
+// 没有保存栏的表单（包括密码表单）共享同一基线。
 export function trackFormDirty(form) {
   const snapshot = () => JSON.stringify([...form.querySelectorAll('[name],[data-tags]')]
     .map((element) => element.dataset.tags !== undefined ? element.getValue() : element.multiple ? [...element.selectedOptions].map((option) => option.value)
@@ -162,7 +162,7 @@ export function trackFormDirty(form) {
   return state;
 }
 
-// Save bars reuse the baseline and add only their own button/note state.
+// 保存栏复用基线，只添加自己的按钮/备注状态。
 export function trackDirty(form, controls) {
   const state = trackFormDirty(form);
   form.syncDirty = () => {
@@ -182,8 +182,8 @@ export function saveBar(label, id) {
   return {save, discard, note, bar: h('div', {class: 'form-actions'}, save, discard, note)};
 }
 
-// Chip editor for node tags: Enter or comma adds, Backspace on empty removes the
-// last tag, pasted lists are split and trimmed. Tags are 1–255 bytes and unique.
+// 节点标签编辑器：Enter 或逗号添加，输入为空时 Backspace 删除最后一个标签。
+// 粘贴的列表会拆分并去除首尾空白；标签须为 1–255 字节且不重复。
 export function tagEditor(values) {
   let tags = [...values];
   const entryID = uid('tag-entry');

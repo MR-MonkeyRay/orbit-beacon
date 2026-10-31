@@ -47,7 +47,7 @@ func TestChannelRoutingPreservesPendingAndOpenEpisodes(t *testing.T) {
 	if len(events) != 1 || events[0].ID != id || events[0].ResolvedAt != nil {
 		t.Fatal("restart changed routed episode")
 	}
-	// Pre-migration snapshots omit channel_ids; null and empty routing are equal.
+	// 迁移前的快照不含 channel_ids；null 与空的路由等价。
 	legacy := f.rule
 	legacy.ChannelIDs = nil
 	current := legacy

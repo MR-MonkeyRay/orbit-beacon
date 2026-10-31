@@ -16,8 +16,8 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-// A connector counts actual driver queries and can stop a page query before it
-// returns rows. Projection must not issue any per-node queries against this DB.
+// connector 统计实际的驱动查询次数，并能在页面查询返回行之前将其阻断。
+// 投影不得对该数据库发起任何按节点查询。
 type publicPageConnector struct {
 	queries atomic.Int64
 	gate    <-chan struct{}

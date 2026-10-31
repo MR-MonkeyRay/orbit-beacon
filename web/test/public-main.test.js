@@ -84,7 +84,7 @@ test('public broken channel retains values and online presence until the next va
   assert.equal(ui.elements.nodes.children.length, 0);
   assert.notEqual(ui.elements.headline.textContent, '');
   assert.equal(ui.elements.retry.hidden, true);
-  // The headline states the empty collection once; the empty box stays hidden.
+  // 空集合只由标题说明一次；空态盒子保持隐藏。
   assert.equal(ui.elements.empty.hidden, true);
 });
 

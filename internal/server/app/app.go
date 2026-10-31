@@ -1,4 +1,4 @@
-// Package app owns server composition and lifecycle.
+// Package app 负责服务器的组装与生命周期。
 package app
 
 import (
@@ -48,7 +48,7 @@ type httpService interface {
 	Close() error
 }
 
-// App is a single-use server assembled by Build. Run releases all its resources.
+// App 是由 Build 组装的一次性服务器。Run 会释放其全部资源。
 type App struct {
 	cfg                       config.Server
 	logger                    *slog.Logger
@@ -165,7 +165,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 		if err != nil {
 			return nil, err
 		}
-		// Assign only a non-nil server: a typed nil would make the interface non-nil.
+		// 仅赋非 nil 的 server：带类型的 nil 会使接口值非 nil。
 		a.metricsServer, a.metricsListener = metricsServer, metricsListener
 	}
 
@@ -178,7 +178,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 func (a *App) Run(ctx context.Context) error {
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
-	// Background work stops with runCtx and must finish before the database closes.
+	// 后台任务随 runCtx 结束，须在数据库关闭前完成。
 	var background sync.WaitGroup
 	for _, run := range a.background {
 		background.Add(1)
@@ -213,11 +213,11 @@ func (a *App) Run(ctx context.Context) error {
 	return err
 }
 
-// shutdown runs once Run's context ends, on a signal or after a serve error.
-// HTTP and live streams share 10 seconds; the remaining drains get 5 seconds
-// each, which keeps the total inside the 30-second stop grace in deploy/.
+// shutdown 在 Run 的上下文结束时执行（收到信号或 HTTP 服务出错后）。
+// HTTP 与实时流共用 10 秒；后续每个组件各有 5 秒关闭时限，
+// 总时长不超过 deploy/ 中配置的 30 秒停机宽限期。
 func (a *App) shutdown(background *sync.WaitGroup) {
-	// Report not-ready first so load balancers stop routing new traffic.
+	// 先上报 not-ready，让负载均衡器停止转发新流量。
 	a.handler.MarkNotReady()
 	a.drainHTTP()
 	if a.ingest != nil {
@@ -315,8 +315,8 @@ func newHTTPServer(address string, handler http.Handler, logger *slog.Logger) *h
 	}
 }
 
-// net/http emits free-form transport errors. Keep those behind the same
-// metadata-only boundary as application errors.
+// net/http 会输出自由格式的传输层错误。
+// 将其与应用错误一样，限制在仅记录元数据的边界内。
 type httpErrorWriter struct{ logger *slog.Logger }
 
 func (w httpErrorWriter) Write(p []byte) (int, error) {

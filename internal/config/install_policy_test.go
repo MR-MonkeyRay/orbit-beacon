@@ -9,8 +9,8 @@ import (
 	"orbitbeacon/internal/config"
 )
 
-// Policy files may live under system ancestors, but never under a writable or
-// symlinked ancestor. Use the user's private home instead of writable /tmp.
+// 策略路径的上级目录不能允许组或其他用户写入，也不能为符号链接。
+// 使用用户私有主目录，而不是可写的 /tmp。
 func securePolicyDirectory(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {

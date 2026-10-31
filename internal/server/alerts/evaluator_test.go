@@ -274,7 +274,7 @@ func TestDisableDeletionRevocationAndScopeChangesResolve(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			// Reloading includes deleted resource IDs and snapshots.
+			// 重新加载包含已删除资源的 ID 和快照。
 			f.e = NewEvaluator(f.s, f.latest, EvaluatorOptions{})
 			f.tick(t)
 			events := f.events(t, "resolved")
@@ -395,7 +395,7 @@ func TestNotifierIsBoundedAfterCommitAndStopsWithContext(t *testing.T) {
 		cancel()
 		t.Fatal("no notification")
 	}
-	// A blocked notifier cannot hold the evaluator. Its queue stays bounded.
+	// 阻塞的 notifier 不得拖住 evaluator。其队列保持有界。
 	f.e.enqueue(Notification{})
 	f.e.enqueue(Notification{})
 	if f.e.dropped.Load() != 1 {
@@ -524,7 +524,7 @@ func TestFailedResolutionRetriesBeforeRebreach(t *testing.T) {
 			if err := f.e.Evaluate(context.Background(), f.now); err == nil || !strings.Contains(err.Error(), "injected resolution failure") {
 				t.Fatalf("expected recovery write failure, got %v", err)
 			}
-			// The condition breaches again while the old resolution still fails.
+			// 告警恢复仍无法写入时，条件再次越限。
 			f.advance(30)
 			f.value(90)
 			if err := f.e.Evaluate(context.Background(), f.now); err == nil || !strings.Contains(err.Error(), "injected resolution failure") {
@@ -630,7 +630,7 @@ func TestPendingResetSurvivesOtherEventWriteFailure(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					// Force both processing orders independently of generated IDs.
+					// 强制两种处理顺序，使其不依赖生成的 ID。
 					created := start.Add(time.Second)
 					if order == "after" {
 						created = start.Add(-time.Second)
@@ -753,7 +753,7 @@ func TestRealIngestIdentityFence(t *testing.T) {
 	if _, err := real.AcceptAdmitted(context.Background(), admission, report); err != nil {
 		t.Fatal(err)
 	}
-	// Rotating the credential fences the old in-memory metric before evaluation.
+	// 轮换凭据会在评估之前隔离旧的内存指标。
 	f.exec(t, "UPDATE nodes SET token_hash=x'02' WHERE id=?", f.node)
 	f.tick(t)
 	if len(f.events(t, "all")) != 0 {

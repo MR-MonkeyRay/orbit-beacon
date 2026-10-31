@@ -9,11 +9,11 @@ type enrollmentTicket struct {
 }
 
 func openEnrollmentTicket(string) (*enrollmentTicket, error) {
-	return nil, errors.New("secure enrollment token handling is unsupported on this platform")
+	return nil, errors.New("本平台不支持安全处理注册票据")
 }
 
 func (*enrollmentTicket) close() {}
 
 func (*enrollmentTicket) remove() error {
-	return errors.New("secure enrollment token cleanup is unsupported on this platform")
+	return errors.New("本平台不支持安全清理注册票据")
 }

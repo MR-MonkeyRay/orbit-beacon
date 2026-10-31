@@ -156,8 +156,8 @@ func TestSchedulerReloadWaitsForCollectionAndKeepsSnapshotRuntime(t *testing.T) 
 		if loads.Load() != 1 || collections.Load() != 2 {
 			t.Fatalf("boundary reload loads=%d samples=%d", loads.Load(), collections.Load())
 		}
-		// The worker may collapse the first notification, but whichever snapshot
-		// it sends must carry its own target set, never a newer global selection.
+		// 上报任务可能合并第一个通知，但每份快照都必须使用自己的目标集，
+		// 不能使用更新后的全局配置。
 		for len(reports) > 0 {
 			report := <-reports
 			targets := requestedTargets[0]

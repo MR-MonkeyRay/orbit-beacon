@@ -55,7 +55,7 @@ func TestNewerHistorySchemaDisablesHistoryWithoutChangingFiles(t *testing.T) {
 	if err := db.QueryRow(`SELECT count(*) FROM nodes`).Scan(&count); err != nil {
 		t.Fatalf("main DB unavailable: %v", err)
 	}
-	// The incompatible history file is retained, never deleted or silently reset.
+	// 不兼容的历史文件予以保留，绝不删除或静默重置。
 	if _, err := os.Stat(filepath.Join(dir, "metrics.db")); err != nil {
 		t.Fatal(err)
 	}

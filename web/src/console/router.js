@@ -7,9 +7,9 @@ import {button, emptyState, linkButton, pageHead, resetIDs, skeleton} from './ui
 import {closeDialogs, confirmDiscard, dialogActionStale, hasUnsavedDialogChanges} from './ui/dialogs.js';
 import {progress} from './ui/feedback.js';
 
-// History-API router. A page is an async function returning an element (or a
-// path string to redirect). Data loads before the swap; a skeleton appears only
-// when loading is slow, and the swap uses a view transition where supported.
+// History API 路由器。页面是返回元素（或重定向路径字符串）的异步函数。
+// 数据先于切换加载；只有加载慢时才显示骨架屏，
+// 切换在支持时使用视图过渡。
 const view = document.getElementById('view');
 let routes = [];
 let navigation = 0;
@@ -23,8 +23,8 @@ class NavigationCancelled extends DOMException {
   constructor() { super('The navigation was cancelled.', 'AbortError'); }
 }
 
-// Event-driven navigation has no awaiting action. Consume only cancellation
-// created by this router; genuine loading/transition errors stay observable.
+// 事件触发的导航没有调用方等待结果；只忽略本路由器产生的取消错误，
+// 其他加载或过渡错误仍须向外抛出。
 export function ignoreNavigationCancellation(error) {
   if (!(error instanceof NavigationCancelled)) throw error;
 }
@@ -67,7 +67,7 @@ export async function go(target, options = {}) {
   await render({scroll: 0});
 }
 
-// Re-renders the current page in place after a change, keeping scroll and focus.
+// 变更后原地重渲染当前页面，保留滚动位置和焦点。
 export const refresh = () => dialogActionStale() ? Promise.reject(new NavigationCancelled()) : render({quiet: true});
 
 async function render(options = {}) {
@@ -93,7 +93,7 @@ async function render(options = {}) {
   let content;
   try {
     resetIDs();
-    // Gate before page loaders can fetch private data or construct private DOM.
+    // 在页面加载器读取私有数据或构建私有 DOM 前，先校验会话。
     if (location.pathname !== '/login') {
       try { await ensureSession(); }
       catch (error) { if (error.status === 401) return go('/login', {replace: true, force: true}); throw error; }
@@ -143,9 +143,9 @@ function swap(content, route, mode, token) {
     const current = {value: document.startViewTransition(update), skipped: false, hidden: false};
     transition = current;
     const ready = current.value.ready.catch((error) => {
-      // Explicit skips reject with AbortError; a document becoming hidden can
-      // instead make the browser skip with InvalidStateError. Other failures
-      // (including duplicate transition names) remain navigation errors.
+      // 显式跳过以 AbortError 拒绝；文档变为隐藏时浏览器可能以
+      // InvalidStateError 跳过。其他失败
+      // （包括重复的过渡名称）仍是导航错误。
       if (current.skipped && error.name === 'AbortError' || current.hidden && error.name === 'InvalidStateError') return;
       throw error;
     });
@@ -175,8 +175,8 @@ export function startRouter(table) {
   const unsubscribe = onSession((current, detail) => {
     if (!detail.boundary || (!detail.previousUser && !['expired', 'unauthenticated', 'logout', 'password', 'deleted'].includes(detail.reason))) return;
     if (!detail.previousUser && location.pathname === '/login') return;
-    // Security boundaries are synchronous, outside view transitions and dirty
-    // prompts. A retained private view or body dialog must not survive expiry.
+    // 会话安全边界必须同步清理，不等待视图过渡或未保存更改提示。
+    // 会话过期后，私有视图和挂在 body 下的对话框都必须移除。
     navigation += 1;
     intent += 1;
     controller?.abort();
@@ -212,13 +212,13 @@ export function startRouter(table) {
     }
     if (attempt === intent) void render({scroll: (event.state && event.state.scroll) || 0}).catch(ignoreNavigationCancellation);
   });
-  // Tabs replace the hash in place; remember it when a form is edited.
+  // 标签页原地替换 hash；表单被编辑时记住它。
   for (const type of ['input', 'change', 'tags']) listen(document, type, () => {
     currentURL = location.pathname + location.search + location.hash;
   });
   const revalidate = () => {
     if (location.pathname === '/login' || !session.user || document.hidden) return;
-    void verifySession({signal: lifetime.signal}).catch(() => { /* network failure retains the known, expiring snapshot */ });
+    void verifySession({signal: lifetime.signal}).catch(() => { /* 网络故障时保留已有快照，但会话仍按已知时间过期 */ });
   };
   const hide = () => { skipTransition(true); pauseSessionVerification(); };
   listen(document, 'visibilitychange', () => { if (document.hidden) hide(); else revalidate(); });

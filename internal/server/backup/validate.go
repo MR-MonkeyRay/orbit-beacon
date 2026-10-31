@@ -30,9 +30,8 @@ import (
 	"orbitbeacon/internal/uuid"
 )
 
-// ValidatePayloadData reads only the registry's named columns. Callers validate
-// the transfer schema first and retain responsibility for final-state FK checks.
-// Neither validation nor the shared domain parsers perform network/filesystem I/O.
+// ValidatePayloadData 只读取 registry 的具名列。调用方须先校验传输库结构，
+// 并自行负责终态外键检查。校验与共享领域解析均不做网络/文件系统 I/O。
 func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key []byte) error {
 	specs := tablesFor(category)
 	if len(specs) == 0 {
@@ -129,7 +128,7 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 }
 
 func invalidPayload(table, id string) error {
-	// Only fixed registry names and syntactically valid UUIDs reach diagnostics.
+	// 只有固定的 registry 表名和语法合法的 UUID 会进入诊断信息。
 	if !uuid.ValidUUID(id) {
 		id = ""
 	}
@@ -316,7 +315,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 		if !oneOf(r.text("state"), "firing", "resolved") || (r.text("state") == "firing") != (r["resolved_at"] == nil) || !jsonObject(r.text("rule_snapshot")) || (r["value"] != nil && !finite(r.number("value"))) {
 			return invalidRow()
 		}
-		// Resolved legacy events can legitimately have an empty rule snapshot.
+		// 已结束的旧版告警事件允许规则快照为空。
 		if r.text("state") == "firing" {
 			_, err := alerts.ParseRuleSnapshot([]byte(r.text("rule_snapshot")))
 			return err
@@ -403,8 +402,8 @@ func validateChannel(r payloadRow, box *secretbox.Box) error {
 	if r.text("kind") != "webhook" && len(url) > 0 {
 		return invalidRow()
 	}
-	// Machine-level insecure opt-in is not configuration data. Preserve syntax
-	// accepted with that opt-in; sending still enforces the target's runtime policy.
+	// 机器级的不安全放行选项不属于配置数据。保留在该放行选项下被接受的语法；
+	// 发送时仍会强制执行目标端的运行时策略。
 	return notify.ValidateChannel(notify.Channel{Name: r.text("name"), Kind: r.text("kind"), Config: cfg}, string(secret), true)
 }
 
@@ -454,8 +453,8 @@ func validateCategoriesJSON(raw string) error {
 	return err
 }
 
-// ParseSchedule accepts five-field crontab syntax, interpreting weekday 7 as
-// Sunday without losing the wildcard marker used by the DOM/DOW OR rule.
+// ParseSchedule 接受五字段 crontab 语法，将星期 7 解释为周日，
+// 并保留日期/星期（DOM/DOW）的 OR 规则所需的通配标记。
 func ParseSchedule(raw string) (cron.Schedule, error) {
 	fields := strings.Fields(raw)
 	if len(fields) != 5 || strings.ContainsAny(raw, "?@=") {
@@ -472,7 +471,7 @@ func ParseSchedule(raw string) (cron.Schedule, error) {
 		return nil, invalidRow()
 	}
 	if wildcard {
-		// Derive the parser's wildcard marker instead of depending on its private bit.
+		// 从解析结果推导通配标记，不依赖其私有位。
 		all, _ := parser.Parse("0 0 * * *")
 		explicit, _ := parser.Parse("0 0 * * 0-6")
 		schedule.(*cron.SpecSchedule).Dow |= all.(*cron.SpecSchedule).Dow ^ explicit.(*cron.SpecSchedule).Dow
@@ -524,7 +523,7 @@ func normalizeWeekday(raw string) (string, bool, error) {
 				hi = 7
 			}
 		}
-		// At most eight iterations, even if the supplied stride is very large.
+		// 即使步长很大，最多八次迭代。
 		for n := lo; n <= hi; {
 			selected[n%7] = true
 			if step > hi-n {
@@ -545,8 +544,8 @@ func normalizeWeekday(raw string) (string, bool, error) {
 	return strings.Join(values, ","), wildcard, nil
 }
 
-// PlanDefinition contains only portable configuration. Filesystem ownership and
-// writability checks belong to saving/enabling a plan, never archive validation.
+// PlanDefinition 只含可移植配置。文件系统属主与可写性检查属于保存/启用计划的职责，
+// 不属于归档校验。
 type PlanDefinition struct {
 	Name        string
 	Enabled     bool

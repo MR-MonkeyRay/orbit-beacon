@@ -106,7 +106,7 @@ func TestDurableRetryBackoffAndRestart(t *testing.T) {
 			t.Fatal(s)
 		}
 	}
-	// Pending work is owned by the database, not an in-memory queue.
+	// 待处理工作由数据库持有，而非内存队列。
 	f.db.Exec("DELETE FROM notification_deliveries")
 	f.s.Notify(context.Background(), f.note("restart"))
 	box, _ := secretbox.New(bytes.Repeat([]byte{7}, 32), "orbitbeacon notification channel v1")
@@ -147,7 +147,7 @@ func TestRateLimitCoalescingAndRetention(t *testing.T) {
 	if calls.Load() != 20 {
 		t.Fatalf("rate=%d", calls.Load())
 	}
-	// Restart must retain the exhausted rate window.
+	// 重启必须保留已耗尽的速率窗口。
 	restarted := New(f.db, f.s.box, f.s.opts)
 	restarted.process(context.Background())
 	if calls.Load() != 20 {
@@ -245,7 +245,7 @@ func TestChannelSecretsAuditAndValidation(t *testing.T) {
 	if c.SecretSet {
 		t.Fatal("clear did not work")
 	}
-	// Audit failures roll back channel writes and prevent test sends.
+	// 审计失败须回滚通道写入，并阻止测试发送。
 	f.db.Exec(`CREATE TRIGGER reject_channel_audit BEFORE INSERT ON audit_events WHEN NEW.action LIKE 'notification_channel.%' BEGIN SELECT RAISE(ABORT,'audit failure'); END`)
 	name := "changed"
 	if _, e = f.s.Save(ctx, c.ID, Patch{Name: &name}); e == nil {

@@ -2,7 +2,7 @@ import {t, tParts} from '../i18n.js';
 import {h, icon} from '../../shared/dom.js';
 import {describeAction, shortID, when} from '../format.js';
 
-// One audit event in a timeline; `names` maps user, node and group IDs to names.
+// 时间线中的一条审计事件；`names` 将用户、节点和分组 ID 映射为名称。
 export function auditItem(event, names, withDetails) {
   const verb = event.action.split('.').pop();
   const kind = /create|claim|enable/.test(verb) ? 'create' : /delete|revoke|disable/.test(verb) ? 'delete' : /^user\./.test(event.action) ? 'auth' : '';

@@ -84,8 +84,8 @@ func (s *Service) openTaskArtifact(task Task) (*os.File, error) {
 	return file, nil
 }
 
-// OpenArtifact exposes a seekable descriptor, not a buffered archive. The stored
-// result_location is display-only and never participates in file selection.
+// OpenArtifact 暴露可定位的描述符，而非缓冲后的归档。存储的
+// result_location 仅供展示，绝不参与文件选择。
 func (s *Service) OpenArtifact(ctx context.Context, id string) (*os.File, Task, error) {
 	if !uuid.ValidUUID(id) {
 		return nil, Task{}, &Error{Code: "task_not_found"}

@@ -126,7 +126,7 @@ func etagMatches(value, etag string) bool {
 	return false
 }
 
-// The embedded manifest is generated from the browser router's definitions.
+// 内嵌清单由浏览器路由器的定义生成。
 var consolePaths = func() []string {
 	data, err := fs.ReadFile(webui.Assets(), "console-routes.json")
 	if err != nil {

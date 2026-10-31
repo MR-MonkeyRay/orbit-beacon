@@ -1,4 +1,4 @@
-// Package egress validates destinations and pins connections to checked IPs.
+// Package egress 校验目标地址，并将连接固定到已检查的 IP。
 package egress
 
 import (
@@ -15,11 +15,10 @@ type Resolver interface {
 	LookupIPAddr(context.Context, string) ([]net.IPAddr, error)
 }
 
-// Dialer resolves and checks every answer before dialing only checked literals.
-// Resolver and Dial must be provided by the caller. AllowPrivate preserves the
-// explicit notification opt-in, including loopback. DenyLocal additionally keeps
-// local/non-unicast destinations blocked even with that opt-in (for backups).
-// Metadata endpoints are always denied, including embedded IPv4 destinations.
+// Dialer 解析并检查每个应答，仅拨号已通过检查的 IP 字面量。
+// 调用方须设置 Resolver 和 Dial。AllowPrivate 保留通知渠道的显式放行，
+// 包括回环地址；DenyLocal 在此基础上额外阻止本地/非单播目标（备份用）。
+// 元数据端点始终拒绝，包括嵌入的 IPv4 目标。
 type Dialer struct {
 	Resolver     Resolver
 	Dial         func(context.Context, string, string) (net.Conn, error)
@@ -33,8 +32,7 @@ func forbiddenIP(ip net.IP) bool {
 		return true
 	}
 	a = a.Unmap()
-	// Include CGNAT, reserved IPv4, IPv6 transition/mapped mechanisms and
-	// documentation ranges: none are valid public destinations.
+	// 包括 CGNAT、保留 IPv4、IPv6 过渡/映射机制及文档地址段：均非合法公网目标。
 	if !a.IsGlobalUnicast() || a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsMulticast() || a.IsUnspecified() {
 		return true
 	}
@@ -46,8 +44,7 @@ func forbiddenIP(ip net.IP) bool {
 	return false
 }
 
-// Cloud instance metadata services stay unreachable even when private
-// networks are explicitly allowed: they hand out host credentials.
+// 云实例元数据服务即便在显式允许私网时也不可达：它们会泄露主机凭据。
 func metadataIP(ip net.IP) bool {
 	a, ok := netip.AddrFromSlice(ip)
 	if !ok {
@@ -58,8 +55,7 @@ func metadataIP(ip net.IP) bool {
 	return blocked
 }
 
-// Instance metadata and container credential endpoints (AWS IMDS and ECS/EKS
-// task credentials, Alibaba Cloud metadata).
+// 实例元数据与容器凭据端点（AWS IMDS 及 ECS/EKS 任务凭据、阿里云元数据）。
 var metadataAddrs = map[netip.Addr]struct{}{
 	netip.MustParseAddr("169.254.169.254"): {}, netip.MustParseAddr("fd00:ec2::254"): {},
 	netip.MustParseAddr("169.254.170.2"): {}, netip.MustParseAddr("169.254.170.23"): {},
@@ -76,10 +72,9 @@ var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("2001::/32"), netip.MustParsePrefix("::/96"), netip.MustParsePrefix("::ffff:0:0:0/96"),
 }
 
-// embeddedIPv4 returns IPv4 destinations encoded by transition mechanisms.
-// RFC 6052 local-use NAT64 prefixes can have multiple lengths; check every
-// possible encoding within 64:ff9b:1::/48, failing closed when
-// an ambiguous encoding could reach metadata.
+// embeddedIPv4 返回经过渡机制编码的 IPv4 目标。
+// RFC 6052 本地 NAT64 前缀可有多种长度；须检查 64:ff9b:1::/48 内所有可能编码，
+// 模糊编码可能触及元数据时一律拒绝。
 func embeddedIPv4(ip net.IP) []net.IP {
 	a, ok := netip.AddrFromSlice(ip)
 	if !ok || a.Is4() {
@@ -104,7 +99,7 @@ func embeddedIPv4(ip net.IP) []net.IP {
 			for i := range v {
 				if pos == 8 {
 					pos++
-				} // reserved u octet
+				} // 保留的 u 八位组
 				v[i] = b[pos]
 				pos++
 			}
@@ -151,7 +146,7 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.
 	if len(ips) == 0 {
 		return nil, ErrDenied
 	}
-	// Reject mixed public/private answers too, before making any connection.
+	// 建立任何连接前，也拒绝公网/私网混合的应答。
 	for _, ip := range ips {
 		if ip.Zone != "" || d.denied(ip.IP) {
 			return nil, ErrDenied
@@ -159,7 +154,7 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.
 	}
 	var last error
 	for _, ip := range ips {
-		// Dial the checked literal, never the hostname: no second DNS resolution.
+		// 拨号已检查的字面量，绝不拨主机名：避免二次 DNS 解析。
 		conn, e := d.Dial(ctx, network, net.JoinHostPort(ip.IP.String(), port))
 		if e == nil {
 			return conn, nil

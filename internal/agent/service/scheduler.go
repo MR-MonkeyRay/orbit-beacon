@@ -19,7 +19,7 @@ type TrafficReporter interface {
 	Acknowledge([]v1.Traffic)
 }
 
-// ProbeReporter returns cached checks without waiting for network work.
+// ProbeReporter 返回缓存的检查结果，不等待网络操作。
 type ProbeReporter interface {
 	Results([]string) []v1.ProbeResult
 }
@@ -29,11 +29,11 @@ type SchedulerOptions struct {
 	Probes   ProbeReporter
 	Traffic  TrafficReporter
 	Identity *identity.Store
-	// RuntimeSettings returns an immutable snapshot; only ReloadConfig may
-	// publish a replacement, synchronously on this collection loop.
+	// RuntimeSettings 返回不可变快照；只有 ReloadConfig 可在采集循环中
+	// 同步发布新的配置快照。
 	RuntimeSettings func() v1.RuntimeSettings
 	Reload          <-chan struct{}
-	// ReloadConfig validates completely before changing any active component.
+	// ReloadConfig 在修改任何运行中的组件前完成完整校验。
 	ReloadConfig func(context.Context) error
 	Collect      func(context.Context) (v1.Metrics, error)
 	Report       func(context.Context, v1.Report) (v1.ReportResponse, error)
@@ -56,8 +56,8 @@ func NewScheduler(options SchedulerOptions) *Scheduler {
 	return &Scheduler{options: options}
 }
 
-// Run owns exactly one collection loop and one reporting worker. No offline
-// queue is retained: the notification channel signals a single latest snapshot.
+// Run 只运行一个采集循环和一个上报任务。不保留离线队列，
+// 通过通知唤醒上报任务，使其读取最新快照。
 func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 	if !s.running.CompareAndSwap(false, true) {
 		return errors.New("scheduler already running")
@@ -162,8 +162,7 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 		case <-notify:
 		}
 		for {
-			// Collapse all collection notifications received during the last request
-			// or backoff into the latest immutable snapshot.
+			// 合并上次请求或退避期间积累的采集通知，只上报最新的不可变快照。
 			select {
 			case <-notify:
 			default:

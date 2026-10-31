@@ -88,7 +88,7 @@ func TestLoginBucketOverflowIsSharedAndReclaimsOnlyFullBudgets(t *testing.T) {
 			if len(buckets) != 1024 {
 				t.Fatalf("overflow allocated new keys: %d", len(buckets))
 			}
-			// Partial refills still contain history; only a full refill is disposable.
+			// 部分补满仍保留历史；只有完全补满才可丢弃。
 			now = now.Add(time.Duration(budget.burst / budget.refill / 2 * float64(time.Second)))
 			if _, ok := reclaimableLoginBucket(buckets, now, budget.burst, budget.refill); ok {
 				t.Fatal("partially refilled history was reclaimable")

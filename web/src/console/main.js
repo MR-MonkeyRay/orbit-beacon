@@ -20,7 +20,7 @@ const routes = consoleRoutes.map((route) => ({...route, match: (path) => matches
 initShell();
 startRouter(routes);
 
-// "/" jumps to the node search, as in many list-heavy tools.
+// "/" 跳转到节点搜索，与多数列表型工具一致。
 document.addEventListener('keydown', (event) => {
   const editing = event.target instanceof Element && event.target.closest('input,textarea,select,[contenteditable]');
   if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || editing || document.querySelector('dialog[open]')) return;

@@ -52,7 +52,7 @@ func TestHistoryHTTPIngestFlushTiersAndDeleteVisibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer hs.Close()
-	// The test fixture wires its ingest service to the history sink.
+	// 将测试环境的 ingest 服务连接到历史样本接收端。
 	h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, History: hs, PublicURL: publicURL, Now: func() time.Time { return f.now }}))
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestHistoryHTTPIngestFlushTiersAndDeleteVisibility(t *testing.T) {
 	if err := hs.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	// Querying remains available after writer shutdown, before database close.
+	// 写入任务停止后、数据库关闭前，仍可查询。
 	for _, test := range []struct {
 		metric, rangeName string
 		step              int

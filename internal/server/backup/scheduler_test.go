@@ -74,7 +74,7 @@ func TestSchedulerRunTicksWhileWorkerBusyAndTerminalWake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A mutation wakes the sole scheduler even though the upload worker is occupied.
+	// 即使上传 worker 繁忙，变更也会唤醒唯一的调度器。
 	clock.Store(start.Add(12 * time.Minute).UnixNano())
 	s.signal()
 	deadline := time.Now().Add(3 * time.Second)
@@ -96,8 +96,8 @@ func TestSchedulerRunTicksWhileWorkerBusyAndTerminalWake(t *testing.T) {
 		t.Fatalf("overdue active timer spins: %v %v", wait, err)
 	}
 	uploader.release <- struct{}{}
-	// Terminal completion must coalesce ten elapsed periods immediately, not wait
-	// for the minute fallback. The unrelated local task remains FIFO work.
+	// 终态完成必须立即合并已过去的十个周期，而不是等分钟级回退。
+	// 无关的本地任务仍是 FIFO 工作。
 	deadline = time.Now().Add(5 * time.Second)
 	for {
 		var count int

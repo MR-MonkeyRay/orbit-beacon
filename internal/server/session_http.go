@@ -71,8 +71,8 @@ func (h *handler) logoutSession(w http.ResponseWriter, r *http.Request, requestI
 		h.serviceError(w, err, requestID)
 		return
 	}
-	// A delayed logout must not expire a newer login's cookie.
-	// Revocation above remains authoritative for the request's session.
+	// 延迟的登出绝不能让更新的登录 Cookie 过期。
+	// 上面的撤销对请求的会话仍然是权威的。
 	w.WriteHeader(http.StatusNoContent)
 }
 

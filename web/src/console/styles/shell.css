@@ -22,7 +22,7 @@
   top: 12px;
 }
 
-/* Route progress */
+/* 路由进度 */
 .progress {
   position: fixed;
   inset: 0 0 auto;
@@ -56,8 +56,8 @@
   }
 }
 
-/* Shell */
-/* Desktop and iPad only: narrower windows scroll instead of reflowing. */
+/* 外壳 */
+/* 仅桌面和 iPad：更窄的窗口横向滚动而非重排。 */
 :root {
   --content-max:1180px;
 }

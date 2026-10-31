@@ -70,7 +70,7 @@ func TestNonFiniteMetricsRejectedBeforeStateMutation(t *testing.T) {
 			if err != nil || latest.Seq != 1 || latest.RunGeneration != 1 || before != after {
 				t.Fatalf("invalid report mutated state: %+v before=%s after=%s err=%v", latest, before, after, err)
 			}
-			// Invalid metrics must not advance the durable generation fence either.
+			// 无效指标同样不得推进持久化 generation 围栏。
 			report.RunGeneration = 1
 			cpu := 20.0
 			report.Metrics.CPUPercent = &cpu

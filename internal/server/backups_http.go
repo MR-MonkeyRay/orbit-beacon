@@ -17,8 +17,8 @@ import (
 	"orbitbeacon/internal/server/validation"
 )
 
-// backupsRoute is reached only after route existence, method, session and CSRF
-// checks. All console accounts have the same access to backup operations.
+// backupsRoute 只在路由存在性、方法、会话和 CSRF 检查通过后才可达。
+// 所有控制台账户对备份操作拥有相同权限。
 func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID string, session auth.Session) {
 	p := r.URL.Path
 	list := r.Method == http.MethodGet && (p == "/api/v1/tasks" || p == "/api/v1/backup-plans")
@@ -109,7 +109,7 @@ func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID
 			if parts[1] == "download" {
 				h.backupDownload(w, r, requestID, id)
 			} else {
-				// No plaintext is fetched by task/list GETs or ordinary page loads.
+				// 任务/列表的 GET 或普通页面加载不会获取明文。
 				w.Header().Set("Cache-Control", "no-store")
 				result, err := h.backups.Password(r.Context(), id)
 				if err != nil {
@@ -129,8 +129,8 @@ func (h *handler) backupsRoute(w http.ResponseWriter, r *http.Request, requestID
 	}
 }
 
-// Only list endpoints accept a cursor and limit. ParseQuery errors are not
-// discarded: malformed encodings must not silently remove an unwanted field.
+// 仅列表端点接受 cursor 和 limit。ParseQuery 的错误不可丢弃：
+// 畸形编码不得导致不允许的字段被静默忽略。
 func backupQuery(r *http.Request, list bool) (int, string, error) {
 	invalid := &backup.Error{Code: "invalid_input"}
 	allowed := map[string]queryParameter{}
@@ -148,8 +148,8 @@ func backupQuery(r *http.Request, list bool) (int, string, error) {
 	return limit, before, nil
 }
 
-// PlanPatch's pointers distinguish omission but not explicit JSON null. Keep
-// null rejection at this HTTP boundary without changing the service patch API.
+// PlanPatch 的指针能区分省略，但无法区分显式 JSON null。
+// 在此 HTTP 边界拒绝 null，不改动服务层的 patch API。
 type backupPlanInput struct{ patch backup.PlanPatch }
 
 func (input *backupPlanInput) UnmarshalJSON(data []byte) error {

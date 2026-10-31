@@ -46,15 +46,14 @@ export function relative(date) {
   return dateFormat.format(date);
 }
 
-// Relative time with the local and UTC timestamps on hover.
+// 相对时间，悬停时显示本地与 UTC 时间戳。
 export function when(iso) {
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return h('span', null, iso);
   return h('time', {datetime: iso, title: `${dateFormat.format(date)} (UTC ${iso})`}, relative(date));
 }
 
-// Quiet live streams do not repaint unchanged observations. An absolute clock
-// cannot turn into a permanently misleading "just now" label.
+// 实时流没有新数据时不会重绘；使用绝对时间，避免“刚刚”一直停留而误导用户。
 export function absoluteWhen(iso) {
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return h('span', null, iso);
@@ -63,7 +62,7 @@ export function absoluteWhen(iso) {
 
 export const shortID = (id) => (id ? id.slice(0, 8) : '');
 
-// quota_bytes is a decimal string up to 2^64-1, so it is formatted with BigInt.
+// quota_bytes 是最大 2^64-1 的十进制字符串，用 BigInt 格式化。
 export function formatBytes(decimal) {
   try {
     let value = BigInt(decimal);

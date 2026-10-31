@@ -9,8 +9,8 @@ const usableStatus = (value) => value === 'ok' || value === 'stale';
 const number = (value) => Number.isFinite(value) && value >= 0;
 const bytes = (value) => Number.isSafeInteger(value) && value >= 0;
 
-// The only mutable portion of this view is readonly sample facts. The clock
-// callback never rebuilds facts or touches a numeric value, input, or tab.
+// 此视图只更新只读的采样信息。时钟回调只更新过期标记，
+// 不重建采样信息，也不改动数值、输入框或标签页。
 export function latestSamplePanel(node, initial, {signal} = {}) {
   const sequence = h('span', {class: 'revision'});
   const body = h('div');

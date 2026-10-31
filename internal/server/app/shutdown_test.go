@@ -115,7 +115,7 @@ func TestShutdownPreservesOrderAndDeadlines(t *testing.T) {
 	if got := trace.events[len(trace.events)-len(want):]; !slices.Equal(got, want) {
 		t.Fatalf("shutdown tail %v want %v", got, want)
 	}
-	// Live streams and HTTP share one deadline; each later drain gets its own.
+	// 实时流与 HTTP 共用截止时间，后续每个组件则各有独立的关闭时限。
 	if len(trace.deadlines) != 5 || !trace.deadlines[0].Equal(trace.deadlines[1]) {
 		t.Fatalf("contexts: %v", trace.deadlines)
 	}

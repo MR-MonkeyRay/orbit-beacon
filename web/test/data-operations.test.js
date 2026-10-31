@@ -19,7 +19,7 @@ test('task and plan pagers retain independent cursors and terminal-button behavi
     const continuation = new URL(url, 'https://console.example').searchParams.get('before');
     return new Response(JSON.stringify({
       [plans ? 'plans' : 'tasks']: [], has_more: true,
-      // Missing continuation keeps the successful page and disables Next.
+      // 缺少后续游标时保留已加载的页面，并禁用“下一页”。
       ...(!continuation ? {next_cursor: plans ? 'plan/+' : 'task/+'} : {}),
       timezone_name: 'UTC', utc_offset_seconds: 0
     }), {headers: {'Content-Type': 'application/json'}});

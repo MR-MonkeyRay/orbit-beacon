@@ -141,8 +141,8 @@ func NewHandler(opts Options) (*handler, error) {
 	return h, nil
 }
 
-// MarkNotReady makes /healthz/ready fail so load balancers stop routing new
-// traffic before the HTTP server begins shutting down.
+// MarkNotReady 让 /healthz/ready 失败，使负载均衡器在 HTTP 服务器开始关闭之前
+// 停止路由新流量。
 func (h *handler) MarkNotReady() {
 	h.lifecycleMu.Lock()
 	h.ready = false

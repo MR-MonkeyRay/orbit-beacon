@@ -20,8 +20,8 @@ type RestoreResult struct {
 	RollbackPath string
 }
 
-// Restore is an offline, lock-protected category replacement. Only validated,
-// closed trusted databases reach the recoverable multi-file commit protocol.
+// Restore 是离线、受锁保护的类别替换。只有通过校验、
+// 已关闭的可信数据库才会进入可恢复的多文件提交协议。
 func Restore(ctx context.Context, dataDir, input, password string, replace bool) (RestoreResult, error) {
 	var result RestoreResult
 	dir, err := filepath.Abs(dataDir)
@@ -136,8 +136,8 @@ func Restore(ctx context.Context, dataDir, input, password string, replace bool)
 	if err = buildRestoreState(ctx, main, historyDB, sources, metrics, selected, key, dir, manifest.ArchiveID, now); err != nil {
 		return result, err
 	}
-	// Validate selected and retained logical rows using the same portable contracts.
-	// These private projections are never installed or published.
+	// 使用相同的可移植契约校验所选和保留的逻辑行。
+	// 这些私有投影绝不安装或发布。
 	for _, category := range []Category{Configuration, Monitoring, Events} {
 		payload, e := createPayload(ctx, filepath.Join(work, "final-"+string(category)+".sqlite"), category)
 		if e != nil {
@@ -192,8 +192,8 @@ func restoreTargetEmpty(dir string) (bool, error) {
 	return true, nil
 }
 
-// Copy the complete SQLite file group before opening it. Recovery/checkpoint
-// activity is permitted only on this private copy, never the sole live files.
+// 打开之前先复制完整的 SQLite 文件组。恢复/checkpoint 活动
+// 仅允许作用于此私有副本，绝不允许作用于唯一的生产文件。
 func restoreTargetSnapshot(ctx context.Context, dir, work, name string, version int) (*sql.DB, error) {
 	raw := filepath.Join(work, "raw-"+name)
 	if err := os.Mkdir(raw, 0700); err != nil {

@@ -1,11 +1,11 @@
-// Builds the embedded web UI into internal/server/webui/dist.
+// 将内嵌 Web UI 构建到 internal/server/webui/dist。
 //
-//   node build.mjs           production build (minified, content-hashed)
-//   node build.mjs --watch   rebuild on change
-//   node build.mjs --check   build into a temporary directory and fail if dist differs
+//   node build.mjs           生产构建（压缩，按内容哈希命名）
+//   node build.mjs --watch   变更时重新构建
+//   node build.mjs --check   构建到临时目录，若与 dist 不一致则报错
 //
-// HTML shells are served with no-store; scripts and styles land in
-// _app/immutable/ under content-hashed names, which the server caches for a year.
+// HTML 外壳以 no-store 下发；脚本和样式落在 _app/immutable/ 下，
+// 按内容哈希命名，服务端缓存一年。
 import * as esbuild from 'esbuild';
 import {mkdtemp, mkdir, readdir, readFile, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';

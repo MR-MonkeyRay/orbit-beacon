@@ -11,9 +11,9 @@ import (
 	"strings"
 )
 
-// ValidateFilesystem checks the longest containing mount, including mount and
-// superblock flags. Only known local filesystems with SQLite locking semantics
-// are accepted; an unreadable or malformed mount table fails closed.
+// ValidateFilesystem 按最长路径匹配找到所在挂载点，并检查挂载标志和超级块标志。
+// 只接受具有 SQLite 锁语义的已知本地文件系统；
+// 挂载表不可读或格式错误时拒绝打开。
 func ValidateFilesystem(path string, mountInfo io.Reader) error {
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("local SQLite filesystem validation requires Linux")
@@ -55,9 +55,8 @@ func ValidateFilesystem(path string, mountInfo io.Reader) error {
 				return fmt.Errorf("malformed mount device: %w", err)
 			}
 		}
-		// Some kernel pseudo-filesystems expose non-path roots (for example
-		// namespace labels). The mount point, not this diagnostic root, decides
-		// whether an entry contains the database path.
+		// 某些内核伪文件系统暴露非路径形式的根（例如命名空间标签）。
+		// 决定某个条目是否包含数据库路径的是挂载点，而不是这个诊断用根。
 		if _, err := unescapeMountPath(fields[3]); err != nil {
 			return fmt.Errorf("malformed mount root %q", fields[3])
 		}

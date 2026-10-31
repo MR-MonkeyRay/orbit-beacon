@@ -8,5 +8,5 @@ import (
 )
 
 func openInstallPolicy(path string, expectedOwner int) (*os.File, error) {
-	return nil, errors.New("secure administrator-owned install policy loading is unsupported on this platform")
+	return nil, errors.New("本平台不支持安全加载归管理员所有的安装策略")
 }

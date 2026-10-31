@@ -15,7 +15,7 @@ import (
 
 func checkHealth(rawURL, caFile string) error {
 	if rawURL == "" {
-		return errors.New("health requires --url")
+		return errors.New("health 需要 --url")
 	}
 	request, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -26,18 +26,18 @@ func checkHealth(rawURL, caFile string) error {
 	}
 	request.URL.Path = "/healthz/ready"
 	if request.URL.Scheme == "http" && caFile != "" {
-		return errors.New("health CA requires an HTTPS URL")
+		return errors.New("health CA 仅适用于 HTTPS URL")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	defer transport.CloseIdleConnections()
 	if caFile != "" {
 		data, err := os.ReadFile(caFile)
 		if err != nil {
-			return fmt.Errorf("read health CA: %w", err)
+			return fmt.Errorf("读取 health CA 失败: %w", err)
 		}
 		roots := x509.NewCertPool()
 		if !roots.AppendCertsFromPEM(data) {
-			return errors.New("health CA contains no certificates")
+			return errors.New("health CA 中没有任何证书")
 		}
 		transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 	}
@@ -48,12 +48,12 @@ func checkHealth(rawURL, caFile string) error {
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return fmt.Errorf("health request: %w", err)
+		return fmt.Errorf("health 请求失败: %w", err)
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("server is not ready: %s", response.Status)
+		return fmt.Errorf("服务器未就绪: %s", response.Status)
 	}
 	fmt.Fprintln(os.Stdout, "ready")
 	return nil

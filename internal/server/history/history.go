@@ -24,8 +24,8 @@ const (
 	cleanupBatchSize     = 1000
 )
 
-// Seek to the next primary-key node prefix instead of visiting every bucket
-// for DISTINCT. Work scales with node count, irrespective of retained history.
+// 定位到下一个主键节点前缀，而不是为 DISTINCT 遍历每个桶。
+// 工作量随节点数增长，与保留的历史无关。
 const historyNodesQuery = `WITH RECURSIVE history_nodes(node_id) AS (
  SELECT min(node_id) FROM buckets
  UNION ALL
@@ -78,14 +78,14 @@ type Service struct {
 	dropped           atomic.Uint64
 }
 
-// OpenDatabase initializes only the trusted metrics schema, without starting a
-// writer or retention worker. Offline restore uses it for its private staging.
+// OpenDatabase 只初始化可信的指标 schema，不启动写入或定期清理任务。
+// 离线恢复用它创建私有暂存库。
 func OpenDatabase(ctx context.Context, path string) (*sql.DB, error) {
 	return storage.OpenWithMigrations(ctx, path, []storage.Migration{{Version: CurrentSchemaVersion, SQL: schema}})
 }
 
-// Open creates metrics.db with its own migration ledger and read-only query
-// pool. The main pool is used only to read node IDs during orphan retention.
+// Open 创建 metrics.db，使用自己的迁移台账和只读查询池。
+// 主库连接池仅用于清理孤立历史记录前读取现有节点 ID。
 func Open(ctx context.Context, dataDir string, nodes *sql.DB, opts Options) (*Service, error) {
 	path := filepath.Join(dataDir, "metrics.db")
 	db, err := OpenDatabase(ctx, path)
@@ -106,8 +106,8 @@ func Open(ctx context.Context, dataDir string, nodes *sql.DB, opts Options) (*Se
 	return s, nil
 }
 
-// Samples is never closed, so even a late producer cannot panic at shutdown.
-// Producers must use a non-blocking send and own their drop counter.
+// Samples 永不关闭，因此即使迟到的生产者也不会在关闭时 panic。
+// 生产者必须使用非阻塞发送，并自己维护丢弃计数。
 func (s *Service) Samples() chan<- Sample { return s.samples }
 func (s *Service) DroppedBuckets() uint64 { return s.dropped.Load() }
 
@@ -141,7 +141,7 @@ func (s *Service) add(sample Sample) {
 }
 
 func (s *Service) drain() {
-	// A finite snapshot prevents live producers from starving retention/shutdown.
+	// 只处理当前队列长度，避免持续到来的样本阻碍定期清理或关闭。
 	for remaining := len(s.samples); remaining > 0; remaining-- {
 		select {
 		case sample := <-s.samples:
@@ -185,9 +185,9 @@ func (s *Service) run(ctx context.Context) {
 	}
 }
 
-// flush merges each minute's exact sums/counts into all tiers in one transaction.
-// Additive upserts preserve a partially flushed minute across server restarts.
-// Pending state is released only after commit, so a failed flush can be retried.
+// flush 在同一事务内将每分钟的精确总和与样本数合并到所有聚合层级。
+// 累加式 upsert 可在重启后继续合并同一分钟的数据。
+// 提交成功后才释放待写状态，因此失败时可以重试。
 func (s *Service) flush(ctx context.Context, now time.Time, all bool) error {
 	keys := make([]bucketKey, 0, len(s.pending))
 	for key := range s.pending {
@@ -227,8 +227,8 @@ func (s *Service) flush(ctx context.Context, now time.Time, all bool) error {
 	return nil
 }
 
-// Cleanup is serialized with flushing and purges deleted nodes from all tiers
-// and pending memory. It never takes a writer lock on the main database.
+// Cleanup 与刷写串行化，并从所有层级和待处理内存中清除已删除的节点。
+// 它从不在主数据库上加写锁。
 func (s *Service) Cleanup(ctx context.Context, now time.Time) (int64, error) {
 	result := make(chan retentionResult, 1)
 	select {
@@ -269,8 +269,8 @@ func (s *Service) cleanup(ctx context.Context, now time.Time) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	// Freeze candidates before reading live IDs. Draining may add pending nodes,
-	// but they cannot become orphan candidates after this existence snapshot.
+	// 在读取活跃 ID 之前冻结候选。排空可能添加待处理节点，
+	// 但在这份存在性快照之后，它们不可能成为孤儿候选。
 	if s.nodes != nil {
 		rows, err := s.nodes.QueryContext(ctx, `SELECT id FROM nodes`)
 		if err != nil {
@@ -294,8 +294,8 @@ func (s *Service) cleanup(ctx context.Context, now time.Time) (int64, error) {
 		clear(candidates)
 	}
 	var removed int64
-	// Every Exec is its own short autocommit transaction. The table is WITHOUT
-	// ROWID, so select at most one batch of composite primary keys per delete.
+	// 每个 Exec 都是自己的短自动提交事务。该表是 WITHOUT ROWID，
+	// 因此每次删除最多选择一批复合主键。
 	deleteBatches := func(query string, args ...any) error {
 		for {
 			result, err := s.db.ExecContext(ctx, query, args...)
@@ -337,8 +337,8 @@ func (s *Service) cleanup(ctx context.Context, now time.Time) (int64, error) {
 	return removed, s.flush(ctx, now, false)
 }
 
-// Shutdown drains queued samples and flushes even the incomplete minute. The
-// caller supplies the total budget; expiry also interrupts an ongoing flush.
+// Shutdown 排空样本队列，写入包括当前未结束分钟在内的全部数据。
+// 调用方提供总时限；到期时也会中断正在进行的写入。
 func (s *Service) Shutdown(ctx context.Context) error {
 	s.once.Do(func() { s.stop <- ctx })
 	select {
@@ -356,8 +356,7 @@ func (s *Service) Close() error {
 	return s.CloseContext(ctx)
 }
 
-// CloseContext shuts down the writer and closes both history database pools
-// within the caller's shared shutdown budget.
+// CloseContext 在调用方共享的关闭时限内停止写入任务，并关闭两个历史数据库连接池。
 func (s *Service) CloseContext(ctx context.Context) error {
 	err := s.Shutdown(ctx)
 	return errors.Join(err, s.reader.Close(), s.db.Close())

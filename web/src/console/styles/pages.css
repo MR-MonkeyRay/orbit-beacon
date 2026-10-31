@@ -1,4 +1,4 @@
-/* Fleet composition */
+/* 集群组成 */
 .fleet-total {
   display: flex;
   align-items: baseline;
@@ -112,7 +112,7 @@
   margin-top: 2px;
 }
 
-/* Lists */
+/* 列表 */
 .rows>li {
   display: flex;
   align-items: center;
@@ -182,7 +182,7 @@
   animation: grow .8s var(--ease) both;
 }
 
-/* Timeline (audit events are a real sequence) */
+/* 时间线（审计事件是真实序列） */
 .timeline {
   position: relative;
 }
@@ -302,7 +302,7 @@
   white-space: pre;
 }
 
-/* Detail */
+/* 详情 */
 .detail-head {
   display: flex;
   flex-wrap: wrap;
@@ -435,7 +435,7 @@
   margin: 0;
 }
 
-/* The shorter side of a split (summary, live preview) stays in view beside a long form. */
+/* 分栏中较短的一侧（摘要、实时预览）在长表单旁保持可见。 */
 .split>.split-aside {
   position: sticky;
   top: 24px;
@@ -519,7 +519,7 @@
   margin-top: var(--sp-1);
 }
 
-/* Explicit selection controls sit above the node row's full-width link. */
+/* 显式选择控件位于节点行全宽链接之上。 */
 .bulk-actions {
   position: sticky;
   bottom: 12px;
@@ -567,7 +567,7 @@
   padding: 10px 0;
 }
 
-/* Probe targets are untrusted text and may contain long URLs. */
+/* 探测目标是不可信文本，可能包含长 URL。 */
 .probe-list {
   list-style: none;
   margin: 0;
@@ -605,7 +605,7 @@
   white-space: pre-wrap;
 }
 
-/* Administrator names shrink without hiding the current-account marker. */
+/* 管理员名称可收缩，但不隐藏当前账户标记。 */
 .administrators-table {
   table-layout: fixed;
 }

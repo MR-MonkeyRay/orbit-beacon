@@ -10,8 +10,8 @@ import (
 
 type loginPeerKey struct{}
 
-// WithLoginPeer records the client address chosen by the HTTP layer: the
-// direct transport peer, or the forwarded client only via configured trusted proxies.
+// WithLoginPeer 记录 HTTP 层选定的客户端地址：直接传输对端，
+// 或仅通过配置的可信代理转发得到的客户端。
 func WithLoginPeer(ctx context.Context, remoteAddr string) context.Context {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
@@ -31,8 +31,8 @@ type loginIdentityKey struct {
 	name [sha256.Size]byte
 }
 
-// Limit both source rotation across usernames and repeated guesses at one name.
-// The maps are bounded independently; both budgets must allow an attempt before either is charged.
+// 同时限制同一来源轮换用户名的尝试，以及针对单个用户名的重复猜测。
+// 两个映射的大小分别受限；仅在两项限流均允许时才扣减额度。
 func (s *Service) admitLogin(ctx context.Context, username string) error {
 	return s.loginAdmission(ctx, username, true)
 }
@@ -48,7 +48,7 @@ func (s *Service) loginAdmission(ctx context.Context, username string, charge bo
 	s.rateMu.Lock()
 	defer s.rateMu.Unlock()
 	now := s.now()
-	// Recheck while charging so a failure recorded concurrently cannot be bypassed.
+	// 扣减额度时重新检查，避免绕过并发记录的登录失败限制。
 	if !s.loginUsernameAllowedLocked(key, name, now) {
 		return ErrRateLimited
 	}
@@ -160,7 +160,7 @@ func reclaimableLoginBucket[K comparable](buckets map[K]loginBucket, now time.Ti
 	return zero, false
 }
 
-// Forget only fully replenished budgets; churn must never reset depleted history.
+// 仅回收额度已完全恢复的限流桶；不断更换键不能清除尚未恢复的限流记录。
 func storeLoginBucket[K comparable](buckets map[K]loginBucket, key K, overflow *loginBucket, bucket loginBucket, now time.Time, burst, refill float64) {
 	if _, exists := buckets[key]; !exists && len(buckets) >= 1024 {
 		if candidate, ok := reclaimableLoginBucket(buckets, now, burst, refill); ok {
@@ -184,7 +184,7 @@ func storeLoginSuccess(successes map[loginIdentityKey]time.Time, key loginIdenti
 			}
 		}
 		if !found {
-			// Sharing trust across overflow identities would grant an exemption.
+			// 在溢出身份之间共享信任会授予豁免。
 			return
 		}
 		delete(successes, expired)

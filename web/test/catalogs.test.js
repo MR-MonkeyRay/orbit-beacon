@@ -33,7 +33,7 @@ test('catalog placeholders match and UI copy follows the glossary', () => {
     assert.deepEqual(placeholders(value), placeholders(zhCN[key]), key);
     for (const text of forms(value)) {
       assert.doesNotMatch(text, /public (?:status )?page/i, key);
-      // Filenames in install instructions retain their literal spelling.
+      // 安装说明中的文件名保留原始拼写。
       assert.doesNotMatch(text, /(?<![-/])\bagents?\b(?![-.])/, key);
     }
     for (const text of forms(zhCN[key])) {

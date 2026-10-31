@@ -2,8 +2,8 @@ package buildinfo
 
 import "runtime"
 
-// These variables are replaced by release builds with -ldflags -X. Development
-// binaries retain explicit non-empty values so diagnostics stay machine-readable.
+// 这些变量在发布构建时通过 -ldflags -X 替换。开发二进制保留显式的非空值，
+// 保证诊断信息机器可读。
 var (
 	Version   = "development"
 	Commit    = "unknown"

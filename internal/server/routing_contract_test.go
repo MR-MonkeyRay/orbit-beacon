@@ -17,8 +17,8 @@ import (
 
 const routingContractID = "01234567-89ab-4cde-abcd-0123456789ab"
 
-// Most routing decisions need no services. Nil dependencies also prove these
-// requests finish before authentication, database access or resource dispatch.
+// 大多数路由决策不需要服务。nil 依赖也证明这些请求在认证、
+// 数据库访问或资源分发之前就已完成。
 func routingContractHandler(t *testing.T) *handler {
 	t.Helper()
 	assets, err := prepareStaticAssets(fstest.MapFS{
@@ -71,8 +71,8 @@ func routingContractResponse(t *testing.T, w *httptest.ResponseRecorder, method 
 	}
 }
 
-// OpenAPI supplies the inventory; this order pins the literal Allow wire value
-// independently of the route table.
+// OpenAPI 提供清单；该顺序固定字面量 Allow 传输值，
+// 独立于路由表。
 func routingContractAllow(t *testing.T, methods []string) string {
 	t.Helper()
 	var ordered []string
@@ -97,7 +97,7 @@ func TestRoutingContractMethodsBeforeGates(t *testing.T) {
 					t.Run(method+"/origin="+origin, func(t *testing.T) {
 						r := httptest.NewRequest(method, concreteOpenAPIPath(path), strings.NewReader(`not json`))
 						r.Header.Set("Origin", origin)
-						// No session or CSRF token; the body is deliberately invalid.
+						// 没有会话或 CSRF 令牌；请求体有意设为无效。
 						w := httptest.NewRecorder()
 						h.ServeHTTP(w, r)
 						routingContractResponse(t, w, method, 405, "method_not_allowed", allow)
@@ -108,8 +108,8 @@ func TestRoutingContractMethodsBeforeGates(t *testing.T) {
 	}
 }
 
-// Cancel after the first complete SSE frame, keeping the test synchronous and
-// pinning the successful streaming response without waiting for its lifetime.
+// 在第一个完整 SSE 帧之后取消，保持测试同步，
+// 并在不等待其生命周期的情况下固定成功的流式响应。
 type routingContractStreamRecorder struct {
 	*httptest.ResponseRecorder
 	cancel context.CancelFunc
@@ -169,7 +169,7 @@ func TestRoutingContractWithDatabase(t *testing.T) {
 		h.ServeHTTP(w, r)
 		routingContractResponse(t, w, http.MethodPost, 401, "unauthenticated", "")
 	})
-	// Health remains public when the public-page gate is closed.
+	// 公开页闸门关闭时，健康检查仍然公开。
 	h.publicPageDisabled.Store(true)
 	for _, ready := range []bool{true, false} {
 		if !ready {
@@ -234,7 +234,7 @@ func TestRoutingContractAcceptedPathSpellings(t *testing.T) {
 
 func TestRoutingContractEncodedSeparatorsAreNotRouteBoundaries(t *testing.T) {
 	h := routingContractHandler(t)
-	// ServeMux matches escaped segments: encoded separators cannot create routes.
+	// ServeMux 匹配转义段：编码后的分隔符不能创建路由。
 	for _, tc := range []struct {
 		path   string
 		status int
@@ -328,7 +328,7 @@ func TestRoutingContractPublicPageGate(t *testing.T) {
 				if method == http.MethodGet {
 					status, code, allow = 403, "public_page_disabled", ""
 				}
-				// Invalid pagination and absent WebSocket Origin cannot precede the gate.
+				// 必须先检查公开页开关，再校验分页参数或 WebSocket Origin。
 				w := routingContractRequest(h, method, path+"?limit=invalid")
 				routingContractResponse(t, w, method, status, code, allow)
 			})
@@ -337,8 +337,8 @@ func TestRoutingContractPublicPageGate(t *testing.T) {
 }
 
 func TestRoutingContractLabels(t *testing.T) {
-	// Every documented concrete route should retain its OpenAPI template label,
-	// including summary, batch, preview and read-all literal exceptions.
+	// 每个已记录的具体路由应保留其 OpenAPI 模板标签，
+	// 包括 summary、batch、preview 和 read-all 的字面量例外。
 	labels := make(map[string]string)
 	for path := range openAPIPathOperations(t) {
 		labels[concreteOpenAPIPath(path)] = path
@@ -378,8 +378,8 @@ func TestRoutingContractLabels(t *testing.T) {
 			h := routingContractHandler(t)
 			h.accessLog, h.metrics = true, newHTTPMetrics("test")
 			h.logger = slog.New(slog.NewJSONHandler(&logs, nil))
-			// PUT keeps API paths before services. Health GET also pins filtering
-			// of successful probes and logging of failed readiness probes.
+			// API 使用 PUT，确保请求在调用服务前结束。健康检查使用 GET，
+			// 同时验证成功探测不记日志，而就绪探测失败会记日志。
 			method := http.MethodPut
 			if healthProbe(path) {
 				method = http.MethodGet

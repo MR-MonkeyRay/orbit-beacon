@@ -43,8 +43,8 @@ func TestRetentionBacklogUsesShortBatchesAndContinuesAfterDeferredFailure(t *tes
 		if _, ok := ctx.Deadline(); !ok {
 			t.Fatal("batch has no shared deadline")
 		}
-		// Backup cleanup counts a deferred unlink as processed and moves its
-		// next attempt forward, allowing the remaining backlog to progress.
+		// 备份清理将删除失败、需延后重试的文件计为已处理，并推迟下次尝试，
+		// 让剩余积压仍能继续处理。
 		n := min(remaining, limit)
 		remaining -= n
 		return int64(n), nil

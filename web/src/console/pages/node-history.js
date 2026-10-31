@@ -25,8 +25,8 @@ function savedRange() {
   return '24h';
 }
 
-// One panel per page lifetime, reused when switching back to the Details tab.
-// The router's abort signal also disposes the timer on refresh/navigation.
+// 每个页面生命周期一个面板，切回详情标签页时复用。
+// 路由器的中止信号在刷新/导航时也会销毁计时器。
 export function historyPanel(id, signal) {
   let range = savedRange();
   let controller;
@@ -53,8 +53,8 @@ export function historyPanel(id, signal) {
     const requestedRange = range;
     status.textContent = t('nodes.historyLoading');
     charts.setAttribute('aria-busy', 'true');
-    // Clear charts when the selected range changes so stale data cannot be
-    // mistaken for the new range. Refreshes keep focused charts while loading.
+    // 所选范围变化时清空图表，避免旧数据被误认为新范围的数据。
+    // 刷新时保留已聚焦的图表直到加载完成。
     if (charts.dataset.range !== range) charts.replaceChildren();
     charts.dataset.range = range;
     const metrics = CHARTS.flatMap((item) => item.metrics.map(([metric]) => metric));
@@ -76,7 +76,7 @@ export function historyPanel(id, signal) {
       }
     }));
     if (request.signal.aborted || signal?.aborted || controller !== request) return;
-    // Read focus at completion: the reader may have focused a chart while this request ran.
+    // 请求完成后再读取焦点，因为用户可能已在等待期间聚焦某个图表。
     const focusedID = charts.contains(document.activeElement) ? document.activeElement.id : null;
     const selectedTime = Number(document.activeElement?.dataset?.selectedTime) || undefined;
     charts.replaceChildren(...CHARTS.map((item) => {
@@ -88,7 +88,7 @@ export function historyPanel(id, signal) {
           selectedTime: focusedID === `history-chart-${item.metrics[0][0]}` ? selectedTime : undefined,
           series: item.metrics.map(([metric, label]) => {
             const data = results.get(metric).data;
-            // Render only well-formed points; anything else is treated as a gap.
+            // 只渲染格式正确的点；其余一律视为空隙。
             const points = Array.isArray(data.points) ? data.points.filter((point) => point && Number.isFinite(Date.parse(point.t))
               && Number.isFinite(point.avg) && Number.isFinite(point.max)) : [];
             return {label, points, stepSeconds: Number.isFinite(data.step_seconds) && data.step_seconds > 0 ? data.step_seconds : 60};

@@ -56,7 +56,7 @@
 ```sh
 mkdir -p build
 CGO_ENABLED=0 go build -trimpath -o build/orbitbeacon-server ./cmd/orbitbeacon-server
-# Skip useradd if the account already exists.
+# 账户已存在时跳过 useradd。
 sudo useradd --system --user-group --home /var/lib/orbitbeacon \
   --shell /usr/sbin/nologin orbitbeacon
 sudo install -D -o root -g root -m 0755 \
@@ -83,7 +83,7 @@ sudo journalctl -u orbitbeacon-server -n 100 --no-pager
 ```sh
 export ORBITBEACON_PUBLIC_URL=http://localhost:8080
 export ORBITBEACON_IMAGE_TAG="$(cat VERSION)"
-# For private packages, authenticate with docker login ghcr.io first.
+# 私有包需先执行 docker login ghcr.io 认证。
 docker compose -f deploy/docker/compose.yaml pull
 docker compose -f deploy/docker/compose.yaml up -d
 docker compose -f deploy/docker/compose.yaml ps
@@ -107,7 +107,7 @@ docker compose -f deploy/docker/compose.yaml logs --tail=100 orbitbeacon
 sudo install -D -o root -g root -m 0644 deploy/proxy/Caddyfile /etc/caddy/Caddyfile
 sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
-# Alternatively, install the nginx example.
+# 也可改为安装 nginx 示例。
 sudo install -D -o root -g root -m 0644 deploy/proxy/nginx.conf /etc/nginx/conf.d/orbitbeacon.conf
 sudo nginx -t
 sudo systemctl reload nginx
@@ -122,7 +122,7 @@ sudo systemctl reload nginx
 ```sh
 curl --fail http://localhost:8080/healthz/ready
 /usr/local/bin/orbitbeacon-server health --url http://localhost:8080
-# For a private CA, add --ca-file /secure/path/ca.pem.
+# 私有 CA 需追加 --ca-file /secure/path/ca.pem。
 /usr/local/bin/orbitbeacon-server health --url https://beacon.your-domain.com
 ```
 

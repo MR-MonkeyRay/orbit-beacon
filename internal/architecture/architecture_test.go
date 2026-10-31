@@ -13,9 +13,8 @@ import (
 
 const modulePath = "orbitbeacon"
 
-// allowedInternalImports is the repository's intentionally small dependency
-// graph. Every internal package must be listed so a new package cannot silently
-// bypass the boundary review.
+// allowedInternalImports 是仓库刻意保持精简的依赖图。每个 internal 包都必须
+// 列出来，新包才无法悄悄绕过边界审查。
 var allowedInternalImports = map[string]map[string]bool{
 	"orbitbeacon/internal/logging": {},
 	"orbitbeacon/internal/server/app": {

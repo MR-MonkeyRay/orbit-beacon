@@ -193,7 +193,7 @@ func TestPublicSettingsHTTPAuthorizationValidationAndIsolation(t *testing.T) {
 	if enabled, ok := object["enabled"]; !ok || string(enabled) != "true" {
 		t.Fatalf("enabled=%s", object["enabled"])
 	}
-	// Omitted and explicit null preserve values; an empty string clears a field.
+	// 省略和显式 null 保留原值；空字符串清除字段。
 	object = publicSettingsObject(t, publicSettingsPatch(t, f, id, `{"name":null,"region":"","provider":null}`, admin, csrf, publicURL))
 	var name, region, provider string
 	_ = json.Unmarshal(object["name"], &name)
@@ -308,7 +308,7 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 	}
 	publicMetricStatuses(t, offline.Nodes[0], "stale")
 
-	// A failed report cannot refresh the accepted report's last_seen or snapshot.
+	// 失败的报告不能刷新已接受报告的 last_seen 或快照。
 	f.now = base.Add(181 * time.Second)
 	failed := strings.Replace(reportBody(1, 2, "private-session", 99), `"cpu_percent":99`, `"cpu_percent":101`, 1)
 	if response := agentRequest(t, f, "/api/agent/v1/report", token, failed); response.Code == http.StatusOK {
@@ -354,7 +354,7 @@ func TestPublicHTTPRotationRestartPaginationAndWithdrawal(t *testing.T) {
 	}
 	assertHTTPStatus(t, agentHTTPCall(t, f, http.MethodGet, "/api/public/v1/secret", "", nil, "", ""), http.StatusNotFound)
 
-	// Rotation invalidates the old in-memory projection until a new identity reports.
+	// 轮换使旧的内存投影失效，直到新身份上报。
 	oldToken := tokens[0]
 	ticket, err := f.enrollments.CreateSingle(context.Background(), ids[0])
 	if err != nil {
@@ -377,8 +377,8 @@ func TestPublicHTTPRotationRestartPaginationAndWithdrawal(t *testing.T) {
 	}
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", newToken, reportBody(1, 1, "new-session", 30)), 1)
 
-	// Reconstructing ingest loses only the in-memory resource snapshot; durable
-	// last_seen still supplies liveness.
+	// 重建 ingest 只丢失内存中的资源快照；
+	// 持久化的 last_seen 仍提供活跃性。
 	f.ingest = ingest.NewService(f.db, ingest.Options{Now: func() time.Time { return f.now }})
 	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return f.now }, WebUpdateIntervalSeconds: 2}))
 	if err != nil {
@@ -394,7 +394,7 @@ func TestPublicHTTPRotationRestartPaginationAndWithdrawal(t *testing.T) {
 		t.Fatalf("restart last_seen=%s err=%v", restarted.Nodes[0]["last_seen"], err)
 	}
 
-	// Withdrawal is immediate and removes the candidate from pagination.
+	// 撤回是立即的，并从分页中移除候选。
 	assertHTTPStatus(t, publicSettingsPatch(t, f, ids[0], `{"enabled":false}`, admin, csrf, publicURL), http.StatusOK)
 	withdrawn, _ := publicList(t, f, "/api/public/v1/nodes?limit=100&offset=0", nil)
 	if len(withdrawn.Nodes) != 2 {

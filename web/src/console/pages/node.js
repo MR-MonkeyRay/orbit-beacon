@@ -113,7 +113,7 @@ export async function nodePage() {
     if (node.deleted) { event.preventDefault(); event.stopImmediatePropagation(); }
   }, true);
   root.addEventListener('input', lockDeleted);
-  // Lazy tabs and their independent async readers can add controls after deletion.
+  // 懒加载标签页及其独立的异步读取器可能在删除后仍添加控件。
   const deletionObserver = new MutationObserver(lockDeleted);
   signal?.addEventListener('abort', () => deletionObserver.disconnect(), {once: true});
   connectConsoleLive({nodeID: id, signal, onState: connection.update, onClock: sample.clock,
@@ -145,7 +145,7 @@ export async function nodePage() {
   return root;
 }
 
-// Wires the shared save/discard behaviour of the editable sections.
+// 接入可编辑区块共享的保存/放弃行为。
 function editableForm(form, controls, save, node) {
   trackDirty(form, controls);
   const syncDirty = form.syncDirty;
@@ -242,7 +242,7 @@ function publicTab(node, settings) {
   const checkName = validateBytes(name, 0, 255, t('nodes.publicName'));
   validateBytes(region, 0, 128, t('nodes.publicRegion'));
   validateBytes(provider, 0, 128, t('nodes.publicProvider'));
-  // The server trims text, so the preview and the required check do too.
+  // 与服务端一致，预览和必填检查都先去除文本首尾空白。
   const sync = () => {
     name.required = enabled.checked;
     if (enabled.checked && name.value.trim() === '') name.setCustomValidity(t('nodes.publicNameRequired'));

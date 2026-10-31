@@ -45,19 +45,19 @@ type EventPage struct {
 	NextCursor string  `json:"next_cursor,omitempty"`
 }
 
-// Event cursors use the same fixed-width UTC timestamp as SQLite ordering.
+// 事件游标使用与 SQLite 排序相同的定宽 UTC 时间戳。
 func eventCursor(event Event) string {
 	return EncodeEventCursor(event.CreatedAt, event.ID)
 }
 
-// EncodeEventCursor encodes a timestamp/UUID keyset position shared by event APIs.
+// EncodeEventCursor 编码事件 API 共用的时间戳/UUID 键集分页位置。
 func EncodeEventCursor(created time.Time, id string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(timekey.Format(created) + "|" + id))
 }
 
-// DecodeEventCursor accepts only canonical timestamp/UUID positions.
+// DecodeEventCursor 仅接受规范的时间戳/UUID 分页位置。
 func DecodeEventCursor(cursor string) (string, string, error) {
-	// A canonical timestamp, separator, and UUID encode to exactly 90 characters.
+	// 规范的时间戳、分隔符和 UUID 编码后恰为 90 个字符。
 	if len(cursor) != 90 {
 		return "", "", ErrInvalidInput
 	}
@@ -173,7 +173,7 @@ func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 	if err := audit.ScopedAlertRuleDeletes(ctx, tx, "group", id, time.Now()); err != nil {
 		return err
 	}
-	// ON DELETE SET NULL detaches nodes and enrollment references in this same transaction.
+	// ON DELETE SET NULL 在同一事务中解除节点与注册引用的关联。
 	result, err := tx.ExecContext(ctx, "DELETE FROM groups WHERE id = ?", id)
 	if err != nil {
 		return err
@@ -237,9 +237,8 @@ func (s *Service) Events(ctx context.Context, limit, offset int, before string) 
 	return page, nil
 }
 
-// CleanupAuditEvents removes at most limit events older than before. The
-// caller owns the retention policy; this method only provides bounded,
-// context-cancelable deletion.
+// CleanupAuditEvents 最多删除 before 之前的 limit 条事件。
+// 保留策略由调用方决定；本方法仅提供有界、可随 context 取消的删除。
 func (s *Service) CleanupAuditEvents(ctx context.Context, before time.Time, limit int) (int64, error) {
 	if limit < 1 {
 		return 0, ErrInvalidInput

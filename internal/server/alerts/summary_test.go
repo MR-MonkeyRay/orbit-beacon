@@ -18,8 +18,8 @@ func TestSummaryCountsAndNewest(t *testing.T) {
 	if err != nil || empty.Firing != (FiringCounts{}) || empty.Newest == nil || len(empty.Newest) != 0 {
 		t.Fatalf("empty summary=%+v err=%v", empty, err)
 	}
-	// Tied timestamps exercise the ID tiebreaker. Legacy, null and
-	// unrecognized severities must all count as unknown.
+	// 相同时间戳用于检验 ID 决胜逻辑。遗留的、null 的和
+	// 未识别的严重级别都必须计为 unknown。
 	snapshots := []string{
 		`{"metric":"cpu_percent","severity":"info"}`,
 		`{"metric":"cpu_percent","severity":"warning"}`,
@@ -31,8 +31,8 @@ func TestSummaryCountsAndNewest(t *testing.T) {
 		f.exec(t, `INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,rule_name,node_name,rule_snapshot)
  VALUES(?,? ,?,'firing',90,?,'stored rule','stored node',?)`, id, f.rule.ID, id, timekey.Format(f.now.Add(time.Duration(i/2)*time.Second)), snapshot)
 	}
-	// The current rule's severity differs from some snapshots; deleted rules
-	// and nodes must retain their stored display fields.
+	// 当前规则的严重级别与某些快照不同；已删除的规则和
+	// 节点必须保留其已存储的展示字段。
 	f.exec(t, "UPDATE alert_events SET rule_id='deleted-rule' WHERE id=?", "00000000-0000-4000-8000-000000000007")
 	f.exec(t, `INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,resolved_at,rule_name,node_name,rule_snapshot)
  VALUES('resolved',? ,?,'resolved',10,?,?,'resolved rule','resolved node','{"severity":"critical"}')`, f.rule.ID, f.node, timekey.Format(f.now.Add(time.Hour)), timekey.Format(f.now.Add(time.Hour)))
@@ -89,8 +89,8 @@ func TestSummaryDoesNotReserveWriter(t *testing.T) {
 	if _, err := writer.ExecContext(ctx, "UPDATE alert_events SET state='resolved',resolved_at=?", timekey.Format(f.now)); err != nil {
 		t.Fatal(err)
 	}
-	// A summary must read the committed firing event even while another
-	// connection holds the writer and has an uncommitted resolution.
+	// 即使另一个连接持有写锁且有未提交的解决操作，
+	// summary 也必须读到已提交的触发事件。
 	summary, err := f.s.Summary(ctx)
 	if err != nil || summary.Firing.Total != 1 || len(summary.Newest) != 1 {
 		t.Fatalf("summary under writer contention=%+v err=%v", summary, err)

@@ -334,8 +334,8 @@ func TestConsoleLiveWrappedHTTPSSENonemptyWebSocketHaveSameDataAndExactOrigin(t 
 		if string(frame["code"]) == `"unauthenticated"` && frame["data"] == nil {
 			break
 		}
-		// A heartbeat already authorized before the durable revocation may be
-		// buffered in the socket. Frames built afterward must not stay live.
+		// 在持久化撤销之前已授权的心跳可能已缓冲在套接字中。
+		// 之后构建的帧绝不能保持存活。
 		var emitted time.Time
 		if err := json.Unmarshal(frame["server_time"], &emitted); err != nil {
 			t.Fatal(err)
@@ -723,7 +723,7 @@ func TestConsoleLiveRejectedWebSocketHandshakeNeverAcquiresPrivateData(t *testin
 	}
 }
 
-// A real interrupted socket rejects subsequent terminal writes immediately.
+// 真正被中断的套接字会立即拒绝后续的终止写入。
 type expiredConsoleWriter struct{ *blockedLiveWriter }
 
 func (w expiredConsoleWriter) Write(body []byte) (int, error) {

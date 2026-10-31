@@ -16,8 +16,8 @@ const (
 	maxConcurrent   = 5
 )
 
-// Options permits short intervals and synthetic checks in tests. Selection is
-// applied explicitly at initialization and configuration reload boundaries.
+// Options 允许测试缩短间隔并替换探测函数。
+// 探测目标只在初始化和配置重载时显式设置。
 type Options struct {
 	Check    func(context.Context, string) v1.ProbeResult
 	Interval time.Duration
@@ -31,8 +31,8 @@ type targetState struct {
 	result  *v1.ProbeResult
 }
 
-// Runner keeps one latest result per target. Its reporting methods never wait
-// for network work; all checks share a five-worker concurrency limit.
+// Runner 为每个目标保留最新结果，读取结果不等待网络操作；
+// 所有探测共享最多五个并发任务的限制。
 type Runner struct {
 	options Options
 	mu      sync.Mutex
@@ -52,8 +52,8 @@ func NewRunner(options Options) *Runner {
 	return &Runner{options: options, targets: make(map[string]*targetState), wake: make(chan struct{}, 1)}
 }
 
-// SetTargets immediately removes stale results and cancels removed checks.
-// Adding a target wakes the runner without waiting for its next interval.
+// SetTargets 立即清除已移除目标的结果，并取消其探测。
+// 新增目标会立即唤醒调度器，无需等待下一个间隔。
 func (r *Runner) SetTargets(targets []string) error {
 	if len(targets) > maxConcurrent {
 		return errors.New("too many probe targets")
@@ -92,8 +92,8 @@ func (r *Runner) SetTargets(targets []string) error {
 	return nil
 }
 
-// Results returns independent copies in the report's target order, omitting
-// unfinished or removed checks. Reading an old snapshot never changes selection.
+// Results 按上报的目标顺序返回独立副本，忽略未完成或已删除的检查。
+// 读取旧快照不会改变当前探测目标。
 func (r *Runner) Results(targets []string) []v1.ProbeResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()

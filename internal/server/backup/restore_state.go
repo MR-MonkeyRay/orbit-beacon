@@ -74,8 +74,8 @@ func (s *restoreSecrets) rekey(id string, ciphertext []byte) ([]byte, error) {
 	return sealed, nil
 }
 
-// DependencyConflict contains only a fixed dependency type and at most one UUID.
-// CLI callers may display this detail without unwrapping arbitrary SQL errors.
+// DependencyConflict 只包含固定的依赖类型和至多一个 UUID。
+// CLI 调用方可直接显示该详情，无需解开任意 SQL 错误。
 type DependencyConflict struct {
 	Type string
 	ID   string
@@ -98,8 +98,8 @@ func dependencyConflict(kind string, id any) error {
 
 type restoreRowTransform func([]string, []any) error
 
-// Each query and destination identifier is supplied only by the fixed registry
-// or the explicit ephemeral-state lists below. Archive DDL is never executed.
+// 每个查询和目标标识符仅由固定的注册表或下方显式的临时状态列表提供。
+// 绝不执行归档 DDL。
 func copyRestoreRows(ctx context.Context, source *sql.DB, destination *sql.Tx, name, columns, query string, transform restoreRowTransform) error {
 	rows, err := source.QueryContext(ctx, query)
 	if err != nil {
@@ -154,8 +154,8 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 		return err
 	}
 	defer tx.Rollback()
-	// Deferral allows us to validate the entire final dependency graph, while
-	// enforcement remains enabled and Commit still checks every foreign key.
+	// 延迟约束让我们能校验完整的最终依赖图，同时强制检查仍然生效，
+	// Commit 依然会检查每个外键。
 	if _, err = tx.ExecContext(ctx, "PRAGMA defer_foreign_keys=ON"); err != nil {
 		return err
 	}
@@ -391,8 +391,8 @@ func validateRestoreDependencies(ctx context.Context, tx *sql.Tx) error {
 	for _, category := range []Category{Configuration, Monitoring, Events} {
 		for _, spec := range tablesFor(category) {
 			if name == spec.Name {
-				// A single bounded UUID identifies the failed row without exposing values,
-				// SQL errors, archive strings, or arbitrary table names.
+				// 仅用一个受限 UUID 标识失败行，不暴露值、SQL 错误、
+				// 归档字符串或任意表名。
 				column := "id"
 				if name == "inbox_reads" {
 					column = "user_id"

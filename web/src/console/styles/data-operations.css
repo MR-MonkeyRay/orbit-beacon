@@ -1,4 +1,4 @@
-/* Data operations: three vertical panels sharing the console tokens. */
+/* 数据操作：三个纵向面板，复用控制台设计变量。 */
 .data-operations {
   min-width: 0;
 }

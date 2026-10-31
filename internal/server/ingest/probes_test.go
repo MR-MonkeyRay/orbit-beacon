@@ -59,7 +59,7 @@ func TestProbeCheckedAtDedupeCadenceAndRestart(t *testing.T) {
 		t.Fatalf("fast report persisted probes: rows=%d writes=%d err=%v", rows, f.writes(t), err)
 	}
 
-	// Repeats and out-of-order results do not add checks; a newer check does.
+	// 重复和乱序的结果不增加检查次数；更新的检查才会。
 	for _, checkedAt := range []time.Time{first, first.Add(2 * time.Second), first.Add(time.Second)} {
 		f.now = f.now.Add(time.Second)
 		f.report.Seq++
@@ -83,7 +83,7 @@ func TestProbeCheckedAtDedupeCadenceAndRestart(t *testing.T) {
 		t.Fatalf("checks=%d failures=%d latest=%s", checks, failures, latest)
 	}
 
-	// A fresh service seeds the durable watermark and does not count the repeat.
+	// 新服务从数据库加载去重水位线，避免对重发结果重复计数。
 	f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }, PersistInterval: 30 * time.Second})
 	f.report.Seq++
 	f.report.ProbeResults = []v1.ProbeResult{probeResult(target, first.Add(2*time.Second), true)}
@@ -280,7 +280,7 @@ func TestProbeOverlappingWritersRebasePartialQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A second service shares the same durable process identity and commits t1.
+	// 第二个服务共享同一持久化进程身份并提交 t1。
 	other := NewService(f.db, Options{Now: func() time.Time { return f.now }, PersistInterval: 30 * time.Second})
 	report := f.report
 	report.Seq++

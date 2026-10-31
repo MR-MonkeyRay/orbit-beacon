@@ -25,7 +25,7 @@ func loadAverage(ctx context.Context) (loadValues, error) {
 	return loadValues{one: value.Load1, five: value.Load5, fifteen: value.Load15}, nil
 }
 
-// Read the kernel routing table; do not execute route or guess the first NIC.
+// 读取内核路由表，不执行 route 命令，也不直接选择第一块网卡。
 func defaultInterface(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err

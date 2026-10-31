@@ -51,8 +51,8 @@ function probeContent(probes) {
       t('nodes.probe.pendingHint')) : null);
 }
 
-// Retained across Details tab visits. Detaching pauses polling; navigation
-// permanently disposes it and prevents late responses from repainting.
+// 切换详情标签页时保留面板，卸载时暂停轮询；
+// 离开页面后永久销毁，防止迟到的响应重绘。
 export function probesPanel(id, signal) {
   let controller;
   let lifecycle;

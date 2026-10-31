@@ -166,9 +166,8 @@ func TestLiveFleetRejectsLateFastPathMemoryAfterCredentialReset(t *testing.T) {
 
 func TestLiveDetailPrefersAcceptedSampleRuntimeDuringDurablePublicationGap(t *testing.T) {
 	f := newCoalesceFixture(t, 30*time.Second)
-	// The next report's durable transaction has committed, but its accepted
-	// memory snapshot is not published yet. The previous accepted sample is
-	// still valid under the same full process identity.
+	// 下一条报告的持久化事务已提交，但其已接受的内存快照尚未发布。
+	// 上一份已接受样本在相同完整进程身份下仍然有效。
 	f.now = f.now.Add(time.Second)
 	if _, err := f.db.Exec(`UPDATE nodes SET last_seen=?,agent_runtime='{"report_interval_seconds":5,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]}' WHERE id=?`, timekey.Format(f.now), f.id); err != nil {
 		t.Fatal(err)

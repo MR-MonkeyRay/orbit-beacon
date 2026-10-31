@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 )
 
-// ValidateParents rejects symlinks and ancestry writable by untrusted principals.
-// Sticky system directories are allowed when their owner is trusted.
+// ValidateParents 拒绝符号链接及可被不可信主体写入的祖先目录。
+// 属主可信时允许带 sticky 位的系统目录。
 func ValidateParents(path string) error {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -33,7 +33,7 @@ func ValidateParents(path string) error {
 	}
 }
 
-// ValidateDirectory accepts only an effective-user-owned, exactly 0700 directory.
+// ValidateDirectory 仅接受归进程有效用户所有、权限恰为 0700 的目录。
 func ValidateDirectory(path string) error {
 	if err := ValidateParents(path); err != nil {
 		return err
@@ -48,8 +48,8 @@ func ValidateDirectory(path string) error {
 	return validateOwner(path, info)
 }
 
-// ValidateFile accepts absent files and owner-only regular files owned by the
-// effective user. It never changes the file or follows its final symlink.
+// ValidateFile 接受不存在的文件，或归进程有效用户所有且禁止组与其他用户访问的普通文件。
+// 不修改文件本身，也不跟随其末级符号链接。
 func ValidateFile(path string) (bool, error) {
 	if err := ValidateParents(path); err != nil {
 		return false, err
@@ -70,8 +70,8 @@ func ValidateFile(path string) (bool, error) {
 	return true, nil
 }
 
-// OpenFile refuses a final symlink and validates the opened file as well as its
-// directory entry, so callers never read or write a foreign or public file.
+// OpenFile 拒绝末级符号链接，并校验打开的文件及其目录项，
+// 确保调用方不会读写他人文件或公开文件。
 func OpenFile(path string, flag int, mode os.FileMode) (*os.File, error) {
 	if err := ValidateParents(path); err != nil {
 		return nil, err
@@ -102,9 +102,9 @@ func OpenFile(path string, flag int, mode os.FileMode) (*os.File, error) {
 	return file, nil
 }
 
-// OpenRegular opens an existing readable regular file without following symlinks.
-// Unlike OpenFile, it accepts public or foreign-owned ciphertext inputs. Ancestry
-// must still meet the shared pathname policy, and no write flags are accepted.
+// OpenRegular 打开已有的可读普通文件，不跟随符号链接。
+// 与 OpenFile 不同，它接受公开或他人拥有的密文输入。
+// 祖先路径仍须满足共享路径名策略，且不接受写标志。
 func OpenRegular(path string) (*os.File, error) {
 	if err := ValidateParents(path); err != nil {
 		return nil, err
@@ -132,7 +132,7 @@ func OpenRegular(path string) (*os.File, error) {
 	return file, nil
 }
 
-// SyncDirectory makes directory entry changes durable and closes the handle.
+// SyncDirectory 使目录项变更持久化并关闭句柄。
 func SyncDirectory(path string) error {
 	dir, err := os.Open(path)
 	if err != nil {

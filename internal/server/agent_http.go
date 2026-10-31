@@ -58,8 +58,7 @@ func (h *handler) agentRoute(w http.ResponseWriter, r *http.Request, requestID s
 		return
 	}
 	if r.URL.Path == "/api/agent/v1/recover" {
-		// Reject unknown credentials before reading a recovery request, without
-		// charging report admission or taking the ingest writer.
+		// 在读取恢复请求前拒绝未知凭据，不消耗上报限流额度，也不占用 ingest 写入槽。
 		if _, err := h.nodes.AuthenticateToken(r.Context(), token); err != nil {
 			h.agentError(w, err, requestID)
 			return
@@ -76,7 +75,7 @@ func (h *handler) agentRoute(w http.ResponseWriter, r *http.Request, requestID s
 		writeJSON(w, http.StatusOK, result)
 		return
 	}
-	// Authentication and admission happen before any request body is read.
+	// 认证和准入在读取任何请求体之前完成。
 	admission, err := h.ingest.AdmitToken(r.Context(), token)
 	if err != nil {
 		h.agentError(w, err, requestID)

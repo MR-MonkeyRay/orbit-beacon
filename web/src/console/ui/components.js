@@ -2,8 +2,8 @@ import {h, icon, svg} from '../../shared/dom.js';
 import {t} from '../i18n.js';
 import {STATUS} from '../format.js';
 
-// IDs restart on every page render, so a quiet refresh rebuilds the same IDs
-// and the router can return focus to the element that had it.
+// ID 在每次页面渲染时重新开始，静默刷新会重建相同的 ID，
+// 路由器因此能把焦点归还给之前持有焦点的元素。
 let idCounter = 0;
 export function resetIDs() { idCounter = 0; }
 export function uid(prefix) { idCounter += 1; return `${prefix}-${idCounter}`; }
@@ -53,7 +53,7 @@ export function patchStatusBadge(element, status) {
   if (element.textContent !== label) element.textContent = label;
 }
 
-// Transport names stay out of the UI. Only transitions update the live region.
+// UI 不显示传输方式名称；仅在状态变化时更新 ARIA live 区域。
 export function liveStatus() {
   const element = h('span', {class: 'live-status', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true'}, t('controls.live.connecting'));
   let previous = 'connecting';
@@ -73,7 +73,7 @@ export function facts(entries) {
   return buildReadonlyFacts(entries, true).element;
 }
 
-// Keep the list and its cells stable; callers patch readonly values, never forms.
+// 保持列表及其单元格稳定；调用方只修补只读值，不改表单。
 export function readonlyFacts(entries = []) {
   return buildReadonlyFacts(entries, false);
 }

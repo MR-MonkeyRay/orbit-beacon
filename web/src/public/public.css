@@ -1,6 +1,6 @@
 @import "../shared/tokens.css";
 
-/* Notched phones in landscape keep content inside the safe area. */
+/* 横屏刘海屏手机将内容保持在安全区域内。 */
 .page {
   --gutter:clamp(16px,4vw,40px);
   max-width: 1180px;
@@ -73,7 +73,7 @@
   transition: background-color .15s,border-color .15s,transform .1s;
 }
 
-/* Hero: the live headline beside the fleet constellation */
+/* Hero：集群星座图旁的实时标题 */
 .hero {
   display: grid;
   grid-template-columns: minmax(0,1.1fr) minmax(0,.9fr);
@@ -116,8 +116,8 @@
   line-height: 1.35;
 }
 
-/* The gap stands in for the space between time and mode, which a flex item
-   trims; when the two parts wrap, the second line starts flush. */
+/* 此间距代替时间与模式之间的空隙（flex 项会将其裁掉）；
+   两部分换行时，第二行顶格对齐。 */
 .live-text p:first-child {
   display: flex;
   flex-wrap: wrap;
@@ -220,7 +220,7 @@
   transition: background-color .15s,border-color .15s,color .15s,opacity .15s,transform .1s;
 }
 
-/* Hover only where a pointer can hover, so touch taps do not leave a stuck highlight. */
+/* 仅在支持悬停的设备上启用 hover，避免触摸点击留下卡住的高亮。 */
 @media (hover:hover) {
   .login:hover {
     background: var(--orbit-soft);
@@ -255,7 +255,7 @@ a,button {
   cursor: not-allowed;
 }
 
-/* Constellation */
+/* 星座图 */
 .constellation {
   justify-self: end;
   width: min(100%,460px);
@@ -343,7 +343,7 @@ a,button {
   }
 }
 
-/* Status filter */
+/* 状态筛选 */
 .filters {
   display: flex;
   flex-wrap: wrap;
@@ -389,7 +389,7 @@ a,button {
   background: var(--bad);
 }
 
-/* Cards */
+/* 卡片 */
 .nodes {
   display: grid;
   grid-template-columns: repeat(auto-fill,minmax(min(100%,300px),1fr));
@@ -551,7 +551,7 @@ a,button {
   display: block;
 }
 
-/* Stats and the last report sit at the card foot so a row of cards lines up. */
+/* 统计和最后上报时间放在卡片底部，使一行卡片底部对齐。 */
 .stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -671,7 +671,7 @@ footer {
   }
 }
 
-/* Wide screens: more card columns instead of wider margins. */
+/* 宽屏：增加卡片列数而非加宽边距。 */
 @media (min-width:1600px) {
   .page {
     max-width: 1480px;
@@ -692,7 +692,7 @@ footer {
   }
 }
 
-/* Tablets keep the headline beside a smaller constellation. */
+/* 平板：标题保持在较小的星座图旁。 */
 @media (max-width:1023px) {
   .hero {
     gap: var(--sp-5) 28px;
@@ -704,8 +704,8 @@ footer {
   }
 }
 
-/* Phones: a compact constellation band so the first card shows above the fold,
-   and one scrolling row of filters instead of wrapped rows. */
+/* 手机：压缩星座图高度，使首张卡片出现在首屏；
+   筛选项为一行可横向滚动，而非换行。 */
 @media (max-width:719px) {
   .top {
     flex-wrap: wrap;

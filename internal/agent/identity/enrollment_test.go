@@ -47,7 +47,7 @@ func TestTicketOperationsRetainExactCandidateAndParentAfterPromotion(t *testing.
 	if reopened.Current() != before {
 		t.Fatal("rejected alias changed durable identity")
 	}
-	// A complete active-credential journal cannot block a new genuine rotation.
+	// 当前凭据的操作记录达到上限，也不能阻止新一轮凭据轮换。
 	newTicket := sha256.Sum256([]byte("new-ticket"))
 	_, fresh, err := reopened.StageEnrollment(context.Background(), newTicket, true)
 	if err != nil || fresh.NodeToken == operation.NodeToken || fresh.PreviousNodeToken != operation.NodeToken {

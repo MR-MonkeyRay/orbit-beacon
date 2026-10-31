@@ -31,8 +31,8 @@ func TestCredentialRotationReleasesPoisonedFenceWithoutResettingExactRetries(t *
 			assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, claim), http.StatusOK)
 			assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/report", oldToken, reportBody(generation, 101, "old-session", 99)), http.StatusUnauthorized)
 			f.now = f.now.Add(time.Second)
-			// Both a poisoned fence and transient sequence ownership must be scoped
-			// to the revoked credential, not the enduring asset identity.
+			// 被污染的围栏和瞬时的序列所有权都必须限定在已撤销的凭据内，
+			// 而不是持久的资产身份。
 			accepted(t, agentRequest(t, f, "/api/agent/v1/report", newToken, reportBody(1, 1, "new-session", 25)), 1)
 			latest, err := f.ingest.Latest(context.Background(), id)
 			if err != nil || latest.SessionID != "new-session" || latest.Seq != 1 || *latest.Metrics.CPUPercent != 25 {

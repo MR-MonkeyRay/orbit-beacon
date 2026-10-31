@@ -31,7 +31,7 @@ function renderEntries() {
   for (const entry of document.querySelectorAll('.notification-entry')) {
     entry.hidden = !session.user || session.user.must_change_password;
     const count = entry.querySelector('.notification-count');
-    // The icon rail shows the count as a small badge, so large counts are capped.
+    // 图标栏以小徽章显示数量，大数量会截断。
     count.textContent = summary ? (summary.unread_count > 99 ? '99+' : new Intl.NumberFormat(getLocale()).format(summary.unread_count)) : stale ? '?' : '…';
     const status = stale ? (navigator.onLine === false ? t('common.status.offline') : t('notifications.stale')) : '';
     const freshness = entry.querySelector('.notification-freshness');
@@ -74,8 +74,8 @@ function resumeNotifications() {
   stale = true;
   renderEntries();
   inbox?.setStale(true);
-  // Keep the same single 15s controller while a foreground auth check is offline.
-  // The summary itself must wait for /me, but a failed check can be retried.
+  // 前台鉴权检查离线期间，保持同一个 15 秒控制器。
+  // 摘要本身须等待 /me，但失败的检查可以重试。
   if (!timer) timer = setInterval(pollNotifications, 15000);
   inbox?.pause();
   const currentEpoch = epoch;

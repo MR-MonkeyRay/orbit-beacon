@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// responseLog records bytes actually written, without inspecting response bodies
-// or credentials. Unwrap preserves ResponseController support.
+// responseLog 记录实际写出的字节数，不检查响应体或凭据。
+// Unwrap 保留对 ResponseController 的支持。
 type responseLog struct {
 	http.ResponseWriter
 	status int
@@ -22,7 +22,7 @@ func (w *responseLog) WriteHeader(status int) {
 	if w.status != 0 {
 		return
 	}
-	// Informational responses do not commit the final response status.
+	// 信息性响应不提交最终的响应状态。
 	if status >= 100 && status < 200 && status != http.StatusSwitchingProtocols {
 		w.ResponseWriter.WriteHeader(status)
 		return
@@ -83,8 +83,8 @@ func (h *handler) observeRequest(w http.ResponseWriter, r *http.Request, next ht
 
 func healthProbe(p string) bool { return p == "/healthz/live" || p == "/healthz/ready" }
 
-// Only known route templates enter logs or labels. Unknown paths, arbitrary
-// filenames, and malformed IDs may contain secrets, so never echo them back.
+// 只有已知路由模板进入日志或标签。未知路径、任意文件名和格式错误的 ID
+// 可能包含机密，因此绝不回显它们。
 func requestRoute(p string) string {
 	if entry := apiRoutes.match(&http.Request{URL: &url.URL{Path: p}}); entry != nil {
 		return entry.label

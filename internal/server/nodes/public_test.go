@@ -40,7 +40,7 @@ func TestPublicSettingsRemainIndependentAndValidateAtomically(t *testing.T) {
 			t.Fatalf("invalid patch changed settings: %+v %v", after, err)
 		}
 	}
-	// Decode a fresh patch: omitted/null fields preserve the stored value.
+	// 解码新补丁：省略或为 null 的字段保留已存储的值。
 	patch = nodes.PublicSettingsPatch{}
 	_ = json.Unmarshal([]byte(`{"name":null,"region":"","enabled":false}`), &patch)
 	got, err = s.PatchPublicSettings(ctx, n.ID, patch)

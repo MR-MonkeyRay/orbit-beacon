@@ -25,7 +25,7 @@ func TestManagementListPaginationEnvelopes(t *testing.T) {
 			t.Fatal(err)
 		}
 		insertPaginationNodes(t, f.db, 101)
-		// The maximum-size page still permits a single-query lookahead row.
+		// 达到页大小上限时，同一查询仍可多取一行以判断是否还有下一页。
 		assertPageEnvelope(t, managementPage(t, f, admin, "/api/v1/nodes?limit=100"), "nodes", 100, true, 100)
 		assertPageEnvelope(t, managementPage(t, f, admin, "/api/v1/nodes?limit=100&offset=1"), "nodes", 100, false, 0)
 	})

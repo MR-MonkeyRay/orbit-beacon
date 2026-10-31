@@ -1,7 +1,7 @@
 package storage
 
-// Generated foreign keys enforce polymorphic scope ownership. Event snapshots
-// retain history after rule or inventory deletion so open episodes can resolve.
+// 基于生成列的外键约束告警规则的作用域归属。规则或节点清单删除后仍保留事件快照，
+// 以便未结束的告警事件能标记为已恢复。
 const alertsSchema = `
 CREATE TABLE alert_rules (
  id TEXT PRIMARY KEY, name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 100),

@@ -34,7 +34,7 @@ func TestValidateDirectoryRejectsRenameableAncestors(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			ancestor := privateDirectory(t)
-			// An intervening private directory must not hide an unsafe ancestor.
+			// 中间的私有目录不得掩盖不安全的祖先目录。
 			dir := filepath.Join(ancestor, "server-owned", "data")
 			if err := os.MkdirAll(dir, 0700); err != nil {
 				t.Fatal(err)

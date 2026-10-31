@@ -22,8 +22,8 @@ type ObservedProbe struct {
 }
 
 func (s *Service) ObservedProbes(ctx context.Context, id string, window time.Time) ([]ObservedProbe, error) {
-	// One read snapshot binds the target list and observations to the same
-	// credential. Rotation cannot turn old targets into a new identity's probes.
+	// 一次读取快照把目标列表和观测结果绑定到同一凭据。
+	// 轮换不会把旧目标变成新身份的探测项。
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT nodes.id, selected.value, latest.ok, latest.latency_ms, latest.error,
 		       latest.status_code, latest.checked_at,

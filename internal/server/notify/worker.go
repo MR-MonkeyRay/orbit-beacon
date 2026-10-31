@@ -79,8 +79,8 @@ func (s *Service) enqueue(ctx context.Context, n alerts.Notification) error {
 		}
 		raw, _ := json.Marshal(p)
 		if count >= MaxPendingPerChannel {
-			// Keep the most recent pending row as a durable summary. The worker only
-			// reads its payload within its claim transaction, fencing concurrent floods.
+			// 保留最新一条 pending 行作为持久摘要。worker 只在认领事务内
+			// 读取其 payload，以此隔离并发的洪泛。
 			var summaryID string
 			var total int
 			e = tx.QueryRowContext(ctx, `SELECT id,coalesced_count FROM notification_deliveries WHERE channel_id=? AND state='pending' AND lease_until='' ORDER BY coalesced_count DESC,created_at DESC,id DESC LIMIT 1`, id).Scan(&summaryID, &total)
@@ -127,8 +127,8 @@ type deliveryWork struct {
 	attempts                int
 }
 
-// Run owns four bounded send lanes. Pending rows stay durable during network
-// work. A restart retries uncertain sends (at-least-once delivery).
+// Run 拥有四条有界的发送通道。网络处理期间，pending 行保持持久。
+// 重启会重试不确定的发送（至少一次投递）。
 func (s *Service) Run(ctx context.Context) {
 	s.mu.Lock()
 	if s.cancel != nil || s.closed.Load() {
@@ -183,7 +183,7 @@ func (s *Service) process(ctx context.Context) {
 	wg.Wait()
 }
 
-// reserveRate is shared by test sends and the worker, persisted across restart.
+// reserveRate 由测试发送和 worker 共用，重启后依然持久。
 func (s *Service) reserveRate(ctx context.Context, tx *sql.Tx, id string) (bool, time.Time, error) {
 	now := s.opts.Now().UTC()
 	var start string
@@ -248,7 +248,7 @@ func (s *Service) claim(ctx context.Context, channel string) (deliveryWork, bool
 		return d, false, tx.Commit()
 	}
 	d.attempts++
-	// The lease protects this payload from flood coalescing while it is sent.
+	// 租约在发送期间保护该 payload 不被洪泛合并。
 	_, e = tx.ExecContext(ctx, "UPDATE notification_deliveries SET attempts=?,next_attempt_at=?,lease_until=?,updated_at=? WHERE id=?", d.attempts, timekey.Format(s.opts.Now().Add(SendTimeout)), timekey.Format(s.opts.Now().Add(SendTimeout)), now, d.id)
 	if e != nil {
 		return d, false, e
@@ -276,7 +276,7 @@ func (s *Service) deliver(ctx context.Context, channel string) {
 	}
 	if ctx.Err() != nil {
 		return
-	} // Remains pending for restart on shutdown deadline.
+	} // 到达停机期限时保持 pending，留待重启后继续。
 	state := "failed"
 	next := s.opts.Now()
 	if result.OK {
@@ -307,7 +307,7 @@ func (s *Service) deliver(ctx context.Context, channel string) {
 	}
 }
 
-// Bound repeated diagnostics across all pending rows for the same channel.
+// 限制同一通道所有 pending 行的重复诊断输出。
 func (s *Service) warnSecretUnreadable(channel string) {
 	now := s.opts.Now()
 	s.mu.Lock()
@@ -316,7 +316,7 @@ func (s *Service) warnSecretUnreadable(channel string) {
 		s.mu.Unlock()
 		return
 	}
-	// At most 20 channels exist. Prune old/deleted channel entries as well.
+	// 通道最多 20 个。同时清理已删除或过期的通道条目。
 	for id, stamp := range s.secretWarnings {
 		if !now.Before(stamp.Add(time.Hour)) {
 			delete(s.secretWarnings, id)
@@ -329,8 +329,8 @@ func (s *Service) warnSecretUnreadable(channel string) {
 	}
 }
 
-// Shutdown rejects new queue writes and cancels sends immediately. The caller
-// supplies at most five seconds; network I/O is closed on cancellation.
+// Shutdown 拒绝新的入队写入，并立即取消正在进行的发送。
+// 调用方最多给五秒；取消时网络 I/O 会被关闭。
 func (s *Service) Shutdown(ctx context.Context) error {
 	s.closed.Store(true)
 	s.stop()
@@ -371,7 +371,7 @@ func (s *Service) Test(ctx context.Context, id string) (Result, error) {
 	if e != nil {
 		return Result{}, e
 	}
-	// Commit the audited attempt and rate reservation before the external effect.
+	// 在产生外部效果之前，先提交已审计的尝试记录与速率预留。
 	if e = audit.Insert(ctx, tx, "notification_channel.test", id, s.opts.Now()); e != nil {
 		return Result{}, e
 	}

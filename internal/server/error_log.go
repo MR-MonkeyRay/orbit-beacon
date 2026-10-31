@@ -11,16 +11,15 @@ import (
 	"orbitbeacon/internal/server/auth"
 )
 
-// Driver/error messages can contain SQL, bound values, paths and attacker-owned
-// text. Log only diagnostic metadata; never pass the error itself to slog.
+// 驱动/错误消息可能包含 SQL、绑定值、路径和攻击者可控的文本。
+// 只记录诊断元数据；绝不把错误本身传给 slog。
 func (h *handler) logInternalError(err error, requestID string) {
 	attrs := append(logging.ErrorAttrs(err, "internal_error"), slog.String("request_id", requestID))
 	h.logger.LogAttrs(context.Background(), slog.LevelError, "request_failed", attrs...)
 }
 
-// Failed and throttled logins are logged for brute-force investigation. The
-// submitted username and password are never logged: users sometimes type a
-// password into the username field.
+// 失败和被限流的登录会被记录，用于暴力破解调查。
+// 提交的用户名和密码绝不记录：用户有时会把密码输到用户名栏。
 func (h *handler) logLoginRejection(err error, r *http.Request, requestID string) {
 	reason := ""
 	switch {

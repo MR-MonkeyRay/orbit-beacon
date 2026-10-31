@@ -17,8 +17,8 @@ import (
 	"orbitbeacon/internal/uuid"
 )
 
-// PlanPatch preserves omitted values. Credentials are an explicit full replacement;
-// an omitted session token in a replacement clears the previous token.
+// PlanPatch 保留被省略的值。凭据为显式整体替换；
+// 替换时省略会话令牌即清除之前的令牌。
 type PlanPatch struct {
 	Name        *string            `json:"name,omitempty"`
 	Enabled     *bool              `json:"enabled,omitempty"`
@@ -133,8 +133,8 @@ func (s *Service) projectPlan(ctx context.Context, p planRecord, now time.Time) 
 		return Plan{}, err
 	}
 	p.NextRuns = preview.NextRuns
-	// An enabled plan's persisted due time is authoritative, including an overdue
-	// coalesced cycle. Future entries still use the same location-aware helper.
+	// 已启用计划以持久化的应执行时间为准，包括合并后的逾期周期。
+	// 后续执行时间仍通过同一个按时区计算的辅助函数生成。
 	if p.Enabled && p.NextRunAt != nil {
 		p.NextRuns, err = s.nextRuns(p.Cron, *p.NextRunAt, true)
 		if err != nil {

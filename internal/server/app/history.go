@@ -9,8 +9,7 @@ import (
 	"orbitbeacon/internal/server/history"
 )
 
-// History is best-effort and excluded from backups. In particular, restoring a
-// main database alongside a newer metrics.db must not stop monitoring service.
+// 历史记录异常不得阻断监控；恢复主库后遗留的 metrics.db 可能使用更新的 schema。
 func openMetricHistory(ctx context.Context, dataDir string, nodes *sql.DB, logger *slog.Logger) *history.Service {
 	service, err := history.Open(ctx, dataDir, nodes, history.Options{Logger: logger})
 	if err != nil {

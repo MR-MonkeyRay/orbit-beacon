@@ -1,4 +1,4 @@
-/* History charts use the shared light/dark palette and have no animation. */
+/* 历史图表使用共享的亮/暗色板，无动画。 */
 .history-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit,minmax(min(100%,420px),1fr));
@@ -79,7 +79,7 @@
   overflow: visible;
 }
 
-/* fitChartText sets --chart-k so labels keep one CSS size at any chart width. */
+/* fitChartText 设置 --chart-k，使标签在任何图表宽度下保持同一 CSS 尺寸。 */
 .chart-axis {
   fill: var(--ink-2);
   font-size: calc(var(--fs-xs) * var(--chart-k,1));

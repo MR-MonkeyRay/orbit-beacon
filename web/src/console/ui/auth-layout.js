@@ -3,7 +3,7 @@ import {h} from '../../shared/dom.js';
 import {orbitSVG} from '../../shared/orbit.js';
 import {brandMark, consoleLocaleSelect} from '../shell.js';
 
-// Shared bare authentication layout retains the console's existing orbit art.
+// 共享的极简鉴权布局，保留控制台现有的轨道装饰画。
 function orbits() {
   return orbitSVG({className: 'login-orbits', viewBox: '0 0 1100 1100', center: 550, squash: .42, tilt: -16, verticalOffset: 320,
     radii: [300, 420, 540], satellites: [

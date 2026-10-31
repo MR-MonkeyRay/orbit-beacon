@@ -23,8 +23,8 @@ const MaxTrafficEntries = 24
 
 var ErrProtocolUnsupported = errors.New("protocol unsupported")
 
-// DecimalUint64 keeps cumulative byte counters exact across JSON consumers.
-// Its wire representation is always a canonical, quoted unsigned decimal.
+// DecimalUint64 保证累计字节计数在各 JSON 消费方之间保持精确。
+// JSON 中始终编码为带引号、无多余前导零的无符号十进制字符串。
 type DecimalUint64 string
 
 func (n DecimalUint64) Validate() error {
@@ -114,8 +114,8 @@ func (s System) Validate() error {
 	return nil
 }
 
-// EnrollmentCheckVersion is independent from the enrollment/report wire version:
-// v2 distinguishes an active credential from an unbound initial identity.
+// EnrollmentCheckVersion 独立于注册/上报的协议版本：
+// v2 区分活跃凭据与未绑定的初始身份。
 const EnrollmentCheckVersion = 2
 
 type EnrollmentCheckRequest struct {
@@ -157,8 +157,8 @@ type EnrollmentResponse struct {
 	ServerTime time.Time `json:"server_time"`
 }
 
-// RecoveryRequest confirms the installation bound to a node credential without
-// creating a report, advancing runtime ownership, or refreshing node liveness.
+// RecoveryRequest 只确认节点凭据绑定的安装，不创建上报、
+// 不推进运行时所有权、不刷新节点存活。
 type RecoveryRequest struct {
 	InstallationID string `json:"installation_id"`
 }
@@ -194,8 +194,8 @@ func (s SourceMetadata) Fresh() bool {
 	return s.FreshAfter(0)
 }
 
-// FreshAfter includes elapsed reception time without overflowing the source age.
-// Callers apply their own source and metric validation before using it.
+// FreshAfter 将接收后经过的时间计入数据龄期，避免计算溢出。
+// 调用方须先自行完成来源与指标校验。
 func (s SourceMetadata) FreshAfter(elapsedMS int64) bool {
 	if s.AgeMS < 0 || s.SourceIntervalMS <= 0 {
 		return false
@@ -432,7 +432,7 @@ func (p ProbeResult) Validate() error {
 	return nil
 }
 
-// ValidateProbeTarget validates one service probe target in its wire format.
+// ValidateProbeTarget 按传输协议格式校验单个服务探测目标。
 func ValidateProbeTarget(target string) error {
 	if target == "" {
 		return errors.New("entries must be nonempty")
@@ -475,8 +475,8 @@ func ValidateProbeTarget(target string) error {
 		if strings.HasPrefix(parsed.Host, "[") && net.ParseIP(parsed.Hostname()) == nil {
 			return errors.New("HTTP targets must use a valid bracketed IPv6 address")
 		}
-		// Validate the host as written: URL parsers decode or rewrite hosts
-		// (percent escapes, IPv4 shorthand, IDNA) differently across Go and browsers.
+		// 按输入原样校验主机，避免 Go 与浏览器对百分号转义、IPv4 缩写和 IDNA
+		// 的解析差异。
 		if !validProbeHost(rawURLHost(target)) {
 			return errors.New("HTTP targets need a valid DNS name, IPv4 address, or bracketed IPv6 address")
 		}
@@ -498,7 +498,7 @@ func ValidateProbeTarget(target string) error {
 	return errors.New("targets must use tcp://, http://, https://, or icmp://")
 }
 
-// rawURLHost returns the authority's host exactly as written, without port.
+// rawURLHost 原样返回 authority 中不带端口的主机。
 func rawURLHost(target string) string {
 	rest := target[strings.Index(target, "//")+2:]
 	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
@@ -544,7 +544,7 @@ func validProbeHost(host string) bool {
 		return false
 	}
 	labels := strings.Split(name, ".")
-	// A numeric final label makes browsers parse the host as IPv4 (e.g. 0x7f.1).
+	// 末尾标签是数字会让浏览器把主机解析成 IPv4（如 0x7f.1）。
 	if last := strings.ToLower(labels[len(labels)-1]); onlyDigitsAndDots(last) || strings.HasPrefix(last, "0x") && strings.Trim(last[2:], "0123456789abcdef") == "" {
 		return false
 	}

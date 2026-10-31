@@ -36,8 +36,8 @@ type Server struct {
 	TrustedProxies                   []netip.Prefix `json:"-"`
 }
 
-// InstallPolicy is administrator-owned configuration. Every source is checked
-// independently, so a later matching override cannot hide a policy conflict.
+// InstallPolicy 是归管理员所有的配置。每个来源都独立校验，
+// 防止后续覆盖掩盖策略冲突。
 type InstallPolicy struct {
 	ServerURL       string `json:"server_url"`
 	CAFile          string `json:"ca_file"`
@@ -58,13 +58,13 @@ func sources(opts LoadOptions, keys []string) ([]map[string]json.RawMessage, err
 	if opts.File != "" {
 		data, err := os.ReadFile(opts.File)
 		if err != nil {
-			return nil, fmt.Errorf("read configuration: %w", err)
+			return nil, fmt.Errorf("读取配置失败: %w", err)
 		}
 		if err := json.Unmarshal(data, &file); err != nil {
-			return nil, fmt.Errorf("decode configuration: %w", err)
+			return nil, fmt.Errorf("解码配置失败: %w", err)
 		}
 		if file == nil {
-			return nil, errors.New("configuration must be an object")
+			return nil, errors.New("配置必须是对象")
 		}
 	}
 	known := make(map[string]bool, len(keys))
@@ -93,12 +93,12 @@ func sources(opts LoadOptions, keys []string) ([]map[string]json.RawMessage, err
 	}
 	for key := range file {
 		if !known[key] {
-			return nil, fmt.Errorf("unknown configuration key %q", key)
+			return nil, fmt.Errorf("未知配置键 %q", key)
 		}
 	}
 	for key := range opts.Flags {
 		if !known[key] {
-			return nil, fmt.Errorf("unknown flag key %q", key)
+			return nil, fmt.Errorf("未知 flag 键 %q", key)
 		}
 	}
 	return []map[string]json.RawMessage{file, environment, flags}, nil
@@ -109,22 +109,22 @@ func encodeValue(key, value string) (json.RawMessage, error) {
 	case "max_nodes", "expected_uid", "expected_gid", "report_interval_seconds", "disk_interval_seconds", "web_update_interval_seconds":
 		n, err := strconv.Atoi(value)
 		if err != nil {
-			// Keep malformed values typed as strings until source precedence is
-			// resolved. Decoding a selected value into its integer field rejects it.
+			// 格式错误的值先按字符串保留，待来源优先级确定后，
+			// 解码到整型字段时再拒绝。
 			return json.Marshal(value)
 		}
 		return json.Marshal(n)
 	case "access_log", "allow_insecure_webhooks", "notification_allow_private_networks":
 		enabled, err := strconv.ParseBool(value)
 		if err != nil {
-			// Preserve the malformed value so decoding reports a typed
-			// configuration error after source precedence is resolved.
+			// 保留格式错误的值，待来源优先级确定后，
+			// 解码时再报告配置类型错误。
 			return json.Marshal(value)
 		}
 		return json.Marshal(enabled)
 	case "interfaces", "disk_paths", "probe_targets":
 		if !json.Valid([]byte(value)) {
-			return nil, fmt.Errorf("%s must be a JSON array of strings", key)
+			return nil, fmt.Errorf("%s 必须是 JSON 字符串数组", key)
 		}
 		return json.RawMessage(value), nil
 	case "trusted_proxies":
@@ -155,7 +155,7 @@ func LoadServer(opts LoadOptions) (Server, error) {
 	}
 	for key, value := range resolved {
 		if string(value) == "null" {
-			return Server{}, fmt.Errorf("%s must not be null", key)
+			return Server{}, fmt.Errorf("%s 不能为 null", key)
 		}
 	}
 	data, err := json.Marshal(resolved)
@@ -163,12 +163,12 @@ func LoadServer(opts LoadOptions) (Server, error) {
 		return Server{}, err
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return Server{}, fmt.Errorf("invalid configuration: %w", err)
+		return Server{}, fmt.Errorf("配置无效: %w", err)
 	}
 	if value, ok := resolved["trusted_proxies"]; ok {
 		var entries []string
 		if err := json.Unmarshal(value, &entries); err != nil {
-			return Server{}, fmt.Errorf("invalid configuration: trusted_proxies must be an array of strings: %w", err)
+			return Server{}, fmt.Errorf("配置无效: trusted_proxies 必须是字符串数组: %w", err)
 		}
 		cfg.TrustedProxies, err = parseTrustedProxies(entries)
 		if err != nil {
@@ -182,11 +182,11 @@ func parseTrustedProxies(entries []string) ([]netip.Prefix, error) {
 	prefixes := make([]netip.Prefix, 0, len(entries))
 	for _, entry := range entries {
 		if entry == "" || strings.TrimSpace(entry) != entry {
-			return nil, fmt.Errorf("trusted_proxies: invalid address or prefix %q", entry)
+			return nil, fmt.Errorf("trusted_proxies: 地址或前缀无效 %q", entry)
 		}
 		if address, err := netip.ParseAddr(entry); err == nil {
 			if address.Zone() != "" {
-				return nil, fmt.Errorf("trusted_proxies: scoped address %q is not supported", entry)
+				return nil, fmt.Errorf("trusted_proxies: 不支持带作用域的地址 %q", entry)
 			}
 			address = address.Unmap()
 			prefixes = append(prefixes, netip.PrefixFrom(address, address.BitLen()))
@@ -194,14 +194,14 @@ func parseTrustedProxies(entries []string) ([]netip.Prefix, error) {
 		}
 		prefix, err := netip.ParsePrefix(entry)
 		if err != nil || prefix.Addr().Zone() != "" {
-			return nil, fmt.Errorf("trusted_proxies: invalid address or prefix %q", entry)
+			return nil, fmt.Errorf("trusted_proxies: 地址或前缀无效 %q", entry)
 		}
 		if prefix.Bits() == 0 {
-			return nil, fmt.Errorf("trusted_proxies: prefix %q is too broad", entry)
+			return nil, fmt.Errorf("trusted_proxies: 前缀 %q 过宽", entry)
 		}
 		if prefix.Addr().Is4In6() {
 			if prefix.Bits() <= 96 {
-				return nil, fmt.Errorf("trusted_proxies: mapped IPv4 prefix %q is too broad", entry)
+				return nil, fmt.Errorf("trusted_proxies: 映射的 IPv4 前缀 %q 过宽", entry)
 			}
 			prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96)
 		}
@@ -210,10 +210,10 @@ func parseTrustedProxies(entries []string) ([]netip.Prefix, error) {
 	return prefixes, nil
 }
 
-// CanonicalOrigin validates an absolute HTTP or HTTPS URL and returns its browser Origin.
-// URL paths are allowed, but credentials, queries and fragments are not.
-// DNS names are ASCII-only; unsupported host forms are rejected rather than
-// producing an Origin that differs from the browser's serialization.
+// CanonicalOrigin 校验绝对 HTTP 或 HTTPS URL，并返回其浏览器 Origin。
+// 允许 URL 路径，但不允许凭据、查询和片段。
+// DNS 名仅限 ASCII；不支持的主机形式直接拒绝，避免产生与浏览器
+// 序列化结果不一致的 Origin。
 func CanonicalOrigin(raw string) (string, error) {
 	u, err := parseHTTPURL(raw)
 	if err != nil {
@@ -225,30 +225,30 @@ func CanonicalOrigin(raw string) (string, error) {
 func parseHTTPURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") || u.Opaque != "" {
-		return nil, errors.New("URL must be absolute HTTP or HTTPS without credentials, query or fragment")
+		return nil, errors.New("URL 必须是绝对 HTTP 或 HTTPS，且不含凭据、查询或片段")
 	}
 	host := strings.ToLower(u.Hostname())
 	if strings.HasPrefix(u.Host, "[") {
 		address, err := netip.ParseAddr(host)
 		if err != nil || !address.Is6() || address.Is4In6() || address.Zone() != "" {
-			return nil, errors.New("URL must have a supported IPv6 address")
+			return nil, errors.New("URL 必须包含受支持的 IPv6 地址")
 		}
 		host = "[" + address.String() + "]"
 	} else if address, err := netip.ParseAddr(host); err == nil {
 		if !address.Is4() {
-			return nil, errors.New("URL IPv6 addresses must be bracketed")
+			return nil, errors.New("URL 中的 IPv6 地址必须加方括号")
 		}
 		host = address.String()
 	} else if !validHostname(host) {
-		return nil, errors.New("URL must have a valid ASCII hostname or IP address")
+		return nil, errors.New("URL 必须包含有效的 ASCII 主机名或 IP 地址")
 	}
 	if strings.HasSuffix(u.Host, ":") {
-		return nil, errors.New("URL port must not be empty")
+		return nil, errors.New("URL 端口不能为空")
 	}
 	if port := u.Port(); port != "" {
 		number, err := strconv.ParseUint(port, 10, 16)
 		if err != nil {
-			return nil, errors.New("URL port must be between 0 and 65535")
+			return nil, errors.New("URL 端口必须在 0 到 65535 之间")
 		}
 		defaultPort := (u.Scheme == "http" && number == 80) || (u.Scheme == "https" && number == 443)
 		if !defaultPort {
@@ -275,8 +275,8 @@ func validHostname(host string) bool {
 			}
 		}
 	}
-	// Browsers treat names ending in a number as IPv4, including hexadecimal
-	// and shortened forms. Only the canonical IPv4 form is accepted above.
+	// 浏览器把以数字结尾的名字当作 IPv4，包括十六进制和缩写形式。
+	// 上面只接受规范的 IPv4 形式。
 	last := labels[len(labels)-1]
 	if strings.Trim(last, "0123456789") == "" {
 		return false
@@ -287,23 +287,23 @@ func validHostname(host string) bool {
 	return true
 }
 
-// ValidateServerURL requires an HTTP or HTTPS origin with at most a literal root slash.
-// Agent endpoints are absolute paths; accepting a prefix would silently discard it.
+// ValidateServerURL 只接受 HTTP 或 HTTPS Origin，可选末尾的根路径斜杠 /。
+// Agent 端点使用绝对路径，不支持 URL 路径前缀。
 func ValidateServerURL(raw string) error {
 	u, err := parseHTTPURL(raw)
 	if err != nil {
 		return err
 	}
 	if (u.Path != "" && u.Path != "/") || u.RawPath != "" {
-		return errors.New("URL must be at its root without an encoded path or prefix")
+		return errors.New("URL 必须位于根路径，且不含编码路径或前缀")
 	}
 	return nil
 }
 
-// ValidatePath rejects SQLite DSNs and network URIs; storage always uses a local file.
+// ValidatePath 拒绝 SQLite DSN 和网络 URI；存储一律使用本地文件。
 func ValidatePath(path string) error {
 	if strings.TrimSpace(path) == "" || strings.Contains(path, ":") || strings.ContainsAny(path, "?\x00") {
-		return errors.New("path must be a local filesystem path, not a URI or SQLite DSN")
+		return errors.New("路径必须是本地文件系统路径，不能是 URI 或 SQLite DSN")
 	}
 	return nil
 }
@@ -317,9 +317,9 @@ func (cfg Server) Validate() error {
 		if err != nil {
 			return fmt.Errorf("metrics_listen: %w", err)
 		}
-		// Metrics must never share the public listener.
+		// 指标绝不能与公开监听共用地址。
 		if cfg.MetricsListen == cfg.ListenAddr && port != "0" {
-			return errors.New("metrics_listen: must differ from listen_addr")
+			return errors.New("metrics_listen: 必须与 listen_addr 不同")
 		}
 	}
 	if err := ValidatePath(cfg.DataDir); err != nil {
@@ -329,17 +329,17 @@ func (cfg Server) Validate() error {
 		return fmt.Errorf("public_url: %w", err)
 	}
 	if cfg.MaxNodes < 1 {
-		return errors.New("max_nodes must be positive")
+		return errors.New("max_nodes 必须为正数")
 	}
 	if cfg.WebUpdateIntervalSeconds < 2 || cfg.WebUpdateIntervalSeconds > 60 {
-		return errors.New("web_update_interval_seconds must be between 2 and 60")
+		return errors.New("web_update_interval_seconds 必须在 2 到 60 之间")
 	}
 	return nil
 }
 
 func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	if policy == nil {
-		return Agent{}, errors.New("administrator-owned install policy is required")
+		return Agent{}, errors.New("必须提供归管理员所有的安装策略")
 	}
 	keys := []string{"server_url", "ca_file", "state_dir", "expected_uid", "expected_gid", "expected_account", "install_mode", "report_interval_seconds", "disk_interval_seconds", "interfaces", "disk_paths", "probe_targets"}
 	layers, err := sources(opts, keys)
@@ -359,10 +359,10 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	for _, layer := range layers {
 		for key, value := range layer {
 			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-				return Agent{}, fmt.Errorf("%s must not be null", key)
+				return Agent{}, fmt.Errorf("%s 不能为 null", key)
 			}
-			// Each local source must be well-typed and valid even when a higher
-			// precedence source supplies another value for the same runtime key.
+			// 即使更高优先级的来源为同一运行时键提供了其他值，
+			// 每个本地来源自身也必须类型正确且有效。
 			if _, ok := protected[key]; !ok {
 				candidate := v1.DefaultRuntimeSettings()
 				encoded, err := json.Marshal(map[string]json.RawMessage{key: value})
@@ -370,7 +370,7 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 					return Agent{}, err
 				}
 				if err := json.Unmarshal(encoded, &candidate); err != nil {
-					return Agent{}, fmt.Errorf("%s has an invalid runtime configuration type", key)
+					return Agent{}, fmt.Errorf("%s 的运行时配置类型无效", key)
 				}
 				if err := candidate.Validate(); err != nil {
 					return Agent{}, err
@@ -397,7 +397,7 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 		return Agent{}, err
 	}
 	if err := json.Unmarshal(data, &settings); err != nil {
-		return Agent{}, errors.New("invalid runtime configuration types")
+		return Agent{}, errors.New("运行时配置类型无效")
 	}
 	if err := settings.Validate(); err != nil {
 		return Agent{}, err
@@ -407,19 +407,19 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	}
 	scheme, _, _ := strings.Cut(policy.ServerURL, ":")
 	if strings.EqualFold(scheme, "http") && policy.CAFile != "" {
-		return Agent{}, errors.New("ca_file requires an HTTPS server_url; HTTP does not use TLS certificates")
+		return Agent{}, errors.New("ca_file 仅适用于 HTTPS 的 server_url；HTTP 不使用 TLS 证书")
 	}
 	if err := ValidatePath(policy.StateDir); err != nil {
 		return Agent{}, err
 	}
 	if !filepath.IsAbs(policy.StateDir) {
-		return Agent{}, errors.New("state_dir must be an absolute filesystem path")
+		return Agent{}, errors.New("state_dir 必须是绝对文件系统路径")
 	}
 	if policy.ExpectedUID < 0 || policy.ExpectedGID < 0 {
-		return Agent{}, errors.New("expected uid/gid must not be negative")
+		return Agent{}, errors.New("期望的 UID/GID 不能为负数")
 	}
 	if policy.InstallMode != "native" && policy.InstallMode != "docker" && policy.InstallMode != "foreground" {
-		return Agent{}, errors.New("install_mode must be native, docker or foreground")
+		return Agent{}, errors.New("install_mode 必须是 native、docker 或 foreground")
 	}
 	return Agent{InstallPolicy: *policy, RuntimeSettings: settings}, nil
 }
