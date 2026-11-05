@@ -9,11 +9,9 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-func TestInboxTransitionsCommitWithoutOutboundCapacity(t *testing.T) {
+func TestInboxTransitionsCommitWithoutOutboundChannels(t *testing.T) {
 	f := newFixture(t, 60)
 	f.e.opts.Now = func() time.Time { return f.now }
-	f.e.queue = make(chan Notification, 1)
-	f.e.queue <- Notification{}
 	f.tick(t)
 	f.advance(60)
 	f.value(90)
@@ -42,8 +40,7 @@ func TestInboxTransitionsCommitWithoutOutboundCapacity(t *testing.T) {
 		t.Fatalf("immutable snapshot=%+v", snapshot)
 	}
 	f.tick(t)
-	f.e = NewEvaluator(f.s, f.latest, EvaluatorOptions{Now: func() time.Time { return f.now }, QueueSize: 1})
-	f.e.queue <- Notification{}
+	f.e = NewEvaluator(f.s, f.latest, EvaluatorOptions{Now: func() time.Time { return f.now }})
 	f.advance(1)
 	f.value(10)
 	f.tick(t)
@@ -64,11 +61,13 @@ func TestInboxTransitionsCommitWithoutOutboundCapacity(t *testing.T) {
 func TestInboxFailureRollsBackAlertTransition(t *testing.T) {
 	f := newFixture(t, 0)
 	f.e.opts.Now = func() time.Time { return f.now }
+	notifier := &recordingNotifier{}
+	f.e.opts.Notifier = notifier
 	f.exec(t, `CREATE TRIGGER reject_inbox BEFORE INSERT ON inbox_notifications BEGIN SELECT RAISE(ABORT,'inbox unavailable'); END`)
 	if err := f.e.Evaluate(context.Background(), f.now); err == nil {
 		t.Fatal("inbox failure ignored")
 	}
-	if len(f.events(t, "all")) != 0 || len(f.e.queue) != 0 {
+	if len(f.events(t, "all")) != 0 || len(notifier.notifications) != 0 || notifier.wakes != 0 {
 		t.Fatal("source state committed without inbox")
 	}
 	f.exec(t, `DROP TRIGGER reject_inbox`)

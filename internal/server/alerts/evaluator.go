@@ -3,13 +3,13 @@ package alerts
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"orbitbeacon/internal/logging"
@@ -30,23 +30,25 @@ type Notification struct {
 	ResolvedAt *time.Time
 }
 
-// Notifier 在事务提交后由独立、队列有界的后台任务调用；实现必须响应 context 取消。
+// Notifier 在调用方事务内持久化投递，失败时由调用方回滚告警变化。
+// Wake 仅在提交后调用，必须非阻塞；即使唤醒丢失，投递也由持久化轮询兜底。
 type Notifier interface {
-	Notify(context.Context, Notification)
+	Enqueue(context.Context, *sql.Tx, Notification) error
+	Wake()
 }
 type NoopNotifier struct{}
 
-func (NoopNotifier) Notify(context.Context, Notification) {}
+func (NoopNotifier) Enqueue(context.Context, *sql.Tx, Notification) error { return nil }
+func (NoopNotifier) Wake()                                                {}
 
 type LatestReader interface {
 	Latest(context.Context, string) (ingest.LatestReport, error)
 }
 type EvaluatorOptions struct {
-	Interval  time.Duration
-	Now       func() time.Time
-	Notifier  Notifier
-	QueueSize int
-	Logger    *slog.Logger
+	Interval time.Duration
+	Now      func() time.Time
+	Notifier Notifier
+	Logger   *slog.Logger
 }
 type pair struct{ rule, node string }
 type pending struct {
@@ -80,8 +82,6 @@ type Evaluator struct {
 	mu          sync.Mutex // Evaluate 串行执行，包括显式的测试/手动 tick。
 	pending     map[pair]pending
 	resolutions map[pair]pendingResolution
-	queue       chan Notification
-	dropped     atomic.Uint64
 }
 
 func NewEvaluator(service *Service, latest LatestReader, opts EvaluatorOptions) *Evaluator {
@@ -94,31 +94,12 @@ func NewEvaluator(service *Service, latest LatestReader, opts EvaluatorOptions) 
 	if opts.Notifier == nil {
 		opts.Notifier = NoopNotifier{}
 	}
-	if opts.QueueSize <= 0 {
-		opts.QueueSize = 256
-	}
-	return &Evaluator{service: service, latest: latest, opts: opts, pending: make(map[pair]pending), resolutions: make(map[pair]pendingResolution), queue: make(chan Notification, opts.QueueSize)}
+	return &Evaluator{service: service, latest: latest, opts: opts, pending: make(map[pair]pending), resolutions: make(map[pair]pendingResolution)}
 }
 
-// Run 持有评估和通知两个 worker，二者都停止后才返回。
+// Run 持有评估循环；外发由通知服务的持久化 worker 处理。
 // 调用方须先取消 ctx 并等待 Run 结束，再关闭数据库。
 func (e *Evaluator) Run(ctx context.Context) {
-	workerDone := make(chan struct{})
-	go func() {
-		defer close(workerDone)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case n := <-e.queue:
-				if ctx.Err() != nil {
-					return
-				}
-				e.opts.Notifier.Notify(ctx, n)
-			}
-		}
-	}()
-	defer func() { <-workerDone }()
 	tick := func() {
 		if err := e.Evaluate(ctx, e.opts.Now()); err != nil && ctx.Err() == nil {
 			if e.opts.Logger != nil {
@@ -135,16 +116,6 @@ func (e *Evaluator) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			tick()
-		}
-	}
-}
-func (e *Evaluator) enqueue(n Notification) {
-	select {
-	case e.queue <- n:
-	default:
-		e.dropped.Add(1)
-		if e.opts.Logger != nil {
-			e.opts.Logger.Warn("alert_notification_queue_full")
 		}
 	}
 }
@@ -413,7 +384,11 @@ func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *f
 		return err
 	}
 	if count > 0 {
-		if err := insertInbox(ctx, tx, Notification{EventID: id, Rule: r, NodeID: n.id, NodeName: n.name, State: "firing", Value: value, StartedAt: since}, e.opts.Now()); err != nil {
+		notification := Notification{EventID: id, Rule: r, NodeID: n.id, NodeName: n.name, State: "firing", Value: value, StartedAt: since}
+		if err := insertInbox(ctx, tx, notification, e.opts.Now()); err != nil {
+			return err
+		}
+		if err := e.opts.Notifier.Enqueue(ctx, tx, notification); err != nil {
 			return err
 		}
 	}
@@ -421,7 +396,7 @@ func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *f
 		return err
 	}
 	if count > 0 {
-		e.enqueue(Notification{EventID: id, Rule: r, NodeID: n.id, NodeName: n.name, State: "firing", Value: value, StartedAt: since})
+		e.opts.Notifier.Wake()
 	}
 	return nil
 }
@@ -448,7 +423,11 @@ func (e *Evaluator) resolve(ctx context.Context, o openEvent, value *float64, no
 		return err
 	}
 	if count > 0 {
-		if err := insertInbox(ctx, tx, Notification{EventID: o.ID, Rule: o.rule, NodeID: o.NodeID, NodeName: o.NodeName, State: "resolved", Value: value, StartedAt: o.StartedAt, ResolvedAt: &now}, e.opts.Now()); err != nil {
+		notification := Notification{EventID: o.ID, Rule: o.rule, NodeID: o.NodeID, NodeName: o.NodeName, State: "resolved", Value: value, StartedAt: o.StartedAt, ResolvedAt: &now}
+		if err := insertInbox(ctx, tx, notification, e.opts.Now()); err != nil {
+			return err
+		}
+		if err := e.opts.Notifier.Enqueue(ctx, tx, notification); err != nil {
 			return err
 		}
 	}
@@ -457,7 +436,7 @@ func (e *Evaluator) resolve(ctx context.Context, o openEvent, value *float64, no
 	}
 	delete(e.resolutions, key)
 	if count > 0 {
-		e.enqueue(Notification{EventID: o.ID, Rule: o.rule, NodeID: o.NodeID, NodeName: o.NodeName, State: "resolved", Value: value, StartedAt: o.StartedAt, ResolvedAt: &now})
+		e.opts.Notifier.Wake()
 	}
 	return nil
 }

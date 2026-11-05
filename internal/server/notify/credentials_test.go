@@ -118,7 +118,7 @@ func TestUnreadableDeliveryBackoffAndKeyRestoration(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.WriteHeader(204) }))
 	defer ts.Close()
 	f.target(t, ts.URL+"/private-path?token=query-secret")
-	f.s.Notify(context.Background(), f.note("restore-key"))
+	f.enqueue(t, f.note("restore-key"))
 	original := f.s.box
 	wrong, _ := secretbox.New(bytes.Repeat([]byte{8}, 32), "orbitbeacon notification channel v1")
 	f.s.box = wrong
@@ -159,7 +159,7 @@ func TestUnreadableDeliveryBackoffAndKeyRestoration(t *testing.T) {
 
 func TestUnreadableDeliveryUsesNormalAttemptLimit(t *testing.T) {
 	f := newFixture(t)
-	f.s.Notify(context.Background(), f.note("exhaust-key"))
+	f.enqueue(t, f.note("exhaust-key"))
 	f.s.box, _ = secretbox.New(bytes.Repeat([]byte{8}, 32), "orbitbeacon notification channel v1")
 	for i := range 5 {
 		f.s.process(context.Background())

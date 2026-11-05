@@ -375,32 +375,54 @@ func TestProbesDownFiresAndEmptyResultsResolve(t *testing.T) {
 	}
 }
 
-type blockingNotifier struct{ entered chan Notification }
+type recordingNotifier struct {
+	notifications []Notification
+	wakes         int
+}
 
-func (n blockingNotifier) Notify(ctx context.Context, v Notification) { n.entered <- v; <-ctx.Done() }
-func TestNotifierIsBoundedAfterCommitAndStopsWithContext(t *testing.T) {
+func (n *recordingNotifier) Enqueue(_ context.Context, _ *sql.Tx, v Notification) error {
+	n.notifications = append(n.notifications, v)
+	return nil
+}
+func (n *recordingNotifier) Wake() { n.wakes++ }
+
+// 检查事务内可见的来源，避免把投递重新移到提交之后。
+type checkingNotifier struct {
+	t *testing.T
+	f *alertFixture
+}
+
+func (n checkingNotifier) Enqueue(ctx context.Context, tx *sql.Tx, v Notification) error {
+	n.t.Helper()
+	var state string
+	if err := tx.QueryRowContext(ctx, "SELECT state FROM alert_events WHERE id=?", v.EventID).Scan(&state); err != nil || state != v.State {
+		n.t.Fatalf("event unavailable inside enqueue: %s %v", state, err)
+	}
+	var count int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM inbox_notifications WHERE source_id=? AND transition=?", v.EventID, v.State).Scan(&count); err != nil || count != 1 {
+		n.t.Fatalf("inbox unavailable inside enqueue: %d %v", count, err)
+	}
+	return nil
+}
+func (n checkingNotifier) Wake() {
+	if len(n.f.events(n.t, "all")) != 1 {
+		n.t.Fatal("wake before commit")
+	}
+}
+
+func TestNotifierEnqueuesInTransactionAndWakesAfterCommit(t *testing.T) {
 	f := newFixture(t, 0)
-	entered := make(chan Notification, 1)
-	notifier := blockingNotifier{entered: entered}
-	f.e = NewEvaluator(f.s, f.latest, EvaluatorOptions{Notifier: notifier, Interval: time.Millisecond, QueueSize: 1, Now: func() time.Time { return f.now }})
+	f.e.opts.Notifier = checkingNotifier{t: t, f: f}
+	f.tick(t)
+	f.value(10)
+	f.tick(t)
+}
+
+func TestEvaluatorRunStopsWithContext(t *testing.T) {
+	f := newFixture(t, 0)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { defer close(done); f.e.Run(ctx) }()
-	select {
-	case n := <-entered:
-		if n.State != "firing" || len(f.events(t, "firing")) != 1 {
-			t.Fatal("notify before commit")
-		}
-	case <-time.After(5 * time.Second):
-		cancel()
-		t.Fatal("no notification")
-	}
-	// 阻塞的 notifier 不得拖住 evaluator。其队列保持有界。
-	f.e.enqueue(Notification{})
-	f.e.enqueue(Notification{})
-	if f.e.dropped.Load() != 1 {
-		t.Fatal("queue not bounded")
-	}
 	cancel()
 	select {
 	case <-done:
@@ -488,11 +510,13 @@ func TestPendingResetsOnCredentialEpochChange(t *testing.T) {
 }
 func TestFailedEventWriteDoesNotNotify(t *testing.T) {
 	f := newFixture(t, 0)
+	notifier := &recordingNotifier{}
+	f.e.opts.Notifier = notifier
 	f.exec(t, `CREATE TRIGGER reject_alert BEFORE INSERT ON alert_events BEGIN SELECT RAISE(ABORT,'event failure'); END`)
 	if err := f.e.Evaluate(context.Background(), f.now); err == nil {
 		t.Fatal("lost event write failure")
 	}
-	if len(f.e.queue) != 0 || len(f.events(t, "all")) != 0 {
+	if len(notifier.notifications) != 0 || notifier.wakes != 0 || len(f.events(t, "all")) != 0 {
 		t.Fatal("failed commit notified or persisted")
 	}
 }
@@ -501,6 +525,8 @@ func TestFailedResolutionRetriesBeforeRebreach(t *testing.T) {
 	for _, seconds := range []int{0, 60} {
 		t.Run((time.Duration(seconds) * time.Second).String(), func(t *testing.T) {
 			f := newFixture(t, seconds)
+			notifier := &recordingNotifier{}
+			f.e.opts.Notifier = notifier
 			f.tick(t)
 			if seconds > 0 {
 				f.advance(seconds)
@@ -512,11 +538,11 @@ func TestFailedResolutionRetriesBeforeRebreach(t *testing.T) {
 				t.Fatalf("expected initial firing episode: %+v", events)
 			}
 			old := events[0]
-			select {
-			case <-f.e.queue:
-			default:
+			if len(notifier.notifications) != 1 || notifier.notifications[0].State != "firing" || notifier.wakes != 1 {
 				t.Fatal("missing initial firing notification")
 			}
+			notifier.notifications = nil
+			notifier.wakes = 0
 			f.advance(30)
 			recoveredAt := f.now
 			f.value(10)
@@ -530,7 +556,7 @@ func TestFailedResolutionRetriesBeforeRebreach(t *testing.T) {
 			if err := f.e.Evaluate(context.Background(), f.now); err == nil || !strings.Contains(err.Error(), "injected resolution failure") {
 				t.Fatalf("re-breach did not retry the observed recovery: %v", err)
 			}
-			if events := f.events(t, "all"); len(events) != 1 || events[0].ID != old.ID || events[0].State != "firing" || len(f.e.queue) != 0 {
+			if events := f.events(t, "all"); len(events) != 1 || events[0].ID != old.ID || events[0].State != "firing" || len(notifier.notifications) != 0 || notifier.wakes != 0 {
 				t.Fatalf("failed resolution started or notified another episode: %+v", events)
 			}
 			if len(f.e.pending) != 0 || len(f.e.resolutions) != 1 {
@@ -548,13 +574,12 @@ func TestFailedResolutionRetriesBeforeRebreach(t *testing.T) {
 			if len(f.e.resolutions) != 0 {
 				t.Fatal("committed resolution retained its intent")
 			}
-			select {
-			case n := <-f.e.queue:
-				if n.EventID != old.ID || n.State != "resolved" || n.ResolvedAt == nil || !n.ResolvedAt.Equal(recoveredAt) || n.Value == nil || *n.Value != 10 {
-					t.Fatalf("incorrect recovery notification: %+v", n)
-				}
-			default:
+			if len(notifier.notifications) == 0 || notifier.wakes == 0 {
 				t.Fatal("missing recovery notification")
+			}
+			n := notifier.notifications[0]
+			if n.EventID != old.ID || n.State != "resolved" || n.ResolvedAt == nil || !n.ResolvedAt.Equal(recoveredAt) || n.Value == nil || *n.Value != 10 {
+				t.Fatalf("incorrect recovery notification: %+v", n)
 			}
 			if seconds > 0 {
 				if events := f.events(t, "firing"); len(events) != 0 {
@@ -713,6 +738,8 @@ func TestFireRevalidatesIdentityAndDisabledRules(t *testing.T) {
 	for _, mode := range []string{"identity", "credential_epoch", "disabled"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newFixture(t, 0)
+			notifier := &recordingNotifier{}
+			f.e.opts.Notifier = notifier
 			inventory, err := f.e.readNodes(context.Background())
 			if err != nil {
 				t.Fatal(err)
@@ -727,7 +754,11 @@ func TestFireRevalidatesIdentityAndDisabledRules(t *testing.T) {
 			if err = f.e.fire(context.Background(), f.rule, inventory[0], ptr(90.0), f.now); err != nil {
 				t.Fatal(err)
 			}
-			if len(f.events(t, "all")) != 0 || len(f.e.queue) != 0 {
+			var inboxCount int
+			if err := f.db.QueryRow("SELECT count(*) FROM inbox_notifications").Scan(&inboxCount); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.events(t, "all")) != 0 || inboxCount != 0 || len(notifier.notifications) != 0 || notifier.wakes != 0 {
 				t.Fatal("stale evaluation committed after identity/disable")
 			}
 		})

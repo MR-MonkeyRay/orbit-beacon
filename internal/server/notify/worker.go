@@ -34,24 +34,19 @@ func notificationPayload(n alerts.Notification) Payload {
 	p.Node.Name = n.NodeName
 	return p
 }
-func (s *Service) Notify(ctx context.Context, n alerts.Notification) {
-	if s.closed.Load() || ctx.Err() != nil {
-		return
+
+// Enqueue 只使用告警调用方的事务，不自行提交或发送网络请求。
+func (s *Service) Enqueue(ctx context.Context, tx *sql.Tx, n alerts.Notification) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.closed.Load() {
+		return ErrUnavailable
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stop := context.AfterFunc(s.stopCtx, cancel)
 	defer stop()
-	if e := s.enqueue(ctx, n); e != nil && ctx.Err() == nil && s.logger != nil {
-		s.logger.LogAttrs(ctx, slog.LevelWarn, "notification_enqueue_failed", logging.ErrorAttrs(e, "storage_error")...)
-	}
-}
-func (s *Service) enqueue(ctx context.Context, n alerts.Notification) error {
-	tx, e := s.db.BeginTx(ctx, nil)
-	if e != nil {
-		return e
-	}
-	defer tx.Rollback()
 	rows, e := tx.QueryContext(ctx, `SELECT c.id FROM notification_channels c JOIN alert_rule_channels r ON r.channel_id=c.id WHERE r.rule_id=? AND c.enabled=1`, n.Rule.ID)
 	if e != nil {
 		return e
@@ -72,12 +67,13 @@ func (s *Service) enqueue(ctx context.Context, n alerts.Notification) error {
 	}
 	now := timekey.Format(s.opts.Now())
 	p := notificationPayload(n)
+	raw, _ := json.Marshal(p)
 	for _, id := range ids {
+		// 合并将每通道 pending 限制在约 100 行，下面两条查询在写锁内的开销有界。
 		var count int
 		if e = tx.QueryRowContext(ctx, "SELECT count(*) FROM notification_deliveries WHERE channel_id=? AND state='pending'", id).Scan(&count); e != nil {
 			return e
 		}
-		raw, _ := json.Marshal(p)
 		if count >= MaxPendingPerChannel {
 			// 保留最新一条 pending 行作为持久摘要。worker 只在认领事务内
 			// 读取其 payload，以此隔离并发的洪泛。
@@ -86,9 +82,9 @@ func (s *Service) enqueue(ctx context.Context, n alerts.Notification) error {
 			e = tx.QueryRowContext(ctx, `SELECT id,coalesced_count FROM notification_deliveries WHERE channel_id=? AND state='pending' AND lease_until='' ORDER BY coalesced_count DESC,created_at DESC,id DESC LIMIT 1`, id).Scan(&summaryID, &total)
 			if e == nil {
 				p.SummaryCount = total + 1
-				raw, _ = json.Marshal(p)
+				summaryRaw, _ := json.Marshal(p)
 				p.SummaryCount = 0
-				_, e = tx.ExecContext(ctx, "UPDATE notification_deliveries SET payload_json=?,event_id=?,coalesced_count=?,attempts=0,last_error_code='',updated_at=? WHERE id=?", string(raw), n.EventID, total+1, now, summaryID)
+				_, e = tx.ExecContext(ctx, "UPDATE notification_deliveries SET payload_json=?,event_id=?,coalesced_count=?,attempts=0,last_error_code='',updated_at=? WHERE id=?", string(summaryRaw), n.EventID, total+1, now, summaryID)
 				if e != nil {
 					return e
 				}
@@ -107,7 +103,15 @@ func (s *Service) enqueue(ctx context.Context, n alerts.Notification) error {
 			return e
 		}
 	}
-	return tx.Commit()
+	return nil
+}
+
+// Wake 只传递提示；容量为一的信号可合并，持久化轮询保证最终处理。
+func (s *Service) Wake() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
 }
 
 type Delivery struct {
@@ -154,6 +158,7 @@ func (s *Service) Run(ctx context.Context) {
 		select {
 		case <-workCtx.Done():
 			return
+		case <-s.wake:
 		case <-ticker.C:
 		}
 	}

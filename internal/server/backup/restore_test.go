@@ -5,17 +5,23 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"orbitbeacon/internal/server/alerts"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/history"
 	"orbitbeacon/internal/server/inbox"
+	"orbitbeacon/internal/server/notify"
 	"orbitbeacon/internal/server/secretbox"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
@@ -715,5 +721,133 @@ func TestRestoreImportedEventsNeverOwnSecretsOrArtifacts(t *testing.T) {
 	var first string
 	if err = restored.QueryRow(`SELECT id FROM inbox_notifications ORDER BY sequence LIMIT 1`).Scan(&first); err != nil || first != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" {
 		t.Fatal("sequence not rebuilt in created_at/id order")
+	}
+}
+
+func TestRestoreHistoricalAlertsNeverReenqueueDeliveries(t *testing.T) {
+	ctx := context.Background()
+	source := restoreFixture(t, "source")
+	db, err := storage.Open(ctx, filepath.Join(source, "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var calls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+	key, err := datadir.LoadKey(filepath.Join(source, "secrets.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	box, err := secretbox.New(key, "orbitbeacon notification channel v1")
+	clear(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notifications := notify.New(db, box, notify.Options{AllowPrivateNetworks: true, AllowInsecureWebhooks: true})
+	config, err := json.Marshal(notify.Config{URL: ts.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const channel = "99999999-9999-4999-8999-999999999999"
+	if _, err = notifications.Save(ctx, channel, notify.Patch{Config: config}); err != nil {
+		t.Fatal(err)
+	}
+	var patch alerts.Patch
+	if err = json.Unmarshal([]byte(`{"name":"historical","enabled":true,"scope_kind":"all","metric":"cpu_percent","comparator":">","threshold":80,"for_seconds":0,"severity":"warning","channel_ids":["`+channel+`"]}`), &patch); err != nil {
+		t.Fatal(err)
+	}
+	rule, err := alerts.NewService(db, nil).Save(ctx, "", patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawRule, err := json.Marshal(rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC()
+	stamp := timekey.Format(at)
+	for i, state := range []string{"pending", "sent", "failed"} {
+		id := fmt.Sprintf("aaaaaaaa-aaaa-4aaa-8aaa-%012d", i+1)
+		eventState := "resolved"
+		var resolved any = stamp
+		if state == "pending" {
+			eventState, resolved = "firing", nil
+		}
+		if _, err = db.Exec(`INSERT INTO alert_events(id,rule_id,node_id,state,started_at,resolved_at,rule_name,node_name,rule_snapshot) VALUES(?,?,?,?,?,?,'historical','source',?)`, id, rule.ID, restoreNode, eventState, stamp, resolved, string(rawRule)); err != nil {
+			t.Fatal(err)
+		}
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := alerts.Notification{EventID: id, Rule: rule, NodeID: restoreNode, NodeName: "source", State: eventState, StartedAt: at}
+		if resolved != nil {
+			n.ResolvedAt = &at
+		}
+		if err = notifications.Enqueue(ctx, tx, n); err != nil {
+			tx.Rollback()
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec("UPDATE notification_deliveries SET state=? WHERE event_id=?", state, id); err != nil {
+			tx.Rollback()
+			t.Fatal(err)
+		}
+		if err = tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	target := restoreFixture(t, "target")
+	archive, password := restoreArchive(t, source, []Category{Configuration, Monitoring, Events})
+	if _, err = Restore(ctx, target, archive, password, true); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := storage.Open(ctx, filepath.Join(target, "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	key, err = datadir.LoadKey(filepath.Join(target, "secrets.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	box, err = secretbox.New(key, "orbitbeacon notification channel v1")
+	clear(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := notify.New(restored, box, notify.Options{AllowPrivateNetworks: true, AllowInsecureWebhooks: true})
+	// 历史 firing 事件仍在；没有新观测不构成恢复，也不得补发历史 firing。
+	evaluator := alerts.NewEvaluator(alerts.NewService(restored, nil), nil, alerts.EvaluatorOptions{Notifier: worker})
+	if err = evaluator.Evaluate(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	for query, want := range map[string]int{
+		"SELECT count(*) FROM alert_events":                                  3,
+		"SELECT count(*) FROM notification_deliveries":                       2,
+		"SELECT count(*) FROM notification_deliveries WHERE state='pending'": 0,
+		"SELECT count(*) FROM notification_deliveries WHERE state='sent'":    1,
+		"SELECT count(*) FROM notification_deliveries WHERE state='failed'":  1,
+	} {
+		if err = restored.QueryRow(query).Scan(&count); err != nil || count != want {
+			t.Fatalf("%s: %d want %d: %v", query, count, want, err)
+		}
+	}
+	go worker.Run(ctx)
+	time.Sleep(600 * time.Millisecond)
+	shutdownCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err = worker.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("restored history sent %d notifications", calls.Load())
 	}
 }

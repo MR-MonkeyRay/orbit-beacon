@@ -69,7 +69,8 @@ func TestEvaluatorRealLatestFencesIdentityMutations(t *testing.T) {
 			}
 			f.exec(t, "DELETE FROM alert_events")
 			reader := &identityFenceReader{LatestReader: real}
-			f.e = NewEvaluator(f.s, reader, EvaluatorOptions{})
+			notifier := &recordingNotifier{}
+			f.e = NewEvaluator(f.s, reader, EvaluatorOptions{Notifier: notifier})
 			ns := nodes.NewService(f.db, nodes.Options{Now: func() time.Time { return f.now }})
 			switch mutation {
 			case "revoke":
@@ -113,8 +114,8 @@ func TestEvaluatorRealLatestFencesIdentityMutations(t *testing.T) {
 			if reader.calls != 1 || !errors.Is(reader.err, nodes.ErrNotFound) || reader.report.Metrics.CPUPercent != nil {
 				t.Fatalf("evaluator read old identity: calls=%d report=%+v err=%v", reader.calls, reader.report, reader.err)
 			}
-			if events := f.events(t, "all"); len(events) != 0 || len(f.e.pending) != 0 || len(f.e.queue) != 0 {
-				t.Fatalf("old report reached evaluator: events=%+v pending=%d queued=%d", events, len(f.e.pending), len(f.e.queue))
+			if events := f.events(t, "all"); len(events) != 0 || len(f.e.pending) != 0 || len(notifier.notifications) != 0 || notifier.wakes != 0 {
+				t.Fatalf("old report reached evaluator: events=%+v pending=%d enqueued=%d", events, len(f.e.pending), len(notifier.notifications))
 			}
 		})
 	}

@@ -412,3 +412,18 @@ func TestPayloadBucketSeriesValueBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestPayloadRejectsPendingNotificationDeliveries(t *testing.T) {
+	for _, state := range []string{"sent", "failed", "pending"} {
+		t.Run(state, func(t *testing.T) {
+			db := validationDB(t, Events)
+			if _, err := db.Exec(`INSERT INTO notification_deliveries(id,channel_id,event_id,state,attempts,next_attempt_at,last_error_code,lease_until,payload_json,coalesced_count,created_at,updated_at) VALUES(?,?,?,?,0,?,'','','{}',1,?,?)`, validationID, validationID, validationID, state, validationTime, validationTime, validationTime); err != nil {
+				t.Fatal(err)
+			}
+			err := ValidatePayloadData(context.Background(), db, Events, nil)
+			if (err == nil) != (state != "pending") {
+				t.Fatalf("state=%s: %v", state, err)
+			}
+		})
+	}
+}

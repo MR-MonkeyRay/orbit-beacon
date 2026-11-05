@@ -87,6 +87,7 @@ type Service struct {
 	closed         atomic.Bool
 	cancel         context.CancelFunc
 	done           chan struct{}
+	wake           chan struct{}
 	stopCtx        context.Context
 	stop           context.CancelFunc
 	secretWarnings map[string]time.Time
@@ -98,7 +99,7 @@ func New(db *sql.DB, box *secretbox.Box, opts Options) *Service {
 		opts.Now = time.Now
 	}
 	stopCtx, stop := context.WithCancel(context.Background())
-	return &Service{db: db, box: box, opts: opts, sender: newSender(opts), done: make(chan struct{}), stopCtx: stopCtx, stop: stop, secretWarnings: make(map[string]time.Time), logger: opts.Logger}
+	return &Service{db: db, box: box, opts: opts, sender: newSender(opts), done: make(chan struct{}), wake: make(chan struct{}, 1), stopCtx: stopCtx, stop: stop, secretWarnings: make(map[string]time.Time), logger: opts.Logger}
 }
 
 var chatIDPattern = regexp.MustCompile(`^(?:-?[0-9]{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$`)
