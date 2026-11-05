@@ -15,7 +15,7 @@ import (
 func managementState(t *testing.T, f fixture) map[string][]string {
 	t.Helper()
 	state := make(map[string][]string)
-	for _, table := range []string{"users", "sessions", "groups", "nodes", "node_tags", "enrollment_tokens", "enrollment_claims", "update_jobs", "update_job_nodes", "audit_events"} {
+	for _, table := range []string{"users", "sessions", "groups", "nodes", "node_tags", "enrollment_tokens", "enrollment_claims", "audit_events"} {
 		state[table] = nil
 		rows, err := f.db.Query("SELECT * FROM " + table)
 		if err != nil {
@@ -59,7 +59,6 @@ func TestAdministrativeMutationsAndAuditInsertCommitOrRollbackTogether(t *testin
 	const nodeID = "00000000-0000-4000-8000-000000000111"
 	const groupID = "00000000-0000-4000-8000-000000000222"
 	const userID = "00000000-0000-4000-8000-000000000333"
-	const jobID = "00000000-0000-4000-8000-000000000444"
 	for _, mutation := range []struct {
 		name   string
 		method string
@@ -107,8 +106,6 @@ func TestAdministrativeMutationsAndAuditInsertCommitOrRollbackTogether(t *testin
 						{"INSERT INTO users(id,username,password_hash,created_at) VALUES (?,?,?,?)", []any{userID, "target-user", hash, now.Format(time.RFC3339Nano)}},
 						{"INSERT INTO nodes(id,name,group_id,notes,created_at) VALUES (?,?,?,?,?)", []any{nodeID, "original node", groupID, "original notes", now.Format(time.RFC3339Nano)}},
 						{"INSERT INTO node_tags(node_id,tag) VALUES (?,?)", []any{nodeID, "original"}},
-						{"INSERT INTO update_jobs(id,release_seq,created_at) VALUES (?,?,?)", []any{jobID, 1, now.Format(time.RFC3339Nano)}},
-						{"INSERT INTO update_job_nodes(job_id,node_id,status) VALUES (?,?,?)", []any{jobID, nodeID, "queued"}},
 					} {
 						if _, err := f.db.Exec(seed.query, seed.args...); err != nil {
 							t.Fatal(err)

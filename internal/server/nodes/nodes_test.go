@@ -10,10 +10,12 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/storage"
 )
@@ -170,39 +172,23 @@ func TestBatchRequiresExplicitBoundedIDsAndReportsEachNode(t *testing.T) {
 	}
 }
 
-// 直接预置排队任务，确保删除节点时也处理持久化的任务状态。
-func seedCredentialAndUpdate(t *testing.T, db *sql.DB, nodeID string) (string, string) {
+// 直接预置凭据，确保删除节点时撤销持久化身份。
+func seedCredential(t *testing.T, db *sql.DB, nodeID string) string {
 	t.Helper()
 	ctx := context.Background()
 	const token = "node-regression-token-with-at-least-32-bytes"
-	const jobID = "00000000-0000-4000-8000-000000000123"
 	digest := sha256.Sum256([]byte(token))
 	if _, err := db.ExecContext(ctx, "UPDATE nodes SET token_hash = ?, installation_id = ? WHERE id = ?", digest[:], "00000000-0000-4000-8000-000000000456", nodeID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, "INSERT INTO update_jobs(id, release_seq, created_at) VALUES (?, ?, ?)", jobID, 1, "2026-02-03T04:05:06Z"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, "INSERT INTO update_job_nodes(job_id, node_id, status) VALUES (?, ?, ?)", jobID, nodeID, "queued"); err != nil {
-		t.Fatal(err)
-	}
-	return token, jobID
+	return token
 }
 
-func queuedStatus(t *testing.T, db *sql.DB, jobID, nodeID string) string {
-	t.Helper()
-	var status string
-	if err := db.QueryRowContext(context.Background(), "SELECT status FROM update_job_nodes WHERE job_id = ? AND node_id = ?", jobID, nodeID).Scan(&status); err != nil {
-		t.Fatal(err)
-	}
-	return status
-}
-
-func TestDeletionRequiresConfirmationAndRevokesCredentialsAndPendingUpdate(t *testing.T) {
+func TestDeletionRequiresConfirmationAndRevokesCredentials(t *testing.T) {
 	service, db := newNodes(t, 2)
 	ctx := context.Background()
 	node := pending(t, service, "delete me")
-	token, jobID := seedCredentialAndUpdate(t, db, node.ID)
+	token := seedCredential(t, db, node.ID)
 	if got, err := service.AuthenticateToken(ctx, token); err != nil || got.ID != node.ID {
 		t.Fatalf("fixture credential is not active: node=%+v err=%v", got, err)
 	}
@@ -211,9 +197,6 @@ func TestDeletionRequiresConfirmationAndRevokesCredentialsAndPendingUpdate(t *te
 	}
 	if _, err := service.AuthenticateToken(ctx, token); err != nil {
 		t.Fatalf("unconfirmed deletion revoked credentials: %v", err)
-	}
-	if got := queuedStatus(t, db, jobID, node.ID); got != "queued" {
-		t.Fatalf("unconfirmed deletion changed update state to %q", got)
 	}
 	if err := service.Delete(ctx, node.ID, true); err != nil {
 		t.Fatal(err)
@@ -224,35 +207,30 @@ func TestDeletionRequiresConfirmationAndRevokesCredentialsAndPendingUpdate(t *te
 	if _, err := service.AuthenticateToken(ctx, token); !errors.Is(err, nodes.ErrUnauthenticated) {
 		t.Errorf("deleted node credential still authenticates: %v", err)
 	}
-	if got := queuedStatus(t, db, jobID, node.ID); got != "cancelled" {
-		t.Errorf("deleted node has pending update status %q", got)
-	}
 }
 
-func TestDeletionFailureRollsBackAllIdentityAndUpdateChanges(t *testing.T) {
+func TestDeletionFailureRollsBackIdentityChanges(t *testing.T) {
 	for _, trigger := range []string{
 		"CREATE TRIGGER reject_node_delete BEFORE DELETE ON nodes BEGIN SELECT RAISE(ABORT, 'injected deletion failure'); END",
-		"CREATE TRIGGER reject_update_cancel BEFORE UPDATE OF status ON update_job_nodes WHEN NEW.status = 'cancelled' BEGIN SELECT RAISE(ABORT, 'injected cancellation failure'); END",
+		"CREATE TRIGGER reject_node_audit BEFORE INSERT ON audit_events WHEN NEW.action = 'node.delete' BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END",
 	} {
 		t.Run(trigger, func(t *testing.T) {
 			service, db := newNodes(t, 2)
-			ctx := context.Background()
+			// 没有操作者时 audit.Insert 会跳过写入，审计触发器就不会执行。
+			ctx := audit.WithSystemActor(context.Background(), "test")
 			node := pending(t, service, "keep on rollback")
-			token, jobID := seedCredentialAndUpdate(t, db, node.ID)
+			token := seedCredential(t, db, node.ID)
 			if _, err := db.ExecContext(ctx, trigger); err != nil {
 				t.Fatal(err)
 			}
-			if err := service.Delete(ctx, node.ID, true); err == nil {
-				t.Fatal("deletion ignored injected storage failure")
+			if err := service.Delete(ctx, node.ID, true); err == nil || !strings.Contains(err.Error(), "injected") {
+				t.Fatalf("deletion did not fail on injected storage failure: %v", err)
 			}
 			if got, err := service.Get(ctx, node.ID); err != nil || got.ID != node.ID {
 				t.Errorf("failed deletion lost asset: node=%+v err=%v", got, err)
 			}
 			if got, err := service.AuthenticateToken(ctx, token); err != nil || got.ID != node.ID {
 				t.Errorf("failed deletion revoked identity: node=%+v err=%v", got, err)
-			}
-			if got := queuedStatus(t, db, jobID, node.ID); got != "queued" {
-				t.Errorf("failed deletion did not restore queued update: %q", got)
 			}
 		})
 	}

@@ -26,8 +26,8 @@ type Migration struct {
 	SQL     string
 }
 
-// CurrentSchemaVersion 是本二进制生成的最高 schema 版本。
-const CurrentSchemaVersion = 21
+// CurrentSchemaVersion 是本二进制使用的主库 schema 基线版本。
+const CurrentSchemaVersion = 1
 
 // Open 打开持久化本地数据库。驱动对池中每个连接应用连接级 pragma，
 // 而不仅是迁移连接。
@@ -285,11 +285,4 @@ CREATE TABLE audit_events (
  created_at TEXT NOT NULL, details TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX audit_events_created_id ON audit_events(created_at DESC, id DESC);
-CREATE TABLE update_jobs (id TEXT PRIMARY KEY, release_seq INTEGER NOT NULL, created_at TEXT NOT NULL);
--- Node IDs deliberately survive asset deletion so cancellation remains observable.
-CREATE TABLE update_job_nodes (
- job_id TEXT NOT NULL REFERENCES update_jobs(id) ON DELETE CASCADE,
- node_id TEXT NOT NULL, status TEXT NOT NULL, PRIMARY KEY(job_id,node_id)
-);
-CREATE INDEX update_job_nodes_node ON update_job_nodes(node_id);
 `

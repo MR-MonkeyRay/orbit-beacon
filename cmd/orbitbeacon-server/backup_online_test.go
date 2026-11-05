@@ -103,10 +103,11 @@ func TestSnapshotRejectsMissingAndInexactSchemaWithoutMigration(t *testing.T) {
 	for _, fixture := range []struct {
 		name    string
 		missing bool
+		empty   bool
 		version int
 	}{
 		{name: "missing_source", missing: true},
-		{name: "empty_ledger"},
+		{name: "empty_ledger", empty: true},
 		{name: "old_schema", version: storage.CurrentSchemaVersion - 1},
 		{name: "future_schema", version: storage.CurrentSchemaVersion + 1},
 	} {
@@ -124,7 +125,7 @@ func TestSnapshotRejectsMissingAndInexactSchemaWithoutMigration(t *testing.T) {
 				if _, err = db.Exec(`INSERT INTO settings(key,value) VALUES('sentinel','committed'); DELETE FROM schema_migrations`); err != nil {
 					t.Fatal(err)
 				}
-				if fixture.version != 0 {
+				if !fixture.empty {
 					if _, err = db.Exec(`INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)`, fixture.version, "2026-10-28T00:00:00Z"); err != nil {
 						t.Fatal(err)
 					}

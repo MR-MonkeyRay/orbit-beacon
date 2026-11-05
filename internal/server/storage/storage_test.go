@@ -55,6 +55,11 @@ func TestOpenInitializesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	var obsolete int
+	for _, name := range []string{"update_jobs", "update_job_nodes", "update_job_nodes_node"} {
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE name=?`, name).Scan(&obsolete); err != nil || obsolete != 0 {
+			t.Fatalf("obsolete schema object %s=%d err=%v", name, obsolete, err)
+		}
+	}
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('sessions') WHERE name='csrf_hash'`).Scan(&obsolete); err != nil || obsolete != 0 {
 		t.Fatalf("obsolete session field=%d err=%v", obsolete, err)
 	}
@@ -290,11 +295,9 @@ func TestOpenRejectsIncompatibleLedgerWithoutChangingData(t *testing.T) {
 	}{
 		{"missing", ""},
 		{"empty", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);"},
-		{"old", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(16,'original');"},
-		{"intermediate", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(17,'original');"},
-		{"previous-current", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(19,'original');"},
-		{"mixed", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'original'),(16,'original');"},
-		{"mixed-current", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'original'),(%d,'original');", storage.CurrentSchemaVersion)},
+		{"old", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(%d,'original');", storage.CurrentSchemaVersion-1)},
+		{"mixed", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(-1,'original'),(0,'original');"},
+		{"mixed-current", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(%d,'original'),(%d,'original');", storage.CurrentSchemaVersion-1, storage.CurrentSchemaVersion)},
 		{"future", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(%d,'original');", storage.CurrentSchemaVersion+1)},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
@@ -309,7 +312,7 @@ func TestOpenRejectsIncompatibleLedgerWithoutChangingData(t *testing.T) {
 			if _, err = db.Exec(`CREATE TABLE sentinel(value TEXT NOT NULL); INSERT INTO sentinel VALUES('untouched');` + fixture.ledger); err != nil {
 				t.Fatal(err)
 			}
-			if fixture.name == "old" || fixture.name == "intermediate" {
+			if fixture.name == "old" {
 				if _, err := db.Exec(`CREATE TABLE users(id TEXT PRIMARY KEY,username TEXT,password_hash TEXT,role TEXT,created_at TEXT); INSERT INTO users VALUES('original','original','hash','viewer','original')`); err != nil {
 					t.Fatal(err)
 				}
@@ -348,7 +351,7 @@ func TestOpenRejectsIncompatibleLedgerWithoutChangingData(t *testing.T) {
 			if err = db.QueryRow(`SELECT value FROM sentinel`).Scan(&value); err != nil || value != "untouched" {
 				t.Fatalf("sentinel=%q err=%v", value, err)
 			}
-			if fixture.name == "old" || fixture.name == "intermediate" {
+			if fixture.name == "old" {
 				var role string
 				if err := db.QueryRow(`SELECT role FROM users WHERE id='original'`).Scan(&role); err != nil || role != "viewer" {
 					t.Fatalf("old account changed: role=%q err=%v", role, err)

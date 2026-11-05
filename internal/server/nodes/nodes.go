@@ -449,8 +449,7 @@ func (s *Service) AuthenticateToken(ctx context.Context, token string) (Authenti
 	return identity, nil
 }
 
-// Delete 在同一事务中撤销身份、取消待处理任务并删除资产。
-// 更新结果保留已删除节点的 ID 以便审计。
+// Delete 在同一事务中撤销身份、删除资产并记录审计。
 func (s *Service) Delete(ctx context.Context, id string, confirm bool) error {
 	if !confirm {
 		return ErrInvalidInput
@@ -461,9 +460,6 @@ func (s *Service) Delete(ctx context.Context, id string, confirm bool) error {
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, "UPDATE nodes SET token_hash = NULL, installation_id = NULL WHERE id = ?", id); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE update_job_nodes SET status = ? WHERE node_id = ? AND status IN ('queued','downloading','verifying','restarting','awaiting_report')", "cancelled", id); err != nil {
 		return err
 	}
 	if err := audit.ScopedAlertRuleDeletes(ctx, tx, "node", id, s.now()); err != nil {
