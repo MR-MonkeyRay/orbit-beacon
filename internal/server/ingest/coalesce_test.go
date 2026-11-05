@@ -33,6 +33,11 @@ type coalesceFixture struct {
 
 func newCoalesceFixture(t *testing.T, interval time.Duration, targets ...string) *coalesceFixture {
 	t.Helper()
+	return newCoalesceFixtureWithOptions(t, Options{PersistInterval: interval, DisablePersistOffset: true}, targets...)
+}
+
+func newCoalesceFixtureWithOptions(t *testing.T, opts Options, targets ...string) *coalesceFixture {
+	t.Helper()
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -58,7 +63,8 @@ func newCoalesceFixture(t *testing.T, interval time.Duration, targets ...string)
 	if _, err := db.Exec(`CREATE TABLE report_writes (n INTEGER NOT NULL); INSERT INTO report_writes VALUES(0); CREATE TRIGGER count_report_writes AFTER UPDATE OF last_seen ON nodes BEGIN UPDATE report_writes SET n=n+1; END`); err != nil {
 		t.Fatal(err)
 	}
-	f.service = NewService(db, Options{Now: clock, PersistInterval: interval})
+	opts.Now = clock
+	f.service = NewService(db, opts)
 	cpu, load, uptime := 10.0, 0.5, 100.0
 	total, available, zero := uint64(8192), uint64(4096), uint64(0)
 	window := int64(10000)

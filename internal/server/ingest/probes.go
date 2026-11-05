@@ -15,7 +15,7 @@ import (
 
 const probeTargetLimit = 5
 
-// 在每秒一次上报的准入速率下，该限制超过正常的 30 秒持久化间隔（含突发）。
+// 在每秒一次上报的准入速率下，该限制覆盖默认含偏移的不足 60 秒持久化间隔（含突发）。
 // 溢出时通过背压保留已接受的检查。
 const probePendingLimit = 64
 const probeRetention = 7 * 24 * time.Hour

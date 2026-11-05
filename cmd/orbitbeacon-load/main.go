@@ -60,6 +60,13 @@ type summary struct {
 	outcomes  map[string]int
 	latencies []time.Duration
 	success   int
+	buckets   []reportBucket
+}
+
+const summaryBucketInterval = 10 * time.Second
+
+type reportBucket struct {
+	reports, busy int
 }
 
 func main() {
@@ -224,13 +231,14 @@ func sendReports(ctx context.Context, client *http.Client, o options, n node, st
 		if ctx.Err() != nil {
 			return
 		}
-		report := makeReport(o, n, seq, time.Now().UTC())
+		started := time.Now()
+		report := makeReport(o, n, seq, started.UTC())
 		result, _, _ := post(ctx, client, strings.TrimRight(o.baseURL, "/")+"/api/agent/v1/report", n.token, report)
 		// 结束时被取消的在途请求不是服务器失败，不计入汇总。
 		if ctx.Err() != nil && result.status == 0 {
 			return
 		}
-		stats.record(result)
+		stats.record(result, started.Sub(start))
 		base = base.Add(o.interval)
 		if missed := time.Since(base); missed > 0 {
 			base = base.Add((missed/o.interval + 1) * o.interval)
@@ -277,7 +285,7 @@ func post(ctx context.Context, client *http.Client, target, token string, input 
 	return result, data, nil
 }
 
-func (s *summary) record(result outcome) {
+func (s *summary) record(result outcome, sinceStart time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := fmt.Sprintf("%d", result.status)
@@ -292,24 +300,40 @@ func (s *summary) record(result outcome) {
 		s.success++
 	}
 	s.latencies = append(s.latencies, result.elapsed)
+	// 按请求开始时间分段，避免慢响应把同一轮上报挪到下一段。
+	index := int(sinceStart / summaryBucketInterval)
+	for len(s.buckets) <= index {
+		s.buckets = append(s.buckets, reportBucket{})
+	}
+	s.buckets[index].reports++
+	if result.code == "report_busy" {
+		s.buckets[index].busy++
+	}
 }
 
 func (s *summary) print() {
+	s.printTo(os.Stdout)
+}
+
+func (s *summary) printTo(w io.Writer) {
 	sort.Slice(s.latencies, func(i, j int) bool { return s.latencies[i] < s.latencies[j] })
 	rate := 0.0
 	if len(s.latencies) > 0 {
 		rate = 100 * float64(s.success) / float64(len(s.latencies))
 	}
-	fmt.Printf("上报次数：%d，成功：%d，成功率：%.2f%%\n", len(s.latencies), s.success, rate)
+	fmt.Fprintf(w, "上报次数：%d，成功：%d，成功率：%.2f%%\n", len(s.latencies), s.success, rate)
 	keys := make([]string, 0, len(s.outcomes))
 	for key := range s.outcomes {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		fmt.Printf("  %s: %d\n", key, s.outcomes[key])
+		fmt.Fprintf(w, "  %s: %d\n", key, s.outcomes[key])
 	}
-	fmt.Printf("延迟（全部已完成上报，含失败）：p50=%s p95=%s p99=%s\n", percentile(s.latencies, 0.50), percentile(s.latencies, 0.95), percentile(s.latencies, 0.99))
+	fmt.Fprintf(w, "延迟（全部已完成上报，含失败）：p50=%s p95=%s p99=%s\n", percentile(s.latencies, 0.50), percentile(s.latencies, 0.95), percentile(s.latencies, 0.99))
+	for i, bucket := range s.buckets {
+		fmt.Fprintf(w, "  %s–%s: reports=%d report_busy=%d\n", time.Duration(i)*summaryBucketInterval, time.Duration(i+1)*summaryBucketInterval, bucket.reports, bucket.busy)
+	}
 }
 func percentile(sorted []time.Duration, quantile float64) time.Duration {
 	if len(sorted) == 0 {

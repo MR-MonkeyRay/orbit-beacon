@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,8 +36,11 @@ type Options struct {
 	// 不延迟上报处理。
 	Samples chan<- history.Sample
 	Now     func() time.Time
-	// PersistInterval 限定持久化 last_seen 的滞后；非正数表示 30 秒。
+	// PersistInterval 是持久化 last_seen 的基础间隔；非正数表示 30 秒。
+	// 默认另加按节点固定的 [0, PersistInterval) 偏移，在后续上报时检查到期。
 	PersistInterval time.Duration
+	// DisablePersistOffset 关闭固定偏移，供精确验证基础间隔的测试使用。
+	DisablePersistOffset bool
 }
 
 type nodeState struct {
@@ -80,23 +84,24 @@ func (state *nodeState) invalidateIdentity(credential []byte, credentialEpoch in
 }
 
 type Service struct {
-	samples         chan<- history.Sample
-	samplesDropped  atomic.Uint64
-	publicPages     publicPageCache
-	db              *sql.DB
-	now             func() time.Time
-	persistInterval time.Duration
-	mu              sync.Mutex
-	rateMu          sync.Mutex
-	epoch           uint64
-	states          map[string]*nodeState
-	writerQueue     chan struct{}
-	writer          chan struct{}
-	lifecycleMu     sync.Mutex
-	inflight        int
-	closing         bool
-	done            chan struct{}
-	doneClosed      bool
+	samples              chan<- history.Sample
+	samplesDropped       atomic.Uint64
+	publicPages          publicPageCache
+	db                   *sql.DB
+	now                  func() time.Time
+	persistInterval      time.Duration
+	disablePersistOffset bool
+	mu                   sync.Mutex
+	rateMu               sync.Mutex
+	epoch                uint64
+	states               map[string]*nodeState
+	writerQueue          chan struct{}
+	writer               chan struct{}
+	lifecycleMu          sync.Mutex
+	inflight             int
+	closing              bool
+	done                 chan struct{}
+	doneClosed           bool
 }
 
 type stateCandidate struct {
@@ -111,7 +116,25 @@ func NewService(db *sql.DB, opts Options) *Service {
 	if opts.PersistInterval <= 0 {
 		opts.PersistInterval = 30 * time.Second
 	}
-	return &Service{samples: opts.Samples, db: db, now: opts.Now, persistInterval: opts.PersistInterval, states: make(map[string]*nodeState), writerQueue: make(chan struct{}, writerQueueCapacity), writer: make(chan struct{}, 1), done: make(chan struct{})}
+	return &Service{samples: opts.Samples, db: db, now: opts.Now, persistInterval: opts.PersistInterval, disablePersistOffset: opts.DisablePersistOffset, states: make(map[string]*nodeState), writerQueue: make(chan struct{}, writerQueueCapacity), writer: make(chan struct{}, 1), done: make(chan struct{})}
+}
+
+// 同一节点始终使用相同偏移；不依赖进程启动时间或随机状态。
+func persistOffset(nodeID string, interval time.Duration) time.Duration {
+	digest := sha256.Sum256([]byte(nodeID))
+	return time.Duration(binary.BigEndian.Uint64(digest[:8]) % uint64(interval))
+}
+
+func (s *Service) persistenceDue(nodeID string, lastSeen, now time.Time) bool {
+	if lastSeen.IsZero() {
+		return true
+	}
+	elapsed := now.Sub(lastSeen)
+	if elapsed < s.persistInterval {
+		return false
+	}
+	// 分开比较基础间隔和偏移，避免极大间隔相加时溢出。
+	return s.disablePersistOffset || elapsed-s.persistInterval >= persistOffset(nodeID, s.persistInterval)
 }
 
 // beginUse 也覆盖内存中的接受，因此 Shutdown 会排空两条路径。
@@ -432,7 +455,7 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 		cachedGeneration == report.RunGeneration && cachedSession == report.SessionID
 	storedSystemHash := sha256.Sum256([]byte(storedSystem))
 	sameSystem := report.System == nil || subtle.ConstantTimeCompare(storedSystemHash[:], normalized.systemHash[:]) == 1
-	intervalDue := persistedLastSeen.IsZero() || now.Sub(persistedLastSeen) >= s.persistInterval
+	intervalDue := s.persistenceDue(nodeID, persistedLastSeen, now)
 	duplicate := sameState && report.Seq <= cachedSeq
 	durable := !sameState || generation != report.RunGeneration || session != report.SessionID ||
 		(!duplicate && (storedRuntime != string(normalized.runtimeJSON) || !sameSystem)) || intervalDue

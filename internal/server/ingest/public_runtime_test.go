@@ -45,7 +45,7 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 	if _, err := ns.PatchPublicSettings(ctx, n.ID, nodes.PublicSettingsPatch{Enabled: &enabled, Name: &name}); err != nil {
 		t.Fatal(err)
 	}
-	s := ingest.NewService(db, ingest.Options{Now: clock})
+	s := ingest.NewService(db, ingest.Options{Now: clock, DisablePersistOffset: true})
 	out, err := publicNode(ctx, ns, s, n.ID, now)
 	if err != nil || out.Status != "unknown" || out.CPUPercent != nil {
 		t.Fatalf("before reports: %+v %v", out, err)

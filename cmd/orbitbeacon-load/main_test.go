@@ -60,10 +60,10 @@ func TestHTTPOutcomesWithoutSocket(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		stats.record(result)
+		stats.record(result, 0)
 	}
-	stats.record(outcome{status: 200, elapsed: time.Millisecond})
-	stats.record(outcome{})
+	stats.record(outcome{status: 200, elapsed: time.Millisecond}, 0)
+	stats.record(outcome{}, 0)
 	if stats.outcomes["503 report_busy"] != 1 || stats.outcomes["503"] != 1 || stats.outcomes["transport_error"] != 1 || stats.success != 1 {
 		t.Fatalf("stats=%+v", stats)
 	}
@@ -94,5 +94,42 @@ func TestSendReportsOmitsCanceledInFlightReport(t *testing.T) {
 	sendReports(ctx, client, options{baseURL: "http://beacon.test", interval: 10 * time.Second}, n, time.Now(), stats)
 	if len(stats.latencies) != 0 || len(stats.outcomes) != 0 {
 		t.Fatalf("canceled report counted against the server: %+v", stats)
+	}
+}
+
+func TestSummaryTimeBuckets(t *testing.T) {
+	stats := &summary{outcomes: make(map[string]int)}
+	for _, sample := range []struct {
+		at     time.Duration
+		result outcome
+	}{
+		{0, outcome{status: 200}},
+		{10*time.Second - time.Nanosecond, outcome{status: 503, code: "report_busy"}},
+		{10 * time.Second, outcome{status: 503}},
+		{30 * time.Second, outcome{status: 503, code: "report_busy"}},
+		{39 * time.Second, outcome{}},
+	} {
+		stats.record(sample.result, sample.at)
+	}
+	want := []reportBucket{{reports: 2, busy: 1}, {reports: 1}, {}, {reports: 2, busy: 1}}
+	if len(stats.buckets) != len(want) {
+		t.Fatalf("buckets=%+v", stats.buckets)
+	}
+	for i := range want {
+		if stats.buckets[i] != want[i] {
+			t.Fatalf("bucket %d=%+v want %+v", i, stats.buckets[i], want[i])
+		}
+	}
+	var output strings.Builder
+	stats.printTo(&output)
+	for _, line := range []string{
+		"0s–10s: reports=2 report_busy=1",
+		"10s–20s: reports=1 report_busy=0",
+		"20s–30s: reports=0 report_busy=0",
+		"30s–40s: reports=2 report_busy=1",
+	} {
+		if !strings.Contains(output.String(), line) {
+			t.Fatalf("missing %q in %s", line, output.String())
+		}
 	}
 }

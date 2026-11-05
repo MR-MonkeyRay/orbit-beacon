@@ -50,7 +50,7 @@ func newAgentHTTP(t *testing.T, capacity int) *agentFixture {
 	clock := func() time.Time { return f.now }
 	f.nodes = nodes.NewService(db, nodes.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{21})})
 	f.enrollments = enrollment.NewService(db, enrollment.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{22})})
-	f.ingest = ingest.NewService(db, ingest.Options{Now: clock})
+	f.ingest = ingest.NewService(db, ingest.Options{Now: clock, DisablePersistOffset: true})
 	f.auth = auth.NewService(db, auth.Options{Now: clock})
 	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: clock, WebUpdateIntervalSeconds: 2}))
 	if err != nil {
