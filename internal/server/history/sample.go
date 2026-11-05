@@ -23,6 +23,8 @@ func ValidValue(metric string, value float64) bool { return validValue(metric, v
 // 有界的非负值确保即使样本计数达到 int64 时总和仍然有限。
 // 对直接构造 Sample 的调用方，在准入和聚合时使用相同的限制。
 func validValue(metric string, value float64) bool {
+	// 序列后缀不参与基础指标的取值边界判断。
+	metric, _, _ = strings.Cut(metric, ":")
 	limit := float64(math.MaxUint64) // 字节计数器/容量
 	switch {
 	case strings.HasSuffix(metric, "_percent"):

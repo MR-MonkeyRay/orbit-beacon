@@ -125,3 +125,40 @@ func TestSnapshotNetworkRejectsInvalidInterfacesBeforeSumming(t *testing.T) {
 		}
 	}
 }
+
+func TestSampleSeriesValueBounds(t *testing.T) {
+	for _, tc := range []struct {
+		metric string
+		limit  float64
+	}{
+		{"disk_used_percent", 100},
+		{"cpu_percent", 100},
+		{"memory_used_percent", 100},
+		{"swap_used_percent", 100},
+		{"load1", 1e6},
+		{"load5", 1e6},
+		{"load15", 1e6},
+		{"net_rx_bytes_per_second", 1e15},
+		{"net_tx_bytes_per_second", 1e15},
+		{"uptime_seconds", 1e12},
+		{"disk_used_bytes", float64(math.MaxUint64)},
+	} {
+		for _, suffix := range []string{"", ":/x", ":/x:y_percent"} {
+			t.Run(tc.metric+suffix, func(t *testing.T) {
+				metric := tc.metric + suffix
+				for _, value := range []float64{0, tc.limit, tc.limit * 1.01, -1, math.NaN(), math.Inf(1), math.Inf(-1)} {
+					want := value >= 0 && value <= tc.limit
+					if got := ValidValue(metric, value); got != want {
+						t.Errorf("ValidValue(%q, %v)=%v, want %v", metric, value, got, want)
+					}
+					s := &Service{pending: make(map[bucketKey]map[string]aggregate)}
+					s.add(Sample{NodeID: "node", ReceivedAt: time.Unix(60, 0), Values: map[string]float64{metric: value}})
+					got, accepted := s.pending[bucketKey{"node", 60}][metric]
+					if accepted != want || (want && (got.total != value || got.peak != value || got.samples != 1)) {
+						t.Errorf("Sample %s=%v: accepted=%v aggregate=%+v, want accepted=%v", metric, value, accepted, got, want)
+					}
+				}
+			})
+		}
+	}
+}

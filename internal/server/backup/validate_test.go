@@ -380,3 +380,35 @@ func TestPayloadMonitoringConstraints(t *testing.T) {
 		})
 	}
 }
+
+func TestPayloadBucketSeriesValueBounds(t *testing.T) {
+	for _, metric := range []string{"disk_used_percent", "disk_used_percent:/x", "disk_used_percent:/x:y"} {
+		for _, tc := range []struct {
+			name        string
+			total, peak float64
+			samples     int
+			valid       bool
+		}{
+			{"zero", 0, 0, 1, true},
+			{"upper bound", 100, 100, 1, true},
+			{"sum above upper bound", 200, 100, 2, true},
+			{"value above upper bound", 101, 101, 1, false},
+			{"peak above upper bound", 200, 101, 2, false},
+			{"average above upper bound", 202, 100, 2, false},
+		} {
+			t.Run(metric+"/"+tc.name, func(t *testing.T) {
+				db := validationDB(t, Monitoring)
+				if _, err := db.Exec(`INSERT INTO buckets(node_id,metric,step,t,total,peak,samples) VALUES('node',?,60,0,?,?,?)`, metric, tc.total, tc.peak, tc.samples); err != nil {
+					t.Fatal(err)
+				}
+				err := ValidatePayloadData(context.Background(), db, Monitoring, nil)
+				if tc.valid && err != nil {
+					t.Fatalf("valid bucket rejected: %v", err)
+				}
+				if !tc.valid && (err == nil || !strings.Contains(err.Error(), "restore_invalid_data")) {
+					t.Fatalf("invalid bucket accepted or unexpected error: %v", err)
+				}
+			})
+		}
+	}
+}
