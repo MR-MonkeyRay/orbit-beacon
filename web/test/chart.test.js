@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {copy, copyPattern} from './console-dom.js';
 import {chart, chartPaths, chartScales, formatAxisValue, formatChartValue, niceMax, pointIndexAtX} from '../src/console/ui/chart.js';
 
 const point = (minute, avg = 10, max = 20) => ({t: new Date(Date.UTC(2026, 9, 27, 12, minute)).toISOString(), avg, max});
@@ -59,14 +60,14 @@ test('isolated and zero samples remain visible and do not connect across gaps', 
 test('tooltip values match the backend unit names and handle missing values', () => {
   assert.equal(formatChartValue(12.25, 'percent'), '12.3%');
   assert.equal(formatChartValue(1536, 'bytes_per_second'), '1.5 KiB/s');
-  assert.equal(formatChartValue(0.3, 'bytes_per_second'), '< 1 B/s');
-  assert.equal(formatChartValue(0.003, 'load'), '< 0.01');
+  assert.equal(formatChartValue(0.3, 'bytes_per_second'), copy('nodes.chart.belowByte'));
+  assert.equal(formatChartValue(0.003, 'load'), copy('nodes.chart.belowLoad'));
   assert.equal(formatChartValue(0, 'load'), '0.00');
   assert.equal(formatChartValue(.125, 'load'), '0.13');
   assert.equal(formatChartValue(0, 'load'), '0.00');
-  assert.equal(formatChartValue(null, 'percent'), 'Unavailable');
-  assert.equal(formatChartValue(undefined, 'bytes_per_second'), 'Unavailable');
-  assert.equal(formatChartValue(NaN, 'load'), 'Unavailable');
+  assert.equal(formatChartValue(null, 'percent'), copy('common.unavailable'));
+  assert.equal(formatChartValue(undefined, 'bytes_per_second'), copy('common.unavailable'));
+  assert.equal(formatChartValue(NaN, 'load'), copy('common.unavailable'));
 });
 
 test('point lookup uses time coordinates, clamps ends, and picks earlier ties', () => {
@@ -106,27 +107,33 @@ test('keyboard tooltip renders actual values and keeps missing network buckets u
   globalThis.document = {createElement: () => new Element(), createElementNS: () => new Element()};
   const elements = (node) => [node, ...node.children.filter((child) => child instanceof Element).flatMap(elements)];
   try {
-    const root = chart({title: 'Network', unit: 'bytes_per_second', id: 'network-test', series: [
-      {label: 'Receive (rx)', points: [point(0, 10, 20)], stepSeconds: 60},
-      {label: 'Send (tx)', points: [point(1, 100, 200)], stepSeconds: 60}
+    const root = chart({title: copy('nodes.network'), unit: 'bytes_per_second', id: 'network-test', series: [
+      {label: copy('nodes.receiveRx'), points: [point(0, 10, 20)], stepSeconds: 60},
+      {label: copy('nodes.sendTx'), points: [point(1, 100, 200)], stepSeconds: 60}
     ]});
     const nodes = elements(root);
     const plot = nodes.find((element) => element.getAttribute('id') === 'network-test');
     const tooltip = nodes.find((element) => element.getAttribute('id') === 'network-test-tooltip');
     const image = nodes.find((element) => element.getAttribute('role') === 'img');
-    assert.match(image.getAttribute('aria-label'), /latest average 100 B\/s/);
-    assert.match(image.getAttribute('aria-label'), /minimum average 10 B\/s/);
-    assert.match(image.getAttribute('aria-label'), /peak maximum 200 B\/s/);
+    const summary = (label, minute, avg, max) => copy('nodes.chart.summary', {
+      label: copy(label), avg, max, min: avg, peak: max, count: 1,
+      time: new Intl.DateTimeFormat('en', {dateStyle: 'medium', timeStyle: 'long'}).format(new Date(point(minute).t))
+    });
+    const receiveSummary = summary('nodes.receiveRx', 0, '10 B/s', '20 B/s');
+    const sendSummary = summary('nodes.sendTx', 1, '100 B/s', '200 B/s');
+    assert.equal(image.getAttribute('aria-label').includes(sendSummary), true);
+    assert.equal(image.getAttribute('aria-label').includes(receiveSummary), true);
+    assert.equal(image.getAttribute('aria-label'), `${copy('nodes.network')}. ${receiveSummary} ${sendSummary}`);
     assert.match(root.textContent, /300 B\/s/); // 两个序列都参与 y 轴量程计算。
     const key = (value) => plot.dispatchEvent(Object.assign(new Event('keydown', {cancelable: true}), {key: value}));
     plot.dispatchEvent(new Event('focus'));
     key('Home');
     assert.equal(tooltip.hidden, false);
-    assert.match(tooltip.textContent, /Receive \(rx\): avg 10 B\/s · max 20 B\/s/);
-    assert.match(tooltip.textContent, /Send \(tx\): avg Unavailable · max Unavailable/);
+    assert.match(tooltip.textContent, copyPattern('nodes.chart.tooltip', {label: copy('nodes.receiveRx'), avg: '10 B/s', max: '20 B/s'}));
+    assert.match(tooltip.textContent, copyPattern('nodes.chart.tooltip', {label: copy('nodes.sendTx'), avg: copy('common.unavailable'), max: copy('common.unavailable')}));
     key('ArrowRight');
-    assert.match(tooltip.textContent, /Send \(tx\): avg 100 B\/s · max 200 B\/s/);
-    assert.match(tooltip.textContent, /Receive \(rx\): avg Unavailable · max Unavailable/);
+    assert.match(tooltip.textContent, copyPattern('nodes.chart.tooltip', {label: copy('nodes.sendTx'), avg: '100 B/s', max: '200 B/s'}));
+    assert.match(tooltip.textContent, copyPattern('nodes.chart.tooltip', {label: copy('nodes.receiveRx'), avg: copy('common.unavailable'), max: copy('common.unavailable')}));
     key('Escape');
     assert.equal(tooltip.hidden, true);
     key('ArrowLeft');
@@ -135,13 +142,13 @@ test('keyboard tooltip renders actual values and keeps missing network buckets u
     assert.equal(tooltip.hidden, true);
     // 刷新重建时保留已选样本，而非跳到最新。
     assert.equal(plot.dataset.selectedTime, String(Date.parse(point(0).t)));
-    const rebuilt = elements(chart({title: 'Network', unit: 'bytes_per_second', id: 'network-test', selectedTime: Number(plot.dataset.selectedTime), series: [
-      {label: 'Receive (rx)', points: [point(0, 10, 20)], stepSeconds: 60},
-      {label: 'Send (tx)', points: [point(1, 100, 200)], stepSeconds: 60}
+    const rebuilt = elements(chart({title: copy('nodes.network'), unit: 'bytes_per_second', id: 'network-test', selectedTime: Number(plot.dataset.selectedTime), series: [
+      {label: copy('nodes.receiveRx'), points: [point(0, 10, 20)], stepSeconds: 60},
+      {label: copy('nodes.sendTx'), points: [point(1, 100, 200)], stepSeconds: 60}
     ]}));
     const rebuiltPlot = rebuilt.find((element) => element.getAttribute('id') === 'network-test');
     rebuiltPlot.dispatchEvent(new Event('focus'));
-    assert.match(rebuilt.find((element) => element.getAttribute('id') === 'network-test-tooltip').textContent, /Receive \(rx\): avg 10 B\/s/);
+    assert.match(rebuilt.find((element) => element.getAttribute('id') === 'network-test-tooltip').textContent, copyPattern('nodes.chart.tooltip', {label: copy('nodes.receiveRx'), avg: '10 B/s', max: '20 B/s'}));
   } finally {
     if (originalNode === undefined) delete globalThis.Node;
     else globalThis.Node = originalNode;

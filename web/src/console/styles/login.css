@@ -51,17 +51,17 @@
 }
 
 .login-orbits .ring {
-  --d:90s;
+  --d:var(--duration-orbit-login-1);
   transform-origin: 550px 550px;
-  animation: orbit var(--d) linear infinite;
+  animation: orbit var(--d) var(--ease-linear) infinite;
 }
 
 .login-orbits .ring.r2 {
-  --d:140s;
+  --d:var(--duration-orbit-login-2);
 }
 
 .login-orbits .ring.r3 {
-  --d:210s;
+  --d:var(--duration-orbit-login-3);
 }
 
 .login-orbits .sat {
@@ -69,7 +69,7 @@
   opacity: .7;
   transform-box: fill-box;
   transform-origin: center;
-  animation: orbit var(--d) linear infinite reverse;
+  animation: orbit var(--d) var(--ease-linear) infinite reverse;
 }
 
 .login-card {
@@ -79,7 +79,7 @@
   border: 1px solid var(--line);
   border-radius: 20px;
   box-shadow: var(--shadow-lg);
-  animation: dialog-in .5s var(--ease);
+  animation: dialog-in var(--duration-500) var(--ease);
 }
 
 .login-card .brand {

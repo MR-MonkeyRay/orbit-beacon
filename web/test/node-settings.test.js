@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {invalidate, setNavigationSignal, setSession} from '../src/console/api.js';
-import {elements, flush, installDOM, TestElement} from './console-dom.js';
+import {copy, elements, flush, installDOM, TestElement} from './console-dom.js';
 
 const id = '00000000-0000-4000-8000-000000000001';
 const path = `/api/v1/nodes/${id}`;
@@ -123,8 +123,8 @@ test('node tabs show reported local settings through #agent without the removed 
     assert.equal(env.root.querySelector('#tab-config'), null);
     const values = factValues(env.root);
     assert.deepEqual(Object.fromEntries(Object.entries(values).slice(0, 6)), {
-      'Report interval': '10 seconds', 'Disk interval': '60 seconds', 'Network interfaces': 'Default route',
-      'Disk paths': 'Agent default', 'Service probes': 'None configured', 'Agent version': 'test-agent'
+      [copy('nodes.reportInterval')]: copy('nodes.seconds', {count: 10}), [copy('nodes.diskInterval')]: copy('nodes.seconds', {count: 60}), [copy('nodes.interfaces')]: copy('nodes.defaultRoute'),
+      [copy('nodes.diskPaths')]: copy('nodes.agentDefault'), [copy('nodes.probes')]: copy('nodes.noneConfigured'), [copy('nodes.agentVersion')]: 'test-agent'
     });
     assert.equal(env.root.querySelector('time').getAttribute('datetime'), env.node.last_seen);
     assert.equal(env.root.querySelectorAll('input,select,textarea').length, 0);
@@ -143,7 +143,7 @@ test('agent settings distinguishes no report and offline last observations', asy
         assert.equal(env.root.querySelectorAll('dl,input,select,textarea').length, 0);
       } else if (options.lastSeen === null) {
         assert.equal(env.root.querySelectorAll('time').length, 0);
-        assert.equal(factValues(env.root)['Report interval'], '10 seconds');
+        assert.equal(factValues(env.root)[copy('nodes.reportInterval')], copy('nodes.seconds', {count: 10}));
       } else {
         assert.equal(env.root.querySelector('time').getAttribute('datetime'), env.node.last_seen);
       }
@@ -157,11 +157,11 @@ test('agent settings displays reported selections as inert text without editable
   const env = await setup({hash: '#agent', observed});
   try {
     const values = factValues(env.root);
-    assert.equal(values['Report interval'], '5 seconds');
-    assert.equal(values['Disk interval'], '120 seconds');
-    assert.equal(values['Network interfaces'], 'eth0\nwg0');
-    assert.equal(values['Disk paths'], '/\n/var/lib');
-    assert.equal(values['Service probes'], observed.probe_targets[0]);
+    assert.equal(values[copy('nodes.reportInterval')], copy('nodes.seconds', {count: 5}));
+    assert.equal(values[copy('nodes.diskInterval')], copy('nodes.seconds', {count: 120}));
+    assert.equal(values[copy('nodes.interfaces')], 'eth0\nwg0');
+    assert.equal(values[copy('nodes.diskPaths')], '/\n/var/lib');
+    assert.equal(values[copy('nodes.probes')], observed.probe_targets[0]);
     const settings = env.root.querySelector('#panel-agent');
     assert.equal(settings.querySelectorAll('input,select,textarea,button,a,img').length, 0);
   } finally { env.cleanup(); }
@@ -181,7 +181,7 @@ test('billing saves exact decimal units, stays clean after submit, and preserves
     const billing = formFor(env.root, 'billing_day');
     assert.ok(billing, 'Details has a separate traffic billing form');
     const headings = env.root.querySelectorAll('h2').map((heading) => heading.textContent);
-    assert.equal(headings[headings.indexOf('Traffic') + 1], 'Traffic billing');
+    assert.equal(headings[headings.indexOf(copy('nodes.traffic')) + 1], copy('nodes.trafficBilling'));
     assert.deepEqual(control(billing, 'quota_unit').options.map((option) => option.value), ['bytes', 'KB', 'MB', 'GB', 'TB']);
     assert.equal(control(billing, 'billing_day').getAttribute('min'), '1');
     assert.equal(control(billing, 'billing_day').getAttribute('max'), '28');
@@ -209,7 +209,7 @@ test('billing saves exact decimal units, stays clean after submit, and preserves
     assert.deepEqual(env.requests.slice(requestsBefore).map((request) => request.url), [`${path}/traffic-settings`, `${path}/traffic?days=30`]);
     edit(billing, 'quota_value', '2000000000');
     assert.equal(billing.dataset.dirty, 'true');
-    billing.querySelectorAll('button').find((button) => button.textContent === 'Discard changes').click();
+    billing.querySelectorAll('button').find((button) => button.textContent === copy('controls.discard')).click();
     assert.equal(billing.dataset.dirty, 'false');
     assert.equal(details.dataset.dirty, 'true');
   } finally { env.cleanup(); }
@@ -244,7 +244,7 @@ test('billing revisits use the saved response and honor tab-change discard', asy
     await flush();
     const dialog = env.body.querySelector('dialog');
     assert.ok(dialog, 'leaving a dirty billing form asks before discarding');
-    dialog.querySelectorAll('button').find((button) => button.textContent === 'Discard changes').click();
+    dialog.querySelectorAll('button').find((button) => button.textContent === copy('controls.discard')).click();
     dialog.dispatchEvent(new Event('animationend'));
     await flush();
     assert.equal(env.root.querySelector('#tab-agent').getAttribute('aria-selected'), 'true');
@@ -267,7 +267,7 @@ test('latest deadline patches leave dirty Notes, focus, current tab, and numeric
     const details = formFor(env.root, 'notes');
     const notes = edit(details, 'notes', 'Do not replace this draft');
     notes.focus();
-    const cpu = env.root.querySelectorAll('dt').find((label) => label.textContent === 'CPU').parentElement.querySelector('.sample-value');
+    const cpu = env.root.querySelectorAll('dt').find((label) => label.textContent === copy('nodes.cpu')).parentElement.querySelector('.sample-value');
     const before = env.requests.length;
     env.advance(45000);
     assert.equal(cpu.classList.contains('metric-stale'), false);

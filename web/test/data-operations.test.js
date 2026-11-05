@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {getNavigationSignal, setNavigationSignal} from '../src/console/api.js';
 import {dataOperationsTab} from '../src/console/pages/data-operations.js';
-import {elements, flush, installDOM} from './console-dom.js';
+import {copy, elements, flush, installDOM} from './console-dom.js';
 
 test('task and plan pagers retain independent cursors and terminal-button behavior', async () => {
   const dom = installDOM();
@@ -30,8 +30,8 @@ test('task and plan pagers retain independent cursors and terminal-button behavi
     tab.attach();
     await flush();
     const find = (label) => elements(tab.element).find((element) => element.tagName === 'button' && element.textContent === label);
-    const taskNext = find('Older tasks');
-    const planNext = find('Older plans');
+    const taskNext = find(copy('data.tasks.older'));
+    const planNext = find(copy('data.plans.older'));
     assert.equal(taskNext.disabled, false);
     assert.equal(planNext.disabled, false);
     taskNext.click();
@@ -39,17 +39,17 @@ test('task and plan pagers retain independent cursors and terminal-button behavi
     assert.equal(calls.at(-1), '/api/v1/tasks?limit=20&before=task%2F%2B');
     assert.equal(taskNext.disabled, true);
     assert.equal(planNext.disabled, false);
-    assert.equal(find('Newer tasks').disabled, false);
+    assert.equal(find(copy('data.tasks.newer')).disabled, false);
     assert.equal(tab.element.querySelector('.data-stale'), null);
     planNext.click();
     await flush();
     assert.equal(calls.at(-1), '/api/v1/backup-plans?limit=20&before=plan%2F%2B');
     assert.equal(planNext.disabled, true);
     assert.equal(tab.element.querySelector('.data-stale'), null);
-    find('Newer tasks').click();
+    find(copy('data.tasks.newer')).click();
     await flush();
     assert.equal(calls.at(-1), '/api/v1/tasks?limit=20');
-    assert.equal(find('Newer tasks').disabled, true);
+    assert.equal(find(copy('data.tasks.newer')).disabled, true);
     assert.equal(taskNext.disabled, false);
     tab.detach();
     const detachedCalls = calls.length;

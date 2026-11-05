@@ -10,7 +10,7 @@
 
 .traffic-content h3 {
   font-size: var(--fs-md);
-  font-weight: 650;
+  font-weight: var(--font-weight-650);
   margin-bottom: var(--sp-2);
 }
 

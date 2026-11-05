@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {invalidate, session, setNavigationSignal, setSession} from '../src/console/api.js';
-import {elements, flush, installDOM} from './console-dom.js';
+import {copy, elements, flush, installDOM} from './console-dom.js';
 import {reducedMotion} from '../src/shared/dom.js';
 
 class TestNode extends EventTarget {
@@ -126,15 +126,15 @@ test('settings lazy tabs show loading and retry an inline load failure', async (
     dom.body.append(page); dom.mutations();
     const tabs = elements(page).filter((element) => element.getAttribute('role') === 'tab');
     tabs.find((element) => element.id === 'tab-administrators').click();
-    assert.ok(elements(page).some((element) => element.getAttribute('aria-label') === 'Loading'));
+    assert.ok(elements(page).some((element) => element.getAttribute('aria-label') === copy('controls.loading')));
     await flush();
     const loadError = elements(page).find((element) => element.getAttribute('role') === 'alert');
     assert.ok(loadError?.textContent);
-    elements(page).find((element) => element.tagName === 'button' && element.textContent === 'Retry').click();
-    assert.ok(elements(page).some((element) => element.getAttribute('aria-label') === 'Loading'));
+    elements(page).find((element) => element.tagName === 'button' && element.textContent === copy('common.retry')).click();
+    assert.ok(elements(page).some((element) => element.getAttribute('aria-label') === copy('controls.loading')));
     await flush();
     assert.equal(userRequests, 2);
-    assert.ok(elements(page).some((element) => element.tagName === 'button' && element.textContent === 'Add administrator'));
+    assert.ok(elements(page).some((element) => element.tagName === 'button' && element.textContent === copy('settings.addAdministrator')));
     tabs.find((element) => element.id === 'tab-account').click();
     tabs.find((element) => element.id === 'tab-administrators').click();
     await flush();
@@ -188,7 +188,7 @@ test('audit load more uses the cursor and hides after a full final page', async 
     const {settingsPage} = await import('../src/console/pages/settings.js');
     const page = await settingsPage();
     await flush();
-    const more = findButton(page, 'Load older events');
+    const more = findButton(page, copy('settings.olderEvents'));
     assert.ok(more);
     assert.equal(more.hidden, false);
     await more.click();
@@ -249,7 +249,7 @@ test('audit load more rejects a cursor that does not advance', async () => {
     const {settingsPage} = await import('../src/console/pages/settings.js');
     const page = await settingsPage();
     await flush();
-    const more = findButton(page, 'Load older events');
+    const more = findButton(page, copy('settings.olderEvents'));
     await more.click();
     assert.equal(calls.at(-1), '/api/v1/audit?limit=50&before=stuck-cursor');
     assert.equal(findTag(page, 'ol').children.length, 1);
@@ -297,7 +297,7 @@ test('administrator forms preserve request boundaries and keep conflicts in the 
     const page = await settingsPage();
     dom.body.append(page);
     await flush();
-    elements(page).find((element) => element.tagName === 'button' && element.textContent === 'Add administrator').click();
+    elements(page).find((element) => element.tagName === 'button' && element.textContent === copy('settings.addAdministrator')).click();
     let dialog = dom.body.querySelector('dialog');
     let controls = elements(dialog);
     controls.find((element) => element.name === 'username').value = 'admin-two';
@@ -317,7 +317,7 @@ test('administrator forms preserve request boundaries and keep conflicts in the 
     await flush();
     assert.equal(requests[1].body.must_change_password, true);
     closeDialogs();
-    elements(page).find((element) => element.getAttribute('aria-label') === 'Rename administrator "admin-one"').click();
+    elements(page).find((element) => element.getAttribute('aria-label') === copy('settings.renameAdministratorLabel', {name: 'admin-one'})).click();
     dialog = dom.body.querySelector('dialog');
     controls = elements(dialog);
     assert.deepEqual(controls.filter((element) => element.name).map((element) => element.name), ['username']);
@@ -369,18 +369,18 @@ test('public-page settings confirm disabling, block duplicate writes, and restor
     const toggle = () => { control.checked = !control.checked; control.dispatchEvent(new Event('change')); };
     toggle(); await flush();
     assert.equal(writes.length, 0);
-    const cancel = elements(dom.body.querySelector('dialog')).find((element) => element.textContent === 'Cancel');
+    const cancel = elements(dom.body.querySelector('dialog')).find((element) => element.textContent === copy('controls.cancel'));
     cancel.click(); await flush();
     assert.equal(control.checked, true); assert.equal(writes.length, 0);
     toggle(); await flush();
-    elements(dom.body.querySelector('dialog')).find((element) => element.tagName === 'button' && element.textContent === 'Disable status page').click();
+    elements(dom.body.querySelector('dialog')).find((element) => element.tagName === 'button' && element.textContent === copy('settings.publicDisable')).click();
     await flush();
     assert.equal(control.disabled, true); assert.deepEqual(writes, [{enabled: false}]);
     resolveWrite(new Response(JSON.stringify({code: 'internal_error', message: 'Could not save setting.'}), {status: 500}));
     await flush();
     assert.equal(control.checked, true); assert.equal(control.disabled, false);
     toggle(); await flush();
-    elements(dom.body.querySelector('dialog')).find((element) => element.tagName === 'button' && element.textContent === 'Disable status page').click();
+    elements(dom.body.querySelector('dialog')).find((element) => element.tagName === 'button' && element.textContent === copy('settings.publicDisable')).click();
     await flush(); resolveWrite(new Response(JSON.stringify({enabled: false}))); await flush();
     assert.equal(control.checked, false);
     toggle(); await flush();
@@ -423,9 +423,9 @@ test('self deletion clears the session without fetching the administrator list a
     const page = await settingsPage();
     dom.body.append(page);
     await flush();
-    elements(page).find((element) => element.getAttribute('aria-label') === 'Delete administrator "admin-one"').click();
+    elements(page).find((element) => element.getAttribute('aria-label') === copy('settings.deleteAdministratorLabel', {name: 'admin-one'})).click();
     const dialog = dom.body.querySelector('dialog');
-    elements(dialog).find((element) => element.tagName === 'button' && element.textContent === 'Delete my account').click();
+    elements(dialog).find((element) => element.tagName === 'button' && element.textContent === copy('settings.deleteMyAccount')).click();
     dialog.dispatchEvent(new Event('animationend'));
     await flush();
     assert.equal(session.user, null);

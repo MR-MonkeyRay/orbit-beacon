@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {flush, TestElement} from './console-dom.js';
+import {copy, flush, TestElement} from './console-dom.js';
 import {frame, liveHarness, response, stream} from './live-harness.js';
 
 const entry = new URL('../src/public/main.js', import.meta.url);
@@ -148,7 +148,7 @@ test('public empty box explains an empty filter but not an empty collection', as
   ui.elements.filters.children[2].click();
   ui.sockets[0].message(snapshot(payload('online')));
   assert.equal(ui.elements.empty.hidden, false);
-  assert.equal(ui.elements['empty-text'].textContent, 'No offline nodes on this page.');
+  assert.equal(ui.elements['empty-text'].textContent, copy('public.filter.empty.offline'));
   ui.sockets[0].message(snapshot(payload('', {nodes: []})));
   assert.equal(ui.elements.empty.hidden, true);
 });

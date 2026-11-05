@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {historyPanel} from '../src/console/pages/node-history.js';
 import {setNavigationSignal} from '../src/console/api.js';
-import {elements, flush, installDOM} from './console-dom.js';
+import {copy, copyPattern, elements, flush, installDOM} from './console-dom.js';
 
 function setup() {
   const dom = installDOM();
@@ -41,7 +41,7 @@ test('history range changes abort stale requests and late responses cannot repai
     initial.forEach((request) => env.respond(request));
     await flush();
     assert.equal(charts.children[0], content);
-    assert.doesNotMatch(env.root.textContent, /could not load/);
+    assert.doesNotMatch(env.root.textContent, new RegExp(`${copyPattern('nodes.historyPartial').source}|${copyPattern('nodes.historyLoadError', {error: ''}).source}`));
   } finally { env.cleanup(); }
 });
 test('history partial failures render a working retry without announcing each chart separately', async () => {
@@ -81,11 +81,11 @@ test('history 404 tears down sibling requests, charts and interval permanently',
     assert.equal(env.timers.size, 0);
     assert.ok(env.requests.slice(1).every((request) => request.signal.aborted));
     assert.equal(env.root.querySelector('.segmented').hidden, true);
-    assert.match(env.root.textContent, /This node no longer exists/);
+    assert.match(env.root.textContent, copyPattern('nodes.nodeMissingPrefix', {link: copy('nodes.goNodes')}));
     assert.equal(env.root.querySelector('.history-grid').children.length, 0);
     env.requests.slice(1).forEach((request) => env.respond(request));
     await flush();
-    assert.match(env.root.textContent, /This node no longer exists/);
+    assert.match(env.root.textContent, copyPattern('nodes.nodeMissingPrefix', {link: copy('nodes.goNodes')}));
     env.root.remove(); env.mutations(); env.body.append(env.root); env.mutations();
     assert.equal(env.timers.size, 0);
     assert.equal(env.requests.length, 6);

@@ -67,7 +67,7 @@
 .data-check strong {
   display: block;
   font-size: var(--fs-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
 }
 
 .data-check small {
@@ -75,7 +75,7 @@
   margin-top: var(--sp-1);
   color: var(--ink-2);
   font-size: var(--fs-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-150);
 }
 
 .data-check:has(input:disabled) {
@@ -146,7 +146,7 @@
 
 .data-plan-head h3 {
   font-size: var(--fs-base);
-  font-weight: 650;
+  font-weight: var(--font-weight-650);
   overflow-wrap: anywhere;
 }
 
@@ -195,7 +195,7 @@
 .data-state {
   display: inline-block;
   font-size: var(--fs-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
   color: var(--ink-2);
   overflow-wrap: anywhere;
 }
@@ -249,7 +249,7 @@
 .data-plan-form .data-destination legend {
   padding: 0 6px;
   font-size: var(--fs-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
   color: var(--ink-2);
 }
 

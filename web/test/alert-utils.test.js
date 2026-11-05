@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {copy} from './console-dom.js';
 import {buildChannelPayload, durationSeconds, formatMetricValue, formatRuleDuration, metricUnit, scopeLabel, validateChannel, validateRule, validHost} from '../src/console/lib/alert-utils.js';
 
 const id = '00000000-0000-4000-8000-000000000001';
@@ -52,8 +53,8 @@ test('metric values preserve precision, durations preserve components and scope 
 
 test('alert metric values retain grouping and duration components distinct from sample formats', () => {
   assert.equal(formatMetricValue('cpu_percent', 1234.5), '1,234.5%');
-  assert.equal(formatMetricValue('load1', 1234.5), '1,234.50 load');
-  assert.equal(formatRuleDuration(3665), '61m 5s');
+  assert.equal(formatMetricValue('load1', 1234.5), copy('alerts.value.load', {value: '1,234.50'}));
+  assert.equal(formatRuleDuration(3665), copy('alerts.duration.minutesSeconds', {minutes: 61, seconds: 5}));
 });
 test('channel PATCH omits untouched secrets and full webhook URL, including redacted response fields', () => {
   const values = {name: 'Hook', enabled: true, kind: 'webhook', url: '', secret: '', url_redacted: 'https://example.com/…', secret_set: true};

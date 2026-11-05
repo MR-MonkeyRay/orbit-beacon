@@ -10,8 +10,8 @@
 
 .page-head h1 {
   font-size: clamp(26px,3vw,32px);
-  line-height: 1.15;
-  font-weight: 700;
+  line-height: var(--line-height-115);
+  font-weight: var(--font-weight-700);
   letter-spacing: -.03em;
   outline: none;
 }
@@ -38,7 +38,7 @@
   border-radius: 999px;
   color: var(--ink-2);
   font-size: var(--fs-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
   white-space: nowrap;
 }
 
@@ -106,14 +106,14 @@
 
 .panel-head h2 {
   font-size: var(--fs-lg);
-  font-weight: 650;
+  font-weight: var(--font-weight-650);
   letter-spacing: -.01em;
 }
 
 .panel-head a {
   font-size: var(--fs-md);
   text-decoration: none;
-  font-weight: 550;
+  font-weight: var(--font-weight-550);
 }
 
 @media (hover:hover) {
@@ -169,14 +169,14 @@
 
 .sample-state {
   font-size: var(--fs-2xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
   color: var(--warn);
 }
 
 .last-report {
   margin-top: 14px;
   font-size: var(--fs-xs);
-  line-height: 1.6;
+  line-height: var(--line-height-160);
   color: var(--ink-2);
   overflow-wrap: anywhere;
 }
@@ -193,13 +193,13 @@
   border-radius: var(--r-md);
   background: var(--panel);
   color: var(--ink);
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
   font-size: var(--fs-md);
-  line-height: 1;
+  line-height: var(--line-height-100);
   white-space: nowrap;
   text-decoration: none;
   cursor: pointer;
-  transition: background-color .15s,border-color .15s,color .15s,transform .1s,box-shadow .15s;
+  transition: background-color var(--duration-150),border-color var(--duration-150),color var(--duration-150),transform var(--duration-100),box-shadow var(--duration-150);
 }
 
 @media (hover:hover) {
@@ -305,7 +305,7 @@
   border-radius: 50%;
   border: 2px solid var(--ink-3);
   border-top-color: transparent;
-  animation: spin .7s linear infinite;
+  animation: spin var(--duration-700) var(--ease-linear) infinite;
 }
 
 .btn-primary.busy::after {
@@ -408,9 +408,9 @@
   background: transparent;
   color: var(--ink-2);
   font-size: var(--fs-sm);
-  font-weight: 550;
+  font-weight: var(--font-weight-550);
   cursor: pointer;
-  transition: background-color .15s,color .15s;
+  transition: background-color var(--duration-150),color var(--duration-150);
 }
 
 @media (hover:hover) {
@@ -449,7 +449,7 @@
   padding: 10px var(--sp-4);
   text-align: left;
   font-size: var(--fs-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
   color: var(--ink-3);
   background: var(--panel);
   border-bottom: 1px solid var(--line);
@@ -478,7 +478,7 @@
   width: 13px;
   height: 13px;
   opacity: 0;
-  transition: opacity .15s,transform .2s;
+  transition: opacity var(--duration-150),transform var(--duration-200);
 }
 
 .table th[aria-sort] .icon {
@@ -496,7 +496,7 @@
 }
 
 .table tbody tr {
-  transition: background-color .12s;
+  transition: background-color var(--duration-120);
 }
 
 @media (hover:hover) {
@@ -515,7 +515,7 @@
 
 .table .name a {
   color: var(--ink);
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
   text-decoration: none;
 }
 
@@ -691,21 +691,21 @@ dialog {
 }
 
 dialog[open] {
-  animation: dialog-in .28s var(--ease);
+  animation: dialog-in var(--duration-280) var(--ease);
 }
 
 dialog.closing {
-  animation: dialog-out .18s ease-in forwards;
+  animation: dialog-out var(--duration-180) var(--ease-in) forwards;
 }
 
 dialog::backdrop {
   background: var(--backdrop);
   backdrop-filter: blur(3px);
-  animation: fade-only .25s ease;
+  animation: fade-only var(--duration-250) var(--ease-default);
 }
 
 dialog.closing::backdrop {
-  animation: fade-only .18s ease reverse forwards;
+  animation: fade-only var(--duration-180) var(--ease-default) reverse forwards;
 }
 
 @keyframes dialog-in {
@@ -763,8 +763,8 @@ dialog.closing::backdrop {
   background: var(--bad-bg);
   color: var(--bad);
   font-size: var(--fs-sm);
-  font-weight: 550;
-  animation: shake .35s;
+  font-weight: var(--font-weight-550);
+  animation: shake var(--duration-350);
 }
 
 .form-error .icon {
@@ -806,7 +806,7 @@ dialog.closing::backdrop {
   box-shadow: var(--shadow-lg);
   font-size: var(--fs-md);
   pointer-events: auto;
-  animation: toast-in .35s var(--ease);
+  animation: toast-in var(--duration-350) var(--ease);
 }
 
 .toast .icon {
@@ -848,7 +848,7 @@ dialog.closing::backdrop {
 }
 
 .toast.leaving {
-  animation: toast-out .25s ease-in forwards;
+  animation: toast-out var(--duration-250) var(--ease-in) forwards;
 }
 
 @keyframes toast-in {

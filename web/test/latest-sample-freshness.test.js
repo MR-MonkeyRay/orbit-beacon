@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {installDOM, elements} from './console-dom.js';
+import {copy, copyPattern, installDOM, elements} from './console-dom.js';
 
 const received = '2026-10-28T10:00:00.000Z';
 const source = (age = 0, interval = 10000) => ({age_ms: age, source_interval_ms: interval});
@@ -43,25 +43,25 @@ async function setup(t, latest = snapshot()) {
 
 test('latest sample expires just after the 45-second boundary without changing numeric or uptime nodes', async (t) => {
   const ui = await setup(t);
-  const cpu = ui.row('CPU').querySelector('.sample-value');
-  const uptime = ui.row('Uptime').querySelector('.sample-value');
+  const cpu = ui.row(copy('nodes.cpu')).querySelector('.sample-value');
+  const uptime = ui.row(copy('nodes.uptime')).querySelector('.sample-value');
   const originalCPU = cpu.textContent;
   const originalUptime = uptime.textContent;
   assert.equal(originalCPU, '25%');
-  assert.equal(originalUptime, '1h 0m');
+  assert.equal(originalUptime, copy('nodes.duration.hours', {hours: 1, minutes: 0}));
   assert.equal(ui.timers.size, 1);
   assert.equal([...ui.timers.values()][0].delay, 45001);
   ui.advance(45000);
   assert.equal(cpu.classList.contains('metric-stale'), false);
   ui.advance(1);
   assert.equal(cpu.classList.contains('metric-stale'), true);
-  assert.match(ui.row('CPU').textContent, /Stale/);
-  assert.equal(ui.row('CPU').querySelector('.sample-value'), cpu);
+  assert.match(ui.row(copy('nodes.cpu')).textContent, copyPattern('nodes.stale'));
+  assert.equal(ui.row(copy('nodes.cpu')).querySelector('.sample-value'), cpu);
   assert.equal(cpu.textContent, originalCPU);
   assert.equal(uptime.textContent, originalUptime);
   const last = ui.view.element.querySelector('.last-report');
   assert.equal(last.hidden, false);
-  assert.match(last.textContent, /Last report Oct 28, 2026/);
+  assert.match(last.textContent, copyPattern('nodes.lastReport', {time: 'Oct 28, 2026'}));
   assert.equal(last.querySelector('time').getAttribute('datetime'), received);
   assert.equal(ui.timers.size, 0);
 });
@@ -72,15 +72,15 @@ test('latest sample honors original error and stale statuses without using earli
   latest.metrics.metric_status.uptime_seconds = 'stale';
   latest.metrics.metric_status.load5 = 'unsupported';
   const ui = await setup(t, latest);
-  assert.equal(ui.row('CPU').querySelector('.sample-value').textContent, '—');
-  assert.equal(ui.row('Uptime').querySelector('.sample-value').textContent, '1h 0m');
-  assert.equal(ui.row('Uptime').querySelector('.sample-value').classList.contains('metric-stale'), true);
-  assert.doesNotMatch(ui.row('Load (1 / 5 / 15 min)').textContent, /2\.00/);
+  assert.equal(ui.row(copy('nodes.cpu')).querySelector('.sample-value').textContent, '—');
+  assert.equal(ui.row(copy('nodes.uptime')).querySelector('.sample-value').textContent, copy('nodes.duration.hours', {hours: 1, minutes: 0}));
+  assert.equal(ui.row(copy('nodes.uptime')).querySelector('.sample-value').classList.contains('metric-stale'), true);
+  assert.doesNotMatch(ui.row(copy('nodes.loadSeries')).textContent, /2\.00/);
   const next = snapshot();
   next.metrics.cpu_percent = null;
   next.metrics.metric_status.cpu_percent = 'error';
   ui.view.snapshot(next);
-  assert.equal(ui.row('CPU').querySelector('.sample-value').textContent, '—');
+  assert.equal(ui.row(copy('nodes.cpu')).querySelector('.sample-value').textContent, '—');
 });
 
 test('latest sample deadline uses original age and interval, not browser wall time or a later clock heartbeat', async (t) => {
@@ -88,7 +88,7 @@ test('latest sample deadline uses original age and interval, not browser wall ti
   latest.metrics.sources.cpu = source(10000, 20000);
   const ui = await setup(t, latest);
   ui.view.clock('2026-10-28T10:00:50.000Z');
-  const cpu = ui.row('CPU').querySelector('.sample-value');
+  const cpu = ui.row(copy('nodes.cpu')).querySelector('.sample-value');
   assert.equal(cpu.classList.contains('metric-stale'), false);
   assert.equal([...ui.timers.values()][0].delay, 1);
   ui.advance(1);
@@ -102,7 +102,7 @@ test('latest sample deadline uses original age and interval, not browser wall ti
 
 test('latest freshness stops while hidden and pagehidden, recomputes on restore, and rejects aborted callbacks', async (t) => {
   const ui = await setup(t);
-  const cpu = ui.row('CPU').querySelector('.sample-value');
+  const cpu = ui.row(copy('nodes.cpu')).querySelector('.sample-value');
   const old = [...ui.timers.values()][0].callback;
   ui.document.hidden = true;
   ui.document.dispatchEvent(new Event('visibilitychange'));
@@ -119,7 +119,7 @@ test('latest freshness stops while hidden and pagehidden, recomputes on restore,
   assert.equal(ui.timers.size, 0);
   ui.advance(46000);
   ui.window.dispatchEvent(Object.assign(new Event('pageshow'), {persisted: true}));
-  assert.equal(ui.row('CPU').querySelector('.sample-value').classList.contains('metric-stale'), true);
+  assert.equal(ui.row(copy('nodes.cpu')).querySelector('.sample-value').classList.contains('metric-stale'), true);
   ui.page.abort();
   const before = ui.view.element.textContent;
   ui.view.clock('2026-10-28T10:02:00Z');
@@ -132,7 +132,7 @@ test('latest freshness stops while hidden and pagehidden, recomputes on restore,
 test('latest sample no-report and missing received time do not invent a last-report timestamp', async (t) => {
   const ui = await setup(t, snapshot({received_at: null}));
   assert.equal(ui.view.element.querySelector('.last-report').hidden, true);
-  assert.equal(ui.row('CPU').querySelector('.sample-value').textContent, '—');
+  assert.equal(ui.row(copy('nodes.cpu')).querySelector('.sample-value').textContent, '—');
   ui.view.snapshot(null);
   assert.equal(ui.view.element.querySelectorAll('dl').length, 0);
   assert.equal(ui.view.element.querySelectorAll('time').length, 0);
@@ -149,15 +149,15 @@ test('latest per-series status masks nonnull failures and respects the disk sour
   latest.metrics.sources['disk:/'] = source(0, 60000);
   latest.metrics.sources['network:eth0'] = source();
   const ui = await setup(t, latest);
-  assert.equal(ui.row('Disk').querySelector('.sample-value').textContent, '/: 1 KiB / 4 KiB (25%)');
-  assert.equal(ui.row('Network').querySelector('.sample-value').textContent, '—');
+  assert.equal(ui.row(copy('nodes.disk')).querySelector('.sample-value').textContent, '/: 1 KiB / 4 KiB (25%)');
+  assert.equal(ui.row(copy('nodes.network')).querySelector('.sample-value').textContent, '—');
   ui.advance(45001);
-  assert.equal(ui.row('CPU').querySelector('.sample-value').classList.contains('metric-stale'), true);
-  assert.equal(ui.row('Disk').querySelector('.sample-value').classList.contains('metric-stale'), false);
+  assert.equal(ui.row(copy('nodes.cpu')).querySelector('.sample-value').classList.contains('metric-stale'), true);
+  assert.equal(ui.row(copy('nodes.disk')).querySelector('.sample-value').classList.contains('metric-stale'), false);
   assert.equal(ui.timers.size, 1);
   ui.advance(134999);
-  assert.equal(ui.row('Disk').querySelector('.sample-value').classList.contains('metric-stale'), false);
+  assert.equal(ui.row(copy('nodes.disk')).querySelector('.sample-value').classList.contains('metric-stale'), false);
   ui.advance(1);
-  assert.equal(ui.row('Disk').querySelector('.sample-value').classList.contains('metric-stale'), true);
-  assert.equal(ui.row('Disk').querySelector('.sample-value').textContent, '/: 1 KiB / 4 KiB (25%)');
+  assert.equal(ui.row(copy('nodes.disk')).querySelector('.sample-value').classList.contains('metric-stale'), true);
+  assert.equal(ui.row(copy('nodes.disk')).querySelector('.sample-value').textContent, '/: 1 KiB / 4 KiB (25%)');
 });

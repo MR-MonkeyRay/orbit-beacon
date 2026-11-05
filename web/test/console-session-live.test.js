@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import * as client from '../src/console/api.js';
 import {errorText} from '../src/shared/errors.js';
-import {flush, TestElement} from './console-dom.js';
+import {copy, flush, TestElement} from './console-dom.js';
 import {frame, liveHarness, response, stream} from './live-harness.js';
 
 const user = {id: '00000000-0000-4000-8000-000000000001', username: 'administrator', must_change_password: false};
@@ -301,7 +301,7 @@ test('expiry synchronously clears private drafts and body dialogs without a dirt
     const {modal} = await import('../src/console/ui/dialogs.js');
     client.setSession(value);
     const secret = new TestElement('form'); secret.dataset.dirty = 'true'; secret.append('private draft');
-    const login = new TestElement('h1'); login.append('Sign in');
+    const login = new TestElement('h1'); login.append(copy('shell.signIn'));
     stopRouter = startRouter([{match: (path) => path === '/login', bare: true, page: async () => login}, {match: () => true, page: async () => secret}]);
     await flush();
     await client.revalidateSession();
@@ -585,18 +585,18 @@ async function actionPage(t, respond, expires_at = '2026-10-28T00:10:00Z', load)
   const actions = lifecycleActions({id: user.id, name: 'Private node', status: 'online'});
   let loads = 0;
   const stop = startRouter([{match: (path) => path === '/login', bare: true, page: async () => {
-    const heading = new TestElement('h1'); heading.append('Sign in'); return heading;
+    const heading = new TestElement('h1'); heading.append(copy('shell.signIn')); return heading;
   }}, {match: () => true, page: async () => ++loads === 1 || !load ? actions : load(loads)}]);
   await flush();
   return {...env, get loads() { return loads; }, async disable() {
-    actions.querySelectorAll('button').find((control) => control.textContent === 'Disable').click();
+    actions.querySelectorAll('button').find((control) => control.textContent === copy('nodes.disable')).click();
     await flush();
     const dialog = env.body.querySelector('dialog');
-    dialog.querySelectorAll('button').find((control) => control.textContent === 'Disable node').click();
+    dialog.querySelectorAll('button').find((control) => control.textContent === copy('nodes.disableNode')).click();
     dialog.dispatchEvent(new Event('animationend'));
     await flush();
   }, async remove() {
-    actions.querySelectorAll('button').find((control) => control.textContent === 'Delete node').click();
+    actions.querySelectorAll('button').find((control) => control.textContent === copy('nodes.deleteNode')).click();
     await flush();
     const dialog = env.body.querySelector('dialog');
     dialog.querySelector('input').value = 'Private node';
@@ -617,7 +617,7 @@ test('an action cancelled by known expiry cannot recreate an error toast after t
     assert.equal(env.requests[0].url, '/api/v1/nodes/batch');
     await env.advance(2000);
     assert.equal(location.pathname, '/login');
-    assert.equal(document.getElementById('view').textContent, 'Sign in');
+    assert.equal(document.getElementById('view').textContent, copy('shell.signIn'));
     release(response({message: 'Late action failure'}, {status: 500})); await flush();
     assert.equal(document.getElementById('toasts').children.length, 0);
   } finally { env.clean(); }
@@ -631,7 +631,7 @@ test('an action initiating management401 clears private UI without adding a stal
     release(response({message: 'Unauthorized'}, {status: 401})); await flush();
     assert.equal(location.pathname, '/login');
     assert.equal(client.session.user, null);
-    assert.equal(document.getElementById('view').textContent, 'Sign in');
+    assert.equal(document.getElementById('view').textContent, copy('shell.signIn'));
     assert.equal(document.getElementById('toasts').children.length, 0);
   } finally { env.clean(); }
 });
@@ -684,7 +684,7 @@ for (const boundary of ['expiry', 'management401', 'replacement']) {
       else if (boundary === 'management401') await assert.rejects(client.api('/private-probe'), (error) => error.status === 401);
       else client.setSession(proof({user: {...user, id: '00000000-0000-4000-8000-000000000002', username: 'replacement'}, csrf_token: `replacement:${t.name}`}));
       await flush();
-      const expected = boundary === 'replacement' ? 'Replacement account' : 'Sign in';
+      const expected = boundary === 'replacement' ? 'Replacement account' : copy('shell.signIn');
       assert.equal(document.getElementById('view').textContent, expected);
       const old = new TestElement('h1'); old.append('Private node late refresh');
       release(old); await flush();
@@ -704,10 +704,10 @@ test('a successful delete awaiting go cannot toast its private node name after k
     assert.equal(location.pathname, '/nodes');
     assert.equal(env.loads, 2, 'delete succeeded and its router navigation is still loading');
     await env.advance(2000);
-    assert.equal(document.getElementById('view').textContent, 'Sign in');
+    assert.equal(document.getElementById('view').textContent, copy('shell.signIn'));
     const old = new TestElement('h1'); old.append('Private node deleted');
     release(old); await flush();
-    assert.equal(document.getElementById('view').textContent, 'Sign in');
+    assert.equal(document.getElementById('view').textContent, copy('shell.signIn'));
     assert.equal(document.getElementById('toasts').children.length, 0);
   } finally { env.clean(); }
 });
@@ -717,7 +717,7 @@ test('a current successful lifecycle mutation still reports success after its re
   try {
     await env.disable();
     assert.equal(env.loads, 2);
-    assert.equal(document.getElementById('toasts').textContent.includes('Private node disabled.'), true);
+    assert.equal(document.getElementById('toasts').textContent.includes(copy('nodes.disabledDone', {name: 'Private node'})), true);
     assert.equal(client.session.user.id, user.id);
   } finally { env.clean(); }
 });

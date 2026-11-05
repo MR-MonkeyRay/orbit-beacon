@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {copy} from './console-dom.js';
 import {enrollmentCommand, enrollmentCountdown, enrollmentState, installerCommand, nodeEnrollments, shellQuote} from '../src/console/lib/enrollment-utils.js';
 
 test('enrollment command quotes token literally and uses private file + policy', () => {
@@ -20,20 +21,20 @@ test('installer command pipes the quoted token through stdin, never as an argume
 test('ticket countdown covers expiry and rounds up remaining seconds', () => {
   const expiry = '2026-10-27T12:15:00Z';
   const now = Date.parse('2026-10-27T12:00:00Z');
-  assert.equal(enrollmentCountdown(expiry, now), '15:00 remaining');
-  assert.equal(enrollmentCountdown(expiry, now + 899001), '0:01 remaining');
-  assert.equal(enrollmentCountdown(expiry, now + 900000), 'Expired');
-  assert.equal(enrollmentCountdown(expiry, now + 901000), 'Expired');
-  assert.equal(enrollmentCountdown('bad', now), 'Expired');
+  assert.equal(enrollmentCountdown(expiry, now), copy('nodes.enrollment.remaining', {time: '15:00'}));
+  assert.equal(enrollmentCountdown(expiry, now + 899001), copy('nodes.enrollment.remaining', {time: '0:01'}));
+  assert.equal(enrollmentCountdown(expiry, now + 900000), copy('nodes.enrollment.expired'));
+  assert.equal(enrollmentCountdown(expiry, now + 901000), copy('nodes.enrollment.expired'));
+  assert.equal(enrollmentCountdown('bad', now), copy('nodes.enrollment.expired'));
 });
 
 test('ticket state includes revoked, expired, exhausted and active metadata', () => {
   const now = Date.parse('2026-10-27T12:00:00Z');
   const ticket = {expires_at: '2026-10-27T12:15:00Z', uses: 0, max_uses: 1};
-  assert.equal(enrollmentState(ticket, now), 'Active');
-  assert.equal(enrollmentState({...ticket, uses: 1}, now), 'Used');
-  assert.equal(enrollmentState(ticket, now + 900000), 'Expired');
-  assert.equal(enrollmentState({...ticket, revoked_at: '2026-10-27T11:59:00Z'}, now), 'Revoked');
+  assert.equal(enrollmentState(ticket, now), copy('nodes.enrollment.active'));
+  assert.equal(enrollmentState({...ticket, uses: 1}, now), copy('nodes.enrollment.used'));
+  assert.equal(enrollmentState(ticket, now + 900000), copy('nodes.enrollment.expired'));
+  assert.equal(enrollmentState({...ticket, revoked_at: '2026-10-27T11:59:00Z'}, now), copy('nodes.enrollment.revoked'));
 });
 
 test('node tickets are filtered after reading every page, including unrelated full pages', async () => {

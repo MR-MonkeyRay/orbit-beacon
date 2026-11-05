@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {flush, installDOM} from './console-dom.js';
+import {copy, flush, installDOM} from './console-dom.js';
 
 test('detail dialog owns loading, replacement, disposal, and navigation abort', async () => {
   const dom = installDOM();
@@ -12,12 +12,12 @@ test('detail dialog owns loading, replacement, disposal, and navigation abort', 
     let disposed = 0;
     const navigation = new AbortController();
     const dialog = detailDialog({
-      title: 'Details', loading: 'Loading', signal: navigation.signal,
+      title: 'Details', loading: copy('controls.loading'), signal: navigation.signal,
       load: () => new Promise((done) => { resolve = done; }),
       render: (value) => ({nodes: document.createElement(value), dispose: () => { disposed += 1; }}),
       failure: () => document.createElement('error')
     });
-    assert.equal(dom.body.querySelector('p')?.textContent, 'Loading');
+    assert.equal(dom.body.querySelector('p')?.textContent, copy('controls.loading'));
     resolve('section');
     await flush();
     assert.ok(dom.body.querySelector('section'));
@@ -36,7 +36,7 @@ test('detail dialog rejects invalid IDs without loading', async () => {
   try {
     const {detailDialog} = await import('../src/console/ui/detail-dialog.js');
     let loads = 0;
-    detailDialog({title: 'Details', loading: 'Loading', valid: false, invalid: 'Invalid', load: () => { loads += 1; }, render: () => null, failure: () => null});
+    detailDialog({title: 'Details', loading: copy('controls.loading'), valid: false, invalid: 'Invalid', load: () => { loads += 1; }, render: () => null, failure: () => null});
     assert.equal(loads, 0);
     assert.equal(dom.body.querySelector('p')?.textContent, 'Invalid');
   } finally { dom.restore(); }

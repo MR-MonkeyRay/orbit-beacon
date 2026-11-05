@@ -4,15 +4,15 @@
 }
 
 ::view-transition-old(main-view) {
-  animation: vt-out .14s ease-in both;
+  animation: vt-out var(--duration-140) var(--ease-in) both;
 }
 
 ::view-transition-new(main-view) {
-  animation: vt-in .32s var(--ease) both;
+  animation: vt-in var(--duration-320) var(--ease) both;
 }
 
 ::view-transition-group(nav-pill) {
-  animation-duration: .32s;
+  animation-duration: var(--duration-320);
   animation-timing-function: var(--ease);
 }
 
@@ -30,7 +30,7 @@
 }
 
 .enter {
-  animation: vt-in .32s var(--ease);
+  animation: vt-in var(--duration-320) var(--ease);
 }
 
 /* 响应式：仅支持桌面和 iPad 宽度。 */
@@ -86,14 +86,14 @@
     background: var(--ink);
     color: var(--bg);
     font-size: var(--fs-sm);
-    font-weight: 600;
-    line-height: 1.4;
+    font-weight: var(--font-weight-600);
+    line-height: var(--line-height-140);
     white-space: nowrap;
     box-shadow: var(--shadow);
     opacity: 0;
     transform: translate(-4px,-50%);
     pointer-events: none;
-    transition: opacity .15s,transform .15s var(--ease);
+    transition: opacity var(--duration-150),transform var(--duration-150) var(--ease);
   }
 
   .sidebar .brand,.account-actions .btn {
@@ -124,7 +124,7 @@
     margin: 0;
     padding: 0 var(--sp-1);
     font-size: var(--fs-2xs);
-    line-height: 16px;
+    line-height: var(--line-height-badge);
   }
 
   .notification-entry .notification-freshness {

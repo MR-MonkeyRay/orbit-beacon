@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {elements, installDOM} from './console-dom.js';
+import {copy, elements, installDOM} from './console-dom.js';
 
 test('facts preserves repeated labels and h child semantics for arrays, Nodes and false values', async () => {
   const dom = installDOM();
@@ -60,16 +60,16 @@ test('live status distinguishes an initial connection from reconnection after li
   try {
     const {liveStatus} = await import('../src/console/ui/components.js');
     const status = liveStatus();
-    assert.equal(status.element.textContent, 'Connecting…');
+    assert.equal(status.element.textContent, copy('controls.live.connecting'));
     status.update({state: 'stale'});
     status.update({state: 'connecting'});
-    assert.equal(status.element.textContent, 'Connecting…');
+    assert.equal(status.element.textContent, copy('controls.live.connecting'));
     status.update({state: 'live'});
-    assert.equal(status.element.textContent, 'Live');
+    assert.equal(status.element.textContent, copy('controls.live.live'));
     status.update({state: 'stale'});
-    assert.equal(status.element.textContent, 'Stale');
+    assert.equal(status.element.textContent, copy('controls.live.stale'));
     status.update({state: 'connecting'});
-    assert.equal(status.element.textContent, 'Reconnecting…');
+    assert.equal(status.element.textContent, copy('controls.live.reconnecting'));
   } finally { dom.restore(); }
 });
 

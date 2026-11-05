@@ -23,7 +23,7 @@
 
 .field-label,.field>span:first-child {
   font-size: var(--fs-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
   color: var(--ink);
 }
 
@@ -35,7 +35,7 @@
 .field-error {
   font-size: var(--fs-xs);
   color: var(--bad);
-  font-weight: 550;
+  font-weight: var(--font-weight-550);
 }
 
 .input {
@@ -45,7 +45,7 @@
   border: 1px solid var(--line-2);
   border-radius: var(--r-md);
   background: var(--panel-2);
-  transition: border-color .15s,box-shadow .15s,background-color .15s;
+  transition: border-color var(--duration-150),box-shadow var(--duration-150),background-color var(--duration-150);
 }
 
 @media (hover:hover) {
@@ -76,7 +76,7 @@
 textarea.input {
   min-height: 96px;
   resize: vertical;
-  line-height: 1.5;
+  line-height: var(--line-height-150);
 }
 
 select.input {
@@ -117,7 +117,7 @@ select.input {
   font-size: var(--fs-sm);
   color: var(--beacon-text);
   opacity: 0;
-  transition: opacity .2s;
+  transition: opacity var(--duration-200);
 }
 
 .dirty-note.on {
@@ -145,7 +145,7 @@ select.input {
   margin-top: 1px;
   border-radius: 12px;
   background: var(--line-2);
-  transition: background-color .2s var(--ease);
+  transition: background-color var(--duration-200) var(--ease);
 }
 
 .switch-track::after {
@@ -158,7 +158,7 @@ select.input {
   border-radius: 50%;
   background: var(--control-knob);
   box-shadow: 0 1px 3px rgba(0,0,0,.25);
-  transition: transform .25s var(--ease);
+  transition: transform var(--duration-250) var(--ease);
 }
 
 .switch input:checked+.switch-track {
@@ -176,7 +176,7 @@ select.input {
 
 .switch-text strong {
   display: block;
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
 }
 
 .switch-text span {
@@ -219,7 +219,7 @@ select.input {
   border-radius: var(--r-md);
   background: var(--panel-2);
   cursor: text;
-  transition: border-color .15s,box-shadow .15s;
+  transition: border-color var(--duration-150),box-shadow var(--duration-150);
 }
 
 .tags:focus-within {
@@ -247,7 +247,7 @@ select.input {
   background: var(--orbit-soft);
   color: var(--ink);
   font-size: var(--fs-sm);
-  animation: pop .2s var(--ease);
+  animation: pop var(--duration-200) var(--ease);
 }
 
 .tag span {

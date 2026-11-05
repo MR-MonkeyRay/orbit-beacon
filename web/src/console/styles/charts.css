@@ -12,7 +12,7 @@
 
 .history-metric h3 {
   font-size: var(--fs-md);
-  font-weight: 650;
+  font-weight: var(--font-weight-650);
   margin-bottom: 10px;
 }
 
@@ -152,6 +152,6 @@
   display: block;
   color: var(--ink-2);
   font-size: var(--fs-2xs);
-  font-weight: 550;
+  font-weight: var(--font-weight-550);
   margin-bottom: var(--sp-1);
 }

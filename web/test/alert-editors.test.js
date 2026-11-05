@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {setNavigationSignal, setSession} from '../src/console/api.js';
-import {elements, flush, installDOM} from './console-dom.js';
+import {copy, elements, flush, installDOM} from './console-dom.js';
 
 const id = '00000000-0000-4000-8000-000000000001';
 const admin = () => setSession({csrf_token: 'csrf', user: {id, username: 'admin-two', must_change_password: false}, expires_at: ''});
@@ -91,7 +91,7 @@ test('channel editor starts with redacted URL and no secret, supports replacemen
     dialog.close('done');
     await dialog.closed;
     const panel = channelsPanel({...context, channels: [item]});
-    assert.ok(elements(panel).some((element) => element.tagName === 'button' && element.textContent === 'Send test'));
+    assert.ok(elements(panel).some((element) => element.tagName === 'button' && element.textContent === copy('alerts.channels.sendTest')));
     setSession({user: null, csrf_token: '', expires_at: ''});
     assert.equal(channelEditor(item, context), undefined);
     admin();
@@ -116,7 +116,7 @@ test('channel test results update accessible live status after failures and succ
   try {
     const {channelsPanel} = await import('../src/console/pages/notification-channels.js');
     const root = channelsPanel({channels: [{id, name: 'Mail', kind: 'email', enabled: true, secret_set: true, config: {host: 'smtp.example.com', port: 587, to: ['a@example.com']}}], signal: controller.signal, saved: async () => {}});
-    const send = elements(root).find((element) => element.tagName === 'button' && element.textContent === 'Send test');
+    const send = elements(root).find((element) => element.tagName === 'button' && element.textContent === copy('alerts.channels.sendTest'));
     const status = elements(root).find((element) => element.getAttribute('role') === 'status');
     send.click(); await flush();
     const rejected = status.textContent;

@@ -67,6 +67,56 @@
   --z-toast:80;
   --z-progress:90;
   --z-skip:100;
+  --duration-reduced-motion:.01ms;
+  --duration-40:40ms;
+  --duration-100:.1s;
+  --duration-120:.12s;
+  --duration-140:.14s;
+  --duration-150:.15s;
+  --duration-180:.18s;
+  --duration-200:.2s;
+  --duration-250:.25s;
+  --duration-280:.28s;
+  --duration-300:.3s;
+  --duration-320:.32s;
+  --duration-350:.35s;
+  --duration-400:.4s;
+  --duration-500:.5s;
+  --duration-700:.7s;
+  --duration-800:.8s;
+  --duration-1200:1.2s;
+  --duration-1400:1.4s;
+  --duration-2400:2.4s;
+  --duration-3200:3.2s;
+  --duration-4000:4s;
+  --duration-orbit-public-1:70s;
+  --duration-orbit-public-2:110s;
+  --duration-orbit-public-3:160s;
+  --duration-orbit-login-1:90s;
+  --duration-orbit-login-2:140s;
+  --duration-orbit-login-3:210s;
+  --font-weight-400:400;
+  --font-weight-550:550;
+  --font-weight-600:600;
+  --font-weight-650:650;
+  --font-weight-680:680;
+  --font-weight-700:700;
+  --font-weight-720:720;
+  --line-height-100:1;
+  --line-height-108:1.08;
+  --line-height-115:1.15;
+  --line-height-135:1.35;
+  --line-height-140:1.4;
+  --line-height-150:1.5;
+  --line-height-155:1.55;
+  --line-height-160:1.6;
+  --line-height-badge:16px;
+  --ease-default:ease;
+  --ease-linear:linear;
+  --ease-in:ease-in;
+  --ease-in-out:ease-in-out;
+  --ease-ping:cubic-bezier(.2,.6,.3,1);
+  --ease-progress:cubic-bezier(.1,.6,.2,1);
   --ease:cubic-bezier(.2,.8,.2,1);
   --font:system-ui,-apple-system,"Segoe UI Variable Text","Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
   --mono:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
@@ -159,7 +209,7 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
-  font: var(--fs-base)/1.55 var(--font);
+  font: var(--fs-base)/var(--line-height-155) var(--font);
   color: var(--ink);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
@@ -263,7 +313,7 @@ button,input,select,textarea {
   background: transparent;
   color: var(--ink-2);
   cursor: pointer;
-  transition: background-color .15s,color .15s;
+  transition: background-color var(--duration-150),color var(--duration-150);
 }
 
 @media (hover:hover) {
@@ -280,7 +330,7 @@ button,input,select,textarea {
   padding: var(--sp-1) 10px var(--sp-1) var(--sp-2);
   border-radius: 999px;
   font-size: var(--fs-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
   white-space: nowrap;
   color: var(--idle);
   background: var(--idle-bg);
@@ -317,7 +367,7 @@ button,input,select,textarea {
   inset: 0;
   background: linear-gradient(90deg,transparent,color-mix(in srgb,var(--panel-2) 75%,transparent),transparent);
   transform: translateX(-100%);
-  animation: shimmer 1.4s linear infinite;
+  animation: shimmer var(--duration-1400) var(--ease-linear) infinite;
 }
 
 @keyframes spin {
@@ -346,8 +396,8 @@ button,input,select,textarea {
 
 @media (prefers-reduced-motion:reduce) {
   *,*::before,*::after,::view-transition-group(*),::view-transition-old(*),::view-transition-new(*) {
-    animation-duration: .01ms!important;
+    animation-duration: var(--duration-reduced-motion)!important;
     animation-iteration-count: 1!important;
-    transition-duration: .01ms!important;
+    transition-duration: var(--duration-reduced-motion)!important;
   }
 }

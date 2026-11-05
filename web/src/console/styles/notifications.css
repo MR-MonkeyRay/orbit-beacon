@@ -109,7 +109,7 @@
 
 .notification-row-title {
   color: var(--ink);
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
   min-width: 0;
   max-width: 100%;
 }
@@ -124,13 +124,13 @@
 
 .notification-unread {
   color: var(--orbit);
-  font-weight: 650;
+  font-weight: var(--font-weight-650);
 }
 
 .notification-row-subject {
   color: var(--ink-2);
   font-size: var(--fs-sm);
-  font-weight: 400;
+  font-weight: var(--font-weight-400);
   min-width: 0;
   max-width: 100%;
 }

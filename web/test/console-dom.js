@@ -1,4 +1,17 @@
 import {setImmediate as nextTurn} from 'node:timers/promises';
+import en from '../src/shared/locales/en.js';
+
+export function copy(key, params = {}) {
+  let value = en[key];
+  if (value === undefined) throw new Error(`Unknown translation key: ${key}`);
+  if (typeof value !== 'string') value = value[new Intl.PluralRules('en').select(Number(params.count))] ?? value.other;
+  return value.replace(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, (_match, name) => {
+    if (!Object.hasOwn(params, name)) throw new Error(`Missing translation parameter ${name} for ${key}`);
+    return String(params[name]);
+  });
+}
+
+export const copyPattern = (key, params) => new RegExp(copy(key, params).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 
 // 异步控制台面板的最小 DOM；刻意不解析 HTML。
 export class TestElement extends EventTarget {

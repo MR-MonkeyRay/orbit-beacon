@@ -13,9 +13,9 @@
   border-radius: var(--r-md);
   background: var(--beacon);
   color: var(--beacon-ink);
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
   text-decoration: none;
-  transition: top .2s var(--ease);
+  transition: top var(--duration-200) var(--ease);
 }
 
 .skip:focus {
@@ -37,13 +37,13 @@
 
 .progress.run {
   opacity: 1;
-  animation: progress 2.4s cubic-bezier(.1,.6,.2,1) forwards;
+  animation: progress var(--duration-2400) var(--ease-progress) forwards;
 }
 
 .progress.done {
   opacity: 0;
   transform: scaleX(1);
-  transition: opacity .35s .1s,transform .2s;
+  transition: opacity var(--duration-350) var(--duration-100),transform var(--duration-200);
 }
 
 @keyframes progress {
@@ -95,7 +95,7 @@
   gap: 10px;
   padding: var(--sp-1) 10px 18px;
   color: var(--ink);
-  font-weight: 680;
+  font-weight: var(--font-weight-680);
   font-size: var(--fs-lg);
   letter-spacing: -.02em;
   text-decoration: none;
@@ -117,9 +117,9 @@
   padding: 0 var(--sp-3);
   border-radius: var(--r-md);
   color: var(--ink-2);
-  font-weight: 550;
+  font-weight: var(--font-weight-550);
   text-decoration: none;
-  transition: color .15s,background-color .15s;
+  transition: color var(--duration-150),background-color var(--duration-150);
 }
 
 @media (hover:hover) {
@@ -184,7 +184,7 @@
   border-radius: 50%;
   background: var(--orbit-soft);
   color: var(--orbit);
-  font-weight: 700;
+  font-weight: var(--font-weight-700);
   text-transform: uppercase;
 }
 
@@ -193,7 +193,7 @@
 }
 
 .who-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-600);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
