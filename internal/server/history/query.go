@@ -16,7 +16,7 @@ const (
 
 var metricUnits = map[string]string{
 	"cpu_percent": "percent", "memory_used_percent": "percent", "swap_used_percent": "percent",
-	"load1": "load", "disk_used_percent": "percent",
+	"load1": "load", "load5": "load", "load15": "load", "disk_used_percent": "percent",
 	"net_rx_bytes_per_second": "bytes_per_second", "net_tx_bytes_per_second": "bytes_per_second",
 }
 
@@ -37,6 +37,8 @@ func SelectRange(value string) (Selection, error) {
 		return Selection{7 * 24 * time.Hour, 300}, nil
 	case "30d":
 		return Selection{30 * 24 * time.Hour, 3600}, nil
+	case "90d":
+		return Selection{90 * 24 * time.Hour, 3600}, nil
 	default:
 		return Selection{}, fmt.Errorf("unsupported history range")
 	}

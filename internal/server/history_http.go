@@ -17,7 +17,7 @@ func (h *handler) nodeHistory(w http.ResponseWriter, r *http.Request, id, reques
 		fields["metric"] = "must be a supported history metric"
 	}
 	if _, err := history.SelectRange(requestedRange); err != nil {
-		fields["range"] = "must be one of 1h, 6h, 24h, 7d, 30d"
+		fields["range"] = "must be one of 1h, 6h, 24h, 7d, 30d, 90d"
 	}
 	if len(fields) > 0 {
 		h.serviceError(w, &validation.Error{Fields: fields}, requestID)

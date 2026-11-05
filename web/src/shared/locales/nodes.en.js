@@ -166,7 +166,6 @@ export default {
   'nodes.traffic': 'Traffic',
   'nodes.trafficLoading': 'Loading traffic…',
   'nodes.memory': 'Memory',
-  'nodes.load1': 'Load (1 min)',
   'nodes.load': 'Load',
   'nodes.disk': 'Disk',
   'nodes.network': 'Network',

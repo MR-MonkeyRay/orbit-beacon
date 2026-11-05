@@ -204,7 +204,7 @@ func TestAggregationWeightedRollupsShutdownAndGaps(t *testing.T) {
 		count              int
 		firstAvg, firstMax float64
 	}{
-		{"1h", 3, 20, 30}, {"6h", 3, 20, 30}, {"24h", 1, 30, 80}, {"7d", 1, 30, 80}, {"30d", 1, 30, 80},
+		{"1h", 3, 20, 30}, {"6h", 3, 20, 30}, {"24h", 1, 30, 80}, {"7d", 1, 30, 80}, {"30d", 1, 30, 80}, {"90d", 1, 30, 80},
 	} {
 		response, err := s.Query(context.Background(), "one", "cpu_percent", test.rangeName, now.Add(4*time.Minute))
 		if err != nil {
@@ -370,9 +370,12 @@ func TestSchemaTooNewAndPermissions(t *testing.T) {
 }
 
 func TestSelectRangeAndEmpty(t *testing.T) {
-	for name, step := range map[string]int{"1h": 60, "6h": 60, "24h": 300, "7d": 300, "30d": 3600} {
+	for name, want := range map[string]Selection{
+		"1h": {time.Hour, 60}, "6h": {6 * time.Hour, 60}, "24h": {24 * time.Hour, 300},
+		"7d": {7 * 24 * time.Hour, 300}, "30d": {30 * 24 * time.Hour, 3600}, "90d": {90 * 24 * time.Hour, 3600},
+	} {
 		selection, err := SelectRange(name)
-		if err != nil || selection.StepSeconds != step {
+		if err != nil || selection != want {
 			t.Fatalf("%s=%+v %v", name, selection, err)
 		}
 	}
@@ -384,6 +387,16 @@ func TestSelectRangeAndEmpty(t *testing.T) {
 	response, err := Empty("net_rx_bytes_per_second", "1h")
 	if err != nil || response.Points == nil || len(response.Points) != 0 || response.Unit != "bytes_per_second" {
 		t.Fatalf("empty=%+v %v", response, err)
+	}
+	for metric, unit := range map[string]string{
+		"cpu_percent": "percent", "memory_used_percent": "percent", "swap_used_percent": "percent",
+		"load1": "load", "load5": "load", "load15": "load", "disk_used_percent": "percent",
+		"net_rx_bytes_per_second": "bytes_per_second", "net_tx_bytes_per_second": "bytes_per_second",
+	} {
+		response, err := Empty(metric, "90d")
+		if !ValidMetric(metric) || err != nil || response.Metric != metric || response.Unit != unit || response.Range != "90d" || response.StepSeconds != 3600 || response.Points == nil || len(response.Points) != 0 {
+			t.Errorf("%s: response=%+v err=%v", metric, response, err)
+		}
 	}
 	if _, err := Empty("unknown", "1h"); err == nil {
 		t.Fatal("accepted unknown metric")
@@ -547,5 +560,26 @@ func TestRetentionPreservesIntersectingBoundaryBuckets(t *testing.T) {
 	}
 	if err := s.db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id='expired'`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("expired count=%d err=%v", count, err)
+	}
+}
+
+func TestLoadHistoryQueriesAcrossNinetyDays(t *testing.T) {
+	s, _ := testService(t, nil)
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	for _, age := range []time.Duration{91 * 24 * time.Hour, 90 * 24 * time.Hour, 60 * 24 * time.Hour, time.Minute} {
+		s.samples <- Sample{NodeID: "node", ReceivedAt: now.Add(-age), Values: map[string]float64{"load1": 1.5, "load5": 2.5, "load15": 3.5}}
+	}
+	stopped(t, s)
+	for metric, want := range map[string]float64{"load1": 1.5, "load5": 2.5, "load15": 3.5} {
+		response, err := s.Query(context.Background(), "node", metric, "90d", now)
+		if err != nil || response.Unit != "load" || response.StepSeconds != 3600 || len(response.Points) != 3 {
+			t.Fatalf("%s: response=%+v err=%v", metric, response, err)
+		}
+		for i, age := range []time.Duration{90 * 24 * time.Hour, 60 * 24 * time.Hour, time.Hour} {
+			point := response.Points[i]
+			if !point.T.Equal(now.Add(-age)) || point.Avg != want || point.Max != want {
+				t.Errorf("%s: point=%+v age=%s want=%v", metric, point, age, want)
+			}
+		}
 	}
 }

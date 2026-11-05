@@ -35,6 +35,17 @@ func TestHistoryAPIValidationSecondAdministratorAndDisabledHistory(t *testing.T)
 	if !strings.Contains(response.Body.String(), `"points":[]`) {
 		t.Fatalf("response=%s", response.Body)
 	}
+	for _, metric := range []string{"load5", "load15"} {
+		response := request(t, f.handler, http.MethodGet, route+"?metric="+metric+"&range=90d", "", second, "", "")
+		assertHTTPStatus(t, response, 200)
+		var result history.Response
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Metric != metric || result.Range != "90d" || result.Unit != "load" || result.StepSeconds != 3600 || result.Points == nil || len(result.Points) != 0 {
+			t.Fatalf("response=%s", response.Body)
+		}
+	}
 	assertHTTPStatus(t, request(t, f.handler, http.MethodPost, route+valid, "", second, "", ""), 405)
 }
 
@@ -75,8 +86,8 @@ func TestHistoryHTTPIngestFlushTiersAndDeleteVisibility(t *testing.T) {
 		avg               float64
 	}{
 		{"cpu_percent", "1h", 60, "percent", 25}, {"cpu_percent", "6h", 60, "percent", 25},
-		{"cpu_percent", "24h", 300, "percent", 25}, {"cpu_percent", "7d", 300, "percent", 25}, {"cpu_percent", "30d", 3600, "percent", 25},
-		{"memory_used_percent", "1h", 60, "percent", 50}, {"load1", "1h", 60, "load", 0.5},
+		{"cpu_percent", "24h", 300, "percent", 25}, {"cpu_percent", "7d", 300, "percent", 25}, {"cpu_percent", "30d", 3600, "percent", 25}, {"cpu_percent", "90d", 3600, "percent", 25},
+		{"memory_used_percent", "1h", 60, "percent", 50}, {"load1", "1h", 60, "load", 0.5}, {"load5", "1h", 60, "load", 0.5}, {"load15", "90d", 3600, "load", 0.5},
 	} {
 		response := request(t, h, http.MethodGet, "/api/v1/nodes/"+id+"/history?metric="+test.metric+"&range="+test.rangeName, "", cookie, "", "")
 		assertHTTPStatus(t, response, 200)

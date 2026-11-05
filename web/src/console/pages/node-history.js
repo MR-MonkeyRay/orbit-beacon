@@ -8,11 +8,11 @@ import {historyError} from '../ui/history-error.js';
 import {panelLifecycle} from '../ui/polling-panel.js';
 
 const STORAGE_KEY = 'orbitbeacon.history.range';
-const RANGES = ['1h', '6h', '24h', '7d', '30d'];
+const RANGES = ['1h', '6h', '24h', '7d', '30d', '90d'];
 const CHARTS = [
   {title: t('nodes.cpu'), unit: 'percent', metrics: [['cpu_percent', t('nodes.cpu')]]},
   {title: t('nodes.memory'), unit: 'percent', metrics: [['memory_used_percent', t('nodes.memory')]]},
-  {title: t('nodes.load1'), unit: 'load', metrics: [['load1', t('nodes.load')]]},
+  {title: t('nodes.load'), unit: 'load', metrics: [['load1', t('nodes.load')]]},
   {title: t('nodes.disk'), unit: 'percent', metrics: [['disk_used_percent', t('nodes.disk')]]},
   {title: t('nodes.network'), unit: 'bytes_per_second', metrics: [['net_rx_bytes_per_second', t('nodes.receiveRx')], ['net_tx_bytes_per_second', t('nodes.sendTx')]]}
 ];
@@ -29,6 +29,7 @@ function savedRange() {
 // 路由器的中止信号在刷新/导航时也会销毁计时器。
 export function historyPanel(id, signal) {
   let range = savedRange();
+  let loadMetric = 'load1';
   let controller;
   let lifecycle;
   const status = h('p', {class: 'muted', role: 'status'});
@@ -42,6 +43,17 @@ export function historyPanel(id, signal) {
       load();
     }}, t(value.endsWith('h') ? 'nodes.range.hours' : 'nodes.range.days', {count: Number.parseInt(value, 10)})));
   const selector = h('div', {class: 'segmented', role: 'group', 'aria-label': t('nodes.historyRange')}, controls);
+  const loadControls = ['load1', 'load5', 'load15'].map((value) => h('button', {type: 'button', id: `history-load-${value}`, dataset: {metric: value},
+    'aria-pressed': String(value === loadMetric), onclick: () => {
+      if (loadMetric === value) return;
+      loadMetric = value;
+      for (const control of loadControls) control.setAttribute('aria-pressed', String(control.dataset.metric === loadMetric));
+      load();
+    }}, t('nodes.duration.minutes', {minutes: Number(value.slice(4))})));
+  const loadSelector = h('div', {class: 'segmented', role: 'group', 'aria-label': t('nodes.load')}, loadControls);
+  const metricSection = (item, content) => h('section', {class: 'history-metric', 'aria-label': t('nodes.historyAria', {title: item.title})},
+    item.unit === 'load' ? h('div', {class: 'head-actions'}, h('h3', null, item.title), loadSelector) : h('h3', null, item.title), content);
+
   const root = panel(t('nodes.history'), {action: selector},
     h('p', {class: 'lede'}, t('nodes.historyIntro')),
     status, charts, note(t('nodes.historyHint')));
@@ -51,18 +63,25 @@ export function historyPanel(id, signal) {
     const request = new AbortController();
     controller = request;
     const requestedRange = range;
+    const requestedCharts = CHARTS.map((item) => item.unit === 'load'
+      ? {...item, metrics: [[loadMetric, t('nodes.load')]]} : item);
     status.textContent = t('nodes.historyLoading');
     charts.setAttribute('aria-busy', 'true');
-    // 所选范围变化时清空图表，避免旧数据被误认为新范围的数据。
+    // 所选范围或负载指标变化时清空图表数据，保留可继续切换的控件。
     // 刷新时保留已聚焦的图表直到加载完成。
-    if (charts.dataset.range !== range) charts.replaceChildren();
+    if (charts.dataset.range !== range || charts.dataset.loadMetric !== loadMetric) {
+      const focusedControl = loadSelector.contains(document.activeElement) ? document.activeElement : null;
+      charts.replaceChildren(...requestedCharts.map((item) => metricSection(item)));
+      focusedControl?.focus({preventScroll: true});
+    }
     charts.dataset.range = range;
-    const metrics = CHARTS.flatMap((item) => item.metrics.map(([metric]) => metric));
+    charts.dataset.loadMetric = loadMetric;
+    const metrics = requestedCharts.flatMap((item) => item.metrics.map(([metric]) => metric));
     const results = new Map();
     await Promise.all(metrics.map(async (metric) => {
       try {
         const data = await api(`/nodes/${encodeURIComponent(id)}/history?metric=${metric}&range=${requestedRange}`, {signal: request.signal});
-        if (data.unit !== CHARTS.find((item) => item.metrics.some(([name]) => name === metric)).unit) throw Object.assign(new Error('Unsupported history unit'), {code: 'unreadable_response'});
+        if (data.unit !== requestedCharts.find((item) => item.metrics.some(([name]) => name === metric)).unit) throw Object.assign(new Error('Unsupported history unit'), {code: 'unreadable_response'});
         results.set(metric, {data});
       } catch (error) {
         results.set(metric, {error});
@@ -79,7 +98,7 @@ export function historyPanel(id, signal) {
     // 请求完成后再读取焦点，因为用户可能已在等待期间聚焦某个图表。
     const focusedID = charts.contains(document.activeElement) ? document.activeElement.id : null;
     const selectedTime = Number(document.activeElement?.dataset?.selectedTime) || undefined;
-    charts.replaceChildren(...CHARTS.map((item) => {
+    charts.replaceChildren(...requestedCharts.map((item) => {
       const error = item.metrics.map(([metric]) => results.get(metric).error).find(Boolean);
       const content = error
         ? historyError(t('nodes.historyLoadError', {error: errorText(error)}),
@@ -93,7 +112,7 @@ export function historyPanel(id, signal) {
               && Number.isFinite(point.avg) && Number.isFinite(point.max)) : [];
             return {label, points, stepSeconds: Number.isFinite(data.step_seconds) && data.step_seconds > 0 ? data.step_seconds : 60};
           })});
-      return h('section', {class: 'history-metric', 'aria-label': t('nodes.historyAria', {title: item.title})}, h('h3', null, item.title), content);
+      return metricSection(item, content);
     }));
     charts.setAttribute('aria-busy', 'false');
     const failures = [...results.values()].filter((result) => result.error).length;

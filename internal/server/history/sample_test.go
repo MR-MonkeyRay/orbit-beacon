@@ -25,9 +25,17 @@ func TestSnapshotScalarMathAndOwnership(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	sample := Snapshot("node", now, m)
-	for metric, want := range map[string]float64{"cpu_percent": 25, "memory_used_bytes": 750, "memory_total_bytes": 1000, "memory_used_percent": 75, "swap_used_bytes": 20, "swap_total_bytes": 100, "swap_used_percent": 20, "load1": 1.5, "load5": 2, "load15": 3, "uptime_seconds": 100, "disk_used_bytes": 200, "disk_total_bytes": 400, "disk_used_percent": 50, "net_rx_bytes_per_second": 50, "net_tx_bytes_per_second": 50} {
+	for metric, want := range map[string]float64{"cpu_percent": 25, "memory_used_percent": 75, "swap_used_percent": 20, "load1": 1.5, "load5": 2, "load15": 3, "disk_used_percent": 50, "net_rx_bytes_per_second": 50, "net_tx_bytes_per_second": 50} {
 		if got, exists := sample.Values[metric]; !exists || got != want {
 			t.Errorf("%s=%v exists=%v want=%v", metric, got, exists, want)
+		}
+	}
+	if len(sample.Values) != 9 {
+		t.Fatalf("unexpected snapshot metrics: %v", sample.Values)
+	}
+	for _, metric := range []string{"uptime_seconds", "memory_total_bytes", "memory_used_bytes", "swap_total_bytes", "swap_used_bytes", "disk_total_bytes", "disk_used_bytes"} {
+		if _, exists := sample.Values[metric]; exists {
+			t.Errorf("unused history metric %s recorded", metric)
 		}
 	}
 	*m.CPUPercent = 99

@@ -1431,11 +1431,11 @@ paths:
           required: true
           schema:
             type: string
-            enum: [cpu_percent, memory_used_percent, swap_used_percent, load1, disk_used_percent, net_rx_bytes_per_second, net_tx_bytes_per_second]
+            enum: [cpu_percent, memory_used_percent, swap_used_percent, load1, load5, load15, disk_used_percent, net_rx_bytes_per_second, net_tx_bytes_per_second]
         - name: range
           in: query
           required: true
-          schema: {type: string, enum: [1h, 6h, 24h, 7d, 30d]}
+          schema: {type: string, enum: [1h, 6h, 24h, 7d, 30d, 90d]}
       responses:
         '200':
           description: 升序的 UTC 桶时间戳；无 null 或合成的间隙点。范围起点处的相交桶可能早于精确截止点不到一个步长。
@@ -2614,9 +2614,9 @@ components:
       additionalProperties: false
       required: [metric, unit, range, step_seconds, points]
       properties:
-        metric: {type: string, enum: [cpu_percent, memory_used_percent, swap_used_percent, load1, disk_used_percent, net_rx_bytes_per_second, net_tx_bytes_per_second]}
+        metric: {type: string, enum: [cpu_percent, memory_used_percent, swap_used_percent, load1, load5, load15, disk_used_percent, net_rx_bytes_per_second, net_tx_bytes_per_second]}
         unit: {type: string, enum: [percent, load, bytes_per_second]}
-        range: {type: string, enum: [1h, 6h, 24h, 7d, 30d]}
+        range: {type: string, enum: [1h, 6h, 24h, 7d, 30d, 90d]}
         step_seconds: {type: integer, enum: [60, 300, 3600]}
         points:
           type: array

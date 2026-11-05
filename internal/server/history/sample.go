@@ -49,15 +49,13 @@ func Snapshot(nodeID string, receivedAt time.Time, m v1.Metrics) Sample {
 			s.Values[key] = value
 		}
 	}
-	for key, value := range map[string]*float64{"cpu_percent": m.CPUPercent, "load1": m.Load1, "load5": m.Load5, "load15": m.Load15, "uptime_seconds": m.UptimeSeconds} {
+	for key, value := range map[string]*float64{"cpu_percent": m.CPUPercent, "load1": m.Load1, "load5": m.Load5, "load15": m.Load15} {
 		source := key
 		switch key {
 		case "cpu_percent":
 			source = "cpu"
 		case "load1", "load5", "load15":
 			source = "load"
-		case "uptime_seconds":
-			source = "uptime"
 		}
 		if value != nil && ok(key, source) {
 			put(key, *value)
@@ -65,16 +63,12 @@ func Snapshot(nodeID string, receivedAt time.Time, m v1.Metrics) Sample {
 	}
 	if m.MemoryTotalBytes != nil && m.MemoryAvailableBytes != nil && ok("memory_total_bytes", "memory") && ok("memory_available_bytes", "memory") && *m.MemoryAvailableBytes <= *m.MemoryTotalBytes {
 		total, used := *m.MemoryTotalBytes, *m.MemoryTotalBytes-*m.MemoryAvailableBytes
-		put("memory_total_bytes", float64(total))
-		put("memory_used_bytes", float64(used))
 		if total > 0 {
 			put("memory_used_percent", 100*float64(used)/float64(total))
 		}
 	}
 	if m.SwapTotalBytes != nil && m.SwapUsedBytes != nil && ok("swap_total_bytes", "swap") && ok("swap_used_bytes", "swap") {
 		total, used := *m.SwapTotalBytes, *m.SwapUsedBytes
-		put("swap_total_bytes", float64(total))
-		put("swap_used_bytes", float64(used))
 		if total > 0 && used <= total {
 			put("swap_used_percent", 100*float64(used)/float64(total))
 		}
@@ -88,8 +82,6 @@ func Snapshot(nodeID string, receivedAt time.Time, m v1.Metrics) Sample {
 		}
 	}
 	if diskTotal > 0 {
-		put("disk_total_bytes", diskTotal)
-		put("disk_used_bytes", diskUsed)
 		put("disk_used_percent", 100*diskUsed/diskTotal)
 	}
 	var rx, tx float64

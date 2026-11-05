@@ -166,7 +166,6 @@ export default {
   'nodes.traffic': '流量',
   'nodes.trafficLoading': '正在加载流量…',
   'nodes.memory': '内存',
-  'nodes.load1': '负载（1 分钟）',
   'nodes.load': '负载',
   'nodes.disk': '磁盘',
   'nodes.network': '网络',
