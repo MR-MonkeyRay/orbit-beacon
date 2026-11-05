@@ -97,3 +97,13 @@ flowchart LR
 - HTML 使用同源 CSP 并禁止嵌入框架，避免依赖第三方脚本或样式。
 - 资产变更与审计同事务提交；批量操作逐节点提交并返回各自结果。通知凭据和完整 Webhook URL 由 `secrets.key` 派生密钥以 AES-256-GCM 加密，出站限制见[通知网络](../deploy/README.md#通知网络)。
 - 正常关闭先标记不就绪、停止实时流，再限时关闭 HTTP 和后台任务、释放目录锁；强制终止可能丢失内存中的合并状态或历史。
+
+## 开发压测
+
+先在测试服务器创建批量注册票据（每张最多 100 次，30 分钟有效），逐行存入仓库外的文件。工具会真实注册节点并保留在服务器，不进入发布产物。
+
+```sh
+go run ./cmd/orbitbeacon-load -url http://127.0.0.1:8080 -tickets-file /path/to/tickets -nodes 200 -interval 10s -duration 5m -jitter 4900ms -disks 2 -networks 2 -probes 3
+```
+
+`-jitter` 决定节点的同步程度：接近间隔一半时近似均匀分布，较小时模拟同时上报。配置 `metrics_listen` 后，可从 `/metrics` 读取连接池、写队列、flush 和 WAL 指标。

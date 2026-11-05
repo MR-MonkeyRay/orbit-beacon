@@ -1,11 +1,16 @@
 package server
 
 import (
+	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
+
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"orbitbeacon/internal/server/ingest"
 	"regexp"
 	"strconv"
 	"strings"
@@ -145,5 +150,113 @@ func TestMetricsInFlightAndConcurrentObservation(t *testing.T) {
 func TestPrometheusBuildLabelEscaping(t *testing.T) {
 	if got := prometheusLabel("v1\\test\"\n"); got != `"v1\\test\"\n"` {
 		t.Fatalf("invalid label escaping: %s", got)
+	}
+}
+
+func TestSaturationMetricsExposition(t *testing.T) {
+	// 只创建连接池句柄，不建立数据库连接或触碰受 securefs 约束的文件。
+	writer, err := sql.Open("sqlite", "unused-metrics-writer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	reader, err := sql.Open("sqlite", "unused-metrics-reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	dir := t.TempDir()
+	wal := filepath.Join(dir, "orbitbeacon.db-wal")
+	if err := os.WriteFile(wal, make([]byte, 123), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewSaturationMetrics(writer, reader, dir)
+	service := ingest.NewService(nil, ingest.Options{})
+	h := &handler{metrics: newHTTPMetrics("test"), saturation: m, ingest: service}
+	for _, d := range []time.Duration{time.Millisecond, 20 * time.Millisecond, 600 * time.Millisecond, 40 * time.Second} {
+		m.ObserveHistoryFlush(d, 12)
+	}
+	h.observeRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/agent/v1/report", nil), func(w http.ResponseWriter, _ *http.Request) {
+		h.agentError(w, fmt.Errorf("wrapped: %w", ingest.ErrWriterBusy), "test")
+	})
+	h.observeRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/agent/v1/report", nil), func(w http.ResponseWriter, _ *http.Request) {
+		h.agentError(w, ingest.ErrServiceClosed, "test")
+	})
+	response := httptest.NewRecorder()
+	h.MetricsHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, line := range []string{
+		`orbitbeacon_db_connections_in_use{database="main",role="writer"} 0`,
+		`orbitbeacon_db_connections_in_use{database="main",role="reader"} 0`,
+		`orbitbeacon_db_wait_count_total{database="main",role="writer"} 0`,
+		`orbitbeacon_db_wait_duration_seconds_total{database="main",role="reader"} 0`,
+		`orbitbeacon_ingest_write_queue_depth 0`,
+		`orbitbeacon_agent_report_busy_total 1`,
+		`orbitbeacon_agent_reports_total{reason="unavailable"} 2`,
+		`orbitbeacon_history_flush_entries_bucket{le="10"} 0`,
+		`orbitbeacon_history_flush_entries_bucket{le="100"} 4`,
+		`orbitbeacon_history_flush_entries_bucket{le="+Inf"} 4`,
+		`orbitbeacon_history_flush_entries_sum 48`,
+		`orbitbeacon_history_flush_entries_count 4`,
+		`orbitbeacon_history_flush_duration_seconds_bucket{le="0.005"} 1`,
+		`orbitbeacon_history_flush_duration_seconds_bucket{le="0.025"} 2`,
+		`orbitbeacon_history_flush_duration_seconds_bucket{le="1"} 3`,
+		`orbitbeacon_history_flush_duration_seconds_bucket{le="+Inf"} 4`,
+		`orbitbeacon_history_flush_duration_seconds_count 4`,
+		`orbitbeacon_history_flush_duration_seconds_sum 40.621`,
+		`orbitbeacon_db_wal_size_bytes{database="main"} 123`,
+		`orbitbeacon_db_wal_size_bytes{database="metrics"} 0`,
+	} {
+		if !strings.Contains(response.Body.String(), line+"\n") {
+			t.Errorf("missing %s\n%s", line, response.Body.String())
+		}
+	}
+	// 后续抓取读取新的文件大小，不依赖后台采样。
+	if err := os.Truncate(wal, 456); err != nil {
+		t.Fatal(err)
+	}
+	if body := m.exposition(h); !strings.Contains(body, `orbitbeacon_db_wal_size_bytes{database="main"} 456`) {
+		t.Fatal(body)
+	}
+}
+
+func TestSaturationMetricsDisabled(t *testing.T) {
+	h := &handler{metrics: newHTTPMetrics("test")}
+	h.agentError(httptest.NewRecorder(), ingest.ErrWriterBusy, "test")
+	response := httptest.NewRecorder()
+	h.MetricsHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if strings.Contains(response.Body.String(), "orbitbeacon_history_flush_") {
+		t.Fatal("disabled saturation metrics were collected")
+	}
+}
+
+func TestSaturationMetricsConcurrentScrape(t *testing.T) {
+	m := NewSaturationMetrics(nil, nil, t.TempDir())
+	h := &handler{saturation: m}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range 1000 {
+			m.ObserveHistoryFlush(time.Millisecond, 3)
+		}
+	}()
+	for range 100 {
+		body := m.exposition(h)
+		var count, bucket string
+		for _, line := range strings.Split(body, "\n") {
+			if strings.HasPrefix(line, "orbitbeacon_history_flush_duration_seconds_count ") {
+				count = strings.TrimPrefix(line, "orbitbeacon_history_flush_duration_seconds_count ")
+			}
+			if strings.HasPrefix(line, `orbitbeacon_history_flush_duration_seconds_bucket{le="+Inf"} `) {
+				bucket = strings.TrimPrefix(line, `orbitbeacon_history_flush_duration_seconds_bucket{le="+Inf"} `)
+			}
+		}
+		if count != bucket {
+			t.Fatalf("inconsistent histogram count=%s bucket=%s", count, bucket)
+		}
+	}
+	wg.Wait()
+	if !strings.Contains(m.exposition(h), "orbitbeacon_history_flush_duration_seconds_count 1000\n") {
+		t.Fatal("lost flush observations")
 	}
 }

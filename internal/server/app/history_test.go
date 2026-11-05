@@ -44,7 +44,7 @@ func TestNewerHistorySchemaDisablesHistoryWithoutChangingFiles(t *testing.T) {
 	defer db.Close()
 	var output bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&output, nil))
-	if service := openMetricHistory(context.Background(), dir, db, logger); service != nil {
+	if service := openMetricHistory(context.Background(), dir, db, logger, nil); service != nil {
 		service.Close()
 		t.Fatal("opened newer schema")
 	}

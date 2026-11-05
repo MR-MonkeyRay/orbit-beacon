@@ -708,3 +708,6 @@ func (s *Service) recordSample(nodeID string, now time.Time, metrics v1.Metrics)
 		s.samplesDropped.Add(1)
 	}
 }
+
+// WriteQueueDepth 返回已占用的写入槽数，包含正在写入的一项；不获取写路径的锁。
+func (s *Service) WriteQueueDepth() int { return len(s.writerQueue) }

@@ -106,7 +106,13 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 	nodeService := nodes.NewService(db, nodes.Options{MaxNodes: cfg.MaxNodes})
 	nodeService.SetPublicReader(publicReader)
 
-	metricHistory := openMetricHistory(ctx, cfg.DataDir, publicReader, logger)
+	var saturation *server.SaturationMetrics
+	var observeFlush func(time.Duration, int)
+	if cfg.MetricsListen != "" {
+		saturation = server.NewSaturationMetrics(db, publicReader, cfg.DataDir)
+		observeFlush = saturation.ObserveHistoryFlush
+	}
+	metricHistory := openMetricHistory(ctx, cfg.DataDir, publicReader, logger, observeFlush)
 	if metricHistory != nil {
 		a.history = metricHistory
 	}
@@ -144,7 +150,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 			nodeService.InvalidatePublic()
 		}
 	})
-	handler, err := server.NewHandler(server.Options{Management: authService.Management(), Enrollments: enrollments, Traffic: traffic.NewService(db), Inbox: inbox.New(db), Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, WebUpdateIntervalSeconds: cfg.WebUpdateIntervalSeconds, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: version})
+	handler, err := server.NewHandler(server.Options{Management: authService.Management(), Enrollments: enrollments, Traffic: traffic.NewService(db), Inbox: inbox.New(db), Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, WebUpdateIntervalSeconds: cfg.WebUpdateIntervalSeconds, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: version, SaturationMetrics: saturation})
 	if err != nil {
 		return nil, err
 	}

@@ -152,6 +152,9 @@ func (h *handler) serviceError(w http.ResponseWriter, err error, requestID strin
 }
 
 func (h *handler) agentError(w http.ResponseWriter, err error, requestID string) {
+	if h.saturation != nil && errors.Is(err, ingest.ErrWriterBusy) {
+		h.saturation.reportBusy.Add(1)
+	}
 	h.writeError(w, err, requestID, agentErrors, "The operation could not be completed")
 }
 

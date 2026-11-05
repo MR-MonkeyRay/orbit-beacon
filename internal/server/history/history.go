@@ -43,6 +43,8 @@ CREATE INDEX buckets_retention ON buckets(step, t);`
 type Options struct {
 	Now    func() time.Time
 	Logger *slog.Logger
+	// ObserveFlush 仅在启用指标时设置；条目数为本次尝试写入的各层级聚合行数。
+	ObserveFlush func(time.Duration, int)
 }
 
 type bucketKey struct {
@@ -76,6 +78,7 @@ type Service struct {
 	logger            *slog.Logger
 	pending           map[bucketKey]map[string]aggregate // owned by run
 	dropped           atomic.Uint64
+	observeFlush      func(time.Duration, int)
 }
 
 // OpenDatabase 只初始化可信的指标 schema，不启动写入或定期清理任务。
@@ -101,7 +104,7 @@ func Open(ctx context.Context, dataDir string, nodes *sql.DB, opts Options) (*Se
 		opts.Now = time.Now
 	}
 	workCtx, cancel := context.WithCancel(context.Background())
-	s := &Service{db: db, reader: reader, nodes: nodes, samples: make(chan Sample, SampleBufferSize), retention: make(chan retentionRequest), stop: make(chan context.Context, 1), done: make(chan struct{}), cancel: cancel, now: opts.Now, logger: opts.Logger, pending: make(map[bucketKey]map[string]aggregate)}
+	s := &Service{db: db, reader: reader, nodes: nodes, samples: make(chan Sample, SampleBufferSize), retention: make(chan retentionRequest), stop: make(chan context.Context, 1), done: make(chan struct{}), cancel: cancel, now: opts.Now, logger: opts.Logger, pending: make(map[bucketKey]map[string]aggregate), observeFlush: opts.ObserveFlush}
 	go s.run(workCtx)
 	return s, nil
 }
@@ -110,6 +113,11 @@ func Open(ctx context.Context, dataDir string, nodes *sql.DB, opts Options) (*Se
 // 生产者必须使用非阻塞发送，并自己维护丢弃计数。
 func (s *Service) Samples() chan<- Sample { return s.samples }
 func (s *Service) DroppedBuckets() uint64 { return s.dropped.Load() }
+
+// DatabaseStats 仅在抓取指标时读取两个连接池的快照。
+func (s *Service) DatabaseStats() (writer, reader sql.DBStats) {
+	return s.db.Stats(), s.reader.Stats()
+}
 
 func (s *Service) add(sample Sample) {
 	if sample.NodeID == "" || sample.ReceivedAt.IsZero() || len(sample.Values) == 0 {
@@ -189,14 +197,25 @@ func (s *Service) run(ctx context.Context) {
 // 累加式 upsert 可在重启后继续合并同一分钟的数据。
 // 提交成功后才释放待写状态，因此失败时可以重试。
 func (s *Service) flush(ctx context.Context, now time.Time, all bool) error {
+	var started time.Time
+	if s.observeFlush != nil {
+		started = time.Now()
+	}
+	entries := 0
 	keys := make([]bucketKey, 0, len(s.pending))
 	for key := range s.pending {
 		if all || key.t < now.Truncate(time.Minute).Unix() {
 			keys = append(keys, key)
+			if s.observeFlush != nil {
+				entries += 3 * len(s.pending[key])
+			}
 		}
 	}
 	if len(keys) == 0 {
 		return ctx.Err()
+	}
+	if s.observeFlush != nil {
+		defer func() { s.observeFlush(time.Since(started), entries) }()
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
