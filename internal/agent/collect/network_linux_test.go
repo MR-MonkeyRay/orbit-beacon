@@ -177,3 +177,37 @@ func TestLinuxHostNetworkMissingInitRouteDoesNotUseSelf(t *testing.T) {
 		t.Fatalf("canceled route lookup=%v", err)
 	}
 }
+
+func TestTrafficDisabledStillCollectsRatesWithoutObservingCounters(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOST_PROC", root)
+	cfg := v1.DefaultRuntimeSettings()
+	cfg.Interfaces = []string{"eth0"}
+	cfg.DisabledFeatures = []string{v1.FeatureTraffic, v1.FeatureDisk}
+	c, err := New(Options{Config: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sample := func(rx uint64) {
+		writeNetworkFixture(t, root, "1/net/dev", fmt.Sprintf("Inter-| Receive | Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n eth0: %d 1 0 0 0 0 0 0 %d 1 0 0 0 0 0 0\n", rx, rx))
+		m := v1.Metrics{MetricStatus: map[string]string{}, Sources: map[string]v1.SourceMetadata{}}
+		c.collectNetworks(t.Context(), &m)
+		if len(m.Networks) != 1 {
+			t.Fatal("traffic toggle removed network rate series")
+		}
+	}
+	sample(100)
+	sample(200)
+	if len(c.traffic.previous) != 0 || len(c.traffic.Entries()) != 0 {
+		t.Fatal("disabled traffic observed counters")
+	}
+	cfg.DisabledFeatures = []string{v1.FeatureDisk}
+	if err := c.SetConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	sample(10000)
+	sample(10010)
+	if got := c.traffic.Entries(); len(got) != 1 || got[0].RxBytes != "10" {
+		t.Fatalf("disabled counters leaked into totals: %+v", got)
+	}
+}

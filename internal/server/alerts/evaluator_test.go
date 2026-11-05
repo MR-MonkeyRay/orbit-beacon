@@ -770,7 +770,7 @@ func TestRealIngestIdentityFence(t *testing.T) {
 	f.e = NewEvaluator(f.s, real, EvaluatorOptions{})
 	f.exec(t, "UPDATE nodes SET run_generation='1',report_session_id='one' WHERE id=?", f.node)
 	var report v1.Report
-	raw := `{"protocol_version":1,"run_generation":1,"session_id":"one","seq":1,"sampled_at":"2026-10-27T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]},"metrics":{"cpu_percent":90,"load1":0,"load5":0,"load15":0,"memory_total_bytes":100,"memory_available_bytes":50,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":10,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000}}},"traffic":[]}`
+	raw := `{"protocol_version":1,"run_generation":1,"session_id":"one","seq":1,"sampled_at":"2026-10-27T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]},"metrics":{"cpu_percent":90,"load1":0,"load5":0,"load15":0,"memory_total_bytes":100,"memory_available_bytes":50,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":10,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000}}},"traffic":[]}`
 	if err := json.Unmarshal([]byte(raw), &report); err != nil {
 		t.Fatal(err)
 	}
@@ -827,5 +827,53 @@ func TestConcurrentMetadataEditPreservesPendingDuration(t *testing.T) {
 	events := f.events(t, "firing")
 	if len(events) != 1 || events[0].RuleName != "new name" || !events[0].StartedAt.Equal(f.now.Add(-61*time.Second)) {
 		t.Fatalf("metadata edit lost pending duration: %+v", events)
+	}
+}
+
+func TestLocallyDisabledFeatureResolvesItsFiringAlert(t *testing.T) {
+	disk := v1.Metrics{Disks: []v1.DiskMetrics{{Path: "/", TotalBytes: ptr(uint64(100)), UsedBytes: ptr(uint64(90))}}, MetricStatus: map[string]string{"disk:/": "ok"}, Sources: map[string]v1.SourceMetadata{"disk:/": {SampleID: "disk", SourceIntervalMS: 60000}}}
+	for _, test := range []struct {
+		name, rule, feature string
+		metrics             v1.Metrics
+	}{
+		{"disk", `{"name":"disk full","enabled":true,"scope_kind":"all","metric":"disk_used_percent","comparator":">","threshold":80,"for_seconds":0,"severity":"warning"}`, v1.FeatureDisk, disk},
+		{"probes", `{"name":"no probes","enabled":true,"scope_kind":"all","metric":"probes_down","comparator":"<","threshold":1,"for_seconds":0,"severity":"warning"}`, v1.FeatureProbes, v1.Metrics{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t, 0)
+			if _, err := f.s.Save(context.Background(), "", patch(t, test.rule)); err != nil {
+				t.Fatal(err)
+			}
+			f.latest.report = ingest.LatestReport{ReceivedAt: f.now, Report: v1.Report{Runtime: v1.DefaultRuntimeSettings(), Metrics: test.metrics}}
+			f.tick(t)
+			if len(f.events(t, "firing")) != 1 {
+				t.Fatalf("events=%+v", f.events(t, "all"))
+			}
+			if test.name == "disk" {
+				// 数据缺失而功能未关闭时不能判定恢复。
+				f.latest.report.Metrics = v1.Metrics{}
+				f.tick(t)
+				if len(f.events(t, "firing")) != 1 {
+					t.Fatal("missing data resolved the alert")
+				}
+			}
+			f.latest.report.Metrics = v1.Metrics{}
+			f.latest.report.Runtime.DisabledFeatures = []string{test.feature}
+			// 过期报告中的关闭决定不算数。
+			f.advance(int(nodes.OnlineWindow/time.Second) + 1)
+			f.tick(t)
+			if len(f.events(t, "firing")) != 1 {
+				t.Fatal("stale report resolved the alert")
+			}
+			f.latest.report.ReceivedAt = f.now
+			f.tick(t)
+			if events := f.events(t, "firing"); len(events) != 0 {
+				t.Fatalf("disabled feature left alert firing: %+v", events)
+			}
+			f.tick(t)
+			if len(f.events(t, "all")) != 1 {
+				t.Fatal("disabled feature fired again")
+			}
+		})
 	}
 }

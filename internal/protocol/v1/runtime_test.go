@@ -15,7 +15,7 @@ func TestReportRequiresValidRuntime(t *testing.T) {
 	if err := json.Unmarshal([]byte(reportJSON), &report); err != nil {
 		t.Fatal(err)
 	}
-	for _, runtime := range []string{"", `null`, `{"report_interval_seconds":1,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]}`} {
+	for _, runtime := range []string{"", `null`, `{"report_interval_seconds":1,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]}`} {
 		t.Run(runtime, func(t *testing.T) {
 			if runtime == "" {
 				delete(report, "runtime")
@@ -32,7 +32,7 @@ func TestReportRequiresValidRuntime(t *testing.T) {
 }
 
 func TestReportRuntimeRequiresEveryNonNullField(t *testing.T) {
-	for _, field := range []string{"report_interval_seconds", "disk_interval_seconds", "interfaces", "disk_paths", "probe_targets"} {
+	for _, field := range []string{"report_interval_seconds", "disk_interval_seconds", "interfaces", "disk_paths", "probe_targets", "remote_commands", "disabled_features"} {
 		for _, missing := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/missing=%t", field, missing), func(t *testing.T) {
 				var report map[string]json.RawMessage
@@ -90,6 +90,7 @@ func TestMaximumAdmittedRuntimeReportFitsWireLimit(t *testing.T) {
 	if err := runtime.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	runtime.DisabledFeatures = v1.DisabledFeatureOrder()
 	report.Runtime = runtime
 	report.Metrics.Disks, report.Metrics.Networks = nil, nil
 	delete(report.Metrics.MetricStatus, "disk:/")
@@ -141,5 +142,82 @@ func TestDecodeRuntimeSettingsPreservesSelectionShape(t *testing.T) {
 		if _, err := v1.DecodeRuntimeSettings(raw); err == nil {
 			t.Fatalf("accepted invalid runtime %q", raw)
 		}
+	}
+}
+
+func TestRuntimeCapabilityEnumsAndCommandPermission(t *testing.T) {
+	defaults := v1.DefaultRuntimeSettings()
+	for _, name := range v1.RemoteCommandOrder() {
+		if !defaults.AllowsCommand(name) {
+			t.Fatalf("default disallows %s", name)
+		}
+	}
+	if defaults.AllowsCommand("shell") {
+		t.Fatal("unknown command allowed")
+	}
+	for _, field := range []string{"remote_commands", "disabled_features"} {
+		for _, values := range [][]string{{"unknown"}, {"restart", "restart"}, {"disk", "disk"}} {
+			settings := v1.DefaultRuntimeSettings()
+			if field == "remote_commands" {
+				settings.RemoteCommands = values
+			} else {
+				settings.DisabledFeatures = values
+			}
+			if settings.Validate() == nil {
+				t.Fatalf("accepted %s=%v", field, values)
+			}
+		}
+	}
+	empty := defaults
+	empty.RemoteCommands = []string{}
+	if empty.AllowsCommand("restart") || empty.Equal(defaults) {
+		t.Fatal("empty permission fell back to defaults")
+	}
+	for _, mutate := range []func(*v1.RuntimeSettings){
+		func(c *v1.RuntimeSettings) { c.ReportIntervalSeconds++ },
+		func(c *v1.RuntimeSettings) { c.DiskIntervalSeconds++ },
+		func(c *v1.RuntimeSettings) { c.Interfaces = []string{"eth0"} },
+		func(c *v1.RuntimeSettings) { c.DiskPaths = []string{"/"} },
+		func(c *v1.RuntimeSettings) { c.ProbeTargets = []string{"tcp://example.test:80"} },
+		func(c *v1.RuntimeSettings) { c.RemoteCommands = []string{} },
+		func(c *v1.RuntimeSettings) { c.DisabledFeatures = []string{v1.FeatureDisk} },
+	} {
+		other := v1.DefaultRuntimeSettings()
+		mutate(&other)
+		if defaults.Equal(other) {
+			t.Fatal("Equal missed changed field")
+		}
+	}
+	var report v1.Report
+	if err := json.Unmarshal([]byte(reportJSON), &report); err != nil {
+		t.Fatal(err)
+	}
+	report.Runtime.RemoteCommands, report.Runtime.DisabledFeatures = []string{}, []string{}
+	body, _ := json.Marshal(report)
+	if err := json.Unmarshal(body, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Runtime.RemoteCommands == nil || report.Runtime.DisabledFeatures == nil || len(report.Runtime.RemoteCommands) != 0 {
+		t.Fatal("empty arrays not preserved")
+	}
+}
+
+func TestReportResponseContainsOnlyAcknowledgements(t *testing.T) {
+	body, err := json.Marshal(v1.ReportResponse{NodeID: "node", AcceptedSeq: 1, ServerTime: time.Now(), TrafficAcks: []v1.Traffic{{RxBytes: "0", TxBytes: "0"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{"node_id": true, "accepted_seq": true, "server_time": true, "traffic_acks": true}
+	for name := range fields {
+		if !allowed[name] {
+			t.Fatalf("response contains setting %s", name)
+		}
+	}
+	if len(fields) != len(allowed) {
+		t.Fatalf("response fields: %s", body)
 	}
 }

@@ -255,16 +255,7 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 							e = invalidPayload("node_observations", node)
 							break
 						}
-						if settings.Interfaces == nil {
-							settings.Interfaces = []string{}
-						}
-						if settings.DiskPaths == nil {
-							settings.DiskPaths = []string{}
-						}
-						if settings.ProbeTargets == nil {
-							settings.ProbeTargets = []string{}
-						}
-						encoded, err := json.Marshal(settings)
+						encoded, err := json.Marshal(settings.Normalized())
 						if err != nil {
 							e = invalidPayload("node_observations", node)
 							break

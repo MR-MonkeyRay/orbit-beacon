@@ -67,7 +67,7 @@ func TestObservedRuntimeCannotRollbackOnDuplicateAndRevokeClearsIdentity(t *test
 	f := newAgentHTTP(t, 2)
 	id, token, _ := enrollHTTP(t, f, "runtime-owner", 1)
 	withRuntime := func(seq uint64, targets string) string {
-		return strings.Replace(reportBody(1, seq, "runtime-session", 25), `"runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]}`, `"runtime":{"report_interval_seconds":5,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":`+targets+`}`, 1)
+		return strings.Replace(reportBody(1, seq, "runtime-session", 25), `"runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]}`, `"runtime":{"report_interval_seconds":5,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":`+targets+`,"remote_commands":["upgrade","restart","stop"],"disabled_features":[]}`, 1)
 	}
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, withRuntime(1, `["tcp://old.test:443"]`)), 1)
 	checked := "2026-10-26T12:00:00.000000000Z"

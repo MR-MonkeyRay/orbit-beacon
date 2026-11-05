@@ -3,6 +3,7 @@ package collect_test
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -32,7 +33,32 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	metrics, _ := collector.Collect(ctx)
-	report := v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "report-size-boundary", Seq: 1, SampledAt: time.Now().UTC(), Runtime: config, Metrics: metrics, Traffic: []v1.Traffic{}, System: &v1.System{Hostname: strings.Repeat("<", 255), OS: strings.Repeat("&", 64), Arch: strings.Repeat(">", 64)}}
+	// 用采集器可输出的最大固定字段覆盖预留，而不依赖测试宿主机的读数。
+	maxUint, maxFloat, cpuPercent := uint64(math.MaxUint64), math.MaxFloat64, 100.0
+	metrics.CPUPercent = &cpuPercent
+	metrics.Load1, metrics.Load5, metrics.Load15, metrics.UptimeSeconds = &maxFloat, &maxFloat, &maxFloat, &maxFloat
+	metrics.MemoryTotalBytes, metrics.MemoryAvailableBytes, metrics.SwapTotalBytes, metrics.SwapUsedBytes = &maxUint, &maxUint, &maxUint, &maxUint
+	at := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+	for i := range metrics.Disks {
+		metrics.Disks[i].TotalBytes, metrics.Disks[i].UsedBytes, metrics.Disks[i].SampledAt = &maxUint, &maxUint, at
+	}
+	for i := range metrics.Networks {
+		metrics.Networks[i].RxBytesPerSec, metrics.Networks[i].TxBytesPerSec = &maxFloat, &maxFloat
+	}
+	for key := range metrics.MetricStatus {
+		metrics.MetricStatus[key] = "permission_denied"
+	}
+	for key, source := range metrics.Sources {
+		source.SampleID = strings.Repeat("s", 35)
+		source.AgeMS, source.SourceIntervalMS = math.MaxInt64, 3600000
+		if source.MeasurementWindowMS != nil {
+			window := int64(math.MaxInt64)
+			source.MeasurementWindowMS = &window
+		}
+		metrics.Sources[key] = source
+	}
+	config.DisabledFeatures = v1.DisabledFeatureOrder() // 最大枚举编码，独立于采集开关覆盖预留。
+	report := v1.Report{ProtocolVersion: 1, RunGeneration: math.MaxUint64, SessionID: strings.Repeat("s", 255), Seq: math.MaxUint64, SampledAt: at, Runtime: config, Metrics: metrics, Traffic: []v1.Traffic{}, System: &v1.System{Hostname: strings.Repeat("<", 255), OS: strings.Repeat("&", 64), Arch: strings.Repeat(">", 64), AgentVersion: strings.Repeat("a", 64)}}
 	for i := range 24 {
 		report.Traffic = append(report.Traffic, v1.Traffic{Epoch: strings.Repeat("f", 64), PeriodStart: time.Now().UTC().Truncate(time.Hour).Add(-time.Duration(i) * time.Hour), RxBytes: "9223372036854775807", TxBytes: "9223372036854775807"})
 	}
@@ -46,6 +72,22 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 	data, err := json.Marshal(report)
 	if err != nil {
 		t.Fatal(err)
+	}
+	selectionBytes := 0
+	for _, values := range [][]string{config.Interfaces, config.DiskPaths} {
+		for _, value := range values {
+			encoded, _ := json.Marshal(value)
+			selectionBytes += 4 * len(encoded)
+		}
+	}
+	for _, value := range config.ProbeTargets {
+		encoded, _ := json.Marshal(value)
+		selectionBytes += 2*len(encoded) + 160
+	}
+	envelope := len(data) - selectionBytes
+	t.Logf("maximum ordinary report: %d bytes; fixed envelope: %d bytes", len(data), envelope)
+	if envelope > 13*1024 {
+		t.Fatalf("fixed envelope exceeds reserved 13 KiB: %d", envelope)
 	}
 	if len(data) > v1.MaxMessageBytes {
 		t.Fatalf("accepted ordinary selections produce %d-byte report", len(data))

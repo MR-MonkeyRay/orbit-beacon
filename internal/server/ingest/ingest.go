@@ -339,16 +339,7 @@ func normalizeReport(report v1.Report) (normalizedReport, error) {
 	if err := validateTraffic(report.Traffic); err != nil {
 		return normalizedReport{}, fmt.Errorf("%w: %v", ErrInvalidReport, err)
 	}
-	runtime := report.Runtime
-	if runtime.Interfaces == nil {
-		runtime.Interfaces = []string{}
-	}
-	if runtime.DiskPaths == nil {
-		runtime.DiskPaths = []string{}
-	}
-	if runtime.ProbeTargets == nil {
-		runtime.ProbeTargets = []string{}
-	}
+	runtime := report.Runtime.Normalized()
 	report.Runtime = runtime
 	body, err := json.Marshal(report)
 	if err != nil {

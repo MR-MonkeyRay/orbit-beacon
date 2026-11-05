@@ -12,7 +12,10 @@ import (
 // 指标时效既考虑接收后经过的时间，也考虑接收时源数据已存在多久。
 // 上报是否仍有效不能由 Agent 的系统时间决定。
 func metricValue(latest ingest.LatestReport, metric string, now time.Time) *float64 {
-	if latest.ReceivedAt.IsZero() || latest.ReceivedAt.After(now) || now.Sub(latest.ReceivedAt) > nodes.OnlineWindow {
+	if !latestFresh(latest, now) {
+		return nil
+	}
+	if metricDisabled(metric, latest.Runtime) {
 		return nil
 	}
 	m := latest.Metrics
@@ -70,6 +73,22 @@ func metricValue(latest ingest.LatestReport, metric string, now time.Time) *floa
 	}
 	return nil
 }
+
+func latestFresh(latest ingest.LatestReport, now time.Time) bool {
+	return !latest.ReceivedAt.IsZero() && !latest.ReceivedAt.After(now) && now.Sub(latest.ReceivedAt) <= nodes.OnlineWindow
+}
+
+// metricDisabled 判断指标是否被 Agent 本地关闭。关闭是明确决定，不是数据缺失。
+func metricDisabled(metric string, runtime v1.RuntimeSettings) bool {
+	switch metric {
+	case "disk_used_percent":
+		return runtime.FeatureDisabled(v1.FeatureDisk)
+	case "probes_down":
+		return runtime.FeatureDisabled(v1.FeatureProbes)
+	}
+	return false
+}
+
 func condition(r Rule, value float64, firing bool) bool {
 	threshold := *r.Threshold
 	margin := 0.0

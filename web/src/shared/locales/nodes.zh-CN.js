@@ -1,4 +1,14 @@
 export default {
+  'nodes.remoteCommands': '远程指令',
+  'nodes.disabledFeatures': '已关闭功能',
+  'nodes.command.upgrade': '升级',
+  'nodes.command.restart': '重启',
+  'nodes.command.stop': '停止',
+  'nodes.feature.disk': '磁盘',
+  'nodes.feature.network': '网络',
+  'nodes.feature.traffic': '流量',
+  'nodes.feature.probes': '探测',
+
   'nodes.enrollment.tokenWarning': '票据仅显示一次',
   'nodes.enrollment.expiry': '{countdown} · {time}过期',
   'nodes.enrollment.usesValue': '{used} / {total}',

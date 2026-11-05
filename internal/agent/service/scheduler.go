@@ -111,7 +111,7 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 				s.options.Logger.LogAttrs(ctx, slog.LevelWarn, "configuration_reload_rejected", oblogging.ErrorAttrs(reloadErr, "configuration_reload_rejected")...)
 				continue
 			}
-			if sameRuntimeSettings(before, s.options.RuntimeSettings()) {
+			if before.Equal(s.options.RuntimeSettings()) {
 				s.options.Logger.InfoContext(ctx, "configuration_unchanged")
 				continue
 			}
@@ -173,10 +173,10 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 			if report.Seq <= sent {
 				break
 			}
-			if s.options.Traffic != nil {
+			if s.options.Traffic != nil && !report.Runtime.FeatureDisabled(v1.FeatureTraffic) {
 				report.Traffic = s.options.Traffic.Entries()
 			}
-			if s.options.Probes != nil {
+			if s.options.Probes != nil && !report.Runtime.FeatureDisabled(v1.FeatureProbes) {
 				report.ProbeResults = s.options.Probes.Results(report.Runtime.ProbeTargets)
 			}
 			response, err := s.options.Report(ctx, report)

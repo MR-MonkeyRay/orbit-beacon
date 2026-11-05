@@ -94,19 +94,26 @@ func (c *Collector) SetConfig(config v1.RuntimeSettings) error {
 	} else {
 		config.Interfaces = slices.Clone(config.Interfaces)
 	}
-	if !slices.Equal(c.config.DiskPaths, config.DiskPaths) || c.config.DiskIntervalSeconds != config.DiskIntervalSeconds {
+	if !slices.Equal(c.config.DiskPaths, config.DiskPaths) || c.config.DiskIntervalSeconds != config.DiskIntervalSeconds || c.config.FeatureDisabled(v1.FeatureDisk) != config.FeatureDisabled(v1.FeatureDisk) {
 		c.disks = nil
 		c.diskEpoch++
 	}
-	if !slices.Equal(c.config.Interfaces, config.Interfaces) || c.config.ReportIntervalSeconds != config.ReportIntervalSeconds {
+	if !slices.Equal(c.config.Interfaces, config.Interfaces) || c.config.ReportIntervalSeconds != config.ReportIntervalSeconds || c.config.FeatureDisabled(v1.FeatureNetwork) != config.FeatureDisabled(v1.FeatureNetwork) || c.config.FeatureDisabled(v1.FeatureTraffic) != config.FeatureDisabled(v1.FeatureTraffic) {
 		c.networks = nil
 		c.networkAt = time.Time{}
 		c.rates = NetworkDifferencer{}
 		c.autoInterface = ""
 	}
-	if c.traffic != nil && !slices.Equal(c.config.Interfaces, config.Interfaces) {
-		c.traffic.Observe(config.Interfaces, nil)
+	if c.traffic != nil {
+		if c.config.FeatureDisabled(v1.FeatureTraffic) != config.FeatureDisabled(v1.FeatureTraffic) {
+			// nil 选择清除所有基线；保留原桶及 epoch，重启累计时不计入停用区间。
+			c.traffic.Observe(nil, nil)
+		} else if !slices.Equal(c.config.Interfaces, config.Interfaces) {
+			c.traffic.Observe(config.Interfaces, nil)
+		}
 	}
+	config.RemoteCommands = slices.Clone(config.RemoteCommands)
+	config.DisabledFeatures = slices.Clone(config.DisabledFeatures)
 	c.config = config
 	c.rates.interval = c.networkInterval()
 	return nil
@@ -150,8 +157,12 @@ func (c *Collector) Collect(parent context.Context) (v1.Metrics, error) {
 	c.collectLoad(ctx, &m)
 	c.collectMemory(ctx, &m)
 	c.collectUptime(ctx, &m)
-	c.collectNetworks(ctx, &m)
-	c.collectDisks(ctx, &m)
+	if !c.config.FeatureDisabled(v1.FeatureNetwork) {
+		c.collectNetworks(ctx, &m)
+	}
+	if !c.config.FeatureDisabled(v1.FeatureDisk) {
+		c.collectDisks(ctx, &m)
+	}
 	c.finalizeSnapshot(&m, time.Now())
 	return m, ctx.Err()
 }
@@ -364,7 +375,7 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 		name, err := defaultInterface(ctx)
 		if err != nil {
 			c.rates.forget(c.autoInterface)
-			if c.traffic != nil {
+			if c.traffic != nil && !c.config.FeatureDisabled(v1.FeatureTraffic) {
 				c.traffic.Observe(nil, nil)
 			}
 			c.autoInterface = ""
@@ -382,7 +393,7 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 		}
 		names = []string{name}
 	}
-	if c.traffic != nil {
+	if c.traffic != nil && !c.config.FeatureDisabled(v1.FeatureTraffic) {
 		c.traffic.Observe(names, nil)
 	}
 	// gopsutil 在 Darwin 上会调用系统 netstat（有时还有 ifconfig）。
@@ -418,7 +429,7 @@ func (c *Collector) collectNetworks(ctx context.Context, m *v1.Metrics) {
 			}
 			c.networks[name] = networkSample{observation: observation, at: at}
 		}
-		if c.traffic != nil {
+		if c.traffic != nil && !c.config.FeatureDisabled(v1.FeatureTraffic) {
 			c.traffic.ObserveAt(at, names, trafficCounters)
 		}
 	}

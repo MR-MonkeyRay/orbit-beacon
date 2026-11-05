@@ -1,4 +1,14 @@
 export default {
+  'nodes.remoteCommands': 'Remote commands',
+  'nodes.disabledFeatures': 'Disabled features',
+  'nodes.command.upgrade': 'Upgrade',
+  'nodes.command.restart': 'Restart',
+  'nodes.command.stop': 'Stop',
+  'nodes.feature.disk': 'Disk',
+  'nodes.feature.network': 'Network',
+  'nodes.feature.traffic': 'Traffic',
+  'nodes.feature.probes': 'Probes',
+
   'nodes.enrollment.tokenWarning': 'Shown only once.',
   'nodes.enrollment.expiry': '{countdown} · Expires {time}',
   'nodes.enrollment.usesValue': '{used} / {total}',

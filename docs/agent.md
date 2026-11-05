@@ -113,10 +113,12 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent doctor \
 | `interfaces` | `[]` | 最多 8 项；空数组使用默认路由网卡 |
 | `disk_paths` | `[]` | 最多 8 个绝对路径；空数组使用默认根路径 |
 | `probe_targets` | `[]` | 最多 5 项；空数组不探测 |
+| `remote_commands` | `["upgrade","restart","stop"]` | 允许的远程指令；native 支持全部，docker 仅 restart，foreground 仅 stop，取交集生效，`[]` 全部关闭 |
+| `disabled_features` | `[]` | 关闭 disk、network、traffic、probes 中的指定功能，默认全部启用；network 同时关闭 traffic，probes 清空探测目标 |
 
 选择还受 JSON 转义后 64 KiB 报告预算约束。
 
-环境变量为 `ORBITBEACON_REPORT_INTERVAL_SECONDS` 等大写参数名；flag 使用 `--report-interval-seconds` 等连字符形式。列表必须是 JSON 数组字符串，例如 `ORBITBEACON_INTERFACES='["eth0"]'` 或 `--probe-targets '["https://example.com/a,b"]'`，不按逗号拆分。
+环境变量为 `ORBITBEACON_REPORT_INTERVAL_SECONDS` 等大写参数名；`remote_commands` 和 `disabled_features` 不提供 flag，其余 flag 使用 `--report-interval-seconds` 等连字符形式。列表必须是 JSON 数组字符串，例如 `ORBITBEACON_INTERFACES='["eth0"]'` 或 `--probe-targets '["https://example.com/a,b"]'`，不按逗号拆分。
 
 修改后执行 `sudo systemctl reload orbitbeacon-agent`（前台进程用 `kill -HUP <PID>`）。reload 重读原 JSON，沿用启动时环境和显式 flags，不重读 policy；有效变更在采样边界完整应用并重采，不重置身份或累计流量，坏配置保留旧值。检查日志 `configuration_reloaded` / `configuration_unchanged` / `configuration_reload_rejected` 和下一报告；systemctl 成功只代表信号送达。
 

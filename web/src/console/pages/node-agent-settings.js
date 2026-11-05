@@ -24,6 +24,8 @@ export function agentSettingsTab(node, runtime) {
       [t('nodes.interfaces'), observed.interfaces.length ? observed.interfaces.join('\n') : t('nodes.defaultRoute')],
       [t('nodes.diskPaths'), observed.disk_paths.length ? observed.disk_paths.join('\n') : t('nodes.agentDefault')],
       [t('nodes.probes'), observed.probe_targets.length ? observed.probe_targets.join('\n') : t('nodes.noneConfigured')],
+      [t('nodes.remoteCommands'), observed.remote_commands.length ? observed.remote_commands.map((name) => t(`nodes.command.${name}`)).join(' · ') : t('nodes.none')],
+      [t('nodes.disabledFeatures'), observed.disabled_features.length ? observed.disabled_features.map((name) => t(`nodes.feature.${name}`)).join(' · ') : t('nodes.none')],
       [t('nodes.agentVersion'), current.agent_version],
       [t('nodes.lastReported'), current.last_seen ? absoluteWhen(current.last_seen) : t('nodes.never')]
     ]);

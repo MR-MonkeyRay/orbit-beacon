@@ -64,10 +64,6 @@ func (r *Runtime) Enroll(ctx context.Context, token string) (v1.EnrollmentRespon
 	return r.client.Enroll(ctx, token)
 }
 
-func sameRuntimeSettings(a, b v1.RuntimeSettings) bool {
-	return a.ReportIntervalSeconds == b.ReportIntervalSeconds && a.DiskIntervalSeconds == b.DiskIntervalSeconds && slices.Equal(a.Interfaces, b.Interfaces) && slices.Equal(a.DiskPaths, b.DiskPaths) && slices.Equal(a.ProbeTargets, b.ProbeTargets)
-}
-
 // 切片属于不可变的配置快照，只在变化时复制。
 func cloneRuntimeSettings(next, current v1.RuntimeSettings) v1.RuntimeSettings {
 	if slices.Equal(next.Interfaces, current.Interfaces) && current.Interfaces != nil {
@@ -84,6 +80,16 @@ func cloneRuntimeSettings(next, current v1.RuntimeSettings) v1.RuntimeSettings {
 		next.ProbeTargets = current.ProbeTargets
 	} else {
 		next.ProbeTargets = append([]string{}, next.ProbeTargets...)
+	}
+	if slices.Equal(next.RemoteCommands, current.RemoteCommands) && current.RemoteCommands != nil {
+		next.RemoteCommands = current.RemoteCommands
+	} else {
+		next.RemoteCommands = append([]string{}, next.RemoteCommands...)
+	}
+	if slices.Equal(next.DisabledFeatures, current.DisabledFeatures) && current.DisabledFeatures != nil {
+		next.DisabledFeatures = current.DisabledFeatures
+	} else {
+		next.DisabledFeatures = append([]string{}, next.DisabledFeatures...)
 	}
 	return next
 }
@@ -119,7 +125,7 @@ func (r *Runtime) reloadSettings(ctx context.Context, probes *probe.Runner, load
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if sameRuntimeSettings(next, r.settings) {
+	if next.Equal(r.settings) {
 		return nil
 	}
 	next = cloneRuntimeSettings(next, r.settings)
@@ -136,20 +142,22 @@ func (r *Runtime) reloadSettings(ctx context.Context, probes *probe.Runner, load
 }
 
 type Diagnostics struct {
-	Configuration  string            `json:"configuration"`
-	Identity       string            `json:"identity"`
-	Connectivity   string            `json:"connectivity"`
-	Authentication string            `json:"authentication"`
-	Collection     string            `json:"collection"`
-	InstallMode    string            `json:"install_mode"`
-	MetricStatus   map[string]string `json:"metric_status"`
+	Configuration    string            `json:"configuration"`
+	Identity         string            `json:"identity"`
+	Connectivity     string            `json:"connectivity"`
+	Authentication   string            `json:"authentication"`
+	Collection       string            `json:"collection"`
+	InstallMode      string            `json:"install_mode"`
+	RemoteCommands   []string          `json:"remote_commands"`
+	DisabledFeatures []string          `json:"disabled_features"`
+	MetricStatus     map[string]string `json:"metric_status"`
 }
 
 // Doctor 不发送注册或指标上报请求，也不推进持久化的 RunGeneration。
 // 通过 HEAD 请求检查 DNS 和端点连通性；使用 HTTPS 时还检查证书信任，
 // 但不验证节点凭据，也不提交采样数据。
 func (r *Runtime) Doctor(ctx context.Context) (Diagnostics, error) {
-	result := Diagnostics{Configuration: "valid", Identity: "valid", Connectivity: "error", Authentication: "not_checked", Collection: "error", InstallMode: r.installMode}
+	result := Diagnostics{Configuration: "valid", Identity: "valid", Connectivity: "error", Authentication: "not_checked", Collection: "error", InstallMode: r.installMode, RemoteCommands: r.settings.RemoteCommands, DisabledFeatures: r.settings.DisabledFeatures}
 	request, err := http.NewRequestWithContext(ctx, http.MethodHead, r.client.baseURL+"/api/agent/v1/report", nil)
 	if err != nil {
 		return result, errors.New("cannot construct diagnostic request")

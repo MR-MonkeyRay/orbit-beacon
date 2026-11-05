@@ -6,7 +6,7 @@ import {frame, liveHarness, response, stream} from './live-harness.js';
 
 const id = (number) => `00000000-0000-4000-8000-${String(number).padStart(12, '0')}`;
 const reported = '2026-10-28T00:00:00Z';
-const runtime = {report_interval_seconds: 10, disk_interval_seconds: 60, interfaces: [], disk_paths: [], probe_targets: []};
+const runtime = {report_interval_seconds: 10, disk_interval_seconds: 60, interfaces: [], disk_paths: [], probe_targets: [], remote_commands: ['upgrade', 'restart', 'stop'], disabled_features: []};
 const node = (number) => ({id: id(number), name: `Node ${String(number).padStart(3, '0')}`, status: 'unknown', presence: 'online',
   last_seen: reported, agent_version: '1.0', group_id: null, region: '', provider: '', notes: 'Saved notes', tags: [], created_at: reported});
 const latest = (seq = 1) => ({received_at: reported, sampled_at: reported, seq, runtime,
@@ -521,4 +521,27 @@ test('detail deletion fences an already open enrollment revocation confirmation'
   button(dialog, copy('nodes.enrollment.revokeConfirm')).click(); dialog.dispatchEvent(new Event('animationend')); await flush();
   assert.equal(env.requests.some((request) => request.method === 'DELETE'), false);
   assert.equal(button(env.root, copy('nodes.enrollment.issue')).disabled, true);
+});
+
+test('detail live capability arrays reject unknown, repeated, missing and null values', async (t) => {
+  for (const [field, values] of [
+    ['remote_commands', ['shell']], ['remote_commands', ['restart', 'restart']],
+    ['disabled_features', ['cpu']], ['disabled_features', ['disk', 'disk']],
+    ['remote_commands', null], ['disabled_features', null],
+    ['remote_commands', undefined], ['disabled_features', undefined]
+  ]) {
+    await t.test(`${field}=${JSON.stringify(values)}`, async (t) => {
+      const env = await setup(t, {page: 'node', hash: '#agent'});
+      env.send({node: env.inventory[0], latest: latest(), runtime});
+      env.send({node: env.inventory[0], latest: latest(), runtime: {...runtime, [field]: values, report_interval_seconds: 5}});
+      assert.equal(sampleFact(env.root, copy('nodes.reportInterval')).textContent, copy('nodes.seconds', {count: 10}));
+    });
+  }
+});
+
+test('detail live accepts empty capability arrays as reported', async (t) => {
+  const env = await setup(t, {page: 'node', hash: '#agent'});
+  env.send({node: env.inventory[0], latest: latest(), runtime: {...runtime, remote_commands: [], disabled_features: []}});
+  assert.equal(sampleFact(env.root, copy('nodes.remoteCommands')).textContent, copy('nodes.none'));
+  assert.equal(sampleFact(env.root, copy('nodes.disabledFeatures')).textContent, copy('nodes.none'));
 });

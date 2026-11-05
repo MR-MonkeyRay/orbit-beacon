@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -122,7 +123,7 @@ func encodeValue(key, value string) (json.RawMessage, error) {
 			return json.Marshal(value)
 		}
 		return json.Marshal(enabled)
-	case "interfaces", "disk_paths", "probe_targets":
+	case "interfaces", "disk_paths", "probe_targets", "remote_commands", "disabled_features":
 		if !json.Valid([]byte(value)) {
 			return nil, fmt.Errorf("%s 必须是 JSON 字符串数组", key)
 		}
@@ -341,7 +342,7 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	if policy == nil {
 		return Agent{}, errors.New("必须提供归管理员所有的安装策略")
 	}
-	keys := []string{"server_url", "ca_file", "state_dir", "expected_uid", "expected_gid", "expected_account", "install_mode", "report_interval_seconds", "disk_interval_seconds", "interfaces", "disk_paths", "probe_targets"}
+	keys := []string{"server_url", "ca_file", "state_dir", "expected_uid", "expected_gid", "expected_account", "install_mode", "report_interval_seconds", "disk_interval_seconds", "interfaces", "disk_paths", "probe_targets", "remote_commands", "disabled_features"}
 	layers, err := sources(opts, keys)
 	if err != nil {
 		return Agent{}, err
@@ -420,6 +421,24 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	}
 	if policy.InstallMode != "native" && policy.InstallMode != "docker" && policy.InstallMode != "foreground" {
 		return Agent{}, errors.New("install_mode 必须是 native、docker 或 foreground")
+	}
+	commands := []string{}
+	for _, command := range v1.RemoteCommandOrder() {
+		supported := policy.InstallMode == "native" || policy.InstallMode == "docker" && command == v1.RemoteCommandRestart || policy.InstallMode == "foreground" && command == v1.RemoteCommandStop
+		if supported && settings.AllowsCommand(command) {
+			commands = append(commands, command)
+		}
+	}
+	settings.RemoteCommands = commands
+	disabled := []string{}
+	for _, feature := range v1.DisabledFeatureOrder() {
+		if settings.FeatureDisabled(feature) {
+			disabled = append(disabled, feature)
+		}
+	}
+	settings.DisabledFeatures = disabled
+	if slices.Contains(disabled, v1.FeatureProbes) {
+		settings.ProbeTargets = []string{}
 	}
 	return Agent{InstallPolicy: *policy, RuntimeSettings: settings}, nil
 }

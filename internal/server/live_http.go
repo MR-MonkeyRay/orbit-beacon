@@ -98,7 +98,7 @@ func consoleDetailsEqual(a, b consoleDetailData) bool {
 	if a.Latest != nil && (a.Latest.Seq != b.Latest.Seq || !a.Latest.ReceivedAt.Equal(b.Latest.ReceivedAt) || !a.Latest.SampledAt.Equal(b.Latest.SampledAt)) {
 		return false
 	}
-	return a.Runtime == nil || a.Runtime.ReportIntervalSeconds == b.Runtime.ReportIntervalSeconds && a.Runtime.DiskIntervalSeconds == b.Runtime.DiskIntervalSeconds && slices.Equal(a.Runtime.Interfaces, b.Runtime.Interfaces) && slices.Equal(a.Runtime.DiskPaths, b.Runtime.DiskPaths) && slices.Equal(a.Runtime.ProbeTargets, b.Runtime.ProbeTargets)
+	return a.Runtime == nil || a.Runtime.Equal(*b.Runtime)
 }
 
 // 身份变更共享公开安全版本：每个投影在此处和出口处都被检查。

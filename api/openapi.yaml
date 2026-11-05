@@ -2892,8 +2892,8 @@ components:
     RuntimeSettings:
       type: object
       additionalProperties: true
-      required: [report_interval_seconds, disk_interval_seconds, interfaces, disk_paths, probe_targets]
-      description: 由 Agent 管理的设置。本地 JSON 严格校验，默认上报/磁盘采集间隔分别为 10/60 秒，数组默认为空；上报须提供全部 runtime 字段，不接受 null，也不填充默认值。大小预算按路径/接口各出现四次、探测目标各出现两次的 JSON 转义后长度计算，为有大小上限的采集数据结构预留 13 KiB。最终编码上报仍以 64 KiB 为上限。空 interfaces 使用默认路由；空 disk_paths 使用 Agent 默认磁盘；空 probe_targets 禁用探测。
+      required: [report_interval_seconds, disk_interval_seconds, interfaces, disk_paths, probe_targets, remote_commands, disabled_features]
+      description: 由 Agent 管理的设置。本地 JSON 严格校验，默认上报/磁盘采集间隔分别为 10/60 秒，remote_commands 默认包含 upgrade、restart、stop，其余数组默认为空；上报须提供全部 runtime 字段，不接受 null，也不填充默认值。大小预算按路径/接口各出现四次、探测目标各出现两次的 JSON 转义后长度计算，为有大小上限的采集数据结构预留 13 KiB。最终编码上报仍以 64 KiB 为上限。空 interfaces 使用默认路由；空 disk_paths 使用 Agent 默认磁盘；空 probe_targets 禁用探测。
       properties:
         report_interval_seconds: {type: integer, minimum: 5, maximum: 60}
         disk_interval_seconds: {type: integer, minimum: 60, maximum: 3600}
@@ -2905,6 +2905,16 @@ components:
           description: 平台有效的绝对路径，每个最多 1024 字节，不含 NUL。服务端/Agent/采集器共用校验。
           items: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 1024, pattern: '^[^\u0000]+$'}
         probe_targets: {$ref: '#/components/schemas/ProbeTargets'}
+        remote_commands:
+          type: array
+          maxItems: 3
+          uniqueItems: true
+          items: {type: string, enum: [upgrade, restart, stop]}
+        disabled_features:
+          type: array
+          maxItems: 4
+          uniqueItems: true
+          items: {type: string, enum: [disk, network, traffic, probes]}
     TrafficSettings:
       type: object
       additionalProperties: false

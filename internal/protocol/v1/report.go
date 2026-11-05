@@ -28,7 +28,7 @@ func (r *Report) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-	if decoded.Runtime.Interfaces == nil || decoded.Runtime.DiskPaths == nil || decoded.Runtime.ProbeTargets == nil {
+	if decoded.Runtime.Interfaces == nil || decoded.Runtime.DiskPaths == nil || decoded.Runtime.ProbeTargets == nil || decoded.Runtime.RemoteCommands == nil || decoded.Runtime.DisabledFeatures == nil {
 		return errors.New("report runtime requires non-null selection arrays")
 	}
 	*r = Report(decoded)

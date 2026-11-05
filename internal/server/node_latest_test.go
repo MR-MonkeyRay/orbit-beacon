@@ -34,7 +34,7 @@ func TestManagementLatestSample(t *testing.T) {
 	var runtimeEnvelope struct {
 		Runtime map[string]json.RawMessage `json:"runtime"`
 	}
-	if err := json.Unmarshal(settings.Body.Bytes(), &runtimeEnvelope); err != nil || len(runtimeEnvelope.Runtime) != 5 || string(runtimeEnvelope.Runtime["report_interval_seconds"]) != "10" || string(runtimeEnvelope.Runtime["probe_targets"]) != "[]" {
+	if err := json.Unmarshal(settings.Body.Bytes(), &runtimeEnvelope); err != nil || len(runtimeEnvelope.Runtime) != 7 || string(runtimeEnvelope.Runtime["report_interval_seconds"]) != "10" || string(runtimeEnvelope.Runtime["probe_targets"]) != "[]" {
 		t.Fatalf("runtime=%s err=%v", settings.Body, err)
 	}
 	assertHTTPStatus(t, request(t, f.handler, http.MethodPatch, runtimePath, `{"report_interval_seconds":5}`, second, "", ""), http.StatusMethodNotAllowed)
@@ -64,7 +64,7 @@ func TestManagementLatestSample(t *testing.T) {
 		t.Fatalf("server_time=%s err=%v", sample["server_time"], err)
 	}
 	var latestRuntime map[string]json.RawMessage
-	if err := json.Unmarshal(sample["runtime"], &latestRuntime); err != nil || len(latestRuntime) != 5 || string(latestRuntime["report_interval_seconds"]) != "10" || string(latestRuntime["probe_targets"]) != "[]" {
+	if err := json.Unmarshal(sample["runtime"], &latestRuntime); err != nil || len(latestRuntime) != 7 || string(latestRuntime["report_interval_seconds"]) != "10" || string(latestRuntime["probe_targets"]) != "[]" {
 		t.Fatalf("latest runtime=%s err=%v", sample["runtime"], err)
 	}
 	for _, secret := range []string{"run_generation", "session_id", token, "private-session", "token_hash"} {

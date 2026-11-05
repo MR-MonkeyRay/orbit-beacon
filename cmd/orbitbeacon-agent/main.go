@@ -253,7 +253,7 @@ func runDoctor(args []string, logger *slog.Logger) error {
 			return err
 		}
 	} else {
-		fmt.Fprintf(os.Stdout, "配置: %s\n身份文件: %s\n连通性: %s\n节点认证: %s\n采集: %s\n安装模式: %s\n", result.Configuration, result.Identity, result.Connectivity, result.Authentication, result.Collection, result.InstallMode)
+		fmt.Fprintf(os.Stdout, "配置: %s\n身份文件: %s\n连通性: %s\n节点认证: %s\n采集: %s\n安装模式: %s\n远程指令: %s\n已关闭功能: %s\n", result.Configuration, result.Identity, result.Connectivity, result.Authentication, result.Collection, result.InstallMode, strings.Join(result.RemoteCommands, ", "), strings.Join(result.DisabledFeatures, ", "))
 		for metric, status := range result.MetricStatus {
 			fmt.Fprintf(os.Stdout, "%s: %s\n", metric, status)
 		}

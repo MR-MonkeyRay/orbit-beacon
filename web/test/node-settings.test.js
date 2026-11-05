@@ -7,7 +7,7 @@ const id = '00000000-0000-4000-8000-000000000001';
 const path = `/api/v1/nodes/${id}`;
 const toastHost = new TestElement('div');
 toastHost.id = 'toasts';
-const runtime = {report_interval_seconds: 10, disk_interval_seconds: 60, interfaces: [], disk_paths: [], probe_targets: []};
+const runtime = {report_interval_seconds: 10, disk_interval_seconds: 60, interfaces: [], disk_paths: [], probe_targets: [], remote_commands: ['upgrade', 'restart', 'stop'], disabled_features: []};
 const control = (root, name) => elements(root).find((element) => element.name === name);
 const formFor = (root, name) => root.querySelectorAll('form').find((form) => control(form, name));
 const factValues = (root) => Object.fromEntries(root.querySelectorAll('dt').map((label) => [label.textContent, label.parentElement.querySelector('dd').textContent]));
@@ -122,9 +122,11 @@ test('node tabs show reported local settings through #agent without the removed 
     assert.equal(env.root.querySelector('#tab-agent').getAttribute('aria-selected'), 'true');
     assert.equal(env.root.querySelector('#tab-config'), null);
     const values = factValues(env.root);
-    assert.deepEqual(Object.fromEntries(Object.entries(values).slice(0, 6)), {
+    assert.deepEqual(Object.fromEntries(Object.entries(values).slice(0, 8)), {
       [copy('nodes.reportInterval')]: copy('nodes.seconds', {count: 10}), [copy('nodes.diskInterval')]: copy('nodes.seconds', {count: 60}), [copy('nodes.interfaces')]: copy('nodes.defaultRoute'),
-      [copy('nodes.diskPaths')]: copy('nodes.agentDefault'), [copy('nodes.probes')]: copy('nodes.noneConfigured'), [copy('nodes.agentVersion')]: 'test-agent'
+      [copy('nodes.diskPaths')]: copy('nodes.agentDefault'), [copy('nodes.probes')]: copy('nodes.noneConfigured'),
+      [copy('nodes.remoteCommands')]: ['upgrade', 'restart', 'stop'].map((name) => copy(`nodes.command.${name}`)).join(' · '),
+      [copy('nodes.disabledFeatures')]: copy('nodes.none'), [copy('nodes.agentVersion')]: 'test-agent'
     });
     assert.equal(env.root.querySelector('time').getAttribute('datetime'), env.node.last_seen);
     assert.equal(env.root.querySelectorAll('input,select,textarea').length, 0);
@@ -153,7 +155,7 @@ test('agent settings distinguishes no report and offline last observations', asy
 
 test('agent settings displays reported selections as inert text without editable controls', async () => {
   const observed = {report_interval_seconds: 5, disk_interval_seconds: 120, interfaces: ['eth0', 'wg0'],
-    disk_paths: ['/', '/var/lib'], probe_targets: ['https://example.test/<img>']};
+    disk_paths: ['/', '/var/lib'], probe_targets: ['https://example.test/<img>'], remote_commands: ['restart'], disabled_features: ['disk', 'traffic']};
   const env = await setup({hash: '#agent', observed});
   try {
     const values = factValues(env.root);
@@ -162,6 +164,8 @@ test('agent settings displays reported selections as inert text without editable
     assert.equal(values[copy('nodes.interfaces')], 'eth0\nwg0');
     assert.equal(values[copy('nodes.diskPaths')], '/\n/var/lib');
     assert.equal(values[copy('nodes.probes')], observed.probe_targets[0]);
+    assert.equal(values[copy('nodes.remoteCommands')], copy('nodes.command.restart'));
+    assert.equal(values[copy('nodes.disabledFeatures')], `${copy('nodes.feature.disk')} · ${copy('nodes.feature.traffic')}`);
     const settings = env.root.querySelector('#panel-agent');
     assert.equal(settings.querySelectorAll('input,select,textarea,button,a,img').length, 0);
   } finally { env.cleanup(); }

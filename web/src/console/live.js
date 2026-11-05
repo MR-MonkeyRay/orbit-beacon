@@ -6,6 +6,7 @@ import {uuid} from '../shared/uuid.js';
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const time = (value) => Number.isFinite(timestampMillis(value));
 const stringList = (value, max = Infinity) => Array.isArray(value) && value.length <= max && value.every((item) => typeof item === 'string');
+const enumList = (value, allowed) => stringList(value, allowed.length) && new Set(value).size === value.length && value.every((item) => allowed.includes(item));
 const number = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const nullableNumber = (value) => value === null || number(value);
 const status = (value) => record(value) && uuid.test(value.id) && ['pending', 'online', 'offline', 'unknown', 'disabled'].includes(value.status)
@@ -14,7 +15,9 @@ const status = (value) => record(value) && uuid.test(value.id) && ['pending', 'o
 const runtime = (value) => value === null || record(value) && Number.isInteger(value.report_interval_seconds)
   && value.report_interval_seconds >= 5 && value.report_interval_seconds <= 60
   && Number.isInteger(value.disk_interval_seconds) && value.disk_interval_seconds >= 60 && value.disk_interval_seconds <= 3600
-  && stringList(value.interfaces, 8) && stringList(value.disk_paths, 8) && stringList(value.probe_targets, 5);
+  && stringList(value.interfaces, 8) && stringList(value.disk_paths, 8) && stringList(value.probe_targets, 5)
+  && enumList(value.remote_commands, ['upgrade', 'restart', 'stop'])
+  && enumList(value.disabled_features, ['disk', 'network', 'traffic', 'probes']);
 const node = (value) => status(value) && ['name', 'notes', 'region', 'provider'].every((key) => typeof value[key] === 'string')
   && (value.group_id === null || typeof value.group_id === 'string' && uuid.test(value.group_id)) && stringList(value.tags) && time(value.created_at);
 const metrics = (value) => {

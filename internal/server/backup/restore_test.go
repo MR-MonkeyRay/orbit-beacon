@@ -251,9 +251,9 @@ func TestRestoreSevenCategoryCombinations(t *testing.T) {
 			if credentialEpoch != wantCredentialEpoch {
 				t.Fatalf("credential identity epoch=%d want %d", credentialEpoch, wantCredentialEpoch)
 			}
-			wantRuntime := `{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":["/srv/target"],"probe_targets":[]}`
+			wantRuntime := `{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":["/srv/target"],"probe_targets":[],"remote_commands":[],"disabled_features":[]}`
 			if mask&2 != 0 {
-				wantRuntime = `{"report_interval_seconds":5,"disk_interval_seconds":120,"interfaces":[],"disk_paths":["/srv/source"],"probe_targets":[]}`
+				wantRuntime = `{"report_interval_seconds":5,"disk_interval_seconds":120,"interfaces":[],"disk_paths":["/srv/source"],"probe_targets":[],"remote_commands":[],"disabled_features":[]}`
 			}
 			if runtime != wantRuntime {
 				t.Fatalf("observed runtime=%s want %s", runtime, wantRuntime)
@@ -270,8 +270,8 @@ func TestRestoreSevenCategoryCombinations(t *testing.T) {
 }
 
 func TestRestoreNormalizesObservedRuntime(t *testing.T) {
-	const unnormalized = `{"probe_targets":null,"disk_paths":null,"interfaces":null,"disk_interval_seconds":60,"report_interval_seconds":10}`
-	const canonical = `{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]}`
+	const unnormalized = `{"disabled_features":null,"remote_commands":null,"probe_targets":null,"disk_paths":null,"interfaces":null,"disk_interval_seconds":60,"report_interval_seconds":10}`
+	const canonical = `{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":[],"disabled_features":[]}`
 	for _, tc := range []struct {
 		name               string
 		categories         []Category

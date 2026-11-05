@@ -20,7 +20,7 @@ func TestInvalidRuntimeAndProbeResultsDoNotRefreshState(t *testing.T) {
 		wantCode string
 	}{
 		{"zero interval", strings.Replace(valid, `"report_interval_seconds":10`, `"report_interval_seconds":0`, 1), "validation_failed"},
-		{"missing runtime", strings.Replace(valid, `"runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]},`, "", 1), "invalid_json"},
+		{"missing runtime", strings.Replace(valid, `"runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]},`, "", 1), "invalid_json"},
 		{"null runtime selection", strings.Replace(valid, `"probe_targets":[]`, `"probe_targets":null`, 1), "invalid_json"},
 		{"invalid probe result", strings.Replace(valid, `"traffic":[]`, `"traffic":[],"probe_results":[{"target":"tcp://host:7","ok":false,"latency_ms":null,"error":"","status_code":null,"checked_at":"2026-03-04T05:06:07Z"}]`, 1), "validation_failed"},
 		{"probe outside reported targets", strings.Replace(valid, `"traffic":[]`, `"traffic":[],"probe_results":[{"target":"tcp://host:7","ok":false,"latency_ms":null,"error":"timeout","status_code":null,"checked_at":"2026-03-04T05:06:07Z"}]`, 1), "validation_failed"},

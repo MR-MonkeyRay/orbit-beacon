@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"orbitbeacon/internal/agent/collect"
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/enrollment"
 	"orbitbeacon/internal/server/nodes"
@@ -731,4 +733,73 @@ func publicNode(ctx context.Context, ns *nodes.Service, s *Service, id string, n
 		}
 	}
 	return PublicNode{}, nodes.ErrNotFound
+}
+
+func TestNormalizedCapabilitiesAvoidExtraDurableWrite(t *testing.T) {
+	f := newCoalesceFixture(t, time.Hour)
+	policy := config.InstallPolicy{ServerURL: "https://example.test", StateDir: t.TempDir(), InstallMode: "native"}
+	load := func(commands, features string) config.Agent {
+		cfg, err := config.LoadAgent(config.LoadOptions{LookupEnv: func(key string) (string, bool) {
+			switch key {
+			case "ORBITBEACON_REMOTE_COMMANDS":
+				return commands, true
+			case "ORBITBEACON_DISABLED_FEATURES":
+				return features, true
+			}
+			return "", false
+		}}, &policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	first := load(`["stop","restart","upgrade"]`, `["probes","network","disk"]`)
+	f.report.Runtime = first.RuntimeSettings
+	f.report.Seq++
+	f.now = f.now.Add(time.Second)
+	if _, err := acceptReport(t.Context(), f.service, coalesceToken, f.report); err != nil {
+		t.Fatal(err)
+	}
+	writes := f.writes(t)
+	second := load(`["upgrade","restart","stop"]`, `["disk","network","traffic","probes"]`)
+	f.report.Runtime = second.RuntimeSettings
+	f.report.Seq++
+	f.now = f.now.Add(time.Second)
+	if _, err := acceptReport(t.Context(), f.service, coalesceToken, f.report); err != nil {
+		t.Fatal(err)
+	}
+	if f.writes(t) != writes {
+		t.Fatal("reordered capabilities caused durable write")
+	}
+	latest, err := f.service.Latest(t.Context(), f.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !latest.Runtime.Equal(second.RuntimeSettings) || len(latest.Metrics.Disks) != 0 || len(latest.Metrics.Networks) != 0 || len(latest.Traffic) != 0 {
+		t.Fatalf("empty disabled series rejected: %+v", latest)
+	}
+}
+
+func TestNormalizeCapabilityNilSlicesAsEmptyObservations(t *testing.T) {
+	settings := v1.DefaultRuntimeSettings()
+	c, err := collect.New(collect.Options{Config: settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	metrics, _ := c.Collect(ctx)
+	report := v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "normalize", Seq: 1, SampledAt: time.Now().UTC(), Runtime: settings, Metrics: metrics, Traffic: []v1.Traffic{}}
+	report.Runtime.RemoteCommands = nil
+	report.Runtime.DisabledFeatures = nil
+	normalized, err := normalizeReport(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Runtime.RemoteCommands == nil || normalized.Runtime.DisabledFeatures == nil {
+		t.Fatal("nil capabilities leaked into stored observation")
+	}
+	if len(normalized.Runtime.RemoteCommands) != 0 || len(normalized.Runtime.DisabledFeatures) != 0 {
+		t.Fatal("observation received defaults")
+	}
 }

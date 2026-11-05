@@ -315,6 +315,12 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 				// 数据缺失或过期会打断持续越限计时，但不能据此判定告警已恢复。
 				if value == nil {
 					delete(e.pending, key)
+					// 本地关闭后不会再有数据，不恢复的话事件会一直处于触发状态。
+					if firing && latestErr == nil && latestFresh(latest, now) && metricDisabled(r.Metric, latest.Runtime) {
+						if err := e.resolve(ctx, o, nil, now); err != nil {
+							evaluationErr = errors.Join(evaluationErr, err)
+						}
+					}
 					continue
 				}
 				trueCondition = condition(r, *value, firing)
