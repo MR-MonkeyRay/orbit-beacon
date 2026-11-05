@@ -13,7 +13,7 @@ var ErrReportBudget = errors.New("selection exceeds report encoding budget")
 
 // 选定的路径和名称会出现在指标序列、两个元数据键和运行时配置中。采集器的 ASCII
 // 来源 ID（至多 35 字节、21 个来源）、标量指标、按最坏情况转义的 System、24 个流量桶、
-// 完整能力枚举及消息外围字段合计不超过 13 KiB。探测结果的固定字段在下方另行预留。
+// 完整能力枚举、2 条封闭指令结果及消息外围字段合计不超过 13 KiB。探测结果的固定字段在下方另行预留。
 // 其他上报实现仍须在发送前检查最终编码大小。
 const reportEnvelopeBytes = 13 * 1024
 

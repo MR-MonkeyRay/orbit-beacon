@@ -8,6 +8,7 @@ import (
 )
 
 type Report struct {
+	CommandResults  []CommandResult `json:"command_results,omitzero"`
 	ProtocolVersion int             `json:"protocol_version"`
 	RunGeneration   uint64          `json:"run_generation"`
 	SessionID       string          `json:"session_id"`
@@ -73,6 +74,14 @@ func (r Report) Validate() error {
 		}
 		trafficIdentities[identity] = struct{}{}
 	}
+	if len(r.CommandResults) > 2 {
+		return errors.New("too many command results")
+	}
+	for _, result := range r.CommandResults {
+		if err := result.Validate(); err != nil {
+			return err
+		}
+	}
 	if len(r.ProbeResults) > 5 {
 		return errors.New("too many probe results")
 	}
@@ -100,6 +109,7 @@ func (r Report) Validate() error {
 }
 
 type ReportResponse struct {
+	Command     *Command  `json:"command,omitempty"`
 	NodeID      string    `json:"node_id,omitempty"`
 	AcceptedSeq uint64    `json:"accepted_seq"`
 	ServerTime  time.Time `json:"server_time"`

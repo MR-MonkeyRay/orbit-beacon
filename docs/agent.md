@@ -231,3 +231,9 @@ Ctrl+C 或 SIGTERM 停止。额外的 Agent JSON 配置非必需。若需要 sys
 HTTP 探测不使用 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`，不能依赖代理做出口限制。Linux ICMP 要求 Agent 的组 ID 位于 `net.ipv4.ping_group_range`；用 `sysctl net.ipv4.ping_group_range` 检查，按主机或容器策略配置允许范围。权限不足报告 `unsupported`，不会提权，也不需要 `CAP_NET_RAW`。
 
 字段与错误码见[接口契约（OpenAPI）](../api/openapi.yaml)。
+
+远程指令仅有 `upgrade`、`restart`、`stop`，最终由本机 `remote_commands` 许可决定；服务器不能修改 Agent 设置。当前 `upgrade` 返回 `rejected/unsupported`，尚不执行升级。
+`restart` 在持久化执行标记后以退出码 **75** 结束，由 systemd 的 `Restart=on-failure` 拉起；同一 ID 不会再次重启。
+`stop` 持久化成功结果并立即采集、上报，确认成功或最多等待 15 秒后以 **0** 退出；恢复须人工 `systemctl start orbitbeacon-agent`，已启用服务在主机重启后也会恢复。正常 SIGTERM 行为不变。
+指令状态保存在 `state/commands.json`（0600）；损坏或写入失败时继续监控但停止执行指令，需人工检查修复，不能随意删除以免丢失去重记录。
+每次上报最多发送最旧的两条待确认结果；已处理 ID 最多保留 32 条，只淘汰已过期且结果已确认的记录。容量满时新指令返回 `rejected/failed`。

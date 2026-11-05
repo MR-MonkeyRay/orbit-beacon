@@ -17,6 +17,7 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/change"
+	"orbitbeacon/internal/server/commands"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
@@ -37,6 +38,7 @@ const (
 )
 
 type Node struct {
+	Stopped      bool       `json:"stopped"`
 	ID           string     `json:"id"`
 	Name         string     `json:"name"`
 	Status       string     `json:"status"`
@@ -194,14 +196,14 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 type scanner interface{ Scan(...any) error }
 
 const nodeColumns = `id, name, status, created_at, notes, region, provider, group_id,
-	(SELECT json_group_array(tag) FROM (SELECT tag FROM node_tags WHERE node_id = nodes.id ORDER BY tag)), last_seen, length(token_hash) > 0, system`
+	(SELECT json_group_array(tag) FROM (SELECT tag FROM node_tags WHERE node_id = nodes.id ORDER BY tag)), last_seen, length(token_hash) > 0, system, ` + commands.StoppedSQL
 
 func scanNode(row scanner, now time.Time) (Node, error) {
 	var node Node
 	var created, tags, systemJSON string
 	var lastSeen sql.NullString
 	var hasCredential sql.NullBool
-	if err := row.Scan(&node.ID, &node.Name, &node.Status, &created, &node.Notes, &node.Region, &node.Provider, &node.GroupID, &tags, &lastSeen, &hasCredential, &systemJSON); err != nil {
+	if err := row.Scan(&node.ID, &node.Name, &node.Status, &created, &node.Notes, &node.Region, &node.Provider, &node.GroupID, &tags, &lastSeen, &hasCredential, &systemJSON, &node.Stopped); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Node{}, ErrNotFound
 		}
@@ -354,6 +356,11 @@ func (s *Service) SetDisabled(ctx context.Context, id string, disabled bool) err
 	if err := affected(result, err); err != nil {
 		return err
 	}
+	if disabled {
+		if err := commands.CancelActive(ctx, tx, id, s.now()); err != nil {
+			return err
+		}
+	}
 	action := "node.enable"
 	if disabled {
 		action = "node.disable"
@@ -387,6 +394,9 @@ func (s *Service) RevokeCredential(ctx context.Context, id string) error {
 	// 现有 NOT NULL 约束只拒绝实际的自增。
 	result, err := tx.ExecContext(ctx, `UPDATE nodes SET credential_epoch = CASE WHEN length(token_hash)>0 THEN CASE WHEN credential_epoch < 9223372036854775807 THEN credential_epoch + 1 ELSE NULL END ELSE credential_epoch END, token_hash = NULL, installation_id = NULL, run_generation = '0', report_session_id = '', agent_runtime = '', last_seen = NULL, system = '{}', status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'pending' END WHERE id = ?`, id)
 	if err := affected(result, err); err != nil {
+		return err
+	}
+	if err := commands.CancelActive(ctx, tx, id, s.now()); err != nil {
 		return err
 	}
 	for _, table := range []string{"probe_latest", "probe_hourly"} {

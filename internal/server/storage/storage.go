@@ -264,6 +264,20 @@ CREATE TABLE nodes (
 );
 CREATE UNIQUE INDEX nodes_installation_identity ON nodes(installation_id) WHERE installation_id IS NOT NULL;
 CREATE INDEX nodes_group ON nodes(group_id);
+CREATE TABLE agent_commands (
+ id TEXT PRIMARY KEY, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+ credential_epoch INTEGER NOT NULL,
+ kind TEXT NOT NULL CHECK(kind IN ('upgrade','restart','stop')),
+ target_version TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL CHECK(state IN ('pending','delivered','succeeded','failed','rejected','expired','canceled')),
+ result_code TEXT NOT NULL DEFAULT '' CHECK(result_code IN ('','ok','disabled_locally','unsupported','expired','interrupted','failed')),
+ requested_by TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+ delivered_at TEXT, delivered_generation TEXT NOT NULL DEFAULT '', finished_at TEXT,
+ CHECK ((kind='upgrade' AND length(target_version) BETWEEN 1 AND 64) OR (kind IN ('restart','stop') AND target_version=''))
+);
+CREATE UNIQUE INDEX agent_commands_active ON agent_commands(node_id) WHERE state IN ('pending','delivered');
+CREATE INDEX agent_commands_recent ON agent_commands(node_id,created_at DESC,id DESC);
+CREATE INDEX agent_commands_finished ON agent_commands(finished_at) WHERE state NOT IN ('pending','delivered');
 CREATE TABLE node_tags (node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE, tag TEXT NOT NULL, PRIMARY KEY(node_id,tag));
 CREATE TABLE enrollment_tokens (
  id TEXT PRIMARY KEY, token_hash BLOB NOT NULL UNIQUE, node_id TEXT REFERENCES nodes(id) ON DELETE CASCADE,

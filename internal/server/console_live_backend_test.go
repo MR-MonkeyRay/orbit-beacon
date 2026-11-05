@@ -459,14 +459,14 @@ func (c consoleFleetBatchConn) QueryContext(context.Context, string, []driver.Na
 type consoleFleetBatchRows struct{ index int }
 
 func (*consoleFleetBatchRows) Columns() []string {
-	return []string{"id", "status", "last_seen", "agent_version", "token_hash", "credential_epoch", "run_generation", "report_session_id"}
+	return []string{"id", "status", "last_seen", "agent_version", "token_hash", "credential_epoch", "run_generation", "report_session_id", "stopped"}
 }
 func (*consoleFleetBatchRows) Close() error { return nil }
 func (r *consoleFleetBatchRows) Next(dest []driver.Value) error {
 	if r.index == 500 {
 		return io.EOF
 	}
-	copy(dest, []driver.Value{fmt.Sprintf("00000000-0000-4000-8000-%012d", r.index), "pending", nil, "", nil, int64(0), "0", ""})
+	copy(dest, []driver.Value{fmt.Sprintf("00000000-0000-4000-8000-%012d", r.index), "pending", nil, "", nil, int64(0), "0", "", int64(0)})
 	r.index++
 	return nil
 }

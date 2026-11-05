@@ -29,15 +29,6 @@ func TestRegistryCoversStorageSchema(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = metrics.Close() })
 
-	// 保留当前备份边界；新增例外必须逐项说明理由。
-	intentionallyExcluded := map[string]map[string]string{
-		"main": {
-			"sessions":                 "登录会话属于临时认证状态，备份不恢复现有登录",
-			"enrollment_tokens":        "注册令牌属于临时接入凭据，备份不恢复注册授权",
-			"enrollment_claims":        "注册认领记录关联临时注册令牌，随令牌一起排除",
-			"notification_rate_limits": "通知限流窗口属于运行时状态，恢复后重新计数",
-		},
-	}
 	// node_observations 是归档投影，实际数据来自主库 nodes，并非独立存储表。
 	projectedTables := map[string]map[string]string{
 		"main": {"node_observations": "nodes"},
@@ -93,5 +84,18 @@ func TestRegistryCoversStorageSchema(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCommandsIntentionallyExcludedFromEveryBackupCategory(t *testing.T) {
+	if intentionallyExcluded["main"]["agent_commands"] == "" {
+		t.Fatal("missing exclusion rationale")
+	}
+	for category, specs := range categoryTables {
+		for _, spec := range specs {
+			if spec.Name == "agent_commands" {
+				t.Fatalf("commands included in %s", category)
+			}
+		}
 	}
 }

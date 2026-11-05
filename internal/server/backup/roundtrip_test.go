@@ -48,6 +48,9 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 	if _, err = db.Exec(`INSERT INTO nodes(id,name,status,group_id,token_hash,credential_epoch,installation_id,first_enrolled_at,last_seen,system,agent_runtime,billing_day,quota_bytes,run_generation,report_session_id,created_at) VALUES(?,'node','online','66666666-6666-4666-8666-666666666666',?,23,'fixture-installation',?,?,?,?,2,'18446744073709551615','17','33333333-3333-4333-8333-333333333333',?)`, node, bytes.Repeat([]byte{3}, 32), at, at, `{"hostname":"monitoring-canary"}`, runtime, at); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = db.Exec(`INSERT INTO agent_commands(id,node_id,credential_epoch,kind,state,requested_by,created_at,expires_at) VALUES('77777777-7777-4777-8777-777777777777',?,23,'restart','pending','11111111-1111-4111-8111-111111111111',?,?)`, node, at, timekey.Format(now.Add(5*time.Minute))); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = db.Exec(`INSERT INTO audit_events VALUES('44444444-4444-4444-8444-444444444444',NULL,'fixture',NULL,?,?)`, at, `{"marker":"events-canary"}`); err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +104,11 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 				reader, err := openPayload(ctx, path)
 				if err != nil {
 					t.Fatal(err)
+				}
+				var commandTables int
+				if err := reader.QueryRow(`SELECT count(*) FROM sqlite_schema WHERE name='agent_commands'`).Scan(&commandTables); err != nil || commandTables != 0 {
+					reader.Close()
+					t.Fatalf("command replay data in backup: %d %v", commandTables, err)
 				}
 				if err = ValidatePayloadSchema(ctx, reader, c); err != nil {
 					reader.Close()

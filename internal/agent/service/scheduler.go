@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,6 +26,7 @@ type ProbeReporter interface {
 }
 
 type SchedulerOptions struct {
+	Commands *commandStore
 	Logger   *slog.Logger
 	Probes   ProbeReporter
 	Traffic  TrafficReporter
@@ -47,13 +49,16 @@ type Scheduler struct {
 	credentialsInvalid atomic.Bool
 	mu                 sync.Mutex
 	latest             v1.Report
+	commandSettings    v1.RuntimeSettings
+	collectNow         chan struct{}
+	stopping           atomic.Bool
 }
 
 func NewScheduler(options SchedulerOptions) *Scheduler {
 	if options.Logger == nil {
 		options.Logger = slog.New(slog.DiscardHandler)
 	}
-	return &Scheduler{options: options}
+	return &Scheduler{options: options, collectNow: make(chan struct{}, 1)}
 }
 
 // Run 只运行一个采集循环和一个上报任务。不保留离线队列，
@@ -63,6 +68,7 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 		return errors.New("scheduler already running")
 	}
 	defer s.running.Store(false)
+	s.stopping.Store(false)
 	if s.options.Identity == nil || s.options.RuntimeSettings == nil || s.options.Collect == nil || s.options.Report == nil {
 		return errors.New("scheduler dependencies are required")
 	}
@@ -73,6 +79,7 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 	if err != nil {
 		return err
 	}
+	s.commandSettings = s.options.RuntimeSettings()
 	ctx, cancel := context.WithCancel(ctx)
 	notify := make(chan struct{}, 1)
 	done := make(chan struct{})
@@ -97,15 +104,25 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-s.collectNow:
+			timer.Reset(0)
 		case _, ok := <-reload:
 			if !ok {
 				reload = nil
 				continue
 			}
+			if s.stopping.Load() {
+				continue
+			}
 			before := s.options.RuntimeSettings()
 			reloadErr := errors.New("configuration loader unavailable")
 			if s.options.ReloadConfig != nil {
+				s.mu.Lock()
 				reloadErr = s.options.ReloadConfig(ctx)
+				if reloadErr == nil {
+					s.commandSettings = s.options.RuntimeSettings()
+				}
+				s.mu.Unlock()
 			}
 			if reloadErr != nil {
 				s.options.Logger.LogAttrs(ctx, slog.LevelWarn, "configuration_reload_rejected", oblogging.ErrorAttrs(reloadErr, "configuration_reload_rejected")...)
@@ -145,12 +162,25 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 			case notify <- struct{}{}:
 			default:
 			}
-			timer.Reset(max(0, time.Until(started.Add(time.Duration(settings.ReportIntervalSeconds)*time.Second))))
+			if !s.stopping.Load() {
+				timer.Reset(max(0, time.Until(started.Add(time.Duration(settings.ReportIntervalSeconds)*time.Second))))
+			}
 		}
 	}
 }
 
 func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) error {
+	parent := ctx
+	stopping := false
+	var stopID string
+	var stopSampleSeq uint64
+	var stopReport *v1.Report
+	canceled := func() error {
+		if stopping && parent.Err() == nil {
+			return &ExitError{Code: 0}
+		}
+		return nil
+	}
 	backoff := NewBackoff(s.options.RandomFloat)
 	var sent uint64
 	var consecutiveFailures uint64
@@ -158,7 +188,7 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return canceled()
 		case <-notify:
 		}
 		for {
@@ -170,7 +200,16 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 			s.mu.Lock()
 			report := s.latest
 			s.mu.Unlock()
-			if report.Seq <= sent {
+			if stopping && report.Seq > stopSampleSeq {
+				if stopReport == nil {
+					snapshot := report
+					stopReport = &snapshot
+				}
+				// An in-flight collection can publish after stop starts. Retrying
+				// one snapshot keeps a lost response from advancing last_seen.
+				report = *stopReport
+			}
+			if report.Seq <= sent && !(stopping && s.options.Commands != nil && len(s.options.Commands.state.Pending) > 0) {
 				break
 			}
 			if s.options.Traffic != nil && !report.Runtime.FeatureDisabled(v1.FeatureTraffic) {
@@ -179,11 +218,51 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 			if s.options.Probes != nil && !report.Runtime.FeatureDisabled(v1.FeatureProbes) {
 				report.ProbeResults = s.options.Probes.Results(report.Runtime.ProbeTargets)
 			}
+			if s.options.Commands != nil {
+				report.CommandResults = s.options.Commands.results()
+			}
+			requested := time.Now()
 			response, err := s.options.Report(ctx, report)
 			if ctx.Err() != nil {
-				return nil
+				return canceled()
 			}
 			if err == nil {
+				if s.options.Commands != nil {
+					s.options.Commands.acknowledge(report.CommandResults)
+					if stopping {
+						for _, result := range report.CommandResults {
+							if result.ID == stopID {
+								return &ExitError{Code: 0}
+							}
+						}
+					}
+					if !stopping && response.Command != nil {
+						s.mu.Lock()
+						// 服务器时间生成于响应之前，计入请求耗时才不会执行已过期的指令。
+						serverTime := response.ServerTime
+						if !serverTime.IsZero() {
+							serverTime = serverTime.Add(time.Since(requested))
+						}
+						action := s.options.Commands.handle(*response.Command, serverTime, s.commandSettings)
+						s.mu.Unlock()
+						if action == v1.RemoteCommandRestart {
+							return &ExitError{Code: 75}
+						}
+						if action == v1.RemoteCommandStop {
+							stopping = true
+							stopID = strings.ToLower(response.Command.ID)
+							stopSampleSeq = report.Seq
+							s.stopping.Store(true)
+							stopCtx, stopCancel := context.WithTimeout(parent, 15*time.Second)
+							defer stopCancel()
+							ctx = stopCtx
+							select {
+							case s.collectNow <- struct{}{}:
+							default:
+							}
+						}
+					}
+				}
 				if s.options.Traffic != nil {
 					s.options.Traffic.Acknowledge(response.TrafficAcks)
 				}
@@ -199,13 +278,16 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 				}
 				consecutiveFailures = 0
 				lastFailureLog = time.Time{}
+				if stopping && report.Seq > stopSampleSeq && len(s.options.Commands.state.Pending) > 0 {
+					continue
+				}
 				break
 			}
 			status, retryAfter := 0, ""
 			var failure *HTTPError
 			if errors.As(err, &failure) {
 				status, retryAfter = failure.StatusCode, failure.RetryAfter
-				if status == http.StatusConflict && failure.Code == "identity_conflict" {
+				if status == http.StatusConflict && failure.Code == "identity_conflict" && !stopping {
 					return err
 				}
 			}
@@ -239,7 +321,7 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				return nil
+				return canceled()
 			case <-timer.C:
 			}
 		}

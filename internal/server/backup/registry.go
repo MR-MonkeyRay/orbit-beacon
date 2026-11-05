@@ -41,6 +41,17 @@ func table(name, source, where, definition, primary string) tableSpec {
 	return spec
 }
 
+// intentionallyExcluded records ephemeral tables that must never be restored.
+var intentionallyExcluded = map[string]map[string]string{
+	"main": {
+		"sessions":                 "登录会话不恢复",
+		"enrollment_tokens":        "注册授权不恢复",
+		"enrollment_claims":        "临时注册回执不恢复",
+		"notification_rate_limits": "运行时限流不恢复",
+		"agent_commands":           "指令及回执不备份，恢复绝不能重放指令",
+	},
+}
+
 var categoryTables = map[Category][]tableSpec{
 	Configuration: {
 		table("users", "main", "", "id TEXT,username TEXT,password_hash TEXT,created_at TEXT,must_change_password INTEGER", "id"),

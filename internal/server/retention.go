@@ -38,6 +38,7 @@ type RetentionResult struct {
 	Sessions          int64
 	TrafficRows       int64
 	ProbeRows         int64
+	CommandRows       int64
 }
 
 // RunRetention 按服务器进程使用的同一每小时计划执行有界清理。
@@ -65,7 +66,7 @@ func (h *handler) RunRetention(ctx context.Context) {
 }
 
 func retentionChanged(result RetentionResult) bool {
-	return result.NotificationDeliveries != 0 || result.InboxNotifications != 0 ||
+	return result.CommandRows != 0 || result.NotificationDeliveries != 0 || result.InboxNotifications != 0 ||
 		result.BackupTasks != 0 || result.BackupOrphanFiles != 0 || result.BackupLocalTemps != 0 ||
 		result.AlertEvents != 0 || result.HistoryBuckets != 0 || result.AuditEvents != 0 ||
 		result.EnrollmentTickets != 0 || result.Sessions != 0 || result.TrafficRows != 0 || result.ProbeRows != 0
@@ -85,6 +86,7 @@ func retentionAttrs(result RetentionResult) []slog.Attr {
 		slog.Int64("sessions", result.Sessions),
 		slog.Int64("traffic_rows", result.TrafficRows),
 		slog.Int64("probe_rows", result.ProbeRows),
+		slog.Int64("command_rows", result.CommandRows),
 	}
 }
 
@@ -102,6 +104,12 @@ func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (Retentio
 		return RetentionResult{AuditEvents: removedAudit}, fmt.Errorf("cleanup enrollment tickets: %w", err)
 	}
 	result := RetentionResult{AuditEvents: removedAudit, EnrollmentTickets: removedTickets}
+	if h.commands != nil {
+		result.CommandRows, err = h.commands.Cleanup(ctx, now, retentionCatchupBatchSize)
+		if err != nil {
+			return result, fmt.Errorf("cleanup commands: %w", err)
+		}
+	}
 	if h.alerts != nil {
 		result.AlertEvents, err = cleanupRetentionBacklog(ctx, now.Add(-90*24*time.Hour), h.alerts.Cleanup)
 		if err != nil {

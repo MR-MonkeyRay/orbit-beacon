@@ -43,7 +43,7 @@ func TestConsoleLiveSnapshotSessionAndInventoryContract(t *testing.T) {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
-		if !reflect.DeepEqual(keys, []string{"agent_version", "id", "last_seen", "presence", "status"}) {
+		if !reflect.DeepEqual(keys, []string{"agent_version", "id", "last_seen", "presence", "status", "stopped"}) {
 			t.Fatalf("noncompact fleet record: %v", keys)
 		}
 		var id, state string

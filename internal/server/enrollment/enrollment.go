@@ -16,6 +16,7 @@ import (
 
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/commands"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
@@ -404,6 +405,9 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 		return v1.EnrollmentResponse{}, err
 	}
 	if identityChanged {
+		if err := commands.CancelActive(audit.WithSystemActor(ctx, "agent"), tx, nodeID, now); err != nil {
+			return v1.EnrollmentResponse{}, err
+		}
 		for _, table := range []string{"probe_latest", "probe_hourly"} {
 			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE node_id=?", nodeID); err != nil {
 				return v1.EnrollmentResponse{}, err

@@ -1578,6 +1578,67 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/commands:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      summary: 最近 20 条 Agent 指令
+      security: [{session: []}]
+      responses:
+        '200':
+          description: 按创建时间倒序，最多 20 条。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [commands]
+                properties:
+                  commands: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/CommandRecord'}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      summary: 创建 restart 或 stop 指令
+      description: 有效期五分钟。stop 的 confirm 必须等于节点名。未观测 runtime 或本地不允许返回 409 command_not_allowed；已有活动指令返回 409 command_active；禁用或未注册返回 409 node_unavailable。upgrade 暂返回 400。
+      security: [{session: []}]
+      parameters:
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/Origin'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [kind]
+              properties:
+                kind: {type: string, enum: [restart, stop]}
+                confirm: {type: string}
+      responses:
+        '201':
+          description: 已排队
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CommandRecord'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/commands/{command_id}/cancel:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: command_id, in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      summary: 仅取消 pending 指令
+      security: [{session: []}]
+      parameters:
+        - {$ref: '#/components/parameters/CSRF'}
+        - {$ref: '#/components/parameters/Origin'}
+      responses:
+        '204': {description: 已取消}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes/{id}/runtime:
     parameters:
       - $ref: '#/components/parameters/NodeID'
@@ -2587,8 +2648,9 @@ components:
     Node:
       type: object
       additionalProperties: false
-      required: [id, name, status, notes, region, provider, group_id, tags, created_at, last_seen, presence, agent_version]
+      required: [id, name, status, notes, region, provider, group_id, tags, created_at, last_seen, presence, agent_version, stopped]
       properties:
+        stopped: {type: boolean, description: 最新 stop 成功且 finished_at 不早于 last_seen；新进程上报后清除。}
         id: {type: string, format: uuid}
         name: {type: string}
         status: {type: string, enum: [pending, online, offline, unknown, disabled]}
@@ -2794,7 +2856,7 @@ components:
           items:
             type: object
             additionalProperties: false
-            required: [id, status, presence, last_seen, agent_version]
+            required: [id, status, presence, last_seen, agent_version, stopped]
             properties:
               id: {$ref: '#/components/schemas/Node/properties/id'}
               status: {$ref: '#/components/schemas/Node/properties/status'}
@@ -2804,6 +2866,7 @@ components:
                 format: date-time
                 description: 当前身份最近已知的服务端接收，含合并的内存上报；上报前或身份重置后为 null。
               agent_version: {$ref: '#/components/schemas/Node/properties/agent_version'}
+              stopped: {$ref: '#/components/schemas/Node/properties/stopped'}
     ConsoleDetailState:
       type: object
       additionalProperties: false
@@ -3117,6 +3180,7 @@ components:
       additionalProperties: true
       required: [protocol_version, run_generation, session_id, seq, sampled_at, runtime, metrics, traffic]
       properties:
+        command_results: {type: array, maxItems: 2, items: {$ref: '#/components/schemas/CommandResult'}}
         protocol_version: {const: 1}
         run_generation: {type: integer, minimum: 1, description: 在当前节点凭据内单调递增；更换凭据重置服务端隔离标记（fence）。}
         session_id: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
@@ -3127,11 +3191,45 @@ components:
         metrics: {$ref: '#/components/schemas/Metrics'}
         traffic: {type: array, maxItems: 24, description: 唯一的 epoch/period_start 对，含每进程按小时累计的字节计数器。, items: {$ref: '#/components/schemas/Traffic'}}
         probe_results: {type: array, maxItems: 5, description: 每个当前配置目标的最新结果；目标值唯一。, items: {$ref: '#/components/schemas/ProbeResult'}}
+    Command:
+      type: object
+      additionalProperties: false
+      required: [id, kind, expires_at]
+      properties:
+        id: {type: string, format: uuid}
+        kind: {type: string, enum: [upgrade, restart, stop]}
+        target_version: {type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9][A-Za-z0-9._+\-]{0,63}$', description: 仅 upgrade 必填；其他指令禁止。}
+        expires_at: {type: string, format: date-time}
+    CommandResult:
+      type: object
+      additionalProperties: false
+      required: [id, status, code]
+      properties:
+        id: {type: string, format: uuid}
+        status: {type: string, enum: [succeeded, failed, rejected]}
+        code: {type: string, enum: [ok, disabled_locally, unsupported, expired, interrupted, failed]}
+    CommandRecord:
+      type: object
+      additionalProperties: false
+      required: [id, kind, expires_at, node_id, state, result_code, requested_by, created_at, delivered_at, finished_at]
+      properties:
+        id: {$ref: '#/components/schemas/Command/properties/id'}
+        kind: {$ref: '#/components/schemas/Command/properties/kind'}
+        target_version: {$ref: '#/components/schemas/Command/properties/target_version'}
+        expires_at: {$ref: '#/components/schemas/Command/properties/expires_at'}
+        node_id: {type: string, format: uuid}
+        state: {type: string, enum: [pending, delivered, succeeded, failed, rejected, expired, canceled]}
+        result_code: {type: string, enum: ['', ok, disabled_locally, unsupported, expired, interrupted, failed]}
+        requested_by: {type: string, format: uuid}
+        created_at: {type: string, format: date-time}
+        delivered_at: {type: [string, 'null'], format: date-time}
+        finished_at: {type: [string, 'null'], format: date-time}
     ReportResponse:
       type: object
       additionalProperties: true
       required: [node_id, accepted_seq, server_time]
       properties:
+        command: {$ref: '#/components/schemas/Command'}
         node_id: {type: string, format: uuid, description: 已认证的节点身份；绝非请求目标。}
         accepted_seq: {type: integer, minimum: 1}
         server_time: {type: string, format: date-time}

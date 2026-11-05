@@ -203,7 +203,7 @@ func TestRuntimeCapabilityEnumsAndCommandPermission(t *testing.T) {
 }
 
 func TestReportResponseContainsOnlyAcknowledgements(t *testing.T) {
-	body, err := json.Marshal(v1.ReportResponse{NodeID: "node", AcceptedSeq: 1, ServerTime: time.Now(), TrafficAcks: []v1.Traffic{{RxBytes: "0", TxBytes: "0"}}})
+	body, err := json.Marshal(v1.ReportResponse{Command: &v1.Command{ID: "00000000-0000-4000-8000-000000000001", Kind: "restart", ExpiresAt: time.Now()}, NodeID: "node", AcceptedSeq: 1, ServerTime: time.Now(), TrafficAcks: []v1.Traffic{{RxBytes: "0", TxBytes: "0"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestReportResponseContainsOnlyAcknowledgements(t *testing.T) {
 	if err := json.Unmarshal(body, &fields); err != nil {
 		t.Fatal(err)
 	}
-	allowed := map[string]bool{"node_id": true, "accepted_seq": true, "server_time": true, "traffic_acks": true}
+	allowed := map[string]bool{"node_id": true, "accepted_seq": true, "server_time": true, "traffic_acks": true, "command": true}
 	for name := range fields {
 		if !allowed[name] {
 			t.Fatalf("response contains setting %s", name)

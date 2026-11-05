@@ -15,6 +15,7 @@ import (
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/server/commands"
 	"orbitbeacon/internal/server/history"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/timekey"
@@ -407,7 +408,8 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	var lastSeenText sql.NullString
 	var storedCredential []byte
 	var storedEpoch int64
-	if err := s.db.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status, COALESCE(system, ''), agent_runtime, last_seen FROM nodes WHERE id = ?", nodeID).Scan(&generationText, &session, &storedCredential, &storedEpoch, &status, &storedSystem, &storedRuntime, &lastSeenText); err != nil {
+	var activeCommand bool
+	if err := s.db.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status, COALESCE(system, ''), agent_runtime, last_seen, EXISTS(SELECT 1 FROM agent_commands WHERE node_id=nodes.id AND state IN ('pending','delivered')) FROM nodes WHERE id = ?", nodeID).Scan(&generationText, &session, &storedCredential, &storedEpoch, &status, &storedSystem, &storedRuntime, &lastSeenText, &activeCommand); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return v1.ReportResponse{}, nodes.ErrUnauthenticated
 		}
@@ -448,7 +450,7 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	sameSystem := report.System == nil || subtle.ConstantTimeCompare(storedSystemHash[:], normalized.systemHash[:]) == 1
 	intervalDue := s.persistenceDue(nodeID, persistedLastSeen, now)
 	duplicate := sameState && report.Seq <= cachedSeq
-	durable := !sameState || generation != report.RunGeneration || session != report.SessionID ||
+	durable := activeCommand || len(report.CommandResults) > 0 || !sameState || generation != report.RunGeneration || session != report.SessionID ||
 		(!duplicate && (storedRuntime != string(normalized.runtimeJSON) || !sameSystem)) || intervalDue
 	response := v1.ReportResponse{NodeID: nodeID, AcceptedSeq: report.Seq, ServerTime: now}
 	fence := acceptanceSnapshot{credential: storedCredential, epoch: storedEpoch, generationText: generationText, generation: generation, session: session, runtime: storedRuntime,
@@ -537,6 +539,10 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 	fence.duplicate = fence.hasLatest && subtle.ConstantTimeCompare(fence.cachedCredential[:], txCredential) == 1 && fence.cachedEpoch == txEpoch &&
 		fence.cachedGeneration == fence.generation && fence.cachedSession == txSession &&
 		fence.cachedGeneration == report.RunGeneration && fence.cachedSession == report.SessionID && report.Seq <= fence.cachedSeq
+	response.Command, err = commands.Exchange(ctx, tx, nodeID, txEpoch, strconv.FormatUint(report.RunGeneration, 10), report.CommandResults, now)
+	if err != nil {
+		return v1.ReportResponse{}, err
+	}
 	currentRuntime := report.Runtime
 	if fence.duplicate {
 		currentRuntime, err = decodeRuntime(txRuntime)

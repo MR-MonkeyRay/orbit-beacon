@@ -29,6 +29,10 @@ func exitCode(err error) int {
 	if err == nil {
 		return 0
 	}
+	var commandExit *service.ExitError
+	if errors.As(err, &commandExit) {
+		return commandExit.Code
+	}
 	var failure *service.HTTPError
 	if errors.As(err, &failure) && failure.StatusCode == 409 && failure.Code == "identity_conflict" {
 		return exitIdentityConflict
@@ -40,8 +44,11 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := runWithLogger(os.Args[1:], logger); err != nil {
 		// 命令错误面向运维，直接输出到 CLI，不写结构化日志。
-		fmt.Fprintln(os.Stderr, "orbitbeacon-agent:", err)
-		os.Exit(exitCode(err))
+		code := exitCode(err)
+		if code != 0 {
+			fmt.Fprintln(os.Stderr, "orbitbeacon-agent:", err)
+		}
+		os.Exit(code)
 	}
 }
 

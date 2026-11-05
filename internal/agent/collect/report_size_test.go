@@ -59,6 +59,9 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 	}
 	config.DisabledFeatures = v1.DisabledFeatureOrder() // 最大枚举编码，独立于采集开关覆盖预留。
 	report := v1.Report{ProtocolVersion: 1, RunGeneration: math.MaxUint64, SessionID: strings.Repeat("s", 255), Seq: math.MaxUint64, SampledAt: at, Runtime: config, Metrics: metrics, Traffic: []v1.Traffic{}, System: &v1.System{Hostname: strings.Repeat("<", 255), OS: strings.Repeat("&", 64), Arch: strings.Repeat(">", 64), AgentVersion: strings.Repeat("a", 64)}}
+	for range 2 {
+		report.CommandResults = append(report.CommandResults, v1.CommandResult{ID: "ffffffff-ffff-4fff-bfff-ffffffffffff", Status: "rejected", Code: "disabled_locally"})
+	}
 	for i := range 24 {
 		report.Traffic = append(report.Traffic, v1.Traffic{Epoch: strings.Repeat("f", 64), PeriodStart: time.Now().UTC().Truncate(time.Hour).Add(-time.Duration(i) * time.Hour), RxBytes: "9223372036854775807", TxBytes: "9223372036854775807"})
 	}

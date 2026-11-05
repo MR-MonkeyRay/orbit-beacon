@@ -27,6 +27,7 @@ type Runtime struct {
 	client      *Client
 	system      v1.System
 	installMode string
+	commandPath string
 }
 
 func OpenRuntime(ctx context.Context, cfg config.Agent, logger *slog.Logger) (*Runtime, error) {
@@ -55,7 +56,7 @@ func OpenRuntime(ctx context.Context, cfg config.Agent, logger *slog.Logger) (*R
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{logger: logger, identity: state, settings: initial, collector: collector, client: client, system: system, installMode: cfg.InstallMode}, nil
+	return &Runtime{logger: logger, identity: state, settings: initial, collector: collector, client: client, system: system, installMode: cfg.InstallMode, commandPath: filepath.Join(cfg.StateDir, "commands.json")}, nil
 }
 
 func (r *Runtime) Close() { r.client.Close() }
@@ -104,7 +105,7 @@ func (r *Runtime) Run(ctx context.Context, reload <-chan struct{}, loadSettings 
 	done := make(chan struct{})
 	go func() { defer close(done); _ = probes.Run(ctx) }()
 	defer func() { cancel(); <-done }()
-	scheduler := NewScheduler(SchedulerOptions{Logger: r.logger, Probes: probes, Traffic: r.collector.Traffic(), Identity: r.identity,
+	scheduler := NewScheduler(SchedulerOptions{Commands: openCommandStore(r.commandPath, r.logger), Logger: r.logger, Probes: probes, Traffic: r.collector.Traffic(), Identity: r.identity,
 		RuntimeSettings: func() v1.RuntimeSettings { return r.settings }, Reload: reload,
 		ReloadConfig: func(ctx context.Context) error { return r.reloadSettings(ctx, probes, loadSettings) },
 		Collect:      r.collector.Collect, Report: r.client.Report, System: &r.system})

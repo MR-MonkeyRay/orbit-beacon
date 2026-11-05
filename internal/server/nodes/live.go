@@ -8,6 +8,7 @@ import (
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/server/commands"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -23,6 +24,7 @@ type LiveIdentity struct {
 
 // LiveNode 是节点列表完整且紧凑的传输记录。
 type LiveNode struct {
+	Stopped      bool       `json:"stopped"`
 	ID           string     `json:"id"`
 	Status       string     `json:"status"`
 	Presence     string     `json:"presence"`
@@ -73,7 +75,7 @@ func liveIdentity(credential []byte, epoch int64, generation, session string) (L
 func (s *Service) LiveRecords(ctx context.Context) ([]LiveRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,status,last_seen,
 		CASE WHEN json_valid(system) THEN COALESCE(json_extract(system,'$.agent_version'),'') ELSE '' END,
-		token_hash,credential_epoch,run_generation,report_session_id FROM nodes ORDER BY created_at,id`)
+		token_hash,credential_epoch,run_generation,report_session_id, `+commands.StoppedSQL+` FROM nodes ORDER BY created_at,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +87,7 @@ func (s *Service) LiveRecords(ctx context.Context) ([]LiveRecord, error) {
 		var credential []byte
 		var generation, session string
 		var epoch int64
-		if err := rows.Scan(&record.ID, &record.Status, &seen, &record.AgentVersion, &credential, &epoch, &generation, &session); err != nil {
+		if err := rows.Scan(&record.ID, &record.Status, &seen, &record.AgentVersion, &credential, &epoch, &generation, &session, &record.Stopped); err != nil {
 			return nil, err
 		}
 		record.Identity, err = liveIdentity(credential, epoch, generation, session)
