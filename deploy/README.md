@@ -136,6 +136,25 @@ curl --fail http://localhost:8080/healthz/ready
 - HTTPS 和 SMTP 校验证书；SMTP 非 465 端口要求 STARTTLS。
 - 控制台可管理通知通道、测试投递与查看记录；Agent 探测使用不同策略，见[服务探测](../docs/agent.md#服务探测)。
 
+### Webhook 签名验证
+
+配置 secret 后，接收方读取 `X-OrbitBeacon-Timestamp` 的 Unix 秒数字符串，建议拒绝与当前时间相差超过 5 分钟的请求。将该头的原始字符串、一个英文句点 `.` 和未经解析或重新编码的原始请求体依次拼接，以 secret 为密钥计算 HMAC-SHA256。`X-OrbitBeacon-Signature` 格式为 `v1=<小写十六进制摘要>`；拒绝其他前缀，并使用常量时间比较。未配置 secret 时只有时间戳头，没有签名头。
+
+以下 Go 片段置于返回 `bool` 的验证函数中；`r` 为请求、`body` 为原始请求体字节、`secret` 为共享密钥：
+
+```go
+ts, sig := r.Header.Get("X-OrbitBeacon-Timestamp"), r.Header.Get("X-OrbitBeacon-Signature")
+sec, err := strconv.ParseInt(ts, 10, 64)
+now := time.Now().Unix()
+if err != nil || sec < now-300 || sec > now+300 || !strings.HasPrefix(sig, "v1=") { return false }
+got, err := hex.DecodeString(strings.TrimPrefix(sig, "v1="))
+if err != nil { return false }
+mac := hmac.New(sha256.New, []byte(secret))
+mac.Write([]byte(ts + "."))
+mac.Write(body)
+return hmac.Equal(got, mac.Sum(nil))
+```
+
 ## 导出与备份
 
 在“设置 → 数据操作 / Settings → Data operations”发起导出、配置计划，在“任务历史 / Task history”查看结果。受理后可离开页面；手动下载，不自动下载。任务与恢复密码由所有管理员共享，通知可靠性见[告警与通知](../docs/architecture.md#告警与通知)。

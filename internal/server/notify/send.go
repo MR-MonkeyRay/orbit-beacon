@@ -117,11 +117,13 @@ func (s *sender) Send(ctx context.Context, c Channel, secret string, p Payload) 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.Kind == "webhook" {
-		req.Header.Set("X-OrbitBeacon-Timestamp", strconv.FormatInt(s.now().Unix(), 10))
+		timestamp := strconv.FormatInt(s.now().Unix(), 10)
+		req.Header.Set("X-OrbitBeacon-Timestamp", timestamp)
 		if secret != "" {
 			mac := hmac.New(sha256.New, []byte(secret))
+			mac.Write([]byte(timestamp + "."))
 			mac.Write(raw)
-			req.Header.Set("X-OrbitBeacon-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+			req.Header.Set("X-OrbitBeacon-Signature", "v1="+hex.EncodeToString(mac.Sum(nil)))
 		}
 	}
 	response, e := s.client.Do(req)

@@ -24,32 +24,115 @@ func trustTestServer(s *sender, ts *httptest.Server) {
 	s.tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
 	s.client.Transport.(*http.Transport).TLSClientConfig = s.tlsConfig
 }
+
+type webhookTestTransport func(*http.Request) (*http.Response, error)
+
+func (f webhookTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 func TestWebhookSignatureTimestampAndRedirects(t *testing.T) {
 	now := time.Unix(1700000000, 0)
-	opts := Options{Now: func() time.Time { return now }, AllowPrivateNetworks: true}
+	clockCalls := 0
+	opts := Options{Now: func() time.Time {
+		clockCalls++
+		return now.Add(time.Duration(clockCalls-1) * time.Second)
+	}}
 	s := newSender(opts)
 	defer s.client.CloseIdleConnections()
 	calls := 0
-	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.client.Transport = webhookTestTransport(func(r *http.Request) (*http.Response, error) {
 		calls++
-		raw, _ := io.ReadAll(r.Body)
-		mac := hmac.New(sha256.New, []byte("secret"))
-		mac.Write(raw)
-		if r.Method != "POST" || r.Header.Get("X-OrbitBeacon-Signature") != "sha256="+hex.EncodeToString(mac.Sum(nil)) || r.Header.Get("X-OrbitBeacon-Timestamp") != "1700000000" {
+		defer r.Body.Close()
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		const body = `{"event_id":"event-1","state":"","rule":{"id":"","name":"","metric":"","severity":""},"node":{"id":"","name":""},"value":null,"started_at":"0001-01-01T00:00:00Z","resolved_at":null}`
+		const signature = "v1=6d6a68cdabd8db678314c38915dd18185360d03dd05729e59546e22cc15a68be"
+		if string(raw) != body {
+			t.Fatalf("body=%s want %s", raw, body)
+		}
+		if r.Method != "POST" || r.Header.Get("X-OrbitBeacon-Signature") != signature || r.Header.Get("X-OrbitBeacon-Timestamp") != "1700000000" {
 			t.Error("bad signature or timestamp")
 		}
-		var p Payload
-		if json.Unmarshal(raw, &p) != nil || p.EventID != "event-1" {
-			t.Error("bad payload")
+		got, err := hex.DecodeString(strings.TrimPrefix(r.Header.Get("X-OrbitBeacon-Signature"), "v1="))
+		if err != nil {
+			t.Fatal(err)
 		}
-		w.Header().Set("Location", "https://forbidden.example")
-		w.WriteHeader(http.StatusFound)
-		w.Write([]byte(strings.Repeat("credential", 2000)))
-	}))
-	defer ts.Close()
-	trustTestServer(s, ts)
-	result := s.Send(context.Background(), Channel{Kind: "webhook", Config: Config{URL: ts.URL}}, "secret", Payload{EventID: "event-1"})
+		// 独立构造验证输入；只篡改时间戳时，原签名必须失效。
+		for _, timestamp := range []string{"1700000000", "1700000001"} {
+			mac := hmac.New(sha256.New, []byte("secret"))
+			mac.Write([]byte(timestamp + "." + body))
+			if hmac.Equal(got, mac.Sum(nil)) != (timestamp == "1700000000") {
+				t.Errorf("unexpected signature verification for timestamp %s", timestamp)
+			}
+		}
+		return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": {"https://forbidden.example"}}, Body: io.NopCloser(strings.NewReader(strings.Repeat("credential", 2000)))}, nil
+	})
+	result := s.Send(context.Background(), Channel{Kind: "webhook", Config: Config{URL: "https://example.com/hook"}}, "secret", Payload{EventID: "event-1"})
 	if result.OK || result.retry || result.ErrorCode != "redirect_denied" || calls != 1 {
+		t.Fatalf("result %+v calls %d", result, calls)
+	}
+	if clockCalls != 1 {
+		t.Fatalf("clock called %d times, want 1", clockCalls)
+	}
+}
+
+func TestWebhookRetryRefreshesSignature(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	s := newSender(Options{Now: func() time.Time { return now }})
+	defer s.client.CloseIdleConnections()
+	var timestamps, signatures, bodies []string
+	s.client.Transport = webhookTestTransport(func(r *http.Request) (*http.Response, error) {
+		defer r.Body.Close()
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		timestamps = append(timestamps, r.Header.Get("X-OrbitBeacon-Timestamp"))
+		signatures = append(signatures, r.Header.Get("X-OrbitBeacon-Signature"))
+		bodies = append(bodies, string(raw))
+		status := http.StatusServiceUnavailable
+		if len(timestamps) == 2 {
+			status = http.StatusNoContent
+		}
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	c := Channel{Kind: "webhook", Config: Config{URL: "https://example.com/hook"}}
+	p := Payload{EventID: "event-1"}
+	if result := s.Send(context.Background(), c, "secret", p); result.OK || !result.retry {
+		t.Fatalf("first attempt: %+v", result)
+	}
+	now = now.Add(time.Minute)
+	if result := s.Send(context.Background(), c, "secret", p); !result.OK {
+		t.Fatalf("retry: %+v", result)
+	}
+	if len(timestamps) != 2 {
+		t.Fatalf("attempts=%d want 2", len(timestamps))
+	}
+	if timestamps[0] != "1700000000" || timestamps[1] != "1700000060" ||
+		signatures[0] != "v1=6d6a68cdabd8db678314c38915dd18185360d03dd05729e59546e22cc15a68be" ||
+		signatures[1] != "v1=33ac3e8c0acb0f6972cfa06f246dae6d672b16bd19baa9c9c76b15f68ed9c8f9" || bodies[0] != bodies[1] {
+		t.Fatalf("timestamps=%v signatures=%v bodies=%v", timestamps, signatures, bodies)
+	}
+}
+
+func TestWebhookWithoutSecret(t *testing.T) {
+	s := newSender(Options{Now: func() time.Time { return time.Unix(1700000000, 0) }})
+	defer s.client.CloseIdleConnections()
+	calls := 0
+	s.client.Transport = webhookTestTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		defer r.Body.Close()
+		if r.Header.Get("X-OrbitBeacon-Timestamp") != "1700000000" {
+			t.Error("bad timestamp")
+		}
+		if len(r.Header.Values("X-OrbitBeacon-Signature")) != 0 {
+			t.Error("signature header present without secret")
+		}
+		return &http.Response{StatusCode: http.StatusNoContent, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	result := s.Send(context.Background(), Channel{Kind: "webhook", Config: Config{URL: "https://example.com/hook"}}, "", Payload{})
+	if !result.OK || calls != 1 {
 		t.Fatalf("result %+v calls %d", result, calls)
 	}
 }
