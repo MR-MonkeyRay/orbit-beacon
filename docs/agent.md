@@ -33,11 +33,11 @@ sudo sh ./install-agent.sh \
   --server https://beacon.your-domain.com --version "$VERSION"
 ```
 
-终端运行时隐藏输入注册票据。也可使用 `--token-file /安全路径/enrollment.token`；自动化通过标准输入传入，不启用 `set -x`，并提前完成 sudo 认证：
+终端运行时隐藏输入注册票据；先复制并运行安装命令，等提示出现后再粘贴票据。也可使用 `--token-file /安全路径/enrollment.token`；自动化通过标准输入传入，不启用 `set -x`，并提前完成 sudo 认证：
 
 ```sh
 sudo -v
-# TOKEN 已从安全来源读入当前 shell。
+# TOKEN 已从安全来源读入当前 shell；printf 使用 shell 内建命令。
 printf '%s\n' "$TOKEN" | sudo sh ./install-agent.sh \
   --server https://beacon.your-domain.com --version "$VERSION"
 unset TOKEN
@@ -68,6 +68,8 @@ sudo -u orbitbeacon-agent /usr/local/bin/orbitbeacon-agent enroll \
 ```
 
 重试成功后，以原来的 `--server`、版本和 CA 参数重跑安装脚本，并加 `< /dev/null`，让脚本补装并启动服务，不再提供注册票据。
+
+需要更换票据时，以策略指定的非 root Agent 用户运行下方[手动前台安装](#手动前台安装)中的隐藏读取注册命令。不要把新票据填进命令或 `printf` 字面量。
 
 成功后删除 state 中的注册票据文件，但源文件和管理机副本须自行清理。若提示清理失败，先核对注册结果，不能假定认领已回滚。
 
@@ -165,14 +167,28 @@ sudo chmod 0640 /etc/orbitbeacon/agent.json
 
 CA 使用限制见[配置参考](../deploy/README.md#配置参考)。私有 CA 由 root 安装为 `/etc/orbitbeacon/ca.pem`（`0644`），并填写 policy 的 `ca_file`。policy、CA 及祖先目录须 root 所有且不可被组/其他用户写入，无符号链接；不要放在家目录或 `/tmp`。state 按[安装路径](#安装与启动)的要求归运行用户所有。
 
-通过安全通道接收注册票据，保存为当前用户所有的 `0600` 普通文件；路径无符号链接，祖先仅 root 或运行用户所有且不可被组/其他用户写入（安全 sticky 临时目录例外）。以普通用户执行：
+通过安全通道接收注册票据。以下命令隐藏读取票据并保存为当前用户所有的 `0600` 普通文件；路径无符号链接，祖先仅 root 或运行用户所有且不可被组/其他用户写入（安全 sticky 临时目录例外）。以普通用户一次性执行整个括号块，等待隐藏读取后再粘贴票据并回车，不要逐行执行或启用追踪。子 shell 在退出或收到 HUP、INT、TERM 时恢复回显，票据不进入命令参数、shell 历史或导出的环境变量；写文件使用 shell 内建 `printf`：
 
 ```sh
-TOKEN_SOURCE=/安全路径/enrollment.token
-install -m 0600 "$TOKEN_SOURCE" /var/lib/orbitbeacon-agent/enrollment.token
-orbitbeacon-agent enroll --install-policy /etc/orbitbeacon/install-policy.json \
-  --config /etc/orbitbeacon/agent.json \
-  --token-file /var/lib/orbitbeacon-agent/enrollment.token
+(
+  set +x
+  set -e
+  unset token
+  trap 'stty echo' 0
+  trap 'exit 1' HUP INT TERM
+  install -m 0600 /dev/null /var/lib/orbitbeacon-agent/enrollment.token
+  stty -echo
+  IFS= read -r token
+  stty echo
+  printf '%s\n' "$token" > /var/lib/orbitbeacon-agent/enrollment.token
+  unset token
+  orbitbeacon-agent enroll --install-policy /etc/orbitbeacon/install-policy.json --config /etc/orbitbeacon/agent.json --token-file /var/lib/orbitbeacon-agent/enrollment.token
+)
+```
+
+注册成功后执行：
+
+```sh
 orbitbeacon-agent doctor --install-policy /etc/orbitbeacon/install-policy.json --config /etc/orbitbeacon/agent.json --json
 orbitbeacon-agent run --install-policy /etc/orbitbeacon/install-policy.json --config /etc/orbitbeacon/agent.json
 ```

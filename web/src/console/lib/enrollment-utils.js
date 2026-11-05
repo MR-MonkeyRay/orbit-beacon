@@ -1,18 +1,18 @@
 import {t} from '../i18n.js';
 import {nextOffset} from '../api.js';
 
-// token 文本不进 URL，而是作为单个字面量 shell 参数引用。
+// 将 Origin 作为单个字面量 shell 参数引用。
 export const shellQuote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 
-export function enrollmentCommand(token) {
+export function enrollmentCommand() {
   const path = '/var/lib/orbitbeacon-agent/enrollment.token';
-  return `install -m 0600 /dev/null ${path} &&\nprintf '%s\\n' ${shellQuote(token)} > ${path} &&\norbitbeacon-agent enroll --install-policy /etc/orbitbeacon/install-policy.json --token-file ${path}`;
+  // 子 shell 隔离变量和 trap；失败或收到信号时也恢复回显。
+  return `(\n  set +x\n  set -e\n  unset token\n  trap 'stty echo' 0\n  trap 'exit 1' HUP INT TERM\n  install -m 0600 /dev/null ${path}\n  stty -echo\n  IFS= read -r token\n  stty echo\n  printf '%s\\n' "$token" > ${path}\n  unset token\n  orbitbeacon-agent enroll --install-policy /etc/orbitbeacon/install-policy.json --config /etc/orbitbeacon/agent.json --token-file ${path}\n)`;
 }
 
-// 安装脚本从 stdin 读取 token；printf 是 shell 内建命令，
-// token 不会出现在进程参数列表中。
-export function installerCommand(token, origin) {
-  return `printf '%s\\n' ${shellQuote(token)} |\nsudo sh ./install-agent.sh --server ${shellQuote(origin)} --version "$VERSION"`;
+// 安装脚本在终端隐藏读取票据，命令文本不包含票据。
+export function installerCommand(origin) {
+  return `sudo sh ./install-agent.sh --server ${shellQuote(origin)} --version "$VERSION"`;
 }
 
 export function enrollmentCountdown(expiresAt, now = Date.now()) {

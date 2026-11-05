@@ -18,8 +18,8 @@ export async function issueEnrollment(target, title, isDeleted = () => false) {
   const ticket = await api('/enrollments', {method: 'POST', body: target});
   if (isDeleted()) return;
   const token = h('code', null, ticket.token);
-  const installer = h('code', null, installerCommand(ticket.token, location.origin));
-  const command = h('code', null, enrollmentCommand(ticket.token));
+  const installer = h('code', null, installerCommand(location.origin));
+  const command = h('code', null, enrollmentCommand());
   // 明文只保留在此对话框中，绝不进入票据列表状态。
   delete ticket.token;
   const countdown = h('span', {class: 'mono', role: 'timer', 'aria-live': 'off'});
@@ -29,16 +29,11 @@ export async function issueEnrollment(target, title, isDeleted = () => false) {
   const {closed} = modal(title, (close) => h('div', null,
     h('div', {class: 'dialog-body stack'},
       callout(t('nodes.enrollment.tokenWarning')),
-      h('p', {class: 'lede'}, target.mode === 'batch'
-        ? t('nodes.enrollment.batchIntro')
-        : t('nodes.enrollment.singleIntro')),
-      h('p', null, tParts('nodes.enrollment.expiry', {countdown, time: when(ticket.expires_at)})),
+      h('div', null, tParts('nodes.enrollment.expiry', {countdown, time: when(ticket.expires_at)})),
       h('pre', {class: 'code enrollment-token'}, token),
       button(t('nodes.enrollment.copyToken'), {icon: 'copy', onClick: () => copyText(token, status)}),
-      h('p', {class: 'lede'}, t('nodes.enrollment.installIntro')),
       h('pre', {class: 'code'}, installer),
       button(t('nodes.enrollment.copyInstall'), {icon: 'copy', onClick: () => copyText(installer, status)}),
-      h('p', {class: 'lede'}, t('nodes.enrollment.manualIntro')),
       h('pre', {class: 'code'}, command),
       button(t('nodes.enrollment.copyEnroll'), {icon: 'copy', onClick: () => copyText(command, status)}), status),
     h('div', {class: 'dialog-foot'}, button(t('nodes.close'), {onClick: () => close('done')}))));
