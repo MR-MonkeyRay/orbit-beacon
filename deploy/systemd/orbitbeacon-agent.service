@@ -8,9 +8,7 @@ Type=simple
 # 该账户须与安装策略中的 expected_uid/expected_gid 一致。
 User=orbitbeacon-agent
 Group=orbitbeacon-agent
-StateDirectory=orbitbeacon-agent
-StateDirectoryMode=0700
-ExecStart=/usr/local/bin/orbitbeacon-agent run --install-policy /etc/orbitbeacon/install-policy.json --config /etc/orbitbeacon/agent.json
+ExecStart=/opt/orbit-beacon/bin/orbitbeacon-agent run --install-policy /opt/orbit-beacon/etc/install-policy.json --config /opt/orbit-beacon/etc/agent.json
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10s
@@ -20,6 +18,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
+ReadWritePaths=/opt/orbit-beacon/bin /opt/orbit-beacon/state
 # 保留 home 挂载可见，使磁盘统计反映真实主机。
 ProtectHome=read-only
 ProtectKernelTunables=true

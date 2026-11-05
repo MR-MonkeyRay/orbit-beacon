@@ -2,6 +2,13 @@
 
 以下命令从仓库根目录执行。Agent 安装见 [Agent 指南](../docs/agent.md)，日志格式见[日志约定](../docs/conventions.md#日志)。
 
+| Agent 路径 | 属主与权限 |
+| --- | --- |
+| `/opt/orbit-beacon/` | root:orbitbeacon-agent，`0750` |
+| `/opt/orbit-beacon/bin/` | orbitbeacon-agent:orbitbeacon-agent，`0750`；内含 `orbitbeacon-agent` |
+| `/opt/orbit-beacon/etc/` | root:orbitbeacon-agent，目录 `0750`、文件 `0640`；agent.json、install-policy.json、ca.pem |
+| `/opt/orbit-beacon/state/` | orbitbeacon-agent:orbitbeacon-agent，`0700`；identity、enrollment.token、run.lock 等 |
+
 ## 数据目录
 
 - 使用支持文件锁、可写的本地文件系统；每个数据目录只运行一个服务器。

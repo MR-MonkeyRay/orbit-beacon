@@ -51,20 +51,24 @@ unset TOKEN
 
 | 路径 | 内容与权限 |
 | --- | --- |
-| `/usr/local/bin/orbitbeacon-agent` | root 所有的可执行文件 |
-| `/etc/orbitbeacon/install-policy.json` | root 所有的安装策略，模式 `native` |
-| `/etc/orbitbeacon/agent.json` | 本地运行参数；新装为 `{}`，root:orbitbeacon-agent、`0640`；重装保留，拒绝符号链接 |
-| `/etc/orbitbeacon/ca.pem` | 可选 CA 副本 |
-| `/var/lib/orbitbeacon-agent` | Agent 账号所有，`0700`；身份和状态不应共享 |
+| `/opt/orbit-beacon/` | root:orbitbeacon-agent，`0750` |
+| `/opt/orbit-beacon/bin/` | orbitbeacon-agent:orbitbeacon-agent，`0750`；内含可替换的 `orbitbeacon-agent`，`0750` |
+| `/opt/orbit-beacon/etc/` | root:orbitbeacon-agent，`0750`；文件 `0640`，Agent 只读 |
+| `/opt/orbit-beacon/etc/install-policy.json` | root:orbitbeacon-agent，`0640`；安装策略，模式 `native` |
+| `/opt/orbit-beacon/etc/agent.json` | 本地运行参数；新装为 `{}`，root:orbitbeacon-agent、`0640`；重装保留，拒绝符号链接 |
+| `/opt/orbit-beacon/etc/ca.pem` | root:orbitbeacon-agent，`0640`；可选 CA 副本 |
+| `/opt/orbit-beacon/state/` | orbitbeacon-agent:orbitbeacon-agent，`0700`；identity、enrollment.token、run.lock 等身份和状态不应共享 |
 | `/etc/systemd/system/orbitbeacon-agent.service` | 非 root systemd 服务 |
+
+不要用 sudo 运行 orbitbeacon-agent。
 
 脚本以 Agent 账号注册，成功后启动服务；没有运行中的 systemd 时打印前台启动命令。失败保留 state 中的 `enrollment.token`，不启用服务。修复 URL、CA、网络或票据问题后重试：
 
 ```sh
-sudo -u orbitbeacon-agent /usr/local/bin/orbitbeacon-agent enroll \
-  --install-policy /etc/orbitbeacon/install-policy.json \
-  --config /etc/orbitbeacon/agent.json \
-  --token-file /var/lib/orbitbeacon-agent/enrollment.token
+sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent enroll \
+  --install-policy /opt/orbit-beacon/etc/install-policy.json \
+  --config /opt/orbit-beacon/etc/agent.json \
+  --token-file /opt/orbit-beacon/state/enrollment.token
 ```
 
 重试成功后，以原来的 `--server`、版本和 CA 参数重跑安装脚本，并加 `< /dev/null`，让脚本补装并启动服务，不再提供注册票据。
@@ -78,8 +82,8 @@ sudo -u orbitbeacon-agent /usr/local/bin/orbitbeacon-agent enroll \
 ```sh
 sudo systemctl status orbitbeacon-agent
 sudo journalctl -u orbitbeacon-agent -n 100 --no-pager
-sudo -u orbitbeacon-agent /usr/local/bin/orbitbeacon-agent doctor \
-  --install-policy /etc/orbitbeacon/install-policy.json --config /etc/orbitbeacon/agent.json --json
+sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent doctor \
+  --install-policy /opt/orbit-beacon/etc/install-policy.json --config /opt/orbit-beacon/etc/agent.json --json
 ```
 
 `doctor` 检查配置、身份文件、HTTP/HTTPS 连通性和采集（HTTPS 同时验证证书），**不注册、不上报、不验证节点凭据**；`authentication: "not_checked"` 是预期结果。
@@ -143,29 +147,32 @@ sudo sh ./install-agent.sh --uninstall
 ```sh
 AGENT_UID="$(id -u)"
 AGENT_GID="$(id -g)"
-sudo install -o root -g root -m 0755 \
-  build/orbitbeacon-agent /usr/local/bin/orbitbeacon-agent
-sudo install -d -o root -g root -m 0755 /etc/orbitbeacon
-sudo install -d -o "$AGENT_UID" -g "$AGENT_GID" -m 0700 /var/lib/orbitbeacon-agent
-sudo tee /etc/orbitbeacon/install-policy.json > /dev/null <<EOF
+sudo install -d -o root -g "$AGENT_GID" -m 0750 /opt/orbit-beacon /opt/orbit-beacon/etc
+sudo install -d -o "$AGENT_UID" -g "$AGENT_GID" -m 0750 /opt/orbit-beacon/bin
+sudo install -d -o "$AGENT_UID" -g "$AGENT_GID" -m 0700 /opt/orbit-beacon/state
+# 安装根不可由 Agent 写入；不在 bin 内写临时文件，也不跟随目标链接。
+AGENT_TMP=$(sudo mktemp /opt/orbit-beacon/.agent.XXXXXXXX)
+sudo install -o "$AGENT_UID" -g "$AGENT_GID" -m 0750 build/orbitbeacon-agent "$AGENT_TMP"
+sudo mv -fT -- "$AGENT_TMP" /opt/orbit-beacon/bin/orbitbeacon-agent
+sudo tee /opt/orbit-beacon/etc/install-policy.json > /dev/null <<EOF
 {
   "server_url": "https://beacon.your-domain.com",
   "ca_file": "",
-  "state_dir": "/var/lib/orbitbeacon-agent",
+  "state_dir": "/opt/orbit-beacon/state",
   "expected_uid": $AGENT_UID,
   "expected_gid": $AGENT_GID,
   "expected_account": "",
   "install_mode": "foreground"
 }
 EOF
-sudo chown root:root /etc/orbitbeacon/install-policy.json
-sudo chmod 0644 /etc/orbitbeacon/install-policy.json
-printf '%s\n' '{}' | sudo tee /etc/orbitbeacon/agent.json > /dev/null
-sudo chown "root:$AGENT_GID" /etc/orbitbeacon/agent.json
-sudo chmod 0640 /etc/orbitbeacon/agent.json
+sudo chown "root:$AGENT_GID" /opt/orbit-beacon/etc/install-policy.json
+sudo chmod 0640 /opt/orbit-beacon/etc/install-policy.json
+printf '%s\n' '{}' | sudo tee /opt/orbit-beacon/etc/agent.json > /dev/null
+sudo chown "root:$AGENT_GID" /opt/orbit-beacon/etc/agent.json
+sudo chmod 0640 /opt/orbit-beacon/etc/agent.json
 ```
 
-CA 使用限制见[配置参考](../deploy/README.md#配置参考)。私有 CA 由 root 安装为 `/etc/orbitbeacon/ca.pem`（`0644`），并填写 policy 的 `ca_file`。policy、CA 及祖先目录须 root 所有且不可被组/其他用户写入，无符号链接；不要放在家目录或 `/tmp`。state 按[安装路径](#安装与启动)的要求归运行用户所有。
+CA 使用限制见[配置参考](../deploy/README.md#配置参考)。私有 CA 由 root 安装为 `/opt/orbit-beacon/etc/ca.pem`（root:Agent 组、`0640`），并填写 policy 的 `ca_file`。policy、CA 及祖先目录须 root 所有且不可被组/其他用户写入，无符号链接；不要放在家目录或 `/tmp`。state 按[安装路径](#安装与启动)的要求归运行用户所有。
 
 通过安全通道接收注册票据。以下命令隐藏读取票据并保存为当前用户所有的 `0600` 普通文件；路径无符号链接，祖先仅 root 或运行用户所有且不可被组/其他用户写入（安全 sticky 临时目录例外）。以普通用户一次性执行整个括号块，等待隐藏读取后再粘贴票据并回车，不要逐行执行或启用追踪。子 shell 在退出或收到 HUP、INT、TERM 时恢复回显，票据不进入命令参数、shell 历史或导出的环境变量；写文件使用 shell 内建 `printf`：
 
@@ -176,21 +183,21 @@ CA 使用限制见[配置参考](../deploy/README.md#配置参考)。私有 CA �
   unset token
   trap 'stty echo' 0
   trap 'exit 1' HUP INT TERM
-  install -m 0600 /dev/null /var/lib/orbitbeacon-agent/enrollment.token
+  install -m 0600 /dev/null /opt/orbit-beacon/state/enrollment.token
   stty -echo
   IFS= read -r token
   stty echo
-  printf '%s\n' "$token" > /var/lib/orbitbeacon-agent/enrollment.token
+  printf '%s\n' "$token" > /opt/orbit-beacon/state/enrollment.token
   unset token
-  orbitbeacon-agent enroll --install-policy /etc/orbitbeacon/install-policy.json --config /etc/orbitbeacon/agent.json --token-file /var/lib/orbitbeacon-agent/enrollment.token
+  /opt/orbit-beacon/bin/orbitbeacon-agent enroll --install-policy /opt/orbit-beacon/etc/install-policy.json --config /opt/orbit-beacon/etc/agent.json --token-file /opt/orbit-beacon/state/enrollment.token
 )
 ```
 
 注册成功后执行：
 
 ```sh
-orbitbeacon-agent doctor --install-policy /etc/orbitbeacon/install-policy.json --config /etc/orbitbeacon/agent.json --json
-orbitbeacon-agent run --install-policy /etc/orbitbeacon/install-policy.json --config /etc/orbitbeacon/agent.json
+/opt/orbit-beacon/bin/orbitbeacon-agent doctor --install-policy /opt/orbit-beacon/etc/install-policy.json --config /opt/orbit-beacon/etc/agent.json --json
+/opt/orbit-beacon/bin/orbitbeacon-agent run --install-policy /opt/orbit-beacon/etc/install-policy.json --config /opt/orbit-beacon/etc/agent.json
 ```
 
 Ctrl+C 或 SIGTERM 停止。额外的 Agent JSON 配置非必需。若需要 systemd 长期运行，优先使用安装脚本；自行配置 [unit](../deploy/systemd/orbitbeacon-agent.service) 时必须同步账号、state 所有权、policy 的 UID/GID 和 `install_mode: "native"`，不能只复制 unit。`install_mode` 本身不会安装服务。

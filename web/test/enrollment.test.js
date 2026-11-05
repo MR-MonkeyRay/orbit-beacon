@@ -9,10 +9,10 @@ test('enrollment command reads a ticket privately and includes policy and runtim
   assert.equal(shellQuote("a'b"), "'a'\\''b'");
   const command = enrollmentCommand('secret-token');
   assert.doesNotMatch(command, /secret-token/);
-  assert.match(command, /install -m 0600 \/dev\/null \/var\/lib\/orbitbeacon-agent\/enrollment.token/);
+  assert.match(command, /install -m 0600 \/dev\/null \/opt\/orbit-beacon\/state\/enrollment.token/);
   assert.match(command, /IFS= read -r token/);
-  assert.match(command, /printf '%s\\n' "\$token" > \/var\/lib\/orbitbeacon-agent\/enrollment.token/);
-  assert.match(command, /orbitbeacon-agent enroll --install-policy \/etc\/orbitbeacon\/install-policy.json --config \/etc\/orbitbeacon\/agent.json --token-file \/var\/lib\/orbitbeacon-agent\/enrollment.token/);
+  assert.match(command, /printf '%s\\n' "\$token" > \/opt\/orbit-beacon\/state\/enrollment.token/);
+  assert.match(command, /\/opt\/orbit-beacon\/bin\/orbitbeacon-agent enroll --install-policy \/opt\/orbit-beacon\/etc\/install-policy.json --config \/opt\/orbit-beacon\/etc\/agent.json --token-file \/opt\/orbit-beacon\/state\/enrollment.token/);
   assert.doesNotMatch(command, /https?:\/\//);
 });
 

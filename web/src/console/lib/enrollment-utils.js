@@ -5,9 +5,9 @@ import {nextOffset} from '../api.js';
 export const shellQuote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 
 export function enrollmentCommand() {
-  const path = '/var/lib/orbitbeacon-agent/enrollment.token';
+  const path = '/opt/orbit-beacon/state/enrollment.token';
   // 子 shell 隔离变量和 trap；失败或收到信号时也恢复回显。
-  return `(\n  set +x\n  set -e\n  unset token\n  trap 'stty echo' 0\n  trap 'exit 1' HUP INT TERM\n  install -m 0600 /dev/null ${path}\n  stty -echo\n  IFS= read -r token\n  stty echo\n  printf '%s\\n' "$token" > ${path}\n  unset token\n  orbitbeacon-agent enroll --install-policy /etc/orbitbeacon/install-policy.json --config /etc/orbitbeacon/agent.json --token-file ${path}\n)`;
+  return `(\n  set +x\n  set -e\n  unset token\n  trap 'stty echo' 0\n  trap 'exit 1' HUP INT TERM\n  install -m 0600 /dev/null ${path}\n  stty -echo\n  IFS= read -r token\n  stty echo\n  printf '%s\\n' "$token" > ${path}\n  unset token\n  /opt/orbit-beacon/bin/orbitbeacon-agent enroll --install-policy /opt/orbit-beacon/etc/install-policy.json --config /opt/orbit-beacon/etc/agent.json --token-file ${path}\n)`;
 }
 
 // 安装脚本在终端隐藏读取票据，命令文本不包含票据。

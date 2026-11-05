@@ -56,21 +56,23 @@ fi
 [ "$(uname -s)" = Linux ] || die '仅支持 Linux。'
 
 account=orbitbeacon-agent
-bin_dir=$root/usr/local/bin
+install_root=$root/opt/orbit-beacon
+bin_dir=$install_root/bin
 binary=$bin_dir/orbitbeacon-agent
-config_dir=$root/etc/orbitbeacon
+config_dir=$install_root/etc
 policy=$config_dir/install-policy.json
 runtime_config=$config_dir/agent.json
 ca_copy=$config_dir/ca.pem
-state=$root/var/lib/orbitbeacon-agent
+state=$install_root/state
 token_file=$state/enrollment.token
 unit_dir=$root/etc/systemd/system
 unit=$unit_dir/orbitbeacon-agent.service
-tmp='' policy_tmp='' binary_tmp='' unit_tmp='' tty_state=''
+tmp='' policy_tmp='' binary_tmp='' token_tmp='' unit_tmp='' tty_state=''
 cleanup() {
     if [ -n "$tty_state" ]; then stty "$tty_state" </dev/tty || :; fi
     [ -z "$policy_tmp" ] || rm -f -- "$policy_tmp"
     [ -z "$binary_tmp" ] || rm -f -- "$binary_tmp"
+    [ -z "$token_tmp" ] || rm -f -- "$token_tmp"
     [ -z "$unit_tmp" ] || rm -f -- "$unit_tmp"
     [ -z "$tmp" ] || rm -rf -- "$tmp"
 }
@@ -86,11 +88,16 @@ safe_path() {
         [ -n "$checked" ] || checked=/
     done
 }
-for path in "$binary" "$policy" "$runtime_config" "$ca_copy" "$token_file" "$state/identity.json" "$unit"; do
+# bin/state 的目录入口由 root 所有的安装根保护；叶子由不跟随链接的操作处理。
+for path in "$bin_dir" "$state" "$policy" "$runtime_config" "$ca_copy" "$unit"; do
     safe_path "$path"
 done
 has_systemd() {
     command -v systemctl >/dev/null 2>&1 && [ -d "$root/run/systemd/system" ]
+}
+has_identity() {
+    # stat 默认检查链接本身；root 只探测类型，不读取 Agent 可控制的身份文件。
+    [ "$(stat -c '%F' -- "$state/identity.json" 2>/dev/null)" = 'regular file' ]
 }
 
 if [ "$uninstall" = 1 ]; then
@@ -108,8 +115,9 @@ if [ "$uninstall" = 1 ]; then
         # unit 不存在无影响；继续删除本地文件。
         systemctl disable --now orbitbeacon-agent >/dev/null 2>&1 || :
     fi
-    rm -f -- "$unit" "$binary" "$policy" "$runtime_config" "$ca_copy"
-    rm -rf -- "$state"
+    rm -f -- "$unit"
+    # 不加末尾斜杠；rm 不跟随树内的符号链接，也不运行 Agent 二进制。
+    rm -rf -- "$install_root"
     if has_systemd; then systemctl daemon-reload; fi
     say '已卸载。系统账户保留；如尚未吊销服务端凭据请自行处理。'
     exit 0
@@ -247,24 +255,30 @@ if [ "$agent_uid" -eq 0 ] || [ "$agent_gid" -eq 0 ]; then die 'Agent 账户的 U
 [ "$(id -gn "$account")" = "$account" ] || die 'Agent 主组必须是 orbitbeacon-agent（systemd 服务单元要求）。'
 
 say '正在安装二进制、私有状态目录和归 root 所有的策略...'
+# 先固定 root 所有的父目录，Agent 无法替换 bin/state/etc 的目录入口。
+mkdir -p "$install_root"
+chown -h "root:$agent_gid" "$install_root"
+chmod 0750 "$install_root"
 mkdir -p "$bin_dir" "$config_dir" "$state"
-chown root:root "$bin_dir" "$config_dir"
-chmod 0755 "$bin_dir" "$config_dir"
-chown "$agent_uid:$agent_gid" "$state"
+chown -h "root:$agent_gid" "$config_dir"
+chmod 0750 "$config_dir"
+chown -h "$agent_uid:$agent_gid" "$bin_dir" "$state"
+chmod 0750 "$bin_dir"
 chmod 0700 "$state"
-# 在目标文件系统内重命名，也允许替换正在运行的二进制。
-binary_tmp=$(mktemp "$bin_dir/.orbitbeacon-agent.XXXXXXXX")
-install -m 0755 "$tmp/agent" "$binary_tmp"
-chown root:root "$binary_tmp"
-mv -f -- "$binary_tmp" "$binary"
+# 暂存于同一文件系统内、Agent 不可写的父目录，避免 bin 内临时文件被调包。
+# chown 后不再读写暂存文件；-T 原子替换叶子链接，绝不跟随目标目录链接。
+binary_tmp=$(mktemp "$install_root/.orbitbeacon-agent.XXXXXXXX")
+install -m 0750 "$tmp/agent" "$binary_tmp"
+chown -h "$agent_uid:$agent_gid" "$binary_tmp"
+mv -fT -- "$binary_tmp" "$binary"
 binary_tmp=
 ca_file=
 if [ -n "$ca_source" ]; then
     # 将 CA 暂存到 root 所有的配置目录，重复安装同一文件也适用。
     policy_tmp=$(mktemp "$config_dir/.ca.XXXXXXXX")
-    install -m 0644 "$ca_source" "$policy_tmp"
-    chown root:root "$policy_tmp"
-    mv -f -- "$policy_tmp" "$ca_copy"
+    install -m 0640 "$ca_source" "$policy_tmp"
+    chown -h "root:$agent_gid" "$policy_tmp"
+    mv -fT -- "$policy_tmp" "$ca_copy"
     policy_tmp=
     ca_file=$ca_copy
 fi
@@ -280,27 +294,28 @@ cat > "$policy_tmp" <<EOF
   "install_mode": "native"
 }
 EOF
-chown root:root "$policy_tmp"
-chmod 0644 "$policy_tmp"
-mv -f -- "$policy_tmp" "$policy"
+chown -h "root:$agent_gid" "$policy_tmp"
+chmod 0640 "$policy_tmp"
+mv -fT -- "$policy_tmp" "$policy"
 policy_tmp=
 # 重装时保留管理员修改；root 所有的目录阻止 Agent 替换此文件或植入符号链接。
 safe_path "$runtime_config"
 if [ ! -e "$runtime_config" ]; then
     policy_tmp=$(mktemp "$config_dir/.agent.XXXXXXXX")
     printf '%s\n' '{}' > "$policy_tmp"
-    chown "root:$agent_gid" "$policy_tmp"
-    chmod 0640 "$policy_tmp"
     mv -fT -- "$policy_tmp" "$runtime_config"
     policy_tmp=
 fi
+# 重装也固定属主和权限，保留管理员修改的内容。
+chown -h "root:$agent_gid" "$runtime_config"
+chmod 0640 "$runtime_config"
 
 # 仅通过标准输入、文件或终端读取票据；绝不将其放入命令行参数。
 if [ -n "$token_source" ]; then
     cat -- "$token_source" > "$tmp/token"
 elif [ ! -t 0 ]; then
     cat > "$tmp/token"
-elif [ ! -f "$state/identity.json" ]; then
+elif ! has_identity; then
     printf '注册票据（隐藏输入）：' >/dev/tty
     tty_state=$(stty -g </dev/tty)
     stty -echo </dev/tty
@@ -313,13 +328,14 @@ elif [ ! -f "$state/identity.json" ]; then
     unset token
 fi
 if [ -s "$tmp/token" ]; then
-    # 不替换已有状态目录中被植入的符号链接。
-    safe_path "$token_file"
-    chmod 0600 "$tmp/token"
-    chown "$agent_uid:$agent_gid" "$tmp/token"
+    # 在同一文件系统的 root 所有目录内准备票据，避免跨文件系统时 mv 退化为复制。
+    token_tmp=$(mktemp "$install_root/.enrollment.XXXXXXXX")
+    install -m 0600 "$tmp/token" "$token_tmp"
+    chown -h "$agent_uid:$agent_gid" "$token_tmp"
     # GNU/BusyBox mv -T 将目标视为文件，即使 Agent 抢先创建了目录符号链接。
     # 移入暂存文件后，绝不以 root 对 Agent 状态目录中的路径执行属主变更。
-    mv -fT -- "$tmp/token" "$token_file"
+    mv -fT -- "$token_tmp" "$token_file"
+    token_tmp=
     say '正在以非 root Agent 用户注册...'
     # 静默子进程：即使端点故障或恶意也不得回显票据。
     # 也不将诊断输出重定向到可能留存票据的日志。
@@ -341,7 +357,7 @@ if [ -s "$tmp/token" ]; then
         die '请检查服务器 URL、CA、网络和票据有效期。服务未启用。'
     fi
     say '注册成功（Agent 在成功后自行删除票据）。'
-elif [ -f "$state/identity.json" ]; then
+elif has_identity; then
     say '已有身份；保留并跳过注册。'
 else
     die '未提供注册票据。请通过 --token-file、stdin 或终端提示输入后重试。'
@@ -364,9 +380,7 @@ Type=simple
 # 该账户须与安装策略中的 expected_uid/expected_gid 一致。
 User=orbitbeacon-agent
 Group=orbitbeacon-agent
-StateDirectory=orbitbeacon-agent
-StateDirectoryMode=0700
-ExecStart=/usr/local/bin/orbitbeacon-agent run --install-policy /etc/orbitbeacon/install-policy.json --config /etc/orbitbeacon/agent.json
+ExecStart=/opt/orbit-beacon/bin/orbitbeacon-agent run --install-policy /opt/orbit-beacon/etc/install-policy.json --config /opt/orbit-beacon/etc/agent.json
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10s
@@ -376,6 +390,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
+ReadWritePaths=/opt/orbit-beacon/bin /opt/orbit-beacon/state
 # 保留 home 挂载可见，使磁盘统计反映真实主机。
 ProtectHome=read-only
 ProtectKernelTunables=true

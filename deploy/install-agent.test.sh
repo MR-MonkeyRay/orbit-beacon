@@ -78,6 +78,9 @@ setup_case() {
 	cat >"$TEST_FIXTURES/orbitbeacon-agent-linux-amd64" <<'AGENT'
 #!/bin/sh
 set -eu
+# 只有降权命令桩设置模拟 UID；直接调用安装后二进制会立即失败。
+[ "${TEST_CALLER_UID:-0}" = 12345 ] || exit 23
+printf 'agent caller_uid=%s host_uid=%s\n' "$TEST_CALLER_UID" "$(/usr/bin/id -u)" >>"$TEST_LOG"
 printf 'agent %s\n' "$*" >>"$TEST_LOG"
 if [ "${1:-}" = enroll ]; then
 	shift
@@ -91,8 +94,8 @@ if [ "${1:-}" = enroll ]; then
 	[ -n "$token_file" ] || exit 20
 	[ -s "$token_file" ] || exit 21
 	[ "${TEST_ENROLL_FAIL:-0}" != 1 ] || exit 17
-	mkdir -p "$TEST_ROOT/var/lib/orbitbeacon-agent"
-	printf '%s\n' '{"node_id":"test-node"}' >"$TEST_ROOT/var/lib/orbitbeacon-agent/identity.json"
+	mkdir -p "$TEST_ROOT/opt/orbit-beacon/state"
+	printf '%s\n' '{"node_id":"test-node"}' >"$TEST_ROOT/opt/orbit-beacon/state/identity.json"
 	printf '%s\n' enrolled >>"$TEST_ROOT/enrollments.log"
 fi
 AGENT
@@ -127,14 +130,33 @@ esac'
 	write_stub getent '
 if [ -f "$TEST_ROOT/.account-created" ]; then
 	case ${1:-}:${2:-} in
-		passwd:orbitbeacon-agent) printf "%s\\n" "orbitbeacon-agent:x:12345:12346::/var/lib/orbitbeacon-agent:/usr/sbin/nologin" ;;
+		passwd:orbitbeacon-agent) printf "%s\\n" "orbitbeacon-agent:x:12345:12346::/opt/orbit-beacon/state:/usr/sbin/nologin" ;;
 		group:orbitbeacon-agent) printf "%s\\n" "orbitbeacon-agent:x:12346:" ;;
 		*) exit 2 ;;
 	esac
 else
 	exit 2
 fi'
-	write_stub chown 'printf "chown" >>"$TEST_LOG"; printf " %s" "$@" >>"$TEST_LOG"; printf "\\n" >>"$TEST_LOG"'
+	# 保存模拟属主，用于非 root 沙箱内校验完整属主表；不对宿主执行 chown。
+	write_stub chown '
+printf "chown" >>"$TEST_LOG"; printf " %s" "$@" >>"$TEST_LOG"; printf "\\n" >>"$TEST_LOG"
+[ "${1:-}" = -h ] && shift
+owner=$1
+shift
+for owned_path do printf "%s %s\\n" "$owner" "$owned_path" >>"$CASE_DIR/owners.log"; done'
+	write_stub mv '
+source_path=
+destination=
+for argument do source_path=$destination; destination=$argument; done
+if [ -n "${TEST_SWAP_DESTINATION:-}" ] && [ "$destination" = "$TEST_SWAP_DESTINATION" ]; then
+	rm -f -- "$destination"
+	ln -s "$TEST_SWAP_TARGET" "$destination"
+fi
+if [ -f "$CASE_DIR/owners.log" ]; then
+	owner=$(awk -v path="$source_path" '\''$2 == path { owner=$1 } END { print owner }'\'' "$CASE_DIR/owners.log")
+	[ -z "$owner" ] || printf "%s %s\\n" "$owner" "$destination" >>"$CASE_DIR/owners.log"
+fi
+exec /bin/mv "$@"'
 	write_stub curl '
 printf "curl" >>"$TEST_LOG"; printf " %s" "$@" >>"$TEST_LOG"; printf "\\n" >>"$TEST_LOG"
 output=
@@ -169,17 +191,23 @@ esac'
 	write_stub runuser '
 printf "runuser" >>"$TEST_LOG"; printf " %s" "$@" >>"$TEST_LOG"; printf "\\n" >>"$TEST_LOG"
 [ "${1:-}" = -u ] || exit 2
+[ "${2:-}" = orbitbeacon-agent ] || exit 2
 shift 2
 [ "${1:-}" = -- ] || exit 2
 shift
+TEST_CALLER_UID=12345
+export TEST_CALLER_UID
 exec "$@"'
 	write_stub su '
 printf "su" >>"$TEST_LOG"; printf " %s" "$@" >>"$TEST_LOG"; printf "\\n" >>"$TEST_LOG"
 command_string=
+[ "${3:-}" = orbitbeacon-agent ] || exit 2
 while [ "$#" -gt 0 ]; do
 	case $1 in -c) command_string=$2; shift 2 ;; *) shift ;; esac
 done
 [ -n "$command_string" ] || exit 2
+TEST_CALLER_UID=12345
+export TEST_CALLER_UID
 exec /bin/sh -c "$command_string"'
 	write_stub systemctl 'printf "systemctl" >>"$TEST_LOG"; printf " %s" "$@" >>"$TEST_LOG"; printf "\\n" >>"$TEST_LOG"'
 
@@ -208,31 +236,46 @@ run_with_token() {
 setup_case basic
 secret='basic-token-DO-NOT-LOG'
 run_with_token "$secret" "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 --ca-file "$TEST_FIXTURES/ca.pem"
-assert_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
-assert_exists "$TEST_ROOT/etc/orbitbeacon/install-policy.json"
-assert_exists "$TEST_ROOT/etc/orbitbeacon/agent.json"
-assert_mode "$TEST_ROOT/etc/orbitbeacon/agent.json" 640
-[ "$(cat "$TEST_ROOT/etc/orbitbeacon/agent.json")" = '{}' ] || fail "new runtime configuration is not empty defaults"
-assert_log_has "chown root:12346"
-assert_exists "$TEST_ROOT/etc/orbitbeacon/ca.pem"
+assert_exists "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent"
+assert_exists "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.json"
+assert_exists "$TEST_ROOT/opt/orbit-beacon/etc/agent.json"
+assert_mode "$TEST_ROOT/opt/orbit-beacon/etc/agent.json" 640
+[ "$(cat "$TEST_ROOT/opt/orbit-beacon/etc/agent.json")" = '{}' ] || fail "new runtime configuration is not empty defaults"
+assert_log_has "chown -h root:12346"
+assert_exists "$TEST_ROOT/opt/orbit-beacon/etc/ca.pem"
 assert_exists "$TEST_ROOT/etc/systemd/system/orbitbeacon-agent.service"
-assert_exists "$TEST_ROOT/var/lib/orbitbeacon-agent/identity.json"
-assert_mode "$TEST_ROOT/usr/local/bin/orbitbeacon-agent" 755
-assert_mode "$TEST_ROOT/etc/orbitbeacon" 755
-assert_mode "$TEST_ROOT/etc/orbitbeacon/install-policy.json" 644
-assert_mode "$TEST_ROOT/etc/orbitbeacon/ca.pem" 644
+assert_exists "$TEST_ROOT/opt/orbit-beacon/state/identity.json"
+assert_mode "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent" 750
+assert_mode "$TEST_ROOT/opt/orbit-beacon/etc" 750
+assert_mode "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.json" 640
+assert_mode "$TEST_ROOT/opt/orbit-beacon/etc/ca.pem" 640
 assert_mode "$TEST_ROOT/etc/systemd/system/orbitbeacon-agent.service" 644
-assert_mode "$TEST_ROOT/var/lib/orbitbeacon-agent" 700
+assert_mode "$TEST_ROOT/opt/orbit-beacon/state" 700
+assert_mode "$TEST_ROOT/opt/orbit-beacon" 750
+assert_mode "$TEST_ROOT/opt/orbit-beacon/bin" 750
+for owner_path in \
+	"root:12346 $TEST_ROOT/opt/orbit-beacon" \
+	"root:12346 $TEST_ROOT/opt/orbit-beacon/etc" \
+	"root:12346 $TEST_ROOT/opt/orbit-beacon/etc/agent.json" \
+	"root:12346 $TEST_ROOT/opt/orbit-beacon/etc/install-policy.json" \
+	"root:12346 $TEST_ROOT/opt/orbit-beacon/etc/ca.pem" \
+	"12345:12346 $TEST_ROOT/opt/orbit-beacon/bin" \
+	"12345:12346 $TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent" \
+	"12345:12346 $TEST_ROOT/opt/orbit-beacon/state/enrollment.token" \
+	"12345:12346 $TEST_ROOT/opt/orbit-beacon/state"; do
+	grep -Fx -- "$owner_path" "$CASE_DIR/owners.log" >/dev/null || fail "owner missing: $owner_path"
+done
+assert_log_has 'agent caller_uid=12345'
 cmp -s "$UNIT_SOURCE" "$TEST_ROOT/etc/systemd/system/orbitbeacon-agent.service" || fail "installed unit differs from repository unit"
-python3 - "$TEST_ROOT/etc/orbitbeacon/install-policy.json" "$TEST_ROOT" <<'PY'
+python3 - "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.json" "$TEST_ROOT" <<'PY'
 import json, pathlib, sys
 p = pathlib.Path(sys.argv[1])
 root = sys.argv[2]
 data = json.loads(p.read_text())
 assert data == {
     "server_url": "https://monitor.example.com",
-    "ca_file": root + "/etc/orbitbeacon/ca.pem",
-    "state_dir": root + "/var/lib/orbitbeacon-agent",
+    "ca_file": root + "/opt/orbit-beacon/etc/ca.pem",
+    "state_dir": root + "/opt/orbit-beacon/state",
     "expected_uid": 12345,
     "expected_gid": 12346,
     "expected_account": "orbitbeacon-agent",
@@ -244,22 +287,103 @@ assert_log_has "--proto =https"
 assert_log_has "--tlsv1.2"
 assert_log_has "systemctl daemon-reload"
 assert_log_has "systemctl enable --now orbitbeacon-agent"
-assert_log_has "--config $TEST_ROOT/etc/orbitbeacon/agent.json"
+assert_log_has "--config $TEST_ROOT/opt/orbit-beacon/etc/agent.json"
 assert_log_lacks "$secret"
 if grep -F -- "$secret" "$CASE_DIR/output" >/dev/null 2>&1; then fail "token leaked to installer output"; fi
 pass "download install creates valid policy, secure files, synced unit, and does not leak token"
 
-printf '%s\n' '{"node_id":"identity-must-survive"}' >"$TEST_ROOT/var/lib/orbitbeacon-agent/identity.json"
-printf '%s\n' '{"report_interval_seconds":5,"probe_targets":[]}' >"$TEST_ROOT/etc/orbitbeacon/agent.json"
+printf '%s\n' '{"node_id":"identity-must-survive"}' >"$TEST_ROOT/opt/orbit-beacon/state/identity.json"
+printf '%s\n' '{"report_interval_seconds":5,"probe_targets":[]}' >"$TEST_ROOT/opt/orbit-beacon/etc/agent.json"
 before_enrollments=$(wc -l <"$TEST_ROOT/enrollments.log")
 : >"$TEST_LOG"
 run_installer "$CASE_DIR/upgrade-output" --server https://monitor.example.com --version 0.1.0 </dev/null
-grep -F 'identity-must-survive' "$TEST_ROOT/var/lib/orbitbeacon-agent/identity.json" >/dev/null || fail "upgrade replaced identity"
-[ "$(cat "$TEST_ROOT/etc/orbitbeacon/agent.json")" = '{"report_interval_seconds":5,"probe_targets":[]}' ] || fail "upgrade replaced local runtime settings"
+grep -F 'identity-must-survive' "$TEST_ROOT/opt/orbit-beacon/state/identity.json" >/dev/null || fail "upgrade replaced identity"
+[ "$(cat "$TEST_ROOT/opt/orbit-beacon/etc/agent.json")" = '{"report_interval_seconds":5,"probe_targets":[]}' ] || fail "upgrade replaced local runtime settings"
 after_enrollments=$(wc -l <"$TEST_ROOT/enrollments.log")
 [ "$before_enrollments" = "$after_enrollments" ] || fail "tokenless upgrade enrolled again"
 assert_log_has "systemctl restart orbitbeacon-agent"
 pass "tokenless re-run preserves identity and restarts upgraded service"
+
+# 验证 Agent 组对 etc 只有读取/遍历权限，bin/state 可写；root 所有权由命令桩记录。
+python3 - "$TEST_ROOT/opt/orbit-beacon" <<'PY'
+import pathlib, stat, sys
+base = pathlib.Path(sys.argv[1])
+for path in [base, base / 'etc', *base.joinpath('etc').iterdir()]:
+    mode = stat.S_IMODE(path.lstat().st_mode)
+    assert not mode & 0o022, (path, oct(mode))
+    assert mode & 0o040, (path, oct(mode))
+for name in ['bin', 'state']:
+    assert base.joinpath(name).lstat().st_mode & 0o200
+PY
+pass "root-owned configuration grants the Agent group read access without write access"
+
+# 静态检查覆盖未走到的分支，防止新增 version/doctor 等 root 直接调用。
+python3 - "$INSTALLER" "$UNIT_SOURCE" <<'PY'
+import pathlib, re, sys
+script = pathlib.Path(sys.argv[1]).read_text()
+calls = [line.strip() for line in script.splitlines() if re.search(r'\$binary["\x27]?\s+(enroll|run|doctor|version)\b', line) and not line.lstrip().startswith('#')]
+assert len(calls) == 5, calls
+assert all(line.startswith(('if runuser -u "$account" --', 'if su -s /bin/sh "$account" -c', 'say ')) for line in calls), calls
+unit = pathlib.Path(sys.argv[2]).read_text()
+assert 'User=orbitbeacon-agent\nGroup=orbitbeacon-agent\n' in unit
+assert 'StateDirectory' not in unit
+assert 'ProtectSystem=strict\nReadWritePaths=/opt/orbit-beacon/bin /opt/orbit-beacon/state\n' in unit
+PY
+pass "all installer binary invocations and the service explicitly select the non-root account"
+
+for link_kind in file directory; do
+	setup_case "binary_link_$link_kind"
+	run_with_token 'first-token' "$CASE_DIR/first-output" --server https://monitor.example.com --version 0.1.0
+	if [ "$link_kind" = file ]; then
+		printf '%s\n' untouched >"$CASE_DIR/victim"
+	else
+		mkdir "$CASE_DIR/victim"
+		printf '%s\n' untouched >"$CASE_DIR/victim/orbitbeacon-agent"
+	fi
+	chmod 640 "$CASE_DIR/victim"
+	[ "$link_kind" = file ] || chmod 750 "$CASE_DIR/victim"
+	before=$(stat -c '%u:%g:%a' "$CASE_DIR/victim")
+	rm "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent"
+	ln -s "$CASE_DIR/victim" "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent"
+	# mv 桩在执行前再次植入链接，覆盖预检之后的竞争窗口。
+	TEST_SWAP_DESTINATION=$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent TEST_SWAP_TARGET=$CASE_DIR/victim \
+		run_installer "$CASE_DIR/reinstall-output" --server https://monitor.example.com --version 0.1.0 </dev/null
+	[ ! -L "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent" ] || fail 'binary link survived'
+	cmp -s "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64" "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent" || fail 'binary replacement failed'
+	[ "$before" = "$(stat -c '%u:%g:%a' "$CASE_DIR/victim")" ] || fail 'binary link target metadata changed'
+	if [ "$link_kind" = file ]; then victim_file=$CASE_DIR/victim; else victim_file=$CASE_DIR/victim/orbitbeacon-agent; fi
+	[ "$(cat "$victim_file")" = untouched ] || fail 'binary link target was overwritten'
+	assert_log_lacks "chown -h 12345:12346 $TEST_ROOT/opt/orbit-beacon/bin/"
+	pass "reinstallation replaces a raced binary $link_kind symlink without touching its target"
+done
+
+setup_case token_link
+run_with_token 'first-token' "$CASE_DIR/first-output" --server https://monitor.example.com --version 0.1.0
+printf '%s\n' untouched >"$CASE_DIR/victim"
+chmod 640 "$CASE_DIR/victim"
+before=$(stat -c '%u:%g:%a' "$CASE_DIR/victim")
+TEST_SWAP_DESTINATION=$TEST_ROOT/opt/orbit-beacon/state/enrollment.token TEST_SWAP_TARGET=$CASE_DIR/victim \
+	run_with_token 'replacement-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0
+[ "$(cat "$CASE_DIR/victim")" = untouched ] || fail 'token link target was overwritten'
+[ "$before" = "$(stat -c '%u:%g:%a' "$CASE_DIR/victim")" ] || fail 'token link target metadata changed'
+assert_mode "$TEST_ROOT/opt/orbit-beacon/state/enrollment.token" 600
+pass "enrollment atomically replaces a raced token symlink without root touching its target"
+
+for directory in bin state; do
+	setup_case "directory_link_$directory"
+	mkdir -p "$TEST_ROOT/opt/orbit-beacon" "$CASE_DIR/victim"
+	printf '%s\n' untouched >"$CASE_DIR/victim/file"
+	ln -s "$CASE_DIR/victim" "$TEST_ROOT/opt/orbit-beacon/$directory"
+	if run_with_token 'directory-link-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0; then
+		fail "installer accepted symlinked $directory directory"
+	fi
+	if run_installer "$CASE_DIR/uninstall-output" --uninstall --yes; then
+		fail "uninstaller accepted symlinked $directory directory"
+	fi
+	[ "$(cat "$CASE_DIR/victim/file")" = untouched ] || fail 'directory symlink target changed'
+	assert_log_lacks 'chown'
+	pass "install and uninstall reject a symlinked $directory directory before any ownership change"
+done
 
 for machine in x86_64 aarch64 arm64; do
 	setup_case "architecture_$machine"
@@ -268,15 +392,15 @@ for machine in x86_64 aarch64 arm64; do
 		*) expected_arch=arm64; other_arch=amd64 ;;
 	esac
 	TEST_ARCH=$machine TEST_BAD_CHECKSUM_ARCH=$other_arch run_with_token 'architecture-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0
-	cmp -s "$TEST_FIXTURES/orbitbeacon-agent-linux-$expected_arch" "$TEST_ROOT/usr/local/bin/orbitbeacon-agent" || fail "$machine installed the wrong architecture"
-	assert_exists "$TEST_ROOT/var/lib/orbitbeacon-agent/identity.json"
+	cmp -s "$TEST_FIXTURES/orbitbeacon-agent-linux-$expected_arch" "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent" || fail "$machine installed the wrong architecture"
+	assert_exists "$TEST_ROOT/opt/orbit-beacon/state/identity.json"
 	pass "$machine installs its architecture-only binary and ignores unrelated checksums"
 done
 
 setup_case config_symlink
-mkdir -p "$TEST_ROOT/etc/orbitbeacon"
+mkdir -p "$TEST_ROOT/opt/orbit-beacon/etc"
 printf '%s\n' '{"report_interval_seconds":5}' >"$CASE_DIR/external.json"
-ln -s "$CASE_DIR/external.json" "$TEST_ROOT/etc/orbitbeacon/agent.json"
+ln -s "$CASE_DIR/external.json" "$TEST_ROOT/opt/orbit-beacon/etc/agent.json"
 if run_with_token 'symlink-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0; then
 	fail "installer accepted a symlinked runtime configuration"
 fi
@@ -284,19 +408,32 @@ fi
 pass "runtime configuration symlink is rejected without changing its target"
 
 setup_case config_directory
-mkdir -p "$TEST_ROOT/etc/orbitbeacon/agent.json"
+mkdir -p "$TEST_ROOT/opt/orbit-beacon/etc/agent.json"
 if run_with_token 'directory-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0; then
 	fail "installer accepted a directory as runtime configuration"
 fi
-assert_not_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent"
 pass "non-regular runtime configuration is rejected before installation"
 
 setup_case foreground
 rm -rf -- "$TEST_ROOT/run/systemd"
 run_with_token 'foreground-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0
-grep -F -- "run --install-policy $TEST_ROOT/etc/orbitbeacon/install-policy.json --config $TEST_ROOT/etc/orbitbeacon/agent.json" "$CASE_DIR/output" >/dev/null || fail "foreground instructions omitted local configuration"
+grep -F -- "run --install-policy $TEST_ROOT/opt/orbit-beacon/etc/install-policy.json --config $TEST_ROOT/opt/orbit-beacon/etc/agent.json" "$CASE_DIR/output" >/dev/null || fail "foreground instructions omitted local configuration"
 assert_log_lacks "systemctl enable"
 pass "non-systemd instructions use the installed local configuration"
+
+setup_case su_fallback
+rm "$CASE_DIR/bin/runuser"
+# 限定 PATH，避免找到宿主 runuser；其余命令仍使用普通工具或现有桩。
+for tool in dash awk stat mkdir mktemp chmod cp install cat sha256sum stty rm cut; do
+	ln -s "$(command -v "$tool")" "$CASE_DIR/bin/$tool"
+done
+TEST_PATH=$CASE_DIR/bin
+run_with_token 'su-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0
+assert_log_has 'su -s /bin/sh orbitbeacon-agent -c'
+assert_log_has 'agent caller_uid=12345'
+assert_log_lacks 'runuser'
+pass "su fallback also executes the binary only through the dedicated non-root account"
 
 for machine in x86_64 aarch64 arm64; do
 	setup_case "checksum_$machine"
@@ -307,7 +444,7 @@ for machine in x86_64 aarch64 arm64; do
 	if TEST_ARCH=$machine TEST_BAD_CHECKSUM_ARCH=$expected_arch run_with_token 'checksum-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0; then
 		fail "$machine bad checksum unexpectedly succeeded"
 	fi
-	assert_not_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
+	assert_not_exists "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent"
 	assert_log_lacks "runuser"
 	pass "$machine checksum failure stops before binary installation or enrollment"
 done
@@ -317,10 +454,10 @@ failure_secret='failure-token-DO-NOT-LOG'
 if TEST_ENROLL_FAIL=1 run_with_token "$failure_secret" "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0; then
 	fail "enrollment failure unexpectedly succeeded"
 fi
-token_path=$TEST_ROOT/var/lib/orbitbeacon-agent/enrollment.token
+token_path=$TEST_ROOT/opt/orbit-beacon/state/enrollment.token
 assert_exists "$token_path"
 assert_mode "$token_path" 600
-assert_mode "$TEST_ROOT/var/lib/orbitbeacon-agent" 700
+assert_mode "$TEST_ROOT/opt/orbit-beacon/state" 700
 [ "$(sed -n '1p' "$token_path")" = "$failure_secret" ] || fail "retained token content changed"
 assert_log_lacks "$failure_secret"
 if grep -F -- "$failure_secret" "$CASE_DIR/output" >/dev/null 2>&1; then fail "failure token leaked to output"; fi
@@ -331,7 +468,7 @@ local_secret='local-token-DO-NOT-LOG'
 printf '%s\n' "$local_secret" >"$TEST_FIXTURES/enrollment.token"
 chmod 600 "$TEST_FIXTURES/enrollment.token"
 run_installer "$CASE_DIR/output" --server https://monitor.example.com --binary "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64" --token-file "$TEST_FIXTURES/enrollment.token"
-assert_exists "$TEST_ROOT/var/lib/orbitbeacon-agent/identity.json"
+assert_exists "$TEST_ROOT/opt/orbit-beacon/state/identity.json"
 assert_log_lacks "curl"
 assert_log_lacks "$local_secret"
 pass "local binary install skips release downloads"
@@ -341,13 +478,13 @@ for http_server in 'http://monitor.example.com/' 'http://192.0.2.10:8080' 'http:
 	http_case=$((http_case + 1))
 	setup_case "http_url_$http_case"
 	run_with_token 'http-token' "$CASE_DIR/output" --server "$http_server" --version 0.1.0
-	python3 - "$TEST_ROOT/etc/orbitbeacon/install-policy.json" "${http_server%/}" <<'PY'
+	python3 - "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.json" "${http_server%/}" <<'PY'
 import json, pathlib, sys
 data = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert data["server_url"] == sys.argv[2], data
 assert data["ca_file"] == "", data
 PY
-	assert_exists "$TEST_ROOT/var/lib/orbitbeacon-agent/identity.json"
+	assert_exists "$TEST_ROOT/opt/orbit-beacon/state/identity.json"
 	assert_log_has "--proto =https"
 	assert_log_has "--proto-redir =https"
 	assert_log_has "https://github.com/mr-monkeyray/orbit-beacon/releases/download/v0.1.0/"
@@ -358,7 +495,7 @@ setup_case http_ca_conflict
 if run_with_token 'http-ca-token' "$CASE_DIR/output" --server http://monitor.example.com --version 0.1.0 --ca-file "$TEST_FIXTURES/missing.pem"; then
 	fail "HTTP server accepted a CA file"
 fi
-assert_not_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent"
 assert_log_lacks "curl"
 pass "HTTP and CA conflict is rejected before reading CA or installing"
 
@@ -380,12 +517,12 @@ for bad_server in \
 		fail "invalid server origin unexpectedly succeeded: $bad_server"
 	fi
 done
-assert_not_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent"
 pass "server URLs with userinfo, malformed host, paths, queries, or JSON-unsafe characters are rejected"
 
 setup_case ipv6_url
 run_with_token 'ipv6-token' "$CASE_DIR/output" --server 'https://[2001:db8::1]:8443' --binary "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64"
-python3 - "$TEST_ROOT/etc/orbitbeacon/install-policy.json" <<'PY'
+python3 - "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.json" <<'PY'
 import json, pathlib, sys
 data = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert data["server_url"] == "https://[2001:db8::1]:8443", data
@@ -397,23 +534,36 @@ setup_case uid_zero
 if TEST_ACCOUNT_UID0=1 run_with_token 'uid-zero-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0; then
 	fail "uid-zero account unexpectedly accepted"
 fi
-assert_not_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent"
 pass "uid-zero agent account is rejected"
 
 setup_case uninstall
 run_with_token 'uninstall-token' "$CASE_DIR/install-output" --server https://monitor.example.com --version 0.1.0 --ca-file "$TEST_FIXTURES/ca.pem"
 printf 'n\n' | env PATH="$TEST_PATH" dash "$INSTALLER" --uninstall >"$CASE_DIR/refuse-output" 2>&1 || true
-assert_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
-assert_exists "$TEST_ROOT/var/lib/orbitbeacon-agent/identity.json"
+assert_exists "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent"
+assert_exists "$TEST_ROOT/opt/orbit-beacon/state/identity.json"
+# 卸载时两个可写目录均可含任意链接；保留外部目标及其属主/模式。
+mkdir "$CASE_DIR/victim-dir"
+printf '%s\n' untouched >"$CASE_DIR/victim-dir/file"
+before=$(stat -c '%u:%g:%a' "$CASE_DIR/victim-dir/file")
+ln -s "$CASE_DIR/victim-dir" "$TEST_ROOT/opt/orbit-beacon/bin/directory-link"
+ln -s "$CASE_DIR/victim-dir/file" "$TEST_ROOT/opt/orbit-beacon/state/file-link"
+: >"$TEST_LOG"
 run_installer "$CASE_DIR/uninstall-output" --uninstall --yes
-assert_not_exists "$TEST_ROOT/usr/local/bin/orbitbeacon-agent"
-assert_not_exists "$TEST_ROOT/etc/orbitbeacon/install-policy.json"
-assert_not_exists "$TEST_ROOT/etc/orbitbeacon/agent.json"
-assert_not_exists "$TEST_ROOT/etc/orbitbeacon/ca.pem"
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent"
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.json"
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon/etc/agent.json"
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon/etc/ca.pem"
 assert_not_exists "$TEST_ROOT/etc/systemd/system/orbitbeacon-agent.service"
-assert_not_exists "$TEST_ROOT/var/lib/orbitbeacon-agent"
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon/state"
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon"
+[ "$(cat "$CASE_DIR/victim-dir/file")" = untouched ] || fail 'uninstall followed an external link'
+[ "$before" = "$(stat -c '%u:%g:%a' "$CASE_DIR/victim-dir/file")" ] || fail 'uninstall changed external metadata'
+assert_log_lacks 'agent '
+assert_log_lacks 'runuser'
+assert_log_lacks 'su -s'
 assert_log_has "systemctl disable --now orbitbeacon-agent"
 assert_log_has "systemctl daemon-reload"
-pass "uninstall refuses declined confirmation and --yes removes installed state"
+pass "uninstall refuses declined confirmation and removes the layout without following links or executing Agent"
 
 printf '1..%s\n' "$PASS_COUNT"
