@@ -338,6 +338,25 @@ func TestStoppedOnlyDescribesTheRunThatReceivedTheCommand(t *testing.T) {
 			t.Fatal("the process that executed the stop is not stopped")
 		}
 	})
+	t.Run("new credential reuses the generation", func(t *testing.T) {
+		f := newCoalesceFixture(t, time.Hour)
+		result := deliver(t, f)
+		f.now = f.now.Add(time.Second)
+		f.report.Seq++
+		f.report.CommandResults = []v1.CommandResult{result}
+		if _, err := acceptReport(t.Context(), f.service, coalesceToken, f.report); err != nil {
+			t.Fatal(err)
+		}
+		if !stopped(t, f) {
+			t.Fatal("stop did not apply")
+		}
+		if _, err := f.db.Exec(`UPDATE nodes SET credential_epoch=credential_epoch+1 WHERE id=?`, f.id); err != nil {
+			t.Fatal(err)
+		}
+		if stopped(t, f) {
+			t.Fatal("a stop from the old credential applied to the new one")
+		}
+	})
 	t.Run("retry after server restart", func(t *testing.T) {
 		f := newCoalesceFixture(t, time.Hour)
 		result := deliver(t, f)
@@ -356,4 +375,18 @@ func TestStoppedOnlyDescribesTheRunThatReceivedTheCommand(t *testing.T) {
 			t.Fatal("a lost-response retry cleared stopped")
 		}
 	})
+}
+
+func TestResultForUndeliveredCommandIsIgnored(t *testing.T) {
+	f := newCoalesceFixture(t, time.Hour)
+	c := createTestCommand(t, f, "stop")
+	f.report.Seq++
+	f.report.CommandResults = []v1.CommandResult{{ID: c.ID, Status: "succeeded", Code: "ok"}}
+	response, err := acceptReport(t.Context(), f.service, coalesceToken, f.report)
+	if err != nil || response.Command == nil || response.Command.ID != c.ID {
+		t.Fatalf("response=%+v err=%v", response, err)
+	}
+	if state := commandStateFor(t, f, c.ID); state != "delivered" {
+		t.Fatalf("state=%s", state)
+	}
 }

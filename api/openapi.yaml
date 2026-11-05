@@ -2650,7 +2650,7 @@ components:
       additionalProperties: false
       required: [id, name, status, notes, region, provider, group_id, tags, created_at, last_seen, presence, agent_version, stopped]
       properties:
-        stopped: {type: boolean, description: 最新 stop 成功且 finished_at 不早于 last_seen；新进程上报后清除。}
+        stopped: {type: boolean, description: 最新 stop 成功，且收到它的进程和凭据仍是节点当前值；任何新进程上报后清除。}
         id: {type: string, format: uuid}
         name: {type: string}
         status: {type: string, enum: [pending, online, offline, unknown, disabled]}

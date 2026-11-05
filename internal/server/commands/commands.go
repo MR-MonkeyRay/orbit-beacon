@@ -32,8 +32,9 @@ var (
 // StoppedSQL is a correlated scalar expression, shared by inventory and alerts.
 // A stop only describes the process it was delivered to: any later run changes
 // nodes.run_generation, so a recovered result or a crash can never hide a real
-// outage. The latest stop must itself have succeeded.
-const StoppedSQL = `COALESCE((SELECT state='succeeded' AND delivered_generation=nodes.run_generation FROM agent_commands WHERE node_id=nodes.id AND kind='stop' ORDER BY created_at DESC,id DESC LIMIT 1),0)`
+// outage. Generations restart with a new credential, so the epoch must match
+// too. The latest stop must itself have succeeded.
+const StoppedSQL = `COALESCE((SELECT state='succeeded' AND credential_epoch=nodes.credential_epoch AND delivered_generation=nodes.run_generation FROM agent_commands WHERE node_id=nodes.id AND kind='stop' ORDER BY created_at DESC,id DESC LIMIT 1),0)`
 
 type Record struct {
 	v1.Command
@@ -266,7 +267,7 @@ func Exchange(ctx context.Context, tx *sql.Tx, nodeID string, epoch int64, gener
 			return nil, err
 		}
 		var id string
-		err := tx.QueryRowContext(ctx, `SELECT id FROM agent_commands WHERE id=? AND node_id=? AND credential_epoch=? AND state IN ('pending','delivered')`, r.ID, nodeID, epoch).Scan(&id)
+		err := tx.QueryRowContext(ctx, `SELECT id FROM agent_commands WHERE id=? AND node_id=? AND credential_epoch=? AND state='delivered'`, r.ID, nodeID, epoch).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
