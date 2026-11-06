@@ -6,10 +6,10 @@ import {busy, button, dataTable, iconButton, panel} from '../ui/components.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, passwordInput, select, textarea, validateBytes} from '../ui/forms.js';
-import {MESSAGE_TEMPLATE_TOKENS, buildChannelPayload, errorCodeMessage, validateChannel, validationError} from '../lib/alert-utils.js';
+import {MESSAGE_TEMPLATE_TOKENS, URL_CHANNELS, usesURL, buildChannelPayload, errorCodeMessage, validateChannel, validationError} from '../lib/alert-utils.js';
 import {eventTime} from './alert-events.js';
 
-const KINDS = [['webhook', t('alerts.kind.webhook')], ['telegram', 'Telegram'], ['email', t('alerts.kind.email')]];
+const KINDS = [['webhook', t('alerts.kind.webhook')], ['telegram', 'Telegram'], ['email', t('alerts.kind.email')], ['feishu', t('alerts.kind.feishu')], ['dingtalk', t('alerts.kind.dingtalk')], ['wecom', t('alerts.kind.wecom')], ['bark', 'Bark'], ['ntfy', 'ntfy']];
 
 export function channelEditor(item, {signal, saved}) {
   if (!session.user || !session.csrf || signal?.aborted) return;
@@ -27,7 +27,7 @@ export function channelEditor(item, {signal, saved}) {
       const kind = controls.kind = select(KINDS, item?.kind || 'webhook', {name: 'kind', disabled: Boolean(item)});
       const enabled = controls.enabled = input({type: 'checkbox', name: 'enabled', checked: item?.enabled ?? true});
       const replaceURL = controls.replaceURL = input({type: 'checkbox', name: 'replace_url'});
-      const urlField = add(t('alerts.channels.webhookURL'), 'url', {type: 'url', autocomplete: 'off', required: !item}, t('alerts.channels.webhookHint'));
+      const urlField = add('URL', 'url', {type: 'url', autocomplete: 'off', required: !item});
       controls.url.dataset.field = 'config.url';
       const urlState = h('p', {class: 'hint'}, item?.config?.url_set ? t('alerts.channels.urlSet', {url: item.config.url_redacted}) : t('alerts.channels.urlNotSet'));
       const replaceField = field(t('alerts.channels.replaceURL'), replaceURL);
@@ -53,12 +53,15 @@ export function channelEditor(item, {signal, saved}) {
       const secretState = h('p', {class: 'hint'}, t(item?.secret_set ? 'alerts.channels.secretSet' : 'alerts.channels.secretNotSet'));
       const sync = () => {
         const k = kind.value;
-        webhook.hidden = k !== 'webhook';
+        webhook.hidden = !usesURL(k);
+        controls.url.placeholder = URL_CHANNELS[k]?.placeholder || '';
+        secretState.hidden = k === 'wecom';
+        replaceSecretField.hidden = k === 'wecom';
         chat.hidden = k !== 'telegram';
         email.hidden = k !== 'email';
-        template.disabled = !['telegram', 'email'].includes(k);
+        template.disabled = k === 'webhook';
         templateField.hidden = template.disabled;
-        controls.url.disabled = k !== 'webhook' || Boolean(item && !replaceURL.checked);
+        controls.url.disabled = !usesURL(k) || Boolean(item && !replaceURL.checked);
         controls.url.required = !controls.url.disabled;
         urlField.hidden = controls.url.disabled;
         controls.chat_id.disabled = k !== 'telegram';
@@ -67,10 +70,10 @@ export function channelEditor(item, {signal, saved}) {
           controls[key].disabled = k !== 'email';
           controls[key].required = k === 'email' && key !== 'username';
         }
-        secretLabel.textContent = t(k === 'webhook' ? 'alerts.channels.optionalSecret' : k === 'telegram' ? 'alerts.channels.botToken' : 'alerts.channels.smtpPassword');
-        secret.disabled = Boolean(item && !replaceSecret.checked);
+        secretLabel.textContent = t(({telegram: 'alerts.channels.botToken', email: 'alerts.channels.smtpPassword', bark: 'alerts.channels.deviceKey', ntfy: 'alerts.channels.accessToken'})[k] || 'alerts.channels.optionalSecret');
+        secret.disabled = k === 'wecom' || Boolean(item && !replaceSecret.checked);
         secretField.hidden = secret.disabled;
-        secret.required = !secret.disabled && (k === 'telegram' || (k === 'email' && Boolean(controls.username.value)));
+        secret.required = !secret.disabled && (k === 'telegram' || k === 'bark' || (k === 'email' && Boolean(controls.username.value)));
       };
       kind.addEventListener('change', () => { secret.value = ''; sync(); });
       replaceURL.addEventListener('change', () => { if (!replaceURL.checked) controls.url.value = ''; sync(); if (replaceURL.checked) controls.url.focus(); });
@@ -87,7 +90,7 @@ export function channelEditor(item, {signal, saved}) {
       const configError = h('p', {class: 'field-error', role: 'alert', hidden: true});
       const configGroup = h('div', {class: 'stack', dataset: {field: 'config'}}, webhook, chat, email, templateField, configError);
       configGroup.showError = (message) => { configError.textContent = message; configError.hidden = !message; };
-      configGroup.focus = () => (kind.value === 'webhook' ? (controls.url.disabled ? replaceURL : controls.url) : kind.value === 'telegram' ? controls.chat_id : controls.host).focus();
+      configGroup.focus = () => (usesURL(kind.value) ? (controls.url.disabled ? replaceURL : controls.url) : kind.value === 'telegram' ? controls.chat_id : controls.host).focus();
       configGroup.addEventListener('input', () => configGroup.showError(''));
       form.append(nameField, field(t('alerts.column.kind'), kind), field(t('alerts.state.enabled'), enabled), configGroup, secretState, ...(item ? [replaceSecretField] : []), secretField);
     },
@@ -134,10 +137,10 @@ export function channelsPanel({channels, signal, saved}) {
         if (!signal?.aborted && error.name !== 'AbortError') status.textContent = t('alerts.channels.testFailed', {error: errorText(error)});
       } finally { busy(test, false); }
     }});
-    const destination = channel.kind === 'webhook' ? channel.config.url_redacted || t('alerts.channels.urlNotSet')
+    const destination = usesURL(channel.kind) ? channel.config.url_redacted || t('alerts.channels.urlNotSet')
       : channel.kind === 'telegram' ? channel.config.chat_id : `${channel.config.host}:${channel.config.port} → ${formatList(channel.config.to)}`;
     return h('tr', null, h('td', null, channel.name), h('td', null, KINDS.find(([kind]) => kind === channel.kind)?.[1] || t('alerts.kind.unknown')),
-      h('td', {class: 'alert-destination'}, destination, h('div', {class: 'hint'}, t(channel.secret_set ? 'alerts.channels.secretSet' : 'alerts.channels.secretNotSet')), status),
+      h('td', {class: 'alert-destination'}, destination, channel.kind === 'wecom' ? null : h('div', {class: 'hint'}, t(channel.secret_set ? 'alerts.channels.secretSet' : 'alerts.channels.secretNotSet')), status),
       h('td', null, t(channel.enabled ? 'alerts.state.enabled' : 'alerts.state.disabled')),
       h('td', {class: 'actions'}, test, iconButton('edit', t('alerts.editNamed', {name: channel.name}), () => edit(channel)), iconButton('trash', t('alerts.deleteAction', {name: channel.name}), () => remove(channel))));
   };

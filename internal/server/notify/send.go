@@ -13,7 +13,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -87,49 +86,13 @@ func (s *sender) Send(ctx context.Context, c Channel, secret string, p Payload) 
 	if c.Kind == "email" {
 		return s.email(ctx, c, secret, p)
 	}
-	raw, e := json.Marshal(p)
-	if e != nil {
-		return failure("invalid_payload", false)
+	req, e := s.buildRequest(ctx, c, secret, p)
+	if e != "" {
+		return failure(e, false)
 	}
-	target := c.Config.URL
-	if c.Kind == "webhook" {
-		u, err := url.Parse(target)
-		if err != nil {
-			return failure("invalid_destination", false)
-		}
-		// 配置变更后发送已持久化通道时，重新检查当前策略。
-		if u.Scheme != "https" {
-			ip := net.ParseIP(u.Hostname())
-			if u.Scheme != "http" || !s.allowInsecureWebhooks || ip == nil || !ip.IsLoopback() {
-				return failure("insecure_webhook_denied", false)
-			}
-		}
-	}
-	if c.Kind == "telegram" {
-		target = s.telegramBase + "/bot" + secret + "/sendMessage"
-		raw, _ = json.Marshal(struct {
-			ChatID string `json:"chat_id"`
-			Text   string `json:"text"`
-		}{c.Config.ChatID, renderMessage(p, c.Config.Template, 4096)})
-	}
-	req, e := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(raw))
-	if e != nil {
-		return failure("invalid_destination", false)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.Kind == "webhook" {
-		timestamp := strconv.FormatInt(s.now().Unix(), 10)
-		req.Header.Set("X-OrbitBeacon-Timestamp", timestamp)
-		if secret != "" {
-			mac := hmac.New(sha256.New, []byte(secret))
-			mac.Write([]byte(timestamp + "."))
-			mac.Write(raw)
-			req.Header.Set("X-OrbitBeacon-Signature", "v1="+hex.EncodeToString(mac.Sum(nil)))
-		}
-	}
-	response, e := s.client.Do(req)
-	if e != nil {
-		return networkFailure(e)
+	response, err := s.client.Do(req)
+	if err != nil {
+		return networkFailure(err)
 	}
 	defer response.Body.Close()
 	// 响应体可能包含凭据，绝不返回、存储或记录。
@@ -138,15 +101,7 @@ func (s *sender) Send(ctx context.Context, c Channel, secret string, p Payload) 
 		if readErr != nil {
 			return networkFailure(readErr)
 		}
-		if c.Kind == "telegram" {
-			var result struct {
-				OK bool `json:"ok"`
-			}
-			if json.Unmarshal(body, &result) != nil || !result.OK {
-				return failure("telegram_rejected", false)
-			}
-		}
-		return Result{OK: true}
+		return channelResponse(c.Kind, body)
 	}
 	if response.StatusCode >= 300 && response.StatusCode < 400 {
 		return failure("redirect_denied", false)
@@ -165,6 +120,50 @@ func (s *sender) Send(ctx context.Context, c Channel, secret string, p Payload) 
 	}
 	return result
 }
+func (s *sender) buildRequest(ctx context.Context, c Channel, secret string, p Payload) (*http.Request, string) {
+	if _, ok := imChannels[c.Kind]; ok {
+		return s.imRequest(ctx, c, secret, p)
+	}
+	var raw []byte
+	target := c.Config.URL
+	switch c.Kind {
+	case "webhook":
+		// 配置变更后发送已持久化通道时，重新检查当前策略。
+		if _, code := destinationURL(c.Kind, target, s.allowInsecureWebhooks); code != "" {
+			return nil, code
+		}
+		var err error
+		raw, err = json.Marshal(p)
+		if err != nil {
+			return nil, "invalid_payload"
+		}
+	case "telegram":
+		target = s.telegramBase + "/bot" + secret + "/sendMessage"
+		raw, _ = json.Marshal(struct {
+			ChatID string `json:"chat_id"`
+			Text   string `json:"text"`
+		}{c.Config.ChatID, renderMessage(p, c.Config.Template, 4096)})
+	default:
+		return nil, "invalid_destination"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(raw))
+	if err != nil {
+		return nil, "invalid_destination"
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.Kind == "webhook" {
+		timestamp := strconv.FormatInt(s.now().Unix(), 10)
+		req.Header.Set("X-OrbitBeacon-Timestamp", timestamp)
+		if secret != "" {
+			mac := hmac.New(sha256.New, []byte(secret))
+			mac.Write([]byte(timestamp + "."))
+			mac.Write(raw)
+			req.Header.Set("X-OrbitBeacon-Signature", "v1="+hex.EncodeToString(mac.Sum(nil)))
+		}
+	}
+	return req, ""
+}
+
 func parseRetryAfter(raw string, now time.Time) time.Duration {
 	if n, e := strconv.ParseInt(raw, 10, 64); e == nil {
 		if n <= 0 {

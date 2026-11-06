@@ -445,7 +445,7 @@ func validateChannel(r payloadRow, box *secretbox.Box) error {
 	}
 	cfg.URL = string(url)
 	cfg.URLSet = false
-	if r.text("kind") != "webhook" && len(url) > 0 {
+	if !notify.UsesURL(r.text("kind")) && len(url) > 0 {
 		return invalidRow()
 	}
 	// 机器级的不安全放行选项不属于配置数据。保留在该放行选项下被接受的语法；

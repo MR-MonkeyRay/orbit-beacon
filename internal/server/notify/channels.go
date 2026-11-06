@@ -14,7 +14,6 @@ import (
 	"net/mail"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -129,24 +128,20 @@ func ValidateChannel(c Channel, secret string, allowInsecureWebhooks bool) error
 		if cfg.URL == "" && cfg.URLSet {
 			break
 		}
-		u, err := url.Parse(cfg.URL)
-		if err != nil || !validHost(u.Hostname()) || u.User != nil || u.Fragment != "" || u.Opaque != "" || strings.ContainsAny(cfg.URL, "\r\n") {
-			return validation.Invalid("config", "requires an absolute webhook URL without credentials or fragment")
+		if _, code := destinationURL(c.Kind, cfg.URL, allowInsecureWebhooks); code != "" {
+			return validation.Invalid("config", "invalid channel URL")
 		}
-		if u.Port() != "" {
-			p, e := strconv.Atoi(u.Port())
-			if e != nil || p < 1 || p > 65535 {
-				return validation.Invalid("config", "invalid webhook port")
+	case "feishu", "dingtalk", "wecom", "bark", "ntfy":
+		if cfg.ChatID != "" || cfg.Host != "" || cfg.Port != 0 || cfg.Username != "" || cfg.From != "" || len(cfg.To) > 0 {
+			return validation.Invalid("config", "unexpected fields for URL channel")
+		}
+		if !(cfg.URL == "" && cfg.URLSet) {
+			if _, code := destinationURL(c.Kind, cfg.URL, allowInsecureWebhooks); code != "" {
+				return validation.Invalid("config", "invalid channel URL")
 			}
 		}
-		if strings.HasSuffix(u.Host, ":") {
-			return validation.Invalid("config", "invalid webhook port")
-		}
-		if u.Scheme != "https" {
-			ip := net.ParseIP(u.Hostname())
-			if u.Scheme != "http" || !allowInsecureWebhooks || ip == nil || !ip.IsLoopback() {
-				return validation.Invalid("config", "HTTPS required; explicit insecure setting permits literal loopback HTTP only")
-			}
+		if !validIMSecret(c.Kind, secret) {
+			return validation.Invalid("secret", "invalid channel secret")
 		}
 	case "telegram":
 		if cfg.URL != "" || cfg.Host != "" || cfg.Port != 0 || cfg.Username != "" || cfg.From != "" || len(cfg.To) > 0 || !chatIDPattern.MatchString(cfg.ChatID) {
@@ -174,7 +169,7 @@ func ValidateChannel(c Channel, secret string, allowInsecureWebhooks bool) error
 			return validation.Invalid("secret", "password required with username")
 		}
 	default:
-		return validation.Invalid("kind", "must be webhook, telegram or email")
+		return validation.Invalid("kind", "must be webhook, telegram, email, feishu, dingtalk, wecom, bark or ntfy")
 	}
 	if len(secret) > 4096 {
 		return validation.Invalid("secret", "must be at most 4096 bytes")
@@ -303,8 +298,11 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 		}
 		allowed := map[string]bool{}
 		switch c.Kind {
-		case "webhook":
+		case "webhook", "feishu", "dingtalk", "wecom", "bark", "ntfy":
 			allowed["url"] = true
+			if c.Kind != "webhook" {
+				allowed["template"] = true
+			}
 		case "telegram":
 			allowed["chat_id"] = true
 			allowed["template"] = true
@@ -325,10 +323,10 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 		if d.Decode(&c.Config) != nil {
 			return c, validation.Invalid("config", "invalid configuration fields")
 		}
-		if c.Kind == "webhook" {
+		if UsesURL(c.Kind) {
 			_, urlReplaced = fields["url"]
 			if urlReplaced && c.Config.URL == "" {
-				return c, validation.Invalid("config", "webhook URL cannot be empty")
+				return c, validation.Invalid("config", "channel URL cannot be empty")
 			}
 			if !urlReplaced {
 				c.Config.URLRedacted = oldConfig.URLRedacted
@@ -364,7 +362,7 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 			}
 		}
 	}
-	if c.Kind == "webhook" && (create || urlReplaced) {
+	if UsesURL(c.Kind) && (create || urlReplaced) {
 		urlCipher, e = s.box.Seal(c.ID+":url", []byte(c.Config.URL))
 		if e != nil {
 			return c, e
@@ -440,7 +438,7 @@ func (s *Service) load(ctx context.Context, id string) (Channel, string, error) 
 		secret = string(plain)
 		clear(plain)
 	}
-	if c.Kind == "webhook" {
+	if UsesURL(c.Kind) {
 		plain, e := s.openSecret(id+":url", urlCipher)
 		if e != nil {
 			return c, "", e

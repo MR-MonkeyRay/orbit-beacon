@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {copy} from './console-dom.js';
-import {buildChannelPayload, durationSeconds, formatMetricValue, formatRuleDuration, metricUnit, scopeLabel, validateChannel, validateRule, validHost} from '../src/console/lib/alert-utils.js';
+import {buildChannelPayload, durationSeconds, formatMetricValue, formatRuleDuration, metricUnit, scopeLabel, validateChannel, validateRule, validHost, errorCodeMessage} from '../src/console/lib/alert-utils.js';
 
 const id = '00000000-0000-4000-8000-000000000001';
 const valid = () => ({name: 'High CPU', enabled: true, scope_kind: 'all', scope_id: null, metric: 'cpu_percent', comparator: '>', threshold: 80, for_seconds: 60, severity: 'warning', channel_ids: []});
@@ -112,4 +112,45 @@ test('channel payloads normalize templates and omit them for hidden webhook fiel
   assert.equal(buildChannelPayload({...values, template: ' \t\r\n '}).config.template, '');
   assert.equal(buildChannelPayload({...values, kind: 'email'}).config.template, '{node}\n{rule}');
   assert.ok(!Object.hasOwn(buildChannelPayload({...values, kind: 'webhook', url: 'https://example.com'}).config, 'template'));
+});
+
+test('URL channels reject common mistakes before the server does', async () => {
+  assert.equal(errorCodeMessage('channel_rejected'), copy('alerts.error.channelRejected'));
+  const targets = {
+    feishu: 'https://open.feishu.cn/open-apis/bot/v2/hook/token',
+    dingtalk: 'https://oapi.dingtalk.com/robot/send?access_token=token',
+    wecom: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=token',
+    bark: 'https://bark.example', ntfy: 'https://ntfy.example/topic/sub_topic'
+  };
+  for (const [kind, url] of Object.entries(targets)) {
+    const body = {name: 'Channel', kind, config: {url, template: '{node}'}, ...(kind === 'bark' ? {secret: 'device_key-123'} : {})};
+    assert.deepEqual(validateChannel(body), {}, kind);
+    const invalid = [url.replace('https:', 'http:'), url.replace('https://', 'https://user:pass@'), url + '#fragment', url + '#', url + (url.includes('?') ? '&' : '?') + 'extra=1'];
+    for (const target of invalid) assert.equal(validateChannel({...body, config: {url: target}})['config.url'], copy('alerts.validation.channelURL'), kind);
+    const payload = buildChannelPayload({name: 'Channel', kind, enabled: true, url, secret: body.secret || '', template: ' {node}\r\n{rule} '});
+    assert.deepEqual(payload.config, {url, template: '{node}\n{rule}'});
+    assert.deepEqual(buildChannelPayload({name: 'Channel', kind, enabled: true, template: '{rule}'}, {editing: true}).config, {template: '{rule}'});
+    assert.deepEqual(validateChannel({name: 'Channel', config: {template: '{rule}'}}, {kind, existing: {secret_set: kind === 'bark', config: {url_set: true}}}), {});
+    const bad = new URL(url); bad.pathname = '/wrong/path!';
+    assert.equal(validateChannel({...body, config: {url: bad.href}})['config.url'], copy('alerts.validation.channelURL'));
+    if (['feishu', 'dingtalk', 'wecom'].includes(kind)) {
+      assert.equal(validateChannel({...body, config: {url: url.replace(new URL(url).hostname, 'example.com')}})['config.url'], copy('alerts.validation.channelURL'));
+      assert.equal(validateChannel({...body, config: {url: url.replace('token', '')}})['config.url'], copy('alerts.validation.channelURL'));
+      assert.equal(validateChannel({...body, config: {url: url.replace(new URL(url).hostname, new URL(url).hostname + ':8443')}})['config.url'], copy('alerts.validation.channelURL'));
+    }
+    if (['bark', 'ntfy'].includes(kind)) {
+      assert.deepEqual(validateChannel({...body, config: {url: 'http://127.0.0.1:8080' + (kind === 'ntfy' ? '/topic' : '')}}), {});
+    }
+  }
+  assert.deepEqual(validateChannel({name: 'Lark', kind: 'feishu', config: {url: targets.feishu.replace('open.feishu.cn', 'open.larksuite.com')}}), {});
+  assert.equal(validateChannel({name: 'WeCom', kind: 'wecom', config: {url: targets.wecom}, secret: 'unexpected'}).secret, copy('alerts.validation.channelSecret'));
+  for (const secret of ['', 'a/b', '设备密钥', 'a'.repeat(129)]) assert.equal(validateChannel({name: 'Bark', kind: 'bark', config: {url: targets.bark}, secret}).secret, copy('alerts.validation.channelSecret'));
+  assert.deepEqual(validateChannel({name: 'Bark', kind: 'bark', config: {url: targets.bark}, secret: 'a'.repeat(128)}), {});
+  for (const path of ['', '/', '/a/', '/a//b', '/a.b']) assert.equal(validateChannel({name: 'ntfy', kind: 'ntfy', config: {url: 'https://ntfy.example' + path}})['config.url'], copy('alerts.validation.channelURL'));
+  assert.ok(!Object.hasOwn(buildChannelPayload({name: 'WeCom', kind: 'wecom', url: targets.wecom, secret: 'stale'}, {replaceSecret: true}), 'secret'));
+  const {fieldErrorText} = await import('../src/shared/errors.js');
+  assert.equal(fieldErrorText('invalid channel URL'), copy('alerts.validation.channelURL'));
+  assert.equal(fieldErrorText('channel URL cannot be empty'), copy('alerts.validation.channelURL'));
+  assert.equal(fieldErrorText('invalid channel secret'), copy('alerts.validation.channelSecret'));
+  assert.equal(fieldErrorText('must be webhook, telegram, email, feishu, dingtalk, wecom, bark or ntfy'), copy('fields.channelKind'));
 });

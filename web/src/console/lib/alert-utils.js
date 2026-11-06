@@ -79,7 +79,7 @@ const ERROR_KEYS = {
   destination_denied: 'destinationDenied', insecure_webhook_denied: 'insecureWebhookDenied',
   invalid_destination: 'invalidDestination', http_rejected: 'httpRejected',
   remote_unavailable: 'remoteUnavailable', network_error: 'networkError',
-  redirect_denied: 'redirectDenied', telegram_rejected: 'telegramRejected',
+  redirect_denied: 'redirectDenied', telegram_rejected: 'telegramRejected', channel_rejected: 'channelRejected',
   smtp_rejected: 'smtpRejected', smtp_protocol: 'smtpProtocol',
   starttls_required: 'starttlsRequired', invalid_payload: 'invalidPayload',
   rate_limited: 'rateLimited', channel_disabled: 'channelDisabled',
@@ -90,36 +90,59 @@ export function errorCodeMessage(code) {
   return t(`alerts.error.${Object.hasOwn(ERROR_KEYS, code) ? ERROR_KEYS[code] : code ? 'unknown' : 'none'}`);
 }
 
+export const URL_CHANNELS = {
+  webhook: {placeholder: 'https://example.com/hook'},
+  feishu: {hosts: ['open.feishu.cn', 'open.larksuite.com'], path: /^\/open-apis\/bot\/v2\/hook\/[^/]+$/, placeholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/…'},
+  dingtalk: {hosts: ['oapi.dingtalk.com'], path: /^\/robot\/send$/, query: 'access_token', placeholder: 'https://oapi.dingtalk.com/robot/send?access_token=…'},
+  wecom: {hosts: ['qyapi.weixin.qq.com'], path: /^\/cgi-bin\/webhook\/send$/, query: 'key', placeholder: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…'},
+  bark: {path: /^\/?$/, placeholder: 'https://api.day.app'},
+  ntfy: {path: /^(?:\/[A-Za-z0-9_-]+)+$/, placeholder: 'https://ntfy.sh/topic'}
+};
+export const usesURL = (kind) => Object.hasOwn(URL_CHANNELS, kind);
+// 服务端是权威校验；这里只拦截常见错误，给出即时反馈。
+function validChannelURL(kind, raw) {
+  const policy = URL_CHANNELS[kind];
+  let url;
+  try { url = new URL(raw); } catch { return false; }
+  const loopback = url.hostname === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(url.hostname);
+  const secure = url.protocol === 'https:' || (url.protocol === 'http:' && loopback && !policy.hosts);
+  if (!secure || url.username || url.password || raw.includes('#')) return false;
+  if (policy.hosts && !policy.hosts.includes(url.host)) return false;
+  if (policy.path && !policy.path.test(url.pathname)) return false;
+  if (policy.query) {
+    const entries = [...url.searchParams];
+    return entries.length === 1 && entries[0][0] === policy.query && Boolean(entries[0][1]);
+  }
+  return kind === 'webhook' || !url.search;
+}
+
 // 未修改的只写字段必须省略；将 secret 设为空字符串表示显式清除。
 export function buildChannelPayload(values, {editing = false, replaceURL = false, replaceSecret = false} = {}) {
   const body = {name: values.name, enabled: values.enabled};
   if (!editing) body.kind = values.kind;
-  if (values.kind === 'webhook') body.config = !editing || replaceURL ? {url: values.url} : {};
+  if (usesURL(values.kind)) body.config = !editing || replaceURL ? {url: values.url} : {};
   else if (values.kind === 'telegram') body.config = {chat_id: values.chat_id};
   else if (values.kind === 'email') body.config = {
     host: values.host, port: values.port === '' ? NaN : Number(values.port), username: values.username || '',
     from: values.from, to: Array.isArray(values.to) ? values.to : String(values.to || '').split(/[,\n]/).map((item) => item.trim()).filter(Boolean)
   };
-  if (['telegram', 'email'].includes(values.kind) && values.template !== undefined) body.config.template = values.template.replace(/\r\n/g, '\n').trim();
-  if (replaceSecret || values.secret) body.secret = values.secret ?? '';
+  if (values.kind !== 'webhook' && body.config && values.template !== undefined) body.config.template = values.template.replace(/\r\n/g, '\n').trim();
+  if (values.kind !== 'wecom' && (replaceSecret || values.secret)) body.secret = values.secret ?? '';
   return body;
 }
 export const MESSAGE_TEMPLATE_TOKENS = ['{state}', '{rule}', '{node}', '{metric}', '{severity}', '{value}', '{started_at}', '{resolved_at}', '{event_id}'];
 export function validateChannel(body, {kind = body.kind, existing = null} = {}) {
   const fields = {};
   const config = body.config || {};
-  if (config.template !== undefined && (!['telegram', 'email'].includes(kind) || typeof config.template !== 'string' || /[\uD800-\uDFFF]/u.test(config.template) || byteLength(config.template) > 1000 || /[\p{Cc}]/u.test(config.template.replace(/\n/g, '')) || [...config.template.matchAll(/\{[a-z_]+\}/g)].some(([token]) => !MESSAGE_TEMPLATE_TOKENS.includes(token)))) fields['config.template'] = t('alerts.validation.template');
+  if (config.template !== undefined && (kind === 'webhook' || typeof config.template !== 'string' || /[\uD800-\uDFFF]/u.test(config.template) || byteLength(config.template) > 1000 || /[\p{Cc}]/u.test(config.template.replace(/\n/g, '')) || [...config.template.matchAll(/\{[a-z_]+\}/g)].some(([token]) => !MESSAGE_TEMPLATE_TOKENS.includes(token)))) fields['config.template'] = t('alerts.validation.template');
   if (!body.name?.trim() || byteLength(body.name || '') > 100) fields.name = t('alerts.validation.name');
-  if (!['webhook', 'telegram', 'email'].includes(kind)) fields.kind = t('alerts.validation.kind');
+  if (!usesURL(kind) && !['telegram', 'email'].includes(kind)) fields.kind = t('alerts.validation.kind');
   if (body.secret !== undefined && (typeof body.secret !== 'string' || byteLength(body.secret || '') > 4096)) fields.secret = t('alerts.validation.secret');
   const hasSecret = body.secret === undefined ? existing?.secret_set : Boolean(body.secret);
-  if (kind === 'webhook' && (config.url !== undefined || !existing?.config?.url_set)) {
-    try {
-      const url = new URL(config.url);
-      const loopback = url.hostname === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(url.hostname);
-      if (url.username || url.password || url.hash || !['https:', 'http:'].includes(url.protocol) || (url.protocol === 'http:' && !loopback)) throw new Error();
-    } catch { fields['config.url'] = t('alerts.validation.webhookURL'); }
-  }
+  if (usesURL(kind) && (config.url !== undefined || !existing?.config?.url_set) && !validChannelURL(kind, config.url)) fields['config.url'] = t('alerts.validation.channelURL');
+  if (kind === 'wecom' && hasSecret) fields.secret = t('alerts.validation.channelSecret');
+  if (kind === 'bark' && (!hasSecret || (body.secret !== undefined && !/^[A-Za-z0-9_-]{1,128}$/.test(body.secret)))) fields.secret = t('alerts.validation.channelSecret');
+  if (kind === 'ntfy' && body.secret !== undefined && /[\x00-\x1f\x7f]/.test(body.secret)) fields.secret = t('alerts.validation.channelSecret');
   if (kind === 'telegram') {
     if (!/^(?:-?[0-9]{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$/.test(config.chat_id || '')) fields['config.chat_id'] = t('alerts.validation.chatID');
     if (!hasSecret || (body.secret !== undefined && !/^[0-9]+:[A-Za-z0-9_-]+$/.test(body.secret))) fields.secret = t('alerts.validation.botToken');

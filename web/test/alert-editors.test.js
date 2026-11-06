@@ -210,3 +210,67 @@ test('channel editor shows templates for Telegram and email, prefills and saves 
     assert.equal(saves, 5);
   } finally { globalThis.fetch = originalFetch; dom.restore(); }
 });
+
+test('new channel editors switch URL and secret requirements and submit URL templates', {timeout: 10000}, async () => {
+  const dom = installDOM();
+  const toasts = dom.document.createElement('div'); toasts.id = 'toasts'; dom.body.append(toasts);
+  const originalFetch = globalThis.fetch;
+  setNavigationSignal(null); admin();
+  const payloads = [];
+  globalThis.fetch = async (_path, options) => { payloads.push(JSON.parse(options.body)); return new Response('{}'); };
+  try {
+    const {channelEditor, channelsPanel} = await import('../src/console/pages/notification-channels.js');
+    const context = {signal: new AbortController().signal, saved: async () => {}};
+    const root = dom.body;
+    const targets = {
+      feishu: 'https://open.feishu.cn/open-apis/bot/v2/hook/token',
+      dingtalk: 'https://oapi.dingtalk.com/robot/send?access_token=token',
+      wecom: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=token',
+      bark: 'https://bark.example', ntfy: 'https://ntfy.example/topic'
+    };
+    const dialog = channelEditor(null, context);
+    const labels = {feishu: 'alerts.channels.optionalSecret', dingtalk: 'alerts.channels.optionalSecret', bark: 'alerts.channels.deviceKey', ntfy: 'alerts.channels.accessToken'};
+    for (const kind of Object.keys(targets)) {
+      change(control(root, 'kind'), kind);
+      assert.equal(control(root, 'url').disabled, false);
+      assert.equal(control(root, 'url').required, true);
+      assert.ok(control(root, 'url').placeholder.startsWith('https://'));
+      assert.equal(control(root, 'template').disabled, false);
+      const secret = control(root, 'secret');
+      const secretField = elements(root).find((element) => element.classList?.contains('field') && element.querySelector?.('label')?.getAttribute('for') === secret.id);
+      assert.equal(secret.disabled, kind === 'wecom');
+      assert.equal(secret.required, kind === 'bark');
+      if (kind === 'wecom') assert.equal(secretField.hidden, true);
+      else assert.equal(secretField.querySelector('label').textContent, copy(labels[kind]));
+    }
+    change(control(root, 'kind'), 'telegram');
+    assert.equal(control(root, 'url').disabled, true);
+    dialog.close('done'); await dialog.closed;
+    for (const [kind, url] of Object.entries(targets)) {
+      const created = channelEditor(null, context);
+      change(control(root, 'kind'), kind);
+      control(root, 'name').value = 'Channel';
+      control(root, 'url').value = url;
+      control(root, 'template').value = ' {node}\r\n{rule} ';
+      if (kind === 'bark') control(root, 'secret').value = 'device-key';
+      elements(root).find((element) => element.tagName === 'form').dispatchEvent(new Event('submit', {cancelable: true}));
+      await flush();
+      assert.equal(payloads.at(-1)?.kind, kind, root.textContent);
+      await created.closed;
+      assert.deepEqual(payloads.at(-1), {name: 'Channel', kind, enabled: true, config: {url, template: '{node}\n{rule}'}, ...(kind === 'bark' ? {secret: 'device-key'} : {})});
+      const item = {id, name: 'Channel', kind, enabled: true, secret_set: kind === 'bark', config: {url_set: true, url_redacted: new URL(url).origin + '/…', template: '{node}'}};
+      const edited = channelEditor(item, context);
+      assert.equal(control(root, 'url').disabled, true);
+      assert.equal(control(root, 'template').value, '{node}');
+      if (kind === 'wecom') assert.equal(control(root, 'replace_secret').parentElement.hidden, true);
+      control(root, 'template').value = '{rule}';
+      elements(root).find((element) => element.tagName === 'form').dispatchEvent(new Event('submit', {cancelable: true}));
+      await flush();
+      assert.deepEqual(payloads.at(-1), {name: 'Channel', enabled: true, config: {template: '{rule}'}}, root.textContent);
+      await edited.closed;
+      assert.deepEqual(payloads.at(-1), {name: 'Channel', enabled: true, config: {template: '{rule}'}});
+      const panel = channelsPanel({...context, channels: [item]});
+      assert.ok(panel.textContent.includes(item.config.url_redacted));
+    }
+  } finally { globalThis.fetch = originalFetch; dom.restore(); }
+});

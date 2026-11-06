@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -55,5 +56,25 @@ DELETE FROM notification_channels WHERE id='channel';`); e != nil {
 		if e = db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?", index).Scan(&count); e != nil || count != 1 {
 			t.Fatalf("missing index %s: count=%d err=%v", index, count, e)
 		}
+	}
+}
+
+func TestNotificationSchemaIMKinds(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec(mainSchema); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"feishu", "dingtalk", "wecom", "bark", "ntfy", "unknown"} {
+		_, err = db.Exec(`INSERT INTO notification_channels(id,name,kind,enabled,config_json,created_at,updated_at) VALUES(?,?,?,1,'{}','now','now')`, kind, kind, kind)
+		if (err == nil) != (kind != "unknown") {
+			t.Fatalf("kind %s: %v", kind, err)
+		}
+	}
+	if CurrentSchemaVersion != 1 {
+		t.Fatal("schema version changed")
 	}
 }

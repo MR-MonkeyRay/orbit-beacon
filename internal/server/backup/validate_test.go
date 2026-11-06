@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -476,5 +477,51 @@ func TestPayloadChannelTemplates(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestPayloadIMChannelURLs(t *testing.T) {
+	key := []byte(strings.Repeat("k", 32))
+	box, err := secretbox.New(key, "orbitbeacon notification channel v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		kind, target, secret string
+		valid                bool
+	}{
+		{"feishu", "https://open.feishu.cn/open-apis/bot/v2/hook/private-token", "", true},
+		{"dingtalk", "https://oapi.dingtalk.com/robot/send?access_token=private-token", "", true},
+		{"wecom", "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=private-token", "", true},
+		{"bark", "https://bark.example", "device-key", true},
+		{"ntfy", "https://ntfy.example/topic", "access-token", true},
+		{"telegram", "https://example.com/topic", "123:token", false},
+		{"bark", "https://bark.example/private-token", "device-key", false},
+	} {
+		t.Run(tt.kind+strconv.FormatBool(tt.valid), func(t *testing.T) {
+			db := validationDB(t, Configuration)
+			encrypted, err := box.Seal(validationID+":url", []byte(tt.target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var secret []byte
+			if tt.secret != "" {
+				secret, err = box.Seal(validationID, []byte(tt.secret))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := `{"template":"{node}"}`
+			if tt.kind == "telegram" {
+				cfg = `{"chat_id":"-123"}`
+			}
+			if _, err = db.Exec(`INSERT INTO notification_channels(id,name,kind,enabled,config_json,secret_ciphertext,url_ciphertext,created_at,updated_at) VALUES(?,'Channel',?,1,?,?,?,?,?)`, validationID, tt.kind, cfg, secret, encrypted, validationTime, validationTime); err != nil {
+				t.Fatal(err)
+			}
+			err = ValidatePayloadData(context.Background(), db, Configuration, key)
+			if (err == nil) != tt.valid {
+				t.Fatalf("valid=%t err=%v", tt.valid, err)
+			}
+		})
 	}
 }
