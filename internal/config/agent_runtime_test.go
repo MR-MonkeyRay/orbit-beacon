@@ -108,10 +108,10 @@ func TestAgentCapabilitiesNormalizeOnceForInstallMode(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := map[string][]string{"native": {"upgrade", "restart", "stop"}, "docker": {"restart"}, "foreground": {"stop"}}[mode]
-			if !reflect.DeepEqual(got.RemoteCommands, want) || !reflect.DeepEqual(got.DisabledFeatures, []string{"disk", "network", "traffic", "probes"}) || got.ProbeTargets == nil || len(got.ProbeTargets) != 0 {
+			if !reflect.DeepEqual(got.RemoteCommands, want) || !reflect.DeepEqual(got.DisabledFeatures, []string{"disk", "network", "traffic", "probes", "disk_io"}) || got.ProbeTargets == nil || len(got.ProbeTargets) != 0 {
 				t.Fatalf("normalized=%+v", got)
 			}
-			opts.File = configFile(t, map[string]any{"remote_commands": want, "disabled_features": []string{"disk", "network", "traffic", "probes"}})
+			opts.File = configFile(t, map[string]any{"remote_commands": want, "disabled_features": []string{"disk", "network", "traffic", "probes", "disk_io"}})
 			reordered, err := config.LoadAgent(opts, &policy)
 			if err != nil {
 				t.Fatal(err)

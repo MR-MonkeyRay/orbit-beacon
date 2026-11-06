@@ -93,3 +93,20 @@ test('data table preserves wrapper properties, class, colgroup and table structu
     assert.equal(table.children[3], body);
   } finally { dom.restore(); }
 });
+
+test('readonly facts removes missing optional rows and restores them on later updates', async () => {
+  const dom = installDOM();
+  try {
+    const {readonlyFacts} = await import('../src/console/ui/components.js');
+    const label = copy('nodes.temperature');
+    const text = copy('nodes.celsius', {value: '40'});
+    const values = readonlyFacts([[label, text], [label, text]]);
+    values.update([[label, text]]);
+    assert.equal(values.element.children.length, 1);
+    values.update([]);
+    assert.equal(values.element.children.length, 0);
+    values.update([[label, text]]);
+    assert.equal(values.element.children.length, 1);
+    assert.equal(values.element.textContent, label + text);
+  } finally { dom.restore(); }
+});

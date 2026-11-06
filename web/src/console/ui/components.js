@@ -109,6 +109,12 @@ function buildReadonlyFacts(entries, flattenChildren) {
         : (Array.isArray(content) ? content : [content]);
       cell.replaceChildren(...children);
     }
+    for (const [label, group] of cells) {
+      const count = occurrences.get(label) || 0;
+      for (const cell of group.slice(count)) cell.parentElement.remove();
+      group.length = count;
+      if (!count) cells.delete(label);
+    }
   };
   update(entries);
   return {element, update};

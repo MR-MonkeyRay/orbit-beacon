@@ -66,7 +66,7 @@ func toolTable() []tool {
 		makeTool("get_node", "Get a monitored node.", "/api/v1/nodes/{id}", map[string]property{"id": id}, "id"),
 		makeTool("get_node_latest", "Get the latest metrics for a node.", "/api/v1/nodes/{id}/latest", map[string]property{"id": id}, "id"),
 		makeTool("get_node_history", "Get metric history for a node.", "/api/v1/nodes/{id}/history", map[string]property{
-			"id": id, "metric": text("cpu_percent", "memory_used_percent", "swap_used_percent", "load1", "load5", "load15", "disk_used_percent", "inode_used_percent", "net_rx_bytes_per_second", "net_tx_bytes_per_second"),
+			"id": id, "metric": text("cpu_percent", "memory_used_percent", "swap_used_percent", "load1", "load5", "load15", "disk_used_percent", "inode_used_percent", "net_rx_bytes_per_second", "net_tx_bytes_per_second", "disk_read_bytes_per_second", "disk_write_bytes_per_second", "disk_busy_percent", "pressure_cpu_percent", "pressure_memory_percent", "pressure_io_percent", "temperature_celsius"),
 			"range": text("1h", "6h", "24h", "7d", "30d", "90d"), "disk": {Type: "string", MinLength: 1, MaxLength: 1024}}, "id", "metric", "range"),
 		makeTool("get_node_availability", "Get availability for a node.", "/api/v1/nodes/{id}/availability", map[string]property{"id": id, "days": integer(30, nil, 30, 90)}, "id"),
 		makeTool("get_node_traffic", "Get daily traffic for a node.", "/api/v1/nodes/{id}/traffic", map[string]property{"id": id, "days": integer(1, &fourHundred)}, "id"),

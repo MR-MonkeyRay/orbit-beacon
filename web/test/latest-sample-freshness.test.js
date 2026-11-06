@@ -175,3 +175,22 @@ test('latest disk row shows inode percent and omits it when inode counts are nul
   ui.view.snapshot(latest);
   assert.equal(value(), '/: 1 KiB / 4 KiB (25%)');
 });
+
+test('optional host sample rows appear only for available values', async (t) => {
+  const latest = snapshot();
+  const ui = await setup(t, latest);
+  const keys = ['nodes.diskIO', 'nodes.pressure', 'nodes.temperature'];
+  for (const key of keys) assert.equal(ui.row(copy(key)), undefined);
+  Object.assign(latest.metrics, {disk_io: {read_bytes_per_sec: 1024, write_bytes_per_sec: 2048, busy_percent: 25},
+    pressure: {cpu: 1, memory: null, io: 3}, temperature_celsius: 48.5});
+  ui.view.snapshot(latest);
+  assert.match(ui.row(copy('nodes.diskIO')).textContent, copyPattern('nodes.diskIOSummary', {read: '1 KiB/s', write: '2 KiB/s', busy: '25%'}));
+  assert.match(ui.row(copy('nodes.pressure')).textContent, copyPattern('nodes.pressureSummary', {cpu: '1%', memory: '—', io: '3%'}));
+  assert.match(ui.row(copy('nodes.temperature')).textContent, copyPattern('nodes.celsius', {value: '48.5'}));
+  Object.assign(latest.metrics, {pressure: {cpu: null, memory: null, io: null}});
+  ui.view.snapshot(latest);
+  assert.equal(ui.row(copy('nodes.pressure')), undefined);
+  Object.assign(latest.metrics, {disk_io: null, pressure: null, temperature_celsius: null});
+  ui.view.snapshot(latest);
+  for (const key of keys) assert.equal(ui.row(copy(key)), undefined);
+});

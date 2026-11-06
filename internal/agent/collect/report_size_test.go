@@ -33,7 +33,11 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 		t.Fatalf("oversized selections must be rejected by budget: %v", err)
 	}
 	// Retain four longest targets and fill the last target up to the admission limit.
-	config.ProbeTargets[4] = config.ProbeTargets[4][:566]
+	config.ProbeTargets[4] = config.ProbeTargets[4][:55]
+	if err := config.Validate(); !errors.Is(err, v1.ErrReportBudget) {
+		t.Fatalf("selection over the limit must be rejected: %v", err)
+	}
+	config.ProbeTargets[4] = config.ProbeTargets[4][:54]
 	config.ReportIntervalSeconds, config.DiskIntervalSeconds = 60, 3600
 	collector, err := collect.New(collect.Options{Config: config})
 	if err != nil {
@@ -69,6 +73,11 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 	}
 	config.DisabledFeatures = v1.DisabledFeatureOrder() // 最大枚举编码，独立于采集开关覆盖预留。
 	report := v1.Report{ProtocolVersion: 1, RunGeneration: math.MaxUint64, SessionID: strings.Repeat("s", 255), Seq: math.MaxUint64, SampledAt: at, Runtime: config, Metrics: metrics, Traffic: []v1.Traffic{}, System: &v1.System{Hostname: strings.Repeat("<", 255), OS: strings.Repeat("&", 64), Arch: strings.Repeat(">", 64), AgentVersion: strings.Repeat("a", 64)}}
+	widestRate, widestPercent, widestTemperature := 999999999999999.9, 99.99, 149.99
+	report.Metrics.DiskIO = &v1.DiskIOMetrics{ReadBytesPerSec: widestRate, WriteBytesPerSec: widestRate, BusyPercent: widestPercent}
+	report.Metrics.Pressure = &v1.PressureMetrics{CPU: &widestPercent, Memory: &widestPercent, IO: &widestPercent}
+	report.Metrics.TemperatureCelsius = &widestTemperature
+
 	for range 2 {
 		report.CommandResults = append(report.CommandResults, v1.CommandResult{ID: "ffffffff-ffff-4fff-bfff-ffffffffffff", Status: "rejected", Code: "disabled_locally"})
 	}
@@ -99,11 +108,11 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 	}
 	envelope := len(data) - selectionBytes
 	t.Logf("maximum ordinary report: %d bytes; fixed envelope: %d bytes; wire headroom: %d bytes", len(data), envelope, v1.MaxMessageBytes-len(data))
-	if selectionBytes+14*1024 != v1.MaxMessageBytes {
-		t.Fatalf("test no longer fills the selection budget: %d", selectionBytes+14*1024)
+	if selectionBytes+15*1024 != v1.MaxMessageBytes {
+		t.Fatalf("test no longer fills the selection budget: %d", selectionBytes+15*1024)
 	}
-	if envelope > 14*1024 {
-		t.Fatalf("fixed envelope exceeds reserved 14 KiB: %d", envelope)
+	if envelope > 15*1024 {
+		t.Fatalf("fixed envelope exceeds reserved 15 KiB: %d", envelope)
 	}
 	if len(data) > v1.MaxMessageBytes {
 		t.Fatalf("accepted ordinary selections produce %d-byte report", len(data))

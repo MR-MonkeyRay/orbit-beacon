@@ -15,7 +15,11 @@ const CHARTS = [
   {title: t('nodes.memory'), unit: 'percent', metrics: [['memory_used_percent', t('nodes.memory')]]},
   {title: t('nodes.load'), unit: 'load', metrics: [['load1', t('nodes.load')]]},
   {title: t('nodes.disk'), unit: 'percent', metrics: [['disk_used_percent', t('nodes.disk')]]},
-  {title: t('nodes.inode'), unit: 'percent', metrics: [['inode_used_percent', t('nodes.inode')]]},
+  {title: t('nodes.inode'), optional: true, unit: 'percent', metrics: [['inode_used_percent', t('nodes.inode')]]},
+  {title: t('nodes.diskIO'), optional: true, unit: 'bytes_per_second', metrics: [['disk_read_bytes_per_second', t('nodes.diskRead')], ['disk_write_bytes_per_second', t('nodes.diskWrite')]]},
+  {title: t('nodes.diskBusy'), optional: true, unit: 'percent', metrics: [['disk_busy_percent', t('nodes.diskBusy')]]},
+  {title: t('nodes.pressure'), optional: true, unit: 'percent', metrics: [['pressure_cpu_percent', t('nodes.pressureCPU')], ['pressure_memory_percent', t('nodes.pressureMemory')], ['pressure_io_percent', t('nodes.pressureIO')]]},
+  {title: t('nodes.temperature'), optional: true, unit: 'celsius', metrics: [['temperature_celsius', t('nodes.temperature')]]},
   {title: t('nodes.network'), unit: 'bytes_per_second', metrics: [['net_rx_bytes_per_second', t('nodes.receiveRx')], ['net_tx_bytes_per_second', t('nodes.sendTx')]]}
 ];
 
@@ -91,7 +95,7 @@ export function historyPanel(id, signal, latest) {
     status.textContent = t('nodes.historyLoading');
     charts.setAttribute('aria-busy', 'true');
     // Keep rendered charts and their controls until the replacement data arrives.
-    if (!charts.children.length) charts.replaceChildren(...requestedCharts.map((item) => metricSection(item)));
+    if (!charts.children.length) charts.replaceChildren(...requestedCharts.filter((item) => !item.optional).map((item) => metricSection(item)));
     charts.dataset.range = range;
     charts.dataset.loadMetric = loadMetric;
     const metrics = requestedCharts.flatMap((item) => item.metrics.map(([metric]) => metric));
@@ -119,21 +123,21 @@ export function historyPanel(id, signal, latest) {
     // 请求完成后再读取焦点，因为用户可能已在等待期间聚焦某个图表。
     const focusedID = charts.contains(document.activeElement) ? document.activeElement.id : null;
     const selectedTime = Number(document.activeElement?.dataset?.selectedTime) || undefined;
-    charts.replaceChildren(...requestedCharts.map((item) => {
+    charts.replaceChildren(...requestedCharts.flatMap((item) => {
       const error = item.metrics.map(([metric]) => results.get(metric).error).find(Boolean);
+      const series = error ? [] : item.metrics.map(([metric, label]) => {
+        const data = results.get(metric).data;
+        const points = Array.isArray(data.points) ? data.points.filter((point) => point && Number.isFinite(Date.parse(point.t))
+          && Number.isFinite(point.avg) && Number.isFinite(point.max)) : [];
+        return {label, points, stepSeconds: Number.isFinite(data.step_seconds) && data.step_seconds > 0 ? data.step_seconds : 60};
+      });
+      if (!error && item.optional && series.every((item) => !item.points.length)) return [];
       const content = error
         ? historyError(t('nodes.historyLoadError', {error: errorText(error)}),
           {retryID: `history-retry-${item.metrics[0][0]}`, onRetry: load})
         : chart({title: item.title, unit: item.unit, id: `history-chart-${item.metrics[0][0]}`,
-          selectedTime: focusedID === `history-chart-${item.metrics[0][0]}` ? selectedTime : undefined,
-          series: item.metrics.map(([metric, label]) => {
-            const data = results.get(metric).data;
-            // 只渲染格式正确的点；其余一律视为空隙。
-            const points = Array.isArray(data.points) ? data.points.filter((point) => point && Number.isFinite(Date.parse(point.t))
-              && Number.isFinite(point.avg) && Number.isFinite(point.max)) : [];
-            return {label, points, stepSeconds: Number.isFinite(data.step_seconds) && data.step_seconds > 0 ? data.step_seconds : 60};
-          })});
-      return metricSection(item, content);
+          selectedTime: focusedID === `history-chart-${item.metrics[0][0]}` ? selectedTime : undefined, series});
+      return [metricSection(item, content)];
     }));
     charts.setAttribute('aria-busy', 'false');
     const failures = [...results.values()].filter((result) => result.error).length;

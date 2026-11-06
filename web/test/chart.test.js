@@ -156,3 +156,9 @@ test('keyboard tooltip renders actual values and keeps missing network buckets u
     else globalThis.document = originalDocument;
   }
 });
+
+test('temperature chart values and axes use celsius', () => {
+  assert.equal(formatChartValue(48.125, 'celsius'), copy('nodes.celsius', {value: '48.1'}));
+  assert.equal(formatAxisValue(50, 'celsius', 150), copy('nodes.celsius', {value: '50'}));
+  assert.equal(formatChartValue(null, 'celsius'), copy('common.unavailable'));
+});

@@ -31,6 +31,11 @@ var nodeMetricFamilies = [...]struct{ name, help string }{
 	{"disk_inodes_used", "Used disk inodes."},
 	{"network_receive_bytes_per_second", "Network receive bytes per second."},
 	{"network_transmit_bytes_per_second", "Network transmit bytes per second."},
+	{"disk_read_bytes_per_second", "Disk read bytes per second."},
+	{"disk_write_bytes_per_second", "Disk write bytes per second."},
+	{"disk_busy_percent", "Disk busy percent."},
+	{"pressure_percent", "PSI some average over sixty seconds."},
+	{"temperature_celsius", "Hottest sensor temperature in Celsius."},
 }
 
 func (h *handler) serveNodeMetrics(w http.ResponseWriter, r *http.Request) {
@@ -140,6 +145,17 @@ func nodeMetricsExposition(snapshots []nodeMetricSnapshot) string {
 			}
 		}
 		m := snapshot.sample.Metrics
+		if m.DiskIO != nil {
+			floatMetric("disk_read_bytes_per_second", labels, &m.DiskIO.ReadBytesPerSec)
+			floatMetric("disk_write_bytes_per_second", labels, &m.DiskIO.WriteBytesPerSec)
+			floatMetric("disk_busy_percent", labels, &m.DiskIO.BusyPercent)
+		}
+		if m.Pressure != nil {
+			floatMetric("pressure_percent", labels+",resource=\"cpu\"", m.Pressure.CPU)
+			floatMetric("pressure_percent", labels+",resource=\"memory\"", m.Pressure.Memory)
+			floatMetric("pressure_percent", labels+",resource=\"io\"", m.Pressure.IO)
+		}
+		floatMetric("temperature_celsius", labels, m.TemperatureCelsius)
 		floatMetric("cpu_percent", labels, m.CPUPercent)
 		floatMetric("load1", labels, m.Load1)
 		floatMetric("load5", labels, m.Load5)

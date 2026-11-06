@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/nodes"
 )
@@ -108,12 +107,12 @@ func (h *handler) tokenLatest(w http.ResponseWriter, r *http.Request, requestID 
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
-		ReceivedAt time.Time  `json:"received_at"`
-		SampledAt  time.Time  `json:"sampled_at"`
-		Seq        uint64     `json:"seq"`
-		Metrics    v1.Metrics `json:"metrics"`
-		ServerTime time.Time  `json:"server_time"`
-	}{latest.ReceivedAt, latest.SampledAt, latest.Seq, latest.Metrics, h.now().UTC()})
+		ReceivedAt time.Time        `json:"received_at"`
+		SampledAt  time.Time        `json:"sampled_at"`
+		Seq        uint64           `json:"seq"`
+		Metrics    tokenMetricsView `json:"metrics"`
+		ServerTime time.Time        `json:"server_time"`
+	}{latest.ReceivedAt, latest.SampledAt, latest.Seq, tokenMetricsDTO(latest.Metrics), h.now().UTC()})
 }
 
 type tokenProbeView struct {

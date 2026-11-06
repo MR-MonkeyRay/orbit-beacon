@@ -588,3 +588,17 @@ func TestLoadHistoryQueriesAcrossNinetyDays(t *testing.T) {
 		}
 	}
 }
+
+func TestTemperatureHistoryQueryUsesCelsius(t *testing.T) {
+	s, _ := testService(t, nil)
+	stopped(t, s)
+	now := time.Now().UTC().Truncate(time.Minute)
+	s.add(Sample{NodeID: "node", ReceivedAt: now, Values: map[string]float64{"temperature_celsius": 42.5}})
+	if err := s.flush(context.Background(), now, true); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.Query(context.Background(), "node", "temperature_celsius", "1h", now, "")
+	if err != nil || result.Unit != "celsius" || len(result.Points) != 1 || result.Points[0].Avg != 42.5 {
+		t.Fatalf("%+v %v", result, err)
+	}
+}

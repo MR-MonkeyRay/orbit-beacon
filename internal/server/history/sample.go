@@ -33,6 +33,8 @@ func validValue(metric string, value float64) bool {
 		limit = 1e6
 	case strings.HasSuffix(metric, "_bytes_per_second"):
 		limit = 1e15
+	case metric == "temperature_celsius":
+		limit = 150
 	case metric == "uptime_seconds":
 		limit = 1e12
 	}
@@ -72,6 +74,21 @@ func Snapshot(nodeID string, receivedAt time.Time, m v1.Metrics) Sample {
 		if total > 0 && used <= total {
 			put("swap_used_percent", 100*float64(used)/float64(total))
 		}
+	}
+	if m.DiskIO != nil {
+		put("disk_read_bytes_per_second", m.DiskIO.ReadBytesPerSec)
+		put("disk_write_bytes_per_second", m.DiskIO.WriteBytesPerSec)
+		put("disk_busy_percent", m.DiskIO.BusyPercent)
+	}
+	if m.Pressure != nil {
+		for key, value := range map[string]*float64{"pressure_cpu_percent": m.Pressure.CPU, "pressure_memory_percent": m.Pressure.Memory, "pressure_io_percent": m.Pressure.IO} {
+			if value != nil {
+				put(key, *value)
+			}
+		}
+	}
+	if m.TemperatureCelsius != nil {
+		put("temperature_celsius", *m.TemperatureCelsius)
 	}
 	var diskTotal, diskUsed, inodeTotal, inodeUsed float64
 	for _, d := range m.Disks {

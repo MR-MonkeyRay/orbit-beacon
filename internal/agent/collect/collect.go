@@ -20,6 +20,7 @@ import (
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"
 	gnet "github.com/shirou/gopsutil/v4/net"
+	"github.com/shirou/gopsutil/v4/sensors"
 
 	"orbitbeacon/internal/buildinfo"
 	v1 "orbitbeacon/internal/protocol/v1"
@@ -28,7 +29,12 @@ import (
 const collectionTimeout = 3 * time.Second
 
 type Options struct {
-	Config v1.RuntimeSettings
+	Config            v1.RuntimeSettings
+	DiskIOReader      func(context.Context) (map[string]disk.IOCountersStat, error)
+	SysBlockRoot      string
+	PressureRoot      string
+	TemperatureReader func(context.Context) ([]sensors.TemperatureStat, error)
+	Now               func() time.Time
 }
 
 type diskSample struct {
@@ -46,29 +52,65 @@ type networkSample struct {
 // Collector 只保留最新的磁盘/网络样本和差分基线。
 // 所有耗时均通过 Go 的单调时钟计算。
 type Collector struct {
-	mu            sync.Mutex
-	config        v1.RuntimeSettings
-	started       time.Time
-	epoch         string
-	sequence      uint64
-	cpuPrevious   cpu.TimesStat
-	cpuAt         time.Time
-	cpuReady      bool
-	disks         map[string]diskSample
-	diskUsage     func(context.Context, string) (*disk.UsageStat, error)
-	diskPending   *diskCollection
-	diskEpoch     uint64
-	networks      map[string]networkSample
-	networkAt     time.Time
-	autoInterface string
-	rates         NetworkDifferencer
-	traffic       *TrafficAccumulator
-	sourceAt      map[string]time.Time
+	mu                 sync.Mutex
+	config             v1.RuntimeSettings
+	started            time.Time
+	epoch              string
+	sequence           uint64
+	cpuPrevious        cpu.TimesStat
+	cpuAt              time.Time
+	cpuReady           bool
+	diskIOReader       func(context.Context) (map[string]disk.IOCountersStat, error)
+	diskIOPrevious     map[string]disk.IOCountersStat
+	diskIOAt           time.Time
+	sysBlockRoot       string
+	pressureRoot       string
+	pressureReadFile   func(string) ([]byte, error)
+	hostNow            func() time.Time
+	temperatureReader  func(context.Context) ([]sensors.TemperatureStat, error)
+	temperatureEpoch   uint64
+	temperaturePending *temperatureCollection
+	temperatureStarted time.Time
+	temperatureAt      time.Time
+	temperatureValue   *float64
+	disks              map[string]diskSample
+	diskUsage          func(context.Context, string) (*disk.UsageStat, error)
+	diskPending        *diskCollection
+	diskEpoch          uint64
+	networks           map[string]networkSample
+	networkAt          time.Time
+	autoInterface      string
+	rates              NetworkDifferencer
+	traffic            *TrafficAccumulator
+	sourceAt           map[string]time.Time
 }
 
 func New(options Options) (*Collector, error) {
 	now := time.Now()
 	c := &Collector{traffic: NewTrafficAccumulator(nil), started: now, epoch: strconv.FormatInt(now.UnixNano(), 36), diskUsage: disk.UsageWithContext, sourceAt: make(map[string]time.Time, 21)}
+	c.diskIOReader = options.DiskIOReader
+	if c.diskIOReader == nil {
+		c.diskIOReader = func(ctx context.Context) (map[string]disk.IOCountersStat, error) {
+			return disk.IOCountersWithContext(ctx)
+		}
+	}
+	c.sysBlockRoot = options.SysBlockRoot
+	if c.sysBlockRoot == "" {
+		c.sysBlockRoot = "/sys/block"
+	}
+	c.pressureReadFile = os.ReadFile
+	c.pressureRoot = options.PressureRoot
+	if c.pressureRoot == "" {
+		c.pressureRoot = "/proc/pressure"
+	}
+	c.hostNow = options.Now
+	if c.hostNow == nil {
+		c.hostNow = time.Now
+	}
+	c.temperatureReader = options.TemperatureReader
+	if c.temperatureReader == nil {
+		c.temperatureReader = sensors.TemperaturesWithContext
+	}
 	if err := c.SetConfig(options.Config); err != nil {
 		return nil, err
 	}
@@ -114,6 +156,14 @@ func (c *Collector) SetConfig(config v1.RuntimeSettings) error {
 	}
 	config.RemoteCommands = slices.Clone(config.RemoteCommands)
 	config.DisabledFeatures = slices.Clone(config.DisabledFeatures)
+	if c.config.FeatureDisabled(v1.FeatureDiskIO) != config.FeatureDisabled(v1.FeatureDiskIO) {
+		c.diskIOPrevious = nil
+	}
+	if c.config.FeatureDisabled(v1.FeatureTemperature) != config.FeatureDisabled(v1.FeatureTemperature) {
+		c.temperatureEpoch++
+		c.temperatureValue = nil
+		c.temperatureAt = time.Time{}
+	}
 	c.config = config
 	c.rates.interval = c.networkInterval()
 	return nil
@@ -153,6 +203,7 @@ func (c *Collector) Collect(parent context.Context) (v1.Metrics, error) {
 		MetricStatus: make(map[string]string, len(v1.MetricStatusFields())+16),
 		Sources:      make(map[string]v1.SourceMetadata, len(v1.SourceFamilies())+16),
 	}
+	c.collectHostMetrics(ctx, &m)
 	c.collectCPU(ctx, &m)
 	c.collectLoad(ctx, &m)
 	c.collectMemory(ctx, &m)

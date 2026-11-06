@@ -765,3 +765,22 @@ func TestHistoryDiskArgumentEncoding(t *testing.T) {
 	}
 	t.Fatal("missing history tool")
 }
+
+func TestHostHistoryMetricsRequestTargets(t *testing.T) {
+	for _, tool := range toolTable() {
+		if tool.Name != "get_node_history" {
+			continue
+		}
+		for _, metric := range []string{"disk_read_bytes_per_second", "disk_write_bytes_per_second", "disk_busy_percent", "pressure_cpu_percent", "pressure_memory_percent", "pressure_io_percent", "temperature_celsius"} {
+			raw, _ := json.Marshal(map[string]string{"id": testID, "metric": metric, "range": "1h"})
+			path, ok := tool.requestTarget(raw)
+			if !ok {
+				t.Fatal(metric)
+			}
+			parsed, err := url.Parse(path)
+			if err != nil || parsed.Query().Get("metric") != metric {
+				t.Fatal(path, err)
+			}
+		}
+	}
+}

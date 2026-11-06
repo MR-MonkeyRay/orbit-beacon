@@ -91,6 +91,11 @@ func TestMaximumAdmittedRuntimeReportFitsWireLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime.DisabledFeatures = v1.DisabledFeatureOrder()
+	widestRate, widestPercent, widestTemperature := 999999999999999.9, 99.99, 149.99
+	report.Metrics.DiskIO = &v1.DiskIOMetrics{ReadBytesPerSec: widestRate, WriteBytesPerSec: widestRate, BusyPercent: widestPercent}
+	report.Metrics.Pressure = &v1.PressureMetrics{CPU: &widestPercent, Memory: &widestPercent, IO: &widestPercent}
+	report.Metrics.TemperatureCelsius = &widestTemperature
+
 	report.Runtime = runtime
 	report.Metrics.Disks, report.Metrics.Networks = nil, nil
 	delete(report.Metrics.MetricStatus, "disk:/")

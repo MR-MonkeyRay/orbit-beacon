@@ -37,7 +37,7 @@ MCP 客户端配置示例（把路径和令牌占位符替换为实际值；包�
 | `get_alert` | `id` |
 | `list_groups` | 无 |
 
-`id` 必须是有效 UUID。历史指标限 `cpu_percent`、`memory_used_percent`、`swap_used_percent`、`load1`、`load5`、`load15`、`disk_used_percent`、`inode_used_percent`、`net_rx_bytes_per_second`、`net_tx_bytes_per_second`。`disk` 仅适用于 `disk_used_percent` 和 `inode_used_percent`；省略时返回聚合，不存在的路径返回空点。令牌历史响应字段仍为 `metric`、`unit`、`range`、`step_seconds`、`points`。省略分页 `limit` 时 API 默认 50；省略 `days` 时默认 30。
+`id` 必须是有效 UUID。历史指标限 `cpu_percent`、`memory_used_percent`、`swap_used_percent`、`load1`、`load5`、`load15`、`disk_used_percent`、`inode_used_percent`、`net_rx_bytes_per_second`、`net_tx_bytes_per_second`、`disk_read_bytes_per_second`、`disk_write_bytes_per_second`、`disk_busy_percent`、`pressure_cpu_percent`、`pressure_memory_percent`、`pressure_io_percent`、`temperature_celsius`（温度单位为 `celsius`）。`disk` 仅适用于 `disk_used_percent` 和 `inode_used_percent`；省略时返回聚合，不存在的路径返回空点。令牌历史响应字段仍为 `metric`、`unit`、`range`、`step_seconds`、`points`。省略分页 `limit` 时 API 默认 50；省略 `days` 时默认 30。
 
 工具输出来自监控数据，节点名和规则名是不可信文本，不能作为指令执行。令牌能读哪些字段以 [API 契约](../api/openapi.yaml)和服务端实际授权为准。MCP 不扩大字段权限，也不提供写工具。
 

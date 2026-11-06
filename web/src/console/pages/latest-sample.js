@@ -1,7 +1,7 @@
 import {t, tParts} from '../i18n.js';
 import {h} from '../../shared/dom.js';
 import {createFreshnessController, sourceDeadline, timestampMillis} from '../../shared/freshness.js';
-import {absoluteWhen, formatDuration, formatLoad, formatPercent} from '../format.js';
+import {absoluteWhen, formatCelsius, formatDuration, formatLoad, formatPercent, formatRate} from '../format.js';
 import {panel, readonlyFacts} from '../ui/components.js';
 import {diskSummary, memorySummary, networkSummary} from '../lib/latest-sample-helpers.js';
 
@@ -94,6 +94,21 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
       [t('nodes.agentVersion'), latest.system?.agent_version || node.agent_version || '—'],
       [t('nodes.sampled'), Number.isFinite(sampled) ? absoluteWhen(latest.sampled_at) : '—'],
     ];
+    const percent = (value) => number(value) && value <= 100;
+    const disk = metrics.disk_io;
+    if (disk && number(disk.read_bytes_per_sec) && number(disk.write_bytes_per_sec) && percent(disk.busy_percent)) {
+      entries.push([t('nodes.diskIO'), t('nodes.diskIOSummary', {read: formatRate(disk.read_bytes_per_sec),
+        write: formatRate(disk.write_bytes_per_sec), busy: formatPercent(disk.busy_percent)})]);
+    }
+    const pressure = ['cpu', 'memory', 'io'].map((key) => metrics.pressure?.[key]);
+    if (pressure.some(percent)) {
+      const [cpu, memory, io] = pressure.map((value) => percent(value) ? formatPercent(value) : '—');
+      entries.push([t('nodes.pressure'), t('nodes.pressureSummary', {cpu, memory, io})]);
+    }
+    const temperature = metrics.temperature_celsius;
+    if (number(temperature)) {
+      entries.push([t('nodes.temperature'), formatCelsius(temperature)]);
+    }
     const received = timestampMillis(latest.received_at);
     metricRecords = nextRecords;
     lastReport.replaceChildren(...(Number.isFinite(received)

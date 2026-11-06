@@ -1830,7 +1830,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [cpu_percent, memory_used_percent, swap_used_percent, load1, load5, load15, disk_used_percent, inode_used_percent, net_rx_bytes_per_second, net_tx_bytes_per_second]
+            enum: [cpu_percent, memory_used_percent, swap_used_percent, load1, load5, load15, disk_used_percent, inode_used_percent, net_rx_bytes_per_second, net_tx_bytes_per_second, disk_read_bytes_per_second, disk_write_bytes_per_second, disk_busy_percent, pressure_cpu_percent, pressure_memory_percent, pressure_io_percent, temperature_celsius]
         - name: range
           in: query
           required: true
@@ -3359,8 +3359,8 @@ components:
       additionalProperties: false
       required: [metric, unit, range, step_seconds, points]
       properties:
-        metric: {type: string, enum: [cpu_percent, memory_used_percent, swap_used_percent, load1, load5, load15, disk_used_percent, inode_used_percent, net_rx_bytes_per_second, net_tx_bytes_per_second]}
-        unit: {type: string, enum: [percent, load, bytes_per_second]}
+        metric: {type: string, enum: [cpu_percent, memory_used_percent, swap_used_percent, load1, load5, load15, disk_used_percent, inode_used_percent, net_rx_bytes_per_second, net_tx_bytes_per_second, disk_read_bytes_per_second, disk_write_bytes_per_second, disk_busy_percent, pressure_cpu_percent, pressure_memory_percent, pressure_io_percent, temperature_celsius]}
+        unit: {type: string, enum: [percent, load, bytes_per_second, celsius]}
         range: {type: string, enum: [1h, 6h, 24h, 7d, 30d, 90d]}
         step_seconds: {type: integer, enum: [60, 300, 3600]}
         points:
@@ -3701,9 +3701,9 @@ components:
           items: {type: string, enum: [upgrade, restart, stop]}
         disabled_features:
           type: array
-          maxItems: 4
+          maxItems: 7
           uniqueItems: true
-          items: {type: string, enum: [disk, network, traffic, probes]}
+          items: {type: string, enum: [disk, network, traffic, probes, disk_io, pressure, temperature]}
     BillingMode:
       type: string
       enum: [total, max, rx, tx]
@@ -3823,6 +3823,20 @@ components:
       additionalProperties: true
       required: [cpu_percent, load1, load5, load15, memory_total_bytes, memory_available_bytes, swap_total_bytes, swap_used_bytes, uptime_seconds, disks, networks, metric_status, sources]
       properties:
+        disk_io:
+          type: [object, 'null']
+          required: [read_bytes_per_sec, write_bytes_per_sec, busy_percent]
+          properties:
+            read_bytes_per_sec: {type: number, minimum: 0, maximum: 1000000000000000}
+            write_bytes_per_sec: {type: number, minimum: 0, maximum: 1000000000000000}
+            busy_percent: {type: number, minimum: 0, maximum: 100}
+        pressure:
+          type: [object, 'null']
+          properties:
+            cpu: {type: [number, 'null'], minimum: 0, maximum: 100}
+            memory: {type: [number, 'null'], minimum: 0, maximum: 100}
+            io: {type: [number, 'null'], minimum: 0, maximum: 100}
+        temperature_celsius: {type: [number, 'null'], exclusiveMinimum: 0, maximum: 150}
         cpu_percent: {type: [number, 'null'], minimum: 0, maximum: 100}
         load1: {type: [number, 'null'], minimum: 0}
         load5: {type: [number, 'null'], minimum: 0}

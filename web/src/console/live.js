@@ -18,7 +18,7 @@ const runtime = (value) => value === null || record(value) && Number.isInteger(v
   && Number.isInteger(value.disk_interval_seconds) && value.disk_interval_seconds >= 60 && value.disk_interval_seconds <= 3600
   && stringList(value.interfaces, 8) && stringList(value.disk_paths, 8) && stringList(value.probe_targets, 5)
   && enumList(value.remote_commands, ['upgrade', 'restart', 'stop'])
-  && enumList(value.disabled_features, ['disk', 'network', 'traffic', 'probes']);
+  && enumList(value.disabled_features, ['disk', 'network', 'traffic', 'probes', 'disk_io', 'pressure', 'temperature']);
 const node = (value) => status(value) && ['name', 'notes', 'region', 'provider'].every((key) => typeof value[key] === 'string')
   && (value.group_id === null || typeof value.group_id === 'string' && uuid.test(value.group_id)) && stringList(value.tags) && time(value.created_at);
 const metrics = (value) => {

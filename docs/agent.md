@@ -115,7 +115,7 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent doctor \
 | `disk_paths` | `[]` | 最多 8 个绝对路径；空数组使用默认根路径 |
 | `probe_targets` | `[]` | 最多 5 项；空数组不探测 |
 | `remote_commands` | `["upgrade","restart","stop"]` | 允许的远程指令；native 仅在安装策略配置了升级地址时支持 upgrade，docker 仅 restart，foreground 仅 stop，取交集生效，`[]` 全部关闭 |
-| `disabled_features` | `[]` | 关闭 disk、network、traffic、probes 中的指定功能，默认全部启用；network 同时关闭 traffic，probes 清空探测目标 |
+| `disabled_features` | `[]` | 关闭 disk、network、traffic、probes、disk_io、pressure、temperature 中的指定功能，默认全部启用；disk 同时关闭 disk_io，network 同时关闭 traffic，probes 清空探测目标 |
 
 选择还受 JSON 转义后 64 KiB 报告预算约束。
 
@@ -251,3 +251,5 @@ HTTP 探测不使用 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`，不能依赖�
 `stop` 持久化成功结果并立即采集、上报，确认成功或最多等待 15 秒后以 **0** 退出；恢复须人工 `systemctl start orbitbeacon-agent`，已启用服务在主机重启后也会恢复。正常 SIGTERM 行为不变。
 指令状态保存在 `state/commands.json`（0600）；损坏或写入失败时继续监控但停止执行指令，需人工检查修复，不能随意删除以免丢失去重记录。
 每次上报最多发送最旧的两条待确认结果；已处理 ID 最多保留 32 条，只淘汰已过期且结果已确认的记录。容量满时新指令返回 `rejected/failed`。
+
+Linux 上这三组指标不可用时为 null，不影响上报。磁盘 IO 只汇总 `/sys/block/<name>/device` 存在的物理整盘；PSI 使用 some avg60；温度取 (0, 150] °C 内最高值，每分钟后台刷新，缓存超过三分钟即丢弃。设置仅由本地手工编辑并 reload。

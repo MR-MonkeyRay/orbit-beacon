@@ -11,6 +11,9 @@ const (
 	RemoteCommandRestart = "restart"
 	RemoteCommandStop    = "stop"
 	FeatureDisk          = "disk"
+	FeatureDiskIO        = "disk_io"
+	FeaturePressure      = "pressure"
+	FeatureTemperature   = "temperature"
 	FeatureNetwork       = "network"
 	FeatureTraffic       = "traffic"
 	FeatureProbes        = "probes"
@@ -23,7 +26,7 @@ func RemoteCommandOrder() []string {
 
 // DisabledFeatureOrder 返回可关闭功能的规范顺序。
 func DisabledFeatureOrder() []string {
-	return []string{FeatureDisk, FeatureNetwork, FeatureTraffic, FeatureProbes}
+	return []string{FeatureDisk, FeatureNetwork, FeatureTraffic, FeatureProbes, FeatureDiskIO, FeaturePressure, FeatureTemperature}
 }
 
 // RuntimeSettings 是由 Agent 管理的采集与上报配置。
@@ -66,9 +69,9 @@ func (c RuntimeSettings) AllowsCommand(name string) bool {
 	return slices.Contains(RemoteCommandOrder(), name) && slices.Contains(c.RemoteCommands, name)
 }
 
-// FeatureDisabled 同时保护直接使用采集器的调用方：关闭网络也关闭流量。
+// FeatureDisabled 同时保护直接使用采集器的调用方：关闭网络也关闭流量，关闭磁盘也关闭磁盘 IO。
 func (c RuntimeSettings) FeatureDisabled(name string) bool {
-	return slices.Contains(c.DisabledFeatures, name) || name == FeatureTraffic && slices.Contains(c.DisabledFeatures, FeatureNetwork)
+	return slices.Contains(c.DisabledFeatures, name) || name == FeatureTraffic && slices.Contains(c.DisabledFeatures, FeatureNetwork) || name == FeatureDiskIO && slices.Contains(c.DisabledFeatures, FeatureDisk)
 }
 
 type ValidationError struct {

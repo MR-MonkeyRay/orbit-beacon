@@ -14,9 +14,10 @@ var ErrReportBudget = errors.New("selection exceeds report encoding budget")
 // 选定的路径和名称会出现在指标序列、两个元数据键和运行时配置中。采集器的 ASCII
 // 来源 ID（至多 35 字节、21 个来源）、标量指标、按最坏情况转义的 System、24 个流量桶、
 // 完整能力枚举、2 条封闭指令结果及消息外围字段，以及 8 个磁盘各两个 uint64 inode 字段
-// （每盘最多 71 字节，共 568 字节），合计预留 14 KiB。探测结果的固定字段在下方另行预留。
+// （每盘最多 71 字节，共 568 字节），以及新增磁盘 IO、PSI、温度字段（预留 1024 字节），
+// 合计预留 15 KiB。探测结果的固定字段在下方另行预留。
 // 其他上报实现仍须在发送前检查最终编码大小。
-const reportEnvelopeBytes = 14 * 1024
+const reportEnvelopeBytes = 15 * 1024
 
 // 为每个探测结果的固定字段预留空间；目标本身在下方按 encoding/json 的转义规则计入。
 const probeResultEnvelopeBytes = 160

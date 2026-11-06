@@ -165,6 +165,7 @@ func TestAPITokenHTTPFieldsAndWrites(t *testing.T) {
 	assertLiteralKeys(t, list["nodes"].([]any)[0], expectedNode...)
 	latest := apiTokenRequest(t, f.handler, "GET", base+"/latest", bearer, cookie)
 	assertLiteralKeys(t, tokenObject(t, latest), "received_at", "sampled_at", "seq", "metrics", "server_time")
+	assertLiteralKeys(t, tokenObject(t, latest)["metrics"], "disk_io", "pressure", "temperature_celsius", "cpu_percent", "load1", "load5", "load15", "memory_total_bytes", "memory_available_bytes", "swap_total_bytes", "swap_used_bytes", "uptime_seconds", "disks", "networks", "metric_status", "sources")
 	probes := apiTokenRequest(t, f.handler, "GET", base+"/probes", bearer, cookie)
 	probeObject := tokenObject(t, probes)
 	assertLiteralKeys(t, probeObject, "probes")
@@ -176,7 +177,7 @@ func TestAPITokenHTTPFieldsAndWrites(t *testing.T) {
 			}
 		}
 	}
-	for _, suffix := range []string{"/history?metric=cpu_percent&range=1h", "/history?metric=disk_used_percent&range=1h&disk=/data:one", "/history?metric=inode_used_percent&range=1h&disk=/data:one", "/availability", "/traffic"} {
+	for _, suffix := range []string{"/history?metric=temperature_celsius&range=1h", "/history?metric=disk_read_bytes_per_second&range=1h", "/history?metric=pressure_io_percent&range=1h", "/history?metric=cpu_percent&range=1h", "/history?metric=disk_used_percent&range=1h&disk=/data:one", "/history?metric=inode_used_percent&range=1h&disk=/data:one", "/availability", "/traffic"} {
 		result := tokenObject(t, apiTokenRequest(t, f.handler, "GET", base+suffix, bearer, cookie))
 		admin := tokenObject(t, request(t, f.handler, "GET", base+suffix, "", cookie, "", ""))
 		switch {

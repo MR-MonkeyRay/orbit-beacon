@@ -3,6 +3,7 @@ package server
 import (
 	"time"
 
+	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/alerts"
 	"orbitbeacon/internal/server/availability"
 	"orbitbeacon/internal/server/history"
@@ -142,4 +143,45 @@ func tokenGroupDTOs(groups []management.Group) []tokenGroupView {
 		result = append(result, tokenGroupView{g.ID, g.Name})
 	}
 	return result
+}
+
+// tokenMetricsView is the read-only telemetry field whitelist.
+type tokenMetricsView struct {
+	DiskIO               *v1.DiskIOMetrics            `json:"disk_io"`
+	Pressure             *v1.PressureMetrics          `json:"pressure"`
+	TemperatureCelsius   *float64                     `json:"temperature_celsius"`
+	CPUPercent           *float64                     `json:"cpu_percent"`
+	Load1                *float64                     `json:"load1"`
+	Load5                *float64                     `json:"load5"`
+	Load15               *float64                     `json:"load15"`
+	MemoryTotalBytes     *uint64                      `json:"memory_total_bytes"`
+	MemoryAvailableBytes *uint64                      `json:"memory_available_bytes"`
+	SwapTotalBytes       *uint64                      `json:"swap_total_bytes"`
+	SwapUsedBytes        *uint64                      `json:"swap_used_bytes"`
+	UptimeSeconds        *float64                     `json:"uptime_seconds"`
+	Disks                []v1.DiskMetrics             `json:"disks"`
+	Networks             []v1.NetworkMetrics          `json:"networks"`
+	MetricStatus         map[string]string            `json:"metric_status"`
+	Sources              map[string]v1.SourceMetadata `json:"sources"`
+}
+
+func tokenMetricsDTO(m v1.Metrics) tokenMetricsView {
+	return tokenMetricsView{
+		DiskIO:               m.DiskIO,
+		Pressure:             m.Pressure,
+		TemperatureCelsius:   m.TemperatureCelsius,
+		CPUPercent:           m.CPUPercent,
+		Load1:                m.Load1,
+		Load5:                m.Load5,
+		Load15:               m.Load15,
+		MemoryTotalBytes:     m.MemoryTotalBytes,
+		MemoryAvailableBytes: m.MemoryAvailableBytes,
+		SwapTotalBytes:       m.SwapTotalBytes,
+		SwapUsedBytes:        m.SwapUsedBytes,
+		UptimeSeconds:        m.UptimeSeconds,
+		Disks:                m.Disks,
+		Networks:             m.Networks,
+		MetricStatus:         m.MetricStatus,
+		Sources:              m.Sources,
+	}
 }

@@ -222,7 +222,22 @@ type NetworkMetrics struct {
 	TxBytesPerSec *float64 `json:"tx_bytes_per_sec"`
 }
 
+type DiskIOMetrics struct {
+	ReadBytesPerSec  float64 `json:"read_bytes_per_sec"`
+	WriteBytesPerSec float64 `json:"write_bytes_per_sec"`
+	BusyPercent      float64 `json:"busy_percent"`
+}
+
+type PressureMetrics struct {
+	CPU    *float64 `json:"cpu"`
+	Memory *float64 `json:"memory"`
+	IO     *float64 `json:"io"`
+}
+
 type Metrics struct {
+	DiskIO               *DiskIOMetrics            `json:"disk_io"`
+	Pressure             *PressureMetrics          `json:"pressure"`
+	TemperatureCelsius   *float64                  `json:"temperature_celsius"`
 	CPUPercent           *float64                  `json:"cpu_percent"`
 	Load1                *float64                  `json:"load1"`
 	Load5                *float64                  `json:"load5"`
@@ -248,6 +263,23 @@ func validStatus(status string) bool {
 }
 
 func (m Metrics) Validate() error {
+	bounded := func(value float64, limit float64) bool {
+		return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= limit
+	}
+	if m.DiskIO != nil && (!bounded(m.DiskIO.ReadBytesPerSec, 1e15) || !bounded(m.DiskIO.WriteBytesPerSec, 1e15) || !bounded(m.DiskIO.BusyPercent, 100)) {
+		return errors.New("invalid disk IO metrics")
+	}
+	if m.Pressure != nil {
+		for _, value := range []*float64{m.Pressure.CPU, m.Pressure.Memory, m.Pressure.IO} {
+			if value != nil && !bounded(*value, 100) {
+				return errors.New("invalid pressure metrics")
+			}
+		}
+	}
+	if m.TemperatureCelsius != nil && (!bounded(*m.TemperatureCelsius, 150) || *m.TemperatureCelsius == 0) {
+		return errors.New("invalid temperature")
+	}
+
 	if len(m.MetricStatus) != len(metricStatusFields)+len(m.Disks)+len(m.Networks) || len(m.Sources) != len(sourceFamilies)+len(m.Disks)+len(m.Networks) {
 		return errors.New("metric statuses and sources must match the reported fields and series exactly")
 	}

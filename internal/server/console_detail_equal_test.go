@@ -38,3 +38,17 @@ func TestConsoleLiveComparisonsSeeStoppedNodes(t *testing.T) {
 		t.Fatal("console fleet ignored a stopped node")
 	}
 }
+
+func TestConsoleDetailsDetectsNewOptionalHostSample(t *testing.T) {
+	for _, metrics := range []v1.Metrics{
+		{DiskIO: &v1.DiskIOMetrics{ReadBytesPerSec: 1024}},
+		{Pressure: &v1.PressureMetrics{CPU: new(1.5)}},
+		{TemperatureCelsius: new(45.0)},
+	} {
+		before := consoleDetailData{Latest: &latestSampleView{Seq: 1}}
+		after := consoleDetailData{Latest: &latestSampleView{Seq: 2, Metrics: metrics}}
+		if consoleDetailsEqual(before, after) {
+			t.Fatal("new host sample ignored")
+		}
+	}
+}

@@ -114,6 +114,16 @@ orbitbeacon_node_network_receive_bytes_per_second{node_id="ID",interface="zeth"}
 # TYPE orbitbeacon_node_network_transmit_bytes_per_second gauge
 orbitbeacon_node_network_transmit_bytes_per_second{node_id="ID",interface="aeth"} 42
 orbitbeacon_node_network_transmit_bytes_per_second{node_id="ID",interface="zeth"} 42
+# HELP orbitbeacon_node_disk_read_bytes_per_second Disk read bytes per second.
+# TYPE orbitbeacon_node_disk_read_bytes_per_second gauge
+# HELP orbitbeacon_node_disk_write_bytes_per_second Disk write bytes per second.
+# TYPE orbitbeacon_node_disk_write_bytes_per_second gauge
+# HELP orbitbeacon_node_disk_busy_percent Disk busy percent.
+# TYPE orbitbeacon_node_disk_busy_percent gauge
+# HELP orbitbeacon_node_pressure_percent PSI some average over sixty seconds.
+# TYPE orbitbeacon_node_pressure_percent gauge
+# HELP orbitbeacon_node_temperature_celsius Hottest sensor temperature in Celsius.
+# TYPE orbitbeacon_node_temperature_celsius gauge
 `
 	if want := strings.ReplaceAll(expected, `"ID"`, strconv.Quote(id)); response.Body.String() != want {
 		t.Fatalf("unexpected exposition:\n%s\nwant:\n%s", response.Body.String(), want)

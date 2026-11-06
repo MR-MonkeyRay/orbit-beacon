@@ -37,7 +37,7 @@ const reportJSON = `{
  "protocol_version":1,"run_generation":7,"session_id":"run-seven","seq":9,
  "sampled_at":"2026-10-26T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":["eth0"],"disk_paths":["/"],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]},
  "system":{"hostname":"same-hostname","os":"linux","arch":"amd64"},
- "metrics":{
+ "metrics":{"disk_io":null,"pressure":null,"temperature_celsius":null,
   "cpu_percent":null,"load1":0.5,"load5":1.25,"load15":2,
   "memory_total_bytes":8192,"memory_available_bytes":4096,
   "swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":123,

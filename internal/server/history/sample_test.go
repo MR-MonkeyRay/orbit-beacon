@@ -2,9 +2,10 @@ package history
 
 import (
 	"math"
-	v1 "orbitbeacon/internal/protocol/v1"
 	"testing"
 	"time"
+
+	v1 "orbitbeacon/internal/protocol/v1"
 )
 
 func ptr[T any](value T) *T { return &value }
@@ -208,5 +209,44 @@ func TestSnapshotDiskAndInodeSeriesFreshnessAndAggregation(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSnapshotOptionalHostMetrics(t *testing.T) {
+	m := v1.Metrics{DiskIO: &v1.DiskIOMetrics{ReadBytesPerSec: 1024, WriteBytesPerSec: 2048, BusyPercent: 25}, Pressure: &v1.PressureMetrics{CPU: ptr(1.5), Memory: ptr(2.5), IO: ptr(3.5)}, TemperatureCelsius: ptr(48.5)}
+	sample := Snapshot("node", time.Now(), m)
+	want := map[string]float64{"disk_read_bytes_per_second": 1024, "disk_write_bytes_per_second": 2048, "disk_busy_percent": 25, "pressure_cpu_percent": 1.5, "pressure_memory_percent": 2.5, "pressure_io_percent": 3.5, "temperature_celsius": 48.5}
+	if len(sample.Values) != len(want) {
+		t.Fatal(sample.Values)
+	}
+	for key, value := range want {
+		if sample.Values[key] != value {
+			t.Fatal(key, sample.Values)
+		}
+	}
+	*m.TemperatureCelsius = 99
+	*m.Pressure.CPU = 99
+	if sample.Values["temperature_celsius"] != 48.5 || sample.Values["pressure_cpu_percent"] != 1.5 {
+		t.Fatal("snapshot retained pointers")
+	}
+	m = v1.Metrics{Pressure: &v1.PressureMetrics{IO: ptr(0.0)}}
+	sample = Snapshot("node", time.Now(), m)
+	if len(sample.Values) != 1 || sample.Values["pressure_io_percent"] != 0 {
+		t.Fatal(sample.Values)
+	}
+	if len(Snapshot("node", time.Now(), v1.Metrics{}).Values) != 0 {
+		t.Fatal("nil metrics recorded")
+	}
+	if validValue("temperature_celsius", 150.01) || !validValue("temperature_celsius", 150) {
+		t.Fatal("temperature limit")
+	}
+}
+
+func TestOptionalHostMetricHistoryUnits(t *testing.T) {
+	for metric, want := range map[string]string{"disk_read_bytes_per_second": "bytes_per_second", "disk_write_bytes_per_second": "bytes_per_second", "disk_busy_percent": "percent", "pressure_cpu_percent": "percent", "pressure_memory_percent": "percent", "pressure_io_percent": "percent", "temperature_celsius": "celsius"} {
+		response, err := Empty(metric, "1h")
+		if err != nil || response.Unit != want || response.Points == nil {
+			t.Fatalf("%s: %+v %v", metric, response, err)
+		}
 	}
 }

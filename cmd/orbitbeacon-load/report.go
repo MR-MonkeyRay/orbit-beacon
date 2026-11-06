@@ -13,7 +13,8 @@ func makeReport(o options, n node, seq uint64, now time.Time) v1.Report {
 	report.Runtime.ReportIntervalSeconds = int(o.interval / time.Second)
 	cpu, load, uptime := float64(20+seq%30), 0.5, float64(seq)*o.interval.Seconds()
 	memoryTotal, memoryAvailable, swapTotal, swapUsed := uint64(8<<30), uint64(4<<30), uint64(1<<30), uint64(0)
-	report.Metrics = v1.Metrics{CPUPercent: &cpu, Load1: &load, Load5: &load, Load15: &load, MemoryTotalBytes: &memoryTotal, MemoryAvailableBytes: &memoryAvailable, SwapTotalBytes: &swapTotal, SwapUsedBytes: &swapUsed, UptimeSeconds: &uptime, Disks: []v1.DiskMetrics{}, Networks: []v1.NetworkMetrics{}, MetricStatus: make(map[string]string), Sources: make(map[string]v1.SourceMetadata)}
+	read, write, busy, pressureCPU, pressureMemory, pressureIO, temperature := 1048576.0, 524288.0, 12.5, 1.25, 0.5, 2.75, 48.5
+	report.Metrics = v1.Metrics{DiskIO: &v1.DiskIOMetrics{ReadBytesPerSec: read, WriteBytesPerSec: write, BusyPercent: busy}, Pressure: &v1.PressureMetrics{CPU: &pressureCPU, Memory: &pressureMemory, IO: &pressureIO}, TemperatureCelsius: &temperature, CPUPercent: &cpu, Load1: &load, Load5: &load, Load15: &load, MemoryTotalBytes: &memoryTotal, MemoryAvailableBytes: &memoryAvailable, SwapTotalBytes: &swapTotal, SwapUsedBytes: &swapUsed, UptimeSeconds: &uptime, Disks: []v1.DiskMetrics{}, Networks: []v1.NetworkMetrics{}, MetricStatus: make(map[string]string), Sources: make(map[string]v1.SourceMetadata)}
 	for _, field := range v1.MetricStatusFields() {
 		report.Metrics.MetricStatus[field] = "ok"
 	}

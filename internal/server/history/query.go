@@ -15,6 +15,8 @@ const (
 )
 
 var metricUnits = map[string]string{
+	"disk_read_bytes_per_second": "bytes_per_second", "disk_write_bytes_per_second": "bytes_per_second", "disk_busy_percent": "percent",
+	"pressure_cpu_percent": "percent", "pressure_memory_percent": "percent", "pressure_io_percent": "percent", "temperature_celsius": "celsius",
 	"cpu_percent": "percent", "memory_used_percent": "percent", "swap_used_percent": "percent",
 	"load1": "load", "load5": "load", "load15": "load", "disk_used_percent": "percent", "inode_used_percent": "percent",
 	"net_rx_bytes_per_second": "bytes_per_second", "net_tx_bytes_per_second": "bytes_per_second",

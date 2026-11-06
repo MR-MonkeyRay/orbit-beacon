@@ -232,7 +232,7 @@ func TestDoctorReportsEffectiveCapabilities(t *testing.T) {
 	if err := json.Unmarshal(body, &fields); err != nil {
 		t.Fatal(err)
 	}
-	if string(fields["remote_commands"]) != `["restart"]` || string(fields["disabled_features"]) != `["disk","network","traffic","probes"]` {
+	if string(fields["remote_commands"]) != `["restart"]` || string(fields["disabled_features"]) != `["disk","network","traffic","probes","disk_io","pressure","temperature"]` {
 		t.Fatalf("doctor JSON=%s", body)
 	}
 }

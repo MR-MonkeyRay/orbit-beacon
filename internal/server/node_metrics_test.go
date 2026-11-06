@@ -276,7 +276,7 @@ func TestNodeMetricsDiskInodesAndNil(t *testing.T) {
 func TestNodeMetricsMaximumSeriesCount(t *testing.T) {
 	value, total := 100.0, uint64(100)
 	seen := time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
-	m := v1.Metrics{CPUPercent: &value, Load1: &value, Load5: &value, Load15: &value, UptimeSeconds: &value,
+	m := v1.Metrics{DiskIO: &v1.DiskIOMetrics{ReadBytesPerSec: value, WriteBytesPerSec: value, BusyPercent: value}, Pressure: &v1.PressureMetrics{CPU: &value, Memory: &value, IO: &value}, TemperatureCelsius: &value, CPUPercent: &value, Load1: &value, Load5: &value, Load15: &value, UptimeSeconds: &value,
 		MemoryTotalBytes: &total, MemoryAvailableBytes: &total, SwapTotalBytes: &total, SwapUsedBytes: &total}
 	for i := range 8 {
 		m.Disks = append(m.Disks, v1.DiskMetrics{Path: fmt.Sprintf("/disk%d", i), TotalBytes: &total, UsedBytes: &total, InodesTotal: &total, InodesUsed: &total})
@@ -287,7 +287,31 @@ func TestNodeMetricsMaximumSeriesCount(t *testing.T) {
 	for _, lines := range values {
 		count += len(lines)
 	}
-	if count != 60 {
-		t.Fatalf("series=%d want 60", count)
+	if count != 67 {
+		t.Fatalf("series=%d want 67", count)
+	}
+}
+
+func TestNodeMetricsOptionalHostSeriesAndNil(t *testing.T) {
+	value := 42.5
+	m := v1.Metrics{DiskIO: &v1.DiskIOMetrics{ReadBytesPerSec: 1024, WriteBytesPerSec: 2048, BusyPercent: 25}, Pressure: &v1.PressureMetrics{CPU: &value, IO: &value}, TemperatureCelsius: &value}
+	samples := []nodeMetricSnapshot{{node: nodes.LiveNode{ID: "node", Presence: "online"}, sample: &ingest.LatestReport{Report: v1.Report{Metrics: m}}}}
+	values := parseNodeMetrics(t, nodeMetricsExposition(samples))
+	for family, want := range map[string]string{"disk_read_bytes_per_second": "1024", "disk_write_bytes_per_second": "2048", "disk_busy_percent": "25", "temperature_celsius": "42.5"} {
+		lines := values["orbitbeacon_node_"+family]
+		if len(lines) != 1 || lines[0] != `orbitbeacon_node_`+family+`{node_id="node"} `+want {
+			t.Fatalf("%s: %v", family, lines)
+		}
+	}
+	lines := values["orbitbeacon_node_pressure_percent"]
+	if len(lines) != 2 || lines[0] != `orbitbeacon_node_pressure_percent{node_id="node",resource="cpu"} 42.5` || lines[1] != `orbitbeacon_node_pressure_percent{node_id="node",resource="io"} 42.5` {
+		t.Fatal(lines)
+	}
+	samples[0].sample.Metrics = v1.Metrics{}
+	values = parseNodeMetrics(t, nodeMetricsExposition(samples))
+	for _, family := range []string{"disk_read_bytes_per_second", "disk_write_bytes_per_second", "disk_busy_percent", "pressure_percent", "temperature_celsius"} {
+		if len(values["orbitbeacon_node_"+family]) != 0 {
+			t.Fatal(family)
+		}
 	}
 }
