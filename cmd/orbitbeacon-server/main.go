@@ -78,6 +78,7 @@ func runServe(args []string, logger *slog.Logger) error {
 	configPath := fs.String("config", "", "JSON 配置文件")
 	fs.String("data-dir", "", "本地持久化数据目录")
 	fs.String("listen-addr", "127.0.0.1:8080", "HTTP 监听地址")
+	fs.String("history-victoriametrics-url", "", "可选的 VictoriaMetrics 历史存储 HTTP 地址")
 	fs.String("metrics-listen", "", "可选的独立 Prometheus 指标监听地址")
 	fs.Bool("access-log", false, "每个请求写一条结构化访问日志")
 	fs.Bool("allow-insecure-webhooks", false, "仅允许使用回环 IP 地址的 HTTP webhook URL")

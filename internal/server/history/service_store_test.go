@@ -23,6 +23,7 @@ type fakeStore struct {
 	points                         []Point
 	query                          func(string, string, int, int64, int64)
 	deleted                        []string
+	seriesCalls                    int
 	expired                        bool
 	closed                         bool
 }
@@ -38,6 +39,7 @@ func (f *fakeStore) Query(_ context.Context, node, series string, step int, star
 	return f.points, f.queryErr
 }
 func (f *fakeStore) Series(context.Context, string) ([]string, error) {
+	f.seriesCalls++
 	return f.series, f.seriesErr
 }
 func (f *fakeStore) NodeIDs(_ context.Context, visit func(string)) error {
@@ -171,11 +173,19 @@ func TestServiceStoreQueryShapingAndStats(t *testing.T) {
 
 func TestServiceStorePathInventoryRetries(t *testing.T) {
 	store := &fakeStore{seriesErr: errors.New("inventory failed"), series: []string{"disk_used_percent:/data", "inode_used_percent:/data", "cpu_percent"}}
-	s := stoppedStoreService(t, store, nil, Options{})
+	now := time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
+	s := stoppedStoreService(t, store, nil, Options{Now: func() time.Time { return now }})
 	if s.admitPath("node", "/new") || len(s.paths) != 0 {
 		t.Fatal("failed inventory admitted path")
 	}
 	store.seriesErr = nil
+	if s.admitPath("other", "/new") || len(s.paths) != 0 {
+		t.Fatal("retried inventory during backoff")
+	}
+	if store.seriesCalls != 1 {
+		t.Fatalf("inventory calls during backoff=%d", store.seriesCalls)
+	}
+	now = now.Add(seriesRetryDelay)
 	if !s.admitPath("node", "/new") || len(s.paths["node"]) != 2 {
 		t.Fatalf("paths=%v", s.paths)
 	}

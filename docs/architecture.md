@@ -57,6 +57,7 @@ flowchart LR
 
 - `orbitbeacon.db` 保存账户、资产、身份、设置、流量、探测、审计、告警、通知和备份任务；使用 WAL、外键、`synchronous=FULL` 与 immediate 写事务。
 - `metrics.db` 保存标量和分盘使用率（字节及 inode）的分钟聚合及 rollup，不保存原始报告，无数据不补零。每节点最多 16 个不同分盘路径，同一路径的两个序列共享名额；超额的新路径样本丢弃并计入 `orbitbeacon_history_series_rejected_total`，已知路径和聚合继续写入。单 goroutine 管理路径集合和写入，节点首次出现时用读连接池的一条沿主键跳跃的查询在写事务外恢复路径集合；节点删除清理时释放集合，保留期过后不立即释放路径名额，重启按数据库实际内容重算。历史序列上限为 200 节点 × (17 个标量 + 16 路径 × 2) × 3 档精度 = 29,400（每条序列的桶数另受保留期限制）。`buckets.metric` 是普通文本，备份注册表按列原样备份和恢复，含 `:` 的分盘指标无需新增表或改注册表。格式兼容性见[升级](../deploy/README.md#升级)。
+- 可选设置 `history_victoriametrics_url`（文件、环境变量或 `--history-victoriametrics-url`）改用 VictoriaMetrics；`history_victoriametrics_token` 仅支持文件或环境变量 `ORBITBEACON_HISTORY_VICTORIAMETRICS_TOKEN`。远端需配置 `-retentionPeriod` 至少 90 天，且不得对这些数据使用 `-dedup.minScrapeInterval`，否则同一分钟的合并样本会被丢弃。VictoriaMetrics 中的历史不包含在 OrbitBeacon 备份内；新安装的 `metrics.db` 为空，从 SQLite 切换后保留已有文件，不再写入、查询或清理，但仍随 Monitoring 类别备份。切换后端不会迁移历史。一个 VictoriaMetrics 实例只能供一台 OrbitBeacon 服务器使用：保留清理会删除本机主库中不存在的节点的 `orbitbeacon_history_*` 序列。
 
 | 数据 | 保留规则 |
 | --- | --- |

@@ -109,7 +109,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 		saturation = server.NewSaturationMetrics(db, publicReader, cfg.DataDir)
 		observeFlush = saturation.ObserveHistoryFlush
 	}
-	metricHistory := openMetricHistory(ctx, cfg.DataDir, publicReader, logger, observeFlush)
+	metricHistory := openMetricHistory(ctx, cfg, publicReader, logger, observeFlush)
 	if metricHistory != nil {
 		a.history = metricHistory
 	}

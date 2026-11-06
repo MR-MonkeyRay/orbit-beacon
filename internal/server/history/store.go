@@ -15,7 +15,7 @@ type Bucket struct {
 }
 
 type Store interface {
-	// Write 原子持久化各桶，失败时也返回计划写入的存储行数。
+	// Write 持久化各桶，失败时也返回计划写入的存储行数。
 	Write(ctx context.Context, buckets []Bucket) (rows int, err error)
 	// Query 返回闭区间内按时间升序排列的点。
 	Query(ctx context.Context, node, series string, stepSeconds int, start, end int64) ([]Point, error)

@@ -21,6 +21,8 @@ const (
 	FlushInterval        = time.Minute
 	maxPendingBuckets    = 8192
 	maxDiskPaths         = 16
+	// 远端存储不可用时，每个节点的首个样本都会等待超时；退避避免写入循环被占满。
+	seriesRetryDelay = 30 * time.Second
 )
 
 type Options struct {
@@ -65,6 +67,7 @@ type Service struct {
 	observeFlush   func(time.Duration, int)
 	paths          map[string]map[string]struct{} // owned by run; one entry per observed node
 	seriesRejected atomic.Uint64
+	seriesRetryAt  time.Time // owned by run
 }
 
 // Open 创建 metrics.db，使用自己的迁移台账和只读查询池。
@@ -142,16 +145,20 @@ func diskSeriesPath(metric string) (string, bool) {
 }
 
 // 只有 run 调用 admitPath。首次从存储读取已有序列，失败时拒绝分区样本，
-// 下一个样本到来时重试。
+// 退避结束后的下一个样本再重试。
 func (s *Service) admitPath(node, path string) bool {
 	paths, loaded := s.paths[node]
 	if !loaded {
 		paths = make(map[string]struct{})
 		if s.store != nil {
+			if s.now().Before(s.seriesRetryAt) {
+				return false
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			series, err := s.store.Series(ctx, node)
 			if err != nil {
+				s.seriesRetryAt = s.now().Add(seriesRetryDelay)
 				return false
 			}
 			for _, metric := range series {
@@ -220,7 +227,7 @@ func (s *Service) run(ctx context.Context) {
 	}
 }
 
-// flush 将每分钟的精确总和与样本数交给存储，原子合并到所有聚合层级。
+// flush 将每分钟的精确总和与样本数交给存储，由存储提供各聚合层级。
 // 提交成功后才释放待写状态，因此失败时可以重试。
 func (s *Service) flush(ctx context.Context, now time.Time, all bool) error {
 	var started time.Time

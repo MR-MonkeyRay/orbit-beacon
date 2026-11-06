@@ -25,6 +25,8 @@ type LoadOptions struct {
 }
 
 type Server struct {
+	HistoryVictoriaMetricsURL        string         `json:"history_victoriametrics_url"`
+	HistoryVictoriaMetricsToken      string         `json:"-"`
 	AllowInsecureWebhooks            bool           `json:"allow_insecure_webhooks"`
 	NotificationAllowPrivateNetworks bool           `json:"notification_allow_private_networks"`
 	ListenAddr                       string         `json:"listen_addr"`
@@ -150,8 +152,11 @@ func encodeValue(key, value string) (json.RawMessage, error) {
 }
 
 func LoadServer(opts LoadOptions) (Server, error) {
+	if _, ok := opts.Flags["history_victoriametrics_token"]; ok {
+		return Server{}, errors.New("history_victoriametrics_token 不支持 flag")
+	}
 	cfg := Server{ListenAddr: "127.0.0.1:8080", DataDir: "./data", PublicURL: "http://localhost:8080", MaxNodes: 500, WebUpdateIntervalSeconds: 10}
-	layers, err := sources(opts, []string{"allow_insecure_webhooks", "notification_allow_private_networks", "listen_addr", "metrics_listen", "access_log", "data_dir", "public_url", "max_nodes", "web_update_interval_seconds", "trusted_proxies"})
+	layers, err := sources(opts, []string{"allow_insecure_webhooks", "notification_allow_private_networks", "listen_addr", "metrics_listen", "access_log", "data_dir", "public_url", "max_nodes", "web_update_interval_seconds", "trusted_proxies", "history_victoriametrics_url", "history_victoriametrics_token"})
 	if err != nil {
 		return Server{}, err
 	}
@@ -165,6 +170,12 @@ func LoadServer(opts LoadOptions) (Server, error) {
 		if string(value) == "null" {
 			return Server{}, fmt.Errorf("%s 不能为 null", key)
 		}
+	}
+	if value, ok := resolved["history_victoriametrics_token"]; ok {
+		if err := json.Unmarshal(value, &cfg.HistoryVictoriaMetricsToken); err != nil {
+			return Server{}, errors.New("history_victoriametrics_token 必须是字符串")
+		}
+		delete(resolved, "history_victoriametrics_token")
 	}
 	data, err := json.Marshal(resolved)
 	if err != nil {
@@ -182,6 +193,13 @@ func LoadServer(opts LoadOptions) (Server, error) {
 		if err != nil {
 			return Server{}, err
 		}
+	}
+	if cfg.HistoryVictoriaMetricsURL != "" {
+		u, err := parseHTTPURL(cfg.HistoryVictoriaMetricsURL)
+		if err != nil {
+			return Server{}, fmt.Errorf("history_victoriametrics_url: %w", err)
+		}
+		cfg.HistoryVictoriaMetricsURL = strings.TrimRight(u.String(), "/")
 	}
 	return cfg, cfg.Validate()
 }
@@ -317,6 +335,13 @@ func ValidatePath(path string) error {
 }
 
 func (cfg Server) Validate() error {
+	if cfg.HistoryVictoriaMetricsURL != "" {
+		if _, err := parseHTTPURL(cfg.HistoryVictoriaMetricsURL); err != nil {
+			return fmt.Errorf("history_victoriametrics_url: %w", err)
+		}
+	} else if cfg.HistoryVictoriaMetricsToken != "" {
+		return errors.New("history_victoriametrics_token 需要 history_victoriametrics_url")
+	}
 	if _, _, err := net.SplitHostPort(cfg.ListenAddr); err != nil {
 		return fmt.Errorf("listen_addr: %w", err)
 	}
