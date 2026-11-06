@@ -54,6 +54,8 @@ jobs:
               printf '%s\n' "$release_assets" | grep -Fxq orbitbeacon-server-linux-arm64 && \
               printf '%s\n' "$release_assets" | grep -Fxq orbitbeacon-agent-linux-amd64 && \
               printf '%s\n' "$release_assets" | grep -Fxq orbitbeacon-agent-linux-arm64 && \
+              printf '%s\n' "$release_assets" | grep -Fxq orbitbeacon-mcp-linux-amd64 && \
+              printf '%s\n' "$release_assets" | grep -Fxq orbitbeacon-mcp-linux-arm64 && \
               printf '%s\n' "$release_assets" | grep -Fxq SHA256SUMS; then
               skip=true
               echo "版本 $VERSION 的镜像和 Release 资产已存在；跳过发布"
@@ -76,7 +78,7 @@ jobs:
           mkdir -p "$output_dir"
           build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           for arch in amd64 arm64; do
-            for kind in server agent; do
+            for kind in server agent mcp; do
               CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
                 go build -trimpath \
                 -ldflags "-s -w -X orbitbeacon/internal/buildinfo.Version=$VERSION -X orbitbeacon/internal/buildinfo.Commit=$GITHUB_SHA -X orbitbeacon/internal/buildinfo.BuildDate=$build_date" \
@@ -112,7 +114,7 @@ jobs:
         run: |
           set -eu
           tag="v$VERSION"
-          assets=("$RUNNER_TEMP/release/orbitbeacon-server-linux-amd64" "$RUNNER_TEMP/release/orbitbeacon-server-linux-arm64" "$RUNNER_TEMP/release/orbitbeacon-agent-linux-amd64" "$RUNNER_TEMP/release/orbitbeacon-agent-linux-arm64" "$RUNNER_TEMP/release/SHA256SUMS")
+          assets=("$RUNNER_TEMP/release/orbitbeacon-server-linux-amd64" "$RUNNER_TEMP/release/orbitbeacon-server-linux-arm64" "$RUNNER_TEMP/release/orbitbeacon-agent-linux-amd64" "$RUNNER_TEMP/release/orbitbeacon-agent-linux-arm64" "$RUNNER_TEMP/release/orbitbeacon-mcp-linux-amd64" "$RUNNER_TEMP/release/orbitbeacon-mcp-linux-arm64" "$RUNNER_TEMP/release/SHA256SUMS")
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release edit "$tag" --title "$VERSION"
             if [ "$SKIP_PUBLICATION" != 'true' ]; then

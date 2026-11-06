@@ -33,6 +33,7 @@ mkdir -p build "$HOME/orbitbeacon-demo"
 chmod 700 "$HOME/orbitbeacon-demo"
 go build -o build/orbitbeacon-server ./cmd/orbitbeacon-server
 go build -o build/orbitbeacon-agent ./cmd/orbitbeacon-agent
+go build -o build/orbitbeacon-mcp ./cmd/orbitbeacon-mcp
 ```
 
 ### 2. 启动
@@ -69,6 +70,7 @@ build/orbitbeacon-server health --url http://localhost:8080
 
 - [部署与配置、备份与恢复](deploy/README.md)
 - [Agent 安装、配置与排障](docs/agent.md)
+- [只读 MCP 客户端](docs/mcp.md)
 - [数据流、状态、保留与安全边界](docs/architecture.md)
 - [Web 开发](web/README.md)
 - [术语、日志与文案约定](docs/conventions.md)
@@ -88,7 +90,7 @@ go vet ./...
 go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 ```
 
-[CI](.github/workflows/ci.yml) 检查 Go、Web、漏洞及安装脚本；`main` push 全部通过后调用[发布流程](.github/workflows/release.yml)。Release 标题直接使用 [`VERSION`](VERSION)（如 `0.1.0`），Git 标签仍为 `v0.1.0`。直接上传 `orbitbeacon-<server|agent>-linux-<amd64|arm64>` 四个独立二进制及统一的 `SHA256SUMS`，文件名不重复版本号、不再打压缩包；镜像仍支持两种架构。手动下载后先核对校验和，再用 `chmod +x` 赋予执行权限。重跑同版本发布会在二进制上传成功后移除该版本原有的分架构压缩包。使用前确认目标版本已发布。
+[CI](.github/workflows/ci.yml) 检查 Go、Web、漏洞及安装脚本；`main` push 全部通过后调用[发布流程](.github/workflows/release.yml)。Release 标题直接使用 [`VERSION`](VERSION)（如 `0.1.0`），Git 标签仍为 `v0.1.0`。直接上传 `orbitbeacon-<server|agent|mcp>-linux-<amd64|arm64>` 六个独立二进制及统一的 `SHA256SUMS`，文件名不重复版本号、不再打压缩包；镜像仍支持两种架构。手动下载后先核对校验和，再用 `chmod +x` 赋予执行权限。重跑同版本发布会在二进制上传成功后移除该版本原有的分架构压缩包。使用前确认目标版本已发布。
 
 ## 许可证
 

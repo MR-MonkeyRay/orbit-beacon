@@ -16,6 +16,10 @@ const modulePath = "orbitbeacon"
 // allowedInternalImports 是仓库刻意保持精简的依赖图。每个 internal 包都必须
 // 列出来，新包才无法悄悄绕过边界审查。
 var allowedInternalImports = map[string]map[string]bool{
+	"orbitbeacon/cmd/orbitbeacon-mcp": {
+		"orbitbeacon/internal/buildinfo": true,
+		"orbitbeacon/internal/uuid":      true,
+	},
 	"orbitbeacon/internal/logging": {},
 	"orbitbeacon/internal/server/app": {
 		"orbitbeacon/internal/server/availability": true,
@@ -235,7 +239,7 @@ type packageJSON struct {
 
 func TestInternalDependencyBoundaries(t *testing.T) {
 	root := moduleRoot(t)
-	command := exec.Command("go", "list", "-json", "./internal/...")
+	command := exec.Command("go", "list", "-json", "./internal/...", "./cmd/orbitbeacon-mcp")
 	command.Dir = root
 	output, err := command.CombinedOutput()
 	if err != nil {
