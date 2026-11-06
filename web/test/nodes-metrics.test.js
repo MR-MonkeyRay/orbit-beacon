@@ -4,6 +4,7 @@ import {readConsoleFleet} from '../src/console/live.js';
 import {setSession} from '../src/console/api.js';
 import {createNodeRow} from '../src/console/lib/nodes-table.js';
 import {patchNodesFromFleet} from '../src/console/lib/nodes-live.js';
+import {createNumberTween} from '../src/shared/tween.js';
 import {formatPercent} from '../src/console/format.js';
 import {copy, installDOM} from './console-dom.js';
 import {frame, liveHarness, response} from './live-harness.js';
@@ -40,8 +41,8 @@ test('node metric cells patch in place without reload flags, selection or sort c
   const dom = installDOM();
   try {
     const item = node();
-    const state = {nodes: [item], filter: {sort: 'status', status: 'online'}, rowRefs: new Map(), deleted: new Set(), selected: new Set([item.id]), visibleIDs: new Set([item.id])};
-    const row = createNodeRow({node: item, query: '', selected: state.selected, deleted: state.deleted, groupNames: new Map(), rowRefs: state.rowRefs, onSelectionChange() {}});
+    const state = {nodes: [item], filter: {sort: 'status', status: 'online'}, rowRefs: new Map(), deleted: new Set(), selected: new Set([item.id]), visibleIDs: new Set([item.id]), tween: createNumberTween()};
+    const row = createNodeRow({node: item, query: '', selected: state.selected, deleted: state.deleted, groupNames: new Map(), rowRefs: state.rowRefs, onSelectionChange() {}, tween: state.tween});
     const refs = state.rowRefs.get(item.id);
     const children = [...row.children];
     const filter = {...state.filter};

@@ -1,6 +1,7 @@
 import {formatList, t, tParts} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h, icon} from '../../shared/dom.js';
+import {createNumberTween} from '../../shared/tween.js';
 import {allNodes, api, getNavigationSignal, groupsList, invalidate, nameLookup, usersList} from '../api.js';
 import {displayStatus, absoluteWhen, STATUS, STATUS_ORDER} from '../format.js';
 import {connectConsoleLive, readConsoleFleet} from '../live.js';
@@ -10,7 +11,9 @@ import {auditItem} from '../lib/audit-item.js';
 import {activeAlertsSummary} from './alert-events.js';
 import {toastError} from '../ui/feedback.js';
 
-function fleetPanel(nodes) {
+function fleetPanel(nodes, signal) {
+  const tween = createNumberTween({signal});
+  const formatTotal = (value) => String(Math.round(value));
   const total = h('strong', {class: 'num'});
   const label = h('span');
   const bar = h('div', {class: 'fleet-bar', role: 'img'});
@@ -30,7 +33,7 @@ function fleetPanel(nodes) {
   element.snapshot = (current) => {
     const counts = Object.fromEntries(states.map((status) => [status, 0]));
     for (const node of current) counts[displayStatus(node)] = (counts[displayStatus(node)] || 0) + 1;
-    total.textContent = current.length;
+    tween.set(total, current.length, formatTotal);
     label.textContent = t('nodes.inventoryCount', {count: current.length});
     content.hidden = current.length === 0;
     empty.hidden = current.length !== 0;
@@ -96,9 +99,12 @@ function groupsPanel(nodes, groups) {
   const sizes = groups.map((group) => [group, nodes.filter((node) => node.group_id === group.id).length]).sort((a, b) => b[1] - a[1]).slice(0, 8);
   const ungrouped = nodes.filter((node) => !node.group_id).length;
   const max = Math.max(1, ungrouped, ...sizes.map(([, size]) => size));
-  const row = (label, size, href, index) => h('div', {class: 'meter-row'},
-    link(href, label), h('span', {class: 'num muted'}, size),
-    h('div', {class: 'bar'}, h('i', {style: `width:${size / max * 100}%;animation-delay:${index * 50}ms`})));
+  const row = (label, size, href, index) => {
+    const fill = h('i');
+    fill.style.width = `${size / max * 100}%`;
+    fill.style.animationDelay = `${index * 50}ms`;
+    return h('div', {class: 'meter-row'}, link(href, label), h('span', {class: 'num muted'}, size), h('div', {class: 'bar'}, fill));
+  };
   return panel(t('nodes.groups'), {action: link('/settings#groups', t('nodes.manageGroups'))},
     sizes.map(([group, size], index) => row(group.name, size, `/nodes?group=${group.id}`, index)),
     row(t('nodes.ungrouped'), ungrouped, '/nodes?group=none', sizes.length));
@@ -116,7 +122,7 @@ export async function overviewPage() {
     audit.events.length ? h('ol', {class: 'timeline'}, audit.events.map((event) => auditItem(event, names, false)))
       : h('p', {class: 'text-note'}, t('nodes.activityEmpty')));
   const connection = liveStatus();
-  const fleet = fleetPanel(nodes);
+  const fleet = fleetPanel(nodes, signal);
   const newest = newestPanel(nodes, new Map(groups.map((group) => [group.id, group.name])));
   let known = new Set(nodes.map((node) => node.id));
   let metadata = nodes;

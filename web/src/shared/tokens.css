@@ -378,6 +378,10 @@ button,input,select,textarea {
 }
 
 @media (prefers-reduced-motion:reduce) {
+  .sk::after {
+    animation: none;
+  }
+
   *,*::before,*::after,::view-transition-group(*),::view-transition-old(*),::view-transition-new(*) {
     animation-duration: var(--duration-reduced-motion)!important;
     animation-iteration-count: 1!important;

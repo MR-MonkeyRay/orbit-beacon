@@ -1,5 +1,6 @@
 import {t} from '../i18n.js';
 import {h, icon, reducedMotion} from '../../shared/dom.js';
+import {createNumberTween} from '../../shared/tween.js';
 import {allNodes, getNavigationSignal, groupsList, invalidate} from '../api.js';
 import {displayStatus, STATUS, STATUS_ORDER} from '../format.js';
 import {connectConsoleLive, readConsoleFleet} from '../live.js';
@@ -9,12 +10,13 @@ import {input, select} from '../ui/forms.js';
 import {runNodeBatch} from '../lib/nodes-bulk.js';
 import {NODE_PAGE_SIZE, nodeSortDirection, readNodeFilter, scopedNodes, sortedNodes, writeNodeFilter} from '../lib/nodes-filters.js';
 import {patchNodesFromFleet} from '../lib/nodes-live.js';
-import {createNodeRow, patchNodeSortHeaders} from '../lib/nodes-table.js';
+import {createNodeRow, fadeNodeRow, patchNodeSortHeaders} from '../lib/nodes-table.js';
 import {addNodeButton} from '../lib/add-node-dialog.js';
 
 export async function nodesPage() {
   const signal = getNavigationSignal();
   const [nodes, groups] = await Promise.all([allNodes(), groupsList()]);
+  const tween = createNumberTween({signal});
   const connection = liveStatus();
   const head = pageHead(t('nodes.listTitle'), null, connection.element, addNodeButton());
 
@@ -68,7 +70,7 @@ export async function nodesPage() {
     filter.page += delta;
     update();
     if (restoreFocus && control.disabled) (delta < 0 ? next : previous).focus();
-    window.scrollTo({top: 0, behavior: reducedMotion.matches ? 'auto' : 'smooth'});
+    window.scrollTo({top: 0, behavior: reducedMotion.matches ? 'instant' : 'smooth'});
   };
   const previous = button(t('nodes.previous'), {icon: 'left', small: true, onClick: () => turn(-1)});
   const next = button(t('nodes.next'), {trailingIcon: 'right', small: true, onClick: () => turn(1)});
@@ -109,7 +111,7 @@ export async function nodesPage() {
     updateSelection();
   });
 
-  const row = (node, query) => createNodeRow({node, query, selected, deleted, groupNames, rowRefs, onSelectionChange: updateSelection});
+  const row = (node, query) => createNodeRow({node, query, selected, deleted, groupNames, rowRefs, onSelectionChange: updateSelection, tween});
 
   function patchCounts(scoped = scopedNodes(indexed, filter)) {
     const counts = {'': 0};
@@ -142,11 +144,14 @@ export async function nodesPage() {
     visibleIDs = new Set(visible.filter((node) => !deleted.has(node.id)).map((node) => node.id));
     const existing = new Set(nodes.filter((node) => !deleted.has(node.id)).map((node) => node.id));
     for (const id of selected) if (!existing.has(id)) selected.delete(id);
+    const shown = new Set(rowRefs.keys());
     rowRefs.clear();
     body.replaceChildren(...(visible.length ? visible.map((node) => row(node, query))
       : [h('tr', null, h('td', {colspan: 9}, nodes.length
         ? emptyState(t('nodes.noMatch'), null, button(t('nodes.clearFilters'), {onClick: clear}))
         : emptyState(t('nodes.empty'), null, addNodeButton())))]));
+    // 搜索和排序会重建表格；只有新进入的行淡入，留在表里的行不闪。
+    if (shown.size) for (const [id, refs] of rowRefs) if (!shown.has(id)) fadeNodeRow(refs);
     updateSelection();
     const summaryText = rows.length === 0 ? t('nodes.noMatching')
       : t(rows.length !== nodes.length ? 'nodes.showingFiltered' : 'nodes.showing', {start: start + 1, end: start + visible.length, count: rows.length, total: nodes.length});
@@ -231,7 +236,7 @@ export async function nodesPage() {
     h('div', {class: 'table-foot'}, summary, pager, changes), actionBar);
   update();
   function patchFleet(data) {
-    const changes = patchNodesFromFleet(data, {nodes, filter, rowRefs, deleted, selected, visibleIDs});
+    const changes = patchNodesFromFleet(data, {nodes, filter, rowRefs, deleted, selected, visibleIDs, tween});
     inventoryChanged ||= changes.inventoryChanged;
     statusChanged ||= changes.statusChanged;
     selectionRemoved ||= changes.selectionRemoved;
@@ -241,6 +246,10 @@ export async function nodesPage() {
   }
   const subscribe = () => connectConsoleLive({signal, onState: connection.update, onSnapshot: patchFleet});
   live = subscribe();
-  signal?.addEventListener('abort', () => { cancelAnimationFrame(frame); clearTimeout(summaryTimer); }, {once: true});
+  signal?.addEventListener('abort', () => {
+    cancelAnimationFrame(frame);
+    clearTimeout(summaryTimer);
+    for (const refs of rowRefs.values()) refs.animation?.cancel();
+  }, {once: true});
   return h('div', null, head, table);
 }

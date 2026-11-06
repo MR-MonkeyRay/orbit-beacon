@@ -239,3 +239,18 @@ test('locale confirmation includes dialog drafts and uses one prompt for a dirty
     dialog.close('done');
   } finally { env.clean(); }
 });
+
+
+test('reduced motion navigates without view transitions and restores scroll instantly', async (t) => {
+  const env = await routing(t);
+  try {
+    Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => true});
+    const count = env.transitions.length;
+    const scrolls = [];
+    env.window.scrollTo = (options) => scrolls.push(options);
+    await env.go('/reduced');
+    assert.equal(env.transitions.length, count);
+    assert.equal(document.getElementById('view').textContent, '/reduced');
+    assert.deepEqual(scrolls, [{top: 0, behavior: 'instant'}]);
+  } finally { env.clean(); }
+});

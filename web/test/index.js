@@ -65,3 +65,5 @@ import './combobox.test.js';
 import './command-palette.test.js';
 
 import './console-mobile.test.js';
+
+import './tween.test.js';

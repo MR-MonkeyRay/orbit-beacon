@@ -125,7 +125,7 @@ async function render(options = {}) {
     if (document.activeElement !== target) view.querySelector('h1')?.focus({preventScroll: true});
     return;
   }
-  if (options.scroll !== undefined) window.scrollTo(0, options.scroll);
+  if (options.scroll !== undefined) window.scrollTo({top: options.scroll, behavior: 'instant'});
   const target = view.querySelector('[data-autofocus]') || view.querySelector('h1');
   if (target) target.focus({preventScroll: true});
 }
@@ -208,7 +208,7 @@ export function startRouter(table) {
     if (hasUnsavedChanges() && !(await confirmDiscard())) {
       if (attempt !== intent) return;
       history.pushState({scroll}, '', previousURL);
-      window.scrollTo(0, scroll);
+      window.scrollTo({top: scroll, behavior: 'instant'});
       return;
     }
     if (attempt === intent) void render({scroll: (event.state && event.state.scroll) || 0}).catch(ignoreNavigationCancellation);

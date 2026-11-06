@@ -26,6 +26,7 @@ export class TestElement extends EventTarget {
     this.id = '';
     this.className = '';
     this.style = {};
+    this.animations = [];
     this.value = '';
     this.type = tagName === 'input' ? 'text' : '';
     this.name = '';
@@ -35,6 +36,11 @@ export class TestElement extends EventTarget {
     this.open = false;
     this.classList = {add: (name) => { this.className += ` ${name}`; }, remove: (name) => { this.className = this.className.split(' ').filter((item) => item !== name).join(' '); },
       contains: (name) => this.className.split(' ').includes(name), toggle: (name, value) => value ? this.classList.add(name) : this.classList.remove(name)};
+  }
+  animate(keyframes, options) {
+    const animation = {keyframes, options, cancelled: false, cancel() { this.cancelled = true; }};
+    this.animations.push(animation);
+    return animation;
   }
   append(...children) {
     for (let child of children) {
@@ -122,7 +128,7 @@ export function installDOM() {
     createElement: (tag) => new TestElement(tag), createElementNS: (_ns, tag) => new TestElement(tag),
     getElementById: (id) => elements(body).find((element) => element.id === id) || null,
     querySelector: (selector) => body.querySelector(selector), querySelectorAll: (selector) => body.querySelectorAll(selector), documentElement: new TestElement('html')});
-  const values = {CSS: {escape: (value) => value}, Node: TestElement, document, localStorage: {getItem: () => '24h', setItem() {}},
+  const values = {getComputedStyle: () => ({getPropertyValue: (key) => ({'--motion-normal': '.25s', '--motion-fast': '.15s', '--ease-default': 'ease', '--ease-linear': 'linear'})[key] || ''}), CSS: {escape: (value) => value}, Node: TestElement, document, localStorage: {getItem: () => '24h', setItem() {}},
     location: {pathname: '/alerts', search: '', hash: ''},
     MutationObserver: class {
       constructor(callback) { this.callback = callback; }

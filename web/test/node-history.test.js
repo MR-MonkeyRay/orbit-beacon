@@ -296,3 +296,29 @@ test('optional host charts hide empty data, keep rendered charts while loading, 
     for (const id of ids.filter((id) => id !== 'temperature_celsius')) assert.equal(charts.querySelector(`#history-chart-${id}`), null);
   } finally { env.cleanup(); }
 });
+
+
+test('range switch retains the exact old charts and focus while busy, then replaces with new data or errors', async () => {
+  const env = setup();
+  try {
+    env.requests.forEach((request) => env.respond(request, 200, [{t: '2026-11-05T12:00:00Z', avg: 25, max: 50}]));
+    await flush();
+    const charts = env.root.querySelector('.history-grid');
+    const rendered = [...charts.children];
+    const cpu = charts.querySelector('#history-chart-cpu_percent');
+    cpu.focus();
+    env.root.querySelector('#history-range-1h').click();
+    assert.equal(charts.getAttribute('aria-busy'), 'true');
+    assert.deepEqual(charts.children, rendered);
+    assert.equal(env.document.activeElement, cpu);
+    env.respond(env.requests[14], 503);
+    await flush();
+    assert.deepEqual(charts.children, rendered, 'one response cannot clear the still-loading grid');
+    env.requests.slice(15).forEach((request) => env.respond(request, 200, [{t: '2026-11-05T12:00:00Z', avg: 50, max: 60}]));
+    await flush();
+    assert.equal(charts.getAttribute('aria-busy'), 'false');
+    assert.notEqual(charts.children[0], rendered[0]);
+    assert.ok(charts.querySelector('#history-retry-cpu_percent'));
+    assert.match(env.root.textContent, copyPattern('nodes.historyPartial'));
+  } finally { env.cleanup(); }
+});

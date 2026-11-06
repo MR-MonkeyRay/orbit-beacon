@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {reducedMotion} from '../src/shared/dom.js';
+import {metricText} from '../src/console/lib/nodes-table.js';
 import {invalidate, setNavigationSignal, setSession} from '../src/console/api.js';
 import {copy, copyPattern, elements, flush} from './console-dom.js';
 import {frame, liveHarness, response, stream} from './live-harness.js';
@@ -68,8 +70,11 @@ async function setup(t, {page = 'nodes', hash = '#monitor', count = 2, search = 
     if (path.endsWith('/probes')) return response({probes: []});
     return response({message: `Unexpected request ${request.url}`}, {status: 503});
   });
-  globalThis.requestAnimationFrame = (callback) => { callback(); return 0; };
-  globalThis.cancelAnimationFrame = () => {};
+  const frames = new Map();
+  let frameID = 0;
+  globalThis.requestAnimationFrame = (callback) => { frames.set(++frameID, callback); return frameID; };
+  globalThis.cancelAnimationFrame = (id) => frames.delete(id);
+  const renderFrame = (time = performance.now()) => { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach((callback) => callback(time)); };
   globalThis.matchMedia = () => ({matches: false, addEventListener() {}});
   env.window.scrollTo = () => {};
   Object.assign(location, {pathname: page === 'node' ? `/nodes/${id(1)}` : `/${page}`, search, hash, href: `https://example.test/${page}`});
@@ -88,7 +93,7 @@ async function setup(t, {page = 'nodes', hash = '#monitor', count = 2, search = 
     if (current.readyState === 0) current.open();
     current.message(frame('snapshot', {server_time: new Date(Date.parse(reported) + seconds * 1000).toISOString(), data}));
   };
-  return {...env, root, scope, socket, send, fallback, inventory,
+  return {...env, root, scope, socket, send, fallback, inventory, frames, renderFrame,
     replaceInventory(value) { inventory = value; serverFleet = value.map(compact); },
     setServerFleet(value) { serverFleet = value.map(compact); },
     deferInventory() { nextInventory = {}; return nextInventory; },
@@ -700,6 +705,7 @@ test('node list live metrics preserve rows and selection without inventory reloa
   const query = location.search;
   for (const value of [0, 42, 100, null]) {
     env.send({nodes: env.inventory.map((item) => ({...compact(item), cpu_percent: value, memory_used_percent: value}))});
+    env.renderFrame(performance.now() + 250);
     await flush();
     assert.deepEqual(env.root.querySelector('tbody').children, rows);
     assert.equal(rows[0].children[3].textContent, value === null ? '—' : `${value}%`);
@@ -708,5 +714,112 @@ test('node list live metrics preserve rows and selection without inventory reloa
     assert.equal(location.search, query);
     assert.equal(env.requests.length, requests);
     assert.equal(button(env.root, copy('nodes.applyFilters')).parentElement.hidden, true);
+  }
+});
+
+
+test('overview total retargets its displayed count and navigation abort clears its frame', async (t) => {
+  const descriptor = Object.getOwnPropertyDescriptor(reducedMotion, 'matches');
+  Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => false});
+  t.after(() => Object.defineProperty(reducedMotion, 'matches', descriptor));
+  const env = await setup(t, {page: 'overview'});
+  const groupFills = env.root.querySelectorAll('.meter-row').map((row) => row.querySelector('i'));
+  assert.ok(groupFills.length > 0);
+  assert.ok(groupFills.every((fill) => !fill.hasAttribute('style') && fill.style.width.endsWith('%') && fill.style.animationDelay.endsWith('ms')));
+  const total = env.root.querySelector('.fleet-total').querySelector('strong');
+  assert.equal(total.textContent, '2');
+  env.send({nodes: [1, 2, 3, 4, 5, 6].map((id) => compact(node(id)))});
+  assert.equal(total.textContent, '2');
+  env.renderFrame(performance.now() + 125);
+  assert.equal(total.textContent, '4');
+  env.send({nodes: env.inventory.map(compact)});
+  assert.equal(total.textContent, '4');
+  env.renderFrame(performance.now() + 250);
+  assert.equal(total.textContent, '2');
+  env.send({nodes: [compact(node(1))]});
+  assert.equal(env.frames.size, 1);
+  env.scope.abort();
+  assert.equal(env.frames.size, 0);
+  assert.equal(total.textContent, '1');
+});
+
+test('node metric tweens start from the original numeric cells and stop on tombstoning', async (t) => {
+  const descriptor = Object.getOwnPropertyDescriptor(reducedMotion, 'matches');
+  Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => false});
+  t.after(() => Object.defineProperty(reducedMotion, 'matches', descriptor));
+  const env = await setup(t);
+  const row = env.root.querySelector('tbody').children[0];
+  const cpu = row.children[3]; const memory = row.children[4];
+  env.send({nodes: env.inventory.map((item) => ({...compact(item), cpu_percent: 10, memory_used_percent: 20}))});
+  env.send({nodes: env.inventory.map((item) => ({...compact(item), cpu_percent: 30, memory_used_percent: 80}))});
+  assert.equal(cpu.textContent, metricText(10));
+  env.renderFrame(performance.now() + 125);
+  assert.equal(cpu.textContent, metricText(20));
+  assert.equal(memory.textContent, metricText(50));
+  env.send({nodes: []});
+  assert.equal(cpu.textContent, metricText(30));
+  assert.equal(memory.textContent, metricText(80));
+  assert.equal(env.frames.size, 0);
+  assert.equal(env.root.querySelector('tbody').children[0], row);
+});
+
+test('tombstones fade once without moving focus or selection and the first render stays still', async (t) => {
+  const descriptor = Object.getOwnPropertyDescriptor(reducedMotion, 'matches');
+  Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => false});
+  t.after(() => Object.defineProperty(reducedMotion, 'matches', descriptor));
+  const env = await setup(t);
+  const rows = [...env.root.querySelector('tbody').children];
+  assert.ok(rows.every((row) => row.animations.length === 0));
+  const boxes = env.root.querySelectorAll('input[data-node-id]');
+  boxes[1].checked = true; boxes[1].dispatchEvent(new Event('change')); boxes[1].focus();
+  env.send({nodes: [compact(env.inventory[1]), compact(node(3))]});
+  assert.equal(rows[0].animations.length, 1);
+  assert.deepEqual(rows[0].animations[0].keyframes, [{opacity: 0}, {opacity: 1}]);
+  assert.deepEqual(rows[0].animations[0].options, {duration: 150, easing: 'ease'});
+  assert.equal(boxes[0].disabled, true);
+  assert.equal(boxes[1].checked, true);
+  assert.equal(env.document.activeElement, boxes[1]);
+  assert.deepEqual(env.root.querySelector('tbody').children, rows);
+  env.send({nodes: [compact(env.inventory[1]), compact(node(3))]});
+  assert.equal(rows[0].animations.length, 1);
+  env.scope.abort();
+  assert.ok(rows[0].animations.every((animation) => animation.cancelled));
+});
+
+test('rebuilding the table fades only rows that were not already shown', async (t) => {
+  const descriptor = Object.getOwnPropertyDescriptor(reducedMotion, 'matches');
+  Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => false});
+  t.after(() => Object.defineProperty(reducedMotion, 'matches', descriptor));
+  const env = await setup(t, {count: 55});
+  const faded = () => Object.fromEntries(env.root.querySelector('tbody').children
+    .map((row) => [row.querySelector('input').dataset.nodeId, row.animations.length]));
+  const sort = env.root.querySelectorAll('th').find((item) => item.dataset.sort === 'name').querySelector('button');
+  sort.click();
+  assert.ok(Object.values(faded()).every((count) => count === 0));
+  const before = new Set(Object.keys(faded()));
+  button(env.root, copy('nodes.next')).click();
+  const after = faded();
+  assert.ok(Object.keys(after).length > 0);
+  for (const [nodeID, count] of Object.entries(after)) assert.equal(count, before.has(nodeID) ? 0 : 1);
+});
+
+for (const hidden of [false, true]) test(`list fades respect ${hidden ? 'hidden document' : 'reduced motion'} and paging respects motion preference`, async (t) => {
+  const descriptor = Object.getOwnPropertyDescriptor(reducedMotion, 'matches');
+  Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => !hidden});
+  t.after(() => Object.defineProperty(reducedMotion, 'matches', descriptor));
+  const env = await setup(t, {count: 55});
+  env.document.hidden = hidden;
+  const rows = [...env.root.querySelector('tbody').children];
+  const counts = rows.map((row) => row.animations.length);
+  // Hidden pages cannot receive live snapshots; exercise the same tombstone path directly.
+  const {tombstoneNodeRow} = await import('../src/console/lib/nodes-table.js');
+  const row = rows[0];
+  tombstoneNodeRow({element: row, checkbox: row.querySelector('input'), name: row.querySelector('a'), badge: row.querySelector('.badge')});
+  assert.equal(row.animations.length, counts[0]);
+  if (!hidden) {
+    assert.ok(rows.every((row) => row.animations.length === 0));
+    const scrolls = []; env.window.scrollTo = (value) => scrolls.push(value);
+    button(env.root, copy('nodes.next')).click();
+    assert.deepEqual(scrolls, [{top: 0, behavior: 'instant'}]);
   }
 });

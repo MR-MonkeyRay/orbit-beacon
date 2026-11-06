@@ -1,5 +1,6 @@
 import {formatList, t} from '../i18n.js';
-import {h} from '../../shared/dom.js';
+import {h, reducedMotion} from '../../shared/dom.js';
+import {motionTiming} from '../../shared/motion.js';
 import {displayStatus, absoluteWhen, when, formatPercent} from '../format.js';
 import {link, patchStatusBadge, statusBadge} from '../ui/components.js';
 
@@ -12,7 +13,14 @@ export function highlightNodeMatch(value, query) {
 // 离线节点很多时，整列“不可用”比占位符更吵。
 export const metricText = (value) => Number.isFinite(value) ? formatPercent(value) : '—';
 
+export function fadeNodeRow(refs) {
+  refs.animation?.cancel();
+  if (reducedMotion.matches || document.hidden) return;
+  refs.animation = refs.element.animate([{opacity: 0}, {opacity: 1}], motionTiming('--motion-fast', '--ease-default'));
+}
+
 export function tombstoneNodeRow(refs) {
+  const changed = !refs.element.classList.contains('node-deleted');
   refs.element.classList.add('node-deleted');
   patchStatusBadge(refs.badge, 'deleted');
   refs.checkbox.checked = false;
@@ -21,9 +29,10 @@ export function tombstoneNodeRow(refs) {
   delete refs.name.dataset.link;
   refs.name.setAttribute('aria-disabled', 'true');
   refs.name.setAttribute('tabindex', '-1');
+  if (changed && refs.element.isConnected) fadeNodeRow(refs);
 }
 
-export function createNodeRow({node, query, selected, deleted, groupNames, rowRefs, onSelectionChange}) {
+export function createNodeRow({node, query, selected, deleted, groupNames, rowRefs, onSelectionChange, tween}) {
   const checkbox = h('input', {type: 'checkbox', checked: selected.has(node.id), disabled: deleted.has(node.id),
     dataset: {nodeId: node.id}, 'aria-label': t('nodes.selectNode', {name: node.name}), onchange: (event) => {
       if (deleted.has(node.id)) return;
@@ -44,6 +53,8 @@ export function createNodeRow({node, query, selected, deleted, groupNames, rowRe
     h('td', {class: 'hide-compact'}, h('div', {class: 'cell-tags'}, node.tags.slice(0, 3).map((tag) => h('span', {class: 'tag static'}, tag)),
       node.tags.length > 3 ? h('span', {class: 'muted'}, `+${node.tags.length - 3}`) : null)),
     h('td', {class: 'hide-compact muted'}, when(node.created_at)));
+  tween.set(cpu, node.cpu_percent, metricText);
+  tween.set(memory, node.memory_used_percent, metricText);
   const refs = {element, checkbox, name, badge, lastSeen, cpu, memory, version};
   rowRefs.set(node.id, refs);
   if (deleted.has(node.id)) tombstoneNodeRow(refs);

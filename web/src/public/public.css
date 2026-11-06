@@ -202,12 +202,6 @@
   }
 }
 
-@media (prefers-reduced-motion:reduce) {
-  .countdown[data-state="live"] .dot,.countdown.running .arc {
-    animation: none;
-  }
-}
-
 .refresh,.retry,.pagination button,.filters button {
   display: inline-flex;
   align-items: center;
@@ -825,3 +819,17 @@ footer {
 .public-announcement h2 { font-size: var(--fs-lg); }
 .public-announcement .announcement-level { color: var(--ink-subtle); }
 .public-announcement .announcement-body { white-space: pre-line; }
+
+/* 静止在基础状态，避免无限动画被全局规则压缩成一次闪烁。
+   加载仍由 aria-busy、骨架屏和现有连接状态文字表达。 */
+@media (prefers-reduced-motion:reduce) {
+  .countdown[data-state="live"] .dot,.countdown.running .arc,
+  .refresh.loading .icon,.orbits .ring,.orbits .sat,.orbits .halo,
+  .node.enter,.card.changed {
+    animation: none;
+  }
+
+  .orbits .halo {
+    opacity: 0;
+  }
+}

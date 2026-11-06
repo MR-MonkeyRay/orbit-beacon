@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
+import {reducedMotion} from '../src/shared/dom.js';
 import {copy, flush, TestElement} from './console-dom.js';
 import {frame, liveHarness, response, stream} from './live-harness.js';
 
@@ -237,4 +238,27 @@ test('public gauges clear both ARIA values when a metric becomes missing', async
   socket.message(snapshot(data));
   assert.equal(meter.getAttribute('aria-valuenow'), null);
   assert.equal(meter.getAttribute('aria-valuetext'), null);
+});
+
+
+test('reduced-motion HTTP refresh and loading state work without any animation completion events', async (t) => {
+  const descriptor = Object.getOwnPropertyDescriptor(reducedMotion, 'matches');
+  Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => true});
+  t.after(() => Object.defineProperty(reducedMotion, 'matches', descriptor));
+  let release;
+  const ui = await setup(t, (request) => request.url.includes('/stream?') ? response({}, {status: 503})
+    : new Promise((resolve) => { release = () => resolve(response(snapshot(payload(), 10))); }));
+  assert.equal(ui.elements.refresh.getAttribute('aria-busy'), 'true');
+  assert.equal(ui.elements.announcement.textContent, copy('public.loading'));
+  ui.sockets[0].fail(); await flush();
+  release(); await flush();
+  assert.equal(ui.elements.refresh.hasAttribute('aria-busy'), false);
+  assert.equal(ui.elements.nodes.children.length, 1);
+  assert.match(ui.elements.updated.textContent, /10/);
+  await ui.advance(5000);
+  assert.match(ui.elements.updated.textContent, /5/);
+  await ui.advance(5000);
+  assert.equal(ui.requests.length, 3, 'next HTTP poll is independent of CSS animationend');
+  release(); await flush();
+  assert.equal(ui.elements.refresh.hasAttribute('aria-busy'), false);
 });

@@ -4,7 +4,7 @@ import {patchStatusBadge} from '../ui/components.js';
 import {metricText, tombstoneNodeRow} from './nodes-table.js';
 
 export function patchNodesFromFleet(data, state) {
-  const {nodes, filter, rowRefs, deleted, selected, visibleIDs} = state;
+  const {nodes, filter, rowRefs, deleted, selected, visibleIDs, tween} = state;
   const current = new Map(data.nodes.map((node) => [node.id, node]));
   const known = new Set(nodes.map((node) => node.id));
   let inventoryChanged = data.nodes.some((node) => !known.has(node.id));
@@ -18,7 +18,11 @@ export function patchNodesFromFleet(data, state) {
       inventoryChanged = true;
       if (selected.delete(node.id)) selectionRemoved = true;
       visibleIDs.delete(node.id);
-      if (refs) tombstoneNodeRow(refs);
+      if (refs) {
+        tween.finish(refs.cpu);
+        tween.finish(refs.memory);
+        tombstoneNodeRow(refs);
+      }
       continue;
     }
     if (deleted.has(node.id)) continue;
@@ -28,8 +32,8 @@ export function patchNodesFromFleet(data, state) {
     Object.assign(node, fresh, {cpu_percent: fresh.cpu_percent ?? null, memory_used_percent: fresh.memory_used_percent ?? null});
     if (refs) {
       patchStatusBadge(refs.badge, displayStatus(node));
-      refs.cpu.textContent = metricText(node.cpu_percent);
-      refs.memory.textContent = metricText(node.memory_used_percent);
+      tween.set(refs.cpu, node.cpu_percent, metricText);
+      tween.set(refs.memory, node.memory_used_percent, metricText);
       refs.version.textContent = node.agent_version;
       if (seenChanged) refs.lastSeen.replaceChildren(node.last_seen ? absoluteWhen(node.last_seen) : t('nodes.never'));
     }
