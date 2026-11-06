@@ -1,4 +1,6 @@
 export default {
+  'common.status.stopped': 'Stopped',
+
   'common.refresh': 'Refresh',
   'common.retry': 'Retry',
   'common.status.online': 'Online',

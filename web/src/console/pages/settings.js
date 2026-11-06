@@ -14,6 +14,7 @@ import {tabSet} from '../ui/tabs.js';
 import {issueEnrollment} from './enrollments.js';
 import {auditItem} from '../lib/audit-item.js';
 import {dataOperationsTab} from './data-operations.js';
+import {groupCommandActions} from '../lib/group-commands.js';
 import {showTask} from './backup-task.js';
 
 export async function settingsPage() {
@@ -315,7 +316,7 @@ function groupsTab(groups, nodes) {
       enrollment.addEventListener('click', () => batchEnrollment(item, enrollment));
       return h('li', null, icon('folder', 'muted'),
         h('div', {class: 'grow'}, h('div', {class: 'title'}, item.name), h('div', {class: 'sub'}, link(`/nodes?group=${item.id}`, t('settings.nodeCount', {count: size})))),
-        [enrollment, iconButton('edit', t('settings.renameName', {name: item.name}), () => groupForm(item)), iconButton('trash', t('settings.deleteName', {name: item.name}), () => deleteGroup(item, size))]);
+        [enrollment, ...groupCommandActions(item), iconButton('edit', t('settings.renameName', {name: item.name}), () => groupForm(item)), iconButton('trash', t('settings.deleteName', {name: item.name}), () => deleteGroup(item, size))]);
     })));
 }
 

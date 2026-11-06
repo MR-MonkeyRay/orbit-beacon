@@ -11,6 +11,7 @@ const number = (value) => typeof value === 'number' && Number.isFinite(value) &&
 const nullableNumber = (value) => value === null || number(value);
 const status = (value) => record(value) && uuid.test(value.id) && ['pending', 'online', 'offline', 'unknown', 'disabled'].includes(value.status)
   && ['pending', 'never', 'online', 'offline', 'disabled'].includes(value.presence)
+  && typeof value.stopped === 'boolean'
   && (value.last_seen === null || time(value.last_seen)) && typeof value.agent_version === 'string';
 const runtime = (value) => value === null || record(value) && Number.isInteger(value.report_interval_seconds)
   && value.report_interval_seconds >= 5 && value.report_interval_seconds <= 60

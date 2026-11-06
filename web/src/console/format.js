@@ -3,10 +3,15 @@ import {statusLabels} from '../shared/status.js';
 import {h} from '../shared/dom.js';
 import {formatLoadNumber} from '../shared/format.js';
 
-export const STATUS = statusLabels();
-export const STATUS_ORDER = ['online', 'offline', 'never', 'pending', 'disabled'];
+export const STATUS = {...statusLabels(), stopped: t('common.status.stopped')};
+export const displayStatus = (node) => node.stopped ? 'stopped' : node.presence;
+export const STATUS_ORDER = ['online', 'offline', 'never', 'pending', 'disabled', 'stopped'];
 
 const ACTIONS = {
+  'command.create': t('audit.commandCreate'), 'command.bulk': t('audit.commandBulk'),
+  'command.succeeded': t('audit.commandSucceeded'),
+  'command.failed': t('audit.commandFailed'), 'command.rejected': t('audit.commandRejected'),
+  'command.expired': t('audit.commandExpired'), 'command.canceled': t('audit.commandCanceled'),
   'node.create': t('audit.nodeCreate'), 'node.delete': t('audit.nodeDelete'), 'node.disable': t('audit.nodeDisable'), 'node.enable': t('audit.nodeEnable'),
   'node.metadata.patch': t('audit.nodeMetadata'), 'node.config.patch': t('audit.nodeConfig'),
   'node.traffic_settings.patch': t('audit.nodeTraffic'),

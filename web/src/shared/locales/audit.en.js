@@ -1,4 +1,12 @@
 export default {
+  'audit.commandCreate': 'Command created',
+  'audit.commandBulk': 'Group commands issued',
+  'audit.commandSucceeded': 'Command succeeded',
+  'audit.commandFailed': 'Command failed',
+  'audit.commandRejected': 'Command rejected',
+  'audit.commandExpired': 'Command expired',
+  'audit.commandCanceled': 'Command canceled',
+
   'audit.nodeCreate': 'Node created',
   'audit.nodeDelete': 'Node deleted',
   'audit.nodeDisable': 'Node disabled',

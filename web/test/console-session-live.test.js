@@ -10,7 +10,7 @@ const user = {id: '00000000-0000-4000-8000-000000000001', username: 'administrat
 let fixtureProof = '';
 const proof = (extra = {}) => ({user, csrf_token: fixtureProof, expires_at: '2026-10-28T00:10:00Z', ...extra});
 const me = (value = proof(), time = 'Wed, 28 Oct 2026 00:00:00 GMT') => response(value, {headers: {Date: time}});
-const fleet = () => frame('snapshot', {data: {nodes: [{id: user.id, status: 'unknown', presence: 'offline', last_seen: '2026-10-27T23:59:00Z', agent_version: 'test'}]}});
+const fleet = () => frame('snapshot', {data: {nodes: [{id: user.id, status: 'unknown', stopped: false, presence: 'offline', last_seen: '2026-10-27T23:59:00Z', agent_version: 'test'}]}});
 function setup(t, respond) {
   fixtureProof = `session:${t.name}`;
   const env = liveHarness(t, respond);

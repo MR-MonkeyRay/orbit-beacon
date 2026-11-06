@@ -11,6 +11,10 @@ import audit from './audit.en.js';
 import notifications from './notifications.en.js';
 
 export default {
+  'errors.command_not_allowed': 'Command not allowed',
+  'errors.command_active': 'A command is active',
+  'errors.node_unavailable': 'Node unavailable',
+
   ...common, ...controls, ...publicPage, ...alerts, ...data, ...shell, ...nodes, ...settings, ...account, ...audit, ...notifications,
   'errors.unauthenticated': 'Sign in again to continue.',
   'errors.forbidden': 'This request is not allowed.',

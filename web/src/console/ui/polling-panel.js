@@ -1,4 +1,4 @@
-export function panelLifecycle({root, signal, load, cancel, poll = true, resume = true, loadWhenHidden = false, interval = 60000}) {
+export function panelLifecycle({root, signal, load, cancel, poll = true, shouldPoll = () => true, resume = true, loadWhenHidden = false, interval = 60000}) {
   let disposed = false;
   let attached = false;
   let active = false;
@@ -13,11 +13,17 @@ export function panelLifecycle({root, signal, load, cancel, poll = true, resume 
   const start = (resuming = false) => {
     if (disposed || signal?.aborted) return;
     active = true;
-    if (poll) timer = setInterval(() => {
+    syncPolling();
+    if (!resuming || loadWhenHidden || !document.hidden) load();
+  };
+  const syncPolling = () => {
+    if (!active || disposed || signal?.aborted) return;
+    if (!shouldPoll()) { clearInterval(timer); timer = undefined; return; }
+    if (poll && timer === undefined) timer = setInterval(() => {
       if (!root.isConnected) { stop(); return; }
+      if (!shouldPoll()) { clearInterval(timer); timer = undefined; return; }
       if (!document.hidden) load();
     }, interval);
-    if (!resuming || loadWhenHidden || !document.hidden) load();
   };
   const dispose = () => {
     if (disposed) return;
@@ -40,5 +46,5 @@ export function panelLifecycle({root, signal, load, cancel, poll = true, resume 
   signal?.addEventListener('abort', dispose, {once: true});
   if (signal?.aborted) dispose();
   else start();
-  return {dispose, get disposed() { return disposed; }};
+  return {dispose, syncPolling, get disposed() { return disposed; }};
 }

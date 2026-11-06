@@ -60,6 +60,7 @@ var routes = []route{
 	{"GET /api/v1/groups/{id}", admin, endpoint((*handler).groups)},
 	{"PATCH /api/v1/groups/{id}", admin, endpoint((*handler).groups)},
 	{"DELETE /api/v1/groups/{id}", admin, endpoint((*handler).groups)},
+	{"POST /api/v1/groups/{id}/commands", admin, withSession((*handler).groupCommandsRoute)},
 	{"GET /api/v1/nodes", admin, endpoint((*handler).nodesRoute)},
 	{"POST /api/v1/nodes", admin, endpoint((*handler).nodesRoute)},
 	{"GET /api/v1/nodes/{id}", admin, endpoint((*handler).nodesRoute)},

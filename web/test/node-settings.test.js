@@ -61,7 +61,7 @@ async function setup({hash = '#details', observed = runtime, presence = 'online'
   const userSession = {csrf_token: 'csrf', user: {id, username: 'administrator', must_change_password: false}, expires_at: '2026-10-29T10:00:00Z'};
   setSession(userSession);
   const requests = [];
-  const node = {id, name: 'Internal name', status: 'unknown', presence, agent_version: 'test-agent',
+  const node = {id, name: 'Internal name', status: 'unknown', stopped: false, presence, agent_version: 'test-agent',
     last_seen: lastSeen, group_id: null, region: '', provider: '', notes: 'Saved notes', tags: [], created_at: '2026-10-27T10:00:00Z'};
   const traffic = {billing_day: 1, quota_bytes: '0', cycle: {}, daily: [], updated_at: null};
   globalThis.fetch = async (url, options) => {
@@ -70,6 +70,7 @@ async function setup({hash = '#details', observed = runtime, presence = 'online'
     let status = 200;
     if (url === '/api/v1/me') data = userSession;
     else if (url === path) data = node;
+    else if (url === `${path}/commands`) data = {commands: []};
     else if (url === `${path}/runtime`) data = {runtime: observed};
     else if (url === `${path}/traffic-settings`) {
       status = options.method === 'PATCH' ? patchStatus : 200;
@@ -166,7 +167,7 @@ test('agent settings displays reported selections as inert text without editable
     assert.equal(values[copy('nodes.probes')], observed.probe_targets[0]);
     assert.equal(values[copy('nodes.remoteCommands')], copy('nodes.command.restart'));
     assert.equal(values[copy('nodes.disabledFeatures')], `${copy('nodes.feature.disk')} · ${copy('nodes.feature.traffic')}`);
-    const settings = env.root.querySelector('#panel-agent');
+    const settings = env.root.querySelector('#panel-agent').querySelector('section');
     assert.equal(settings.querySelectorAll('input,select,textarea,button,a,img').length, 0);
   } finally { env.cleanup(); }
 });

@@ -77,7 +77,8 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 	var name, status, raw, generation, session string
 	var epoch int64
 	var credential sql.NullBool
-	err = tx.QueryRowContext(ctx, `SELECT name,status,agent_runtime,credential_epoch,length(token_hash)>0,run_generation,report_session_id FROM nodes WHERE id=?`, nodeID).Scan(&name, &status, &raw, &epoch, &credential, &generation, &session)
+	var stopped bool
+	err = tx.QueryRowContext(ctx, `SELECT name,status,agent_runtime,credential_epoch,length(token_hash)>0,run_generation,report_session_id,`+StoppedSQL+` FROM nodes WHERE id=?`, nodeID).Scan(&name, &status, &raw, &epoch, &credential, &generation, &session, &stopped)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
@@ -87,7 +88,7 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 	if req.Kind == v1.RemoteCommandStop && req.Confirm != name {
 		return Record{}, ErrInvalid
 	}
-	if status == "disabled" || !credential.Bool {
+	if status == "disabled" || !credential.Bool || stopped {
 		return Record{}, ErrNodeUnavailable
 	}
 	runtime, decodeErr := v1.DecodeRuntimeSettings(raw)
@@ -114,13 +115,76 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 	if err != nil {
 		return Record{}, err
 	}
-	if err := audit.InsertDetails(ctx, tx, "command.create", id, now, audit.Details{"node_id": nodeID, "kind": req.Kind}); err != nil {
+	if err := audit.InsertDetails(ctx, tx, "command.create", nodeID, now, audit.Details{"command_id": id, "kind": req.Kind}); err != nil {
 		return Record{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Record{}, err
 	}
 	return record, nil
+}
+
+type BulkResult struct {
+	Created int `json:"created"`
+	Skipped int `json:"skipped"`
+}
+
+// CreateGroup snapshots membership before creating each command in its own transaction.
+func (s *Service) CreateGroup(ctx context.Context, groupID, actor string, req CreateRequest) (BulkResult, error) {
+	var result BulkResult
+	if req.Kind != v1.RemoteCommandRestart && req.Kind != v1.RemoteCommandStop {
+		return result, ErrInvalid
+	}
+	var name string
+	if err := s.db.QueryRowContext(ctx, `SELECT name FROM groups WHERE id=?`, groupID).Scan(&name); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return result, ErrNotFound
+		}
+		return result, err
+	}
+	if req.Confirm != name {
+		return result, ErrInvalid
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name FROM nodes WHERE group_id=? ORDER BY id`, groupID)
+	if err != nil {
+		return result, err
+	}
+	type target struct{ id, name string }
+	var targets []target
+	for rows.Next() {
+		var n target
+		if err := rows.Scan(&n.id, &n.name); err != nil {
+			rows.Close()
+			return result, err
+		}
+		targets = append(targets, n)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return result, err
+	}
+	for _, n := range targets {
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		if _, err := s.Create(ctx, n.id, actor, CreateRequest{Kind: req.Kind, Confirm: n.name}); err != nil {
+			result.Skipped++
+		} else {
+			result.Created++
+		}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
+	if err := audit.InsertDetails(ctx, tx, "command.bulk", groupID, s.now().UTC(), audit.Details{
+		"group_id": groupID, "kind": req.Kind, "created": result.Created, "skipped": result.Skipped,
+	}); err != nil {
+		return result, err
+	}
+	return result, tx.Commit()
 }
 
 func (s *Service) Cancel(ctx context.Context, nodeID, id string) error {
@@ -143,7 +207,7 @@ func (s *Service) Cancel(ctx context.Context, nodeID, id string) error {
 	if state != "pending" {
 		return ErrNotPending
 	}
-	if err := transition(ctx, tx, id, "canceled", "", s.now().UTC(), false); err != nil {
+	if err := transition(ctx, tx, nodeID, id, "canceled", "", s.now().UTC(), false); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -204,7 +268,7 @@ func (s *Service) List(ctx context.Context, nodeID string) ([]Record, error) {
 	return result, rows.Err()
 }
 
-func transition(ctx context.Context, tx *sql.Tx, id, state, code string, now time.Time, delivering bool) error {
+func transition(ctx context.Context, tx *sql.Tx, nodeID, id, state, code string, now time.Time, delivering bool) error {
 	query := `UPDATE agent_commands SET state=?,result_code=?,finished_at=? WHERE id=? AND state IN ('pending','delivered')`
 	if delivering {
 		query = `UPDATE agent_commands SET state=?,result_code=?,delivered_at=? WHERE id=? AND state='pending'`
@@ -214,10 +278,11 @@ func transition(ctx context.Context, tx *sql.Tx, id, state, code string, now tim
 		return err
 	}
 	count, err := result.RowsAffected()
-	if err != nil || count == 0 {
+	// 下发只记在 delivered_at：审计保留谁发起和结果如何，不随上报刷屏。
+	if err != nil || count == 0 || delivering {
 		return err
 	}
-	return audit.InsertDetails(ctx, tx, "command."+state, id, now, audit.Details{"result_code": code})
+	return audit.InsertDetails(ctx, tx, "command."+state, nodeID, now, audit.Details{"command_id": id, "result_code": code})
 }
 func transitionMatching(ctx context.Context, tx *sql.Tx, nodeID, condition, state, code string, now time.Time, args ...any) error {
 	values := append([]any{nodeID}, args...)
@@ -240,7 +305,7 @@ func transitionMatching(ctx context.Context, tx *sql.Tx, nodeID, condition, stat
 		return err
 	}
 	for _, id := range ids {
-		if err := transition(ctx, tx, id, state, code, now, false); err != nil {
+		if err := transition(ctx, tx, nodeID, id, state, code, now, false); err != nil {
 			return err
 		}
 	}
@@ -274,7 +339,7 @@ func Exchange(ctx context.Context, tx *sql.Tx, nodeID string, epoch int64, gener
 		if err != nil {
 			return nil, err
 		}
-		if err := transition(ctx, tx, id, r.Status, r.Code, now, false); err != nil {
+		if err := transition(ctx, tx, nodeID, id, r.Status, r.Code, now, false); err != nil {
 			return nil, err
 		}
 	}
@@ -301,7 +366,7 @@ func Exchange(ctx context.Context, tx *sql.Tx, nodeID string, epoch int64, gener
 		return nil, err
 	}
 	if state == "pending" {
-		if err := transition(ctx, tx, c.ID, "delivered", "", now, true); err != nil {
+		if err := transition(ctx, tx, nodeID, c.ID, "delivered", "", now, true); err != nil {
 			return nil, err
 		}
 	}

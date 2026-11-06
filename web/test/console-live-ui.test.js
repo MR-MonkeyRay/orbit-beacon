@@ -7,13 +7,13 @@ import {frame, liveHarness, response, stream} from './live-harness.js';
 const id = (number) => `00000000-0000-4000-8000-${String(number).padStart(12, '0')}`;
 const reported = '2026-10-28T00:00:00Z';
 const runtime = {report_interval_seconds: 10, disk_interval_seconds: 60, interfaces: [], disk_paths: [], probe_targets: [], remote_commands: ['upgrade', 'restart', 'stop'], disabled_features: []};
-const node = (number) => ({id: id(number), name: `Node ${String(number).padStart(3, '0')}`, status: 'unknown', presence: 'online',
+const node = (number) => ({id: id(number), name: `Node ${String(number).padStart(3, '0')}`, status: 'unknown', stopped: false, presence: 'online',
   last_seen: reported, agent_version: '1.0', group_id: null, region: '', provider: '', notes: 'Saved notes', tags: [], created_at: reported});
 const latest = (seq = 1) => ({received_at: reported, sampled_at: reported, seq, runtime,
   system: {agent_version: '1.0'}, metrics: {cpu_percent: seq, uptime_seconds: 3600,
     metric_status: {cpu_percent: 'ok', uptime_seconds: 'ok'},
     sources: {cpu: {age_ms: 0, source_interval_ms: 10000}, uptime: {age_ms: 0, source_interval_ms: 10000}}}});
-const compact = (value) => Object.fromEntries(['id', 'status', 'presence', 'last_seen', 'agent_version'].map((key) => [key, value[key]]));
+const compact = (value) => Object.fromEntries(['id', 'status', 'presence', 'stopped', 'last_seen', 'agent_version'].map((key) => [key, value[key]]));
 const control = (root, name) => elements(root).find((element) => element.name === name);
 const formFor = (root, name) => root.querySelectorAll('form').find((form) => control(form, name));
 const button = (root, label) => root.querySelectorAll('button').find((item) => item.textContent === label);
@@ -22,7 +22,7 @@ const edit = (form, name, value) => {
 };
 const sampleFact = (root, label) => root.querySelectorAll('dt').find((item) => item.textContent === label)?.parentElement.querySelector('dd');
 
-async function setup(t, {page = 'nodes', hash = '#details', count = 2, search = '', sample = latest(), mutate} = {}) {
+async function setup(t, {page = 'nodes', hash = '#details', count = 2, search = '', sample = latest(), mutate, commands = []} = {}) {
   const original = new Map(['requestAnimationFrame', 'cancelAnimationFrame', 'history', 'matchMedia'].map((key) => [key, globalThis[key]]));
   let scope;
   t.after(() => {
@@ -59,6 +59,7 @@ async function setup(t, {page = 'nodes', hash = '#details', count = 2, search = 
     if (path === '/api/v1/enrollments') return response({enrollments: [{id: id(500), node_id: id(1), expires_at: '2026-10-29T00:00:00Z', uses: 0, max_uses: 1, revoked_at: null}], has_more: false});
     if (path === '/api/v1/alerts/summary') return response({firing: {total: 0}, newest: []});
     if (path === `/api/v1/nodes/${id(1)}`) return response(inventory[0]);
+    if (path.endsWith('/commands')) return response({commands});
     if (path.endsWith('/runtime')) return response({runtime});
     if (path.endsWith('/traffic-settings')) return response({billing_day: 1, quota_bytes: '0'});
     if (path.endsWith('/public-settings')) return response({enabled: true, name: 'Saved public name', region: '', provider: ''});
@@ -361,7 +362,7 @@ for (const page of ['nodes', 'overview']) {
   test(`${page} last-seen timestamps remain absolute through quiet heartbeats`, async (t) => {
     const env = await setup(t, {page});
     const times = () => page === 'nodes'
-      ? env.root.querySelectorAll('tbody').flatMap((body) => body.querySelectorAll('tr').map((row) => row.children[3].querySelector('time')))
+      ? env.root.querySelectorAll('tbody').flatMap((body) => body.querySelectorAll('tr').map((row) => row.children[4].querySelector('time')))
       : env.root.querySelectorAll('section').find((item) => item.querySelector('h2')?.textContent === copy('nodes.newest')).querySelectorAll('time');
     assert.equal(times().length, env.inventory.length);
     const assertObservedTime = (time, iso) => {
@@ -464,6 +465,17 @@ test('overview patches only fleet and existing newest readonly fields until expl
   assert.equal(env.sockets.filter((socket) => !socket.closed).length, 1);
 });
 
+test('overview keeps the group name when live frames omit it', async (t) => {
+  const env = await setup(t, {page: 'overview'});
+  env.send({nodes: [compact(env.inventory[0]), compact(env.inventory[1]), compact(node(3))]});
+  const grouped = {...node(3), group_id: id(700)};
+  env.replaceInventory([node(1), node(2), grouped]); button(env.root, copy('nodes.refreshList')).click(); await flush();
+  env.send({nodes: [compact(node(1)), compact(node(2)), compact(grouped)]}, 10);
+  const newest = env.root.querySelectorAll('section').find((item) => item.querySelector('h2')?.textContent === copy('nodes.newest'));
+  const row = newest.querySelectorAll('li').find((item) => item.textContent.includes('Node 003'));
+  assert.match(row.textContent, /Production/);
+});
+
 test('overview deferred refresh keeps newer fleet status, deleted links and unknown-inventory notice', async (t) => {
   const env = await setup(t, {page: 'overview'});
   const section = (title) => env.root.querySelectorAll('section').find((item) => item.querySelector('h2')?.textContent === title);
@@ -544,4 +556,69 @@ test('detail live accepts empty capability arrays as reported', async (t) => {
   env.send({node: env.inventory[0], latest: latest(), runtime: {...runtime, remote_commands: [], disabled_features: []}});
   assert.equal(sampleFact(env.root, copy('nodes.remoteCommands')).textContent, copy('nodes.none'));
   assert.equal(sampleFact(env.root, copy('nodes.disabledFeatures')).textContent, copy('nodes.none'));
+});
+
+for (const page of ['nodes', 'overview', 'node']) test(`${page} uses Stopped badge and separates stopped from offline`, async (t) => {
+  const env = await setup(t, {page, search: page === 'nodes' ? '?sort=status' : ''});
+  const stopped = {...env.inventory[0], stopped: true, presence: 'offline'};
+  const offline = {...env.inventory[1], presence: 'offline'};
+  env.send(page === 'node' ? {node: stopped, latest: null, runtime} : {nodes: [compact(stopped), compact(offline)]});
+  const badges = env.root.querySelectorAll('.badge');
+  const stoppedBadge = badges.find((badge) => badge.textContent === copy('common.status.stopped'));
+  assert.ok(stoppedBadge); assert.ok(stoppedBadge.classList.contains('disabled'));
+  if (page === 'nodes') {
+    const filters = env.root.querySelector('.segmented').querySelectorAll('button');
+    const stoppedFilter = filters.find((item) => item.textContent.startsWith(copy('common.status.stopped')));
+    const offlineFilter = filters.find((item) => item.textContent.startsWith(copy('common.status.offline')));
+    assert.equal(stoppedFilter.lastElementChild.textContent, '1');
+    assert.equal(offlineFilter.lastElementChild.textContent, '1');
+    stoppedFilter.click();
+    assert.equal(env.root.querySelector('tbody').querySelectorAll('tr').length, 1);
+    assert.match(env.root.querySelector('tbody').textContent, copyPattern('common.status.stopped'));
+    assert.doesNotMatch(env.root.querySelector('tbody').textContent, copyPattern('common.status.offline'));
+  } else if (page === 'overview') {
+    const links = env.root.querySelector('.legend').querySelectorAll('a');
+    assert.equal(links.find((link) => link.getAttribute('href') === '/nodes?status=stopped').querySelector('strong').textContent, '1');
+    assert.equal(links.find((link) => link.getAttribute('href') === '/nodes?status=offline').querySelector('strong').textContent, '1');
+  } else {
+    assert.equal(env.root.querySelector('header').querySelector('.badge').textContent, copy('common.status.stopped'));
+  }
+});
+
+for (const page of ['nodes', 'node']) test(`${page} rejects missing and nonboolean stopped live fields`, async (t) => {
+  const env = await setup(t, {page});
+  const send = (value) => env.send(page === 'node' ? {node: value, latest: null, runtime} : {nodes: [compact(value)]});
+  send({...env.inventory[0], stopped: true, presence: 'offline'});
+  for (const stopped of [undefined, null, 'false', 0]) {
+    send({...env.inventory[0], stopped, presence: 'online'});
+    assert.equal(env.root.querySelector('.badge').textContent, copy('common.status.stopped'));
+  }
+});
+
+test('node list sorts Agent versions and patches the existing version cells', async (t) => {
+  const env = await setup(t, {search: '?sort=agent_version&dir=desc'});
+  const header = env.root.querySelectorAll('th').find((item) => item.dataset.sort === 'agent_version');
+  assert.ok(header.classList.contains('hide-compact'));
+  assert.equal(header.getAttribute('aria-sort'), 'descending');
+  env.send({nodes: [compact({...env.inventory[0], agent_version: '1.9'}), compact({...env.inventory[1], agent_version: '1.10'})]});
+  const versionCells = env.root.querySelector('tbody').querySelectorAll('tr').map((row) => row.children[3]);
+  assert.ok(versionCells.every((cell) => cell.classList.contains('hide-compact')));
+  assert.deepEqual(versionCells.map((cell) => cell.textContent), ['1.9', '1.10']);
+  header.querySelector('button').click();
+  assert.equal(header.getAttribute('aria-sort'), 'ascending');
+  header.querySelector('button').click();
+  assert.equal(env.root.querySelector('tbody').querySelector('tr').children[3].textContent, '1.10');
+});
+
+test('Agent command polling detaches on tab changes and clears on navigation', async (t) => {
+  const env = await setup(t, {page: 'node', hash: '#agent', commands: [{id: id(800), kind: 'restart', state: 'pending', result_code: '', requested_by: 'Alice', created_at: reported}]});
+  const commands = () => env.requests.filter((item) => item.url.endsWith('/commands')).length;
+  const before = commands();
+  [...env.intervals.values()][0](); await flush();
+  assert.equal(commands(), before + 1);
+  button(env.root, copy('nodes.details')).click(); env.mutations(); await flush();
+  env.advance(6000); await flush(); assert.equal(commands(), before + 1);
+  button(env.root, copy('nodes.agentSettings')).click(); env.mutations(); await flush();
+  const resumed = commands(); assert.equal(resumed, before + 2);
+  env.scope.abort(); env.advance(6000); await flush(); assert.equal(commands(), resumed);
 });

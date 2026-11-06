@@ -1,9 +1,9 @@
 import {getLocale} from '../i18n.js';
-import {STATUS, STATUS_ORDER} from '../format.js';
+import {displayStatus, STATUS, STATUS_ORDER} from '../format.js';
 
 export const NODE_PAGE_SIZE = 50;
 
-const SORTS = ['name', 'status', 'created'];
+const SORTS = ['name', 'status', 'agent_version', 'created'];
 
 export function readNodeFilter(search = location.search) {
   const params = new URLSearchParams(search);
@@ -42,9 +42,10 @@ export function scopedNodes(indexed, filter) {
 
 export function sortedNodes(nodes, filter) {
   const sign = nodeSortDirection(filter) === 'asc' ? 1 : -1;
-  return nodes.filter((node) => !filter.status || node.presence === filter.status).sort((a, b) => {
+  return nodes.filter((node) => !filter.status || displayStatus(node) === filter.status).sort((a, b) => {
     const order = filter.sort === 'name' ? a.name.localeCompare(b.name, getLocale(), {numeric: true, sensitivity: 'base'})
-      : filter.sort === 'status' ? STATUS_ORDER.indexOf(a.presence) - STATUS_ORDER.indexOf(b.presence)
+      : filter.sort === 'status' ? STATUS_ORDER.indexOf(displayStatus(a)) - STATUS_ORDER.indexOf(displayStatus(b))
+        : filter.sort === 'agent_version' ? a.agent_version.localeCompare(b.agent_version, getLocale(), {numeric: true, sensitivity: 'base'})
         : a.created_at.localeCompare(b.created_at);
     return order * sign || a.id.localeCompare(b.id);
   });

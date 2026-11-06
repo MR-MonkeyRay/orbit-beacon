@@ -1,4 +1,12 @@
 export default {
+  'audit.commandCreate': '创建指令',
+  'audit.commandBulk': '批量下发指令',
+  'audit.commandSucceeded': '指令成功',
+  'audit.commandFailed': '指令失败',
+  'audit.commandRejected': '指令已拒绝',
+  'audit.commandExpired': '指令已过期',
+  'audit.commandCanceled': '指令已取消',
+
   'audit.nodeCreate': '已创建节点',
   'audit.nodeDelete': '已删除节点',
   'audit.nodeDisable': '已禁用节点',

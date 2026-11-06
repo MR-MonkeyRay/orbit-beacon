@@ -1,4 +1,6 @@
 export default {
+  'common.status.stopped': '已关闭',
+
   'common.refresh': '刷新',
   'common.retry': '重试',
   'common.status.online': '在线',

@@ -45,10 +45,10 @@ export function pageHead(title, subtitle, ...actions) {
 
 const statusLabel = (status) => status === 'deleted' ? t('controls.deleted') : STATUS[status] || status;
 
-export const statusBadge = (status) => h('span', {class: `badge ${status}`}, statusLabel(status));
+export const statusBadge = (status) => h('span', {class: `badge ${status === 'stopped' ? 'disabled' : status}`}, statusLabel(status));
 
 export function patchStatusBadge(element, status) {
-  element.className = `badge ${status}`;
+  element.className = `badge ${status === 'stopped' ? 'disabled' : status}`;
   const label = statusLabel(status);
   if (element.textContent !== label) element.textContent = label;
 }

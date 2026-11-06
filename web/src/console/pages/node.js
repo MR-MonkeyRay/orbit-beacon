@@ -2,13 +2,14 @@ import {t} from '../i18n.js';
 import {h, icon} from '../../shared/dom.js';
 import {copyElementText} from '../../shared/clipboard.js';
 import {api, getNavigationSignal, groupsList, invalidate, onSession, session} from '../api.js';
-import {absoluteWhen, shortID, when} from '../format.js';
+import {displayStatus, absoluteWhen, shortID, when} from '../format.js';
 import {connectConsoleLive} from '../live.js';
 import {ignoreNavigationCancellation, refresh} from '../router.js';
 import {callout, iconButton, link, liveStatus, pageHead, panel, patchStatusBadge, readonlyFacts, statusBadge} from '../ui/components.js';
 import {toast} from '../ui/feedback.js';
 import {field, input, onSubmit, saveBar, select, tagEditor, textarea, trackDirty, validateBytes} from '../ui/forms.js';
 import {tabSet} from '../ui/tabs.js';
+import {nodeCommandsPanel} from './node-commands.js';
 import {agentSettingsTab} from './node-agent-settings.js';
 import {enrollmentTab} from './enrollments.js';
 import {latestSamplePanel} from './latest-sample.js';
@@ -54,7 +55,8 @@ export async function nodePage() {
   let observedRuntime = runtime.runtime;
   let detailsView;
   let agent;
-  const badge = statusBadge(node.presence);
+  let commands;
+  const badge = statusBadge(displayStatus(node));
   const connection = liveStatus();
   const actions = lifecycleActions(node);
   const deletedNotice = h('div', {class: 'node-deleted-notice', hidden: true}, callout(t('nodes.deletedNotice')));
@@ -85,7 +87,9 @@ export async function nodePage() {
     {id: 'agent', label: t('nodes.agentSettings'), icon: 'sliders', build: () => {
       agent ||= agentSettingsTab(node, observedRuntime);
       agent.snapshot(node, observedRuntime);
-      return agent;
+      commands ||= nodeCommandsPanel(node, observedRuntime, signal);
+      commands.snapshot(node, observedRuntime);
+      return {element: h('div', {class: 'stack'}, agent, commands.element), attach: commands.attach, detach: commands.detach};
     }},
     {id: 'enrollment', label: t('nodes.enrollAgent'), icon: 'key', build: () => enrollmentTab(node)}
   ], t('nodes.sections'));
@@ -122,6 +126,7 @@ export async function nodePage() {
         node.deleted = true;
         observedRuntime = null;
         agent?.snapshot(node, null);
+        commands?.snapshot(node, null);
         deletionObserver.observe(root, {childList: true, subtree: true});
         deletedNotice.hidden = false;
         patchStatusBadge(badge, 'deleted');
@@ -135,11 +140,12 @@ export async function nodePage() {
       Object.assign(node, data.node);
       observedRuntime = data.runtime;
       if (title.textContent !== node.name) title.textContent = node.name;
-      patchStatusBadge(badge, node.presence);
+      patchStatusBadge(badge, displayStatus(node));
       actions.snapshot();
       detailsView?.snapshot(node);
       sample.snapshot(data.latest, frame.server_time);
       agent?.snapshot(node, observedRuntime);
+      commands?.snapshot(node, observedRuntime);
     }
   });
   return root;
@@ -167,10 +173,10 @@ function editableForm(form, controls, save, node) {
 function detailsTab(node, groups, sample, history, traffic, probes, billing) {
   const group = groups.find((item) => item.id === node.group_id);
   const summaryValues = readonlyFacts();
-  const summaryBadge = statusBadge(node.presence);
+  const summaryBadge = statusBadge(displayStatus(node));
   const snapshot = (current) => {
     const currentGroup = groups.find((item) => item.id === current.group_id);
-    patchStatusBadge(summaryBadge, current.deleted ? 'deleted' : current.presence);
+    patchStatusBadge(summaryBadge, current.deleted ? 'deleted' : displayStatus(current));
     summaryValues.update([
       [t('nodes.presence'), summaryBadge],
       [t('nodes.lastSeen'), current.last_seen ? absoluteWhen(current.last_seen) : t('nodes.never')],

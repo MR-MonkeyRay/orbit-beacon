@@ -1,7 +1,7 @@
 import {t} from '../i18n.js';
 import {h, icon, reducedMotion} from '../../shared/dom.js';
 import {allNodes, getNavigationSignal, groupsList, invalidate} from '../api.js';
-import {STATUS, STATUS_ORDER} from '../format.js';
+import {displayStatus, STATUS, STATUS_ORDER} from '../format.js';
 import {connectConsoleLive, readConsoleFleet} from '../live.js';
 import {busy, button, emptyState, liveStatus, pageHead} from '../ui/components.js';
 import {toastError} from '../ui/feedback.js';
@@ -52,8 +52,10 @@ export async function nodesPage() {
   }}, label, icon('up')));
   const selectAll = h('input', {type: 'checkbox', 'aria-label': t('nodes.selectAll')});
   const headers = [h('th', {scope: 'col', class: 'selection-cell'}, selectAll),
-    sortable('name', t('nodes.column.name')), sortable('status', t('nodes.presence')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.lastSeen')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.group')),
+    sortable('name', t('nodes.column.name')), sortable('status', t('nodes.presence')), sortable('agent_version', t('nodes.agentVersion')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.lastSeen')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.group')),
     h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.location')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.tags')), sortable('created', t('nodes.added'))];
+
+  headers.find((header) => header.dataset.sort === 'agent_version').className = 'hide-compact';
 
   const body = h('tbody');
   const summary = h('span', {'aria-live': 'polite'});
@@ -112,7 +114,7 @@ export async function nodesPage() {
     for (const node of scoped) {
       if (deleted.has(node.id)) continue;
       counts['']++;
-      counts[node.presence] = (counts[node.presence] || 0) + 1;
+      counts[displayStatus(node)] = (counts[displayStatus(node)] || 0) + 1;
     }
     for (const [status, control] of statusButtons) {
       control.lastElementChild.textContent = counts[status] || 0;
@@ -140,7 +142,7 @@ export async function nodesPage() {
     for (const id of selected) if (!existing.has(id)) selected.delete(id);
     rowRefs.clear();
     body.replaceChildren(...(visible.length ? visible.map((node) => row(node, query))
-      : [h('tr', null, h('td', {colspan: 8}, nodes.length
+      : [h('tr', null, h('td', {colspan: 9}, nodes.length
         ? emptyState(t('nodes.noMatch'), t('nodes.filterHint'), button(t('nodes.clearFilters'), {onClick: clear}))
         : emptyState(t('nodes.empty'), t('nodes.emptyEnroll'), addNodeButton())))]));
     updateSelection();

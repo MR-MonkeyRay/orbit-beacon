@@ -251,6 +251,10 @@ func TestStopResultAndNewRunClearsStopped(t *testing.T) {
 func TestCommandResultTransactionRollsBackOnAuditFailure(t *testing.T) {
 	f := newCoalesceFixture(t, time.Hour)
 	c := createTestCommand(t, f, "stop")
+	f.report.Seq++
+	if _, err := acceptReport(t.Context(), f.service, coalesceToken, f.report); err != nil {
+		t.Fatal(err)
+	}
 	before := f.writes(t)
 	if _, err := f.db.Exec(`CREATE TRIGGER reject_command_audit BEFORE INSERT ON audit_events BEGIN SELECT RAISE(ABORT,'test'); END`); err != nil {
 		t.Fatal(err)
@@ -261,7 +265,7 @@ func TestCommandResultTransactionRollsBackOnAuditFailure(t *testing.T) {
 	if _, err := acceptReport(t.Context(), f.service, coalesceToken, f.report); err == nil {
 		t.Fatal("audit failure accepted")
 	}
-	if f.writes(t) != before || commandStateFor(t, f, c.ID) != "pending" {
+	if f.writes(t) != before || commandStateFor(t, f, c.ID) != "delivered" {
 		t.Fatal("partial transaction")
 	}
 }

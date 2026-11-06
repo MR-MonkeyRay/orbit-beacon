@@ -89,7 +89,7 @@ export function modal(title, build) {
 
 export function confirmDialog({title, message, confirm, danger = false}) {
   const {closed} = modal(title, (close) => h('div', null,
-    h('div', {class: 'dialog-body'}, h('p', null, message)),
+    message ? h('div', {class: 'dialog-body'}, h('p', null, message)) : null,
     h('div', {class: 'dialog-foot'},
       h('button', {type: 'button', class: 'btn', onclick: () => close(), dataset: {autofocus: ''}}, t('controls.cancel')),
       button(confirm, {variant: danger ? 'danger' : 'primary', className: danger ? 'solid' : '', onClick: () => close('confirm')}))));

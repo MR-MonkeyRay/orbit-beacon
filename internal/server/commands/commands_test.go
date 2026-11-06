@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -140,7 +141,7 @@ func TestCommandCleanupRetainsLatestAndExpiresOfflineCommands(t *testing.T) {
 		t.Fatal(state, err)
 	}
 }
-func TestCommandAuditCreateCancelAndDelivery(t *testing.T) {
+func TestCommandAuditTargetsTheNodeAndSkipsDelivery(t *testing.T) {
 	db, s, now := fixture(t)
 	ctx := audit.WithActor(t.Context(), "operator")
 	r, err := s.Create(ctx, testNode, "operator", CreateRequest{Kind: "restart"})
@@ -164,9 +165,24 @@ func TestCommandAuditCreateCancelAndDelivery(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	var count int
-	if err := db.QueryRow(`SELECT count(*) FROM audit_events WHERE action IN ('command.pending','command.create','command.canceled','command.delivered')`).Scan(&count); err != nil || count != 4 {
-		t.Fatal(count, err)
+	rows, err := db.Query(`SELECT action,target_id FROM audit_events WHERE action LIKE 'command.%'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	actions := map[string]int{}
+	for rows.Next() {
+		var action, target string
+		if err := rows.Scan(&action, &target); err != nil {
+			t.Fatal(err)
+		}
+		if target != testNode {
+			t.Fatalf("%s targets %s", action, target)
+		}
+		actions[action]++
+	}
+	if rows.Err() != nil || actions["command.create"] != 2 || actions["command.canceled"] != 1 || len(actions) != 2 {
+		t.Fatalf("actions=%v err=%v", actions, rows.Err())
 	}
 }
 
@@ -184,5 +200,88 @@ func TestListShowsUnsweptExpiredCommandAsExpired(t *testing.T) {
 	var stored string
 	if err := db.QueryRow(`SELECT state FROM agent_commands WHERE id=?`, created.ID).Scan(&stored); err != nil || stored != "pending" {
 		t.Fatalf("list wrote state %q: %v", stored, err)
+	}
+}
+
+func TestCreateGroupIsolatesNodeTransactionFailuresAndAcceptsRestart(t *testing.T) {
+	db, s, _ := fixture(t)
+	const groupID = "00000000-0000-4000-8000-000000000070"
+	const secondNode = "00000000-0000-4000-8000-000000000002"
+	const outsideNode = "00000000-0000-4000-8000-000000000003"
+	if _, err := db.Exec(`INSERT INTO groups(id,name) VALUES(?,'Production')`, groupID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE nodes SET group_id=? WHERE id=?`, groupID, testNode); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{secondNode, outsideNode} {
+		hash := sha256.Sum256([]byte(id))
+		if _, err := db.Exec(`INSERT INTO nodes(id,name,status,token_hash,agent_runtime,run_generation,report_session_id,created_at,group_id) SELECT ?,?,'unknown',?,agent_runtime,run_generation,report_session_id,created_at,? FROM nodes WHERE id=?`, id, id, hash[:], groupID, testNode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`UPDATE nodes SET group_id=NULL WHERE id=?`, outsideNode); err != nil {
+		t.Fatal(err)
+	}
+	// The first node fails during INSERT, after it has passed the normal eligibility checks.
+	if _, err := db.Exec(`CREATE TRIGGER fail_one_command BEFORE INSERT ON agent_commands WHEN NEW.node_id='00000000-0000-4000-8000-000000000001' BEGIN SELECT RAISE(ABORT,'node failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	ctx := audit.WithSystemActor(t.Context(), "test")
+	result, err := s.CreateGroup(ctx, groupID, "Alice", CreateRequest{Kind: "restart", Confirm: "Production"})
+	if err != nil || result.Created != 1 || result.Skipped != 1 {
+		t.Fatal(result, err)
+	}
+	list, err := s.List(t.Context(), secondNode)
+	if err != nil || len(list) != 1 || list[0].RequestedBy != "Alice" {
+		t.Fatal(list, err)
+	}
+	for _, id := range []string{testNode, outsideNode} {
+		list, err := s.List(t.Context(), id)
+		if err != nil || len(list) != 0 {
+			t.Fatal(id, list, err)
+		}
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM audit_events WHERE action='command.bulk' AND target_id=?`, groupID).Scan(&count); err != nil || count != 1 {
+		t.Fatal(count, err)
+	}
+}
+
+func TestCreateGroupHasNoMemberLimitAndHandlesEmptyGroups(t *testing.T) {
+	db, s, now := fixture(t)
+	const groupID = "00000000-0000-4000-8000-000000000070"
+	if _, err := db.Exec(`INSERT INTO groups(id,name) VALUES(?,'Fleet')`, groupID); err != nil {
+		t.Fatal(err)
+	}
+	empty, err := s.CreateGroup(t.Context(), groupID, "Alice", CreateRequest{Kind: "restart", Confirm: "Fleet"})
+	if err != nil || empty != (BulkResult{}) {
+		t.Fatal(empty, err)
+	}
+	runtime, _ := json.Marshal(v1.DefaultRuntimeSettings())
+	for i := range 201 {
+		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+100)
+		hash := sha256.Sum256([]byte(id))
+		if _, err := db.Exec(`INSERT INTO nodes(id,name,status,token_hash,agent_runtime,run_generation,report_session_id,created_at,group_id) VALUES(?,?,'unknown',?,?,'1','session',?,?)`, id, id, hash[:], string(runtime), timekey.Format(now), groupID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := s.CreateGroup(t.Context(), groupID, "Alice", CreateRequest{Kind: "restart", Confirm: "Fleet"})
+	if err != nil || result.Created != 201 || result.Skipped != 0 {
+		t.Fatal(result, err)
+	}
+}
+
+func TestCreateRejectsStoppedNode(t *testing.T) {
+	db, s, now := fixture(t)
+	stopped, err := s.Create(t.Context(), testNode, "Alice", CreateRequest{Kind: "stop", Confirm: "host"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE agent_commands SET state='succeeded',result_code='ok',delivered_generation='1',finished_at=? WHERE id=?`, timekey.Format(now), stopped.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Create(t.Context(), testNode, "Alice", CreateRequest{Kind: "restart"}); !errors.Is(err, ErrNodeUnavailable) {
+		t.Fatal(err)
 	}
 }

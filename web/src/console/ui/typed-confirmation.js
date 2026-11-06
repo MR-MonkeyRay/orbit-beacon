@@ -14,7 +14,7 @@ export function typedConfirmation({title, message, expected, confirm}) {
       event.preventDefault();
       if (matchesConfirmation(entry.value, expected)) close('confirm');
     }},
-    h('div', {class: 'dialog-body stack'}, h('p', null, message), field(t('controls.confirmation.type', {expected}), entry)),
+    h('div', {class: 'dialog-body stack'}, message ? h('p', null, message) : null, field(t('controls.confirmation.type', {expected}), entry)),
     h('div', {class: 'dialog-foot'}, button(t('controls.cancel'), {onClick: () => close(), id: 'typed-confirm-cancel'}), submit));
   });
   return closed.then((value) => value === 'confirm');

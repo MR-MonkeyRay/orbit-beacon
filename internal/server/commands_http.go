@@ -35,7 +35,7 @@ func (h *handler) commandsRoute(w http.ResponseWriter, r *http.Request, requestI
 	if !decode(w, r, &req, requestID) {
 		return
 	}
-	record, err := h.commands.Create(r.Context(), nodeID, session.User.ID, req)
+	record, err := h.commands.Create(r.Context(), nodeID, session.User.Username, req)
 	if err != nil {
 		h.commandError(w, err, requestID)
 		return
@@ -58,4 +58,23 @@ func (h *handler) commandError(w http.ResponseWriter, err error, requestID strin
 		}
 	}
 	h.serviceError(w, err, requestID)
+}
+
+func (h *handler) groupCommandsRoute(w http.ResponseWriter, r *http.Request, requestID string, session auth.Session) {
+	groupID := strings.Split(r.URL.Path, "/")[4]
+	// Keep group lookup errors consistent with the group management API.
+	if _, err := h.management.Group(r.Context(), groupID); err != nil {
+		h.serviceError(w, err, requestID)
+		return
+	}
+	var req commands.CreateRequest
+	if !decode(w, r, &req, requestID) {
+		return
+	}
+	result, err := h.commands.CreateGroup(r.Context(), groupID, session.User.Username, req)
+	if err != nil {
+		h.commandError(w, err, requestID)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }

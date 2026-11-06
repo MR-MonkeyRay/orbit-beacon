@@ -751,7 +751,7 @@ dialog.closing::backdrop {
   padding: 22px;
 }
 
-.form .dialog-foot {
+.dialog-body .form .dialog-foot {
   padding: var(--sp-2) 0 22px;
 }
 

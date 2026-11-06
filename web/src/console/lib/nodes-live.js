@@ -1,5 +1,5 @@
 import {t} from '../i18n.js';
-import {absoluteWhen} from '../format.js';
+import {displayStatus, absoluteWhen} from '../format.js';
 import {patchStatusBadge} from '../ui/components.js';
 import {tombstoneNodeRow} from './nodes-table.js';
 
@@ -22,11 +22,13 @@ export function patchNodesFromFleet(data, state) {
       continue;
     }
     if (deleted.has(node.id)) continue;
-    if (fresh.presence !== node.presence && (filter.status || filter.sort === 'status')) statusChanged = true;
+    if (displayStatus(fresh) !== displayStatus(node) && (filter.status || filter.sort === 'status')) statusChanged = true;
+    if (fresh.agent_version !== node.agent_version && filter.sort === 'agent_version') statusChanged = true;
     const seenChanged = fresh.last_seen !== node.last_seen;
     Object.assign(node, fresh);
     if (refs) {
-      patchStatusBadge(refs.badge, node.presence);
+      patchStatusBadge(refs.badge, displayStatus(node));
+      refs.version.textContent = node.agent_version;
       if (seenChanged) refs.lastSeen.replaceChildren(node.last_seen ? absoluteWhen(node.last_seen) : t('nodes.never'));
     }
   }

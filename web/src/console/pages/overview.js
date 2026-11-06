@@ -2,7 +2,7 @@ import {formatList, t, tParts} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h, icon} from '../../shared/dom.js';
 import {allNodes, api, getNavigationSignal, groupsList, invalidate, nameLookup, usersList} from '../api.js';
-import {absoluteWhen, STATUS, STATUS_ORDER} from '../format.js';
+import {displayStatus, absoluteWhen, STATUS, STATUS_ORDER} from '../format.js';
 import {connectConsoleLive, readConsoleFleet} from '../live.js';
 import {busy, button, emptyState, link, liveStatus, pageHead, panel, patchStatusBadge, statusBadge} from '../ui/components.js';
 import {addNodeButton} from '../lib/add-node-dialog.js';
@@ -17,9 +17,9 @@ function fleetPanel(nodes) {
   const legend = h('div', {class: 'legend'});
   const states = [...STATUS_ORDER, 'unknown'];
   const refs = new Map(states.map((status) => {
-    const segment = h('i', {class: `c-${status}`, hidden: true});
+    const segment = h('i', {class: `c-${status === 'stopped' ? 'disabled' : status}`, hidden: true});
     const count = h('strong');
-    const entry = link(`/nodes?status=${status}`, h('i', {class: `c-${status}`}), STATUS[status], count);
+    const entry = link(`/nodes?status=${status}`, h('i', {class: `c-${status === 'stopped' ? 'disabled' : status}`}), STATUS[status], count);
     bar.append(segment);
     legend.append(entry);
     return [status, {segment, count, entry}];
@@ -29,7 +29,7 @@ function fleetPanel(nodes) {
   const element = panel(t('nodes.fleet'), {}, content, empty);
   element.snapshot = (current) => {
     const counts = Object.fromEntries(states.map((status) => [status, 0]));
-    for (const node of current) counts[node.presence] = (counts[node.presence] || 0) + 1;
+    for (const node of current) counts[displayStatus(node)] = (counts[displayStatus(node)] || 0) + 1;
     total.textContent = current.length;
     label.textContent = t('nodes.inventoryCount', {count: current.length});
     content.hidden = current.length === 0;
@@ -60,8 +60,8 @@ function newestPanel(nodes, groupNames) {
     list.replaceChildren(...newest.map((node) => {
       const name = link(`/nodes/${node.id}`, node.name);
       const seen = h('span');
-      const badge = statusBadge(node.presence);
-      refs.set(node.id, {name, seen, badge});
+      const badge = statusBadge(displayStatus(node));
+      refs.set(node.id, {name, seen, badge, groupID: node.group_id});
       return h('li', null,
         h('div', {class: 'grow'}, h('div', {class: 'title'}, name), h('div', {class: 'sub'},
           seen)), badge);
@@ -72,16 +72,16 @@ function newestPanel(nodes, groupNames) {
   };
   element.snapshot = (current) => {
     const byID = new Map(current.map((node) => [node.id, node]));
-    for (const [id, {name, seen, badge}] of refs) {
+    for (const [id, {name, seen, badge, groupID}] of refs) {
       const node = byID.get(id);
-      patchStatusBadge(badge, node ? node.presence : 'deleted');
+      patchStatusBadge(badge, node ? displayStatus(node) : 'deleted');
       if (!node) {
         name.removeAttribute('href');
         delete name.dataset.link;
         name.setAttribute('aria-disabled', 'true');
         name.setAttribute('tabindex', '-1');
       } else {
-        const group = node.group_id ? groupNames.get(node.group_id) || t('nodes.unknownGroup') : t('nodes.ungrouped');
+        const group = groupID ? groupNames.get(groupID) || t('nodes.unknownGroup') : t('nodes.ungrouped');
         seen.replaceChildren(...tParts(node.last_seen ? 'nodes.lastSeenPrefix' : 'nodes.neverSeenSuffix',
           {group, time: node.last_seen ? absoluteWhen(node.last_seen) : ''}));
       }
