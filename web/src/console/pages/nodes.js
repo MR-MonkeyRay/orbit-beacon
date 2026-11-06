@@ -51,13 +51,13 @@ export async function nodesPage() {
     update();
   }}, label, icon('up')));
   const selectAll = h('input', {type: 'checkbox', 'aria-label': t('nodes.selectAll')});
-  const headers = [h('th', {scope: 'col', class: 'selection-cell'}, selectAll),
+  const headers = [h('th', {scope: 'col', class: 'selection-cell'}, h('label', {class: 'selection-hit'}, selectAll)),
     sortable('name', t('nodes.column.name')), sortable('status', t('nodes.presence')),
-    h('th', {scope: 'col', class: 'hide-compact num'}, t('nodes.cpu')), h('th', {scope: 'col', class: 'hide-compact num'}, t('nodes.memory')),
+    h('th', {scope: 'col', class: 'num'}, t('nodes.cpu')), h('th', {scope: 'col', class: 'num'}, t('nodes.memory')),
     sortable('agent_version', t('nodes.agentVersion')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.lastSeen')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.group')),
     h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.location')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.tags')), sortable('created', t('nodes.added'))];
 
-  headers.find((header) => header.dataset.sort === 'agent_version').className = 'hide-compact';
+  for (const header of headers) if (['agent_version', 'created'].includes(header.dataset.sort)) header.className = 'hide-compact';
 
   const body = h('tbody');
   const summary = h('span', {'aria-live': 'polite'});

@@ -63,3 +63,5 @@ import './probe-alerts.test.js';
 
 import './combobox.test.js';
 import './command-palette.test.js';
+
+import './console-mobile.test.js';

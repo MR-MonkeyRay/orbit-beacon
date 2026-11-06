@@ -126,7 +126,7 @@
   padding: 18px 22px 22px;
 }
 
-.panel+.panel,.stack>*+* {
+.panel+.panel,.grid-2~.panel,.stack>*+* {
   margin-top: 18px;
 }
 

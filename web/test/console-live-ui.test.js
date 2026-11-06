@@ -121,7 +121,7 @@ test('nodes deletion tombstones only its selected ID and confirmation keeps froz
   const boxes = env.root.querySelectorAll('input[data-node-id]');
   for (const box of boxes) { box.checked = true; box.dispatchEvent(new Event('change')); }
   button(env.root, copy('nodes.disable')).click(); await flush();
-  const row = boxes[0].parentElement.parentElement;
+  const row = boxes[0].parentElement.parentElement.parentElement;
   env.send({nodes: [compact(env.inventory[1]), compact(node(3))]});
   assert.equal(boxes[0].disabled, true); assert.equal(boxes[0].checked, false); assert.equal(boxes[1].checked, true);
   assert.match(row.textContent, copyPattern('controls.deleted')); assert.doesNotMatch(row.textContent, copyPattern('common.status.offline'));
@@ -157,9 +157,9 @@ test('nodes refresh overlays the newest complete fleet after a deferred metadata
   const deletedBox = env.root.querySelectorAll('input[data-node-id]').find((box) => box.dataset.nodeId === id(1));
   const survivorBox = env.root.querySelectorAll('input[data-node-id]').find((box) => box.dataset.nodeId === id(2));
   assert.equal(deletedBox.disabled, true); assert.equal(deletedBox.checked, false);
-  assert.match(deletedBox.parentElement.parentElement.textContent, copyPattern('controls.deleted'));
-  assert.equal(deletedBox.parentElement.parentElement.querySelector('a').hasAttribute('href'), false);
-  assert.equal(survivorBox.checked, true); assert.match(survivorBox.parentElement.parentElement.textContent, copyPattern('common.status.offline'));
+  assert.match(deletedBox.parentElement.parentElement.parentElement.textContent, copyPattern('controls.deleted'));
+  assert.equal(deletedBox.parentElement.parentElement.parentElement.querySelector('a').hasAttribute('href'), false);
+  assert.equal(survivorBox.checked, true); assert.match(survivorBox.parentElement.parentElement.parentElement.textContent, copyPattern('common.status.offline'));
   assert.equal(button(env.root, copy('nodes.refreshList')).parentElement.hidden, false, 'new inventory is not acknowledged by an older response');
   assert.equal(elements(env.root).find((item) => item.textContent === copy('nodes.selectionRemoved')).hidden, false);
   assert.equal(env.document.activeElement, search); assert.equal(search.value, 'Node');
@@ -196,8 +196,8 @@ test('nodes post-batch reload overlays fleet changes received while metadata is 
   pending.release(); await flush();
   const boxes = env.root.querySelectorAll('input[data-node-id]');
   const removed = boxes.find((box) => box.dataset.nodeId === id(1));
-  assert.equal(removed.disabled, true); assert.match(removed.parentElement.parentElement.textContent, copyPattern('controls.deleted'));
-  assert.match(boxes.find((box) => box.dataset.nodeId === id(2)).parentElement.parentElement.textContent, copyPattern('common.status.disabled'));
+  assert.equal(removed.disabled, true); assert.match(removed.parentElement.parentElement.parentElement.textContent, copyPattern('controls.deleted'));
+  assert.match(boxes.find((box) => box.dataset.nodeId === id(2)).parentElement.parentElement.parentElement.textContent, copyPattern('common.status.disabled'));
   assert.equal(button(env.root, copy('nodes.refreshList')).parentElement.hidden, false);
   assert.deepEqual(JSON.parse(env.requests.find((request) => request.url === '/api/v1/nodes/batch').body).node_ids, [id(1), id(2)]);
 });
@@ -269,9 +269,9 @@ test('nodes unrelated batch keeps an existing deleted tombstone and explanation 
   const removed = boxes.find((box) => box.dataset.nodeId === id(1));
   assert.ok(removed, 'a batch is not an acknowledgement of an unrelated deletion');
   assert.equal(removed.disabled, true); assert.equal(removed.checked, false);
-  const row = removed.parentElement.parentElement;
+  const row = removed.parentElement.parentElement.parentElement;
   assert.match(row.textContent, copyPattern('controls.deleted')); assert.equal(row.querySelector('a').hasAttribute('href'), false);
-  assert.match(boxes.find((box) => box.dataset.nodeId === id(2)).parentElement.parentElement.textContent, copyPattern('common.status.disabled'));
+  assert.match(boxes.find((box) => box.dataset.nodeId === id(2)).parentElement.parentElement.parentElement.textContent, copyPattern('common.status.disabled'));
   assert.equal(explanation.hidden, false);
   assert.equal(button(env.root, copy('nodes.refreshList')).parentElement.hidden, false);
   assert.deepEqual(JSON.parse(env.requests.find((request) => request.url === '/api/v1/nodes/batch').body).node_ids, [id(2)]);
@@ -314,7 +314,7 @@ for (const page of ['nodes', 'overview']) {
     if (page === 'nodes') {
       const addition = env.root.querySelectorAll('input[data-node-id]').find((box) => box.dataset.nodeId === id(4));
       assert.equal(addition.disabled, false);
-      assert.doesNotMatch(addition.parentElement.parentElement.textContent, copyPattern('controls.deleted'));
+      assert.doesNotMatch(addition.parentElement.parentElement.parentElement.textContent, copyPattern('controls.deleted'));
     } else {
       const addition = env.root.querySelectorAll('li').find((item) => item.textContent.includes('Node 004'));
       assert.equal(addition.querySelector('a').getAttribute('href'), `/nodes/${id(4)}`);
@@ -349,7 +349,7 @@ for (const page of ['nodes', 'overview']) {
     if (page === 'nodes') {
       const removed = env.root.querySelectorAll('input[data-node-id]').find((box) => box.dataset.nodeId === id(4));
       assert.equal(removed.disabled, true);
-      assert.match(removed.parentElement.parentElement.textContent, copyPattern('controls.deleted'));
+      assert.match(removed.parentElement.parentElement.parentElement.textContent, copyPattern('controls.deleted'));
     } else {
       const removed = env.root.querySelectorAll('li').find((item) => item.textContent.includes('Node 004'));
       assert.equal(removed.querySelector('a').hasAttribute('href'), false);
@@ -599,6 +599,9 @@ test('node list sorts Agent versions and patches the existing version cells', as
   const env = await setup(t, {search: '?sort=agent_version&dir=desc'});
   const header = env.root.querySelectorAll('th').find((item) => item.dataset.sort === 'agent_version');
   assert.ok(header.classList.contains('hide-compact'));
+  const added = env.root.querySelectorAll('th').find((item) => item.dataset.sort === 'created');
+  assert.ok(added.classList.contains('hide-compact'));
+  assert.ok(env.root.querySelector('tbody').querySelectorAll('tr').every((row) => row.lastElementChild.classList.contains('hide-compact')));
   assert.equal(header.getAttribute('aria-sort'), 'descending');
   env.send({nodes: [compact({...env.inventory[0], agent_version: '1.9'}), compact({...env.inventory[1], agent_version: '1.10'})]});
   const versionCells = env.root.querySelector('tbody').querySelectorAll('tr').map((row) => row.children[5]);

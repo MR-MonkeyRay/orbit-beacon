@@ -534,9 +534,15 @@
   padding-right: 0!important;
 }
 
-.selection-cell input {
+.selection-hit {
   position: relative;
   z-index: var(--z-raised);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.selection-cell input {
   width: 18px;
   height: 18px;
   accent-color: var(--beacon);

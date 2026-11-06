@@ -50,7 +50,7 @@ test('node metric cells patch in place without reload flags, selection or sort c
     assert.equal(row.children[3], refs.cpu);
     assert.equal(row.children[4], refs.memory);
     for (const cell of [refs.cpu, refs.memory]) {
-      assert.ok(cell.classList.contains('hide-compact'));
+      assert.ok(!cell.classList.contains('hide-compact'));
       assert.ok(cell.classList.contains('num'));
     }
     for (const [cpu, memory] of [[0, 100], [12.34, 76.54], [null, null]]) {

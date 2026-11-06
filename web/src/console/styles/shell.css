@@ -57,7 +57,6 @@
 }
 
 /* 外壳 */
-/* 仅桌面和 iPad：更窄的窗口横向滚动而非重排。 */
 :root {
   --content-max:1180px;
 }
@@ -71,7 +70,6 @@
 .shell {
   display: grid;
   grid-template-columns: 248px minmax(0,1fr);
-  min-width: 744px;
   min-height: 100vh;
 }
 
@@ -237,4 +235,8 @@
 .noscript {
   padding: 40px;
   text-align: center;
+}
+
+.mobile-bar,.drawer-backdrop {
+  display: none;
 }

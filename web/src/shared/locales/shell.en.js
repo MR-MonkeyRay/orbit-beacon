@@ -1,4 +1,5 @@
 export default {
+  'shell.menu': 'Menu',
   'shell.commandPalette': 'Command palette',
   'shell.consoleTitle': 'OrbitBeacon Console',
   'shell.notFound': 'Not found',

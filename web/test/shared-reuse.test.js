@@ -51,6 +51,6 @@ test('consolidated CSS keeps native checkbox focus and stack spacing without obs
   assert.match(forms, /\.check-row:has\(input:focus-visible\)\s*\{\s*outline: 2px solid var\(--focus\);/);
   assert.match(forms, /\.check-row input\s*\{[^}]*width: 18px;[^}]*height: 18px;/);
   assert.doesNotMatch(forms, /\.check-row input\s*\{[^}]*(?:appearance|opacity|outline):/);
-  assert.match(components, /\.panel\+\.panel,\.stack>\*\+\*\s*\{\s*margin-top: 18px;/);
+  assert.match(components, /\.panel\+\.panel,\.grid-2~\.panel,\.stack>\*\+\*\s*\{\s*margin-top: 18px;/);
   assert.doesNotMatch(css, /\.(?:hint|lede|note|data-check|data-load-note|data-secondary|data-empty|notification-empty|notification-status|notification-read-status|notification-source-status|notification-error|notification-filters|administrator-protection)(?![\w-])/);
 });
