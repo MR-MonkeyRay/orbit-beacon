@@ -26,6 +26,11 @@ export function errorText(error) {
 }
 
 const fieldReasons = new Map([
+  ['must be a valid probe target', 'alerts.validation.probeTarget'],
+  ['must be null for this metric', 'alerts.validation.probeTarget'],
+  ['must be >', 'fields.comparator'],
+  ['must be <', 'fields.comparator'],
+  ['must be greater than zero', 'fields.threshold'],
   ['must be an integer between 1 and 100000', 'fields.apiTokenRate'],
   ['is only valid for disk_used_percent or inode_used_percent', 'fields.historyDiskMetric'],
   ['must be an absolute path of at most 1024 bytes without NUL', 'fields.absoluteDiskPath'],

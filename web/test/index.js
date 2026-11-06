@@ -57,3 +57,5 @@ import './announcements.test.js';
 import './totp.test.js';
 
 import './api-tokens.test.js';
+
+import './probe-alerts.test.js';

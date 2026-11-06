@@ -342,15 +342,39 @@ func TestAPITokenHTTPAlertsGroupsAndLiteralFields(t *testing.T) {
 	f := newHTTP(t, 1)
 	_, token, cookie, csrf := createHTTPAPIToken(t, f)
 	id := "00000000-0000-4000-8000-000000000001"
-	if _, err := f.db.Exec(`INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,rule_name,node_name,rule_snapshot) VALUES(?,'deleted-rule','deleted-node','firing',90,?,'retained rule','retained node','{"metric":"cpu_percent","severity":"critical"}')`, id, timekey.Format(time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC))); err != nil {
+	if _, err := f.db.Exec(`INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,rule_name,node_name,rule_snapshot) VALUES(?,'deleted-rule','deleted-node','firing',90,?,'retained rule','retained node','{"metric":"probe_failed","target":"https://private-alert-target.example","severity":"critical"}')`, id, timekey.Format(time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC))); err != nil {
 		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/v1/alerts", "/api/v1/alerts/summary", "/api/v1/alerts/" + id, "/api/public/v1/nodes"} {
+		response := request(t, f.handler, "GET", path, "", nil, "", "")
+		if path == "/api/public/v1/nodes" {
+			assertHTTPStatus(t, response, http.StatusOK)
+		} else {
+			assertHTTPStatus(t, response, http.StatusUnauthorized)
+		}
+		if strings.Contains(response.Body.String(), "private-alert-target") {
+			t.Fatalf("anonymous target leak: %s", response.Body)
+		}
 	}
 	group := createHTTPGroup(t, f, cookie, csrf, "token-group")
 	eventKeys := []string{"id", "rule_id", "node_id", "rule_name", "metric", "severity", "node_name", "state", "value", "started_at", "resolved_at", "last_notified_at", "silenced"}
 	bearer := "Bearer " + token
 	for _, path := range []string{"/api/v1/alerts", "/api/v1/alerts/summary", "/api/v1/alerts/" + id, "/api/v1/groups"} {
-		got := tokenObject(t, apiTokenRequest(t, f.handler, "GET", path, bearer, cookie))
+		response := apiTokenRequest(t, f.handler, "GET", path, bearer, cookie)
+		if strings.Contains(response.Body.String(), "private-alert-target") || strings.Contains(response.Body.String(), `"target"`) {
+			t.Fatalf("token leaked target: %s", response.Body)
+		}
+		got := tokenObject(t, response)
 		admin := tokenObject(t, request(t, f.handler, "GET", path, "", cookie, "", ""))
+		// Console responses include the snapshot target; token responses keep their allowlist.
+		switch path {
+		case "/api/v1/alerts":
+			delete(admin["events"].([]any)[0].(map[string]any), "target")
+		case "/api/v1/alerts/summary":
+			delete(admin["newest"].([]any)[0].(map[string]any), "target")
+		case "/api/v1/alerts/" + id:
+			delete(admin, "target")
+		}
 		if !reflect.DeepEqual(got, admin) {
 			t.Fatalf("changed shape: %s", path)
 		}

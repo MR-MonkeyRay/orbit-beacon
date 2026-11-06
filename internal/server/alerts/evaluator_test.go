@@ -305,7 +305,7 @@ func TestMetricComputationAndLessThanHysteresis(t *testing.T) {
 	}
 	f.latest.report.Metrics = m
 	for metric, want := range map[string]float64{"memory_used_percent": 80, "swap_used_percent": 30, "load1": 2.5, "disk_used_percent": 90} {
-		v := metricValue(f.latest.report, metric, f.now)
+		v := metricValue(f.latest.report, Rule{Metric: metric}, f.now)
 		if v == nil || *v != want {
 			t.Errorf("%s=%v want %v", metric, v, want)
 		}
@@ -326,12 +326,12 @@ func TestProbesDownMetricCountsFailuresAndEmptyIsZero(t *testing.T) {
 			{Target: "icmp://three.example", OK: false},
 		}},
 	}
-	value := metricValue(latest, "probes_down", now)
+	value := metricValue(latest, Rule{Metric: "probes_down"}, now)
 	if value == nil || *value != 2 {
 		t.Fatalf("probes_down=%v want 2", value)
 	}
 	latest.ProbeResults = nil
-	value = metricValue(latest, "probes_down", now)
+	value = metricValue(latest, Rule{Metric: "probes_down"}, now)
 	if value == nil || *value != 0 {
 		t.Fatalf("empty probes_down=%v want 0", value)
 	}

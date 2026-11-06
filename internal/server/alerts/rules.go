@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/validation"
@@ -33,6 +34,7 @@ type Rule struct {
 	ScopeKind  string    `json:"scope_kind"`
 	ScopeID    *string   `json:"scope_id"`
 	Metric     string    `json:"metric"`
+	Target     *string   `json:"target"`
 	Comparator *string   `json:"comparator"`
 	Threshold  *float64  `json:"threshold"`
 	ForSeconds int       `json:"for_seconds"`
@@ -41,7 +43,7 @@ type Rule struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-// json.RawMessage 区分字段省略和显式 null；仅 scope_id、comparator 和 threshold 接受 null。
+// json.RawMessage 区分字段省略和显式 null；仅 scope_id、target、comparator 和 threshold 接受 null。
 // POST 必须提供不接受 null 的字段。
 type Patch struct {
 	ChannelIDs json.RawMessage `json:"channel_ids"`
@@ -50,6 +52,7 @@ type Patch struct {
 	ScopeKind  json.RawMessage `json:"scope_kind"`
 	ScopeID    json.RawMessage `json:"scope_id"`
 	Metric     json.RawMessage `json:"metric"`
+	Target     json.RawMessage `json:"target"`
 	Comparator json.RawMessage `json:"comparator"`
 	Threshold  json.RawMessage `json:"threshold"`
 	ForSeconds json.RawMessage `json:"for_seconds"`
@@ -76,7 +79,7 @@ func apply(r *Rule, p Patch, create bool) error {
 	}{
 		{"name", p.Name, &r.Name, false}, {"enabled", p.Enabled, &r.Enabled, false},
 		{"scope_kind", p.ScopeKind, &r.ScopeKind, false}, {"scope_id", p.ScopeID, &r.ScopeID, true},
-		{"metric", p.Metric, &r.Metric, false}, {"comparator", p.Comparator, &r.Comparator, true},
+		{"metric", p.Metric, &r.Metric, false}, {"target", p.Target, &r.Target, true}, {"comparator", p.Comparator, &r.Comparator, true},
 		{"threshold", p.Threshold, &r.Threshold, true}, {"for_seconds", p.ForSeconds, &r.ForSeconds, false},
 		{"severity", p.Severity, &r.Severity, false},
 	} {
@@ -120,6 +123,13 @@ func ValidateRuleSyntax(r Rule) error {
 	if r.Severity != "info" && r.Severity != "warning" && r.Severity != "critical" {
 		return validation.Invalid("severity", "must be info, warning or critical")
 	}
+	if targetMetric(r.Metric) {
+		if r.Target == nil || v1.ValidateProbeTarget(*r.Target) != nil {
+			return validation.Invalid("target", "must be a valid probe target")
+		}
+	} else if r.Target != nil {
+		return validation.Invalid("target", "must be null for this metric")
+	}
 	switch r.Metric {
 	case "offline":
 		if r.Comparator != nil || r.Threshold != nil {
@@ -128,10 +138,23 @@ func ValidateRuleSyntax(r Rule) error {
 		if time.Duration(r.ForSeconds)*time.Second < nodes.OnlineWindow {
 			return validation.Invalid("for_seconds", "offline duration must be at least the online window")
 		}
-	case "cpu_percent", "memory_used_percent", "swap_used_percent", "disk_used_percent", "load1", "probes_down", "traffic_quota_percent", "node_expiry_days":
+	case "cpu_percent", "memory_used_percent", "swap_used_percent", "disk_used_percent", "load1", "probes_down", "traffic_quota_percent", "node_expiry_days", "probe_failed", "probe_latency_ms", "probe_tls_expiry_days":
 		bound := 100.0
-		if r.Metric == "node_expiry_days" {
+		if r.Metric == "probe_failed" {
+			bound = 0
+			if r.Comparator == nil || *r.Comparator != ">" {
+				return validation.Invalid("comparator", "must be >")
+			}
+		} else if r.Metric == "probe_latency_ms" {
+			bound = 60000
+			if r.Threshold != nil && *r.Threshold <= 0 {
+				return validation.Invalid("threshold", "must be greater than zero")
+			}
+		} else if r.Metric == "node_expiry_days" || r.Metric == "probe_tls_expiry_days" {
 			bound = 365
+			if r.Metric == "probe_tls_expiry_days" {
+				bound = 3650
+			}
 			if r.Comparator == nil || *r.Comparator != "<" {
 				return validation.Invalid("comparator", "must be <")
 			}
@@ -195,14 +218,14 @@ func validate(ctx context.Context, tx *sql.Tx, r Rule) error {
 	return nil
 }
 
-const ruleColumns = "id,name,enabled,scope_kind,scope_id,metric,comparator,threshold,for_seconds,severity,created_at,updated_at"
+const ruleColumns = "id,name,enabled,scope_kind,scope_id,metric,target,comparator,threshold,for_seconds,severity,created_at,updated_at"
 
 type scanner interface{ Scan(...any) error }
 
 func scanRule(row scanner) (Rule, error) {
 	var r Rule
 	var created, updated string
-	err := row.Scan(&r.ID, &r.Name, &r.Enabled, &r.ScopeKind, &r.ScopeID, &r.Metric, &r.Comparator, &r.Threshold, &r.ForSeconds, &r.Severity, &created, &updated)
+	err := row.Scan(&r.ID, &r.Name, &r.Enabled, &r.ScopeKind, &r.ScopeID, &r.Metric, &r.Target, &r.Comparator, &r.Threshold, &r.ForSeconds, &r.Severity, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
@@ -288,9 +311,9 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Rule, error) {
 	}
 	r.UpdatedAt = updated
 	if create {
-		_, err = tx.ExecContext(ctx, "INSERT INTO alert_rules("+ruleColumns+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", r.ID, r.Name, r.Enabled, r.ScopeKind, r.ScopeID, r.Metric, r.Comparator, r.Threshold, r.ForSeconds, r.Severity, timekey.Format(r.CreatedAt), timekey.Format(r.UpdatedAt))
+		_, err = tx.ExecContext(ctx, "INSERT INTO alert_rules("+ruleColumns+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", r.ID, r.Name, r.Enabled, r.ScopeKind, r.ScopeID, r.Metric, r.Target, r.Comparator, r.Threshold, r.ForSeconds, r.Severity, timekey.Format(r.CreatedAt), timekey.Format(r.UpdatedAt))
 	} else {
-		_, err = tx.ExecContext(ctx, "UPDATE alert_rules SET name=?,enabled=?,scope_kind=?,scope_id=?,metric=?,comparator=?,threshold=?,for_seconds=?,severity=?,updated_at=? WHERE id=?", r.Name, r.Enabled, r.ScopeKind, r.ScopeID, r.Metric, r.Comparator, r.Threshold, r.ForSeconds, r.Severity, timekey.Format(r.UpdatedAt), id)
+		_, err = tx.ExecContext(ctx, "UPDATE alert_rules SET name=?,enabled=?,scope_kind=?,scope_id=?,metric=?,target=?,comparator=?,threshold=?,for_seconds=?,severity=?,updated_at=? WHERE id=?", r.Name, r.Enabled, r.ScopeKind, r.ScopeID, r.Metric, r.Target, r.Comparator, r.Threshold, r.ForSeconds, r.Severity, timekey.Format(r.UpdatedAt), id)
 	}
 	if err != nil {
 		return Rule{}, err

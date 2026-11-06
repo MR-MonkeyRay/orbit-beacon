@@ -15,6 +15,7 @@ export function showAlert(id, signal) {
     load: (requestSignal) => api(`/alerts/${encodeURIComponent(id)}`, {signal: requestSignal}),
     render: (event) => [facts([
       [t('alerts.column.rule'), event.rule_name || t('alerts.deletedRule')], [t('alerts.column.node'), event.node_name || event.node_id], [t('alerts.column.state'), t(event.state === 'firing' ? 'alerts.state.firing' : 'alerts.state.resolved')],
+      ...(event.target ? [[t('nodes.audit.target'), h('code', {class: 'probe-target mono'}, event.target)]] : []),
       [t('alerts.column.metric'), metricLabel(event.metric)], [t('alerts.column.severity'), severityLabel(event.severity)], [t('alerts.column.value'), formatMetricValue(event.metric, event.value)],
       [t('alerts.column.started'), when(event.started_at)], [t('alerts.column.resolved'), event.resolved_at ? when(event.resolved_at) : null], [t('alerts.detail.eventID'), event.id]
     ]), link(`/nodes/${encodeURIComponent(event.node_id)}`, t('alerts.detail.viewNode'))],

@@ -50,7 +50,14 @@ func TestAPITokenViewsHaveLiteralFieldSets(t *testing.T) {
 	}
 	assertTokenViewKeys(t, tokenProbeView{Status: "down", LatencyMS: &percent}, "status", "latency_ms", "status_code", "checked_at", "tls_expires_at", "uptime_24h", "checks_24h")
 	eventKeys := []string{"id", "rule_id", "node_id", "rule_name", "metric", "severity", "node_name", "state", "value", "started_at", "resolved_at", "last_notified_at", "silenced"}
-	event := alerts.Event{ID: "alert", RuleName: "cpu", StartedAt: at, Value: &percent}
+	target := "https://private-alert-target.example"
+	event := alerts.Event{ID: "alert", RuleName: "probe", Metric: "probe_failed", Target: &target, StartedAt: at, Value: &percent}
+	for _, value := range []any{tokenAlertDTO(event), tokenAlertPage{Events: tokenAlertDTOs([]alerts.Event{event})}, tokenAlertSummaryDTO(alerts.AlertSummary{Newest: []alerts.Event{event}})} {
+		raw, err := json.Marshal(value)
+		if err != nil || strings.Contains(string(raw), target) || strings.Contains(string(raw), `"target"`) {
+			t.Fatalf("token target leak: %s %v", raw, err)
+		}
+	}
 	assertTokenViewKeys(t, tokenAlertDTO(event), eventKeys...)
 	assertTokenViewKeys(t, tokenAlertPage{Events: tokenAlertDTOs([]alerts.Event{event})}, "events", "has_more")
 	assertTokenViewKeys(t, tokenAlertPage{NextCursor: "cursor"}, "events", "has_more", "next_cursor")

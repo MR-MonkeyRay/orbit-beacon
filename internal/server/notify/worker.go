@@ -29,6 +29,7 @@ func notificationPayload(n alerts.Notification) Payload {
 	p.Rule.ID = n.Rule.ID
 	p.Rule.Name = n.Rule.Name
 	p.Rule.Metric = n.Rule.Metric
+	p.Rule.Target = n.Rule.Target
 	p.Rule.Severity = n.Rule.Severity
 	p.Node.ID = n.NodeID
 	p.Node.Name = n.NodeName

@@ -161,7 +161,7 @@ test('channel editor shows templates for Telegram and email, prefills and saves 
     assert.equal(template.disabled, true);
     assert.equal(wrapper.hidden, true);
     assert.equal(wrapper.querySelector('label').textContent, copy('alerts.channels.template'));
-    assert.equal(wrapper.querySelector('.hint').textContent, '{state} {rule} {node} {metric} {severity} {value} {started_at} {resolved_at} {event_id}');
+    assert.equal(wrapper.querySelector('.hint').textContent, '{state} {rule} {node} {metric} {target} {severity} {value} {started_at} {resolved_at} {event_id}');
     change(control(root, 'kind'), 'telegram');
     assert.equal(template.disabled, false);
     assert.equal(wrapper.hidden, false);

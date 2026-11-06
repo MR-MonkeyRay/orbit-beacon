@@ -63,7 +63,7 @@ var categoryTables = map[Category][]tableSpec{
 		table("node_tags", "main", "", "node_id TEXT,tag TEXT", "node_id,tag"),
 		table("announcements", "main", "", "id TEXT,level TEXT,title TEXT,body TEXT,starts_at TEXT,ends_at TEXT,created_at TEXT,updated_at TEXT", "id"),
 		table("alert_silences", "main", "", "id TEXT,reason TEXT,scope_kind TEXT,scope_id TEXT,starts_at TEXT,ends_at TEXT,created_at TEXT", "id"),
-		table("alert_rules", "main", "", "id TEXT,name TEXT,enabled INTEGER,scope_kind TEXT,scope_id TEXT,metric TEXT,comparator TEXT,threshold REAL,for_seconds INTEGER,severity TEXT,created_at TEXT,updated_at TEXT", "id"),
+		table("alert_rules", "main", "", "id TEXT,name TEXT,enabled INTEGER,scope_kind TEXT,scope_id TEXT,metric TEXT,target TEXT,comparator TEXT,threshold REAL,for_seconds INTEGER,severity TEXT,created_at TEXT,updated_at TEXT", "id"),
 		table("notification_channels", "main", "", "id TEXT,name TEXT,kind TEXT,enabled INTEGER,config_json TEXT,secret_ciphertext BLOB,url_ciphertext BLOB,created_at TEXT,updated_at TEXT", "id"),
 		table("alert_rule_channels", "main", "", "rule_id TEXT,channel_id TEXT", "rule_id,channel_id"),
 		table("backup_plans", "main", "", "id TEXT,name TEXT,enabled INTEGER,kind TEXT,categories_json TEXT,cron TEXT,destination_json TEXT,credentials_ciphertext BLOB,retain_count INTEGER,created_at TEXT,updated_at TEXT", "id"),

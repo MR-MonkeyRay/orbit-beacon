@@ -1,4 +1,10 @@
 export default {
+  'alerts.metric.probeFailed': 'Probe failure',
+  'alerts.metric.probeLatency': 'Probe latency',
+  'alerts.metric.probeTLSExpiry': 'Probe TLS expiry',
+  'alerts.rules.thresholdMilliseconds': 'Threshold (ms)',
+  'alerts.validation.probeTarget': 'Enter a valid probe target for a per-target metric; otherwise leave it empty.',
+
   'alerts.silences.title': 'Silences',
   'alerts.silences.add': 'Add silence',
   'alerts.silences.delete': 'Delete silence',

@@ -24,7 +24,7 @@ const eventSummary = (event) => {
 export function eventRows(events) {
   return events.map((event) => h('tr', null,
     h('td', null, severityPill(event.severity)),
-    h('td', null, link(`/alerts?event=${encodeURIComponent(event.id)}#history`, event.rule_name || t('alerts.deletedRule'))),
+    h('td', null, link(`/alerts?event=${encodeURIComponent(event.id)}#history`, event.rule_name || t('alerts.deletedRule')), event.target ? h('div', null, h('code', {class: 'probe-target mono'}, event.target)) : null),
     h('td', null, link(`/nodes/${encodeURIComponent(event.node_id)}`, event.node_name || event.node_id)),
     h('td', null, formatMetricValue(event.metric, event.value)),
     h('td', null, t(event.state === 'firing' ? 'alerts.state.firing' : 'alerts.state.resolved'), event.silenced ? [' ', silencedBadge()] : null),
@@ -95,7 +95,7 @@ export function activeAlertsSummary({firing, newest}) {
   return panel(t('alerts.events.activeTitle'), {action: link('/alerts', t('alerts.events.viewAlerts', {count: firing.total}))},
     firing.total ? [h('div', {class: 'alert-counts'}, counts),
       h('ul', {class: 'rows'}, newest.map((event) => h('li', null,
-        h('div', {class: 'grow'}, h('div', {class: 'title'}, link(`/alerts?event=${encodeURIComponent(event.id)}#history`, event.rule_name || t('alerts.deletedRule'))),
+        h('div', {class: 'grow'}, h('div', {class: 'title'}, link(`/alerts?event=${encodeURIComponent(event.id)}#history`, event.rule_name || t('alerts.deletedRule')), event.target ? h('div', null, h('code', {class: 'probe-target mono'}, event.target)) : null),
           h('div', {class: 'sub'}, eventSummary(event))),
         severityPill(event.severity))))] : h('p', {class: 'muted'}, t('alerts.events.noActive')));
 }

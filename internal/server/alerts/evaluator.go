@@ -125,7 +125,7 @@ func (e *Evaluator) Run(ctx context.Context) {
 }
 func definition(r Rule) string {
 	// 名称、严重级别和时间戳变更不重置待触发计时。条件或范围变更
-	// 会开始新一轮告警，并结束此前仍在触发中的事件。
+	// （包括探测目标）会开始新一轮告警，并结束此前仍在触发中的事件。
 	// 通知路由变更不得重置待触发计时或未结束的事件。
 	r.ChannelIDs = nil
 	r.ID = ""
@@ -176,7 +176,7 @@ func (e *Evaluator) readOpen(ctx context.Context) (map[pair]openEvent, error) {
 		var o openEvent
 		var start, raw string
 		var resolved, notified *string
-		if err := rows.Scan(&o.ID, &o.RuleID, &o.NodeID, &o.RuleName, &o.NodeName, &o.State, &o.Value, &start, &resolved, &notified, &o.Silenced, &raw); err != nil {
+		if err := rows.Scan(&o.ID, &o.RuleID, &o.NodeID, &o.RuleName, &o.NodeName, &o.State, &o.Value, &start, &resolved, &notified, &o.Silenced, &o.Target, &raw); err != nil {
 			return nil, err
 		}
 		o.StartedAt, err = timekey.Parse(start)
@@ -353,7 +353,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 					}
 				} else if r.Metric == "traffic_quota_percent" {
 					v, hasQuota := quotas[n.id]
-					disabled := latestErr == nil && metricDisabled(r.Metric, latest.Runtime)
+					disabled := latestErr == nil && metricDisabled(r, latest.Runtime)
 					if !hasQuota || (disabled && latestFresh(latest, now)) {
 						delete(e.pending, key)
 						if firing {
@@ -370,13 +370,13 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 					}
 					value = &v
 				} else if latestErr == nil {
-					value = metricValue(latest, r.Metric, now)
+					value = metricValue(latest, r, now)
 				}
 				// 数据缺失或过期会打断持续越限计时，但不能据此判定告警已恢复。
 				if value == nil {
 					delete(e.pending, key)
 					// 本地关闭后不会再有数据，不恢复的话事件会一直处于触发状态。
-					if firing && latestErr == nil && latestFresh(latest, now) && metricDisabled(r.Metric, latest.Runtime) {
+					if firing && latestErr == nil && latestFresh(latest, now) && metricDisabled(r, latest.Runtime) {
 						if err := e.resolve(ctx, o, nil, now); err != nil {
 							evaluationErr = errors.Join(evaluationErr, err)
 						}

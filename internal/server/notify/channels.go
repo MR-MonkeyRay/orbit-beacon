@@ -496,7 +496,7 @@ func validHost(host string) bool {
 }
 
 var templateTokenPattern = regexp.MustCompile(`\{[a-z_]+\}`)
-var templateTokens = []string{"{state}", "{rule}", "{node}", "{metric}", "{severity}", "{value}", "{started_at}", "{resolved_at}", "{event_id}"}
+var templateTokens = []string{"{state}", "{rule}", "{node}", "{metric}", "{target}", "{severity}", "{value}", "{started_at}", "{resolved_at}", "{event_id}"}
 
 func validTemplate(template string) bool {
 	if !utf8.ValidString(template) || len(template) > 1000 {

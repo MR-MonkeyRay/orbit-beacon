@@ -1,18 +1,20 @@
 // 告警与通知表单逻辑，与 DOM 解耦。
 import {getLocale, t} from '../i18n.js';
 import {byteLength} from '../../shared/dom.js';
+import {formatMilliseconds} from '../format.js';
 import {uuid} from '../../shared/uuid.js';
 export const METRICS = [
   ['cpu_percent', t('alerts.metric.cpu')], ['memory_used_percent', t('alerts.metric.memory')],
   ['swap_used_percent', t('alerts.metric.swap')], ['disk_used_percent', t('alerts.metric.disk')],
-  ['traffic_quota_percent', t('alerts.metric.trafficQuota')], ['node_expiry_days', t('alerts.metric.nodeExpiry')], ['load1', t('alerts.metric.load1')], ['probes_down', t('alerts.metric.probesDown')], ['offline', t('common.status.offline')]
+  ['traffic_quota_percent', t('alerts.metric.trafficQuota')], ['node_expiry_days', t('alerts.metric.nodeExpiry')], ['load1', t('alerts.metric.load1')], ['probes_down', t('alerts.metric.probesDown')], ['probe_failed', t('alerts.metric.probeFailed')], ['probe_latency_ms', t('alerts.metric.probeLatency')], ['probe_tls_expiry_days', t('alerts.metric.probeTLSExpiry')], ['offline', t('common.status.offline')]
 ];
 export const SEVERITIES = [['info', t('alerts.severity.info')], ['warning', t('alerts.severity.warning')], ['critical', t('alerts.severity.critical')]];
 export const metricLabel = (metric) => METRICS.find(([id]) => id === metric)?.[1] || t('alerts.metric.unknown');
 export const severityLabel = (severity) => SEVERITIES.find(([id]) => id === severity)?.[1] || t('alerts.severity.unknown');
 export const metricUnit = (metric = '') => metric.endsWith('_percent') ? '%' : metric === 'load1' ? t('alerts.unit.load') : metric === 'probes_down' ? t('alerts.unit.probes') : '';
+export const isProbeMetric = (metric) => ['probe_failed', 'probe_latency_ms', 'probe_tls_expiry_days'].includes(metric);
 // 各指标阈值上限，与服务端规则校验一致。
-export const metricMax = (metric) => metric === 'node_expiry_days' ? 365 : metric === 'traffic_quota_percent' ? 1000 : metric === 'load1' ? 1000000 : metric === 'probes_down' ? 5 : 100;
+export const metricMax = (metric) => metric === 'probe_failed' ? 0 : metric === 'probe_latency_ms' ? 60000 : metric === 'probe_tls_expiry_days' ? 3650 : metric === 'node_expiry_days' ? 365 : metric === 'traffic_quota_percent' ? 1000 : metric === 'load1' ? 1000000 : metric === 'probes_down' ? 5 : 100;
 // 与服务端 notify.validHost 一致：IP 字面量或 LDH 标签。
 export function validHost(host) {
   if (!host || host.length > 253 || host.includes('%')) return false;
@@ -26,7 +28,9 @@ export function formatMetricValue(metric, value) {
   if (metric === 'offline') return t('common.status.offline');
   if (!Number.isFinite(value)) return t('common.unavailable');
   if (metricUnit(metric) === '%') return `${Number(value.toFixed(1)).toLocaleString(getLocale(), {maximumFractionDigits: 1})}%`;
-  if (metric === 'node_expiry_days') return t('alerts.value.expiryDays', {value: Number(value.toFixed(1)).toLocaleString(getLocale(), {maximumFractionDigits: 1})});
+  if (metric === 'probe_latency_ms') return formatMilliseconds(value);
+  if (metric === 'probe_failed') return t(value ? 'nodes.probe.down' : 'nodes.probe.up');
+  if (metric === 'node_expiry_days' || metric === 'probe_tls_expiry_days') return t('alerts.value.expiryDays', {value: Number(value.toFixed(1)).toLocaleString(getLocale(), {maximumFractionDigits: 1})});
   if (metric === 'load1') return t('alerts.value.load', {value: value > 0 && value < .01 ? `< ${(0.01).toLocaleString(getLocale())}` : Number(value.toFixed(2)).toLocaleString(getLocale(), {minimumFractionDigits: 2, maximumFractionDigits: 2})});
   if (metric === 'probes_down') return t('alerts.value.failingProbes', {count: value});
   return t('alerts.value.unknownMetric', {value: value.toLocaleString(getLocale(), {maximumSignificantDigits: 21})});
@@ -56,13 +60,14 @@ export function validateRule(rule) {
   if (!['all', 'group', 'node'].includes(rule.scope_kind)) fields.scope_kind = t('alerts.validation.scope');
   else if (rule.scope_kind === 'all' ? rule.scope_id != null : !uuid.test(rule.scope_id || '')) fields.scope_id = t(rule.scope_kind === 'all' ? 'alerts.validation.allScopeID' : 'alerts.validation.scopeID');
   if (!METRICS.some(([id]) => rule.metric === id)) fields.metric = t('alerts.validation.metric');
+  if (isProbeMetric(rule.metric) ? typeof rule.target !== 'string' || !rule.target || byteLength(rule.target) > 1024 || /\s/.test(rule.target) : rule.target != null) fields.target = t('alerts.validation.probeTarget');
   if (rule.metric === 'offline') {
     if (rule.comparator != null) fields.comparator = t('alerts.validation.offlineComparator');
     if (rule.threshold != null) fields.threshold = t('alerts.validation.offlineThreshold');
   } else {
-    if (rule.metric === 'node_expiry_days' ? rule.comparator !== '<' : !['>', '<'].includes(rule.comparator)) fields.comparator = t('alerts.validation.comparator');
+    if (rule.metric === 'probe_failed' ? rule.comparator !== '>' : ['node_expiry_days', 'probe_tls_expiry_days'].includes(rule.metric) ? rule.comparator !== '<' : !['>', '<'].includes(rule.comparator)) fields.comparator = t('alerts.validation.comparator');
     const max = metricMax(rule.metric);
-    if (!Number.isFinite(rule.threshold) || rule.threshold < 0 || (rule.metric === 'node_expiry_days' && rule.threshold < 1) || ((rule.metric === 'traffic_quota_percent' || rule.metric === 'node_expiry_days') && rule.threshold === 0) || rule.threshold > max) fields.threshold = rule.metric === 'node_expiry_days' ? t('alerts.validation.expiryThreshold') : rule.metric === 'traffic_quota_percent' ? t('alerts.validation.quotaThreshold') : t('alerts.validation.threshold', {max});
+    if (!Number.isFinite(rule.threshold) || rule.threshold < 0 || (rule.metric === 'node_expiry_days' && rule.threshold < 1) || (['traffic_quota_percent', 'node_expiry_days', 'probe_latency_ms', 'probe_tls_expiry_days'].includes(rule.metric) && rule.threshold === 0) || rule.threshold > max) fields.threshold = rule.metric === 'node_expiry_days' ? t('alerts.validation.expiryThreshold') : rule.metric === 'traffic_quota_percent' ? t('alerts.validation.quotaThreshold') : t('alerts.validation.threshold', {max});
   }
   const minimum = rule.metric === 'offline' ? 180 : 0;
   if (!Number.isInteger(rule.for_seconds) || rule.for_seconds < minimum || rule.for_seconds > 86400) fields.for_seconds = t(minimum ? 'alerts.validation.offlineDuration' : 'alerts.validation.duration');
@@ -130,7 +135,7 @@ export function buildChannelPayload(values, {editing = false, replaceURL = false
   if (values.kind !== 'wecom' && (replaceSecret || values.secret)) body.secret = values.secret ?? '';
   return body;
 }
-export const MESSAGE_TEMPLATE_TOKENS = ['{state}', '{rule}', '{node}', '{metric}', '{severity}', '{value}', '{started_at}', '{resolved_at}', '{event_id}'];
+export const MESSAGE_TEMPLATE_TOKENS = ['{state}', '{rule}', '{node}', '{metric}', '{target}', '{severity}', '{value}', '{started_at}', '{resolved_at}', '{event_id}'];
 export function validateChannel(body, {kind = body.kind, existing = null} = {}) {
   const fields = {};
   const config = body.config || {};

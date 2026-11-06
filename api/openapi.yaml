@@ -3275,6 +3275,7 @@ components:
       description: |
         指标规则须有 comparator 与 threshold。流量配额阈值为 (0,1000]，其他百分比阈值为 0..100；
         load1 阈值须为 0..1000000 的有限数值；probes_down 阈值须为 0..5 的有限数值。
+        probe_failed 仅允许 comparator 为 > 且 threshold 为 0。probe_latency_ms 支持 > 或 <，阈值须 > 0 且 <= 60000，失败结果无数据。probe_tls_expiry_days 仅允许 <，阈值须 > 0 且 <= 3650，剩余天数可含小数且下限为 0，无 TLS 到期时间则无数据。三种指标须指定有效 target，其他指标 target 须为 null；按原始目标精确匹配。目标移除或关闭探测时，新鲜报告可恢复事件。
         node_expiry_days 仅允许 comparator 为 <，阈值 > 0 且 <= 365。按到期日次日 UTC 零点计算连续剩余天数，下限 0；不依赖 Agent 上报，亦为下述最新报告时效限制的例外。无日期不匹配，并恢复已有事件。
         流量配额按账期计费用量评估，可超过 100%；不依赖在线状态。读取失败保留事件，移除配额或账期回落可恢复。
         offline 须 comparator 与 threshold 为 null/省略，且 for_seconds 至少 180（nodes.OnlineWindow）。
@@ -3286,14 +3287,15 @@ components:
         probes_down 统计最新上报中的失败结果；无探测结果即数值零，因此移除目标可使告警恢复。
         指标条件须持续满足 for_seconds。offline 使用距最近一次服务端收到上报
         （无上报则为注册）的时长，无额外待触发延迟。恢复判断采用阈值 2% 的回差，
-        百分比指标的回差至少为 1 个百分点；probes_down 使用限制在 0..5 的计数回差。
+        百分比指标的回差至少为 1 个百分点；probes_down 使用限制在 0..5 的计数回差。probe_failed 无回差；probe_latency_ms 仅使用阈值 2% 的回差；probe_tls_expiry_days 使用阈值 2% 且至少 1 天的回差。
         重启后重置待触发计时器；已触发的事件重新加载，不重复创建。
       properties: &alertRuleProperties
         name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 100, description: 非空名称。}
         enabled: {type: boolean}
         scope_kind: {type: string, enum: [all, group, node]}
         scope_id: {type: [string, 'null'], format: uuid}
-        metric: {type: string, enum: [cpu_percent, memory_used_percent, swap_used_percent, disk_used_percent, load1, probes_down, traffic_quota_percent, node_expiry_days, offline]}
+        metric: {type: string, enum: [cpu_percent, memory_used_percent, swap_used_percent, disk_used_percent, load1, probes_down, probe_failed, probe_latency_ms, probe_tls_expiry_days, traffic_quota_percent, node_expiry_days, offline]}
+        target: {type: [string, 'null'], x-maxLengthBytes: 1024, description: 三个单目标探测指标必填且须为有效探测目标；其他指标须为 null。}
         comparator: {type: [string, 'null'], enum: ['>', '<', null]}
         threshold: {type: [number, 'null'], minimum: 0, maximum: 1000000}
         for_seconds: {type: integer, minimum: 0, maximum: 86400}
@@ -3306,7 +3308,7 @@ components:
     AlertRule:
       type: object
       additionalProperties: false
-      required: [id, name, enabled, scope_kind, scope_id, metric, comparator, threshold, for_seconds, severity, channel_ids, created_at, updated_at]
+      required: [id, name, enabled, scope_kind, scope_id, metric, target, comparator, threshold, for_seconds, severity, channel_ids, created_at, updated_at]
       properties:
         <<: *alertRuleProperties
         id: {type: string, format: uuid}
@@ -3394,12 +3396,13 @@ components:
     AlertEvent:
       type: object
       additionalProperties: false
-      required: [id, rule_id, node_id, rule_name, node_name, metric, severity, state, value, started_at, resolved_at, last_notified_at, silenced]
+      required: [id, rule_id, node_id, rule_name, node_name, metric, target, severity, state, value, started_at, resolved_at, last_notified_at, silenced]
       properties:
         id: {type: string, format: uuid}
         rule_id: {type: string, format: uuid}
         node_id: {type: string, format: uuid}
         rule_name: {type: string}
+        target: {type: [string, 'null'], description: 事件触发时的规则目标；无目标时为 null。}
         metric: {type: string, description: 事件触发时的规则指标（来自存储的规则快照）；不可用时为空。}
         severity: {type: string, description: 事件触发时的规则严重级别（来自存储的规则快照）；不可用时为空。}
         node_name: {type: string}

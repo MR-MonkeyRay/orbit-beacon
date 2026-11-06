@@ -1,4 +1,10 @@
 export default {
+  'alerts.metric.probeFailed': '探测失败',
+  'alerts.metric.probeLatency': '探测延迟',
+  'alerts.metric.probeTLSExpiry': '探测 TLS 到期',
+  'alerts.rules.thresholdMilliseconds': '阈值（毫秒）',
+  'alerts.validation.probeTarget': '单目标指标请输入有效的探测目标；其他指标请留空。',
+
   'alerts.silences.title': '静默',
   'alerts.silences.add': '添加静默',
   'alerts.silences.delete': '删除静默',

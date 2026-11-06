@@ -12,6 +12,7 @@ import (
 )
 
 type Event struct {
+	Target         *string    `json:"target"`
 	Silenced       bool       `json:"silenced"`
 	ID             string     `json:"id"`
 	RuleID         string     `json:"rule_id"`
@@ -49,7 +50,7 @@ func scanEvent(row scanner) (Event, error) {
 	var e Event
 	var start string
 	var resolved, notified *string
-	err := row.Scan(&e.ID, &e.RuleID, &e.NodeID, &e.RuleName, &e.NodeName, &e.State, &e.Value, &start, &resolved, &notified, &e.Silenced, &e.Metric, &e.Severity)
+	err := row.Scan(&e.ID, &e.RuleID, &e.NodeID, &e.RuleName, &e.NodeName, &e.State, &e.Value, &start, &resolved, &notified, &e.Silenced, &e.Target, &e.Metric, &e.Severity)
 	if err != nil {
 		return e, err
 	}
@@ -72,7 +73,7 @@ func scanEvent(row scanner) (Event, error) {
 	return e, nil
 }
 
-const eventColumns = "e.id,e.rule_id,e.node_id,COALESCE(r.name,e.rule_name),COALESCE(n.name,e.node_name),e.state,e.value,e.started_at,e.resolved_at,e.last_notified_at,e.silenced"
+const eventColumns = "e.id,e.rule_id,e.node_id,COALESCE(r.name,e.rule_name),COALESCE(n.name,e.node_name),e.state,e.value,e.started_at,e.resolved_at,e.last_notified_at,e.silenced,json_extract(e.rule_snapshot,'$.target')"
 const eventSelect = "SELECT " + eventColumns + ",COALESCE(json_extract(e.rule_snapshot,'$.metric'),''),COALESCE(json_extract(e.rule_snapshot,'$.severity'),'') FROM alert_events e LEFT JOIN alert_rules r ON r.id=e.rule_id LEFT JOIN nodes n ON n.id=e.node_id"
 
 // Event 按 ID 直接读取历史事件，沿用列表中的当前名称回退规则和不可变快照字段。

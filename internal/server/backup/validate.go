@@ -186,7 +186,7 @@ func nullableColumn(table, column string) bool {
 	case "alert_silences":
 		return column == "scope_id"
 	case "alert_rules":
-		return oneOf(column, "scope_id", "comparator", "threshold")
+		return oneOf(column, "scope_id", "target", "comparator", "threshold")
 	case "notification_channels":
 		return oneOf(column, "secret_ciphertext", "url_ciphertext")
 	case "backup_plans":
@@ -315,7 +315,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 		if r.integer("enabled") < 0 || r.integer("enabled") > 1 {
 			return invalidRow()
 		}
-		return alerts.ValidateRuleSyntax(alerts.Rule{Name: r.text("name"), Enabled: r.integer("enabled") == 1, ScopeKind: r.text("scope_kind"), ScopeID: r.pointer("scope_id"), Metric: r.text("metric"), Comparator: r.pointer("comparator"), Threshold: r.floatPointer("threshold"), ForSeconds: int(r.integer("for_seconds")), Severity: r.text("severity")})
+		return alerts.ValidateRuleSyntax(alerts.Rule{Name: r.text("name"), Enabled: r.integer("enabled") == 1, ScopeKind: r.text("scope_kind"), ScopeID: r.pointer("scope_id"), Metric: r.text("metric"), Target: r.pointer("target"), Comparator: r.pointer("comparator"), Threshold: r.floatPointer("threshold"), ForSeconds: int(r.integer("for_seconds")), Severity: r.text("severity")})
 	case "notification_channels":
 		return validateChannel(r, notificationBox)
 	case "alert_rule_channels":

@@ -27,10 +27,11 @@ type Payload struct {
 	EventID string `json:"event_id"`
 	State   string `json:"state"`
 	Rule    struct {
-		ID       string `json:"id"`
-		Name     string `json:"name"`
-		Metric   string `json:"metric"`
-		Severity string `json:"severity"`
+		ID       string  `json:"id"`
+		Name     string  `json:"name"`
+		Metric   string  `json:"metric"`
+		Target   *string `json:"target,omitempty"`
+		Severity string  `json:"severity"`
 	} `json:"rule"`
 	Node struct {
 		ID   string `json:"id"`
@@ -189,7 +190,10 @@ func networkFailure(e error) Result {
 	return failure("network_error", true)
 }
 func renderMessage(p Payload, template string, maxBytes int) string {
-	value, resolved := "", ""
+	value, resolved, target := "", "", ""
+	if p.Rule.Target != nil {
+		target = *p.Rule.Target
+	}
 	if p.Value != nil {
 		value = fmt.Sprintf("%g", *p.Value)
 	}
@@ -201,7 +205,7 @@ func renderMessage(p Payload, template string, maxBytes int) string {
 	if template != "" {
 		text = strings.NewReplacer(
 			"{state}", p.State, "{rule}", p.Rule.Name, "{node}", p.Node.Name,
-			"{metric}", p.Rule.Metric, "{severity}", p.Rule.Severity, "{value}", value,
+			"{target}", target, "{metric}", p.Rule.Metric, "{severity}", p.Rule.Severity, "{value}", value,
 			"{started_at}", started, "{resolved_at}", resolved, "{event_id}", p.EventID,
 		).Replace(template)
 		if p.SummaryCount > 1 {
@@ -214,6 +218,9 @@ func renderMessage(p Payload, template string, maxBytes int) string {
 			value = " value=" + value
 		}
 		text = fmt.Sprintf("OrbitBeacon %s: %s on %s (%s, %s)%s\nEvent: %s\nStarted: %s", p.State, p.Rule.Name, p.Node.Name, p.Rule.Metric, p.Rule.Severity, value, p.EventID, started)
+	}
+	if template == "" && p.Rule.Target != nil {
+		text += "\nTarget: " + target
 	}
 	if maxBytes > 0 && len(text) > maxBytes {
 		const suffix = "…"

@@ -5,7 +5,7 @@ import {button, dataTable, iconButton, panel} from '../ui/components.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, select, validateBytes} from '../ui/forms.js';
-import {durationSeconds, formatMetricValue, formatRuleDuration, METRICS, metricLabel, metricMax, scopeLabel, SEVERITIES, validateRule, validationError} from '../lib/alert-utils.js';
+import {durationSeconds, formatMetricValue, formatRuleDuration, isProbeMetric, METRICS, metricLabel, metricMax, scopeLabel, SEVERITIES, validateRule, validationError} from '../lib/alert-utils.js';
 import {alertScope} from '../ui/alert-scope.js';
 import {severityPill} from './alert-events.js';
 
@@ -26,6 +26,8 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
       const comparatorField = field(t('alerts.rules.comparator'), comparator);
       const condition = h('div', {class: 'form-row'}, comparatorField, thresholdField);
       const offlineHint = h('p', {class: 'hint'}, t('alerts.rules.offlineHint'));
+      const target = controls.target = input({name: 'target', value: item?.target || '', autocomplete: 'off', class: 'input mono'});
+      const targetField = field(t('nodes.audit.target'), target);
       const minutes = controls.minutes = input({name: 'for_seconds', type: 'number', min: 0, max: 1440, step: 1, required: true, value: Math.floor((item?.for_seconds ?? 180) / 60)});
       const seconds = controls.seconds = input({name: 'duration_seconds', type: 'number', min: 0, max: 59, step: 1, required: true, value: (item?.for_seconds ?? 180) % 60});
       let previousMetric = metric.value;
@@ -36,28 +38,36 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
       };
       threshold.addEventListener('input', validateThreshold);
       const syncMetric = () => {
-        const expiry = metric.value === 'node_expiry_days';
+        const expiry = ['node_expiry_days', 'probe_tls_expiry_days'].includes(metric.value);
+        const failed = metric.value === 'probe_failed';
+        const probe = isProbeMetric(metric.value);
+        targetField.hidden = !probe;
+        target.disabled = !probe;
+        target.required = probe;
         if (expiry) {
-          if (previousMetric !== 'node_expiry_days') {
+          if (!['node_expiry_days', 'probe_tls_expiry_days'].includes(previousMetric)) {
             previousComparator = comparator.value;
             threshold.value = '30';
           }
           comparator.value = '<';
-        } else if (previousMetric === 'node_expiry_days') comparator.value = previousComparator;
+        } else if (failed) {
+          if (previousMetric !== 'probe_failed' && !['node_expiry_days', 'probe_tls_expiry_days'].includes(previousMetric)) previousComparator = comparator.value;
+          comparator.value = '>';
+        } else if (['node_expiry_days', 'probe_tls_expiry_days', 'probe_failed'].includes(previousMetric)) comparator.value = previousComparator;
         previousMetric = metric.value;
-        comparatorField.hidden = expiry;
+        comparatorField.hidden = expiry || failed;
         const offline = metric.value === 'offline';
-        condition.hidden = offline;
-        comparator.disabled = offline || expiry;
-        threshold.disabled = offline;
-        threshold.required = !offline;
+        condition.hidden = offline || failed;
+        comparator.disabled = offline || expiry || failed;
+        threshold.disabled = offline || failed;
+        threshold.required = !offline && !failed;
         offlineHint.hidden = !offline;
         threshold.max = metricMax(metric.value);
-        threshold.min = expiry ? 1 : 0;
+        threshold.min = metric.value === 'node_expiry_days' ? 1 : 0;
         // 80% 之类的默认值对计数无意义；0 表示任意一次失败。
-        if (Number(threshold.value) > threshold.max) threshold.value = metric.value === 'probes_down' ? '0' : String(threshold.max);
+        if (!failed && Number(threshold.value) > threshold.max) threshold.value = metric.value === 'probes_down' ? '0' : String(threshold.max);
         validateThreshold();
-        thresholdLabel.textContent = t(expiry ? 'alerts.rules.thresholdDays' : metric.value === 'load1' ? 'alerts.rules.thresholdLoad' : metric.value === 'probes_down' ? 'alerts.rules.thresholdProbes' : 'alerts.rules.thresholdPercent');
+        thresholdLabel.textContent = t(expiry ? 'alerts.rules.thresholdDays' : metric.value === 'probe_latency_ms' ? 'alerts.rules.thresholdMilliseconds' : metric.value === 'load1' ? 'alerts.rules.thresholdLoad' : metric.value === 'probes_down' ? 'alerts.rules.thresholdProbes' : 'alerts.rules.thresholdPercent');
         minutes.min = offline ? 3 : 0;
       };
       metric.addEventListener('change', syncMetric);
@@ -68,7 +78,7 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
       const severity = controls.severity = select(SEVERITIES, item?.severity || 'warning', {name: 'severity'});
       const routing = controls.channel_ids = select(channels.map((entry) => [entry.id, entry.enabled ? entry.name : t('alerts.disabledName', {name: entry.name})]), '', {name: 'channel_ids', multiple: true, size: Math.min(6, Math.max(2, channels.length)), class: 'input alert-multiselect'});
       for (const option of routing.options) option.selected = Boolean(item?.channel_ids.includes(option.value));
-      form.append(field(t('alerts.column.name'), name), field(t('alerts.state.enabled'), enabled), field(t('alerts.column.metric'), metric), condition, offlineHint,
+      form.append(field(t('alerts.column.name'), name), field(t('alerts.state.enabled'), enabled), field(t('alerts.column.metric'), metric), targetField, condition, offlineHint,
         h('div', {class: 'form-row'}, field(t('alerts.rules.durationMinutes'), minutes, {hint: t('alerts.rules.durationHint')}), field(t('alerts.rules.additionalSeconds'), seconds)),
         ...scopeFields, field(t('alerts.column.severity'), severity),
         field(t('alerts.channels.title'), routing, {hint: t(channels.length ? 'alerts.rules.routingHint' : 'alerts.rules.noChannelsHint')}));
@@ -78,7 +88,8 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
       const c = controls;
       const offline = c.metric.value === 'offline';
       const body = {name: c.name.value, enabled: c.enabled.checked, metric: c.metric.value,
-        comparator: offline ? null : c.metric.value === 'node_expiry_days' ? '<' : c.comparator.value, threshold: offline ? null : c.threshold.value.trim() === '' ? NaN : Number(c.threshold.value),
+        target: isProbeMetric(c.metric.value) ? c.target.value.trim() : null,
+        comparator: offline ? null : c.metric.value === 'probe_failed' ? '>' : ['node_expiry_days', 'probe_tls_expiry_days'].includes(c.metric.value) ? '<' : c.comparator.value, threshold: offline ? null : c.metric.value === 'probe_failed' ? 0 : c.threshold.value.trim() === '' ? NaN : Number(c.threshold.value),
         for_seconds: durationSeconds(c.minutes.value, c.seconds.value), scope_kind: c.scope_kind.value,
         scope_id: c.scope_kind.value === 'all' ? null : c.scope_id.value, severity: c.severity.value,
         channel_ids: [...c.channel_ids.selectedOptions].map((option) => option.value)};
@@ -109,7 +120,7 @@ export function rulesPanel({rules, groups, nodes, channels, signal, saved}) {
       columns: ['name', 'condition', 'scope', 'severity', 'state', 'channels', 'actions'].map((key) => t(`alerts.column.${key}`)),
       body: h('tbody', null, rules.map((rule) => h('tr', null,
         h('td', null, rule.name),
-        h('td', null, t('alerts.rules.conditionDuration', {condition: rule.metric === 'offline' ? metricLabel(rule.metric) : t('alerts.rules.metricCondition', {metric: metricLabel(rule.metric), comparator: rule.comparator, value: formatMetricValue(rule.metric, rule.threshold)}), duration: formatRuleDuration(rule.for_seconds)})),
+        h('td', null, t('alerts.rules.conditionDuration', {condition: ['offline', 'probe_failed'].includes(rule.metric) ? metricLabel(rule.metric) : t('alerts.rules.metricCondition', {metric: metricLabel(rule.metric), comparator: rule.comparator, value: formatMetricValue(rule.metric, rule.threshold)}), duration: formatRuleDuration(rule.for_seconds)}), rule.target ? h('div', null, h('code', {class: 'probe-target mono'}, rule.target)) : null),
         h('td', null, scopeLabel(rule, groups, nodes)), h('td', null, severityPill(rule.severity)), h('td', null, t(rule.enabled ? 'alerts.state.enabled' : 'alerts.state.disabled')),
         h('td', null, formatList(rule.channel_ids.map((id) => channels.find((channel) => channel.id === id)?.name || id)) || t('common.none')),
         h('td', {class: 'actions'}, iconButton('edit', t('alerts.editNamed', {name: rule.name}), () => edit(rule)), iconButton('trash', t('alerts.deleteAction', {name: rule.name}), () => remove(rule))))))})
