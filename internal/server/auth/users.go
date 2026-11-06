@@ -104,6 +104,9 @@ func (s *Service) DeleteUser(ctx context.Context, id string) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ?", id); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM api_tokens WHERE created_by = ?", id); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM users WHERE id = ?", id); err != nil {
 		return err
 	}

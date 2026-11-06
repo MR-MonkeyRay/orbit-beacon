@@ -1,4 +1,5 @@
 export default {
+  "errors.api_token_limit": "API 令牌数量已达上限。",
   "errors.totp_required": "请输入验证码。",
   "errors.totp_invalid": "验证码或恢复码无效。",
   "errors.totp_already_enabled": "两步验证已启用。",

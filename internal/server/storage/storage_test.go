@@ -31,7 +31,7 @@ func TestOpenInitializesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	for _, table := range []string{
-		"users", "sessions", "nodes", "groups", "node_tags", "enrollment_tokens",
+		"users", "sessions", "api_tokens", "nodes", "groups", "node_tags", "enrollment_tokens",
 		"enrollment_claims", "settings", "audit_events", "schema_migrations",
 		"traffic_hourly", "traffic_daily", "probe_latest", "probe_hourly",
 	} {
@@ -63,9 +63,7 @@ func TestOpenInitializesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('sessions') WHERE name='csrf_hash'`).Scan(&obsolete); err != nil || obsolete != 0 {
 		t.Fatalf("obsolete session field=%d err=%v", obsolete, err)
 	}
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE name='api_tokens'`).Scan(&obsolete); err != nil || obsolete != 0 {
-		t.Fatalf("obsolete API tokens=%d err=%v", obsolete, err)
-	}
+
 	for _, field := range []struct{ table, column string }{{"users", "role"}, {"inbox_notifications", "audience"}, {"groups", "desired_config"}, {"nodes", "desired_revision"}, {"nodes", "applied_revision"}, {"nodes", "config_error"}, {"nodes", "report_interval_seconds"}, {"nodes", "disk_interval_seconds"}, {"nodes", "interfaces"}, {"nodes", "disk_paths"}, {"nodes", "probe_targets"}} {
 		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info(?) WHERE name=?`, field.table, field.column).Scan(&obsolete); err != nil || obsolete != 0 {
 			t.Fatalf("obsolete %s.%s=%d err=%v", field.table, field.column, obsolete, err)

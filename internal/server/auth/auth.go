@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/argon2"
@@ -79,10 +80,12 @@ type Options struct {
 }
 
 type Service struct {
-	db     *sql.DB
-	now    func() time.Time
-	random io.Reader
-	box    *secretbox.Box
+	db           *sql.DB
+	now          func() time.Time
+	random       io.Reader
+	box          *secretbox.Box
+	tokenUseBusy atomic.Bool
+	tokenUses    sync.WaitGroup
 	// 每个服务同时只进行一次昂贵的密码计算，也保护注入的随机源，
 	// 因此随机源不必支持并发读取。
 	gate                   chan struct{}
@@ -108,20 +111,19 @@ func NewService(db *sql.DB, opts Options) *Service {
 	if opts.Random == nil {
 		opts.Random = rand.Reader
 	}
-	now := opts.Now()
 	return &Service{
 		db: db, now: opts.Now, random: opts.Random, box: opts.SecretBox,
-		totpFailures: make(map[string]loginBucket), totpFailureOverflow: loginBucket{tokens: 10, at: now},
+		totpFailures: make(map[string]loginBucket), totpFailureOverflow: loginBucket{tokens: 10},
 		gate: make(chan struct{}, 1), waiters: make(chan struct{}, 8),
 		loginPeers:             make(map[netip.Addr]loginBucket),
 		loginNames:             make(map[loginIdentityKey]loginBucket),
 		loginFailures:          make(map[[sha256.Size]byte]loginBucket),
 		loginSuccesses:         make(map[loginIdentityKey]time.Time),
 		passwordChanges:        make(map[string]loginBucket),
-		loginPeerOverflow:      loginBucket{tokens: 32, at: now},
-		loginNameOverflow:      loginBucket{tokens: 10, at: now},
-		loginFailureOverflow:   loginBucket{tokens: 20, at: now},
-		passwordChangeOverflow: loginBucket{tokens: 5, at: now},
+		loginPeerOverflow:      loginBucket{tokens: 32},
+		loginNameOverflow:      loginBucket{tokens: 10},
+		loginFailureOverflow:   loginBucket{tokens: 20},
+		passwordChangeOverflow: loginBucket{tokens: 5},
 	}
 }
 
@@ -613,6 +615,9 @@ func (s *Service) ChangePassword(ctx context.Context, userID, oldPassword, newPa
 		return ErrWrongPassword
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ?", userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM api_tokens WHERE created_by = ?", userID); err != nil {
 		return err
 	}
 	if err := audit.Insert(ctx, tx, "user.password.change", userID, s.now()); err != nil {

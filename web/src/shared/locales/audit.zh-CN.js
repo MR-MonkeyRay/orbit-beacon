@@ -1,4 +1,6 @@
 export default {
+  "audit.apiTokenRevoke": "撤销 API 令牌",
+  "audit.apiTokenCreate": "创建 API 令牌",
   "audit.totpEnable": "启用两步验证",
   "audit.totpDisable": "停用两步验证",
   "audit.totpReset": "重置两步验证",

@@ -88,7 +88,7 @@ func TestManagementUsesOnlyCookieSessions(t *testing.T) {
 	second, secondCSRF := login(t, f, "admin-two")
 	serve := func(method, path, body string, cookie *http.Cookie, csrf string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, publicURL+path, strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer obt_legacy-management-credential")
+		req.Header.Set("Authorization", "Basic cHJveHk6Y3JlZGVudGlhbA==")
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Origin", publicURL)
 		if cookie != nil {
@@ -109,26 +109,6 @@ func TestManagementUsesOnlyCookieSessions(t *testing.T) {
 	assertHTTPStatus(t, response, http.StatusCreated)
 	id := objectID(t, decodeObject(t, response))
 	collectionContains(t, request(t, f.handler, http.MethodGet, "/api/v1/groups", "", second, "", ""), "groups", id)
-}
-
-func TestRemovedManagementTokenEndpointsReturnNotFound(t *testing.T) {
-	f := newHTTP(t, 5)
-	admin, csrf := login(t, f, "admin")
-	for _, tt := range []struct {
-		method string
-		path   string
-		body   string
-	}{
-		{http.MethodGet, "/api/v1/api-tokens", ""},
-		{http.MethodPost, "/api/v1/api-tokens", `{"name":"removed credential"}`},
-		{http.MethodDelete, "/api/v1/api-tokens/00000000-0000-4000-8000-000000000001", ""},
-		{http.MethodHead, "/api/v1/api-tokens", ""},
-	} {
-		t.Run(tt.method, func(t *testing.T) {
-			response := request(t, f.handler, tt.method, tt.path, tt.body, admin, csrf, publicURL)
-			assertHTTPStatus(t, response, http.StatusNotFound)
-		})
-	}
 }
 
 func TestGroupHTTPCRUDPersistsAndRemainsReadableToBothAdministrators(t *testing.T) {

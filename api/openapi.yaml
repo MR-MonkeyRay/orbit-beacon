@@ -20,6 +20,75 @@ servers:
 security:
   - session: []
 paths:
+  /api/v1/api-tokens:
+    get:
+      operationId: listAPITokens
+      security: [{session: []}]
+      responses:
+        '200':
+          description: 全部令牌，包括过期令牌。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [api_tokens]
+                additionalProperties: false
+                properties:
+                  api_tokens: {type: array, items: {$ref: '#/components/schemas/APIToken'}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createAPIToken
+      security: [{session: []}]
+      description: 当前密码确认；事务内重新检查会话有效性和密码哈希。总数上限 20，过期令牌也计数。仅此响应返回明文令牌。
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, expires_in_days, password]
+              additionalProperties: false
+              properties:
+                name: {type: string, minLength: 1, x-maxLengthBytes: 100}
+                expires_in_days: {type: [integer, 'null'], enum: [30, 90, 365, null]}
+                password: {type: string, writeOnly: true, x-maxLengthBytes: 1024}
+      responses:
+        '201':
+          description: 一次性明文令牌；Cache-Control 为 no-store。
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/APIToken'}
+                  - type: object
+                    required: [token]
+                    properties:
+                      token: {type: string, pattern: '^obt_[A-Za-z0-9_-]{43}$'}
+        '409':
+          description: api_token_limit
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/api-tokens/{id}:
+    delete:
+      operationId: revokeAPIToken
+      security: [{session: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      responses:
+        '204': {description: 令牌立即撤销。}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/settings/public-page:
     get:
       operationId: getPublicPageSettings
@@ -725,6 +794,10 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /api/v1/groups:
     get:
+      x-read-only-token: true
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: listGroups
       description: 所有已认证管理员均可用。返回完整、不分页的分组列表。
       responses:
@@ -1116,6 +1189,10 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /api/v1/alerts:
     get:
+      x-read-only-token: true
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: listAlerts
       description: |
         管理员可读取告警事件。按 started_at DESC、id DESC 排序，使用键集分页。
@@ -1148,6 +1225,10 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /api/v1/alerts/summary:
     get:
+      x-read-only-token: true
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: getAlertSummary
       description: 管理员可从一次一致性读取快照中获取触发计数与最多五条最新触发事件。严重级别来自存储的规则快照；缺失或无法识别的严重级别计为 unknown。最新事件使用与 listAlerts 相同的字段，按 started_at DESC、id DESC 排序。
       responses:
@@ -1161,6 +1242,10 @@ paths:
     parameters:
       - $ref: '#/components/parameters/ResourceID'
     get:
+      x-read-only-token: true
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: getAlertEvent
       description: 管理员可直接读取单条事件，无需搜索历史页。使用与 listAlerts 相同的当前名称关联与已删除来源的快照回退。拒绝查询参数。读取不标记任何站内通知为已读。
       responses:
@@ -1603,6 +1688,12 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes:
     get:
+      x-read-only-token: true
+      x-read-only-token-response:
+        $ref: "#/components/schemas/TokenNodePage"
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: listNodes
       parameters:
         - name: limit
@@ -1617,14 +1708,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [nodes, has_more]
-                properties:
-                  nodes:
-                    type: array
-                    items: {$ref: '#/components/schemas/Node'}
-                  has_more: {type: boolean, description: 本页之后是否还有其他节点。}
-                  next_offset: {type: integer, minimum: 0, description: 仅当 has_more 为 true 时存在。作为 offset 传入获取下一页。}
+                anyOf:
+                  - $ref: '#/components/schemas/TokenNodePage'
+                  - type: object
+                    required: [nodes, has_more]
+                    properties:
+                      nodes:
+                        type: array
+                        items: {$ref: '#/components/schemas/Node'}
+                      has_more: {type: boolean, description: 本页之后是否还有其他节点。}
+                      next_offset: {type: integer, minimum: 0, description: 仅当 has_more 为 true 时存在。作为 offset 传入获取下一页。}
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createPendingNode
@@ -1654,13 +1747,22 @@ paths:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
+      x-read-only-token: true
+      x-read-only-token-response:
+        $ref: "#/components/schemas/TokenNode"
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: getNode
       responses:
         '200':
           description: 不含凭据的节点视图。
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Node'}
+              schema:
+                anyOf:
+                  - {$ref: '#/components/schemas/Node'}
+                  - {$ref: '#/components/schemas/TokenNode'}
         default: {$ref: '#/components/responses/Error'}
     patch:
       operationId: updateNodeMetadata
@@ -1716,6 +1818,10 @@ paths:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
+      x-read-only-token: true
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: getNodeHistory
       description: 所有已认证管理员均可用。尽力而为的历史，约每分钟刷盘一次。缺失或失败的测量与间隙不产生数据点。网络速率对成功接口求和。磁盘百分比为所有成功选定磁盘的已用字节总量除以总容量。两个查询参数各须恰好出现一次；拒绝未知参数。1h 与 6h 使用 1 分钟桶，24h 与 7d 使用 5 分钟桶，30d 使用 1 小时桶。聚合平均值按测量次数加权。已禁用的历史存储返回空 points 数组。未知节点返回 node_not_found。
       parameters:
@@ -1746,6 +1852,10 @@ paths:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
+      x-read-only-token: true
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: getNodeAvailability
       description: 管理员读取连续 UTC 天的可用性，包含今天。缺失观测为未知；百分比仅统计在线和离线秒数，未观测时为 null。有离线秒数时最高为 99.99。未知节点返回 node_not_found。
       parameters:
@@ -1766,6 +1876,10 @@ paths:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
+      x-read-only-token: true
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: getNodeTraffic
       description: 所有已认证管理员均可用。返回最近 N 天（含今天）的 UTC 每日流量及当前 UTC 计费周期总计。可选 days 参数默认 30；提供时须恰好出现一次且为 1 到 400 的整数。拒绝未知参数。每日结果合并保留的日聚合与小时数据，仅包含有流量的天。未知节点返回 node_not_found。
       parameters:
@@ -1790,6 +1904,12 @@ paths:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
+      x-read-only-token: true
+      x-read-only-token-response:
+        $ref: "#/components/schemas/TokenProbeSummary"
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: getNodeProbes
       description: 所有已认证管理员均可用。按期望配置顺序为每个当前配置的探测目标返回一条；已从配置移除的目标不返回结果。最新结果与小时计数按合并的接收事务节奏持久化，响应可能滞后上报约 30 秒。24 小时窗口包含大于等于当前 UTC 小时减 23 小时的 UTC 小时，无单独的上截止。未知节点返回 node_not_found。
       responses:
@@ -1797,7 +1917,10 @@ paths:
           description: 当前服务探测状态与 24 小时可用率聚合。
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/ProbeSummary'}
+              schema:
+                anyOf:
+                  - {$ref: '#/components/schemas/ProbeSummary'}
+                  - {$ref: '#/components/schemas/TokenProbeSummary'}
         '404': {$ref: '#/components/responses/Error'}
         '405': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
@@ -1805,6 +1928,12 @@ paths:
     parameters:
       - $ref: '#/components/parameters/NodeID'
     get:
+      x-read-only-token: true
+      x-read-only-token-response:
+        $ref: "#/components/schemas/TokenLatestSample"
+      security:
+        - session: []
+        - bearerAuth: []
       operationId: getNodeLatest
       description: 所有已认证管理员均可用。返回当前节点身份最新接受的内存上报，不含凭据、run_generation 或 session_id。节点不存在、服务器启动后无上报、节点已禁用或身份已失效均返回 404 node_not_found。值为最新采样，可能已过期；received_at 是服务端接收时间，非存活保证。上报省略 system 时为 null；agent_version 在持久化节点视图中仍可用。
       responses:
@@ -1812,7 +1941,10 @@ paths:
           description: 最新的私有遥测采样。
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/LatestSample'}
+              schema:
+                anyOf:
+                  - {$ref: '#/components/schemas/LatestSample'}
+                  - {$ref: '#/components/schemas/TokenLatestSample'}
         '404': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes/{id}/public-settings:
@@ -2329,6 +2461,11 @@ paths:
         default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: obt_ + base64url(32 random bytes)
+      description: 只读 API 令牌，仅允许显式标记的 GET 操作；携带 obt_ 令牌时优先于 Cookie，其他管理路由返回 token_forbidden。
     session:
       type: apiKey
       in: cookie
@@ -2448,6 +2585,79 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/Error'}
   schemas:
+    APIToken:
+      type: object
+      required: [id, name, created_by, created_by_username, created_at, expires_at, last_used_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        created_by: {type: string, format: uuid}
+        created_by_username: {type: string}
+        created_at: {type: string, format: date-time}
+        expires_at: {type: [string, 'null'], format: date-time}
+        last_used_at: {type: [string, 'null'], format: date-time}
+    TokenNodePage:
+      type: object
+      additionalProperties: false
+      required: [nodes, has_more]
+      properties:
+        nodes: {type: array, items: {$ref: '#/components/schemas/TokenNode'}}
+        has_more: {type: boolean}
+        next_offset: {type: integer}
+    TokenLatestSample:
+      type: object
+      additionalProperties: false
+      required: [received_at, sampled_at, seq, metrics, server_time]
+      properties:
+        received_at: {type: string, format: date-time}
+        sampled_at: {type: string, format: date-time}
+        seq: {type: integer, minimum: 0}
+        metrics: {$ref: '#/components/schemas/Metrics'}
+        server_time: {type: string, format: date-time}
+    TokenProbeSummary:
+      type: object
+      additionalProperties: false
+      required: [probes]
+      properties:
+        probes: {type: array, items: {$ref: '#/components/schemas/TokenProbeStatus'}}
+    TokenProbeStatus:
+      type: object
+      additionalProperties: false
+      required: [status, latency_ms, status_code, checked_at, uptime_24h, checks_24h]
+      properties:
+        status: {type: string}
+        latency_ms: {type: [number, 'null']}
+        status_code: {type: [integer, 'null']}
+        checked_at: {type: [string, 'null'], format: date-time}
+        uptime_24h: {type: [number, 'null']}
+        checks_24h: {type: integer}
+    TokenNode:
+      type: object
+      additionalProperties: false
+      required: [id, name, status, expires_on, region, provider, group_id, tags, created_at, last_seen, presence, agent_version, stopped]
+      properties:
+        stopped: {type: boolean, description: 最新 stop 成功，且收到它的进程和凭据仍是节点当前值；任何新进程上报后清除。}
+        id: {type: string, format: uuid}
+        name: {type: string}
+        status: {type: string, enum: [pending, online, offline, unknown, disabled]}
+        expires_on: {type: [string, 'null'], format: date}
+
+        region: {type: string}
+        provider: {type: string}
+        group_id:
+          type: [string, 'null']
+          format: uuid
+        tags:
+          type: array
+          description: 已排序的标签字符串；无标签节点返回 []，绝不为 null。
+          items: {type: string}
+        created_at: {type: string, format: date-time, description: UTC RFC3339。}
+        last_seen: {type: [string, 'null'], format: date-time, description: 持久化的 UTC 接收时间；首次上报前及凭据替换/吊销后为 null。常规写入合并，故该资产视图可能滞后约 30 秒。}
+        presence:
+          type: string
+          enum: [online, offline, never, disabled, pending]
+          description: 已禁用状态优先；待注册状态或缺凭据为 pending。已注册但无 last_seen 的节点为 never。否则 online 表示 last_seen 在 0 到 180 秒之间（含边界）；更早或未来的时间为 offline。遗留 status 字段保持不变。
+        agent_version: {type: string, maxLength: 64, pattern: '^[A-Za-z0-9._+\-]*$', description: 来自持久化系统身份的 Agent 版本；旧版 Agent 未提供时为空。}
     BackupCategories:
       type: array
       minItems: 1

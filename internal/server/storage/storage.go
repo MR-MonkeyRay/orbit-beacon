@@ -257,6 +257,12 @@ CREATE TABLE sessions (
 );
 CREATE INDEX sessions_user ON sessions(user_id);
 CREATE INDEX sessions_expiry ON sessions(expires_at);
+CREATE TABLE api_tokens (
+ id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash BLOB NOT NULL UNIQUE,
+ created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ created_at TEXT NOT NULL, expires_at TEXT, last_used_at TEXT
+);
+CREATE INDEX api_tokens_owner ON api_tokens(created_by);
 CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
 CREATE TABLE nodes (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',

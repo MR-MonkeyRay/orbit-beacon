@@ -1,6 +1,7 @@
 import {t} from './i18n.js';
 
 const errorKeys = new Set([
+  'api_token_limit',
  'totp_required', 'totp_invalid', 'totp_already_enabled', 'totp_setup_expired',
   'command_same_version', 'command_not_allowed', 'command_active', 'node_unavailable',
   'unauthenticated', 'forbidden', 'password_change_required', 'password_unchanged', 'public_page_disabled',
@@ -25,6 +26,7 @@ export function errorText(error) {
 }
 
 const fieldReasons = new Map([
+  ['must be 30, 90, 365 or null', 'fields.apiTokenExpiry'],
   ['invalid message template', 'alerts.validation.template'],
   ['invalid announcement title', 'announcements.invalidTitle'],
   ['invalid announcement body', 'announcements.invalidBody'],

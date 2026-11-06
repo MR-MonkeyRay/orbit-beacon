@@ -308,8 +308,13 @@
   margin-inline: auto;
 }
 
+.split > .panel-wide {
+  grid-column: 1/-1;
+}
+
 .recovery-secret {
   display: block;
+  white-space: pre-wrap;
   max-width: 100%;
   padding: var(--sp-3);
   border: 1px solid var(--line);

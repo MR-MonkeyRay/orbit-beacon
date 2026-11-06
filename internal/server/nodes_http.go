@@ -8,34 +8,41 @@ import (
 	"orbitbeacon/internal/server/nodes"
 )
 
+type nodePage struct {
+	HasMore    bool `json:"has_more"`
+	NextOffset *int `json:"next_offset,omitempty"`
+}
+
+func (h *handler) readNodePage(w http.ResponseWriter, r *http.Request, requestID string) ([]nodes.Node, nodePage, bool) {
+	limit, offset, err := pagination(r)
+	if err != nil {
+		h.serviceError(w, nodes.ErrInvalidInput, requestID)
+		return nil, nodePage{}, false
+	}
+	list, hasMore, err := h.nodes.ListPage(r.Context(), limit, offset)
+	if err != nil {
+		h.serviceError(w, err, requestID)
+		return nil, nodePage{}, false
+	}
+	page := nodePage{HasMore: hasMore}
+	if next := offset + limit; hasMore && next > offset {
+		page.NextOffset = &next
+	}
+	return list, page, true
+}
+
 func (h *handler) nodesRoute(w http.ResponseWriter, r *http.Request, requestID string) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/"), "/")
 	var err error
 	switch r.URL.Path {
 	case "/api/v1/nodes":
 		if r.Method == http.MethodGet {
-			limit, offset, err := pagination(r)
-			if err != nil {
-				h.serviceError(w, nodes.ErrInvalidInput, requestID)
-				return
+			if list, page, ok := h.readNodePage(w, r, requestID); ok {
+				writeJSON(w, http.StatusOK, struct {
+					Nodes []nodes.Node `json:"nodes"`
+					nodePage
+				}{list, page})
 			}
-			list, hasMore, err := h.nodes.ListPage(r.Context(), limit, offset)
-			if err != nil {
-				h.serviceError(w, err, requestID)
-				return
-			}
-			var nextOffset *int
-			if hasMore {
-				next := offset + limit
-				if next > offset {
-					nextOffset = &next
-				}
-			}
-			writeJSON(w, http.StatusOK, struct {
-				Nodes      []nodes.Node `json:"nodes"`
-				HasMore    bool         `json:"has_more"`
-				NextOffset *int         `json:"next_offset,omitempty"`
-			}{Nodes: list, HasMore: hasMore, NextOffset: nextOffset})
 			return
 		}
 		var input nodes.CreateRequest

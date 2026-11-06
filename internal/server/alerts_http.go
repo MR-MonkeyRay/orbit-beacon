@@ -8,6 +8,39 @@ import (
 	"orbitbeacon/internal/server/validation"
 )
 
+func (h *handler) readAlert(w http.ResponseWriter, r *http.Request, requestID string) (alerts.Event, bool) {
+	if r.URL.RawQuery != "" {
+		h.serviceError(w, &validation.Error{Fields: map[string]string{"query": "unknown parameter"}}, requestID)
+		return alerts.Event{}, false
+	}
+	event, err := h.alerts.Event(r.Context(), strings.TrimPrefix(r.URL.Path, "/api/v1/alerts/"))
+	if err != nil {
+		h.serviceError(w, err, requestID)
+		return alerts.Event{}, false
+	}
+	return event, true
+}
+
+func (h *handler) readAlertPage(w http.ResponseWriter, r *http.Request, requestID string) (alerts.EventPage, bool) {
+	const suppliedOnce = "must be supplied once and nonempty"
+	query, fields := parseQuery(r.URL.RawQuery, "invalid query string", map[string]queryParameter{
+		"state":  {nonempty: true, repeated: suppliedOnce},
+		"limit":  {nonempty: true, repeated: suppliedOnce},
+		"before": {nonempty: true, repeated: suppliedOnce},
+	})
+	limit := parseLimit(query, fields, 50, "must be an integer")
+	if len(fields) > 0 {
+		h.serviceError(w, &validation.Error{Fields: fields}, requestID)
+		return alerts.EventPage{}, false
+	}
+	page, err := h.alerts.Events(r.Context(), query.Get("state"), limit, query.Get("before"))
+	if err != nil {
+		h.serviceError(w, err, requestID)
+		return alerts.EventPage{}, false
+	}
+	return page, true
+}
+
 func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID string) {
 	p := r.URL.Path
 	if p == "/api/v1/alerts/summary" {
@@ -20,36 +53,15 @@ func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID 
 		return
 	}
 	if strings.HasPrefix(p, "/api/v1/alerts/") {
-		if r.URL.RawQuery != "" {
-			h.serviceError(w, &validation.Error{Fields: map[string]string{"query": "unknown parameter"}}, requestID)
-			return
-		}
-		event, err := h.alerts.Event(r.Context(), strings.TrimPrefix(p, "/api/v1/alerts/"))
-		if err != nil {
-			h.serviceError(w, err, requestID)
-		} else {
+		if event, ok := h.readAlert(w, r, requestID); ok {
 			writeJSON(w, http.StatusOK, event)
 		}
 		return
 	}
 	if p == "/api/v1/alerts" {
-		const suppliedOnce = "must be supplied once and nonempty"
-		query, fields := parseQuery(r.URL.RawQuery, "invalid query string", map[string]queryParameter{
-			"state":  {nonempty: true, repeated: suppliedOnce},
-			"limit":  {nonempty: true, repeated: suppliedOnce},
-			"before": {nonempty: true, repeated: suppliedOnce},
-		})
-		limit := parseLimit(query, fields, 50, "must be an integer")
-		if len(fields) > 0 {
-			h.serviceError(w, &validation.Error{Fields: fields}, requestID)
-			return
+		if page, ok := h.readAlertPage(w, r, requestID); ok {
+			writeJSON(w, http.StatusOK, page)
 		}
-		page, err := h.alerts.Events(r.Context(), query.Get("state"), limit, query.Get("before"))
-		if err != nil {
-			h.serviceError(w, err, requestID)
-			return
-		}
-		writeJSON(w, http.StatusOK, page)
 		return
 	}
 	collection := p == "/api/v1/alert-rules"

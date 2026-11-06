@@ -8,6 +8,7 @@ import {busy, button, emptyState, facts, iconButton, link, pageHead, panel, skel
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, onSubmit, passwordInput, validateBytes} from '../ui/forms.js';
+import {apiTokensPanel} from '../ui/api-tokens.js';
 import {totpPanel, totpCredentials} from '../ui/totp.js';
 import {passwordChangeForm} from '../ui/password-form.js';
 import {nextCursor} from '../ui/pager.js';
@@ -166,7 +167,7 @@ function accountTab() {
       [t('account.username'), user.username],
       [t('account.accountCreated'), when(user.created_at)], [t('account.sessionExpires'), session.expires ? when(session.expires) : null]
     ])),
-    panel(t('account.changePassword'), {}, h('p', {class: 'lede'}, t('account.passwordSignOutHint')), form), totpPanel());
+    panel(t('account.changePassword'), {}, h('p', {class: 'lede'}, t('account.passwordSignOutHint')), form), totpPanel(), apiTokensPanel());
 }
 
 function administratorsTab(users) {

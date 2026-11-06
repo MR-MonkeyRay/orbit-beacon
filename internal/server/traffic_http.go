@@ -4,21 +4,28 @@ import (
 	"net/http"
 	"strconv"
 
+	"orbitbeacon/internal/server/traffic"
 	"orbitbeacon/internal/server/validation"
 )
 
 func (h *handler) nodeTraffic(w http.ResponseWriter, r *http.Request, id, requestID string) {
+	if summary, ok := h.readTraffic(w, r, id, requestID); ok {
+		writeJSON(w, http.StatusOK, summary)
+	}
+}
+
+func (h *handler) readTraffic(w http.ResponseWriter, r *http.Request, id, requestID string) (traffic.Summary, bool) {
 	days, fields := trafficDays(r.URL.RawQuery)
 	if len(fields) > 0 {
 		h.serviceError(w, &validation.Error{Fields: fields}, requestID)
-		return
+		return traffic.Summary{}, false
 	}
 	summary, err := h.traffic.Read(r.Context(), id, days, h.now())
 	if err != nil {
 		h.serviceError(w, err, requestID)
-		return
+		return traffic.Summary{}, false
 	}
-	writeJSON(w, http.StatusOK, summary)
+	return summary, true
 }
 
 func trafficDays(rawQuery string) (int, map[string]string) {

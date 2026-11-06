@@ -8,6 +8,12 @@ import (
 )
 
 func (h *handler) nodeHistory(w http.ResponseWriter, r *http.Request, id, requestID string) {
+	if response, ok := h.readHistory(w, r, id, requestID); ok {
+		writeJSON(w, http.StatusOK, response)
+	}
+}
+
+func (h *handler) readHistory(w http.ResponseWriter, r *http.Request, id, requestID string) (history.Response, bool) {
 	query, fields := parseQuery(r.URL.RawQuery, "must be a valid query string", map[string]queryParameter{
 		"metric": {repeated: "must be supplied exactly once"},
 		"range":  {repeated: "must be supplied exactly once"},
@@ -21,12 +27,12 @@ func (h *handler) nodeHistory(w http.ResponseWriter, r *http.Request, id, reques
 	}
 	if len(fields) > 0 {
 		h.serviceError(w, &validation.Error{Fields: fields}, requestID)
-		return
+		return history.Response{}, false
 	}
 	// 即使启动时禁用了历史记录，仍须确认节点存在。
 	if _, err := h.nodes.Get(r.Context(), id); err != nil {
 		h.serviceError(w, err, requestID)
-		return
+		return history.Response{}, false
 	}
 	response, _ := history.Empty(metric, requestedRange)
 	if h.history != nil {
@@ -34,8 +40,8 @@ func (h *handler) nodeHistory(w http.ResponseWriter, r *http.Request, id, reques
 		response, err = h.history.Query(r.Context(), id, metric, requestedRange, h.now())
 		if err != nil {
 			h.serviceError(w, err, requestID)
-			return
+			return history.Response{}, false
 		}
 	}
-	writeJSON(w, http.StatusOK, response)
+	return response, true
 }

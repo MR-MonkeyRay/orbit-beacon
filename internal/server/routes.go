@@ -31,6 +31,9 @@ type routeHandler func(h *handler, w http.ResponseWriter, r *http.Request, reque
 
 // 声明顺序保持每个路径 Allow 列表的传输顺序。
 var routes = []route{
+	{"GET /api/v1/api-tokens", admin, (*handler).apiTokens},
+	{"POST /api/v1/api-tokens", admin, (*handler).apiTokens},
+	{"DELETE /api/v1/api-tokens/{id}", admin, (*handler).apiTokens},
 	{"GET /api/v1/account/totp", admin, (*handler).accountTOTP},
 	{"POST /api/v1/account/totp/setup", admin, (*handler).accountTOTP},
 	{"POST /api/v1/account/totp/confirm", admin, (*handler).accountTOTP},
@@ -203,6 +206,18 @@ func (registry *routeRegistry) serve(h *handler, w http.ResponseWriter, r *http.
 		return
 	}
 	r.Pattern = entry.label
+	// 携带 API 令牌的管理请求在方法分派前进入令牌分支，
+	// 因此白名单路径上未注册的写方法也不能落入普通处理函数。
+	level := entry.auth
+	if requested := registry.endpoints[r.Method+" "+entry.label]; requested != nil {
+		level = requested.auth
+	}
+	if level == admin || level == pendingPasswordAllowed {
+		if carriesAPIToken(r) {
+			h.serveAPIToken(w, r, requestID, r.Method+" "+entry.label)
+			return
+		}
+	}
 	if !method(w, r, requestID, registry.methods[entry.label]...) {
 		return
 	}

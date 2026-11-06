@@ -40,6 +40,7 @@ type errorMapping struct {
 
 // Agent 专属响应优先于共享的服务映射。
 var errorMappings = []errorMapping{
+	{serviceErrors, matches(auth.ErrAPITokenLimit), http.StatusConflict, "api_token_limit", "API token limit reached", false},
 	{serviceErrors, matches(auth.ErrTOTPRequired), http.StatusUnauthorized, "totp_required", "Second factor required", false},
 	{serviceErrors, matches(auth.ErrTOTPInvalid), http.StatusUnauthorized, "totp_invalid", "Invalid second factor", false},
 	{serviceErrors, matches(auth.ErrTOTPAlreadyEnabled), http.StatusConflict, "totp_already_enabled", "Two-step verification already enabled", false},

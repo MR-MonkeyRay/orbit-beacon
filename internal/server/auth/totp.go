@@ -471,6 +471,9 @@ func resetTOTP(ctx context.Context, tx *sql.Tx, id string, now time.Time) error 
 	if _, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=?`, id); err != nil {
 		return err
 	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM api_tokens WHERE created_by=?`, id); err != nil {
+		return err
+	}
 	return audit.Insert(ctx, tx, "user.totp.reset", id, now)
 }
 func ResetTOTP(ctx context.Context, db *sql.DB, username string, now time.Time) error {

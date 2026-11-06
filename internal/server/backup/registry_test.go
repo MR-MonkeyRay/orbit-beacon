@@ -99,3 +99,16 @@ func TestCommandsIntentionallyExcludedFromEveryBackupCategory(t *testing.T) {
 		}
 	}
 }
+
+func TestAPITokensIntentionallyExcludedFromEveryBackupCategory(t *testing.T) {
+	if intentionallyExcluded["main"]["api_tokens"] != "API 令牌不恢复" {
+		t.Fatal("missing API token exclusion rationale")
+	}
+	for category, specs := range categoryTables {
+		for _, spec := range specs {
+			if spec.Name == "api_tokens" {
+				t.Fatalf("API tokens included in %s", category)
+			}
+		}
+	}
+}

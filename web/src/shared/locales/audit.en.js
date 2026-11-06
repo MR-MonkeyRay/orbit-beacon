@@ -1,4 +1,6 @@
 export default {
+  "audit.apiTokenRevoke": "Revoke API token",
+  "audit.apiTokenCreate": "Create API token",
   "audit.totpEnable": "Two-step verification enabled",
   "audit.totpDisable": "Two-step verification disabled",
   "audit.totpReset": "Two-step verification reset",

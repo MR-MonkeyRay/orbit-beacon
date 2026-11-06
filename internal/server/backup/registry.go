@@ -44,6 +44,7 @@ func table(name, source, where, definition, primary string) tableSpec {
 // intentionallyExcluded records ephemeral tables that must never be restored.
 var intentionallyExcluded = map[string]map[string]string{
 	"main": {
+		"api_tokens":               "API 令牌不恢复",
 		"sessions":                 "登录会话不恢复",
 		"enrollment_tokens":        "注册授权不恢复",
 		"enrollment_claims":        "临时注册回执不恢复",

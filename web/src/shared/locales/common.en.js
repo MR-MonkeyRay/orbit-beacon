@@ -1,4 +1,5 @@
 export default {
+  "errors.api_token_limit": "API token limit reached.",
   "errors.totp_required": "Verification code required.",
   "errors.totp_invalid": "Invalid verification or recovery code.",
   "errors.totp_already_enabled": "Two-step verification already enabled.",
