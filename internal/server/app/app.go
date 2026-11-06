@@ -141,7 +141,8 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 	}
 	notifications := notify.New(db, box, notify.Options{Logger: logger, AllowInsecureWebhooks: cfg.AllowInsecureWebhooks, AllowPrivateNetworks: cfg.NotificationAllowPrivateNetworks})
 	alertService := alerts.NewService(db, nil)
-	evaluator := alerts.NewEvaluator(alertService, ingestService, alerts.EvaluatorOptions{Logger: logger, Notifier: notifications})
+	trafficService := traffic.NewService(db)
+	evaluator := alerts.NewEvaluator(alertService, ingestService, alerts.EvaluatorOptions{Logger: logger, Notifier: notifications, Quota: trafficService.Quota})
 	enrollments := enrollment.NewService(db, enrollment.Options{MaxNodes: cfg.MaxNodes})
 	enrollments.OnIdentityChange(func(replaced bool) {
 		if replaced {
@@ -150,7 +151,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 			nodeService.InvalidatePublic()
 		}
 	})
-	handler, err := server.NewHandler(server.Options{Management: authService.Management(), Enrollments: enrollments, Traffic: traffic.NewService(db), Inbox: inbox.New(db), Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, WebUpdateIntervalSeconds: cfg.WebUpdateIntervalSeconds, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: version, SaturationMetrics: saturation})
+	handler, err := server.NewHandler(server.Options{Management: authService.Management(), Enrollments: enrollments, Traffic: trafficService, Inbox: inbox.New(db), Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, WebUpdateIntervalSeconds: cfg.WebUpdateIntervalSeconds, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: version, SaturationMetrics: saturation})
 	if err != nil {
 		return nil, err
 	}

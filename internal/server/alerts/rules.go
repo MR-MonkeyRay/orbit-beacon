@@ -128,9 +128,14 @@ func ValidateRuleSyntax(r Rule) error {
 		if time.Duration(r.ForSeconds)*time.Second < nodes.OnlineWindow {
 			return validation.Invalid("for_seconds", "offline duration must be at least the online window")
 		}
-	case "cpu_percent", "memory_used_percent", "swap_used_percent", "disk_used_percent", "load1", "probes_down":
+	case "cpu_percent", "memory_used_percent", "swap_used_percent", "disk_used_percent", "load1", "probes_down", "traffic_quota_percent":
 		bound := 100.0
-		if r.Metric == "load1" {
+		if r.Metric == "traffic_quota_percent" {
+			bound = 1000
+			if r.Threshold != nil && *r.Threshold <= 0 {
+				return validation.Invalid("threshold", "must be greater than zero")
+			}
+		} else if r.Metric == "load1" {
 			bound = 1e6
 		} else if r.Metric == "probes_down" {
 			bound = 5

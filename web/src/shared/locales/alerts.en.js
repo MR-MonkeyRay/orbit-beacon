@@ -14,6 +14,8 @@ export default {
   'alerts.deleteAction': 'Delete {name}',
   'alerts.disabledName': '{name} (disabled)',
   'alerts.choose': 'Choose…',
+  'alerts.validation.quotaThreshold': 'Enter a threshold greater than 0 and at most 1,000.',
+  'alerts.metric.trafficQuota': 'Traffic quota used',
   'alerts.metric.cpu': 'CPU usage',
   'alerts.metric.memory': 'Memory usage',
   'alerts.metric.swap': 'Swap usage',

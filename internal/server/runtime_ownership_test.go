@@ -31,7 +31,7 @@ func TestRuntimeOwnershipHTTPAndTrafficSettings(t *testing.T) {
 	path := base + "/traffic-settings"
 	before := request(t, f.handler, http.MethodGet, path, "", admin, "", "")
 	assertHTTPStatus(t, before, http.StatusOK)
-	for _, body := range []string{`{"billing_day":null}`, `{"quota_bytes":null}`, `{"billing_day":0}`, `{"quota_bytes":"01"}`, `{"quota_bytes":2}`, `{"report_interval_seconds":5}`} {
+	for _, body := range []string{`{"billing_mode":null}`, `{"billing_mode":"invalid"}`, `{"billing_mode":1}`, `{"billing_day":null}`, `{"quota_bytes":null}`, `{"billing_day":0}`, `{"quota_bytes":"01"}`, `{"quota_bytes":2}`, `{"report_interval_seconds":5}`} {
 		response := request(t, f.handler, http.MethodPatch, path, body, admin, csrf, publicURL)
 		assertHTTPStatus(t, response, http.StatusBadRequest)
 		after := request(t, f.handler, http.MethodGet, path, "", admin, "", "")
@@ -40,10 +40,10 @@ func TestRuntimeOwnershipHTTPAndTrafficSettings(t *testing.T) {
 		}
 	}
 	for range 2 {
-		changed := request(t, f.handler, http.MethodPatch, path, `{"billing_day":2,"quota_bytes":"1000000000"}`, admin, csrf, publicURL)
+		changed := request(t, f.handler, http.MethodPatch, path, `{"billing_mode":"max","billing_day":2,"quota_bytes":"1000000000"}`, admin, csrf, publicURL)
 		assertHTTPStatus(t, changed, http.StatusOK)
 		var values map[string]any
-		if err := json.Unmarshal(changed.Body.Bytes(), &values); err != nil || len(values) != 2 || values["billing_day"] != float64(2) || values["quota_bytes"] != "1000000000" {
+		if err := json.Unmarshal(changed.Body.Bytes(), &values); err != nil || len(values) != 3 || values["billing_mode"] != "max" || values["billing_day"] != float64(2) || values["quota_bytes"] != "1000000000" {
 			t.Fatalf("traffic settings=%v err=%v", values, err)
 		}
 	}

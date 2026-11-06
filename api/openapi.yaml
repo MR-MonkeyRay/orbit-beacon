@@ -1728,6 +1728,7 @@ paths:
               type: object
               additionalProperties: false
               properties:
+                billing_mode: {$ref: '#/components/schemas/BillingMode'}
                 billing_day: {type: integer, minimum: 1, maximum: 28}
                 quota_bytes: {$ref: '#/components/schemas/DecimalCounter'}
       responses:
@@ -2554,12 +2555,13 @@ components:
       type: object
       additionalProperties: false
       description: |
-        指标规则须有 comparator 与 threshold。百分比阈值须为 0..100 的有限数值；
+        指标规则须有 comparator 与 threshold。流量配额阈值为 (0,1000]，其他百分比阈值为 0..100；
         load1 阈值须为 0..1000000 的有限数值；probes_down 阈值须为 0..5 的有限数值。
+        流量配额按账期计费用量评估，可超过 100%；不依赖在线状态。读取失败保留事件，移除配额或账期回落可恢复。
         offline 须 comparator 与 threshold 为 null/省略，且 for_seconds 至少 180（nodes.OnlineWindow）。
         all 作用域须 scope_id 为 null/省略；node/group 作用域须已有 UUID。
         指定节点或分组的规则在对应节点或分组删除时级联删除；每次级联删除随父级资产事务审计。
-        每 30 秒使用已注册且启用的节点，以及新鲜且通过身份隔离校验的最新上报进行评估。
+        每 30 秒评估已注册且启用的节点；除流量配额外，指标须来自新鲜且通过身份隔离校验的最新上报。
         缺失/已过期/错误的指标会重置待触发时长，既不触发告警，也不能作为恢复依据。
         磁盘使用率取新鲜且采集成功的磁盘中的最大值；总量为零的内存、交换空间或磁盘视为无数据。
         probes_down 统计最新上报中的失败结果；无探测结果即数值零，因此移除目标可使告警恢复。
@@ -2572,7 +2574,7 @@ components:
         enabled: {type: boolean}
         scope_kind: {type: string, enum: [all, group, node]}
         scope_id: {type: [string, 'null'], format: uuid}
-        metric: {type: string, enum: [cpu_percent, memory_used_percent, swap_used_percent, disk_used_percent, load1, probes_down, offline]}
+        metric: {type: string, enum: [cpu_percent, memory_used_percent, swap_used_percent, disk_used_percent, load1, probes_down, traffic_quota_percent, offline]}
         comparator: {type: [string, 'null'], enum: ['>', '<', null]}
         threshold: {type: [number, 'null'], minimum: 0, maximum: 1000000}
         for_seconds: {type: integer, minimum: 0, maximum: 86400}
@@ -3020,11 +3022,17 @@ components:
           maxItems: 4
           uniqueItems: true
           items: {type: string, enum: [disk, network, traffic, probes]}
+    BillingMode:
+      type: string
+      enum: [total, max, rx, tx]
+      default: total
+      description: 收发合计、收发较大值、仅接收或仅发送；按周期总量计算。
     TrafficSettings:
       type: object
       additionalProperties: false
-      required: [billing_day, quota_bytes]
+      required: [billing_day, quota_bytes, billing_mode]
       properties:
+        billing_mode: {$ref: '#/components/schemas/BillingMode'}
         billing_day: {type: integer, minimum: 1, maximum: 28}
         quota_bytes: {$ref: '#/components/schemas/DecimalCounter', description: 零表示不限；仅服务端业务设置。}
     Enrollment:
@@ -3052,7 +3060,7 @@ components:
     TrafficTotal:
       type: string
       pattern: '^(0|[1-9][0-9]*)$'
-      description: 精确的无符号十进制流量聚合；总和可能超过 uint64。
+      description: 十进制流量聚合；收、发、合计和计费用量均饱和至 9223372036854775807。
     TrafficDaily:
       type: object
       additionalProperties: false
@@ -3064,18 +3072,20 @@ components:
     TrafficCycle:
       type: object
       additionalProperties: false
-      required: [start, end, rx_bytes, tx_bytes, total_bytes]
+      required: [start, end, rx_bytes, tx_bytes, total_bytes, used_bytes]
       properties:
         start: {type: string, format: date-time, description: Inclusive UTC billing-cycle start at 00:00.}
         end: {type: string, format: date-time, description: 下一计费周期的 UTC 起始（不含）。}
         rx_bytes: {$ref: '#/components/schemas/TrafficTotal'}
         tx_bytes: {$ref: '#/components/schemas/TrafficTotal'}
         total_bytes: {$ref: '#/components/schemas/TrafficTotal'}
+        used_bytes: {$ref: '#/components/schemas/TrafficTotal', description: 按 billing_mode 计算，饱和至 int64 上限。}
     TrafficSummary:
       type: object
       additionalProperties: false
-      required: [billing_day, quota_bytes, cycle, daily, updated_at]
+      required: [billing_day, quota_bytes, billing_mode, cycle, daily, updated_at]
       properties:
+        billing_mode: {$ref: '#/components/schemas/BillingMode'}
         billing_day: {type: [integer, 'null'], minimum: 1, maximum: 28}
         quota_bytes:
           description: 节点无配额时为 null；配置配额为 0 表示不限。

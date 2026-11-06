@@ -18,7 +18,8 @@ const emptyTraffic = () => ({
     end: '2026-11-01T00:00:00Z',
     rx_bytes: '0',
     tx_bytes: '0',
-    total_bytes: '0'
+    total_bytes: '0',
+    used_bytes: '0'
   },
   daily: [],
   updated_at: null
@@ -138,7 +139,7 @@ test('traffic panel renders quota semantics and populated daily values', async (
     env.respond(env.requests[0], {
       ...emptyTraffic(),
       quota_bytes: '1000',
-      cycle: {...emptyTraffic().cycle, rx_bytes: '700', tx_bytes: '100', total_bytes: '800'},
+      cycle: {...emptyTraffic().cycle, rx_bytes: '700', tx_bytes: '100', total_bytes: '800', used_bytes: '800'},
       daily: [{day: new Date().toISOString().slice(0, 10), rx_bytes: '700', tx_bytes: '100'}],
       updated_at: '2026-10-27T12:00:00Z'
     });
@@ -160,7 +161,7 @@ test('traffic panel treats a zero quota as unlimited', async () => {
     env.respond(env.requests[0], {
       ...emptyTraffic(),
       quota_bytes: '0',
-      cycle: {...emptyTraffic().cycle, rx_bytes: '700', tx_bytes: '100', total_bytes: '800'},
+      cycle: {...emptyTraffic().cycle, rx_bytes: '700', tx_bytes: '100', total_bytes: '800', used_bytes: '800'},
       updated_at: '2026-10-27T12:00:00Z'
     });
     await flush();
@@ -205,7 +206,7 @@ test('billing-triggered traffic reload cannot be overwritten by an older pending
     const reload = env.root.reload();
     assert.equal(env.requests.length, 2);
     env.respond(env.requests[1], {...emptyTraffic(), quota_bytes: '1000',
-      cycle: {...emptyTraffic().cycle, total_bytes: '800'}, updated_at: '2026-10-28T12:00:00Z'});
+      cycle: {...emptyTraffic().cycle, total_bytes: '800', used_bytes: '800'}, updated_at: '2026-10-28T12:00:00Z'});
     await reload;
     assert.match(env.root.textContent, /800 B \/ 1000 B/);
     env.respond(older, emptyTraffic());
@@ -213,4 +214,15 @@ test('billing-triggered traffic reload cannot be overwritten by an older pending
     assert.match(env.root.textContent, /800 B \/ 1000 B/);
     assert.doesNotMatch(env.root.textContent, copyPattern('nodes.trafficEmpty'));
   } finally { env.cleanup(); }
+});
+
+test('traffic quota meter renders billed usage instead of the sum', async () => {
+  const env = setupPanel();
+  try {
+    env.respond(env.requests[0], {...emptyTraffic(), billing_mode: 'max', quota_bytes: '1000',
+      cycle: {...emptyTraffic().cycle, rx_bytes: '700', tx_bytes: '300', total_bytes: '1000', used_bytes: '700'}});
+    await flush();
+    const meter = elements(env.root).find((element) => element.tagName === 'meter');
+    assert.match(meter.getAttribute('aria-label'), copyPattern('nodes.trafficQuotaDescription', {used: '700 B', quota: '1000 B', percent: '70%'}));
+  } finally {env.cleanup();}
 });

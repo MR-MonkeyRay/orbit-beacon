@@ -19,6 +19,10 @@ test('rule editor toggles offline fields, scopes and channel routing for every a
     const dialog = ruleEditor(null, context);
     const root = dom.body;
     const metric = control(root, 'metric');
+    assert.equal(metric.options.find((option) => option.value === 'traffic_quota_percent').textContent, copy('alerts.metric.trafficQuota'));
+    change(metric, 'traffic_quota_percent');
+    assert.equal(control(root, 'threshold').max, 1000);
+    assert.ok(root.textContent.includes(copy('alerts.rules.thresholdPercent')));
     change(metric, 'offline');
     assert.equal(control(root, 'threshold').disabled, true);
     assert.equal(control(root, 'threshold').required, false);
@@ -34,6 +38,9 @@ test('rule editor toggles offline fields, scopes and channel routing for every a
     assert.equal(control(root, 'scope_id').disabled, true);
     dialog.close('done');
     await dialog.closed;
+    const canceled = ruleEditor(null, context);
+    elements(root).find((element) => element.tagName === 'button' && element.textContent === copy('controls.cancel')).click();
+    await canceled.closed;
     const existing = ruleEditor({id, name: 'Offline', enabled: false, metric: 'offline', comparator: null, threshold: null, for_seconds: 180, scope_kind: 'node', scope_id: id, severity: 'critical', channel_ids: [id]}, context);
     assert.equal(control(root, 'channel_ids').selectedOptions.length, 1);
     assert.equal(control(root, 'scope_id').value, id);

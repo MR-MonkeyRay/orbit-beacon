@@ -74,7 +74,7 @@ async function setup({hash = '#details', observed = runtime, presence = 'online'
     else if (url === `${path}/runtime`) data = {runtime: observed};
     else if (url === `${path}/traffic-settings`) {
       status = options.method === 'PATCH' ? patchStatus : 200;
-      data = status === 200 ? options.method === 'PATCH' ? {billing_day: 2, quota_bytes: '1000000000'} : {billing_day: 1, quota_bytes: '0'}
+      data = status === 200 ? options.method === 'PATCH' ? {billing_day: 2, quota_bytes: '1000000000', billing_mode: 'total'} : {billing_day: 1, quota_bytes: '0'}
         : {message: 'Billing update rejected'};
     } else if (url === '/api/v1/groups') data = {groups: []};
     else if (url === `${path}/public-settings`) data = {enabled: true, name: 'Saved public name', region: '', provider: ''};
@@ -202,7 +202,7 @@ test('billing saves exact decimal units, stays clean after submit, and preserves
     billing.dispatchEvent(new Event('submit', {cancelable: true}));
     await flush();
     const patch = env.requests.find((request) => request.url === `${path}/traffic-settings` && request.options.method === 'PATCH');
-    assert.deepEqual(JSON.parse(patch.options.body), {billing_day: 2, quota_bytes: '1000000000'});
+    assert.deepEqual(JSON.parse(patch.options.body), {billing_day: 2, quota_bytes: '1000000000', billing_mode: 'total'});
     assert.equal(billing.dataset.dirty, 'false');
     assert.equal(billing.querySelector('#billing-save').disabled, true);
     assert.equal(details.dataset.dirty, 'true');

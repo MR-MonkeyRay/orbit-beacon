@@ -128,6 +128,7 @@ function trafficContent(data) {
   const rx = parseTrafficBytes(cycle.rx_bytes);
   const tx = parseTrafficBytes(cycle.tx_bytes);
   const total = parseTrafficBytes(cycle.total_bytes);
+  const used = parseTrafficBytes(cycle.used_bytes);
   const daily = Array.isArray(data.daily) ? data.daily : [];
   const empty = !data.updated_at && !daily.length && rx === 0n && tx === 0n && total === 0n;
   return h('div', {class: 'traffic-content'},
@@ -135,7 +136,7 @@ function trafficContent(data) {
       h('p', {class: 'muted'}, cycleDateLabel(cycle)),
       facts([[t('nodes.received'), formatBytes(rx)], [t('nodes.sent'), formatBytes(tx)], [t('nodes.total'), formatBytes(total)]])),
     // 配额为 0 表示无限制，与流量计费表单一致。
-    parseTrafficBytes(data.quota_bytes) > 0n ? quotaMeter(total, parseTrafficBytes(data.quota_bytes)) : null,
+    parseTrafficBytes(data.quota_bytes) > 0n ? quotaMeter(used, parseTrafficBytes(data.quota_bytes)) : null,
     empty ? h('p', {class: 'muted', role: 'status'}, t('nodes.trafficEmpty')) : dailyChart(fillTrafficDays(daily)),
     data.updated_at ? h('p', {class: 'note'}, tParts('nodes.updated', {time: when(data.updated_at)})) : null);
 }

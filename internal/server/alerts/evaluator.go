@@ -46,6 +46,7 @@ type LatestReader interface {
 	Latest(context.Context, string) (ingest.LatestReport, error)
 }
 type EvaluatorOptions struct {
+	Quota    func(context.Context, time.Time) (map[string]float64, error)
 	Interval time.Duration
 	Now      func() time.Time
 	Notifier Notifier
@@ -189,6 +190,9 @@ func (e *Evaluator) readOpen(ctx context.Context) (map[pair]openEvent, error) {
 	return result, rows.Err()
 }
 func pendingDefinition(r Rule, n evaluationNode, latest ingest.LatestReport) string {
+	if r.Metric == "traffic_quota_percent" {
+		latest.SessionID = ""
+	}
 	return definition(r) + "|" + hex.EncodeToString(n.identity) + "|" + strconv.FormatInt(n.credentialEpoch, 10) + "|" + timekey.Format(*n.enrolled) + "|" + n.generation + "|" + n.session + "|" + latest.SessionID
 }
 
@@ -243,6 +247,19 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 		}
 	}
 	var evaluationErr error
+	var quotas map[string]float64
+	var quotaErr error
+	for _, r := range rules {
+		if r.Enabled && r.Metric == "traffic_quota_percent" {
+			if e.opts.Quota == nil {
+				quotaErr = errors.New("traffic quota reader unavailable")
+			} else {
+				quotas, quotaErr = e.opts.Quota(ctx, now)
+			}
+			evaluationErr = errors.Join(evaluationErr, quotaErr)
+			break
+		}
+	}
 	// 每个待重试的恢复操作都对应一个未结束的事件。先重试再评估当前条件，
 	// 避免再次越限抹掉已观测到的恢复。
 	for key, intent := range e.resolutions {
@@ -252,6 +269,9 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 	}
 	// 这也能处理进程停机期间被删除的情况。
 	for key, o := range open {
+		if o.rule.Metric == "traffic_quota_percent" && quotaErr != nil {
+			continue
+		}
 		r, exists := ruleMap[key.rule]
 		n, present := nodeMap[key.node]
 		_, retry := e.resolutions[key]
@@ -278,16 +298,21 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 		}
 		if latestErr != nil && !errors.Is(latestErr, nodes.ErrNotFound) {
 			evaluationErr = errors.Join(evaluationErr, latestErr)
-			for _, r := range rules {
-				delete(e.pending, pair{r.ID, n.id})
-			}
-			continue
 		}
 		for _, r := range rules {
 			if !matches(r, n) {
 				continue
 			}
 			key := pair{r.ID, n.id}
+			if r.Metric == "traffic_quota_percent" {
+				if quotaErr != nil {
+					delete(e.pending, key)
+					continue
+				}
+			} else if latestErr != nil && !errors.Is(latestErr, nodes.ErrNotFound) {
+				delete(e.pending, key)
+				continue
+			}
 			o, firing := open[key]
 			if firing {
 				delete(e.pending, key)
@@ -311,7 +336,25 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 				since = seen
 				trueCondition = !seen.After(now) && now.Sub(seen) >= time.Duration(r.ForSeconds)*time.Second
 			} else {
-				if latestErr == nil {
+				if r.Metric == "traffic_quota_percent" {
+					v, hasQuota := quotas[n.id]
+					disabled := latestErr == nil && metricDisabled(r.Metric, latest.Runtime)
+					if !hasQuota || (disabled && latestFresh(latest, now)) {
+						delete(e.pending, key)
+						if firing {
+							if err := e.resolve(ctx, o, nil, now); err != nil {
+								evaluationErr = errors.Join(evaluationErr, err)
+							}
+						}
+						continue
+					}
+					// 关闭配置可阻止新告警；恢复事件须有新鲜报告作证。
+					if disabled {
+						delete(e.pending, key)
+						continue
+					}
+					value = &v
+				} else if latestErr == nil {
 					value = metricValue(latest, r.Metric, now)
 				}
 				// 数据缺失或过期会打断持续越限计时，但不能据此判定告警已恢复。

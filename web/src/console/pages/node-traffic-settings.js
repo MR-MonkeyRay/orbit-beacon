@@ -33,13 +33,16 @@ export function trafficSettingsPanel(id, settings, onSaved, signal, isDeleted = 
   quotaUnit.addEventListener('change', checkQuota);
   const billing = input({type: 'number', name: 'billing_day', min: 1, max: 28, step: 1, required: true,
     value: String(settings.billing_day), id: 'field-billing', inputMode: 'numeric'});
+  const mode = select(['total', 'max', 'rx', 'tx'].map((value) => [value, t(`nodes.billingMode.${value}`)]),
+    settings.billing_mode || 'total', {name: 'billing_mode', id: 'field-billing-mode'});
   const controls = saveBar(t('nodes.saveBilling'), 'billing-save');
   const form = h('form', {class: 'form form-wide'},
     field(t('nodes.trafficQuota'), quota, {inner: h('div', {class: 'form-row'}, quota, h('div', null, quotaUnit)),
       hint: t('nodes.quotaHint')}),
-    field(t('nodes.billingDay'), billing, {hint: t('nodes.billingDayHint')}), controls.bar);
+    h('div', {class: 'form-row'}, field(t('nodes.billingDay'), billing, {hint: t('nodes.billingDayHint')}), field(t('nodes.billingMode'), mode)), controls.bar);
   const restore = () => {
     billing.value = String(saved.billing_day);
+    mode.value = saved.billing_mode || 'total';
     const bytes = BigInt(saved.quota_bytes);
     let unit = 'bytes';
     for (const [name, multiplier] of Object.entries(QUOTA_UNITS).reverse()) {
@@ -62,7 +65,7 @@ export function trafficSettingsPanel(id, settings, onSaved, signal, isDeleted = 
     const result = quotaToBytes(quota.value, quotaUnit.value);
     if (!result.ok) { quota.setCustomValidity(result.error); throw new Error(result.error); }
     const response = await api(`/nodes/${encodeURIComponent(id)}/traffic-settings`, {method: 'PATCH', signal,
-      body: {billing_day: Number(billing.value), quota_bytes: result.value}});
+      body: {billing_mode: mode.value, billing_day: Number(billing.value), quota_bytes: result.value}});
     if (isDeleted()) return;
     saved = response;
     restore();

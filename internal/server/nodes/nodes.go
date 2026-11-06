@@ -80,11 +80,13 @@ type BatchResult struct {
 }
 
 type TrafficSettings struct {
-	BillingDay int    `json:"billing_day"`
-	QuotaBytes string `json:"quota_bytes"`
+	BillingMode string `json:"billing_mode"`
+	BillingDay  int    `json:"billing_day"`
+	QuotaBytes  string `json:"quota_bytes"`
 }
 
 type TrafficSettingsPatch struct {
+	BillingMode   *string `json:"billing_mode,omitempty"`
 	BillingDay    *int    `json:"billing_day,omitempty"`
 	QuotaBytes    *string `json:"quota_bytes,omitempty"`
 	invalidFields map[string]string
@@ -553,7 +555,7 @@ func readTrafficSettings(ctx context.Context, q interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id string) (TrafficSettings, error) {
 	var settings TrafficSettings
-	err := q.QueryRowContext(ctx, "SELECT billing_day, quota_bytes FROM nodes WHERE id=?", id).Scan(&settings.BillingDay, &settings.QuotaBytes)
+	err := q.QueryRowContext(ctx, "SELECT billing_day, quota_bytes, billing_mode FROM nodes WHERE id=?", id).Scan(&settings.BillingDay, &settings.QuotaBytes, &settings.BillingMode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TrafficSettings{}, ErrNotFound
 	}
@@ -568,6 +570,9 @@ func (s *Service) PatchTrafficSettings(ctx context.Context, id string, patch Tra
 	fields := make(map[string]string)
 	for field, reason := range patch.invalidFields {
 		fields[field] = reason
+	}
+	if p := patch.BillingMode; p != nil && *p != "total" && *p != "max" && *p != "rx" && *p != "tx" {
+		fields["billing_mode"] = "must be total, max, rx or tx"
 	}
 	if p := patch.BillingDay; p != nil && (*p < 1 || *p > 28) {
 		fields["billing_day"] = "must be between 1 and 28"
@@ -590,6 +595,9 @@ func (s *Service) PatchTrafficSettings(ctx context.Context, id string, patch Tra
 		return TrafficSettings{}, err
 	}
 	before := settings
+	if patch.BillingMode != nil {
+		settings.BillingMode = *patch.BillingMode
+	}
 	if patch.BillingDay != nil {
 		settings.BillingDay = *patch.BillingDay
 	}
@@ -599,7 +607,7 @@ func (s *Service) PatchTrafficSettings(ctx context.Context, id string, patch Tra
 	if settings == before {
 		return settings, nil
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE nodes SET billing_day=?, quota_bytes=? WHERE id=?", settings.BillingDay, settings.QuotaBytes, id); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE nodes SET billing_day=?, quota_bytes=?, billing_mode=? WHERE id=?", settings.BillingDay, settings.QuotaBytes, settings.BillingMode, id); err != nil {
 		return TrafficSettings{}, err
 	}
 	if err := audit.Insert(ctx, tx, "node.traffic_settings.patch", id, s.now()); err != nil {

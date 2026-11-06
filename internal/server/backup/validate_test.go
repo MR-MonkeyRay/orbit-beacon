@@ -184,7 +184,7 @@ func TestPayloadChannelCiphertextUsesExistingPurposeAndAAD(t *testing.T) {
 
 func TestPayloadNodeGenerationAndTrafficSettings(t *testing.T) {
 	db := validationDB(t, Configuration)
-	_, err := db.Exec(`INSERT INTO nodes(id,name,status,group_id,region,provider,notes,created_at,public_settings,billing_day,quota_bytes,token_hash,credential_epoch,installation_id,first_enrolled_at,run_generation,report_session_id) VALUES(?,'Node','pending',NULL,'','','',?,'{}',1,'0',NULL,0,NULL,NULL,'0','')`, validationID, validationTime)
+	_, err := db.Exec(`INSERT INTO nodes(id,name,status,group_id,region,provider,notes,created_at,public_settings,billing_day,quota_bytes,billing_mode,token_hash,credential_epoch,installation_id,first_enrolled_at,run_generation,report_session_id) VALUES(?,'Node','pending',NULL,'','','',?,'{}',1,'0','total',NULL,0,NULL,NULL,'0','')`, validationID, validationTime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,16 @@ func TestPayloadNodeGenerationAndTrafficSettings(t *testing.T) {
 	if err = ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err != nil {
 		t.Fatalf("valid maximum billing settings rejected: %v", err)
 	}
-	db.Exec("UPDATE nodes SET public_settings='null'")
+	for _, mode := range []string{"total", "max", "rx", "tx", "invalid", ""} {
+		if _, err = db.Exec("UPDATE nodes SET billing_mode=?", mode); err != nil {
+			t.Fatal(err)
+		}
+		err = ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32))
+		if (mode == "invalid" || mode == "") != (err != nil) {
+			t.Fatalf("billing mode %q: %v", mode, err)
+		}
+	}
+	db.Exec("UPDATE nodes SET billing_mode='total', public_settings='null'")
 	if err = ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err == nil {
 		t.Fatal("accepted null public settings")
 	}
@@ -225,7 +234,7 @@ func TestPayloadNodeGenerationAndTrafficSettings(t *testing.T) {
 
 func TestPayloadNodeCredentialEpochRequiresNonnegativeInteger(t *testing.T) {
 	db := validationDB(t, Configuration)
-	if _, err := db.Exec(`INSERT INTO nodes(id,name,status,group_id,region,provider,notes,created_at,public_settings,billing_day,quota_bytes,token_hash,credential_epoch,installation_id,first_enrolled_at,run_generation,report_session_id) VALUES(?,'Node','pending',NULL,'','','',?,'{}',1,'0',NULL,0,NULL,NULL,'0','')`, validationID, validationTime); err != nil {
+	if _, err := db.Exec(`INSERT INTO nodes(id,name,status,group_id,region,provider,notes,created_at,public_settings,billing_day,quota_bytes,billing_mode,token_hash,credential_epoch,installation_id,first_enrolled_at,run_generation,report_session_id) VALUES(?,'Node','pending',NULL,'','','',?,'{}',1,'0','total',NULL,0,NULL,NULL,'0','')`, validationID, validationTime); err != nil {
 		t.Fatal(err)
 	}
 	for _, epoch := range []int64{0, 23, 9223372036854775807} {

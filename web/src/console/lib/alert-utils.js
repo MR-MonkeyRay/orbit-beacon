@@ -5,14 +5,14 @@ import {uuid} from '../../shared/uuid.js';
 export const METRICS = [
   ['cpu_percent', t('alerts.metric.cpu')], ['memory_used_percent', t('alerts.metric.memory')],
   ['swap_used_percent', t('alerts.metric.swap')], ['disk_used_percent', t('alerts.metric.disk')],
-  ['load1', t('alerts.metric.load1')], ['probes_down', t('alerts.metric.probesDown')], ['offline', t('common.status.offline')]
+  ['traffic_quota_percent', t('alerts.metric.trafficQuota')], ['load1', t('alerts.metric.load1')], ['probes_down', t('alerts.metric.probesDown')], ['offline', t('common.status.offline')]
 ];
 export const SEVERITIES = [['info', t('alerts.severity.info')], ['warning', t('alerts.severity.warning')], ['critical', t('alerts.severity.critical')]];
 export const metricLabel = (metric) => METRICS.find(([id]) => id === metric)?.[1] || t('alerts.metric.unknown');
 export const severityLabel = (severity) => SEVERITIES.find(([id]) => id === severity)?.[1] || t('alerts.severity.unknown');
 export const metricUnit = (metric = '') => metric.endsWith('_percent') ? '%' : metric === 'load1' ? t('alerts.unit.load') : metric === 'probes_down' ? t('alerts.unit.probes') : '';
 // 各指标阈值上限，与服务端规则校验一致。
-export const metricMax = (metric) => metric === 'load1' ? 1000000 : metric === 'probes_down' ? 5 : 100;
+export const metricMax = (metric) => metric === 'traffic_quota_percent' ? 1000 : metric === 'load1' ? 1000000 : metric === 'probes_down' ? 5 : 100;
 // 与服务端 notify.validHost 一致：IP 字面量或 LDH 标签。
 export function validHost(host) {
   if (!host || host.length > 253 || host.includes('%')) return false;
@@ -61,7 +61,7 @@ export function validateRule(rule) {
   } else {
     if (!['>', '<'].includes(rule.comparator)) fields.comparator = t('alerts.validation.comparator');
     const max = metricMax(rule.metric);
-    if (!Number.isFinite(rule.threshold) || rule.threshold < 0 || rule.threshold > max) fields.threshold = t('alerts.validation.threshold', {max});
+    if (!Number.isFinite(rule.threshold) || rule.threshold < 0 || (rule.metric === 'traffic_quota_percent' && rule.threshold === 0) || rule.threshold > max) fields.threshold = rule.metric === 'traffic_quota_percent' ? t('alerts.validation.quotaThreshold') : t('alerts.validation.threshold', {max});
   }
   const minimum = rule.metric === 'offline' ? 180 : 0;
   if (!Number.isInteger(rule.for_seconds) || rule.for_seconds < minimum || rule.for_seconds > 86400) fields.for_seconds = t(minimum ? 'alerts.validation.offlineDuration' : 'alerts.validation.duration');

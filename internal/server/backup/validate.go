@@ -370,6 +370,11 @@ func validateNode(r payloadRow) error {
 	if r.integer("billing_day") < 1 || r.integer("billing_day") > 28 {
 		return invalidRow()
 	}
+	switch r.text("billing_mode") {
+	case "total", "max", "rx", "tx":
+	default:
+		return invalidRow()
+	}
 	return v1.DecimalUint64(r.text("quota_bytes")).Validate()
 }
 

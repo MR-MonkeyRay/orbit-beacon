@@ -9,14 +9,14 @@ CREATE TABLE alert_rules (
  scope_kind TEXT NOT NULL CHECK(scope_kind IN ('all','group','node')), scope_id TEXT,
  scope_group_id TEXT GENERATED ALWAYS AS (CASE WHEN scope_kind='group' THEN scope_id END) VIRTUAL REFERENCES groups(id) ON DELETE CASCADE,
  scope_node_id TEXT GENERATED ALWAYS AS (CASE WHEN scope_kind='node' THEN scope_id END) VIRTUAL REFERENCES nodes(id) ON DELETE CASCADE,
- metric TEXT NOT NULL CHECK(metric IN ('cpu_percent','memory_used_percent','swap_used_percent','disk_used_percent','load1','offline','probes_down')),
+ metric TEXT NOT NULL CHECK(metric IN ('cpu_percent','memory_used_percent','swap_used_percent','disk_used_percent','load1','offline','probes_down','traffic_quota_percent')),
  comparator TEXT, threshold REAL, for_seconds INTEGER NOT NULL CHECK(for_seconds BETWEEN 0 AND 86400),
  severity TEXT NOT NULL CHECK(severity IN ('info','warning','critical')),
  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
  CHECK((scope_kind='all' AND scope_id IS NULL) OR (scope_kind IN ('group','node') AND scope_id IS NOT NULL)),
  CHECK((metric='offline' AND comparator IS NULL AND threshold IS NULL) OR
        (metric!='offline' AND comparator IS NOT NULL AND comparator IN ('>','<') AND threshold IS NOT NULL AND threshold>=0 AND
-        ((metric='load1' AND threshold<=1000000) OR (metric!='load1' AND threshold<=100))))
+        ((metric='load1' AND threshold<=1000000) OR (metric='traffic_quota_percent' AND threshold>0 AND threshold<=1000) OR (metric NOT IN ('load1','traffic_quota_percent') AND threshold<=100))))
 );
 CREATE INDEX alert_rules_group ON alert_rules(scope_group_id);
 CREATE INDEX alert_rules_node ON alert_rules(scope_node_id);

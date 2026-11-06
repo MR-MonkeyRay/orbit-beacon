@@ -13,7 +13,7 @@ test('billing success records its normalized baseline while Notes and Public nam
   const requests = [];
   globalThis.fetch = async (path, options) => {
     requests.push({path, options});
-    return new Response(JSON.stringify({billing_day: 2, quota_bytes: '1000'}));
+    return new Response(JSON.stringify({billing_day: 2, quota_bytes: '1000', billing_mode: 'total'}));
   };
   try {
     const {h} = await import('../src/shared/dom.js');
@@ -50,7 +50,7 @@ test('billing success records its normalized baseline while Notes and Public nam
     await flush();
     assert.equal(requests.length, 1);
     assert.equal(requests[0].path, '/api/v1/nodes/node-1/traffic-settings');
-    assert.deepEqual(JSON.parse(requests[0].options.body), {billing_day: 2, quota_bytes: '1000'});
+    assert.deepEqual(JSON.parse(requests[0].options.body), {billing_day: 2, quota_bytes: '1000', billing_mode: 'total'});
     assert.equal(trafficRefreshes, 1);
     assert.equal(billing.dataset.dirty, 'false');
     assert.equal(billing.querySelector('#billing-save').disabled, true);

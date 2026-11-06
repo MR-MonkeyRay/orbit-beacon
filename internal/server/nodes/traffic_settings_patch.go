@@ -16,8 +16,9 @@ func (p *TrafficSettingsPatch) UnmarshalJSON(data []byte) error {
 		return errors.New("traffic settings patch must be an object")
 	}
 	var wire struct {
-		BillingDay json.RawMessage `json:"billing_day"`
-		QuotaBytes json.RawMessage `json:"quota_bytes"`
+		BillingMode json.RawMessage `json:"billing_mode"`
+		BillingDay  json.RawMessage `json:"billing_day"`
+		QuotaBytes  json.RawMessage `json:"quota_bytes"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -31,6 +32,7 @@ func (p *TrafficSettingsPatch) UnmarshalJSON(data []byte) error {
 		dst  any
 	}{
 		{"billing_day", wire.BillingDay, &p.BillingDay},
+		{"billing_mode", wire.BillingMode, &p.BillingMode},
 		{"quota_bytes", wire.QuotaBytes, &p.QuotaBytes},
 	} {
 		if len(field.raw) == 0 {

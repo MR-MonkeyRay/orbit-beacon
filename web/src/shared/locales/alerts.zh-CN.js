@@ -14,6 +14,8 @@ export default {
   'alerts.deleteAction': '删除 {name}',
   'alerts.disabledName': '{name}（已停用）',
   'alerts.choose': '请选择…',
+  'alerts.validation.quotaThreshold': '请输入大于 0 且不超过 1,000 的阈值。',
+  'alerts.metric.trafficQuota': '流量配额使用率',
   'alerts.metric.cpu': 'CPU 使用率',
   'alerts.metric.memory': '内存使用率',
   'alerts.metric.swap': '交换空间使用率',

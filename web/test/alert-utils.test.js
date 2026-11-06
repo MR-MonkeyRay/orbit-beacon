@@ -9,6 +9,8 @@ test('rule validation covers bounds, offline semantics, UUIDs and UTF-8 names', 
   assert.deepEqual(validateRule(valid()), {});
   for (const threshold of [-1, 101, NaN, Infinity, null, '80']) assert.ok(validateRule({...valid(), threshold}).threshold);
   for (const threshold of [0, 100]) assert.deepEqual(validateRule({...valid(), threshold}), {});
+  for (const threshold of [0.1, 150, 1000]) assert.deepEqual(validateRule({...valid(), metric: 'traffic_quota_percent', threshold}), {});
+  for (const threshold of [0, -1, 1001]) assert.ok(validateRule({...valid(), metric: 'traffic_quota_percent', threshold}).threshold);
   assert.deepEqual(validateRule({...valid(), metric: 'load1', threshold: 1000000}), {});
   assert.ok(validateRule({...valid(), metric: 'load1', threshold: 1000001}).threshold);
   assert.deepEqual(validateRule({...valid(), metric: 'probes_down', threshold: 5}), {});

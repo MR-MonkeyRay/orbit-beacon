@@ -259,7 +259,7 @@ CREATE TABLE nodes (
  credential_epoch INTEGER NOT NULL DEFAULT 0,
  system TEXT NOT NULL DEFAULT '{}', public_settings TEXT NOT NULL DEFAULT '{}',
  agent_runtime TEXT NOT NULL DEFAULT '', billing_day INTEGER NOT NULL DEFAULT 1,
- quota_bytes TEXT NOT NULL DEFAULT '0', created_at TEXT NOT NULL,
+ quota_bytes TEXT NOT NULL DEFAULT '0', billing_mode TEXT NOT NULL DEFAULT 'total' CHECK(billing_mode IN ('total','max','rx','tx')), created_at TEXT NOT NULL,
  run_generation TEXT NOT NULL DEFAULT '0', report_session_id TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX nodes_installation_identity ON nodes(installation_id) WHERE installation_id IS NOT NULL;
