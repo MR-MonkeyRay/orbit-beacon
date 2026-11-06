@@ -285,3 +285,117 @@ func TestCreateRejectsStoppedNode(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestUpgradeValidationLifetimeConflictAndAudit(t *testing.T) {
+	db, s, now := fixture(t)
+	ctx := audit.WithSystemActor(t.Context(), "test")
+	for _, req := range []CreateRequest{{Kind: "upgrade"}, {Kind: "upgrade", TargetVersion: "01.2.3"}, {Kind: "upgrade", TargetVersion: "1.2"}, {Kind: "upgrade", TargetVersion: "v1.2.3"}, {Kind: "upgrade", TargetVersion: "1.2.3-rc1"}, {Kind: "upgrade", TargetVersion: "../1.2.3"}, {Kind: "restart", TargetVersion: "1.2.3"}, {Kind: "stop", TargetVersion: "1.2.3", Confirm: "host"}} {
+		if _, err := s.Create(ctx, testNode, "user", req); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%+v: %v", req, err)
+		}
+	}
+	if _, err := db.Exec(`UPDATE nodes SET system='{"agent_version":"1.2.3"}' WHERE id=?`, testNode); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Create(ctx, testNode, "user", CreateRequest{Kind: "upgrade", TargetVersion: "1.2.3"}); !errors.Is(err, ErrSameVersion) {
+		t.Fatal(err)
+	}
+	created, err := s.Create(ctx, testNode, "user", CreateRequest{Kind: "upgrade", TargetVersion: "1.2.4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.TargetVersion != "1.2.4" || created.ExpiresAt.Sub(now) != UpgradeLifetime {
+		t.Fatal(created)
+	}
+	list, err := s.List(ctx, testNode)
+	if err != nil || len(list) != 1 || list[0].TargetVersion != "1.2.4" {
+		t.Fatal(list, err)
+	}
+	var details string
+	if err := db.QueryRow(`SELECT details FROM audit_events WHERE action='command.create' AND target_id=?`, testNode).Scan(&details); err != nil {
+		t.Fatal(err)
+	}
+	var detail map[string]any
+	if err := json.Unmarshal([]byte(details), &detail); err != nil || detail["target_version"] != "1.2.4" {
+		t.Fatal(details, err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := Exchange(ctx, tx, testNode, 0, "1", nil, now)
+	if err != nil || command == nil || command.TargetVersion != "1.2.4" {
+		tx.Rollback()
+		t.Fatal(command, err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for _, code := range []string{"download", "checksum", "self_check", "downgrade", "rolled_back"} {
+		if _, err := db.Exec(`UPDATE agent_commands SET result_code=? WHERE id=?`, code, created.ID); err != nil {
+			t.Fatal(code, err)
+		}
+	}
+}
+
+func TestUpgradeGroupSkipsCurrentStoppedAndDisallowed(t *testing.T) {
+	db, s, now := fixture(t)
+	const group = "00000000-0000-4000-8000-000000000070"
+	if _, err := db.Exec(`INSERT INTO groups(id,name) VALUES(?,'Production')`, group); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE nodes SET group_id=? WHERE id=?`, group, testNode); err != nil {
+		t.Fatal(err)
+	}
+	ids := []string{testNode, "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004"}
+	for _, id := range ids[1:] {
+		hash := sha256.Sum256([]byte(id))
+		if _, err := db.Exec(`INSERT INTO nodes(id,name,status,token_hash,agent_runtime,run_generation,report_session_id,created_at,group_id) SELECT ?,?,'unknown',?,agent_runtime,run_generation,report_session_id,created_at,? FROM nodes WHERE id=?`, id, id, hash[:], group, testNode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`UPDATE nodes SET system='{"agent_version":"1.2.4"}' WHERE id=?`, ids[1]); err != nil {
+		t.Fatal(err)
+	}
+	settings := v1.DefaultRuntimeSettings()
+	settings.RemoteCommands = []string{"restart", "stop"}
+	raw, _ := json.Marshal(settings)
+	if _, err := db.Exec(`UPDATE nodes SET agent_runtime=? WHERE id=?`, string(raw), ids[2]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO agent_commands(id,node_id,credential_epoch,kind,state,result_code,requested_by,created_at,expires_at,delivered_generation) VALUES('00000000-0000-4000-8000-000000000090',?,0,'stop','succeeded','ok','user',?,?,'1')`, ids[3], timekey.Format(now.Add(-time.Minute)), timekey.Format(now.Add(time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.CreateGroup(t.Context(), group, "user", CreateRequest{Kind: "upgrade", TargetVersion: "1.2.4", Confirm: "Production"})
+	if err != nil || result.Created != 1 || result.Skipped != 3 {
+		t.Fatal(result, err)
+	}
+	for _, id := range ids[1:] {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM agent_commands WHERE node_id=? AND kind='upgrade'`, id).Scan(&count); err != nil || count != 0 {
+			t.Fatal(id, count, err)
+		}
+	}
+}
+
+func TestCreateRequestRejectsTargetOnOtherKinds(t *testing.T) {
+	for _, body := range []string{`{"kind":"restart","target_version":""}`, `{"kind":"restart","target_version":null}`, `{"kind":"stop","target_version":"1.2.3"}`} {
+		var req CreateRequest
+		if err := json.Unmarshal([]byte(body), &req); err != nil {
+			t.Fatal(err)
+		}
+		if req.valid() {
+			t.Fatal("accepted unexpected target", body)
+		}
+	}
+	for _, body := range []string{`{"kind":"restart"}`, `{"kind":"upgrade","target_version":"1.2.3"}`} {
+		var req CreateRequest
+		if err := json.Unmarshal([]byte(body), &req); err != nil || !req.valid() {
+			t.Fatal(body, req, err)
+		}
+	}
+	var req CreateRequest
+	if json.Unmarshal([]byte(`{"kind":"upgrade","target_version":"1.2.3","url":"https://attacker.example"}`), &req) == nil {
+		t.Fatal("unknown fields accepted")
+	}
+}

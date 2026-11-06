@@ -41,6 +41,7 @@ type Server struct {
 // 防止后续覆盖掩盖策略冲突。
 type InstallPolicy struct {
 	ServerURL       string `json:"server_url"`
+	UpdateBaseURL   string `json:"update_base_url"`
 	CAFile          string `json:"ca_file"`
 	StateDir        string `json:"state_dir"`
 	ExpectedUID     int    `json:"expected_uid"`
@@ -422,9 +423,20 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	if policy.InstallMode != "native" && policy.InstallMode != "docker" && policy.InstallMode != "foreground" {
 		return Agent{}, errors.New("install_mode 必须是 native、docker 或 foreground")
 	}
+	effectivePolicy := *policy
+	if policy.UpdateBaseURL != "" {
+		normalized, err := NormalizeUpdateBaseURL(policy.UpdateBaseURL)
+		if err != nil {
+			return Agent{}, fmt.Errorf("update_base_url: %w", err)
+		}
+		effectivePolicy.UpdateBaseURL = normalized
+	}
 	commands := []string{}
 	for _, command := range v1.RemoteCommandOrder() {
 		supported := policy.InstallMode == "native" || policy.InstallMode == "docker" && command == v1.RemoteCommandRestart || policy.InstallMode == "foreground" && command == v1.RemoteCommandStop
+		if command == v1.RemoteCommandUpgrade && effectivePolicy.UpdateBaseURL == "" {
+			supported = false
+		}
 		if supported && settings.AllowsCommand(command) {
 			commands = append(commands, command)
 		}
@@ -440,5 +452,14 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	if slices.Contains(disabled, v1.FeatureProbes) {
 		settings.ProbeTargets = []string{}
 	}
-	return Agent{InstallPolicy: *policy, RuntimeSettings: settings}, nil
+	return Agent{InstallPolicy: effectivePolicy, RuntimeSettings: settings}, nil
+}
+
+// NormalizeUpdateBaseURL 仅接受管理员指定的 HTTPS 发布根地址。
+func NormalizeUpdateBaseURL(raw string) (string, error) {
+	u, err := parseHTTPURL(raw)
+	if err != nil || u.Scheme != "https" {
+		return "", errors.New("升级地址必须为 HTTPS，且不含凭据、查询或片段")
+	}
+	return strings.TrimRight(u.String(), "/"), nil
 }

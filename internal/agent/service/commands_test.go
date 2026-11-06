@@ -23,7 +23,7 @@ func commandTestStore(t *testing.T) *commandStore {
 	if err := os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	s := openCommandStore(filepath.Join(dir, "commands.json"), slog.New(slog.DiscardHandler))
+	s := openCommandStore(filepath.Join(dir, "commands.json"), slog.New(slog.DiscardHandler), "")
 	if s.blocked {
 		t.Fatal("blocked")
 	}
@@ -38,7 +38,7 @@ func TestCommandsRejectAndDeduplicate(t *testing.T) {
 		disabled, expired bool
 	}{
 		{name: "disabled", kind: "restart", code: "disabled_locally", disabled: true},
-		{name: "upgrade", kind: "upgrade", code: "unsupported"},
+		{name: "upgrade reserve", kind: "upgrade", code: "expired"},
 		{name: "expired", kind: "stop", code: "expired", expired: true},
 		{name: "unknown", kind: "shell"},
 	} {
@@ -46,7 +46,7 @@ func TestCommandsRejectAndDeduplicate(t *testing.T) {
 			s := commandTestStore(t)
 			c := testCommand(test.kind)
 			if c.Kind == "upgrade" {
-				c.TargetVersion = "v1"
+				c.TargetVersion = "1.2.3"
 			}
 			now := c.ExpiresAt.Add(-time.Minute)
 			if test.expired {
@@ -87,7 +87,7 @@ func TestCommandCrashRecoveryAndResponseLoss(t *testing.T) {
 			if got := s.handle(c, now, v1.DefaultRuntimeSettings()); got != "" {
 				t.Fatal("executed twice")
 			}
-			recovered := openCommandStore(s.path, s.logger)
+			recovered := openCommandStore(s.path, s.logger, "")
 			if recovered.blocked {
 				t.Fatal("recovery blocked")
 			}
@@ -98,13 +98,13 @@ func TestCommandCrashRecoveryAndResponseLoss(t *testing.T) {
 				t.Fatal("replayed after crash")
 			}
 			// Only a successful response acknowledges a result; reopening retains it.
-			recovered = openCommandStore(s.path, s.logger)
+			recovered = openCommandStore(s.path, s.logger, "")
 			results := recovered.results()
 			if len(results) != 1 {
 				t.Fatal(results)
 			}
 			recovered.acknowledge(results)
-			recovered = openCommandStore(s.path, s.logger)
+			recovered = openCommandStore(s.path, s.logger, "")
 			if len(recovered.results()) != 0 {
 				t.Fatal("ack lost")
 			}
@@ -129,7 +129,7 @@ func TestStopInterruptedAtExecutionBarrier(t *testing.T) {
 	if s.handle(c, c.ExpiresAt.Add(-time.Minute), v1.DefaultRuntimeSettings()) != "" {
 		t.Fatal("executed despite write failure")
 	}
-	recovered := openCommandStore(s.path, s.logger)
+	recovered := openCommandStore(s.path, s.logger, "")
 	results := recovered.results()
 	if recovered.blocked || len(results) != 1 || results[0].Status != "failed" || results[0].Code != "interrupted" {
 		t.Fatal(results)
@@ -148,7 +148,7 @@ func TestCommandStateCorruptAndWriteFailureFailClosed(t *testing.T) {
 	if err := os.WriteFile(s.path, []byte("invalid"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	corrupt := openCommandStore(s.path, s.logger)
+	corrupt := openCommandStore(s.path, s.logger, "")
 	if !corrupt.blocked || corrupt.handle(c, c.ExpiresAt.Add(-time.Minute), v1.DefaultRuntimeSettings()) != "" {
 		t.Fatal("corruption executed")
 	}
@@ -255,12 +255,12 @@ func TestCommandResultsSendOldestTwoAndOnlyAcknowledgeSent(t *testing.T) {
 		t.Fatal(batch)
 	}
 	// A response is lost: reopening must retain all three pending results.
-	s = openCommandStore(s.path, s.logger)
+	s = openCommandStore(s.path, s.logger, "")
 	if len(s.state.Pending) != 3 {
 		t.Fatal(s.state.Pending)
 	}
 	s.acknowledge(batch)
-	s = openCommandStore(s.path, s.logger)
+	s = openCommandStore(s.path, s.logger, "")
 	remaining := s.results()
 	if len(remaining) != 1 || remaining[0].ID != "00000000-0000-4000-8000-000000000002" {
 		t.Fatal(remaining)
@@ -340,7 +340,7 @@ func TestCommandAcknowledgementFailureDisablesNextExecution(t *testing.T) {
 	if s.handle(next, c.ExpiresAt.Add(-time.Minute), v1.DefaultRuntimeSettings()) != "" || !s.blocked {
 		t.Fatal("ack persistence failure allowed execution")
 	}
-	recovered := openCommandStore(s.path, s.logger)
+	recovered := openCommandStore(s.path, s.logger, "")
 	if len(recovered.results()) != 1 {
 		t.Fatal("unpersisted acknowledgement removed pending result")
 	}

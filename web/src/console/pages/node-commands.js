@@ -4,12 +4,13 @@ import {api, getNavigationSignal, getSessionSignal} from '../api.js';
 import {absoluteWhen} from '../format.js';
 import {button, dataTable, panel} from '../ui/components.js';
 import {confirmDialog} from '../ui/dialogs.js';
-import {typedConfirmation} from '../ui/typed-confirmation.js';
+import {typedConfirmation, upgradeConfirmation} from '../ui/typed-confirmation.js';
 import {toastError} from '../ui/feedback.js';
 import {panelLifecycle} from '../ui/polling-panel.js';
 
+const kinds = ['upgrade', 'restart', 'stop'];
 const activeCommand = (command) => ['pending', 'delivered'].includes(command.state);
-const resultCodes = ['disabled_locally', 'unsupported', 'interrupted', 'failed'];
+const resultCodes = ['disabled_locally', 'unsupported', 'interrupted', 'failed', 'download', 'checksum', 'self_check', 'downgrade', 'rolled_back'];
 
 export function nodeCommandsPanel(node, runtime, signal = getNavigationSignal()) {
   const path = `/nodes/${encodeURIComponent(node.id)}/commands`;
@@ -21,7 +22,7 @@ export function nodeCommandsPanel(node, runtime, signal = getNavigationSignal())
   let controller;
   let lifecycle;
   const active = () => controller && !controller.signal.aborted && !signal?.aborted && !sessionSignal.aborted;
-  const controls = ['restart', 'stop'].map((kind) => button(t(`nodes.command.${kind}`), {
+  const controls = kinds.map((kind) => button(t(`nodes.command.${kind}`), {
     variant: kind === 'stop' ? 'danger' : undefined, disabled: true, onClick: () => create(kind)
   }));
   const body = h('tbody');
@@ -29,7 +30,7 @@ export function nodeCommandsPanel(node, runtime, signal = getNavigationSignal())
   const element = panel(t('nodes.remoteCommands'), {}, h('div', {class: 'head-actions'}, controls), table);
   const patch = () => {
     controls.forEach((control, index) => {
-      const kind = ['restart', 'stop'][index];
+      const kind = kinds[index];
       control.disabled = !active() || !loaded || running || node.deleted || node.status === 'disabled' || node.stopped
         || !runtime?.remote_commands.includes(kind) || records.some(activeCommand);
     });
@@ -40,7 +41,7 @@ export function nodeCommandsPanel(node, runtime, signal = getNavigationSignal())
     body.replaceChildren(...records.map((command) => {
       const code = resultCodes.includes(command.result_code) ? ` · ${t(`nodes.command.result.${command.result_code}`)}` : '';
       return h('tr', null,
-        h('td', null, t(`nodes.command.${command.kind}`)),
+        h('td', null, [t(`nodes.command.${command.kind}`), command.target_version].filter(Boolean).join(' ')),
         h('td', null, `${t(`nodes.command.state.${command.state}`)}${code}`),
         h('td', null, command.requested_by), h('td', null, absoluteWhen(command.created_at)),
         h('td', null, command.state === 'pending' ? button(t('controls.cancel'), {small: true, disabled: running || node.deleted,
@@ -71,16 +72,17 @@ export function nodeCommandsPanel(node, runtime, signal = getNavigationSignal())
     finally { running = false; if (active()) render(); }
   };
   async function create(kind) {
-    const control = controls[kind === 'restart' ? 0 : 1];
+    const control = controls[kinds.indexOf(kind)];
     if (control.disabled) return;
     const current = controller;
     const expected = node.name;
     await mutate(async () => {
-      const approved = kind === 'stop'
+      const targetVersion = kind === 'upgrade' ? await upgradeConfirmation({title: t('nodes.command.upgrade')}) : undefined;
+      const approved = kind === 'upgrade' ? Boolean(targetVersion) : kind === 'stop'
         ? await typedConfirmation({title: t('nodes.command.stopTitle'), message: t('nodes.command.stopConsequence'), expected, confirm: t('nodes.command.stop')})
         : await confirmDialog({title: t('nodes.command.restartTitle'), confirm: t('nodes.command.restart')});
       if (!approved || !active() || current !== controller || node.deleted || node.stopped || node.status === 'disabled' || !runtime?.remote_commands.includes(kind) || records.some(activeCommand)) return;
-      await api(path, {method: 'POST', body: {kind, ...(kind === 'stop' ? {confirm: expected} : {})}, signal: current.signal});
+      await api(path, {method: 'POST', body: {kind, ...(kind === 'upgrade' ? {target_version: targetVersion} : {}), ...(kind === 'stop' ? {confirm: expected} : {})}, signal: current.signal});
     });
   }
   const detach = () => {

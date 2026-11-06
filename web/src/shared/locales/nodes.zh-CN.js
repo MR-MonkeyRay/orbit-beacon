@@ -1,4 +1,11 @@
 export default {
+  'nodes.command.upgradeAll': '升级全部',
+  'nodes.command.targetVersion': '目标版本',
+  'nodes.command.result.download': '下载失败',
+  'nodes.command.result.checksum': '校验和失败',
+  'nodes.command.result.self_check': '自检失败',
+  'nodes.command.result.downgrade': '不高于当前版本',
+  'nodes.command.result.rolled_back': '已回滚',
   'nodes.command.status': '状态',
   'nodes.command.restartTitle': '重启节点',
   'nodes.command.stopTitle': '关闭节点',

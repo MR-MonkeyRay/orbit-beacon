@@ -227,6 +227,10 @@ sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore --data-dir /var/li
 
 ## 升级
 
+原生 Agent 可通过控制台按版本远程升级，操作与回滚见[远程升级](../docs/agent.md#远程升级)。安装器的 `--update-base-url URL` 固定 HTTPS 发布源，写入 root 所有的策略；未配置时不开放 upgrade。下载、切换与回滚均以 Agent 用户运行，root 所有的 `libexec/orbitbeacon-agent-rollback` 由无 `+` 前缀的 `ExecStartPre=-` 调用；`etc/` 不可由 Agent 写入。管理员绝不能运行 `sudo orbitbeacon-agent`。
+
+`SHA256SUMS` 与二进制同源，只防传输损坏，不能防发布源入侵；没有签名验证。不接受此信任边界的节点应从本地 `remote_commands` 移除 `upgrade`。
+
 数据库结构调整直接更新对应的建库、建表 SQL。升级前保留数据备份和原版本程序。
 
 升级步骤：

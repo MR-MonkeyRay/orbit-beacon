@@ -58,7 +58,8 @@ export function modal(title, build) {
   };
   const entry = {opener, cancel: () => finish('cancel'), dirty: () => snapshot() !== initial};
   let initial;
-  const snapshot = () => JSON.stringify([...dialog.querySelectorAll('input,select,textarea,[data-tags]')]
+  // 确认输入不是用户的工作成果，取消时无需再次确认。
+  const snapshot = () => JSON.stringify([...dialog.querySelectorAll('input:not([data-transient]),select,textarea,[data-tags]')]
     .map((control) => control.dataset.tags !== undefined ? control.getValue() : control.multiple ? [...control.selectedOptions].map((option) => option.value)
       : ['checkbox', 'radio'].includes(control.type) ? control.checked : control.value));
   const dismiss = async () => {

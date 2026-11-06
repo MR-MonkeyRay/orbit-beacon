@@ -253,6 +253,13 @@ assert_mode "$TEST_ROOT/etc/systemd/system/orbitbeacon-agent.service" 644
 assert_mode "$TEST_ROOT/opt/orbit-beacon/state" 700
 assert_mode "$TEST_ROOT/opt/orbit-beacon" 750
 assert_mode "$TEST_ROOT/opt/orbit-beacon/bin" 750
+assert_mode "$TEST_ROOT/opt/orbit-beacon/libexec" 755
+assert_mode "$TEST_ROOT/opt/orbit-beacon/libexec/orbitbeacon-agent-rollback" 755
+cmp -s "$SCRIPT_DIR/orbitbeacon-agent-rollback" "$TEST_ROOT/opt/orbit-beacon/libexec/orbitbeacon-agent-rollback" || fail 'rollback source differs'
+grep -Fx 'ExecStartPre=-/opt/orbit-beacon/libexec/orbitbeacon-agent-rollback' "$UNIT_SOURCE" >/dev/null || fail 'rollback unit must run as Agent user'
+if grep -F 'ExecStartPre=+' "$UNIT_SOURCE"; then fail 'privileged rollback'; fi
+grep -Fx "root:root $TEST_ROOT/opt/orbit-beacon/libexec" "$CASE_DIR/owners.log" >/dev/null || fail 'libexec owner'
+grep -E "root:root $TEST_ROOT/opt/orbit-beacon/libexec/.rollback.[A-Za-z0-9]+" "$CASE_DIR/owners.log" >/dev/null || fail 'rollback owner'
 for owner_path in \
 	"root:12346 $TEST_ROOT/opt/orbit-beacon" \
 	"root:12346 $TEST_ROOT/opt/orbit-beacon/etc" \
@@ -274,6 +281,7 @@ root = sys.argv[2]
 data = json.loads(p.read_text())
 assert data == {
     "server_url": "https://monitor.example.com",
+    "update_base_url": "https://github.com/mr-monkeyray/orbit-beacon/releases/download",
     "ca_file": root + "/opt/orbit-beacon/etc/ca.pem",
     "state_dir": root + "/opt/orbit-beacon/state",
     "expected_uid": 12345,
@@ -425,7 +433,7 @@ pass "non-systemd instructions use the installed local configuration"
 setup_case su_fallback
 rm "$CASE_DIR/bin/runuser"
 # 限定 PATH，避免找到宿主 runuser；其余命令仍使用普通工具或现有桩。
-for tool in dash awk stat mkdir mktemp chmod cp install cat sha256sum stty rm cut; do
+for tool in dash awk stat mkdir mktemp chmod cp install cat sha256sum stty rm cut sed; do
 	ln -s "$(command -v "$tool")" "$CASE_DIR/bin/$tool"
 done
 TEST_PATH=$CASE_DIR/bin
@@ -552,6 +560,7 @@ ln -s "$CASE_DIR/victim-dir/file" "$TEST_ROOT/opt/orbit-beacon/state/file-link"
 run_installer "$CASE_DIR/uninstall-output" --uninstall --yes
 assert_not_exists "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent"
 assert_not_exists "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.json"
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon/libexec"
 assert_not_exists "$TEST_ROOT/opt/orbit-beacon/etc/agent.json"
 assert_not_exists "$TEST_ROOT/opt/orbit-beacon/etc/ca.pem"
 assert_not_exists "$TEST_ROOT/etc/systemd/system/orbitbeacon-agent.service"
@@ -565,5 +574,70 @@ assert_log_lacks 'su -s'
 assert_log_has "systemctl disable --now orbitbeacon-agent"
 assert_log_has "systemctl daemon-reload"
 pass "uninstall refuses declined confirmation and removes the layout without following links or executing Agent"
+
+# 回滚只读写固定目录，恶意二进制不得执行。
+for scenario in below above missing garbage newline; do
+    rollback_root=$WORK_DIR/rollback_$scenario
+    mkdir -p "$rollback_root/bin" "$rollback_root/state"
+    printf '%s\n' '#!/bin/sh' "touch '$rollback_root/executed'" > "$rollback_root/bin/orbitbeacon-agent"
+    chmod 0750 "$rollback_root/bin/orbitbeacon-agent"
+    cp "$rollback_root/bin/orbitbeacon-agent" "$rollback_root/original"
+    printf '%s' previous > "$rollback_root/bin/orbitbeacon-agent.prev"
+    count=2
+    case $scenario in above|missing) count=3 ;; garbage) count=invalid ;; esac
+    [ "$scenario" != missing ] || rm "$rollback_root/bin/orbitbeacon-agent.prev"
+    printf '%s' "$count" > "$rollback_root/state/upgrade-pending"
+    [ "$scenario" != newline ] || printf '1\n' > "$rollback_root/state/upgrade-pending"
+    sh "$SCRIPT_DIR/orbitbeacon-agent-rollback" "$rollback_root"
+    assert_not_exists "$rollback_root/executed"
+    case $scenario in
+        below|missing|newline) cmp -s "$rollback_root/original" "$rollback_root/bin/orbitbeacon-agent" || fail 'rollback swapped too early'
+            assert_exists "$rollback_root/state/upgrade-pending" ;;
+        *) [ "$(cat "$rollback_root/bin/orbitbeacon-agent")" = previous ] || fail 'rollback did not restore'
+            assert_exists "$rollback_root/state/upgrade-rolled-back"
+            assert_not_exists "$rollback_root/state/upgrade-pending" ;;
+    esac
+    if [ "$scenario" = missing ]; then
+        sh "$SCRIPT_DIR/orbitbeacon-agent-rollback" "$rollback_root"
+        [ "$(cat "$rollback_root/state/upgrade-pending")" = 4 ] || fail 'rollback counter must saturate'
+    fi
+    pass "rollback $scenario preserves startup and executes nothing in bin"
+done
+setup_case update_base
+for invalid_base in http://release.example.com https://user@release.example.com https://release.example.com/?q=x https://release.example.com/#x; do
+    if run_installer "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 --update-base-url "$invalid_base" </dev/null; then fail 'invalid upgrade source accepted'; fi
+done
+run_with_token update-token "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 --update-base-url https://release.example.com/download/
+grep -F '"update_base_url": "https://release.example.com/download"' "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.json" >/dev/null || fail 'upgrade base not normalized'
+pass 'custom update source is HTTPS only and normalized'
+run_with_token update-token "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0
+grep -F '"update_base_url": "https://release.example.com/download"' "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.json" >/dev/null || fail 'reinstall dropped the update source'
+pass 'reinstall keeps the pinned update source'
+reinstall_policy=$TEST_ROOT/opt/orbit-beacon/etc/install-policy.json
+for policy_edit in minified:mirror last_key:mirror spaced:mirror empty:off; do
+    python3 - "$reinstall_policy" "${policy_edit%:*}" <<'EDIT'
+import json, sys
+path, scenario = sys.argv[1:3]
+data = json.load(open(path))
+data.pop("update_base_url", None)
+mirror = "https://release.example.com/download"
+if scenario == "minified":
+    text = json.dumps({"update_base_url": mirror, **data}, separators=(",", ":"))
+elif scenario == "last_key":
+    text = json.dumps({**data, "update_base_url": mirror}, indent=4)
+elif scenario == "spaced":
+    text = '{ "update_base_url"  :  "%s", %s' % (mirror, json.dumps(data)[1:])
+else:
+    text = json.dumps({"update_base_url": "", **data}, indent=2)
+open(path, "w").write(text)
+EDIT
+    run_with_token update-token "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0
+    case $policy_edit in
+        *:mirror) want='"update_base_url": "https://release.example.com/download"' ;;
+        *) want='"update_base_url": ""' ;;
+    esac
+    grep -F "$want" "$reinstall_policy" >/dev/null || fail "reinstall changed the update source: $policy_edit"
+done
+pass 'reinstall reads edited policies and keeps upgrades off when disabled'
 
 printf '1..%s\n' "$PASS_COUNT"

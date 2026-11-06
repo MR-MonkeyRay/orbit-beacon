@@ -99,7 +99,7 @@ func TestAgentProtectedFieldsRejectCompositeValuesWithoutPanic(t *testing.T) {
 func TestAgentCapabilitiesNormalizeOnceForInstallMode(t *testing.T) {
 	for _, mode := range []string{"native", "docker", "foreground"} {
 		t.Run(mode, func(t *testing.T) {
-			policy := config.InstallPolicy{ServerURL: "https://beacon.example.test", StateDir: t.TempDir(), InstallMode: mode}
+			policy := config.InstallPolicy{ServerURL: "https://beacon.example.test", StateDir: t.TempDir(), InstallMode: mode, UpdateBaseURL: "https://releases.example.test/download"}
 			opts := config.LoadOptions{LookupEnv: lookup(nil), File: configFile(t, map[string]any{
 				"remote_commands": []string{"stop", "restart", "upgrade"}, "disabled_features": []string{"probes", "network", "disk"}, "probe_targets": []string{"tcp://example.test:80"},
 			})}

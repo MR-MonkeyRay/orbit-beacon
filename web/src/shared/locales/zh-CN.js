@@ -11,6 +11,7 @@ import audit from './audit.zh-CN.js';
 import notifications from './notifications.zh-CN.js';
 
 export default {
+  'errors.command_same_version': '节点已运行此版本',
   'errors.command_not_allowed': '不允许此指令',
   'errors.command_active': '已有活动指令',
   'errors.node_unavailable': '节点不可用',

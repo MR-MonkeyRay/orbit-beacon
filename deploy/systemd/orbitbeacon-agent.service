@@ -8,6 +8,7 @@ Type=simple
 # 该账户须与安装策略中的 expected_uid/expected_gid 一致。
 User=orbitbeacon-agent
 Group=orbitbeacon-agent
+ExecStartPre=-/opt/orbit-beacon/libexec/orbitbeacon-agent-rollback
 ExecStart=/opt/orbit-beacon/bin/orbitbeacon-agent run --install-policy /opt/orbit-beacon/etc/install-policy.json --config /opt/orbit-beacon/etc/agent.json
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure

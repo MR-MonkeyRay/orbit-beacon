@@ -1582,8 +1582,8 @@ paths:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
     post:
-      summary: 为分组节点创建 restart 或 stop 指令
-      description: confirm 必须等于分组名。每节点独立事务；不允许、已有活动指令或不可用的节点计入 skipped，单节点失败不影响其他节点。指令有效期五分钟。节点数不设接口上限。
+      summary: 为分组节点创建 upgrade、restart 或 stop 指令
+      description: confirm 必须等于分组名。每节点独立事务；已运行目标版本、不允许、已有活动指令或不可用的节点计入 skipped，单节点失败不影响其他节点。upgrade 有效期十五分钟，restart/stop 五分钟。节点数不设接口上限。
       security: [{session: []}]
       parameters:
         - {$ref: '#/components/parameters/CSRF'}
@@ -1596,8 +1596,10 @@ paths:
               type: object
               additionalProperties: false
               required: [kind, confirm]
+              allOf: [{$ref: '#/components/schemas/CommandTargetConstraint'}]
               properties:
-                kind: {type: string, enum: [restart, stop]}
+                kind: {type: string, enum: [upgrade, restart, stop]}
+                target_version: {$ref: '#/components/schemas/Command/properties/target_version'}
                 confirm: {type: string}
       responses:
         '200':
@@ -1634,8 +1636,8 @@ paths:
                   commands: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/CommandRecord'}}
         default: {$ref: '#/components/responses/Error'}
     post:
-      summary: 创建 restart 或 stop 指令
-      description: 有效期五分钟。stop 的 confirm 必须等于节点名。未观测 runtime 或本地不允许返回 409 command_not_allowed；已有活动指令返回 409 command_active；禁用、已关闭或未注册返回 409 node_unavailable。upgrade 暂返回 400。
+      summary: 创建 upgrade、restart 或 stop 指令
+      description: upgrade 有效期十五分钟，restart/stop 五分钟；目标版本必须是无前导零的 MAJOR.MINOR.PATCH。stop 的 confirm 必须等于节点名。未观测 runtime 或本地不允许返回 409 command_not_allowed；已有活动指令返回 409 command_active；禁用、已关闭或未注册返回 409 node_unavailable。upgrade 已是目标版本返回 409 command_same_version。
       security: [{session: []}]
       parameters:
         - {$ref: '#/components/parameters/CSRF'}
@@ -1648,8 +1650,10 @@ paths:
               type: object
               additionalProperties: false
               required: [kind]
+              allOf: [{$ref: '#/components/schemas/CommandTargetConstraint'}]
               properties:
-                kind: {type: string, enum: [restart, stop]}
+                kind: {type: string, enum: [upgrade, restart, stop]}
+                target_version: {$ref: '#/components/schemas/Command/properties/target_version'}
                 confirm: {type: string}
       responses:
         '201':
@@ -3229,14 +3233,19 @@ components:
         metrics: {$ref: '#/components/schemas/Metrics'}
         traffic: {type: array, maxItems: 24, description: 唯一的 epoch/period_start 对，含每进程按小时累计的字节计数器。, items: {$ref: '#/components/schemas/Traffic'}}
         probe_results: {type: array, maxItems: 5, description: 每个当前配置目标的最新结果；目标值唯一。, items: {$ref: '#/components/schemas/ProbeResult'}}
+    CommandTargetConstraint:
+      if: {properties: {kind: {const: upgrade}}}
+      then: {required: [target_version]}
+      else: {not: {required: [target_version]}}
     Command:
       type: object
       additionalProperties: false
       required: [id, kind, expires_at]
+      allOf: [{$ref: '#/components/schemas/CommandTargetConstraint'}]
       properties:
         id: {type: string, format: uuid}
         kind: {type: string, enum: [upgrade, restart, stop]}
-        target_version: {type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9][A-Za-z0-9._+\-]{0,63}$', description: 仅 upgrade 必填；其他指令禁止。}
+        target_version: {type: string, minLength: 1, maxLength: 64, pattern: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$', description: 仅 upgrade 必填；其他指令禁止。}
         expires_at: {type: string, format: date-time}
     CommandResult:
       type: object
@@ -3245,7 +3254,7 @@ components:
       properties:
         id: {type: string, format: uuid}
         status: {type: string, enum: [succeeded, failed, rejected]}
-        code: {type: string, enum: [ok, disabled_locally, unsupported, expired, interrupted, failed]}
+        code: {type: string, maxLength: 16, enum: [ok, disabled_locally, unsupported, expired, interrupted, failed, download, checksum, self_check, downgrade, rolled_back]}
     CommandRecord:
       type: object
       additionalProperties: false
@@ -3257,7 +3266,7 @@ components:
         expires_at: {$ref: '#/components/schemas/Command/properties/expires_at'}
         node_id: {type: string, format: uuid}
         state: {type: string, enum: [pending, delivered, succeeded, failed, rejected, expired, canceled]}
-        result_code: {type: string, enum: ['', ok, disabled_locally, unsupported, expired, interrupted, failed]}
+        result_code: {type: string, enum: ['', ok, disabled_locally, unsupported, expired, interrupted, failed, download, checksum, self_check, downgrade, rolled_back]}
         requested_by: {type: string, description: 请求人的用户名}
         created_at: {type: string, format: date-time}
         delivered_at: {type: [string, 'null'], format: date-time}

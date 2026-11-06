@@ -28,11 +28,12 @@ const commandHistoryLimit = 32
 const pendingCommandResultLimit = 3 * commandHistoryLimit
 
 type processedCommand struct {
-	ID        string    `json:"id"`
-	Kind      string    `json:"kind"`
-	State     string    `json:"state"`
-	Code      string    `json:"code"`
-	ExpiresAt time.Time `json:"expires_at"`
+	ID            string    `json:"id"`
+	TargetVersion string    `json:"target_version,omitempty"`
+	Kind          string    `json:"kind"`
+	State         string    `json:"state"`
+	Code          string    `json:"code"`
+	ExpiresAt     time.Time `json:"expires_at"`
 }
 type commandState struct {
 	Processed []processedCommand `json:"processed"`
@@ -42,6 +43,7 @@ type commandState struct {
 // Only the reporting goroutine owns this store. Corruption or any ambiguous
 // durability failure disables execution until an operator repairs local state.
 type commandStore struct {
+	version string
 	path    string
 	state   commandState
 	blocked bool
@@ -49,8 +51,8 @@ type commandStore struct {
 	persist func(commandState) error
 }
 
-func openCommandStore(path string, logger *slog.Logger) *commandStore {
-	s := &commandStore{path: path, logger: logger}
+func openCommandStore(path string, logger *slog.Logger, version string) *commandStore {
+	s := &commandStore{path: path, logger: logger, version: version}
 	s.persist = s.write
 	if err := s.load(); err != nil {
 		s.block(err)
@@ -108,10 +110,7 @@ func (s *commandStore) load() error {
 	for i := range state.Processed {
 		c := &state.Processed[i]
 		c.ID = strings.ToLower(c.ID)
-		command := v1.Command{ID: c.ID, Kind: c.Kind, ExpiresAt: c.ExpiresAt}
-		if c.Kind == v1.RemoteCommandUpgrade {
-			command.TargetVersion = "validation"
-		}
+		command := v1.Command{ID: c.ID, Kind: c.Kind, TargetVersion: c.TargetVersion, ExpiresAt: c.ExpiresAt}
 		if err := command.Validate(); err != nil {
 			return err
 		}
@@ -119,7 +118,7 @@ func (s *commandStore) load() error {
 			return errors.New("duplicate command state")
 		}
 		if c.State == "executing" {
-			if c.Kind != v1.RemoteCommandRestart && c.Kind != v1.RemoteCommandStop {
+			if c.Kind != v1.RemoteCommandRestart && c.Kind != v1.RemoteCommandStop && c.Kind != v1.RemoteCommandUpgrade {
 				return errors.New("invalid executing command")
 			}
 		} else if err := (v1.CommandResult{ID: c.ID, Status: c.State, Code: c.Code}).Validate(); err != nil {
@@ -145,16 +144,33 @@ func (s *commandStore) load() error {
 		if c.State != "executing" {
 			continue
 		}
+		// Starting proves nothing: a rollback must not inherit a recorded success.
+		if c.Kind == v1.RemoteCommandUpgrade && s.version == c.TargetVersion && s.upgradeUnconfirmed() {
+			continue
+		}
 		c.State, c.Code = "failed", "interrupted"
 		if c.Kind == v1.RemoteCommandRestart {
 			c.State, c.Code = "succeeded", "ok"
+		}
+		if c.Kind == v1.RemoteCommandUpgrade {
+			if s.version == c.TargetVersion {
+				c.State, c.Code = "succeeded", "ok"
+			} else if _, err := os.Stat(filepath.Join(filepath.Dir(s.path), "upgrade-rolled-back")); err == nil {
+				c.Code = "rolled_back"
+			}
 		}
 		state.Pending = append(state.Pending, v1.CommandResult{ID: c.ID, Status: c.State, Code: c.Code})
 	}
 	if len(state.Pending) > pendingCommandResultLimit {
 		return errors.New("command recovery results exceed bounds")
 	}
-	return s.save(state)
+	if err := s.save(state); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(filepath.Dir(s.path), "upgrade-rolled-back")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		s.logger.Warn("upgrade_rollback_marker_remove_failed", "error", err)
+	}
+	return nil
 }
 func (s *commandStore) save(state commandState) error {
 	if err := s.persist(state); err != nil {
@@ -251,7 +267,7 @@ func (s *commandStore) handle(c v1.Command, serverTime time.Time, settings v1.Ru
 	if len(state.Processed) == commandHistoryLimit {
 		evict := -1
 		for i, p := range state.Processed {
-			if p.ExpiresAt.After(serverTime) {
+			if p.State == "executing" || p.ExpiresAt.After(serverTime) {
 				continue
 			}
 			pending := false
@@ -283,14 +299,12 @@ func (s *commandStore) handle(c v1.Command, serverTime time.Time, settings v1.Ru
 	}
 	status, code := "executing", ""
 	switch {
-	case !serverTime.Before(c.ExpiresAt):
+	case !serverTime.Before(c.ExpiresAt) || c.Kind == v1.RemoteCommandUpgrade && c.ExpiresAt.Sub(serverTime) < upgradeReserve:
 		status, code = "rejected", "expired"
 	case !settings.AllowsCommand(c.Kind):
 		status, code = "rejected", "disabled_locally"
-	case c.Kind == v1.RemoteCommandUpgrade:
-		status, code = "rejected", "unsupported"
 	}
-	state.Processed = append(state.Processed, processedCommand{ID: c.ID, Kind: c.Kind, State: status, Code: code, ExpiresAt: c.ExpiresAt})
+	state.Processed = append(state.Processed, processedCommand{ID: c.ID, Kind: c.Kind, TargetVersion: c.TargetVersion, State: status, Code: code, ExpiresAt: c.ExpiresAt})
 	if status != "executing" {
 		state.Pending = append(state.Pending, v1.CommandResult{ID: c.ID, Status: status, Code: code})
 	}
@@ -312,4 +326,62 @@ func (s *commandStore) handle(c v1.Command, serverTime time.Time, settings v1.Ru
 		}
 	}
 	return c.Kind
+}
+
+func (s *commandStore) finishUpgrade(result upgradeOutcome) {
+	if s.blocked {
+		return
+	}
+	state := s.copyState()
+	for i := range state.Processed {
+		c := &state.Processed[i]
+		if c.ID == result.id && c.State == "executing" {
+			c.State, c.Code = result.status, result.code
+			state.Pending = append(state.Pending, v1.CommandResult{ID: c.ID, Status: c.State, Code: c.Code})
+			if err := s.save(state); err != nil {
+				s.block(err)
+			}
+			return
+		}
+	}
+}
+func (s *commandStore) upgradeUnconfirmed() bool {
+	_, err := os.Stat(filepath.Join(filepath.Dir(s.path), "upgrade-pending"))
+	return err == nil
+}
+
+// confirmUpgrade runs on the first accepted report. Rollback is disarmed durably
+// before success is recorded, so a crash between the steps cannot roll back onto
+// a saved success: load() derives it from the version once the marker is gone.
+func (s *commandStore) confirmUpgrade() bool {
+	dir := filepath.Dir(s.path)
+	err := os.Remove(filepath.Join(dir, "upgrade-pending"))
+	if errors.Is(err, os.ErrNotExist) {
+		err = nil
+	} else if err == nil {
+		err = syncDirectory(dir)
+	}
+	if err != nil {
+		s.logger.Warn("upgrade_pending_remove_failed", "error", err)
+		return false
+	}
+	if s.blocked {
+		return true
+	}
+	state := s.copyState()
+	changed := false
+	for i := range state.Processed {
+		c := &state.Processed[i]
+		if c.Kind == v1.RemoteCommandUpgrade && c.State == "executing" && c.TargetVersion == s.version {
+			c.State, c.Code = "succeeded", "ok"
+			state.Pending = append(state.Pending, v1.CommandResult{ID: c.ID, Status: c.State, Code: c.Code})
+			changed = true
+		}
+	}
+	if changed {
+		if err := s.save(state); err != nil {
+			s.block(err)
+		}
+	}
+	return true
 }

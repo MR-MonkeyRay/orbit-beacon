@@ -54,6 +54,7 @@ unset TOKEN
 | `/opt/orbit-beacon/` | root:orbitbeacon-agent，`0750` |
 | `/opt/orbit-beacon/bin/` | orbitbeacon-agent:orbitbeacon-agent，`0750`；内含可替换的 `orbitbeacon-agent`，`0750` |
 | `/opt/orbit-beacon/etc/` | root:orbitbeacon-agent，`0750`；文件 `0640`，Agent 只读 |
+| `/opt/orbit-beacon/libexec/orbitbeacon-agent-rollback` | root:root，`0755`；以 Agent 用户运行的启动回滚脚本 |
 | `/opt/orbit-beacon/etc/install-policy.json` | root:orbitbeacon-agent，`0640`；安装策略，模式 `native` |
 | `/opt/orbit-beacon/etc/agent.json` | 本地运行参数；新装为 `{}`，root:orbitbeacon-agent、`0640`；重装保留，拒绝符号链接 |
 | `/opt/orbit-beacon/etc/ca.pem` | root:orbitbeacon-agent，`0640`；可选 CA 副本 |
@@ -113,7 +114,7 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent doctor \
 | `interfaces` | `[]` | 最多 8 项；空数组使用默认路由网卡 |
 | `disk_paths` | `[]` | 最多 8 个绝对路径；空数组使用默认根路径 |
 | `probe_targets` | `[]` | 最多 5 项；空数组不探测 |
-| `remote_commands` | `["upgrade","restart","stop"]` | 允许的远程指令；native 支持全部，docker 仅 restart，foreground 仅 stop，取交集生效，`[]` 全部关闭 |
+| `remote_commands` | `["upgrade","restart","stop"]` | 允许的远程指令；native 仅在安装策略配置了升级地址时支持 upgrade，docker 仅 restart，foreground 仅 stop，取交集生效，`[]` 全部关闭 |
 | `disabled_features` | `[]` | 关闭 disk、network、traffic、probes 中的指定功能，默认全部启用；network 同时关闭 traffic，probes 清空探测目标 |
 
 选择还受 JSON 转义后 64 KiB 报告预算约束。
@@ -121,6 +122,18 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent doctor \
 环境变量为 `ORBITBEACON_REPORT_INTERVAL_SECONDS` 等大写参数名；`remote_commands` 和 `disabled_features` 不提供 flag，其余 flag 使用 `--report-interval-seconds` 等连字符形式。列表必须是 JSON 数组字符串，例如 `ORBITBEACON_INTERFACES='["eth0"]'` 或 `--probe-targets '["https://example.com/a,b"]'`，不按逗号拆分。
 
 修改后执行 `sudo systemctl reload orbitbeacon-agent`（前台进程用 `kill -HUP <PID>`）。reload 重读原 JSON，沿用启动时环境和显式 flags，不重读 policy；有效变更在采样边界完整应用并重采，不重置身份或累计流量，坏配置保留旧值。检查日志 `configuration_reloaded` / `configuration_unchanged` / `configuration_reload_rejected` 和下一报告；systemctl 成功只代表信号送达。
+
+## 远程升级
+
+控制台节点的「升级」或分组的「升级全部」只指定版本号；分组需输入组名，已运行目标版本、已关闭或本地不允许的节点跳过。当前版本必须也是正式三段版本，目标必须严格更新；开发版、相同版本和降级返回 `rejected/downgrade`。
+
+安装器将 `update_base_url` 写入 root 所有的安装策略，默认 `https://github.com/mr-monkeyray/orbit-beacon/releases/download`，可用 `--update-base-url URL` 指定 HTTPS 镜像，重装时保留已有地址；空值关闭升级能力。该值不能通过 `agent.json`、reload 或服务器修改，也不随报告上传。docker/foreground 不支持远程升级。
+
+下载和自检在后台执行，期间继续上报；仅支持 Linux amd64/arm64。下载使用系统证书及策略中的 `ca_file`，仅允许 HTTPS（包括最多五次重定向）。二进制上限 64 MiB，清单上限 64 KiB。候选版本经 SHA256 校验和 `version --json` 自检后，保留 `bin/orbitbeacon-agent.prev`，写入 `state/upgrade-pending`，再原子替换并以 75 退出。下载最多十分钟，并为重启与首次上报预留 90 秒；不足 90 秒拒绝执行。
+
+新版本首次被服务器接受的上报才算升级成功，并删除待确认标记。新版本崩溃，或运行 2 分钟仍未上报成功而自行退出，都计一次启动；第四次启动时，root 所有的回滚脚本以 Agent 用户运行并恢复 `.prev`，结果为 `rolled_back`。升级期间服务器长时间不可用同样会触发回滚。`.prev` 在成功升级后保留供人工恢复；意外中断返回 `interrupted`。回滚脚本绝不执行 `bin/` 中的文件，`etc/` 始终归 root 所有且 Agent 只读。
+
+`SHA256SUMS` 与二进制来自同一发布源，只防传输损坏，不能防发布源被入侵；没有签名验证。不接受此信任边界的节点应从本地 `remote_commands` 移除 `upgrade`。管理员绝不能运行 `sudo orbitbeacon-agent`；手工恢复也须先停止服务，再以 Agent 用户检查二进制。
 
 ## 升级与卸载
 
@@ -159,6 +172,7 @@ sudo mv -fT -- "$AGENT_TMP" /opt/orbit-beacon/bin/orbitbeacon-agent
 sudo tee /opt/orbit-beacon/etc/install-policy.json > /dev/null <<EOF
 {
   "server_url": "https://beacon.your-domain.com",
+  "update_base_url": "",
   "ca_file": "",
   "state_dir": "/opt/orbit-beacon/state",
   "expected_uid": $AGENT_UID,
@@ -232,7 +246,7 @@ HTTP 探测不使用 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`，不能依赖�
 
 字段与错误码见[接口契约（OpenAPI）](../api/openapi.yaml)。
 
-远程指令仅有 `upgrade`、`restart`、`stop`，最终由本机 `remote_commands` 许可决定；服务器不能修改 Agent 设置。当前 `upgrade` 返回 `rejected/unsupported`，尚不执行升级。
+远程指令仅有 `upgrade`、`restart`、`stop`，最终由本机 `remote_commands` 许可决定；服务器不能修改 Agent 设置。`upgrade` 只接收严格的 `MAJOR.MINOR.PATCH` 目标版本（无前导零），有效期 20 分钟，下发时剩余不足 7 分钟按过期拒绝；restart/stop 有效期 5 分钟。
 `restart` 在持久化执行标记后以退出码 **75** 结束，由 systemd 的 `Restart=on-failure` 拉起；同一 ID 不会再次重启。
 `stop` 持久化成功结果并立即采集、上报，确认成功或最多等待 15 秒后以 **0** 退出；恢复须人工 `systemctl start orbitbeacon-agent`，已启用服务在主机重启后也会恢复。正常 SIGTERM 行为不变。
 指令状态保存在 `state/commands.json`（0600）；损坏或写入失败时继续监控但停止执行指令，需人工检查修复，不能随意删除以免丢失去重记录。

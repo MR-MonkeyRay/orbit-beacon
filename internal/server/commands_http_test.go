@@ -172,3 +172,42 @@ func TestGroupCommandsConfirmationIsolationAndAudit(t *testing.T) {
 		t.Fatal(recorded)
 	}
 }
+
+func TestUpgradeAPIHasOnlyVersionAndSameVersionConflict(t *testing.T) {
+	f := newHTTP(t, 2)
+	n, err := f.nodes.CreatePending(t.Context(), nodes.CreateRequest{Name: "host"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, _ := json.Marshal(v1.DefaultRuntimeSettings())
+	hash := sha256.Sum256([]byte("upgrade credential"))
+	if _, err := f.db.Exec(`UPDATE nodes SET token_hash=?,agent_runtime=?,run_generation='1',report_session_id='session',status='unknown',system='{"agent_version":"1.2.3"}' WHERE id=?`, hash[:], string(settings), n.ID); err != nil {
+		t.Fatal(err)
+	}
+	cookie, csrf := login(t, f, "admin")
+	path := "/api/v1/nodes/" + n.ID + "/commands"
+	for _, body := range []string{`{"kind":"upgrade","target_version":"01.2.3"}`, `{"kind":"upgrade","target_version":"1.2"}`, `{"kind":"restart","target_version":"1.2.4"}`, `{"kind":"restart","target_version":""}`, `{"kind":"stop","target_version":null,"confirm":"host"}`, `{"kind":"stop","target_version":"1.2.4","confirm":"host"}`, `{"kind":"upgrade","target_version":"1.2.4","url":"https://attacker.example"}`, `{"kind":"upgrade","target_version":"1.2.4","hash":"abcd"}`} {
+		response := request(t, f.handler, "POST", path, body, cookie, csrf, publicURL)
+		if response.Code != 400 {
+			t.Fatalf("%s: %d %s", body, response.Code, response.Body)
+		}
+	}
+	same := request(t, f.handler, "POST", path, `{"kind":"upgrade","target_version":"1.2.3"}`, cookie, csrf, publicURL)
+	if same.Code != 409 {
+		t.Fatal(same.Code, same.Body)
+	}
+	var failure struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(same.Body.Bytes(), &failure); err != nil || failure.Code != "command_same_version" {
+		t.Fatal(failure, err)
+	}
+	created := request(t, f.handler, "POST", path, `{"kind":"upgrade","target_version":"1.2.4"}`, cookie, csrf, publicURL)
+	if created.Code != 201 {
+		t.Fatal(created.Code, created.Body)
+	}
+	var record commands.Record
+	if err := json.Unmarshal(created.Body.Bytes(), &record); err != nil || record.TargetVersion != "1.2.4" || record.ExpiresAt.Sub(record.CreatedAt) != commands.UpgradeLifetime {
+		t.Fatal(record, err)
+	}
+}

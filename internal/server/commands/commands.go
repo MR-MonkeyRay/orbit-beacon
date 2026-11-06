@@ -3,9 +3,11 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -16,12 +18,14 @@ import (
 )
 
 const (
-	Lifetime  = 5 * time.Minute
-	Retention = 90 * 24 * time.Hour
+	Lifetime        = 5 * time.Minute
+	UpgradeLifetime = 20 * time.Minute
+	Retention       = 90 * 24 * time.Hour
 )
 
 var (
 	ErrNotFound        = errors.New("command or node not found")
+	ErrSameVersion     = errors.New("node already runs target version")
 	ErrInvalid         = errors.New("invalid command request")
 	ErrNotAllowed      = errors.New("command not allowed")
 	ErrActive          = errors.New("command active")
@@ -61,12 +65,45 @@ func New(db *sql.DB, now func() time.Time) *Service {
 }
 
 type CreateRequest struct {
-	Kind    string `json:"kind"`
-	Confirm string `json:"confirm"`
+	Kind           string `json:"kind"`
+	TargetVersion  string `json:"target_version"`
+	Confirm        string `json:"confirm"`
+	targetProvided bool
+}
+
+// UnmarshalJSON 保留字段是否出现，restart/stop 不接受空值或 null 的目标版本。
+func (r *CreateRequest) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Kind          string          `json:"kind"`
+		TargetVersion json.RawMessage `json:"target_version"`
+		Confirm       string          `json:"confirm"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil {
+		return err
+	}
+	*r = CreateRequest{Kind: wire.Kind, Confirm: wire.Confirm, targetProvided: wire.TargetVersion != nil}
+	if r.targetProvided {
+		return json.Unmarshal(wire.TargetVersion, &r.TargetVersion)
+	}
+	return nil
+}
+
+func (r CreateRequest) valid() bool {
+	switch r.Kind {
+	case v1.RemoteCommandUpgrade:
+		_, err := v1.ParseVersion(r.TargetVersion)
+		return err == nil
+	case v1.RemoteCommandRestart, v1.RemoteCommandStop:
+		return !r.targetProvided && r.TargetVersion == ""
+	default:
+		return false
+	}
 }
 
 func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRequest) (Record, error) {
-	if !uuid.ValidUUID(nodeID) || (req.Kind != v1.RemoteCommandRestart && req.Kind != v1.RemoteCommandStop) {
+	if !uuid.ValidUUID(nodeID) || !req.valid() {
 		return Record{}, ErrInvalid
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -74,11 +111,11 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 		return Record{}, err
 	}
 	defer tx.Rollback()
-	var name, status, raw, generation, session string
+	var name, status, raw, generation, session, version string
 	var epoch int64
 	var credential sql.NullBool
 	var stopped bool
-	err = tx.QueryRowContext(ctx, `SELECT name,status,agent_runtime,credential_epoch,length(token_hash)>0,run_generation,report_session_id,`+StoppedSQL+` FROM nodes WHERE id=?`, nodeID).Scan(&name, &status, &raw, &epoch, &credential, &generation, &session, &stopped)
+	err = tx.QueryRowContext(ctx, `SELECT name,status,agent_runtime,credential_epoch,length(token_hash)>0,run_generation,report_session_id,CASE WHEN json_valid(system) THEN COALESCE(json_extract(system,'$.agent_version'),'') ELSE '' END,`+StoppedSQL+` FROM nodes WHERE id=?`, nodeID).Scan(&name, &status, &raw, &epoch, &credential, &generation, &session, &version, &stopped)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
@@ -95,6 +132,13 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 	if decodeErr != nil || generation == "0" || session == "" || !runtime.AllowsCommand(req.Kind) {
 		return Record{}, ErrNotAllowed
 	}
+	if req.Kind == v1.RemoteCommandUpgrade && version == req.TargetVersion {
+		return Record{}, ErrSameVersion
+	}
+	lifetime := Lifetime
+	if req.Kind == v1.RemoteCommandUpgrade {
+		lifetime = UpgradeLifetime
+	}
 	now := s.now().UTC()
 	if err := expire(ctx, tx, nodeID, now); err != nil {
 		return Record{}, err
@@ -110,12 +154,12 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 	if err != nil {
 		return Record{}, err
 	}
-	record := Record{Command: v1.Command{ID: id, Kind: req.Kind, ExpiresAt: now.Add(Lifetime)}, NodeID: nodeID, CredentialEpoch: epoch, State: "pending", RequestedBy: actor, CreatedAt: now}
-	_, err = tx.ExecContext(ctx, `INSERT INTO agent_commands(id,node_id,credential_epoch,kind,state,requested_by,created_at,expires_at) VALUES(?,?,?,?,'pending',?,?,?)`, id, nodeID, epoch, req.Kind, actor, timekey.Format(now), timekey.Format(record.ExpiresAt))
+	record := Record{Command: v1.Command{ID: id, Kind: req.Kind, TargetVersion: req.TargetVersion, ExpiresAt: now.Add(lifetime)}, NodeID: nodeID, CredentialEpoch: epoch, State: "pending", RequestedBy: actor, CreatedAt: now}
+	_, err = tx.ExecContext(ctx, `INSERT INTO agent_commands(id,node_id,credential_epoch,kind,target_version,state,requested_by,created_at,expires_at) VALUES(?,?,?,?,?,'pending',?,?,?)`, id, nodeID, epoch, req.Kind, req.TargetVersion, actor, timekey.Format(now), timekey.Format(record.ExpiresAt))
 	if err != nil {
 		return Record{}, err
 	}
-	if err := audit.InsertDetails(ctx, tx, "command.create", nodeID, now, audit.Details{"command_id": id, "kind": req.Kind}); err != nil {
+	if err := audit.InsertDetails(ctx, tx, "command.create", nodeID, now, audit.Details{"command_id": id, "kind": req.Kind, "target_version": req.TargetVersion}); err != nil {
 		return Record{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -132,7 +176,7 @@ type BulkResult struct {
 // CreateGroup snapshots membership before creating each command in its own transaction.
 func (s *Service) CreateGroup(ctx context.Context, groupID, actor string, req CreateRequest) (BulkResult, error) {
 	var result BulkResult
-	if req.Kind != v1.RemoteCommandRestart && req.Kind != v1.RemoteCommandStop {
+	if !req.valid() {
 		return result, ErrInvalid
 	}
 	var name string
@@ -168,7 +212,7 @@ func (s *Service) CreateGroup(ctx context.Context, groupID, actor string, req Cr
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
-		if _, err := s.Create(ctx, n.id, actor, CreateRequest{Kind: req.Kind, Confirm: n.name}); err != nil {
+		if _, err := s.Create(ctx, n.id, actor, CreateRequest{Kind: req.Kind, TargetVersion: req.TargetVersion, Confirm: n.name}); err != nil {
 			result.Skipped++
 		} else {
 			result.Created++
@@ -180,7 +224,7 @@ func (s *Service) CreateGroup(ctx context.Context, groupID, actor string, req Cr
 	}
 	defer tx.Rollback()
 	if err := audit.InsertDetails(ctx, tx, "command.bulk", groupID, s.now().UTC(), audit.Details{
-		"group_id": groupID, "kind": req.Kind, "created": result.Created, "skipped": result.Skipped,
+		"group_id": groupID, "kind": req.Kind, "target_version": req.TargetVersion, "created": result.Created, "skipped": result.Skipped,
 	}); err != nil {
 		return result, err
 	}

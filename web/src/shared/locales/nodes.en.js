@@ -1,4 +1,11 @@
 export default {
+  'nodes.command.upgradeAll': 'Upgrade all',
+  'nodes.command.targetVersion': 'Target version',
+  'nodes.command.result.download': 'Download failed',
+  'nodes.command.result.checksum': 'Checksum failed',
+  'nodes.command.result.self_check': 'Self-check failed',
+  'nodes.command.result.downgrade': 'Not newer than current',
+  'nodes.command.result.rolled_back': 'Rolled back',
   'nodes.command.status': 'Status',
   'nodes.command.restartTitle': 'Restart node',
   'nodes.command.stopTitle': 'Stop node',

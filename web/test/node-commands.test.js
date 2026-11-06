@@ -118,7 +118,7 @@ for (const kind of ['restart', 'stop']) test(`group ${kind} requires its name an
   const env = await setup(t);
   const controls = groupCommandActions({id, name: 'Production'}, env.scope.signal);
   env.body.append(...controls);
-  controls[kind === 'restart' ? 0 : 1].click(); await flush();
+  controls[kind === 'restart' ? 1 : 2].click(); await flush();
   const dialog = env.body.querySelector('dialog');
   assert.equal(dialog.querySelector('h2').textContent, copy(`nodes.command.${kind}All`));
   if (kind === 'restart') assert.equal(dialog.querySelector('p'), null);
@@ -167,4 +167,74 @@ test('a pending poll response cannot overwrite a newer command mutation refresh'
   assert.equal(env.timers.size, 0);
   assert.match(env.panel.element.querySelector('tbody').textContent, copyPattern('nodes.command.state.canceled'));
   assert.equal(button(env.panel.element, 'controls.cancel'), undefined);
+});
+
+test('upgrade dialog requires a strict target version and submits it', async (t) => {
+  const env = await setup(t, {observed: {remote_commands: ['upgrade']}});
+  button(env.panel.element, 'nodes.command.upgrade').click(); await flush();
+  const dialog = env.body.querySelector('dialog');
+  assert.equal(dialog.querySelector('h2').textContent, copy('nodes.command.upgrade'));
+  assert.equal(dialog.querySelector('p'), null);
+  assert.equal(dialog.querySelector('label').textContent, copy('nodes.command.targetVersion'));
+  const entry = dialog.querySelector('input');
+  const submit = dialog.querySelectorAll('button').find((item) => item.type === 'submit');
+  for (const version of ['', '1.2', 'v1.2.3', '01.2.3', '1.02.3', '1.2.03', '1.2.3-rc1', '../1.2.3', '1.2.3\n']) {
+    entry.value = version; entry.dispatchEvent(new Event('input'));
+    assert.equal(submit.disabled, true);
+  }
+  entry.value = '1.2.3'; entry.dispatchEvent(new Event('input')); assert.equal(submit.disabled, false);
+  dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true}));
+  dialog.dispatchEvent(new Event('animationend')); await flush();
+  const post = env.requests.find((item) => item.options.method === 'POST');
+  assert.deepEqual(JSON.parse(post.options.body), {kind: 'upgrade', target_version: '1.2.3'});
+});
+
+test('cancelling a typed confirmation closes without a discard prompt', async (t) => {
+  const env = await setup(t, {observed: {remote_commands: ['upgrade']}});
+  button(env.panel.element, 'nodes.command.upgrade').click(); await flush();
+  const dialog = env.body.querySelector('dialog');
+  const entry = dialog.querySelector('input');
+  entry.value = '1.2'; entry.dispatchEvent(new Event('input'));
+  dialog.querySelectorAll('button').find((item) => item.textContent === copy('controls.cancel')).click(); await flush();
+  dialog.dispatchEvent(new Event('animationend')); await flush();
+  assert.equal(env.body.querySelectorAll('dialog').length, 0);
+  assert.equal(env.requests.some((item) => item.options.method === 'POST'), false);
+});
+
+test('group upgrade requires both target version and group name', async (t) => {
+  const env = await setup(t);
+  const controls = groupCommandActions({id, name: 'Production'}, env.scope.signal);
+  env.body.append(...controls);
+  button(env.body, 'nodes.command.upgradeAll').click(); await flush();
+  const dialog = env.body.querySelector('dialog');
+  assert.equal(dialog.querySelector('h2').textContent, copy('nodes.command.upgradeAll'));
+  assert.equal(dialog.querySelector('p'), null);
+  const [version, confirmation] = dialog.querySelectorAll('input');
+  const submit = dialog.querySelectorAll('button').find((item) => item.type === 'submit');
+  confirmation.value = 'Production'; confirmation.dispatchEvent(new Event('input')); assert.equal(submit.disabled, true);
+  version.value = '1.2.3'; version.dispatchEvent(new Event('input')); assert.equal(submit.disabled, false);
+  confirmation.value = 'wrong'; confirmation.dispatchEvent(new Event('input')); assert.equal(submit.disabled, true);
+  confirmation.value = 'Production'; confirmation.dispatchEvent(new Event('input'));
+  dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true}));
+  dialog.dispatchEvent(new Event('animationend')); await flush();
+  const post = env.requests.find((item) => item.url.includes('/groups/'));
+  assert.deepEqual(JSON.parse(post.options.body), {kind: 'upgrade', target_version: '1.2.3', confirm: 'Production'});
+  assert.match(env.body.querySelector('#toasts').textContent, copyPattern('nodes.command.bulkResult', {created: 2, skipped: 3}));
+});
+
+test('upgrade capability gates and result labels include the target', async (t) => {
+  const env = await setup(t, {observed: {remote_commands: ['upgrade']}});
+  assert.equal(button(env.panel.element, 'nodes.command.upgrade').disabled, false);
+  for (const code of ['download', 'checksum', 'self_check', 'downgrade', 'rolled_back']) {
+    env.setRecords([{...record('failed', code), kind: 'upgrade', target_version: '1.2.3'}]);
+    env.panel.detach(); env.panel.attach(); await flush();
+    assert.match(env.panel.element.querySelector('tbody').textContent, /1\.2\.3/);
+    assert.match(env.panel.element.querySelector('tbody').textContent, copyPattern(`nodes.command.result.${code}`));
+  }
+  for (const current of [{...node(), status: 'disabled'}, {...node(), stopped: true}]) {
+    env.panel.snapshot(current, {remote_commands: ['upgrade']});
+    assert.equal(button(env.panel.element, 'nodes.command.upgrade').disabled, true);
+  }
+  env.panel.snapshot(node(), null); assert.equal(button(env.panel.element, 'nodes.command.upgrade').disabled, true);
+  assert.equal(errorText({code: 'command_same_version'}), copy('errors.command_same_version'));
 });

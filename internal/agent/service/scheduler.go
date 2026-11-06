@@ -27,10 +27,13 @@ type ProbeReporter interface {
 
 type SchedulerOptions struct {
 	Commands *commandStore
-	Logger   *slog.Logger
-	Probes   ProbeReporter
-	Traffic  TrafficReporter
-	Identity *identity.Store
+	Upgrade  *upgrader
+	// UpgradeConfirmTimeout defaults to upgradeConfirmTimeout.
+	UpgradeConfirmTimeout time.Duration
+	Logger                *slog.Logger
+	Probes                ProbeReporter
+	Traffic               TrafficReporter
+	Identity              *identity.Store
 	// RuntimeSettings 返回不可变快照；只有 ReloadConfig 可在采集循环中
 	// 同步发布新的配置快照。
 	RuntimeSettings func() v1.RuntimeSettings
@@ -171,6 +174,42 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 
 func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) error {
 	parent := ctx
+	upgradeCtx, cancelUpgrade := context.WithCancel(ctx)
+	var upgradeDone chan upgradeOutcome
+	defer func() {
+		cancelUpgrade()
+		if upgradeDone != nil {
+			<-upgradeDone
+		}
+	}()
+	firstReport := true
+	// A build that runs but cannot report never crashes, so it must exit by itself
+	// for the rollback script to count the attempt.
+	var unconfirmed <-chan time.Time
+	if s.options.Commands != nil && s.options.Commands.upgradeUnconfirmed() {
+		timeout := s.options.UpgradeConfirmTimeout
+		if timeout <= 0 {
+			timeout = upgradeConfirmTimeout
+		}
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		unconfirmed = timer.C
+	}
+	exitUnconfirmed := func() error {
+		s.options.Logger.Warn("upgrade_unconfirmed")
+		return &ExitError{Code: 75}
+	}
+	completeUpgrade := func(result upgradeOutcome) error {
+		upgradeDone = nil
+		if result.status == "succeeded" {
+			return &ExitError{Code: 75}
+		}
+		if result.err != nil {
+			s.options.Logger.LogAttrs(parent, slog.LevelWarn, "upgrade_failed", append(oblogging.ErrorAttrs(result.err, "upgrade_failed"), slog.String("code", result.code))...)
+		}
+		s.options.Commands.finishUpgrade(result)
+		return nil
+	}
 	stopping := false
 	var stopID string
 	var stopSampleSeq uint64
@@ -189,6 +228,13 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 		select {
 		case <-ctx.Done():
 			return canceled()
+		case <-unconfirmed:
+			return exitUnconfirmed()
+		case result := <-upgradeDone:
+			if err := completeUpgrade(result); err != nil {
+				return err
+			}
+			continue
 		case <-notify:
 		}
 		for {
@@ -227,6 +273,19 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 				return canceled()
 			}
 			if err == nil {
+				if firstReport && (s.options.Commands == nil || s.options.Commands.confirmUpgrade()) {
+					firstReport = false
+					unconfirmed = nil
+				}
+				if upgradeDone != nil {
+					select {
+					case result := <-upgradeDone:
+						if err := completeUpgrade(result); err != nil {
+							return err
+						}
+					default:
+					}
+				}
 				if s.options.Commands != nil {
 					s.options.Commands.acknowledge(report.CommandResults)
 					if stopping {
@@ -236,15 +295,30 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 							}
 						}
 					}
-					if !stopping && response.Command != nil {
+					if !stopping && response.Command != nil && !(response.Command.Kind == v1.RemoteCommandUpgrade && upgradeDone != nil) {
 						s.mu.Lock()
 						// 服务器时间生成于响应之前，计入请求耗时才不会执行已过期的指令。
 						serverTime := response.ServerTime
 						if !serverTime.IsZero() {
 							serverTime = serverTime.Add(time.Since(requested))
 						}
+						upgradeDeadline := time.Now().Add(min(upgradeDownloadTimeout, response.Command.ExpiresAt.Sub(serverTime)-upgradeReserve))
 						action := s.options.Commands.handle(*response.Command, serverTime, s.commandSettings)
 						s.mu.Unlock()
+						if action == v1.RemoteCommandUpgrade {
+							if s.options.Upgrade == nil {
+								s.options.Commands.finishUpgrade(upgradeOutcome{id: strings.ToLower(response.Command.ID), status: "rejected", code: "unsupported"})
+							} else {
+								command := *response.Command
+								done := make(chan upgradeOutcome, 1)
+								upgradeDone = done
+								go func() {
+									downloadCtx, cancel := context.WithDeadline(upgradeCtx, upgradeDeadline)
+									defer cancel()
+									done <- s.options.Upgrade.run(downloadCtx, command)
+								}()
+							}
+						}
 						if action == v1.RemoteCommandRestart {
 							return &ExitError{Code: 75}
 						}
@@ -322,6 +396,14 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 			case <-ctx.Done():
 				timer.Stop()
 				return canceled()
+			case <-unconfirmed:
+				timer.Stop()
+				return exitUnconfirmed()
+			case result := <-upgradeDone:
+				timer.Stop()
+				if err := completeUpgrade(result); err != nil {
+					return err
+				}
 			case <-timer.C:
 			}
 		}

@@ -281,7 +281,7 @@ func (c *Client) post(ctx context.Context, path, token string, body, result any)
 		return errAgentConnectionFailed
 	}
 	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
+	if response.StatusCode < 200 || response.StatusCode >= 300 || path == "/api/agent/v1/report" && response.StatusCode != http.StatusOK {
 		var failure struct {
 			Code string `json:"code"`
 		}

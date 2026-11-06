@@ -11,6 +11,7 @@ import audit from './audit.en.js';
 import notifications from './notifications.en.js';
 
 export default {
+  'errors.command_same_version': 'Node already runs this version',
   'errors.command_not_allowed': 'Command not allowed',
   'errors.command_active': 'A command is active',
   'errors.node_unavailable': 'Node unavailable',

@@ -270,7 +270,7 @@ CREATE TABLE agent_commands (
  kind TEXT NOT NULL CHECK(kind IN ('upgrade','restart','stop')),
  target_version TEXT NOT NULL DEFAULT '',
  state TEXT NOT NULL CHECK(state IN ('pending','delivered','succeeded','failed','rejected','expired','canceled')),
- result_code TEXT NOT NULL DEFAULT '' CHECK(result_code IN ('','ok','disabled_locally','unsupported','expired','interrupted','failed')),
+ result_code TEXT NOT NULL DEFAULT '' CHECK(result_code IN ('','ok','disabled_locally','unsupported','expired','interrupted','failed','download','checksum','self_check','downgrade','rolled_back')),
  requested_by TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
  delivered_at TEXT, delivered_generation TEXT NOT NULL DEFAULT '', finished_at TEXT,
  CHECK ((kind='upgrade' AND length(target_version) BETWEEN 1 AND 64) OR (kind IN ('restart','stop') AND target_version=''))

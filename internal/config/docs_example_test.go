@@ -31,6 +31,9 @@ func TestAgentGuideInstallPolicyExampleDecodes(t *testing.T) {
 	if err := decoder.Decode(&policy); err != nil {
 		t.Fatalf("agent guide install policy is not valid: %v", err)
 	}
+	if policy.UpdateBaseURL != "" {
+		t.Fatal("foreground example must not advertise upgrade")
+	}
 	if _, err := LoadAgent(LoadOptions{}, &policy); err != nil {
 		t.Fatalf("agent guide install policy fails validation: %v", err)
 	}

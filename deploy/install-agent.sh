@@ -12,7 +12,7 @@ die() { printf '%s\n' "[orbitbeacon] ERROR: $*" >&2; exit 1; }
 usage() {
     cat <<'USAGE'
 用法：sh install-agent.sh --server http[s]://HOST[:PORT] --version VERSION
-      [--ca-file FILE] [--token-file FILE] [--binary FILE]
+      [--ca-file FILE] [--token-file FILE] [--binary FILE] [--update-base-url URL]
       sh install-agent.sh --uninstall [--yes]
 以 root 运行。--binary 替代下载（此时 --version 可选）。
 通过文件、标准输入或终端的隐藏输入提示提供注册票据。
@@ -21,12 +21,16 @@ USAGE
 }
 
 server='' version='' ca_source='' token_source='' local_binary=''
+default_update_base=https://github.com/mr-monkeyray/orbit-beacon/releases/download
+update_base_url=$default_update_base
+update_base_set=0
 uninstall=0 yes=0
 while [ "$#" -gt 0 ]; do
     case $1 in
-        --server|--version|--ca-file|--token-file|--binary)
+        --server|--version|--ca-file|--token-file|--binary|--update-base-url)
             if [ "$#" -lt 2 ] || [ -z "$2" ]; then die "缺少 $1 的参数值"; fi
             case $1 in
+                --update-base-url) update_base_url=$2; update_base_set=1 ;;
                 --server) server=$2 ;;
                 --version) version=$2 ;;
                 --ca-file) ca_source=$2 ;;
@@ -58,6 +62,7 @@ fi
 account=orbitbeacon-agent
 install_root=$root/opt/orbit-beacon
 bin_dir=$install_root/bin
+libexec=$install_root/libexec
 binary=$bin_dir/orbitbeacon-agent
 config_dir=$install_root/etc
 policy=$config_dir/install-policy.json
@@ -89,7 +94,7 @@ safe_path() {
     done
 }
 # bin/state 的目录入口由 root 所有的安装根保护；叶子由不跟随链接的操作处理。
-for path in "$bin_dir" "$state" "$policy" "$runtime_config" "$ca_copy" "$unit"; do
+for path in "$bin_dir" "$libexec" "$state" "$policy" "$runtime_config" "$ca_copy" "$unit"; do
     safe_path "$path"
 done
 has_systemd() {
@@ -101,7 +106,7 @@ has_identity() {
 }
 
 if [ "$uninstall" = 1 ]; then
-    [ -z "$server$version$ca_source$token_source$local_binary" ] || die '不要将安装选项与 --uninstall 混用。'
+    if [ "$update_base_set" != 0 ] || [ -n "$server$version$ca_source$token_source$local_binary" ]; then die '不要将安装选项与 --uninstall 混用。'; fi
     say '请先在控制台吊销该节点凭据；本地删除不会吊销。'
     say '卸载将删除服务、二进制、策略、本地配置、CA 副本及全部 Agent 状态。请先停止前台 Agent。'
     if [ "$yes" != 1 ]; then
@@ -166,6 +171,19 @@ esac
 if [ -n "$port" ]; then
     if [ "${#port}" -gt 5 ] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then die '无效的服务器端口。'; fi
 fi
+# 重装沿用已有发布源；显式空值或无法提取时保持关闭，绝不改回默认源。
+if [ "$update_base_set" = 0 ] && [ -f "$policy" ] && grep -q '"update_base_url"' "$policy"; then
+    update_base_url=$(sed -n 's/.*"update_base_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$policy")
+fi
+# HTTPS 根地址同时用于安装下载和后续远程升级；限制字符以安全写入 JSON。
+update_base_url=$(printf '%s' "$update_base_url" | sed 's:/*$::')
+if [ -n "$update_base_url" ]; then
+    # 用变量传正则：BusyBox awk 不接受字面量里字符类中的 /。
+    printf '%s\n' "$update_base_url" | awk -v re='^https://([A-Za-z0-9.-]+|[[][0-9A-Fa-f:]+])(:[0-9]+)?(/[A-Za-z0-9._~!$&()*+,;=:@%/-]*)?$' '
+        NR != 1 || $0 !~ re { bad=1 }
+        END { exit bad }
+    ' || die '--update-base-url 必须是 HTTPS 地址，且不含用户信息、查询或片段。'
+fi
 if [ -n "$version" ]; then
     printf '%s\n' "$version" | awk '
         NR != 1 || $0 !~ /^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$/ { bad=1 }
@@ -203,10 +221,10 @@ if [ -n "$local_binary" ]; then
 else
     say "正在下载 v$version 的 $arch 发布包..."
     agent_asset=orbitbeacon-agent-linux-$arch
-    release=https://github.com/mr-monkeyray/orbit-beacon/releases/download/v$version
+    release=${update_base_url:-$default_update_base}/v$version
     for asset in "$agent_asset" SHA256SUMS; do
         curl --fail --silent --show-error --location --proto '=https' \
-            --proto-redir '=https' --tlsv1.2 --output "$tmp/$asset" "$release/$asset"
+            --proto-redir '=https' --max-redirs 5 --tlsv1.2 --output "$tmp/$asset" "$release/$asset"
     done
     # 仅选取一条记录，不信任无关的清单路径或选项。
     awk -v name="$agent_asset" '
@@ -259,7 +277,9 @@ say '正在安装二进制、私有状态目录和归 root 所有的策略...'
 mkdir -p "$install_root"
 chown -h "root:$agent_gid" "$install_root"
 chmod 0750 "$install_root"
-mkdir -p "$bin_dir" "$config_dir" "$state"
+mkdir -p "$bin_dir" "$config_dir" "$state" "$libexec"
+chown -h root:root "$libexec"
+chmod 0755 "$libexec"
 chown -h "root:$agent_gid" "$config_dir"
 chmod 0750 "$config_dir"
 chown -h "$agent_uid:$agent_gid" "$bin_dir" "$state"
@@ -282,10 +302,42 @@ if [ -n "$ca_source" ]; then
     policy_tmp=
     ca_file=$ca_copy
 fi
+# 内嵌脚本与 deploy/orbitbeacon-agent-rollback 保持一致。
+policy_tmp=$(mktemp "$libexec/.rollback.XXXXXXXX")
+cat > "$policy_tmp" <<'ROLLBACK'
+#!/bin/sh
+# 以 Agent 用户运行；绝不执行 bin 中的文件。
+# 唯一参数用于测试根目录，systemd 不传参数。
+root=${1:-/opt/orbit-beacon}
+marker=$root/state/upgrade-pending
+[ -f "$marker" ] || exit 0
+# 第四次启动仍未确认时回滚；异常内容按超限处理。
+case $(cat "$marker" 2>/dev/null) in
+    0) count=1 ;;
+    1) count=2 ;;
+    2) count=3 ;;
+    *) count=4 ;;
+esac
+tmp=$(mktemp "$root/state/.upgrade-pending.XXXXXXXX") || exit 0
+if ! printf '%s' "$count" > "$tmp" || ! mv -f "$tmp" "$marker"; then
+    rm -f "$tmp"
+    exit 0
+fi
+[ "$count" = 4 ] && [ -f "$root/bin/orbitbeacon-agent.prev" ] || exit 0
+if mv -f "$root/bin/orbitbeacon-agent.prev" "$root/bin/orbitbeacon-agent"; then
+    mv -f "$marker" "$root/state/upgrade-rolled-back" || :
+fi
+exit 0
+ROLLBACK
+chown -h root:root "$policy_tmp"
+chmod 0755 "$policy_tmp"
+mv -fT -- "$policy_tmp" "$libexec/orbitbeacon-agent-rollback"
+policy_tmp=
 policy_tmp=$(mktemp "$config_dir/.install-policy.XXXXXXXX")
 cat > "$policy_tmp" <<EOF
 {
   "server_url": "$server",
+  "update_base_url": "$update_base_url",
   "ca_file": "$ca_file",
   "state_dir": "$state",
   "expected_uid": $agent_uid,
@@ -380,6 +432,7 @@ Type=simple
 # 该账户须与安装策略中的 expected_uid/expected_gid 一致。
 User=orbitbeacon-agent
 Group=orbitbeacon-agent
+ExecStartPre=-/opt/orbit-beacon/libexec/orbitbeacon-agent-rollback
 ExecStart=/opt/orbit-beacon/bin/orbitbeacon-agent run --install-policy /opt/orbit-beacon/etc/install-policy.json --config /opt/orbit-beacon/etc/agent.json
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure

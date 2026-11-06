@@ -3,6 +3,7 @@ package v1
 import (
 	"errors"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,7 +16,33 @@ type Command struct {
 	ExpiresAt     time.Time `json:"expires_at"`
 }
 
-var commandVersion = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+\-]{0,63}$`)
+var commandVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+
+// Version 按十进制字符串比较，避免数值溢出。
+type Version [3]string
+
+func ParseVersion(raw string) (Version, error) {
+	if len(raw) > 64 || !commandVersion.MatchString(raw) {
+		return Version{}, errors.New("invalid target version")
+	}
+	parts := strings.Split(raw, ".")
+	return Version{parts[0], parts[1], parts[2]}, nil
+}
+
+func (v Version) Compare(other Version) int {
+	for i := range v {
+		if len(v[i]) < len(other[i]) {
+			return -1
+		}
+		if len(v[i]) > len(other[i]) {
+			return 1
+		}
+		if c := strings.Compare(v[i], other[i]); c != 0 {
+			return c
+		}
+	}
+	return 0
+}
 
 func (c Command) Validate() error {
 	if _, err := uuid.Parse(c.ID); err != nil || len(c.ID) != 36 {
@@ -26,7 +53,7 @@ func (c Command) Validate() error {
 	}
 	switch c.Kind {
 	case RemoteCommandUpgrade:
-		if !commandVersion.MatchString(c.TargetVersion) {
+		if _, err := ParseVersion(c.TargetVersion); err != nil {
 			return errors.New("invalid target version")
 		}
 	case RemoteCommandRestart, RemoteCommandStop:
@@ -55,7 +82,7 @@ func (r CommandResult) Validate() error {
 		return errors.New("unknown command result status")
 	}
 	switch r.Code {
-	case "ok", "disabled_locally", "unsupported", "expired", "interrupted", "failed":
+	case "ok", "disabled_locally", "unsupported", "expired", "interrupted", "failed", "download", "checksum", "self_check", "downgrade", "rolled_back":
 	default:
 		return errors.New("unknown command result code")
 	}
