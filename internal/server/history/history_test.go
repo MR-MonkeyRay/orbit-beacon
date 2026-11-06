@@ -59,11 +59,11 @@ func TestLargeCleanupKeepsAcceptingSamples(t *testing.T) {
 			}
 			const batches = 12
 			const rows = batches * 1000
-			_, err = s.db.Exec(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<?) INSERT INTO buckets SELECT ?, 'cpu_percent', 60, ?-n*60, 10, 10, 1 FROM seq`, rows, id, now.Add(-Retention1m).Unix())
+			_, err = sqlitePools(t, s).db.Exec(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<?) INSERT INTO buckets SELECT ?, 'cpu_percent', 60, ?-n*60, 10, 10, 1 FROM seq`, rows, id, now.Add(-Retention1m).Unix())
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.db.Exec(`CREATE TRIGGER cleanup_producer BEFORE DELETE ON buckets WHEN OLD.t % 60000 = 0 BEGIN SELECT history_test_cleanup_produce(); END`); err != nil {
+			if _, err := sqlitePools(t, s).db.Exec(`CREATE TRIGGER cleanup_producer BEFORE DELETE ON buckets WHEN OLD.t % 60000 = 0 BEGIN SELECT history_test_cleanup_produce(); END`); err != nil {
 				t.Fatal(err)
 			}
 			var offered, dropped int
@@ -90,7 +90,7 @@ func TestLargeCleanupKeepsAcceptingSamples(t *testing.T) {
 				t.Fatalf("offered=%d dropped=%d buckets_dropped=%d", offered, dropped, s.DroppedBuckets())
 			}
 			var accepted int
-			if err := s.db.QueryRow(`SELECT samples FROM buckets WHERE node_id=? AND step=60`, live.ID).Scan(&accepted); err != nil || accepted != offered {
+			if err := sqlitePools(t, s).db.QueryRow(`SELECT samples FROM buckets WHERE node_id=? AND step=60`, live.ID).Scan(&accepted); err != nil || accepted != offered {
 				t.Fatalf("accepted=%d offered=%d err=%v", accepted, offered, err)
 			}
 		})
@@ -99,7 +99,7 @@ func TestLargeCleanupKeepsAcceptingSamples(t *testing.T) {
 
 func TestOrphanDiscoveryUsesNodeSeeks(t *testing.T) {
 	s, _ := testService(t, nil)
-	rows, err := s.db.Query(`EXPLAIN QUERY PLAN ` + historyNodesQuery)
+	rows, err := sqlitePools(t, s).db.Query(`EXPLAIN QUERY PLAN ` + historyNodesQuery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestQuerySkipsNonFiniteStoredPoints(t *testing.T) {
 	stopped(t, s)
 	now := time.Now().UTC().Truncate(time.Minute)
 	for i, values := range [][2]float64{{math.Inf(1), 1}, {1, math.Inf(1)}, {math.Inf(-1), 1}, {1, math.Inf(-1)}, {10, 10}} {
-		if _, err := s.db.Exec(`INSERT INTO buckets VALUES('node','load1',60,?,?,?,1)`, now.Add(time.Duration(-i)*time.Minute).Unix(), values[0], values[1]); err != nil {
+		if _, err := sqlitePools(t, s).db.Exec(`INSERT INTO buckets VALUES('node','load1',60,?,?,?,1)`, now.Add(time.Duration(-i)*time.Minute).Unix(), values[0], values[1]); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -285,7 +285,7 @@ func TestRetentionAndDeletedNodePurge(t *testing.T) {
 			keep time.Duration
 		}{{60, Retention1m}, {300, Retention5m}, {3600, Retention1h}} {
 			for _, timestamp := range []int64{now.Add(-tier.keep).Unix() - 1, now.Add(-tier.keep).Unix(), now.Unix()} {
-				if _, err := s.db.Exec(`INSERT INTO buckets VALUES(?, 'cpu_percent', ?, ?, 10, 10, 1)`, id, tier.step, timestamp); err != nil {
+				if _, err := sqlitePools(t, s).db.Exec(`INSERT INTO buckets VALUES(?, 'cpu_percent', ?, ?, 10, 10, 1)`, id, tier.step, timestamp); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -302,7 +302,7 @@ func TestRetentionAndDeletedNodePurge(t *testing.T) {
 		t.Fatalf("removed=%d err=%v", removed, err)
 	}
 	var count int
-	if err := s.db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id=?`, deleted.ID).Scan(&count); err != nil || count != 0 {
+	if err := sqlitePools(t, s).db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id=?`, deleted.ID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("orphan rows=%d err=%v", count, err)
 	}
 	if len(s.paths) != 1 || len(s.paths[live.ID]) != 1 {
@@ -311,7 +311,7 @@ func TestRetentionAndDeletedNodePurge(t *testing.T) {
 	if len(s.pending) != 0 {
 		t.Fatal("orphan pending bucket survived")
 	}
-	if err := s.db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id=?`, live.ID).Scan(&count); err != nil || count != 6 {
+	if err := sqlitePools(t, s).db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id=?`, live.ID).Scan(&count); err != nil || count != 6 {
 		t.Fatalf("retained rows=%d err=%v", count, err)
 	}
 }
@@ -353,7 +353,7 @@ func TestIndependentWriterLockAndCleanupDrainsQueue(t *testing.T) {
 func TestSchemaTooNewAndPermissions(t *testing.T) {
 	s, dir := testService(t, nil)
 	stopped(t, s)
-	if _, err := s.db.Exec(`INSERT INTO schema_migrations VALUES(?, 'future')`, CurrentSchemaVersion+1); err != nil {
+	if _, err := sqlitePools(t, s).db.Exec(`INSERT INTO schema_migrations VALUES(?, 'future')`, CurrentSchemaVersion+1); err != nil {
 		t.Fatal(err)
 	}
 	newer, err := Open(context.Background(), dir, nil, Options{})
@@ -425,7 +425,7 @@ func TestConcurrentSamplesAndShutdown(t *testing.T) {
 	stopped(t, s)
 	stopped(t, s) // idempotent
 	var count int
-	if err := s.db.QueryRow(`SELECT sum(samples) FROM buckets WHERE step=60`).Scan(&count); err != nil || count != 800 {
+	if err := sqlitePools(t, s).db.QueryRow(`SELECT sum(samples) FROM buckets WHERE step=60`).Scan(&count); err != nil || count != 800 {
 		t.Fatalf("count=%d err=%v", count, err)
 	}
 }
@@ -460,8 +460,8 @@ func TestShutdownDeadlineInterruptsBlockedWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.db.SetMaxOpenConns(1)
-	held, err := s.db.Conn(context.Background())
+	sqlitePools(t, s).db.SetMaxOpenConns(1)
+	held, err := sqlitePools(t, s).db.Conn(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,7 +537,7 @@ func TestRetentionPreservesIntersectingBoundaryBuckets(t *testing.T) {
 	}{{60, Retention1m}, {300, Retention5m}, {3600, Retention1h}} {
 		cutoff := now.Add(-tier.keep).Truncate(time.Duration(tier.step) * time.Second)
 		for _, timestamp := range []int64{cutoff.Unix() - int64(tier.step), cutoff.Unix()} {
-			if _, err := s.db.Exec(`INSERT INTO buckets VALUES('node','cpu_percent',?,?,10,10,1)`, tier.step, timestamp); err != nil {
+			if _, err := sqlitePools(t, s).db.Exec(`INSERT INTO buckets VALUES('node','cpu_percent',?,?,10,10,1)`, tier.step, timestamp); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -548,7 +548,7 @@ func TestRetentionPreservesIntersectingBoundaryBuckets(t *testing.T) {
 	}
 	for _, step := range []int{60, 300, 3600} {
 		var count int
-		if err := s.db.QueryRow(`SELECT count(*) FROM buckets WHERE step=?`, step).Scan(&count); err != nil || count != 1 {
+		if err := sqlitePools(t, s).db.QueryRow(`SELECT count(*) FROM buckets WHERE step=?`, step).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("step=%d count=%d err=%v", step, count, err)
 		}
 	}
@@ -560,10 +560,10 @@ func TestRetentionPreservesIntersectingBoundaryBuckets(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := s.db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id='pending'`).Scan(&count); err != nil || count != 3 {
+	if err := sqlitePools(t, s).db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id='pending'`).Scan(&count); err != nil || count != 3 {
 		t.Fatalf("pending count=%d err=%v", count, err)
 	}
-	if err := s.db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id='expired'`).Scan(&count); err != nil || count != 0 {
+	if err := sqlitePools(t, s).db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id='expired'`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("expired count=%d err=%v", count, err)
 	}
 }

@@ -88,24 +88,17 @@ func (s *Service) Query(ctx context.Context, nodeID, metric, requestedRange stri
 	// 包含与范围起点相交的桶；缺失数据不补 null 行或零值。
 	// 待写入的桶在落盘后才可查询。
 	start := now.Add(-selection.Duration).Truncate(time.Duration(selection.StepSeconds) * time.Second).Unix()
-	rows, err := s.reader.QueryContext(ctx, `SELECT t, total / samples, peak FROM buckets WHERE node_id=? AND metric=? AND step=? AND t>=? AND t<=? ORDER BY t`, nodeID, series, selection.StepSeconds, start, now.Unix())
+	points, err := s.store.Query(ctx, nodeID, series, selection.StepSeconds, start, now.Unix())
 	if err != nil {
 		return Response{}, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var point Point
-		var timestamp int64
-		if err := rows.Scan(&timestamp, &point.Avg, &point.Max); err != nil {
-			return Response{}, err
-		}
+	for _, point := range points {
 		// 旧的或损坏的存储可能包含溢出的总和或峰值。
 		// 绝不让这样一个点导致整个响应无法编码。
 		if math.IsNaN(point.Avg) || math.IsInf(point.Avg, 0) || math.IsNaN(point.Max) || math.IsInf(point.Max, 0) {
 			continue
 		}
-		point.T = time.Unix(timestamp, 0).UTC()
 		response.Points = append(response.Points, point)
 	}
-	return response, rows.Err()
+	return response, nil
 }

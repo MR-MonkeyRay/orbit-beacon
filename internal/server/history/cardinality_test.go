@@ -68,7 +68,7 @@ func TestPathCardinalityReloadsFromDatabase(t *testing.T) {
 		t.Fatalf("known=%+v err=%v", result, err)
 	}
 	// Expiration keeps the in-memory reservation; a fresh Service uses only DB contents.
-	if _, err := restarted.db.Exec(`DELETE FROM buckets WHERE node_id=? AND metric IN (?,?)`, "one", "disk_used_percent:/disk:15", "inode_used_percent:/disk:15"); err != nil {
+	if _, err := sqlitePools(t, restarted).db.Exec(`DELETE FROM buckets WHERE node_id=? AND metric IN (?,?)`, "one", "disk_used_percent:/disk:15", "inode_used_percent:/disk:15"); err != nil {
 		t.Fatal(err)
 	}
 	if restarted.admitPath("one", "/replacement") {
@@ -100,18 +100,18 @@ func TestConcurrentProducersCannotExceedPathLimit(t *testing.T) {
 		t.Fatalf("paths=%v rejected=%d", s.paths, s.SeriesRejected())
 	}
 	var count int
-	if err := s.db.QueryRow(`SELECT count(DISTINCT metric) FROM buckets WHERE node_id='one' AND metric LIKE '%:%'`).Scan(&count); err != nil || count != 32 {
+	if err := sqlitePools(t, s).db.QueryRow(`SELECT count(DISTINCT metric) FROM buckets WHERE node_id='one' AND metric LIKE '%:%'`).Scan(&count); err != nil || count != 32 {
 		t.Fatalf("series=%d err=%v", count, err)
 	}
 }
 
 func TestSeriesQueryWalksThePrimaryKey(t *testing.T) {
 	s, _ := testService(t, nil)
-	if _, err := s.db.Exec(`INSERT INTO buckets(node_id,metric,step,t,total,peak,samples) VALUES
+	if _, err := sqlitePools(t, s).db.Exec(`INSERT INTO buckets(node_id,metric,step,t,total,peak,samples) VALUES
 		('one','a',60,1,1,1,1),('one','a',60,2,1,1,1),('one','b',60,1,1,1,1),('two','c',60,1,1,1,1)`); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := s.db.Query(`EXPLAIN QUERY PLAN `+historySeriesQuery, "one")
+	rows, err := sqlitePools(t, s).db.Query(`EXPLAIN QUERY PLAN `+historySeriesQuery, "one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestSeriesQueryWalksThePrimaryKey(t *testing.T) {
 	if !skips {
 		t.Fatal("plan does not seek to the next metric")
 	}
-	found, err := s.db.Query(historySeriesQuery, "one")
+	found, err := sqlitePools(t, s).db.Query(historySeriesQuery, "one")
 	if err != nil {
 		t.Fatal(err)
 	}

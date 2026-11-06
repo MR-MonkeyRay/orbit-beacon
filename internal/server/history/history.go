@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"log/slog"
 	"math"
 	"path/filepath"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	"orbitbeacon/internal/logging"
-	"orbitbeacon/internal/server/storage"
 )
 
 const (
@@ -22,25 +20,8 @@ const (
 	SampleBufferSize     = 4096
 	FlushInterval        = time.Minute
 	maxPendingBuckets    = 8192
-	cleanupBatchSize     = 1000
 	maxDiskPaths         = 16
 )
-
-// 定位到下一个主键节点前缀，而不是为 DISTINCT 遍历每个桶。
-// 工作量随节点数增长，与保留的历史无关。
-const historyNodesQuery = `WITH RECURSIVE history_nodes(node_id) AS (
- SELECT min(node_id) FROM buckets
- UNION ALL
- SELECT (SELECT min(node_id) FROM buckets WHERE node_id > history_nodes.node_id)
- FROM history_nodes WHERE node_id IS NOT NULL
-) SELECT node_id FROM history_nodes WHERE node_id IS NOT NULL`
-
-const schema = `CREATE TABLE buckets (
- node_id TEXT NOT NULL, metric TEXT NOT NULL, step INTEGER NOT NULL,
- t INTEGER NOT NULL, total REAL NOT NULL, peak REAL NOT NULL, samples INTEGER NOT NULL CHECK(samples > 0),
- PRIMARY KEY(node_id, metric, step, t)
-) WITHOUT ROWID;
-CREATE INDEX buckets_retention ON buckets(step, t);`
 
 type Options struct {
 	Now    func() time.Time
@@ -68,49 +49,43 @@ type retentionResult struct {
 }
 
 type Service struct {
-	db, reader, nodes *sql.DB
-	samples           chan Sample
-	retention         chan retentionRequest
-	stop              chan context.Context
-	done              chan struct{}
-	cancel            context.CancelFunc
-	once              sync.Once
-	err               error // published by closing done
-	now               func() time.Time
-	logger            *slog.Logger
-	pending           map[bucketKey]map[string]aggregate // owned by run
-	dropped           atomic.Uint64
-	observeFlush      func(time.Duration, int)
-	paths             map[string]map[string]struct{} // owned by run; one entry per observed node
-	seriesRejected    atomic.Uint64
-}
-
-// OpenDatabase 只初始化可信的指标 schema，不启动写入或定期清理任务。
-// 离线恢复用它创建私有暂存库。
-func OpenDatabase(ctx context.Context, path string) (*sql.DB, error) {
-	return storage.OpenWithMigrations(ctx, path, []storage.Migration{{Version: CurrentSchemaVersion, SQL: schema}})
+	store          Store
+	nodes          *sql.DB
+	samples        chan Sample
+	retention      chan retentionRequest
+	stop           chan context.Context
+	done           chan struct{}
+	cancel         context.CancelFunc
+	once           sync.Once
+	err            error // published by closing done
+	now            func() time.Time
+	logger         *slog.Logger
+	pending        map[bucketKey]map[string]aggregate // owned by run
+	dropped        atomic.Uint64
+	observeFlush   func(time.Duration, int)
+	paths          map[string]map[string]struct{} // owned by run; one entry per observed node
+	seriesRejected atomic.Uint64
 }
 
 // Open 创建 metrics.db，使用自己的迁移台账和只读查询池。
 // 主库连接池仅用于清理孤立历史记录前读取现有节点 ID。
 func Open(ctx context.Context, dataDir string, nodes *sql.DB, opts Options) (*Service, error) {
-	path := filepath.Join(dataDir, "metrics.db")
-	db, err := OpenDatabase(ctx, path)
+	store, err := openSQLiteStore(ctx, filepath.Join(dataDir, "metrics.db"))
 	if err != nil {
-		return nil, fmt.Errorf("open metric history: %w", err)
+		return nil, err
 	}
-	reader, err := storage.OpenReader(ctx, path)
-	if err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("open metric history reader: %w", err)
-	}
+	return newService(store, nodes, opts), nil
+}
+
+// newService 在存储就绪后启动采样、刷写和清理任务。
+func newService(store Store, nodes *sql.DB, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
 	workCtx, cancel := context.WithCancel(context.Background())
-	s := &Service{db: db, reader: reader, nodes: nodes, samples: make(chan Sample, SampleBufferSize), retention: make(chan retentionRequest), stop: make(chan context.Context, 1), done: make(chan struct{}), cancel: cancel, now: opts.Now, logger: opts.Logger, pending: make(map[bucketKey]map[string]aggregate), paths: make(map[string]map[string]struct{}), observeFlush: opts.ObserveFlush}
+	s := &Service{store: store, nodes: nodes, samples: make(chan Sample, SampleBufferSize), retention: make(chan retentionRequest), stop: make(chan context.Context, 1), done: make(chan struct{}), cancel: cancel, now: opts.Now, logger: opts.Logger, pending: make(map[bucketKey]map[string]aggregate), paths: make(map[string]map[string]struct{}), observeFlush: opts.ObserveFlush}
 	go s.run(workCtx)
-	return s, nil
+	return s
 }
 
 // Samples 永不关闭，因此即使迟到的生产者也不会在关闭时 panic。
@@ -120,8 +95,11 @@ func (s *Service) DroppedBuckets() uint64 { return s.dropped.Load() }
 func (s *Service) SeriesRejected() uint64 { return s.seriesRejected.Load() }
 
 // DatabaseStats 仅在抓取指标时读取两个连接池的快照。
-func (s *Service) DatabaseStats() (writer, reader sql.DBStats) {
-	return s.db.Stats(), s.reader.Stats()
+func (s *Service) DatabaseStats() (writer, reader sql.DBStats, ok bool) {
+	if s.store == nil {
+		return writer, reader, false
+	}
+	return s.store.DatabaseStats()
 }
 
 func (s *Service) add(sample Sample) {
@@ -157,45 +135,29 @@ func (s *Service) add(sample Sample) {
 	}
 }
 
-// historySeriesQuery 沿主键跳跃，只按序列数访问 B 树；DISTINCT 会扫完该节点的全部桶，
-// 重启后每个节点都要读一次，且运行在历史写入 goroutine 上。
-const historySeriesQuery = `WITH RECURSIVE series(metric) AS (
-	SELECT min(metric) FROM buckets WHERE node_id=?1
-	UNION ALL
-	SELECT (SELECT min(metric) FROM buckets WHERE node_id=?1 AND metric>series.metric) FROM series WHERE series.metric IS NOT NULL
-) SELECT metric FROM series WHERE metric IS NOT NULL`
-
 // diskSeriesPath splits only the first colon; paths may themselves contain colons.
 func diskSeriesPath(metric string) (string, bool) {
 	base, path, found := strings.Cut(metric, ":")
 	return path, found && (base == "disk_used_percent" || base == "inode_used_percent")
 }
 
-// Only run calls admitPath. The first read uses the reader pool outside any write
-// transaction; failures reject partitioned samples and retry on the next sample.
+// 只有 run 调用 admitPath。首次从存储读取已有序列，失败时拒绝分区样本，
+// 下一个样本到来时重试。
 func (s *Service) admitPath(node, path string) bool {
 	paths, loaded := s.paths[node]
 	if !loaded {
 		paths = make(map[string]struct{})
-		if s.reader != nil {
+		if s.store != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			rows, err := s.reader.QueryContext(ctx, historySeriesQuery, node)
+			series, err := s.store.Series(ctx, node)
 			if err != nil {
 				return false
 			}
-			defer rows.Close()
-			for rows.Next() {
-				var metric string
-				if err := rows.Scan(&metric); err != nil {
-					return false
-				}
+			for _, metric := range series {
 				if known, ok := diskSeriesPath(metric); ok {
 					paths[known] = struct{}{}
 				}
-			}
-			if rows.Err() != nil {
-				return false
 			}
 		}
 		if s.paths == nil {
@@ -258,8 +220,7 @@ func (s *Service) run(ctx context.Context) {
 	}
 }
 
-// flush 在同一事务内将每分钟的精确总和与样本数合并到所有聚合层级。
-// 累加式 upsert 可在重启后继续合并同一分钟的数据。
+// flush 将每分钟的精确总和与样本数交给存储，原子合并到所有聚合层级。
 // 提交成功后才释放待写状态，因此失败时可以重试。
 func (s *Service) flush(ctx context.Context, now time.Time, all bool) error {
 	var started time.Time
@@ -267,12 +228,13 @@ func (s *Service) flush(ctx context.Context, now time.Time, all bool) error {
 		started = time.Now()
 	}
 	entries := 0
+	var buckets []Bucket
 	keys := make([]bucketKey, 0, len(s.pending))
 	for key := range s.pending {
 		if all || key.t < now.Truncate(time.Minute).Unix() {
 			keys = append(keys, key)
-			if s.observeFlush != nil {
-				entries += 3 * len(s.pending[key])
+			for metric, a := range s.pending[key] {
+				buckets = append(buckets, Bucket{Node: key.node, Series: metric, T: key.t, Total: a.total, Peak: a.peak, Samples: a.samples})
 			}
 		}
 	}
@@ -282,27 +244,9 @@ func (s *Service) flush(ctx context.Context, now time.Time, all bool) error {
 	if s.observeFlush != nil {
 		defer func() { s.observeFlush(time.Since(started), entries) }()
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	var err error
+	entries, err = s.store.Write(ctx, buckets)
 	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	statement, err := tx.PrepareContext(ctx, `INSERT INTO buckets(node_id,metric,step,t,total,peak,samples) VALUES(?,?,?,?,?,?,?) ON CONFLICT(node_id,metric,step,t) DO UPDATE SET total=total+excluded.total, peak=max(peak,excluded.peak), samples=samples+excluded.samples`)
-	if err != nil {
-		return err
-	}
-	defer statement.Close()
-	for _, key := range keys {
-		for metric, a := range s.pending[key] {
-			for _, step := range []int64{60, 300, 3600} {
-				t := time.Unix(key.t, 0).Truncate(time.Duration(step) * time.Second).Unix()
-				if _, err := statement.ExecContext(ctx, key.node, metric, step, t, a.total, a.peak, a.samples); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	if err := tx.Commit(); err != nil {
 		return err
 	}
 	for _, key := range keys {
@@ -338,21 +282,10 @@ func (s *Service) cleanup(ctx context.Context, now time.Time) (int64, error) {
 	for id := range s.paths {
 		candidates[id] = true
 	}
-	rows, err := s.db.QueryContext(ctx, historyNodesQuery)
-	if err != nil {
-		return 0, err
-	}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return 0, err
-		}
+	err := s.store.NodeIDs(ctx, func(id string) {
 		candidates[id] = true
 		s.drain()
-	}
-	err = rows.Err()
-	_ = rows.Close()
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -381,40 +314,17 @@ func (s *Service) cleanup(ctx context.Context, now time.Time) (int64, error) {
 		clear(candidates)
 	}
 	var removed int64
-	// 每个 Exec 都是自己的短自动提交事务。该表是 WITHOUT ROWID，
-	// 因此每次删除最多选择一批复合主键。
-	deleteBatches := func(query string, args ...any) error {
-		for {
-			result, err := s.db.ExecContext(ctx, query, args...)
-			if err != nil {
-				return err
-			}
-			n, err := result.RowsAffected()
-			if err != nil {
-				return err
-			}
-			removed += n
-			s.drain()
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if n < cleanupBatchSize {
-				return nil
-			}
-		}
-	}
 	for id := range candidates {
-		if err := deleteBatches(`DELETE FROM buckets WHERE (node_id,metric,step,t) IN (SELECT node_id,metric,step,t FROM buckets WHERE node_id=? LIMIT ?)`, id, cleanupBatchSize); err != nil {
+		n, err := s.store.DeleteNode(ctx, id, s.drain)
+		removed += n
+		if err != nil {
 			return removed, err
 		}
 	}
-	for _, tier := range []struct {
-		step int
-		keep time.Duration
-	}{{60, Retention1m}, {300, Retention5m}, {3600, Retention1h}} {
-		if err := deleteBatches(`DELETE FROM buckets WHERE (node_id,metric,step,t) IN (SELECT node_id,metric,step,t FROM buckets WHERE step=? AND t<? LIMIT ?)`, tier.step, now.Add(-tier.keep).Truncate(time.Duration(tier.step)*time.Second).Unix(), cleanupBatchSize); err != nil {
-			return removed, err
-		}
+	n, err := s.store.DeleteExpired(ctx, now, s.drain)
+	removed += n
+	if err != nil {
+		return removed, err
 	}
 	for key := range s.pending {
 		if candidates[key.node] || key.t < now.Add(-Retention1m).Truncate(time.Minute).Unix() {
@@ -446,8 +356,8 @@ func (s *Service) Close() error {
 	return s.CloseContext(ctx)
 }
 
-// CloseContext 在调用方共享的关闭时限内停止写入任务，并关闭两个历史数据库连接池。
+// CloseContext 在调用方共享的关闭时限内停止写入任务，并关闭历史存储。
 func (s *Service) CloseContext(ctx context.Context) error {
 	err := s.Shutdown(ctx)
-	return errors.Join(err, s.reader.Close(), s.db.Close())
+	return errors.Join(err, s.store.Close())
 }

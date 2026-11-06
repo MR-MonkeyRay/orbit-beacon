@@ -305,3 +305,16 @@ func TestAPITokenRateLimitRetryEnvelope(t *testing.T) {
 		t.Fatal("missing token rate metric")
 	}
 }
+
+func TestSaturationMetricsHistoryWithoutPools(t *testing.T) {
+	m := NewSaturationMetrics(nil, nil, t.TempDir())
+	body := m.exposition(&handler{history: new(history.Service)})
+	for _, name := range []string{"orbitbeacon_db_connections_in_use", "orbitbeacon_db_wait_count_total", "orbitbeacon_db_wait_duration_seconds_total"} {
+		if strings.Contains(body, name+`{database="metrics"`) {
+			t.Fatalf("history without pools emitted %s", name)
+		}
+	}
+	if !strings.Contains(body, "orbitbeacon_history_flush_entries_count 0\n") {
+		t.Fatal("missing flush metrics")
+	}
+}

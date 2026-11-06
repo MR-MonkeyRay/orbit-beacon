@@ -23,14 +23,14 @@ func TestFlushMetricsWithoutDatabaseIO(t *testing.T) {
 	db.SetMaxOpenConns(3)
 	reader.SetMaxOpenConns(4)
 	calls, entries := 0, 0
-	s := &Service{db: db, reader: reader, pending: make(map[bucketKey]map[string]aggregate), observeFlush: func(elapsed time.Duration, n int) {
+	s := &Service{store: &sqliteStore{db: db, reader: reader}, pending: make(map[bucketKey]map[string]aggregate), observeFlush: func(elapsed time.Duration, n int) {
 		calls++
 		entries = n
 		if elapsed < 0 {
 			t.Error("negative flush duration")
 		}
 	}}
-	writerStats, readerStats := s.DatabaseStats()
+	writerStats, readerStats, _ := s.DatabaseStats()
 	if writerStats.MaxOpenConnections != 3 || readerStats.MaxOpenConnections != 4 {
 		t.Fatalf("pool stats=%+v %+v", writerStats, readerStats)
 	}

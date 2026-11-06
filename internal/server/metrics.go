@@ -279,9 +279,10 @@ func (m *SaturationMetrics) exposition(h *handler) string {
 		writeStats("main", "reader", m.reader.Stats())
 	}
 	if h.history != nil {
-		writer, reader := h.history.DatabaseStats()
-		writeStats("metrics", "writer", writer)
-		writeStats("metrics", "reader", reader)
+		if writer, reader, ok := h.history.DatabaseStats(); ok {
+			writeStats("metrics", "writer", writer)
+			writeStats("metrics", "reader", reader)
+		}
 	}
 	if h.ingest != nil {
 		fmt.Fprintf(&b, "# HELP orbitbeacon_ingest_write_queue_depth Occupied write slots, including the active writer.\n# TYPE orbitbeacon_ingest_write_queue_depth gauge\norbitbeacon_ingest_write_queue_depth %d\n", h.ingest.WriteQueueDepth())
