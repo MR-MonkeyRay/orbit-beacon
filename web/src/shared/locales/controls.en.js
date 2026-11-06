@@ -42,5 +42,5 @@ export default {
   'controls.tags.remove': 'Remove tag {tag}',
   'controls.tags.add': 'Add tag',
   'controls.tags.placeholder': 'Type a tag and press Enter',
-  'controls.tags.hint': 'Press Enter or comma to add a tag. Each tag is 1–255 UTF-8 bytes.'
+  'controls.tags.hint': 'Press Enter or comma to add. 1–255 UTF-8 bytes each.'
 };

@@ -42,5 +42,5 @@ export default {
   'controls.tags.remove': '移除标签 {tag}',
   'controls.tags.add': '添加标签',
   'controls.tags.placeholder': '输入标签后按 Enter 键',
-  'controls.tags.hint': '按 Enter 键或输入逗号以添加标签。每个标签为 1–255 个 UTF-8 字节。'
+  'controls.tags.hint': '按 Enter 或逗号添加，每个 1–255 个 UTF-8 字节。'
 };

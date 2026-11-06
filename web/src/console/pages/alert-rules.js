@@ -25,7 +25,6 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
       const thresholdLabel = thresholdField.querySelector('label');
       const comparatorField = field(t('alerts.rules.comparator'), comparator);
       const condition = h('div', {class: 'form-row'}, comparatorField, thresholdField);
-      const offlineHint = h('p', {class: 'hint'}, t('alerts.rules.offlineHint'));
       const target = controls.target = input({name: 'target', value: item?.target || '', autocomplete: 'off', class: 'input mono'});
       const targetField = field(t('nodes.audit.target'), target);
       const minutes = controls.minutes = input({name: 'for_seconds', type: 'number', min: 0, max: 1440, step: 1, required: true, value: Math.floor((item?.for_seconds ?? 180) / 60)});
@@ -61,7 +60,6 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
         comparator.disabled = offline || expiry || failed;
         threshold.disabled = offline || failed;
         threshold.required = !offline && !failed;
-        offlineHint.hidden = !offline;
         threshold.max = metricMax(metric.value);
         threshold.min = metric.value === 'node_expiry_days' ? 1 : 0;
         // 80% 之类的默认值对计数无意义；0 表示任意一次失败。
@@ -78,8 +76,8 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
       const severity = controls.severity = select(SEVERITIES, item?.severity || 'warning', {name: 'severity'});
       const routing = controls.channel_ids = select(channels.map((entry) => [entry.id, entry.enabled ? entry.name : t('alerts.disabledName', {name: entry.name})]), '', {name: 'channel_ids', multiple: true, size: Math.min(6, Math.max(2, channels.length)), class: 'input alert-multiselect'});
       for (const option of routing.options) option.selected = Boolean(item?.channel_ids.includes(option.value));
-      form.append(field(t('alerts.column.name'), name), field(t('alerts.state.enabled'), enabled), field(t('alerts.column.metric'), metric), targetField, condition, offlineHint,
-        h('div', {class: 'form-row'}, field(t('alerts.rules.durationMinutes'), minutes, {hint: t('alerts.rules.durationHint')}), field(t('alerts.rules.additionalSeconds'), seconds)),
+      form.append(field(t('alerts.column.name'), name), field(t('alerts.state.enabled'), enabled), field(t('alerts.column.metric'), metric), targetField, condition,
+        h('div', {class: 'form-row'}, field(t('alerts.rules.durationMinutes'), minutes), field(t('alerts.rules.additionalSeconds'), seconds)),
         ...scopeFields, field(t('alerts.column.severity'), severity),
         field(t('alerts.channels.title'), routing, {hint: t(channels.length ? 'alerts.rules.routingHint' : 'alerts.rules.noChannelsHint')}));
     },
@@ -115,7 +113,6 @@ export function rulesPanel({rules, groups, nodes, channels, signal, saved}) {
     } catch (error) { if (!signal?.aborted) toastError(error); }
   };
   return panel(t('alerts.tab.rules'), {action: button(t('alerts.rules.add'), {small: true, variant: 'primary', onClick: () => edit(null)})},
-    h('p', {class: 'lede'}, t('alerts.rules.evaluationHint')),
     rules.length ? dataTable({caption: t('alerts.rules.caption'),
       columns: ['name', 'condition', 'scope', 'severity', 'state', 'channels', 'actions'].map((key) => t(`alerts.column.${key}`)),
       body: h('tbody', null, rules.map((rule) => h('tr', null,

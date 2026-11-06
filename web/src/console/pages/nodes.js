@@ -16,7 +16,7 @@ export async function nodesPage() {
   const signal = getNavigationSignal();
   const [nodes, groups] = await Promise.all([allNodes(), groupsList()]);
   const connection = liveStatus();
-  const head = pageHead(t('nodes.listTitle'), t('nodes.listIntro'), connection.element, addNodeButton());
+  const head = pageHead(t('nodes.listTitle'), null, connection.element, addNodeButton());
 
   const filter = readNodeFilter();
   const groupNames = new Map(groups.map((group) => [group.id, group.name]));
@@ -143,8 +143,8 @@ export async function nodesPage() {
     rowRefs.clear();
     body.replaceChildren(...(visible.length ? visible.map((node) => row(node, query))
       : [h('tr', null, h('td', {colspan: 9}, nodes.length
-        ? emptyState(t('nodes.noMatch'), t('nodes.filterHint'), button(t('nodes.clearFilters'), {onClick: clear}))
-        : emptyState(t('nodes.empty'), t('nodes.emptyEnroll'), addNodeButton())))]));
+        ? emptyState(t('nodes.noMatch'), null, button(t('nodes.clearFilters'), {onClick: clear}))
+        : emptyState(t('nodes.empty'), null, addNodeButton())))]));
     updateSelection();
     const summaryText = rows.length === 0 ? t('nodes.noMatching')
       : t(rows.length !== nodes.length ? 'nodes.showingFiltered' : 'nodes.showing', {start: start + 1, end: start + visible.length, count: rows.length, total: nodes.length});

@@ -18,6 +18,10 @@ test('rule editor toggles offline fields, scopes and channel routing for every a
     admin();
     const dialog = ruleEditor(null, context);
     const root = dom.body;
+    assert.equal(control(root, 'for_seconds').getAttribute('max'), '1440');
+    assert.equal(control(root, 'duration_seconds').getAttribute('max'), '59');
+    assert.equal(control(root, 'channel_ids').getAttribute('multiple'), '');
+    assert.ok(root.textContent.includes(copy('alerts.rules.routingHint')));
     const metric = control(root, 'metric');
     assert.equal(metric.options.find((option) => option.value === 'traffic_quota_percent').textContent, copy('alerts.metric.trafficQuota'));
     change(metric, 'traffic_quota_percent');
@@ -46,6 +50,10 @@ test('rule editor toggles offline fields, scopes and channel routing for every a
     assert.equal(control(root, 'scope_id').value, id);
     assert.equal(control(root, 'enabled').checked, false);
     existing.close('done'); await existing.closed;
+    const withoutChannels = ruleEditor(null, {...context, channels: []});
+    assert.ok(root.textContent.includes(copy('alerts.rules.noChannelsHint')));
+    assert.equal(control(root, 'channel_ids').options.length, 0);
+    withoutChannels.close('done'); await withoutChannels.closed;
     setSession({user: null, csrf_token: '', expires_at: ''});
     assert.equal(ruleEditor(null, context), undefined);
     admin();

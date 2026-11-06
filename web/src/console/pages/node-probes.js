@@ -33,9 +33,7 @@ export function formatProbeUptime(uptime, checks) {
 }
 
 function probeContent(probes) {
-  if (!probes.length) return h('div', {class: 'stack'},
-    h('p', {class: 'muted'}, t('nodes.probe.empty')),
-    h('p', {class: 'muted'}, t('nodes.probe.guidance')));
+  if (!probes.length) return h('p', {class: 'muted'}, t('nodes.probe.empty'));
   return h('div', {class: 'stack'},
     h('ul', {class: 'probe-list'}, probes.map((probe) => {
       const status = {up: ['online', t('nodes.probe.up')], down: ['offline', t('nodes.probe.down')], pending: ['pending', t('common.status.pending')]}[probe.status] || ['pending', t('common.status.pending')];

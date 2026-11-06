@@ -79,7 +79,6 @@ export async function loginPage() {
   const changed = new URLSearchParams(location.search).has('password-changed');
   return authLayout({
     title: t('shell.signInTitle'),
-    description: t('shell.signInDescription'),
     content: [changed ? callout(t('shell.passwordChanged'), 'info') : null, form],
     footer: h('a', {href: '/'}, t('shell.viewPublic'))
   });

@@ -20,6 +20,6 @@ export function authLayout({title, description, content, footer}) {
         h('div', {class: 'brand'}, brandMark(), h('span', null, 'OrbitBeacon')),
         h('label', {class: 'console-locale auth-locale'}, h('span', null, t('common.language')), consoleLocaleSelect({navigation: true})),
         h('h1', {tabindex: '-1'}, title),
-        h('p', null, description), content),
+        description ? h('p', null, description) : null, content),
       footer ? h('p', {class: 'login-foot'}, footer) : null));
 }

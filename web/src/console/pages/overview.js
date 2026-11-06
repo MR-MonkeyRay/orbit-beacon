@@ -25,7 +25,7 @@ function fleetPanel(nodes) {
     return [status, {segment, count, entry}];
   }));
   const content = h('div', null, h('div', {class: 'fleet-total'}, total, label), bar, legend);
-  const empty = emptyState(t('nodes.empty'), t('nodes.emptyIntro'), addNodeButton());
+  const empty = emptyState(t('nodes.empty'), null, addNodeButton());
   const element = panel(t('nodes.fleet'), {}, content, empty);
   element.snapshot = (current) => {
     const counts = Object.fromEntries(states.map((status) => [status, 0]));
@@ -51,7 +51,7 @@ function fleetPanel(nodes) {
 
 function newestPanel(nodes, groupNames) {
   const list = h('ul', {class: 'rows'});
-  const empty = h('p', {class: 'muted'}, t('nodes.newestEmpty'));
+  const empty = h('p', {class: 'muted'}, t('nodes.empty'));
   const refs = new Map();
   const element = panel(t('nodes.newest'), {action: link('/nodes', t('nodes.allNodes'))}, list, empty);
   element.reload = (current, snapshot = current) => {
@@ -155,7 +155,7 @@ export async function overviewPage() {
   }});
   const inventoryNotice = h('div', {class: 'table-foot live-change', hidden: true, 'aria-live': 'polite'}, t('nodes.inventoryChanged'), refreshNodes);
   const root = h('div', null,
-    pageHead(t('nodes.overview'), t('nodes.overviewIntro'), connection.element, addNodeButton(), h('a', {class: 'btn', href: '/'}, icon('external'), t('nodes.openPublic'))),
+    pageHead(t('nodes.overview'), null, connection.element, addNodeButton(), h('a', {class: 'btn', href: '/'}, icon('external'), t('nodes.openPublic'))),
     fleet,
     alerts.error ? panel(t('nodes.activeAlerts'), {action: link('/alerts', t('nodes.viewAlerts'))}, h('p', {role: 'status', class: 'muted'}, t('nodes.alertsLoadError', {error: errorText(alerts.error)}))) : activeAlertsSummary(alerts.summary),
     h('div', {class: 'grid-2'}, newest, activity), inventoryNotice,

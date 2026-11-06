@@ -103,6 +103,12 @@ test('public broken channel retains values and online presence until the next va
   assert.equal(ui.elements.retry.hidden, true);
   // 空集合只由标题说明一次；空态盒子保持隐藏。
   assert.equal(ui.elements.empty.hidden, true);
+  assert.equal(ui.elements.headline.textContent, copy('public.empty.all'));
+  assert.equal(ui.elements.summary.textContent, '');
+  assert.equal(ui.elements.summary.parentElement, ui.elements.headline.parentElement);
+  sse.frame(snapshot(payload('returned'))); await flush();
+  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'returned');
+  assert.equal(ui.elements.summary.textContent, copy('public.summary.full', {count: 1}));
 });
 
 test('public invalid snapshot cannot clear an accepted collection or change its values', async (t) => {

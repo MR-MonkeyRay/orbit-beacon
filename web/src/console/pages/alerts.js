@@ -19,7 +19,7 @@ export async function alertsPage() {
   const event = new URLSearchParams(location.search).get('event');
   if (event !== null) requestAnimationFrame(() => { if (!signal?.aborted) showAlert(event, signal); });
   return h('div', null,
-    pageHead(t('alerts.title'), t('alerts.subtitle')),
+    pageHead(t('alerts.title'), null),
     tabSet([
       {id: 'active', label: t('alerts.tab.active'), icon: 'alert', build: () => eventsPanel('firing', signal)},
       {id: 'history', label: t('alerts.tab.history'), icon: 'list', build: () => eventsPanel('all', signal)},

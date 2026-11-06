@@ -75,7 +75,7 @@ export function enrollmentTab(node) {
                 if (!node.deleted) await reload();
               } catch (failure) { toastError(failure); }
               finally { busy(control, false); control.disabled = Boolean(node.deleted); }
-            }})))))}) : emptyState(t('nodes.enrollment.empty'), t('nodes.enrollment.emptyHint')));
+            }})))))}) : emptyState(t('nodes.enrollment.empty'), null));
     } catch (failure) {
       if (failure.name !== 'AbortError') { error.textContent = errorText(failure); error.hidden = false; }
     } finally { loading = false; busy(retry, false); retry.disabled = Boolean(node.deleted); }

@@ -27,6 +27,22 @@ test('task and plan pagers retain independent cursors and terminal-button behavi
   try {
     tab = dataOperationsTab();
     dom.body.append(tab.element);
+    assert.equal(tab.element.querySelector('.lede'), null);
+    assert.ok(tab.element.textContent.includes(copy('data.export.warning')));
+    assert.ok(tab.element.textContent.includes(copy('data.export.hint')));
+    const categories = elements(tab.element).filter((element) => element.name === 'categories');
+    assert.equal(categories.length, 3);
+    assert.deepEqual(categories.map((element) => element.value), ['configuration', 'monitoring', 'events']);
+    for (const category of categories) {
+      const hint = category.parentElement.querySelector('small');
+      assert.equal(hint?.textContent ?? null, category.value === 'events' ? copy('data.category.eventsHint') : null);
+      category.checked = false;
+      category.dispatchEvent(new Event('change'));
+    }
+    assert.equal(categories[0].validationMessage, copy('data.category.required'));
+    categories[1].checked = true;
+    categories[1].dispatchEvent(new Event('change'));
+    assert.equal(categories[0].validationMessage, '');
     tab.attach();
     await flush();
     const find = (label) => elements(tab.element).find((element) => element.tagName === 'button' && element.textContent === label);

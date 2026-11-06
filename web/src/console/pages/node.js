@@ -226,8 +226,7 @@ function publicPreview() {
   const name = h('h3');
   const where = h('div', {class: 'where'});
   const badge = h('span', {class: 'badge'});
-  const element = h('div', {class: 'preview'}, h('p', {class: 'preview-label'}, t('nodes.previewIntro')),
-    h('div', {class: 'preview-card'}, h('div', {class: 'top'}, name, badge), where));
+  const element = h('div', {class: 'preview-card'}, h('div', {class: 'top'}, name, badge), where);
   element.paint = ({enabled, name: title, region, provider}) => {
     name.replaceChildren(title || h('span', {class: 'placeholder'}, t('nodes.publicName')));
     where.replaceChildren(...[region && h('span', null, icon('pin'), region), provider && h('span', null, icon('cloud'), provider)].filter(Boolean));
@@ -267,7 +266,7 @@ function publicTab(node, settings) {
   const controls = saveBar(t('nodes.savePublic'), 'public-save');
   const form = h('form', {class: 'form form-wide'},
     h('label', {class: 'switch'}, enabled, h('span', {class: 'switch-track', 'aria-hidden': 'true'}),
-      h('span', {class: 'switch-text'}, h('strong', null, t('nodes.publish')), h('span', null, t('nodes.publishHint')))),
+      h('span', {class: 'switch-text'}, h('strong', null, t('nodes.publish')))),
     field(t('nodes.publicName'), name, {hint: t('nodes.publicNameHint')}),
     h('div', {class: 'form-row'}, field(t('nodes.publicRegion'), region, {hint: t('nodes.publicLocationHint')}), field(t('nodes.publicProvider'), provider, {hint: t('nodes.publicLocationHint')})),
     controls.bar);

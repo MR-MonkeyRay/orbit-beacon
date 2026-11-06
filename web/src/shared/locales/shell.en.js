@@ -10,7 +10,6 @@ export default {
   'shell.settings': 'Settings',
   'shell.signIn': 'Sign in',
   'shell.signInTitle': 'Console sign-in',
-  'shell.signInDescription': 'Manage nodes and access to this Server’s status page.',
   'shell.passwordChanged': 'Password changed. Every session was signed out; sign in with your new password.',
   'shell.viewPublic': 'View the status page',
   'shell.invalidCredentials': 'Username or password is incorrect.',

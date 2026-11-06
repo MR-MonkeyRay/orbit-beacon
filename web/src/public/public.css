@@ -92,6 +92,10 @@
   font-variant-numeric: tabular-nums;
 }
 
+.summary:empty {
+  display: none;
+}
+
 .summary {
   margin-top: 14px;
   max-width: 46ch;

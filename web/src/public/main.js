@@ -112,7 +112,7 @@ function render(result) {
   const partial = offset > 0 || result.has_more;
   if (nodes.length === 0) {
     headline.textContent = t(partial ? 'public.empty.page' : 'public.empty.all');
-    summary.textContent = t('public.empty.explanation');
+    summary.textContent = '';
   } else {
     headline.textContent = online === nodes.length ? t('public.headline.allOnline', {count: nodes.length}) : t('public.headline.online', {online, count: nodes.length});
     const summaryKey = `public.summary.${partial ? 'page' : 'full'}${offline && unknown ? 'Both' : offline ? 'Offline' : unknown ? 'Unknown' : ''}`;

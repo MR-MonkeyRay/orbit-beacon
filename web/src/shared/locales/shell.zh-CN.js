@@ -10,7 +10,6 @@ export default {
   'shell.settings': '设置',
   'shell.signIn': '登录',
   'shell.signInTitle': '控制台登录',
-  'shell.signInDescription': '管理此服务器的节点及状态页访问权限。',
   'shell.passwordChanged': '密码已修改，所有会话均已退出。请使用新密码登录。',
   'shell.viewPublic': '查看状态页',
   'shell.invalidCredentials': '用户名或密码不正确。',

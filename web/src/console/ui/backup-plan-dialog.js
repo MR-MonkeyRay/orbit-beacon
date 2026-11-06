@@ -7,8 +7,8 @@ import {formDialog} from './dialogs.js';
 import {field, input, select, validateBytes} from './forms.js';
 
 const CATEGORIES = [
-  ['configuration', 'common.configuration', 'data.category.configurationHint'],
-  ['monitoring', 'common.monitoring', 'data.category.monitoringHint'],
+  ['configuration', 'common.configuration'],
+  ['monitoring', 'common.monitoring'],
   ['events', 'common.events', 'data.category.eventsHint']
 ];
 export const backupProviders = [['s3_compatible', 'data.provider.compatible'], ['cos', 'data.provider.cos'], ['oss', 'data.provider.oss'], ['r2', 'data.provider.r2'], ['s3', 'data.provider.s3']];
@@ -23,7 +23,9 @@ export function backupCategoriesField(selected = ['configuration']) {
   }));
   check();
   const choices = h('div', {class: 'data-category-choices'}, CATEGORIES.map(([, title, hint], index) =>
-    h('label', {class: 'data-check'}, controls[index], h('span', null, h('strong', null, t(title)), h('small', null, t(hint))))));
+    h('label', {class: 'data-check'}, controls[index], hint
+      ? h('span', null, h('strong', null, t(title)), h('small', null, t(hint)))
+      : h('strong', null, t(title)))));
   return {element: field(t('data.categories'), controls[0], {inner: choices}), value: () => controls.filter((control) => control.checked).map((control) => control.value)};
 }
 
@@ -168,7 +170,7 @@ export function backupPlanDialog(plan, {signal, onSaved}) {
       region.addEventListener('input', () => updateProvider());
       kind.addEventListener('change', updateKind);
       replace.control.addEventListener('change', updateCredentials);
-      form.append(field(t('data.plan.name'), name), field(t('data.plan.destinationKind'), kind, {hint: plan ? t('data.plan.kindHint') : undefined}), enabled.element, categories.element,
+      form.append(field(t('data.plan.name'), name), field(t('data.plan.destinationKind'), kind), enabled.element, categories.element,
         field(t('data.plan.cron'), cron, {hint: t('data.plan.cronHint')}), preview, local, remote);
       controls = {name, kind, enabled: enabled.control, categories, cron, path, retain, provider, endpoint, region, bucket, prefix, pathStyle: pathStyle.control, replace: replace.control, keyID, secret, token, allowPrivate: allowPrivate.control};
       updateProvider();

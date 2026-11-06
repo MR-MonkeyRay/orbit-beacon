@@ -117,10 +117,8 @@ function dailyChart(days) {
   const key = (label, className) => h('span', {class: 'chart-key'}, h('i', {class: className, 'aria-hidden': 'true'}), label);
   return h('section', {class: 'traffic-chart', 'aria-label': t('nodes.dailyTraffic')},
     h('h3', null, t('nodes.dailyTraffic')),
-    h('p', {class: 'muted'}, t('nodes.dailyTrafficIntro')),
     h('div', {class: 'chart-legend', 'aria-label': t('nodes.chartLegend')}, key(t('nodes.receivedLower'), 'traffic-rx-key'), key(t('nodes.sentUpper'), 'traffic-tx-key')),
-    h('div', {class: 'traffic-plot'}, drawing),
-    h('p', {class: 'note'}, t('nodes.dailyTrafficHint')));
+    h('div', {class: 'traffic-plot'}, drawing));
 }
 
 function trafficContent(data) {

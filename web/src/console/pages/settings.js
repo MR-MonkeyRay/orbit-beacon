@@ -27,7 +27,7 @@ export async function settingsPage() {
     requestAnimationFrame(() => { if (!signal?.aborted) showTask(task, {signal}); });
   }
   return h('div', null,
-    pageHead(t('shell.settings'), t('settings.settingsIntro')),
+    pageHead(t('shell.settings'), null),
     tabSet([
       {id: 'account', label: t('settings.account'), icon: 'user', build: accountTab},
       {id: 'administrators', label: t('settings.administrators'), icon: 'users', build: lazyTab(usersList, administratorsTab)},
@@ -147,8 +147,7 @@ function publicPageTab() {
   });
   const element = panel(t('settings.publicPage'), {},
     h('label', {class: 'switch'}, control, h('span', {class: 'switch-track', 'aria-hidden': 'true'}),
-      h('span', {class: 'switch-text'}, h('strong', null, t('settings.publicEnable')), h('span', null, t('settings.publicEnableHint')))),
-    h('p', {class: 'lede'}, t('settings.publicRoutingHint')),
+      h('span', {class: 'switch-text'}, h('strong', null, t('settings.publicEnable')))),
     errorBox, note, retry);
   const announcements = announcementsPanel(navigation);
   return {element: h('div', {class: 'stack'}, element, announcements.element),
@@ -266,7 +265,6 @@ function administratorsTab(users) {
 
   return h('section', {class: 'panel', 'aria-labelledby': 'administrators-title'},
     h('div', {class: 'panel-head'}, h('h2', {id: 'administrators-title'}, t('settings.administrators')), button(t('settings.addAdministrator'), {icon: 'plus', variant: 'primary', small: true, onClick: createUser})),
-    h('div', {class: 'panel-body flush'}, h('p', {class: 'lede'}, t('settings.fullAccess'))),
     h('div', {class: 'table-wrap'}, h('table', {class: 'table administrators-table'},
       h('thead', null, h('tr', null, h('th', {scope: 'col'}, t('account.username')), h('th', {scope: 'col', class: 'hide-compact'}, t('settings.created')),
         h('th', {scope: 'col'}, t('account.totp')), h('th', {scope: 'col'}, h('span', {class: 'sr'}, t('settings.actions'))))),
@@ -317,9 +315,8 @@ function groupsTab(groups, nodes) {
     } catch (error) { toastError(error); }
   };
   const addButton = button(t('settings.addGroup'), {icon: 'plus', variant: 'primary', small: !!groups.length, onClick: () => groupForm()});
-  if (!groups.length) return panel(t('settings.groups'), {}, emptyState(t('settings.noGroups'), t('settings.groupsIntro'), addButton));
+  if (!groups.length) return panel(t('settings.groups'), {}, emptyState(t('settings.noGroups'), null, addButton));
   return panel(t('settings.groups'), {action: addButton},
-    h('p', {class: 'lede'}, t('settings.groupsHint')),
     h('ul', {class: 'rows'}, groups.map((item) => {
       const size = nodes.filter((node) => node.group_id === item.id).length;
       const enrollment = button(t('settings.batchEnrollment'), {small: true});
@@ -351,6 +348,6 @@ function auditTab(page, names) {
     finally { busy(more, false); }
   }});
   more.hidden = !page.has_more;
-  return panel(t('settings.audit'), {}, h('p', {class: 'lede'}, t('settings.auditHint')),
-    events.length ? [list, more] : emptyState(t('settings.noAudit'), t('settings.noAuditHint')));
+  return panel(t('settings.audit'), {},
+    events.length ? [list, more] : emptyState(t('settings.noAudit')));
 }

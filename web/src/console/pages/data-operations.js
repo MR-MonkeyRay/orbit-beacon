@@ -67,8 +67,8 @@ export function dataOperationsTab() {
   const dialogs = new Set();
   const taskRows = h('div');
   const planRows = h('div');
-  const taskNote = h('p', {class: 'data-load-note', role: 'status'}, t('data.tasks.initial'));
-  const planNote = h('p', {class: 'data-load-note', role: 'status'}, t('data.plans.initial'));
+  const taskNote = h('p', {class: 'data-load-note', role: 'status'}, t('controls.loading'));
+  const planNote = h('p', {class: 'data-load-note', role: 'status'}, t('controls.loading'));
   const timezone = h('p', {class: 'hint'}, t('data.timezone.loading'));
   const taskPrevious = button(t('data.tasks.newer'), {disabled: true, onClick: () => { taskPager.page -= 1; loadTasks(); }});
   const taskNext = button(t('data.tasks.older'), {disabled: true, onClick: () => { taskPager.page += 1; loadTasks(); }});
@@ -97,16 +97,13 @@ export function dataOperationsTab() {
   }, exportError);
   const element = h('div', {class: 'data-operations'},
     panel(t('data.export.title'), {},
-      h('p', {class: 'lede'}, t('data.export.intro')),
       callout(t('data.export.warning')),
       h('p', {class: 'hint'}, t('data.export.hint')),
       exportForm),
     panel(t('data.plans.title'), {action: h('div', {class: 'data-actions'}, planRefresh, addPlan)},
-      h('p', {class: 'lede'}, t('data.plans.intro')),
       timezone, planNote, planRows,
       h('div', {class: 'data-pagination'}, planPrevious, planNext)),
     panel(t('data.tasks.title'), {action: taskRefresh},
-      h('p', {class: 'lede'}, t('data.tasks.intro')),
       taskNote, taskRows, h('div', {class: 'data-pagination'}, taskPrevious, taskNext)));
 
   const taskView = {pager: taskPager, path: '/tasks', rows: taskRows, note: taskNote, previous: taskPrevious, next: taskNext, refresh: taskRefresh,
@@ -117,7 +114,7 @@ export function dataOperationsTab() {
   const planView = {pager: planPager, path: '/backup-plans', rows: planRows, note: planNote, previous: planPrevious, next: planNext, refresh: planRefresh,
     values: (page) => page.plans,
     render: (page) => page.plans.length ? h('div', {class: 'data-plan-list'}, page.plans.map((plan) => planCard(plan, {openTask, editPlan, deletePlan}))) : h('p', {class: 'data-empty'}, t('data.plans.empty')),
-    success: (page) => { timezone.textContent = t('data.timezone.description', {timezone: timezoneText(page)}); planNote.textContent = ''; },
+    success: (page) => { timezone.textContent = t('data.timezone.label', {timezone: timezoneText(page)}); planNote.textContent = ''; },
     failure: (stale, error) => t(stale ? 'data.plans.refreshFailedStale' : 'data.plans.refreshFailed', {error: errorText(error)})};
 
   async function loadPage(view, {poll = false} = {}) {

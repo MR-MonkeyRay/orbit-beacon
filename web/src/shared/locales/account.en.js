@@ -40,7 +40,7 @@ export default {
   'account.passwordMismatch': 'Passwords do not match.',
   'account.changeAndSignOut': 'Change password and sign out',
   'account.passwordBytes': '8–1024 UTF-8 bytes.',
-  'account.passwordDifferentHint': '8–1024 UTF-8 bytes. Choose a different password.',
+  'account.passwordDifferentHint': '8–1024 UTF-8 bytes, different from the current password.',
   'account.yourAccount': 'Your account',
   'account.username': 'Username',
   'account.password': 'Password',
@@ -49,5 +49,5 @@ export default {
   'account.changePassword': 'Change password',
   'account.passwordSignOutHint': 'Changing your password signs out every session, including this one.',
   'account.changePasswordTitle': 'Password change',
-  'account.changePasswordDescription': 'Set a new password to access the Console; all sessions will be signed out.'
+  'account.changePasswordDescription': 'All sessions will be signed out.'
 };

@@ -11,7 +11,6 @@ function createNodeDialog() {
   let name;
   formDialog({
     title: t('nodes.add'),
-    intro: t('nodes.addIntro'),
     submit: t('nodes.add'),
     build: (form) => {
       name = input({name: 'name', required: true, autocomplete: 'off', placeholder: t('nodes.nameExample')});
