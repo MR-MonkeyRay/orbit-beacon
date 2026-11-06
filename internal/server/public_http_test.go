@@ -252,7 +252,20 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 	publicMetricStatuses(t, unknown.Nodes[0], "unavailable")
 
 	base := f.now
-	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, reportBody(1, 1, "private-session", 25)), 1)
+	var report v1.Report
+	if err := json.Unmarshal([]byte(reportBody(1, 1, "private-session", 25)), &report); err != nil {
+		t.Fatal(err)
+	}
+	report.Runtime.ProbeTargets = []string{"https://private-probe.example"}
+	expiry := time.Date(2035, 5, 6, 7, 8, 9, 0, time.UTC)
+	latency := 1.0
+	report.ProbeResults = []v1.ProbeResult{{Target: report.Runtime.ProbeTargets[0], OK: true, LatencyMS: &latency, CheckedAt: f.now, TLSExpiresAt: &expiry}}
+	reportJSON, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, string(reportJSON)), 1)
+
 	f.now = f.now.Add(2 * time.Second) // Expire the pre-report rendered page.
 	anonymous, anonymousBytes := publicList(t, f, "/api/public/v1/nodes", nil)
 	adminResult, adminBytes := publicList(t, f, "/api/public/v1/nodes", admin)
@@ -278,7 +291,7 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 	if err := json.Unmarshal(node["last_seen"], &lastSeen); err != nil || !lastSeen.Equal(base) {
 		t.Fatalf("last_seen=%s err=%v", node["last_seen"], err)
 	}
-	for _, sentinel := range []string{"private-2001:db8::7", "private-note-203.0.113.8", "private-region", "private-provider", "private-tag-2001:db8::8", "identical-host", "private-session", "cpu-1", "memory-1", "sample_id", "token_hash", "installation-private"} {
+	for _, sentinel := range []string{"private-2001:db8::7", "private-note-203.0.113.8", "private-region", "private-provider", "private-tag-2001:db8::8", "identical-host", "private-session", "cpu-1", "memory-1", "sample_id", "token_hash", "installation-private", "tls_expires_at", "2035-05-06", "private-probe.example"} {
 		if strings.Contains(string(anonymousBytes), sentinel) {
 			t.Errorf("anonymous response leaked private sentinel %q: %s", sentinel, anonymousBytes)
 		}

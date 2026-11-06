@@ -40,6 +40,11 @@ func TestReportsMatchProtocol(t *testing.T) {
 		if decoded.Metrics.DiskIO == nil || decoded.Metrics.Pressure == nil || decoded.Metrics.TemperatureCelsius == nil || decoded.Metrics.Pressure.CPU == nil || decoded.Metrics.Pressure.Memory == nil || decoded.Metrics.Pressure.IO == nil {
 			t.Fatal("missing host metrics")
 		}
+		for _, probe := range decoded.ProbeResults {
+			if !strings.HasPrefix(probe.Target, "https://") || probe.TLSExpiresAt == nil || !probe.TLSExpiresAt.Equal(report.SampledAt.Add(30*24*time.Hour)) {
+				t.Fatalf("unrealistic probe=%+v", probe)
+			}
+		}
 		if len(decoded.Metrics.Disks) != count || len(decoded.Metrics.Networks) != count || len(decoded.ProbeResults) != 5 {
 			t.Fatal("wrong series count")
 		}

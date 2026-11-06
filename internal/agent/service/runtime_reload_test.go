@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"orbitbeacon/internal/agent/collect"
 	"orbitbeacon/internal/agent/identity"
 	"orbitbeacon/internal/agent/probe"
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -49,14 +51,21 @@ func TestRuntimeReloadValidatesBeforeChangingCollectorOrProbes(t *testing.T) {
 		invalid.Interfaces = []string{"eth1"}
 		invalid.DiskPaths = []string{"/new"}
 		invalid.ProbeTargets = []string{"invalid-target"}
-		if err := runtime.reloadSettings(ctx, runner, func() (v1.RuntimeSettings, error) { return invalid, nil }); err == nil {
+		if err := runtime.reloadSettings(ctx, runner, func() (config.Agent, error) { return config.Agent{RuntimeSettings: invalid}, nil }); err == nil {
 			t.Fatal("invalid reload accepted")
 		}
 		if !reflect.DeepEqual(runtime.settings, initial) || len(runner.Results(initial.ProbeTargets)) != 1 || !reflect.DeepEqual(before, traffic.Entries()) {
 			t.Fatal("invalid reload partially changed active state")
 		}
-		if err := runtime.reloadSettings(ctx, runner, func() (v1.RuntimeSettings, error) { return v1.RuntimeSettings{}, errors.New("malformed JSON") }); err == nil {
+		if err := runtime.reloadSettings(ctx, runner, func() (config.Agent, error) { return config.Agent{}, errors.New("malformed JSON") }); err == nil {
 			t.Fatal("loader failure accepted")
+		}
+		badExpected := invalid
+		badExpected.ProbeTargets = []string{"tcp://new.example:443"}
+		if err := runtime.reloadSettings(ctx, runner, func() (config.Agent, error) {
+			return config.Agent{RuntimeSettings: badExpected, ProbeExpectedStatus: map[string]int{"tcp://new.example:443": 200}}, nil
+		}); err == nil {
+			t.Fatal("expected status for TCP target accepted")
 		}
 		canceledBefore, stopBefore := context.WithCancel(ctx)
 		stopBefore()
@@ -67,7 +76,7 @@ func TestRuntimeReloadValidatesBeforeChangingCollectorOrProbes(t *testing.T) {
 		next := invalid
 		next.ReportIntervalSeconds = 5
 		next.ProbeTargets = []string{"tcp://new.example:443"}
-		if err := runtime.reloadSettings(ctx, runner, func() (v1.RuntimeSettings, error) { return next, nil }); err != nil {
+		if err := runtime.reloadSettings(ctx, runner, func() (config.Agent, error) { return config.Agent{RuntimeSettings: next}, nil }); err != nil {
 			t.Fatal(err)
 		}
 		synctest.Wait()
@@ -91,7 +100,7 @@ func TestRuntimeReloadValidatesBeforeChangingCollectorOrProbes(t *testing.T) {
 		}
 		pointer := &runtime.settings.Interfaces[0]
 		unchanged := cloneRuntimeSettings(runtime.settings, v1.RuntimeSettings{})
-		if err := runtime.reloadSettings(ctx, runner, func() (v1.RuntimeSettings, error) { return unchanged, nil }); err != nil {
+		if err := runtime.reloadSettings(ctx, runner, func() (config.Agent, error) { return config.Agent{RuntimeSettings: unchanged}, nil }); err != nil {
 			t.Fatal(err)
 		}
 		if pointer != &runtime.settings.Interfaces[0] {
@@ -142,7 +151,7 @@ func TestRuntimeFeatureReloadChangesNextReportAndStopsProbes(t *testing.T) {
 		next := initial
 		scheduler := NewScheduler(SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return runtime.settings }, Reload: reload,
 			ReloadConfig: func(ctx context.Context) error {
-				return runtime.reloadSettings(ctx, probes, func() (v1.RuntimeSettings, error) { return next, nil })
+				return runtime.reloadSettings(ctx, probes, func() (config.Agent, error) { return config.Agent{RuntimeSettings: next}, nil })
 			},
 			Collect: func(context.Context) (v1.Metrics, error) {
 				canceled, stop := context.WithCancel(ctx)
@@ -235,4 +244,96 @@ func TestDoctorReportsEffectiveCapabilities(t *testing.T) {
 	if string(fields["remote_commands"]) != `["restart"]` || string(fields["disabled_features"]) != `["disk","network","traffic","probes","disk_io","pressure","temperature"]` {
 		t.Fatalf("doctor JSON=%s", body)
 	}
+}
+
+func TestRuntimeReloadAppliesExpectedStatusToChecks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }))
+	defer server.Close()
+	initial := v1.DefaultRuntimeSettings()
+	initial.ProbeTargets = []string{server.URL + "/"}
+	collector, err := collect.New(collect.Options{Config: initial})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &Runtime{settings: initial, collector: collector}
+	runner := probe.NewRunner(probe.Options{})
+	if err := runner.SetConfig(initial.ProbeTargets, nil); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	latest := func(ok bool) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if results := runner.Results(initial.ProbeTargets); len(results) == 1 && results[0].OK == ok {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("no result with OK=%t: %+v", ok, runner.Results(initial.ProbeTargets))
+	}
+	latest(false)
+	next := config.Agent{RuntimeSettings: initial, ProbeExpectedStatus: map[string]int{initial.ProbeTargets[0]: http.StatusNotFound}}
+	if err := runtime.reloadSettings(ctx, runner, func() (config.Agent, error) { return next, nil }); err != nil {
+		t.Fatal(err)
+	}
+	latest(true)
+}
+
+func TestRuntimeExpectedStatusReload(t *testing.T) {
+	initial := v1.DefaultRuntimeSettings()
+	target := "https://example.test"
+	initial.ProbeTargets = []string{target}
+	collector, err := collect.New(collect.Options{Config: initial})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &Runtime{settings: initial, collector: collector, expectedStatus: map[string]int{target: 204}}
+	runner := probe.NewRunner(probe.Options{})
+	if err := runner.SetConfig(initial.ProbeTargets, runtime.expectedStatus); err != nil {
+		t.Fatal(err)
+	}
+	next := config.Agent{RuntimeSettings: initial, ProbeExpectedStatus: map[string]int{target: 200}}
+	if err := runtime.reloadSettings(t.Context(), runner, func() (config.Agent, error) { return next, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.expectedStatus[target] != 200 || runtime.configRevision != 1 {
+		t.Fatalf("reload ignored local change: %v revision=%d", runtime.expectedStatus, runtime.configRevision)
+	}
+	next.ProbeExpectedStatus[target] = 500
+	if runtime.expectedStatus[target] != 200 {
+		t.Fatal("map aliases loader")
+	}
+	next.ProbeExpectedStatus[target] = 200
+	if err := runtime.reloadSettings(t.Context(), runner, func() (config.Agent, error) { return next, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.configRevision != 1 {
+		t.Fatal("unchanged config advanced revision")
+	}
+	next.ProbeExpectedStatus[target] = 99
+	if err := runtime.reloadSettings(t.Context(), runner, func() (config.Agent, error) { return next, nil }); err == nil {
+		t.Fatal("invalid map accepted")
+	}
+	if runtime.expectedStatus[target] != 200 || runtime.configRevision != 1 {
+		t.Fatal("invalid reload partially applied")
+	}
+	bodyWithExpected, err := json.Marshal(v1.Report{Runtime: runtime.settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(bodyWithExpected), "probe_expected_status") {
+		t.Fatalf("setting leaked: %s", bodyWithExpected)
+	}
+	next.ProbeExpectedStatus = nil
+	if err := runtime.reloadSettings(t.Context(), runner, func() (config.Agent, error) { return next, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.expectedStatus) != 0 || runtime.configRevision != 2 {
+		t.Fatal("removing expected status did not reload")
+	}
+
 }

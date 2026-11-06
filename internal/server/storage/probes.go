@@ -9,6 +9,7 @@ CREATE TABLE probe_latest (
  error TEXT NOT NULL CHECK(error IN ('','timeout','refused','dns','tls','http_status','unreachable','unsupported','error')),
  status_code INTEGER CHECK(status_code IS NULL OR status_code BETWEEN 100 AND 599),
  checked_at TEXT NOT NULL,
+ tls_expires_at TEXT,
  PRIMARY KEY(node_id,target)
 ) WITHOUT ROWID;
 CREATE TABLE probe_hourly (

@@ -120,12 +120,13 @@ func (h *handler) tokenLatest(w http.ResponseWriter, r *http.Request, requestID 
 }
 
 type tokenProbeView struct {
-	Status     string   `json:"status"`
-	LatencyMS  *float64 `json:"latency_ms"`
-	StatusCode *int     `json:"status_code"`
-	CheckedAt  *string  `json:"checked_at"`
-	Uptime24H  *float64 `json:"uptime_24h"`
-	Checks24H  int64    `json:"checks_24h"`
+	TLSExpiresAt *string  `json:"tls_expires_at"`
+	Status       string   `json:"status"`
+	LatencyMS    *float64 `json:"latency_ms"`
+	StatusCode   *int     `json:"status_code"`
+	CheckedAt    *string  `json:"checked_at"`
+	Uptime24H    *float64 `json:"uptime_24h"`
+	Checks24H    int64    `json:"checks_24h"`
 }
 
 func (h *handler) tokenProbes(w http.ResponseWriter, r *http.Request, requestID string) {
@@ -136,7 +137,7 @@ func (h *handler) tokenProbes(w http.ResponseWriter, r *http.Request, requestID 
 	}
 	probes := make([]tokenProbeView, 0, len(observed))
 	for _, p := range observed {
-		probes = append(probes, tokenProbeView{p.Status, p.LatencyMS, p.StatusCode, p.CheckedAt, p.Uptime24H, p.Checks24H})
+		probes = append(probes, tokenProbeView{p.TLSExpiresAt, p.Status, p.LatencyMS, p.StatusCode, p.CheckedAt, p.Uptime24H, p.Checks24H})
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Probes []tokenProbeView `json:"probes"`

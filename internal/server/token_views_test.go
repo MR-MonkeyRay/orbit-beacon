@@ -48,7 +48,7 @@ func TestAPITokenViewsHaveLiteralFieldSets(t *testing.T) {
 	if string(node["name"]) != `"monitor"` {
 		t.Fatal("lost node value")
 	}
-	assertTokenViewKeys(t, tokenProbeView{Status: "down", LatencyMS: &percent}, "status", "latency_ms", "status_code", "checked_at", "uptime_24h", "checks_24h")
+	assertTokenViewKeys(t, tokenProbeView{Status: "down", LatencyMS: &percent}, "status", "latency_ms", "status_code", "checked_at", "tls_expires_at", "uptime_24h", "checks_24h")
 	eventKeys := []string{"id", "rule_id", "node_id", "rule_name", "metric", "severity", "node_name", "state", "value", "started_at", "resolved_at", "last_notified_at", "silenced"}
 	event := alerts.Event{ID: "alert", RuleName: "cpu", StartedAt: at, Value: &percent}
 	assertTokenViewKeys(t, tokenAlertDTO(event), eventKeys...)
@@ -79,7 +79,7 @@ func TestAPITokenResponseSchemasHaveLiteralPropertiesAndValidReferences(t *testi
 		"TokenNodePage":     {"nodes", "has_more", "next_offset"},
 		"TokenLatestSample": {"received_at", "sampled_at", "seq", "metrics", "server_time"},
 		"TokenProbeSummary": {"probes"},
-		"TokenProbeStatus":  {"status", "latency_ms", "status_code", "checked_at", "uptime_24h", "checks_24h"},
+		"TokenProbeStatus":  {"status", "latency_ms", "status_code", "checked_at", "tls_expires_at", "uptime_24h", "checks_24h"},
 	} {
 		properties := schemas[name].(schema)["properties"].(schema)
 		assertTokenViewKeys(t, properties, keys...)

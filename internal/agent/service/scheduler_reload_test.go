@@ -26,16 +26,19 @@ func TestSchedulerReloadAppliesAtSampleBoundary(t *testing.T) {
 		var collections atomic.Int64
 		reports := make(chan v1.Report, 8)
 		var reject bool
+		var revision, candidateRevision uint64
 		candidate := settings
 		logs := &testLogSink{}
 		scheduler := service.NewScheduler(service.SchedulerOptions{
-			Logger:   logs.logger(),
-			Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return settings }, Reload: reload,
+			Logger:         logs.logger(),
+			ConfigRevision: func() uint64 { return revision },
+			Identity:       state, RuntimeSettings: func() v1.RuntimeSettings { return settings }, Reload: reload,
 			ReloadConfig: func(context.Context) error {
 				if reject {
 					return errors.New("invalid settings")
 				}
 				settings = candidate
+				revision = candidateRevision
 				return nil
 			},
 			Collect: func(context.Context) (v1.Metrics, error) { collections.Add(1); return schedulerMetrics(), nil },
@@ -54,25 +57,32 @@ func TestSchedulerReloadAppliesAtSampleBoundary(t *testing.T) {
 		if collections.Load() != 1 {
 			t.Fatal("unchanged configuration caused a sample")
 		}
+		candidateRevision++
+		reload <- struct{}{}
+		synctest.Wait()
+		localChange := <-reports
+		if !localChange.Runtime.Equal(first.Runtime) || collections.Load() != 2 {
+			t.Fatal("local configuration change was treated as unchanged")
+		}
 		time.Sleep(2 * time.Second)
 		candidate.ReportIntervalSeconds = 5
 		candidate.ProbeTargets = []string{"https://example.test/health"}
 		reload <- struct{}{}
 		synctest.Wait()
 		second := <-reports
-		if second.Runtime.ReportIntervalSeconds != 5 || len(second.Runtime.ProbeTargets) != 1 || second.Seq != 2 || second.RunGeneration != first.RunGeneration || second.SessionID != first.SessionID {
+		if second.Runtime.ReportIntervalSeconds != 5 || len(second.Runtime.ProbeTargets) != 1 || second.Seq != 3 || second.RunGeneration != first.RunGeneration || second.SessionID != first.SessionID {
 			t.Fatalf("reload report = %+v", second)
 		}
 		reject = true
 		reload <- struct{}{}
 		synctest.Wait()
-		if collections.Load() != 2 {
+		if collections.Load() != 3 {
 			t.Fatal("rejected reload caused a sample")
 		}
 		time.Sleep(5 * time.Second)
 		synctest.Wait()
 		third := <-reports
-		if third.Runtime.ReportIntervalSeconds != 5 || third.Seq != 3 {
+		if third.Runtime.ReportIntervalSeconds != 5 || third.Seq != 4 {
 			t.Fatalf("reload changed cadence or snapshot: %+v", third)
 		}
 		gotLogs := logs.snapshot()
@@ -80,11 +90,11 @@ func TestSchedulerReloadAppliesAtSampleBoundary(t *testing.T) {
 		for i, record := range gotLogs {
 			messages[i] = record.message
 		}
-		if !reflect.DeepEqual(messages, []string{"configuration_unchanged", "configuration_reloaded", "configuration_reload_rejected"}) {
+		if !reflect.DeepEqual(messages, []string{"configuration_unchanged", "configuration_reloaded", "configuration_reloaded", "configuration_reload_rejected"}) {
 			t.Fatalf("reload logs = %+v", gotLogs)
 		}
-		if gotLogs[2].attrs["error_code"] != "configuration_reload_rejected" {
-			t.Fatalf("rejected reload attrs = %+v", gotLogs[2].attrs)
+		if gotLogs[3].attrs["error_code"] != "configuration_reload_rejected" {
+			t.Fatalf("rejected reload attrs = %+v", gotLogs[3].attrs)
 		}
 		cancel()
 		synctest.Wait()

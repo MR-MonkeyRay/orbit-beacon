@@ -51,6 +51,7 @@ type InstallPolicy struct {
 }
 
 type Agent struct {
+	ProbeExpectedStatus map[string]int `json:"probe_expected_status,omitempty"`
 	InstallPolicy
 	v1.RuntimeSettings
 }
@@ -124,6 +125,11 @@ func encodeValue(key, value string) (json.RawMessage, error) {
 			return json.Marshal(value)
 		}
 		return json.Marshal(enabled)
+	case "probe_expected_status":
+		if !json.Valid([]byte(value)) {
+			return nil, errors.New("probe_expected_status 必须是 JSON 对象")
+		}
+		return json.RawMessage(value), nil
 	case "interfaces", "disk_paths", "probe_targets", "remote_commands", "disabled_features":
 		if !json.Valid([]byte(value)) {
 			return nil, fmt.Errorf("%s 必须是 JSON 字符串数组", key)
@@ -343,7 +349,7 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	if policy == nil {
 		return Agent{}, errors.New("必须提供归管理员所有的安装策略")
 	}
-	keys := []string{"server_url", "ca_file", "state_dir", "expected_uid", "expected_gid", "expected_account", "install_mode", "report_interval_seconds", "disk_interval_seconds", "interfaces", "disk_paths", "probe_targets", "remote_commands", "disabled_features"}
+	keys := []string{"server_url", "ca_file", "state_dir", "expected_uid", "expected_gid", "expected_account", "install_mode", "report_interval_seconds", "disk_interval_seconds", "interfaces", "disk_paths", "probe_targets", "probe_expected_status", "remote_commands", "disabled_features"}
 	layers, err := sources(opts, keys)
 	if err != nil {
 		return Agent{}, err
@@ -365,6 +371,22 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 			}
 			// 即使更高优先级的来源为同一运行时键提供了其他值，
 			// 每个本地来源自身也必须类型正确且有效。
+			if key == "probe_expected_status" {
+				var expected map[string]int
+				if err := json.Unmarshal(value, &expected); err != nil {
+					return Agent{}, fmt.Errorf("probe_expected_status: %w", err)
+				}
+				for target, status := range expected {
+					if err := v1.ValidateProbeTarget(target); err != nil {
+						return Agent{}, err
+					}
+					if err := v1.ValidateProbeExpectedStatus([]string{target}, map[string]int{target: status}); err != nil {
+						return Agent{}, err
+					}
+				}
+				resolved[key] = value
+				continue
+			}
 			if _, ok := protected[key]; !ok {
 				candidate := v1.DefaultRuntimeSettings()
 				encoded, err := json.Marshal(map[string]json.RawMessage{key: value})
@@ -402,6 +424,15 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 		return Agent{}, errors.New("运行时配置类型无效")
 	}
 	if err := settings.Validate(); err != nil {
+		return Agent{}, err
+	}
+	var local struct {
+		ProbeExpectedStatus map[string]int `json:"probe_expected_status"`
+	}
+	if err := json.Unmarshal(data, &local); err != nil {
+		return Agent{}, err
+	}
+	if err := v1.ValidateProbeExpectedStatus(settings.ProbeTargets, local.ProbeExpectedStatus); err != nil {
 		return Agent{}, err
 	}
 	if err := ValidateServerURL(policy.ServerURL); err != nil {
@@ -451,8 +482,9 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	settings.DisabledFeatures = disabled
 	if slices.Contains(disabled, v1.FeatureProbes) {
 		settings.ProbeTargets = []string{}
+		local.ProbeExpectedStatus = nil
 	}
-	return Agent{InstallPolicy: effectivePolicy, RuntimeSettings: settings}, nil
+	return Agent{InstallPolicy: effectivePolicy, RuntimeSettings: settings, ProbeExpectedStatus: local.ProbeExpectedStatus}, nil
 }
 
 // NormalizeUpdateBaseURL 仅接受管理员指定的 HTTPS 发布根地址。

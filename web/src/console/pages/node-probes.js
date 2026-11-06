@@ -2,7 +2,7 @@ import {getLocale, t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h} from '../../shared/dom.js';
 import {api} from '../api.js';
-import {formatPercent, when} from '../format.js';
+import {absoluteWhen, formatPercent, when} from '../format.js';
 import {facts, panel} from '../ui/components.js';
 import {historyError} from '../ui/history-error.js';
 import {panelLifecycle} from '../ui/polling-panel.js';
@@ -42,7 +42,8 @@ function probeContent(probes) {
           h('code', {class: 'probe-target mono'}, probe.target)),
         facts([
           [t('nodes.probe.latency'), formatProbeLatency(probe.latency_ms)],
-          ...(error ? [[t('nodes.probe.result'), error]] : []),
+          ...(error ? [[t('nodes.probe.result'), probe.status_code ? `${error} (${probe.status_code})` : error]] : []),
+          ...(probe.tls_expires_at ? [[t('nodes.probe.tlsExpires'), absoluteWhen(probe.tls_expires_at)]] : []),
           [t('nodes.probe.checked'), probe.checked_at ? when(probe.checked_at) : t('nodes.probe.notChecked')],
           [t('nodes.probe.uptime'), formatProbeUptime(probe.uptime_24h, probe.checks_24h)]
         ]));

@@ -129,6 +129,10 @@ func (b *probeBuffer) buffer(ctx context.Context, q probeQueryer, nodeID string,
 			value := *result.StatusCode
 			result.StatusCode = &value
 		}
+		if result.TLSExpiresAt != nil {
+			value := *result.TLSExpiresAt
+			result.TLSExpiresAt = &value
+		}
 		entry.pending = append(entry.pending, result)
 		entry.counted = result.CheckedAt
 		b.targets[result.Target] = entry
@@ -151,7 +155,11 @@ func (b *probeBuffer) persist(ctx context.Context, tx *sql.Tx, nodeID string, no
 			if !result.CheckedAt.After(counted) {
 				continue
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO probe_latest(node_id,target,ok,latency_ms,error,status_code,checked_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(node_id,target) DO UPDATE SET ok=excluded.ok,latency_ms=excluded.latency_ms,error=excluded.error,status_code=excluded.status_code,checked_at=excluded.checked_at WHERE excluded.checked_at>probe_latest.checked_at`, nodeID, target, result.OK, result.LatencyMS, result.Error, result.StatusCode, timekey.Format(result.CheckedAt)); err != nil {
+			var expiry any
+			if result.TLSExpiresAt != nil {
+				expiry = timekey.Format(*result.TLSExpiresAt)
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO probe_latest(node_id,target,ok,latency_ms,error,status_code,checked_at,tls_expires_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(node_id,target) DO UPDATE SET ok=excluded.ok,latency_ms=excluded.latency_ms,error=excluded.error,status_code=excluded.status_code,checked_at=excluded.checked_at,tls_expires_at=excluded.tls_expires_at WHERE excluded.checked_at>probe_latest.checked_at`, nodeID, target, result.OK, result.LatencyMS, result.Error, result.StatusCode, timekey.Format(result.CheckedAt), expiry); err != nil {
 				return err
 			}
 			counted = result.CheckedAt

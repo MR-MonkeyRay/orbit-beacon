@@ -115,6 +115,7 @@ func prepareRuntimeCommand(name string, args []string, configure func(*flag.Flag
 		"interfaces":              fs.String("interfaces", "", "用 JSON 字符串数组覆盖受监控网卡"),
 		"disk_paths":              fs.String("disk-paths", "", "用 JSON 字符串数组覆盖受监控磁盘路径"),
 		"probe_targets":           fs.String("probe-targets", "", "用 JSON 字符串数组覆盖探测目标"),
+		"probe_expected_status":   fs.String("probe-expected-status", "", "用 JSON 对象覆盖探测预期状态码"),
 	}
 	if configure != nil {
 		if err := configure(fs); err != nil {
@@ -204,9 +205,8 @@ func runAgent(args []string, logger *slog.Logger) error {
 		return err
 	}
 	defer agent.Close()
-	err = agent.Run(command.ctx, reload, func() (v1.RuntimeSettings, error) {
-		next, err := command.loadAgent()
-		return next.RuntimeSettings, err
+	err = agent.Run(command.ctx, reload, func() (config.Agent, error) {
+		return command.loadAgent()
 	})
 	if errors.Is(err, context.Canceled) {
 		return nil

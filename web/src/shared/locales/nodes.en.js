@@ -255,6 +255,7 @@ export default {
   'nodes.probe.down': 'Down',
   'nodes.probe.latency': 'Latency',
   'nodes.probe.result': 'Result',
+  'nodes.probe.tlsExpires': 'Certificate expires',
   'nodes.probe.checked': 'Checked',
   'nodes.probe.notChecked': 'Not checked yet',
   'nodes.probe.uptime': '24h uptime',

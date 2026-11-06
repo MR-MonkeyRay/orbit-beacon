@@ -2773,11 +2773,12 @@ components:
     TokenProbeStatus:
       type: object
       additionalProperties: false
-      required: [status, latency_ms, status_code, checked_at, uptime_24h, checks_24h]
+      required: [status, latency_ms, status_code, checked_at, tls_expires_at, uptime_24h, checks_24h]
       properties:
         status: {type: string}
         latency_ms: {type: [number, 'null']}
         status_code: {type: [integer, 'null']}
+        tls_expires_at: {type: [string, 'null'], format: date-time, description: HTTPS leaf certificate expiry when a response arrived.}
         checked_at: {type: [string, 'null'], format: date-time}
         uptime_24h: {type: [number, 'null']}
         checks_24h: {type: integer}
@@ -3817,7 +3818,7 @@ components:
       type: array
       maxItems: 5
       uniqueItems: true
-      description: 唯一的服务探测目标。每个目标最多 1024 UTF-8 字节，不含空白。支持格式：tcp://host:port、不含 userinfo 或 fragment 的 http:// 或 https:// URL、icmp://host。目标对所有控制台用户可见；切勿在 URL（含查询字符串）中放入机密。
+      description: 唯一的服务探测目标。每个目标最多 1024 UTF-8 字节，不含空白。支持格式：tcp://host:port、不含 userinfo 或 fragment 的 http:// 或 https:// URL、icmp://host、dns://host。目标对所有控制台用户可见；切勿在 URL（含查询字符串）中放入机密。
       items:
         type: string
         x-minLengthBytes: 1
@@ -3938,13 +3939,14 @@ components:
     ProbeStatus:
       type: object
       additionalProperties: false
-      required: [target, status, latency_ms, error, status_code, checked_at, uptime_24h, checks_24h]
+      required: [target, status, latency_ms, error, status_code, checked_at, tls_expires_at, uptime_24h, checks_24h]
       properties:
         target: {type: string, x-maxLengthBytes: 1024}
         status: {type: string, enum: [up, down, pending], description: pending 表示尚无存储的最新结果。}
         latency_ms: {type: [number, 'null'], minimum: 0, maximum: 60000}
         error: {type: string, enum: ['', timeout, refused, dns, tls, http_status, unreachable, unsupported, error]}
         status_code: {type: [integer, 'null'], minimum: 100, maximum: 599, description: 适用时的 HTTP 响应状态码。}
+        tls_expires_at: {type: [string, 'null'], format: date-time, description: HTTPS leaf certificate expiry when a response arrived.}
         checked_at: {type: [string, 'null'], format: date-time}
         uptime_24h: {type: [number, 'null'], minimum: 0, maximum: 100, description: 100 * (checks - failures) / checks；checks 为零时为 null。}
         checks_24h: {type: integer, minimum: 0}
@@ -4069,6 +4071,7 @@ components:
         latency_ms: {type: [number, 'null'], minimum: 0, maximum: 60000, description: 成功结果非 null，失败为 null。}
         error: {type: string, enum: ['', timeout, refused, dns, tls, http_status, unreachable, unsupported, error], description: 当且仅当 ok 为 true 时为空；http_status 须附 status_code。}
         status_code: {type: [integer, 'null'], minimum: 100, maximum: 599, description: 仅 HTTP 探测时存在；error 为 http_status 时必填。}
+        tls_expires_at: {type: [string, 'null'], format: date-time, description: HTTPS leaf certificate expiry when a response arrived; null on handshake failure.}
         checked_at: {type: string, format: date-time}
     Report:
       type: object

@@ -38,6 +38,8 @@ type SchedulerOptions struct {
 	// 同步发布新的配置快照。
 	RuntimeSettings func() v1.RuntimeSettings
 	Reload          <-chan struct{}
+	// ConfigRevision 包含不会出现在上报中的本地配置变化。
+	ConfigRevision func() uint64
 	// ReloadConfig 在修改任何运行中的组件前完成完整校验。
 	ReloadConfig func(context.Context) error
 	Collect      func(context.Context) (v1.Metrics, error)
@@ -118,6 +120,10 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 				continue
 			}
 			before := s.options.RuntimeSettings()
+			var revision uint64
+			if s.options.ConfigRevision != nil {
+				revision = s.options.ConfigRevision()
+			}
 			reloadErr := errors.New("configuration loader unavailable")
 			if s.options.ReloadConfig != nil {
 				s.mu.Lock()
@@ -131,7 +137,7 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 				s.options.Logger.LogAttrs(ctx, slog.LevelWarn, "configuration_reload_rejected", oblogging.ErrorAttrs(reloadErr, "configuration_reload_rejected")...)
 				continue
 			}
-			if before.Equal(s.options.RuntimeSettings()) {
+			if before.Equal(s.options.RuntimeSettings()) && (s.options.ConfigRevision == nil || revision == s.options.ConfigRevision()) {
 				s.options.Logger.InfoContext(ctx, "configuration_unchanged")
 				continue
 			}

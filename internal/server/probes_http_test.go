@@ -40,6 +40,10 @@ func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 	if _, err := f.db.Exec(`INSERT INTO probe_latest(node_id,target,ok,latency_ms,error,status_code,checked_at) VALUES(?,?,1,12.5,'',200,?),(?,?,0,NULL,'timeout',NULL,?),(?,?,0,NULL,'timeout',503,?)`, node.ID, targets[1], checked, node.ID, targets[2], checked, node.ID, unconfigured, checked); err != nil {
 		t.Fatal(err)
 	}
+	expiry := now.Add(24 * time.Hour)
+	if _, err := f.db.Exec(`UPDATE probe_latest SET tls_expires_at=? WHERE node_id=? AND target=?`, timekey.Format(expiry), node.ID, targets[1]); err != nil {
+		t.Fatal(err)
+	}
 	hour := timekey.Format(now.Truncate(time.Hour))
 	boundary := timekey.Format(now.Truncate(time.Hour).Add(-23 * time.Hour))
 	old := timekey.Format(now.Truncate(time.Hour).Add(-24 * time.Hour))
@@ -51,14 +55,15 @@ func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 	assertHTTPStatus(t, response, http.StatusOK)
 	var envelope struct {
 		Probes []struct {
-			Target     string   `json:"target"`
-			Status     string   `json:"status"`
-			LatencyMS  *float64 `json:"latency_ms"`
-			Error      string   `json:"error"`
-			StatusCode *int     `json:"status_code"`
-			CheckedAt  *string  `json:"checked_at"`
-			Uptime24H  *float64 `json:"uptime_24h"`
-			Checks24H  int64    `json:"checks_24h"`
+			Target       string     `json:"target"`
+			Status       string     `json:"status"`
+			LatencyMS    *float64   `json:"latency_ms"`
+			Error        string     `json:"error"`
+			StatusCode   *int       `json:"status_code"`
+			CheckedAt    *string    `json:"checked_at"`
+			TLSExpiresAt *time.Time `json:"tls_expires_at"`
+			Uptime24H    *float64   `json:"uptime_24h"`
+			Checks24H    int64      `json:"checks_24h"`
 		} `json:"probes"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
@@ -76,7 +81,7 @@ func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &raw); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"latency_ms", "status_code", "checked_at", "uptime_24h"} {
+	for _, key := range []string{"latency_ms", "status_code", "checked_at", "tls_expires_at", "uptime_24h"} {
 		if value, ok := raw.Probes[0][key]; !ok || string(value) != "null" {
 			t.Fatalf("pending %s=%s present=%t; body=%s", key, value, ok, response.Body)
 		}
@@ -89,7 +94,7 @@ func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 	if p := envelope.Probes[0]; p.Status != "pending" || p.CheckedAt != nil || p.Uptime24H != nil || p.Checks24H != 0 {
 		t.Fatalf("pending=%+v", p)
 	}
-	if p := envelope.Probes[1]; p.Status != "up" || p.LatencyMS == nil || *p.LatencyMS != 12.5 || p.StatusCode == nil || *p.StatusCode != 200 || p.Uptime24H == nil || *p.Uptime24H != 80 || p.Checks24H != 5 {
+	if p := envelope.Probes[1]; p.TLSExpiresAt == nil || !p.TLSExpiresAt.Equal(expiry) || p.Status != "up" || p.LatencyMS == nil || *p.LatencyMS != 12.5 || p.StatusCode == nil || *p.StatusCode != 200 || p.Uptime24H == nil || *p.Uptime24H != 80 || p.Checks24H != 5 {
 		t.Fatalf("up=%+v", p)
 	}
 	if p := envelope.Probes[2]; p.Status != "down" || p.Error != "timeout" || p.LatencyMS != nil || p.Uptime24H == nil || *p.Uptime24H != 0 || p.Checks24H != 2 {

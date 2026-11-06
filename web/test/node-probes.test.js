@@ -83,7 +83,7 @@ test('probe up and down rows retain server order, badges, latency, error, timest
     assert.equal(rows[0].querySelector('time').getAttribute('datetime'), checked);
     assert.equal(rows[1].querySelector('.badge').classList.contains('offline'), true);
     assert.match(rows[1].textContent, new RegExp(`${copyPattern('nodes.probe.down').source}.*${copyPattern('nodes.probe.http').source}.*${copyPattern('nodes.probe.checks', {percent: '0%', count: 1}).source}`));
-    assert.doesNotMatch(rows[1].textContent, /503/);
+    assert.match(rows[1].textContent, /503/);
     assert.doesNotMatch(env.root.textContent, copyPattern('nodes.probe.pendingHint'));
     assert.equal(env.root.querySelector('.probes-body').getAttribute('aria-busy'), 'false');
   } finally { env.cleanup(); }
@@ -145,5 +145,29 @@ test('navigation cancels probe requests and permanently clears polling', async (
     env.root.remove(); env.mutations(); env.body.append(env.root); env.mutations();
     assert.equal(env.timers.size, 0);
     assert.equal(env.requests.length, 1);
+  } finally { env.cleanup(); }
+});
+
+
+test('probe certificate expiry appears only on probes with a certificate', async () => {
+  const env = setup();
+  try {
+    const expiry = '2027-01-02T03:04:05Z';
+    env.respond(env.requests[0], {probes: [probe({target: 'https://example.com', status: 'down', error: 'http_status', status_code: 302, tls_expires_at: expiry}), probe({target: 'dns://example.com'})]});
+    await flush();
+    const rows = env.root.querySelectorAll('.probe-row');
+    assert.ok(rows[0].textContent.includes(copy('nodes.probe.tlsExpires')));
+    assert.ok(rows[0].textContent.includes(`${copy('nodes.probe.http')} (302)`));
+    assert.equal(rows[0].querySelector('time').getAttribute('datetime'), expiry);
+    assert.ok(!rows[1].textContent.includes(copy('nodes.probe.tlsExpires')));
+  } finally { env.cleanup(); }
+});
+
+test('probe list without certificate expiry has no expiry label', async () => {
+  const env = setup();
+  try {
+    env.respond(env.requests[0], {probes: [probe(), probe({target: 'https://example.com', tls_expires_at: null})]});
+    await flush();
+    assert.ok(!env.root.textContent.includes(copy('nodes.probe.tlsExpires')));
   } finally { env.cleanup(); }
 });

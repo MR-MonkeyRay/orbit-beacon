@@ -114,12 +114,13 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent doctor \
 | `interfaces` | `[]` | 最多 8 项；空数组使用默认路由网卡 |
 | `disk_paths` | `[]` | 最多 8 个绝对路径；空数组使用默认根路径 |
 | `probe_targets` | `[]` | 最多 5 项；空数组不探测 |
+| `probe_expected_status` | `{}` | HTTP(S) 目标到预期状态码（100–599 整数）的本地映射 |
 | `remote_commands` | `["upgrade","restart","stop"]` | 允许的远程指令；native 仅在安装策略配置了升级地址时支持 upgrade，docker 仅 restart，foreground 仅 stop，取交集生效，`[]` 全部关闭 |
 | `disabled_features` | `[]` | 关闭 disk、network、traffic、probes、disk_io、pressure、temperature 中的指定功能，默认全部启用；disk 同时关闭 disk_io，network 同时关闭 traffic，probes 清空探测目标 |
 
 选择还受 JSON 转义后 64 KiB 报告预算约束。
 
-环境变量为 `ORBITBEACON_REPORT_INTERVAL_SECONDS` 等大写参数名；`remote_commands` 和 `disabled_features` 不提供 flag，其余 flag 使用 `--report-interval-seconds` 等连字符形式。列表必须是 JSON 数组字符串，例如 `ORBITBEACON_INTERFACES='["eth0"]'` 或 `--probe-targets '["https://example.com/a,b"]'`，不按逗号拆分。
+环境变量为 `ORBITBEACON_REPORT_INTERVAL_SECONDS` 等大写参数名；`remote_commands` 和 `disabled_features` 不提供 flag，其余 flag 使用 `--report-interval-seconds` 等连字符形式。列表必须是 JSON 数组字符串，例如 `ORBITBEACON_INTERFACES='["eth0"]'` 或 `--probe-targets '["https://example.com/a,b"]'`，不按逗号拆分。`probe_expected_status` 使用 JSON 对象，例如 `--probe-expected-status '{"https://example.com/health":204}'`。
 
 修改后执行 `sudo systemctl reload orbitbeacon-agent`（前台进程用 `kill -HUP <PID>`）。reload 重读原 JSON，沿用启动时环境和显式 flags，不重读 policy；有效变更在采样边界完整应用并重采，不重置身份或累计流量，坏配置保留旧值。检查日志 `configuration_reloaded` / `configuration_unchanged` / `configuration_reload_rejected` 和下一报告；systemctl 成功只代表信号送达。
 
@@ -238,9 +239,14 @@ Ctrl+C 或 SIGTERM 停止。额外的 Agent JSON 配置非必需。若需要 sys
 | --- | --- |
 | `tcp://host:port` | 仅测 TCP 建连；端口 1–65535，IPv6 如 `tcp://[::1]:443` |
 | `http://host/path` / `https://host/path` | GET 至响应头的耗时；低于 400（包括 3xx）为成功，不跟随重定向，不保存 Cookie，最多丢弃 64 KiB 响应体；HTTPS 校验证书并使用系统信任，不使用安装策略的私有 CA |
+| `dns://host` | DNS 地址解析耗时；至少一个地址为成功，仅接受主机，不含端口、路径、查询、凭据或片段 |
 | `icmp://host` | ICMP Echo 往返耗时；不能带端口、路径或查询；仅 Linux 非特权 datagram socket 支持，其他系统为 `unsupported` |
 
-每 60 秒执行一次，单次超时 5 秒，最多并发 5 个；reload 后新增目标立即开始检查。报告携带该次采样目标集合中最近完成的结果，未完成的省略，删除目标后停止携带；结果去重见[状态与历史](architecture.md#状态与历史)。结果不包含响应体或原始错误信息。
+`probe_expected_status` 是仅保存在本地的 JSON 对象，例如 `{"https://example.com/health":204}`：键须在 `probe_targets` 中且为 HTTP(S)，值须为 100–599 的整数。设置后仅精确匹配成功（含低于 400 的不匹配响应），未设置仍以低于 400 为成功；reload 生效，不随报告发送。
+
+HTTPS 收到响应时携带叶证书到期时间 `tls_expires_at`，状态码不匹配时仍携带；握手失败（含过期证书）为 `tls` 且无到期时间。
+
+每 60 秒执行一次，单次超时 5 秒，最多并发 5 个；reload 后新增目标立即开始检查。报告携带该次采样目标集合中最近完成的结果，未完成的省略，删除目标后停止携带；结果去重见[状态与历史](architecture.md#状态与历史)。结果不包含响应体、原始错误信息或证书主体。
 
 HTTP 探测不使用 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`，不能依赖代理做出口限制。Linux ICMP 要求 Agent 的组 ID 位于 `net.ipv4.ping_group_range`；用 `sysctl net.ipv4.ping_group_range` 检查，按主机或容器策略配置允许范围。权限不足报告 `unsupported`，不会提权，也不需要 `CAP_NET_RAW`。
 

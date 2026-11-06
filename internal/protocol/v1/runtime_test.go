@@ -90,6 +90,23 @@ func TestMaximumAdmittedRuntimeReportFitsWireLimit(t *testing.T) {
 	if err := runtime.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	for i, length := range []int{1024, 1024, 1024, 884, 54} {
+		prefix := fmt.Sprintf("https://probe%d.example/", i)
+		target := prefix + strings.Repeat("a", length-len(prefix))
+		runtime.ProbeTargets = append(runtime.ProbeTargets, target)
+		latency, code := 0.00010000000000000002, 599
+		expiry := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.FixedZone("widest", 23*3600+59*60))
+		report.ProbeResults = append(report.ProbeResults, v1.ProbeResult{Target: target, OK: true, LatencyMS: &latency, StatusCode: &code, CheckedAt: report.SampledAt, TLSExpiresAt: &expiry})
+	}
+	if err := runtime.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	over := runtime
+	over.ProbeTargets = append([]string{}, runtime.ProbeTargets...)
+	over.ProbeTargets[4] += "a"
+	if err := over.Validate(); err == nil {
+		t.Fatal("saturated selection accepted an extra byte")
+	}
 	runtime.DisabledFeatures = v1.DisabledFeatureOrder()
 	widestRate, widestPercent, widestTemperature := 999999999999999.9, 99.99, 149.99
 	report.Metrics.DiskIO = &v1.DiskIOMetrics{ReadBytesPerSec: widestRate, WriteBytesPerSec: widestRate, BusyPercent: widestPercent}
@@ -126,6 +143,7 @@ func TestMaximumAdmittedRuntimeReportFitsWireLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Logf("admitted report: %d bytes; headroom: %d bytes", len(encoded), v1.MaxMessageBytes-len(encoded))
 	if len(encoded) > v1.MaxMessageBytes {
 		t.Fatalf("admitted runtime generated %d-byte report", len(encoded))
 	}

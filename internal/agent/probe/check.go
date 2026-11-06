@@ -27,9 +27,10 @@ const (
 
 // Checker 执行单个服务探测，可并发使用。
 type Checker struct {
-	timeout   time.Duration
-	transport *http.Transport
-	client    *http.Client
+	lookupIPAddr func(context.Context, string) ([]net.IPAddr, error)
+	timeout      time.Duration
+	transport    *http.Transport
+	client       *http.Client
 }
 
 // NewChecker 创建探测器，使用给定的单次探测超时。
@@ -47,7 +48,7 @@ func NewChecker(timeout time.Duration) *Checker {
 			return http.ErrUseLastResponse
 		},
 	}
-	return &Checker{timeout: timeout, transport: transport, client: client}
+	return &Checker{lookupIPAddr: net.DefaultResolver.LookupIPAddr, timeout: timeout, transport: transport, client: client}
 }
 
 // Close 释放探测器持有的空闲 HTTP 连接。
@@ -59,6 +60,11 @@ func (c *Checker) Close() {
 
 // Check 对目标探测一次，返回可直接上报的结果。
 func (c *Checker) Check(ctx context.Context, target string) v1.ProbeResult {
+	return c.CheckExpectedStatus(ctx, target, 0)
+}
+
+// CheckExpectedStatus 使用本地期望状态；零表示接受所有低于 400 的响应。
+func (c *Checker) CheckExpectedStatus(ctx context.Context, target string, expected int) v1.ProbeResult {
 	checkedAt := time.Now().UTC()
 	result := v1.ProbeResult{Target: target, CheckedAt: checkedAt}
 	if c == nil {
@@ -77,11 +83,19 @@ func (c *Checker) Check(ctx context.Context, target string) v1.ProbeResult {
 
 	var latency time.Duration
 	switch strings.ToLower(u.Scheme) {
+	case "dns":
+		started := time.Now()
+		var addresses []net.IPAddr
+		addresses, err = c.lookupIPAddr(probeCtx, u.Hostname())
+		latency = time.Since(started)
+		if err != nil || len(addresses) == 0 {
+			err = dnsProbeError{err}
+		}
 	case "tcp":
 		latency, err = c.checkTCP(probeCtx, u.Host)
 	case "http", "https":
 		var status int
-		latency, status, err = c.checkHTTP(probeCtx, target)
+		latency, status, result.TLSExpiresAt, err = c.checkHTTP(probeCtx, target, expected)
 		if status != 0 {
 			result.StatusCode = &status
 		}
@@ -123,14 +137,19 @@ func (c *Checker) checkTCP(ctx context.Context, address string) (time.Duration, 
 
 type httpStatusError struct{}
 type tlsProbeError struct{ error }
+type dnsProbeError struct{ error }
+
+func (err dnsProbeError) Error() string { return "DNS lookup failure" }
+func (err dnsProbeError) Unwrap() error { return err.error }
+
 type errorHolder struct{ error }
 
 func (err tlsProbeError) Unwrap() error { return err.error }
 
-func (c *Checker) checkHTTP(ctx context.Context, target string) (time.Duration, int, error) {
+func (c *Checker) checkHTTP(ctx context.Context, target string, expected int) (time.Duration, int, *time.Time, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
 	request.Header.Set("User-Agent", "OrbitBeacon-Probe/"+buildinfo.Version)
 	var handshakeError atomic.Pointer[errorHolder]
@@ -146,19 +165,24 @@ func (c *Checker) checkHTTP(ctx context.Context, target string) (time.Duration, 
 	latency := time.Since(started)
 	if err != nil {
 		if failure := handshakeError.Load(); failure != nil {
-			return 0, 0, tlsProbeError{failure.error}
+			return 0, 0, nil, tlsProbeError{failure.error}
 		}
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxHTTPBody))
+	var expiry *time.Time
+	if request.URL.Scheme == "https" && response.TLS != nil && len(response.TLS.PeerCertificates) > 0 {
+		value := response.TLS.PeerCertificates[0].NotAfter
+		expiry = &value
+	}
 	if response.StatusCode < 100 || response.StatusCode > 599 {
-		return 0, 0, errors.New("invalid HTTP status code")
+		return 0, 0, expiry, errors.New("invalid HTTP status code")
 	}
-	if response.StatusCode >= http.StatusBadRequest {
-		return 0, response.StatusCode, httpStatusError{}
+	if expected != 0 && response.StatusCode != expected || expected == 0 && response.StatusCode >= http.StatusBadRequest {
+		return 0, response.StatusCode, expiry, httpStatusError{}
 	}
-	return latency, response.StatusCode, nil
+	return latency, response.StatusCode, expiry, nil
 }
 
 func (httpStatusError) Error() string { return "HTTP status failure" }
@@ -173,6 +197,10 @@ func classifyError(err error) string {
 	}
 	if errors.Is(err, context.DeadlineExceeded) || isTimeout(err) {
 		return "timeout"
+	}
+	var lookupError dnsProbeError
+	if errors.As(err, &lookupError) {
+		return "dns"
 	}
 	if errors.Is(err, syscall.ECONNREFUSED) {
 		return "refused"

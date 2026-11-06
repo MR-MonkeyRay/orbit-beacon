@@ -152,7 +152,7 @@ func TestAPITokenHTTPFieldsAndWrites(t *testing.T) {
 	if _, err := f.db.Exec(`UPDATE nodes SET notes='private-notes',agent_runtime=? WHERE id=?`, string(encoded), id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.db.Exec(`INSERT INTO probe_latest(node_id,target,ok,error,checked_at) VALUES(?,?,0,'refused',?)`, id, runtime.ProbeTargets[0], timekey.Format(f.now)); err != nil {
+	if _, err := f.db.Exec(`INSERT INTO probe_latest(node_id,target,ok,error,checked_at,tls_expires_at,status_code) VALUES(?,?,0,'http_status',?,?,302)`, id, runtime.ProbeTargets[0], timekey.Format(f.now), timekey.Format(f.now.Add(24*time.Hour))); err != nil {
 		t.Fatal(err)
 	}
 	base := "/api/v1/nodes/" + id
@@ -169,7 +169,11 @@ func TestAPITokenHTTPFieldsAndWrites(t *testing.T) {
 	probes := apiTokenRequest(t, f.handler, "GET", base+"/probes", bearer, cookie)
 	probeObject := tokenObject(t, probes)
 	assertLiteralKeys(t, probeObject, "probes")
-	assertLiteralKeys(t, probeObject["probes"].([]any)[0], "status", "latency_ms", "status_code", "checked_at", "uptime_24h", "checks_24h")
+	assertLiteralKeys(t, probeObject["probes"].([]any)[0], "status", "latency_ms", "status_code", "checked_at", "tls_expires_at", "uptime_24h", "checks_24h")
+	probe := probeObject["probes"].([]any)[0].(map[string]any)
+	if probe["tls_expires_at"] != f.now.Add(24*time.Hour).Format(time.RFC3339Nano) || probe["status_code"] != float64(302) {
+		t.Fatalf("probe=%v", probe)
+	}
 	for _, response := range []*httptest.ResponseRecorder{detail, latest, probes} {
 		for _, private := range []string{`"notes"`, `"system"`, `"runtime"`, `"target"`, `"error"`, `"hostname"`, "private-notes", "private-hostname", "private-target", "private-error", token} {
 			if strings.Contains(response.Body.String(), private) {

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -426,12 +427,13 @@ func (t Traffic) Validate() error {
 }
 
 type ProbeResult struct {
-	Target     string    `json:"target"`
-	OK         bool      `json:"ok"`
-	LatencyMS  *float64  `json:"latency_ms"`
-	Error      string    `json:"error"`
-	StatusCode *int      `json:"status_code"`
-	CheckedAt  time.Time `json:"checked_at"`
+	TLSExpiresAt *time.Time `json:"tls_expires_at"`
+	Target       string     `json:"target"`
+	OK           bool       `json:"ok"`
+	LatencyMS    *float64   `json:"latency_ms"`
+	Error        string     `json:"error"`
+	StatusCode   *int       `json:"status_code"`
+	CheckedAt    time.Time  `json:"checked_at"`
 }
 
 func (p ProbeResult) Validate() error {
@@ -466,10 +468,20 @@ func (p ProbeResult) Validate() error {
 			return errors.New("probe result status code must be between 100 and 599")
 		}
 	}
-	if p.CheckedAt.IsZero() {
+	if p.TLSExpiresAt != nil && (!strings.HasPrefix(p.Target, "https://") || !storableProbeTime(*p.TLSExpiresAt)) {
+		return errors.New("TLS expiry requires an HTTPS target and a storable time")
+	}
+	if !storableProbeTime(p.CheckedAt) {
 		return errors.New("probe result checked time is required")
 	}
 	return nil
+}
+
+// storableProbeTime 要求换算到 UTC 后仍是四位年份：timekey 的定宽格式写入后无法读回
+// 其他年份，单个 Agent 就能让探测查询和备份校验失败。
+func storableProbeTime(value time.Time) bool {
+	year := value.UTC().Year()
+	return !value.IsZero() && year >= 1 && year <= 9999
 }
 
 // ValidateProbeTarget 按传输协议格式校验单个服务探测目标。
@@ -529,13 +541,20 @@ func ValidateProbeTarget(target string) error {
 		return nil
 	}
 
+	if host, ok := strings.CutPrefix(target, "dns://"); ok {
+		if !validProbeHost(host) {
+			return errors.New("DNS targets must use dns://host with a valid host")
+		}
+		return nil
+	}
+
 	if host, ok := strings.CutPrefix(target, "icmp://"); ok {
 		if host == "" || !validProbeHost(host) {
 			return errors.New("ICMP targets must use icmp://host with a valid host")
 		}
 		return nil
 	}
-	return errors.New("targets must use tcp://, http://, https://, or icmp://")
+	return errors.New("targets must use tcp://, http://, https://, dns://, or icmp://")
 }
 
 // rawURLHost 原样返回 authority 中不带端口的主机。
@@ -646,4 +665,14 @@ func validDiskPath(path string) bool {
 
 func validInterfaceName(name string) bool {
 	return strings.TrimSpace(name) != "" && len(name) <= 255 && !strings.ContainsAny(name, "\x00\r\n")
+}
+
+// ValidateProbeExpectedStatus 校验仅供 Agent 本地使用的 HTTP 期望状态。
+func ValidateProbeExpectedStatus(targets []string, expected map[string]int) error {
+	for target, status := range expected {
+		if !slices.Contains(targets, target) || (!strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://")) || status < 100 || status > 599 {
+			return errors.New("probe_expected_status requires a configured HTTP target and an integer status between 100 and 599")
+		}
+	}
+	return nil
 }

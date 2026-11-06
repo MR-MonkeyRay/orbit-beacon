@@ -17,8 +17,8 @@ func TestObservedProbesReadsConfiguredTargetsAndHourlySummary(t *testing.T) {
 VALUES('node','node',X'01','1','session','{"probe_targets":["https://example.test"]}',?)`, timekey.Format(now)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO probe_latest(node_id,target,ok,latency_ms,error,status_code,checked_at)
-VALUES('node','https://example.test',1,12.5,'',200,?)`, timekey.Format(now)); err != nil {
+	if _, err := db.Exec(`INSERT INTO probe_latest(node_id,target,ok,latency_ms,error,status_code,checked_at,tls_expires_at)
+VALUES('node','https://example.test',1,12.5,'',200,?,?)`, timekey.Format(now), timekey.Format(now.Add(24*time.Hour))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms)
@@ -34,7 +34,7 @@ VALUES('node','https://example.test',?,4,1,50)`, timekey.Format(now.Add(-time.Ho
 		t.Fatalf("probes=%+v", probes)
 	}
 	probe := probes[0]
-	if probe.Target != "https://example.test" || probe.Status != "up" || probe.LatencyMS == nil || *probe.LatencyMS != 12.5 || probe.StatusCode == nil || *probe.StatusCode != 200 || probe.CheckedAt == nil || !probe.CheckedAt.Equal(now) || probe.Checks24H != 4 || probe.Uptime24H == nil || *probe.Uptime24H != 75 {
+	if probe.TLSExpiresAt == nil || !probe.TLSExpiresAt.Equal(now.Add(24*time.Hour)) || probe.Target != "https://example.test" || probe.Status != "up" || probe.LatencyMS == nil || *probe.LatencyMS != 12.5 || probe.StatusCode == nil || *probe.StatusCode != 200 || probe.CheckedAt == nil || !probe.CheckedAt.Equal(now) || probe.Checks24H != 4 || probe.Uptime24H == nil || *probe.Uptime24H != 75 {
 		t.Fatalf("probe=%+v", probe)
 	}
 }

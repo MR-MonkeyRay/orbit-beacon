@@ -255,6 +255,7 @@ export default {
   'nodes.probe.down': '不可用',
   'nodes.probe.latency': '延迟',
   'nodes.probe.result': '结果',
+  'nodes.probe.tlsExpires': '证书到期时间',
   'nodes.probe.checked': '检测时间',
   'nodes.probe.notChecked': '尚未检测',
   'nodes.probe.uptime': '24 小时可用率',

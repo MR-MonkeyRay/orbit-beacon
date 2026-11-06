@@ -11,14 +11,15 @@ import (
 )
 
 type ObservedProbe struct {
-	Target     string
-	Status     string
-	LatencyMS  *float64
-	Error      string
-	StatusCode *int
-	CheckedAt  *time.Time
-	Uptime24H  *float64
-	Checks24H  int64
+	Target       string
+	Status       string
+	LatencyMS    *float64
+	Error        string
+	StatusCode   *int
+	TLSExpiresAt *time.Time
+	CheckedAt    *time.Time
+	Uptime24H    *float64
+	Checks24H    int64
 }
 
 func (s *Service) ObservedProbes(ctx context.Context, id string, window time.Time) ([]ObservedProbe, error) {
@@ -26,7 +27,7 @@ func (s *Service) ObservedProbes(ctx context.Context, id string, window time.Tim
 	// 轮换不会把旧目标变成新身份的探测项。
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT nodes.id, selected.value, latest.ok, latest.latency_ms, latest.error,
-		       latest.status_code, latest.checked_at,
+		       latest.status_code, latest.checked_at, latest.tls_expires_at,
 		       coalesce(sum(hourly.checks),0), coalesce(sum(hourly.failures),0)
 		FROM nodes
 		LEFT JOIN json_each(CASE WHEN length(nodes.token_hash)>0 AND nodes.run_generation!='0' AND nodes.report_session_id!='' THEN nullif(nodes.agent_runtime,'') ELSE NULL END, '$.probe_targets') AS selected ON true
@@ -42,12 +43,12 @@ func (s *Service) ObservedProbes(ctx context.Context, id string, window time.Tim
 	for rows.Next() {
 		found = true
 		var nodeID string
-		var target, failure, checked sql.NullString
+		var target, failure, checked, expiry sql.NullString
 		var ok sql.NullBool
 		var latency sql.NullFloat64
 		var status sql.NullInt64
 		var checks, failures int64
-		if err := rows.Scan(&nodeID, &target, &ok, &latency, &failure, &status, &checked, &checks, &failures); err != nil {
+		if err := rows.Scan(&nodeID, &target, &ok, &latency, &failure, &status, &checked, &expiry, &checks, &failures); err != nil {
 			return nil, err
 		}
 		if !target.Valid {
@@ -71,6 +72,13 @@ func (s *Service) ObservedProbes(ctx context.Context, id string, window time.Tim
 				return nil, fmt.Errorf("parse latest probe timestamp: %w", err)
 			}
 			probe.CheckedAt = &stamp
+		}
+		if expiry.Valid {
+			stamp, err := timekey.Parse(expiry.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse probe TLS expiry: %w", err)
+			}
+			probe.TLSExpiresAt = &stamp
 		}
 		if checks > 0 {
 			uptime := 100 * float64(checks-failures) / float64(checks)

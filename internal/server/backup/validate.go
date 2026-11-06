@@ -194,7 +194,7 @@ func nullableColumn(table, column string) bool {
 	case "node_observations":
 		return column == "last_seen"
 	case "probe_latest":
-		return oneOf(column, "latency_ms", "status_code")
+		return oneOf(column, "latency_ms", "status_code", "tls_expires_at")
 	case "audit_events":
 		return oneOf(column, "actor_id", "target_id")
 	case "alert_events":
@@ -369,7 +369,12 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 			v := int(r.integer("status_code"))
 			code = &v
 		}
-		return (v1.ProbeResult{Target: r.text("target"), OK: r.integer("ok") == 1, LatencyMS: r.floatPointer("latency_ms"), Error: r.text("error"), StatusCode: code, CheckedAt: at}).Validate()
+		var expiry *time.Time
+		if r["tls_expires_at"] != nil {
+			v, _ := timekey.Parse(r.text("tls_expires_at"))
+			expiry = &v
+		}
+		return (v1.ProbeResult{TLSExpiresAt: expiry, Target: r.text("target"), OK: r.integer("ok") == 1, LatencyMS: r.floatPointer("latency_ms"), Error: r.text("error"), StatusCode: code, CheckedAt: at}).Validate()
 	case "probe_hourly":
 		at, err := timekey.Parse(r.text("hour"))
 		if err != nil || timekey.Format(at) != r.text("hour") || !at.Equal(at.Truncate(time.Hour)) || r.text("node_id") == "" || r.integer("checks") < 0 || r.integer("failures") < 0 || r.integer("failures") > r.integer("checks") || !finite(r.number("latency_sum_ms")) || r.number("latency_sum_ms") < 0 {

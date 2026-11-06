@@ -25,10 +25,11 @@ type Options struct {
 }
 
 type targetState struct {
-	next    time.Time
-	running bool
-	cancel  context.CancelFunc
-	result  *v1.ProbeResult
+	expected int
+	next     time.Time
+	running  bool
+	cancel   context.CancelFunc
+	result   *v1.ProbeResult
 }
 
 // Runner 为每个目标保留最新结果，读取结果不等待网络操作；
@@ -55,6 +56,14 @@ func NewRunner(options Options) *Runner {
 // SetTargets 立即清除已移除目标的结果，并取消其探测。
 // 新增目标会立即唤醒调度器，无需等待下一个间隔。
 func (r *Runner) SetTargets(targets []string) error {
+	return r.SetConfig(targets, nil)
+}
+
+// SetConfig 原子替换本地目标及期望状态，取消并丢弃旧配置的检查。
+func (r *Runner) SetConfig(targets []string, expected map[string]int) error {
+	if err := v1.ValidateProbeExpectedStatus(targets, expected); err != nil {
+		return err
+	}
 	if len(targets) > maxConcurrent {
 		return errors.New("too many probe targets")
 	}
@@ -71,7 +80,7 @@ func (r *Runner) SetTargets(targets []string) error {
 	r.mu.Lock()
 	changed := false
 	for target, state := range r.targets {
-		if !desired[target] {
+		if !desired[target] || state.expected != expected[target] {
 			if state.cancel != nil {
 				state.cancel()
 			}
@@ -81,7 +90,7 @@ func (r *Runner) SetTargets(targets []string) error {
 	}
 	for target := range desired {
 		if r.targets[target] == nil {
-			r.targets[target] = &targetState{}
+			r.targets[target] = &targetState{expected: expected[target]}
 			changed = true
 		}
 	}
@@ -112,6 +121,10 @@ func (r *Runner) Results(targets []string) []v1.ProbeResult {
 			value := *result.StatusCode
 			result.StatusCode = &value
 		}
+		if result.TLSExpiresAt != nil {
+			value := *result.TLSExpiresAt
+			result.TLSExpiresAt = &value
+		}
 		results = append(results, result)
 	}
 	return results
@@ -131,11 +144,13 @@ func (r *Runner) Run(ctx context.Context) error {
 	defer r.running.Store(false)
 	ctx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
-	check := r.options.Check
-	if check == nil {
+	check := func(ctx context.Context, target string, expected int) v1.ProbeResult {
+		return r.options.Check(ctx, target)
+	}
+	if r.options.Check == nil {
 		checker := NewChecker(r.options.Timeout)
 		defer checker.Close()
-		check = checker.Check
+		check = checker.CheckExpectedStatus
 	}
 	defer func() { cancel(); workers.Wait() }()
 	timer := time.NewTimer(0)
@@ -159,7 +174,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			workers.Add(1)
 			go func(target string, state *targetState) {
 				defer workers.Done()
-				result := check(checkCtx, target)
+				result := check(checkCtx, target, state.expected)
 				stop()
 				r.mu.Lock()
 				r.active--

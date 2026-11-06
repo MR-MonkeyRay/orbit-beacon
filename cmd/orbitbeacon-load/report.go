@@ -49,10 +49,12 @@ func makeReport(o options, n node, seq uint64, now time.Time) v1.Report {
 	bytes := seq * uint64(o.interval/time.Second) * uint64(o.networks*(o.networks+1)/2) * 1024
 	report.Traffic = []v1.Traffic{{Epoch: n.epoch, PeriodStart: now.Truncate(time.Hour), RxBytes: v1.DecimalUint64(strconv.FormatUint(bytes, 10)), TxBytes: v1.DecimalUint64(strconv.FormatUint(bytes/2, 10))}}
 	for i := range o.probes {
-		target := fmt.Sprintf("tcp://load-%d.invalid:443", i+1)
+		target := fmt.Sprintf("https://load-%d.invalid/", i+1)
 		latency := float64(i + 1)
+		expiry := now.Add(30 * 24 * time.Hour)
+		status := 200
 		report.Runtime.ProbeTargets = append(report.Runtime.ProbeTargets, target)
-		report.ProbeResults = append(report.ProbeResults, v1.ProbeResult{Target: target, OK: true, LatencyMS: &latency, CheckedAt: now})
+		report.ProbeResults = append(report.ProbeResults, v1.ProbeResult{Target: target, OK: true, LatencyMS: &latency, CheckedAt: now, StatusCode: &status, TLSExpiresAt: &expiry})
 	}
 	return report
 }

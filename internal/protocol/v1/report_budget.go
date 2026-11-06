@@ -20,7 +20,8 @@ var ErrReportBudget = errors.New("selection exceeds report encoding budget")
 const reportEnvelopeBytes = 15 * 1024
 
 // 为每个探测结果的固定字段预留空间；目标本身在下方按 encoding/json 的转义规则计入。
-const probeResultEnvelopeBytes = 160
+// tls_expires_at 另预留 56 字节，覆盖带纳秒及数字时区的最长时间编码。
+const probeResultEnvelopeBytes = 216
 
 func selectionFitsReport(c RuntimeSettings) bool {
 	bytes := 0

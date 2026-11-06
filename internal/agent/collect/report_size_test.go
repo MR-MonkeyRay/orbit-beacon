@@ -32,7 +32,8 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 	if err := config.Validate(); !errors.Is(err, v1.ErrReportBudget) {
 		t.Fatalf("oversized selections must be rejected by budget: %v", err)
 	}
-	// Retain four longest targets and fill the last target up to the admission limit.
+	config.ProbeTargets[3] = config.ProbeTargets[3][:884]
+	// Retain three maximum-length targets and fill the last target up to the admission limit.
 	config.ProbeTargets[4] = config.ProbeTargets[4][:55]
 	if err := config.Validate(); !errors.Is(err, v1.ErrReportBudget) {
 		t.Fatalf("selection over the limit must be rejected: %v", err)
@@ -84,9 +85,12 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 	for i := range 24 {
 		report.Traffic = append(report.Traffic, v1.Traffic{Epoch: strings.Repeat("f", 64), PeriodStart: at.Truncate(time.Hour).Add(-time.Duration(i) * time.Hour), RxBytes: "9223372036854775807", TxBytes: "9223372036854775807"})
 	}
+	expiry := at.In(time.FixedZone("widest", 23*3600+59*60))
+	// Keep the year encodable after applying the widest numeric UTC offset.
+	expiry = time.Date(9999, 12, 31, 23, 59, 59, 999999999, expiry.Location())
 	for _, target := range config.ProbeTargets {
 		latency, code := 0.00010000000000000002, 599
-		report.ProbeResults = append(report.ProbeResults, v1.ProbeResult{Target: target, OK: true, LatencyMS: &latency, StatusCode: &code, CheckedAt: at})
+		report.ProbeResults = append(report.ProbeResults, v1.ProbeResult{Target: target, OK: true, LatencyMS: &latency, StatusCode: &code, CheckedAt: at, TLSExpiresAt: &expiry})
 	}
 	if err := report.Validate(); err != nil {
 		t.Fatalf("selected series lost report validity: %v", err)
@@ -104,7 +108,7 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 	}
 	for _, value := range config.ProbeTargets {
 		encoded, _ := json.Marshal(value)
-		selectionBytes += 2*len(encoded) + 160
+		selectionBytes += 2*len(encoded) + 216
 	}
 	envelope := len(data) - selectionBytes
 	t.Logf("maximum ordinary report: %d bytes; fixed envelope: %d bytes; wire headroom: %d bytes", len(data), envelope, v1.MaxMessageBytes-len(data))

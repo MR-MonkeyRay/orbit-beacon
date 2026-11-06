@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"fmt"
 	"testing"
@@ -101,12 +102,15 @@ func TestProbeDrainPersistsPendingAndOwnsCallerPointers(t *testing.T) {
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
 	latency, status := 7.25, 204
+	expiry := f.now.Add(24 * time.Hour)
+	wantExpiry := expiry
 	target := "https://example.test/health"
-	f.report.ProbeResults = []v1.ProbeResult{{Target: target, OK: true, LatencyMS: &latency, StatusCode: &status, CheckedAt: f.now}}
+	f.report.ProbeResults = []v1.ProbeResult{{Target: target, OK: true, LatencyMS: &latency, StatusCode: &status, CheckedAt: f.now, TLSExpiresAt: &expiry}}
 	if _, err := probeAccept(t, f); err != nil {
 		t.Fatal(err)
 	}
 	latency, status = 999, 599
+	expiry = expiry.Add(time.Hour)
 	if err := f.service.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +118,42 @@ func TestProbeDrainPersistsPendingAndOwnsCallerPointers(t *testing.T) {
 	var gotStatus int
 	if err := f.db.QueryRow(`SELECT latency_ms,status_code FROM probe_latest WHERE node_id=? AND target=?`, f.id, target).Scan(&gotLatency, &gotStatus); err != nil || gotLatency != 7.25 || gotStatus != 204 {
 		t.Fatalf("latency=%v status=%d err=%v", gotLatency, gotStatus, err)
+	}
+	var gotExpiry string
+	if err := f.db.QueryRow(`SELECT tls_expires_at FROM probe_latest WHERE node_id=? AND target=?`, f.id, target).Scan(&gotExpiry); err != nil || gotExpiry != timekey.Format(wantExpiry) {
+		t.Fatalf("expiry=%s err=%v", gotExpiry, err)
+	}
+	observed, err := nodes.NewService(f.db, nodes.Options{}).ObservedProbes(t.Context(), f.id, f.now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, p := range observed {
+		if p.Target == target {
+			found = true
+			if p.TLSExpiresAt == nil || !p.TLSExpiresAt.Equal(wantExpiry) {
+				t.Fatalf("observed=%+v", p)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("stored probe not returned")
+	}
+
+	f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }, PersistInterval: 30 * time.Second})
+	f.now = f.now.Add(time.Minute)
+	f.report.Seq++
+	failed := probeResult(target, f.now, false)
+	f.report.ProbeResults = []v1.ProbeResult{failed}
+	if _, err := probeAccept(t, f); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var cleared sql.NullString
+	if err := f.db.QueryRow(`SELECT tls_expires_at FROM probe_latest WHERE node_id=? AND target=?`, f.id, target).Scan(&cleared); err != nil || cleared.Valid {
+		t.Fatalf("handshake failure kept old expiry: %v err=%v", cleared, err)
 	}
 }
 
