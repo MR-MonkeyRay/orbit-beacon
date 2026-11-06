@@ -277,6 +277,12 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 		}
 		at, _ := timekey.Parse(r.text("period_start"))
 		return (v1.Traffic{Epoch: r.text("epoch"), PeriodStart: at, RxBytes: v1.DecimalUint64(strconv.FormatInt(r.integer("rx_bytes"), 10)), TxBytes: v1.DecimalUint64(strconv.FormatInt(r.integer("tx_bytes"), 10))}).Validate()
+	case "node_availability_daily":
+		day, err := time.Parse(time.DateOnly, r.text("day"))
+		online, offline := r.integer("online_seconds"), r.integer("offline_seconds")
+		if err != nil || day.Format(time.DateOnly) != r.text("day") || r.text("node_id") == "" || online < 0 || offline < 0 || online > 86400 || offline > 86400 || online+offline > 86400 {
+			return invalidRow()
+		}
 	case "traffic_daily":
 		day, err := time.Parse("2006-01-02", r.text("day"))
 		if err != nil || day.Format("2006-01-02") != r.text("day") || r.text("node_id") == "" || r.integer("rx_bytes") < 0 || r.integer("tx_bytes") < 0 {

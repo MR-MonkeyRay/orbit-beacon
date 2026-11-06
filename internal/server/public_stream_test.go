@@ -103,7 +103,7 @@ func (c publicStreamConn) QueryContext(ctx context.Context, query string, _ []dr
 			bytes.Repeat([]byte{1}, 32),
 			int64(0),
 			"0",
-			"",
+			"", "[]",
 		}}
 	}
 	return rows, nil
@@ -115,7 +115,7 @@ type publicStreamRows struct {
 }
 
 func (*publicStreamRows) Columns() []string {
-	return []string{"id", "public_settings", "last_seen", "token_hash", "credential_epoch", "run_generation", "report_session_id"}
+	return []string{"id", "public_settings", "last_seen", "token_hash", "credential_epoch", "run_generation", "report_session_id", "availability"}
 }
 func (*publicStreamRows) Close() error { return nil }
 func (r *publicStreamRows) Next(dest []driver.Value) error {

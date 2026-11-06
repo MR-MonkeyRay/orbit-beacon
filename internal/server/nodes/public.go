@@ -211,7 +211,8 @@ func (s *Service) PublicVisibilityVersion() uint64 {
 // 传 nil 恢复为现有构造函数使用的主连接池。
 func (s *Service) SetPublicReader(db *sql.DB) { s.publicReader.Store(db) }
 
-func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int) ([]PublicRecord, bool, error) {
+// ListPublicRecords 用一条查询返回一页记录及其最近 30 个 UTC 日的可用性计数。
+func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int, now time.Time) ([]PublicRecord, bool, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, false, ErrInvalidInput
 	}
@@ -219,7 +220,17 @@ func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int) ([]P
 	if db == nil {
 		db = s.db
 	}
-	rows, err := db.QueryContext(ctx, "SELECT id,public_settings,last_seen,token_hash,credential_epoch,run_generation,report_session_id FROM nodes WHERE "+publicVisibility+" ORDER BY created_at,id LIMIT ? OFFSET ?", limit+1, offset)
+	now = now.UTC()
+	rows, err := db.QueryContext(ctx, `WITH page AS (
+ SELECT created_at,id,public_settings,last_seen,token_hash,credential_epoch,run_generation,report_session_id
+ FROM nodes WHERE `+publicVisibility+` ORDER BY created_at,id LIMIT ? OFFSET ?
+), daily AS (
+ SELECT a.node_id,json_group_array(json_object('day',a.day,'online_seconds',a.online_seconds,'offline_seconds',a.offline_seconds)) AS counts
+ FROM node_availability_daily a JOIN page p ON p.id=a.node_id WHERE a.day>=? AND a.day<=? GROUP BY a.node_id
+)
+SELECT p.id,p.public_settings,p.last_seen,p.token_hash,p.credential_epoch,p.run_generation,p.report_session_id,COALESCE(d.counts,'[]')
+FROM page p LEFT JOIN daily d ON d.node_id=p.id ORDER BY p.created_at,p.id`,
+		limit+1, offset, now.AddDate(0, 0, -29).Format(time.DateOnly), now.Format(time.DateOnly))
 	if err != nil {
 		return nil, false, err
 	}
@@ -241,13 +252,14 @@ func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int) ([]P
 
 // PublicRecord 是内部身份围栏，绝不作为 HTTP 响应。
 type PublicRecord struct {
-	ID              string         `json:"-"`
-	Settings        PublicSettings `json:"-"`
-	LastSeen        time.Time      `json:"-"`
-	Credential      [32]byte       `json:"-"`
-	CredentialEpoch int64          `json:"-"`
-	Generation      uint64         `json:"-"`
-	Session         string         `json:"-"`
+	ID               string         `json:"-"`
+	AvailabilityJSON string         `json:"-"`
+	Settings         PublicSettings `json:"-"`
+	LastSeen         time.Time      `json:"-"`
+	Credential       [32]byte       `json:"-"`
+	CredentialEpoch  int64          `json:"-"`
+	Generation       uint64         `json:"-"`
+	Session          string         `json:"-"`
 }
 
 // LatestSeen 包含持久化 last_seen 之后在内存中合并的上报。
@@ -264,7 +276,7 @@ func scanPublicRecord(row interface{ Scan(...any) error }) (PublicRecord, error)
 	var raw, generation string
 	var seen sql.NullString
 	var credential []byte
-	err := row.Scan(&p.ID, &raw, &seen, &credential, &p.CredentialEpoch, &generation, &p.Session)
+	err := row.Scan(&p.ID, &raw, &seen, &credential, &p.CredentialEpoch, &generation, &p.Session, &p.AvailabilityJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}

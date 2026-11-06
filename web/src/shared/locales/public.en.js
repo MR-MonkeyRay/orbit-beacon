@@ -1,4 +1,7 @@
 export default {
+  'public.availabilityNoData': 'No data',
+  'public.availability': 'Availability',
+  'public.availabilityDuration': 'Offline {offline}, unknown {unknown}',
   'public.title': 'Node status – OrbitBeacon',
   'public.description': 'Availability and resource usage of public nodes',
   'public.signIn': 'Sign in',

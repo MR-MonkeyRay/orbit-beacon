@@ -20,6 +20,7 @@ import (
 	"orbitbeacon/internal/server"
 	"orbitbeacon/internal/server/alerts"
 	"orbitbeacon/internal/server/auth"
+	"orbitbeacon/internal/server/availability"
 	"orbitbeacon/internal/server/backup"
 	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/enrollment"
@@ -142,6 +143,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 	notifications := notify.New(db, box, notify.Options{Logger: logger, AllowInsecureWebhooks: cfg.AllowInsecureWebhooks, AllowPrivateNetworks: cfg.NotificationAllowPrivateNetworks})
 	alertService := alerts.NewService(db, nil)
 	trafficService := traffic.NewService(db)
+	availabilityService := availability.NewService(db, nil, logger)
 	evaluator := alerts.NewEvaluator(alertService, ingestService, alerts.EvaluatorOptions{Logger: logger, Notifier: notifications, Quota: trafficService.Quota})
 	enrollments := enrollment.NewService(db, enrollment.Options{MaxNodes: cfg.MaxNodes})
 	enrollments.OnIdentityChange(func(replaced bool) {
@@ -151,7 +153,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 			nodeService.InvalidatePublic()
 		}
 	})
-	handler, err := server.NewHandler(server.Options{Management: authService.Management(), Enrollments: enrollments, Traffic: trafficService, Inbox: inbox.New(db), Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, WebUpdateIntervalSeconds: cfg.WebUpdateIntervalSeconds, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: version, SaturationMetrics: saturation})
+	handler, err := server.NewHandler(server.Options{Management: authService.Management(), Enrollments: enrollments, Traffic: trafficService, Availability: availabilityService, Inbox: inbox.New(db), Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, WebUpdateIntervalSeconds: cfg.WebUpdateIntervalSeconds, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: version, SaturationMetrics: saturation})
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +180,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 
 	a.handler, a.httpServer = handler, httpServer
 	a.ingest, a.notifications = ingestService, notifications
-	a.background = []func(context.Context){backups.Run, notifications.Run, evaluator.Run, handler.RunRetention}
+	a.background = []func(context.Context){availabilityService.Run, backups.Run, notifications.Run, evaluator.Run, handler.RunRetention}
 	return a, nil
 }
 

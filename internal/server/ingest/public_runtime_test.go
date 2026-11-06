@@ -113,7 +113,7 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 	if _, err := db.Exec("DROP TRIGGER reject_report"); err != nil {
 		t.Fatal(err)
 	}
-	records, _, err := ns.ListPublicRecords(ctx, 100, 0)
+	records, _, err := ns.ListPublicRecords(ctx, 100, 0, time.Now())
 	if err != nil || len(records) != 1 {
 		t.Fatalf("page before commit: %+v %v", records, err)
 	}
@@ -127,7 +127,7 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 	}
 	// 更新的报告在页面查询与投影锁之间提交。
 	// 保留持久化活跃性，同时抑制新快照中的所有指标。
-	raced := s.ProjectPublicRecord(records[0], now)
+	raced, _ := s.ProjectPublicRecord(records[0], now)
 	if raced.Status != "online" || raced.CPUPercent != nil || raced.MemoryPercent != nil || raced.Load1 != nil || raced.UptimeSeconds != nil {
 		t.Fatalf("stale page record reused newer metrics: %+v", raced)
 	}

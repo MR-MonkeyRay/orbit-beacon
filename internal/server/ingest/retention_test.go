@@ -48,7 +48,7 @@ func TestRetainedLastSampleLifecycle(t *testing.T) {
 		})
 	}
 	// 新的 Server 进程保留资产和持久化活跃性，不保留数值。
-	records, _, err := f.nodes.ListPublicRecords(ctx, 100, 0)
+	records, _, err := f.nodes.ListPublicRecords(ctx, 100, 0, time.Now())
 	if err != nil || len(records) != 1 {
 		t.Fatalf("durable page=%+v err=%v", records, err)
 	}

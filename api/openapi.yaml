@@ -1449,6 +1449,26 @@ paths:
               schema: {$ref: '#/components/schemas/Error'}
         '404': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/availability:
+    parameters:
+      - $ref: '#/components/parameters/NodeID'
+    get:
+      operationId: getNodeAvailability
+      description: 管理员读取连续 UTC 天的可用性，包含今天。缺失观测为未知；百分比仅统计在线和离线秒数，未观测时为 null。有离线秒数时最高为 99.99。未知节点返回 node_not_found。
+      parameters:
+        - name: days
+          in: query
+          schema: {type: integer, enum: [30, 90], default: 30}
+          description: 只接受 30 或 90；拒绝重复或未知参数。
+      responses:
+        '200':
+          description: 旧到新排列的每日可用性及按秒加权汇总。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AvailabilitySummary'}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes/{id}/traffic:
     parameters:
       - $ref: '#/components/parameters/NodeID'
@@ -2788,10 +2808,47 @@ components:
         name: {type: [string, 'null'], x-maxLengthBytes: 255, pattern: '^[^\u0000-\u001f\u007f-\u009f]*$', description: 去除首尾空白后的公开名称；合并设置禁用时可用空字符串清除；null 保持不变。}
         region: {type: [string, 'null'], x-maxLengthBytes: 128, pattern: '^[^\u0000-\u001f\u007f-\u009f]*$', description: 去除首尾空白后的公开区域；空字符串清除；null 保持不变。}
         provider: {type: [string, 'null'], x-maxLengthBytes: 128, pattern: '^[^\u0000-\u001f\u007f-\u009f]*$', description: 去除首尾空白后的公开服务商；空字符串清除；null 保持不变。}
+    AvailabilityPercent:
+      type: [number, 'null']
+      minimum: 0
+      maximum: 100
+      description: 在线秒数除以已观测秒数的百分比，保留两位小数；无观测为 null，有离线秒数时最高 99.99。
+    AvailabilitySummary:
+      type: object
+      additionalProperties: false
+      required: [days, percent]
+      properties:
+        percent: {$ref: '#/components/schemas/AvailabilityPercent'}
+        days:
+          type: array
+          minItems: 30
+          maxItems: 90
+          items:
+            type: object
+            additionalProperties: false
+            required: [day, online_seconds, offline_seconds, unknown_seconds, percent]
+            properties:
+              day: {type: string, format: date}
+              online_seconds: {type: integer, minimum: 0, maximum: 86400}
+              offline_seconds: {type: integer, minimum: 0, maximum: 86400}
+              unknown_seconds: {type: integer, minimum: 0, maximum: 86400}
+              percent: {$ref: '#/components/schemas/AvailabilityPercent'}
+    PublicAvailability:
+      type: object
+      additionalProperties: false
+      required: [start_day, percent, days]
+      properties:
+        start_day: {type: string, format: date}
+        percent: {$ref: '#/components/schemas/AvailabilityPercent'}
+        days:
+          type: array
+          minItems: 30
+          maxItems: 30
+          items: {$ref: '#/components/schemas/AvailabilityPercent'}
     PublicNode:
       type: object
       additionalProperties: false
-      required: [name, region, provider, status, last_seen, metric_status, cpu_percent, memory_percent, load1, uptime_seconds]
+      required: [name, region, provider, status, last_seen, availability, metric_status, cpu_percent, memory_percent, load1, uptime_seconds]
       description: |
         最小公开投影，绝非内部节点或原始上报。
         公开文本为显式配置，绝不来自私有元数据。
@@ -2812,6 +2869,7 @@ components:
         为 unavailable/null，绝不从更早的成功上报填充。原始上报状态不变，
         过期值不会成为告警/历史观测。
       properties:
+        availability: {$ref: '#/components/schemas/PublicAvailability'}
         name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255, description: 显式的公开名称。}
         region: {type: string, x-maxLengthBytes: 128, description: 显式的公开区域；未设置时为空。}
         provider: {type: string, x-maxLengthBytes: 128, description: 显式的公开服务商；未设置时为空。}

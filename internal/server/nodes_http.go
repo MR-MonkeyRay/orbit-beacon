@@ -67,6 +67,10 @@ func (h *handler) nodesRoute(w http.ResponseWriter, r *http.Request, requestID s
 			h.nodeHistory(w, r, id, requestID)
 			return
 		}
+		if len(parts) == 3 && parts[2] == "availability" {
+			h.nodeAvailability(w, r, id, requestID)
+			return
+		}
 		if len(parts) == 3 && parts[2] == "traffic" {
 			h.nodeTraffic(w, r, id, requestID)
 			return

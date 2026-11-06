@@ -15,6 +15,7 @@ import {enrollmentTab} from './enrollments.js';
 import {latestSamplePanel} from './latest-sample.js';
 import {lifecycleActions} from './node-lifecycle.js';
 import {historyPanel} from './node-history.js';
+import {availabilityPanel} from './node-availability.js';
 import {trafficPanel} from './node-traffic.js';
 import {trafficSettingsPanel} from './node-traffic-settings.js';
 import {probesPanel} from './node-probes.js';
@@ -50,6 +51,7 @@ export async function nodePage() {
   back.className = 'back';
   let history;
   let traffic;
+  let availability;
   let billingSettings = trafficSettings;
   let probes;
   let observedRuntime = runtime.runtime;
@@ -74,7 +76,7 @@ export async function nodePage() {
   const tabs = tabSet([
     {id: 'details', label: t('nodes.details'), icon: 'info', build: () => {
       detailsView = detailsTab(node, groups, sample.element,
-        history ||= historyPanel(id, signal), traffic ||= trafficPanel(id, signal),
+        history ||= historyPanel(id, signal), availability ||= availabilityPanel(id, signal), traffic ||= trafficPanel(id, signal),
         probes ||= probesPanel(id, signal),
         trafficSettingsPanel(id, billingSettings, (settings) => {
           if (node.deleted) return;
@@ -170,7 +172,7 @@ function editableForm(form, controls, save, node) {
   });
 }
 
-function detailsTab(node, groups, sample, history, traffic, probes, billing) {
+function detailsTab(node, groups, sample, history, availability, traffic, probes, billing) {
   const group = groups.find((item) => item.id === node.group_id);
   const summaryValues = readonlyFacts();
   const summaryBadge = statusBadge(displayStatus(node));
@@ -213,7 +215,7 @@ function detailsTab(node, groups, sample, history, traffic, probes, billing) {
     invalidate('nodes');
     return t('nodes.saved', {name: result.name});
   }, node);
-  return {element: h('div', {class: 'stack'}, h('div', {class: 'split'}, summary, panel(t('nodes.editDetails'), {}, form)), sample, history, traffic, billing, probes), snapshot};
+  return {element: h('div', {class: 'stack'}, h('div', {class: 'split'}, summary, panel(t('nodes.editDetails'), {}, form)), sample, history, availability, traffic, billing, probes), snapshot};
 }
 
 function publicPreview() {

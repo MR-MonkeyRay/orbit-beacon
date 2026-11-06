@@ -1,5 +1,6 @@
 /* 控制台样式表。顺序重要：响应式覆盖放最后。 */
 @import "../../shared/tokens.css";
+@import "../../shared/availability.css";
 
 @import "./shell.css";
 

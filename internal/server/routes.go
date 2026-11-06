@@ -88,6 +88,7 @@ var routes = []route{
 	{"GET /api/v1/nodes/{id}/runtime", admin, endpoint((*handler).nodesRoute)},
 	{"GET /api/v1/nodes/{id}/latest", admin, endpoint((*handler).nodesRoute)},
 	{"GET /api/v1/nodes/{id}/history", admin, endpoint((*handler).nodesRoute)},
+	{"GET /api/v1/nodes/{id}/availability", admin, endpoint((*handler).nodesRoute)},
 	{"GET /api/v1/nodes/{id}/traffic", admin, endpoint((*handler).nodesRoute)},
 	{"GET /api/v1/nodes/{id}/probes", admin, endpoint((*handler).nodesRoute)},
 	{"GET /api/v1/nodes/{id}/traffic-settings", admin, endpoint((*handler).nodesRoute)},

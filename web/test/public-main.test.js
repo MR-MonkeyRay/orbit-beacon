@@ -10,6 +10,7 @@ const source = (await readFile(entry, 'utf8')).replace("import './public.css';",
 let run = 0;
 const payload = (name = 'edge', extra = {}) => ({
   nodes: [{name, region: '', provider: '', status: 'online', last_seen: '2026-10-27T12:34:56Z',
+    availability: {start_day: '2026-09-28', percent: null, days: Array(30).fill(null)},
     cpu_percent: 25, memory_percent: null, load1: null, uptime_seconds: 3600,
     metric_status: {cpu_percent: 'ok', memory_percent: 'unavailable', load1: 'unavailable', uptime_seconds: 'ok'}}],
   generated_at: '2026-10-27T12:34:56Z', has_more: false, next_offset: null, ...extra

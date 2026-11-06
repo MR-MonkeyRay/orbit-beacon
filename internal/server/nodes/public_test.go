@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/nodes"
@@ -68,7 +69,7 @@ func TestPublicVisibilityAndMalformedSettings(t *testing.T) {
 		if _, err := db.Exec(`UPDATE nodes SET public_settings=?, status='unknown', token_hash=randomblob(32), first_enrolled_at=created_at WHERE id=?`, settings, n.ID); err != nil {
 			t.Fatal(err)
 		}
-		records, _, err := s.ListPublicRecords(ctx, 100, 0)
+		records, _, err := s.ListPublicRecords(ctx, 100, 0, time.Now())
 		var record nodes.PublicRecord
 		found := false
 		for _, candidate := range records {
@@ -85,22 +86,22 @@ func TestPublicVisibilityAndMalformedSettings(t *testing.T) {
 			t.Fatalf("invalid settings %q exposed: %+v %v", settings, record, err)
 		}
 	}
-	records, more, err := s.ListPublicRecords(ctx, 1, 0)
+	records, more, err := s.ListPublicRecords(ctx, 1, 0, time.Now())
 	if err != nil || len(records) != 1 || more {
 		t.Fatalf("public list: %v %v %v", records, more, err)
 	}
 	if err := s.SetDisabled(ctx, records[0].ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if records, _, err := s.ListPublicRecords(ctx, 100, 0); err != nil || len(records) != 0 {
+	if records, _, err := s.ListPublicRecords(ctx, 100, 0, time.Now()); err != nil || len(records) != 0 {
 		t.Fatalf("disabled exposed: %+v %v", records, err)
 	}
-	records, _, err = s.ListPublicRecords(ctx, 100, 0)
+	records, _, err = s.ListPublicRecords(ctx, 100, 0, time.Now())
 	if err != nil || len(records) != 0 {
 		t.Fatalf("invalid or disabled exposed: %v %v", records, err)
 	}
 	for _, args := range [][2]int{{0, 0}, {101, 0}, {1, -1}} {
-		if _, _, err := s.ListPublicRecords(ctx, args[0], args[1]); !errors.Is(err, nodes.ErrInvalidInput) {
+		if _, _, err := s.ListPublicRecords(ctx, args[0], args[1], time.Now()); !errors.Is(err, nodes.ErrInvalidInput) {
 			t.Fatalf("pagination %v: %v", args, err)
 		}
 	}

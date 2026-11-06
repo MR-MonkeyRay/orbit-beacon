@@ -8,21 +8,23 @@ import (
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/server/availability"
 	"orbitbeacon/internal/server/nodes"
 )
 
 // PublicNode 是严格的匿名投影，独立于内部清单。
 type PublicNode struct {
-	Name          string             `json:"name"`
-	Region        string             `json:"region"`
-	Provider      string             `json:"provider"`
-	Status        string             `json:"status"`
-	LastSeen      *time.Time         `json:"last_seen"`
-	CPUPercent    *float64           `json:"cpu_percent"`
-	MemoryPercent *float64           `json:"memory_percent"`
-	Load1         *float64           `json:"load1"`
-	UptimeSeconds *float64           `json:"uptime_seconds"`
-	MetricStatus  PublicMetricStatus `json:"metric_status"`
+	Availability  availability.Public `json:"availability"`
+	Name          string              `json:"name"`
+	Region        string              `json:"region"`
+	Provider      string              `json:"provider"`
+	Status        string              `json:"status"`
+	LastSeen      *time.Time          `json:"last_seen"`
+	CPUPercent    *float64            `json:"cpu_percent"`
+	MemoryPercent *float64            `json:"memory_percent"`
+	Load1         *float64            `json:"load1"`
+	UptimeSeconds *float64            `json:"uptime_seconds"`
+	MetricStatus  PublicMetricStatus  `json:"metric_status"`
 }
 
 type PublicMetricStatus struct {
@@ -107,10 +109,14 @@ func (m publicMetric) project(elapsedMS int64) (*float64, string) {
 
 // ProjectPublicRecord 仅对相同持久化身份叠加上接收时间。
 // 若在页面查询之后提交了持久化报告，则省略指标。
-func (s *Service) ProjectPublicRecord(record nodes.PublicRecord, now time.Time) PublicNode {
-	out := PublicNode{Name: record.Settings.Name, Region: record.Settings.Region, Provider: record.Settings.Provider, Status: "unknown", MetricStatus: unavailablePublicMetrics()}
+func (s *Service) ProjectPublicRecord(record nodes.PublicRecord, now time.Time) (PublicNode, error) {
+	projection, err := availability.Project(record.AvailabilityJSON, now)
+	if err != nil {
+		return PublicNode{}, err
+	}
+	out := PublicNode{Availability: projection, Name: record.Settings.Name, Region: record.Settings.Region, Provider: record.Settings.Provider, Status: "unknown", MetricStatus: unavailablePublicMetrics()}
 	if record.Generation == 0 || record.Session == "" || record.LastSeen.IsZero() || record.LastSeen.After(now) {
-		return out
+		return out, nil
 	}
 	lastSeen := record.LastSeen
 	var snapshot publicMetrics
@@ -127,7 +133,7 @@ func (s *Service) ProjectPublicRecord(record nodes.PublicRecord, now time.Time) 
 		s.releaseState(state)
 	}
 	if lastSeen.After(now) {
-		return out
+		return out, nil
 	}
 	out.LastSeen = new(lastSeen.UTC())
 	out.Status = "online"
@@ -135,7 +141,7 @@ func (s *Service) ProjectPublicRecord(record nodes.PublicRecord, now time.Time) 
 		out.Status = "offline"
 	}
 	snapshot.project(&out, now)
-	return out
+	return out, nil
 }
 
 // PublicPage 保持匿名响应的字段顺序与 null 语义。
@@ -208,14 +214,19 @@ func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offs
 		cache.calls[key] = call
 		cache.mu.Unlock()
 
-		records, more, err := ns.ListPublicRecords(ctx, limit, offset)
+		records, more, err := ns.ListPublicRecords(ctx, limit, offset, now)
 		page := PublicPage{Nodes: make([]PublicNode, 0, len(records)), HasMore: more, GeneratedAt: now}
 		if more {
 			next := offset + len(records)
 			page.NextOffset = &next
 		}
 		for _, record := range records {
-			page.Nodes = append(page.Nodes, s.ProjectPublicRecord(record, now))
+			node, projectErr := s.ProjectPublicRecord(record, now)
+			if projectErr != nil {
+				err = projectErr
+				break
+			}
+			page.Nodes = append(page.Nodes, node)
 		}
 		if err == nil {
 			err = ctx.Err()

@@ -238,7 +238,9 @@ func publicPagesEqual(a, b ingest.PublicPage) bool {
 			a.Status == b.Status && equalLiveTime(a.LastSeen, b.LastSeen) &&
 			a.MetricStatus == b.MetricStatus && equalLiveValue(a.CPUPercent, b.CPUPercent) &&
 			equalLiveValue(a.MemoryPercent, b.MemoryPercent) && equalLiveValue(a.Load1, b.Load1) &&
-			equalLiveValue(a.UptimeSeconds, b.UptimeSeconds)
+			equalLiveValue(a.UptimeSeconds, b.UptimeSeconds) &&
+			a.Availability.StartDay == b.Availability.StartDay && equalLiveValue(a.Availability.Percent, b.Availability.Percent) &&
+			slices.EqualFunc(a.Availability.Days, b.Availability.Days, equalLiveValue[float64])
 	})
 }
 

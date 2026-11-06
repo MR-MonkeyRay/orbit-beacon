@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"orbitbeacon/internal/server/availability"
 	"orbitbeacon/internal/server/ingest"
 )
 
@@ -921,5 +922,29 @@ func TestPublicLiveWebSocketClearsHTTPHandshakeDeadlineAfterHijack(t *testing.T)
 	case <-cleared:
 	case <-ctx.Done():
 		t.Fatal("HTTP handshake deadline would kill an idle upgraded socket")
+	}
+}
+
+func TestPublicPagesEqualIncludesAvailability(t *testing.T) {
+	first, _ := availability.Project("", time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC))
+	second, _ := availability.Project("", time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC))
+	a := ingest.PublicPage{Nodes: []ingest.PublicNode{{Availability: first}}}
+	b := ingest.PublicPage{Nodes: []ingest.PublicNode{{Availability: second}}}
+	if !publicPagesEqual(a, b) {
+		t.Fatal("equal availability changed snapshot")
+	}
+	b.Nodes[0].Availability.Days[29] = new(99.99)
+	if publicPagesEqual(a, b) {
+		t.Fatal("daily availability change omitted")
+	}
+	b.Nodes[0].Availability.Days[29] = nil
+	b.Nodes[0].Availability.Percent = new(99.99)
+	if publicPagesEqual(a, b) {
+		t.Fatal("summary availability change omitted")
+	}
+	b.Nodes[0].Availability.Percent = nil
+	b.Nodes[0].Availability.StartDay = "2026-10-08"
+	if publicPagesEqual(a, b) {
+		t.Fatal("new UTC day omitted")
 	}
 }

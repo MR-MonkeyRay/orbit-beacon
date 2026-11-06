@@ -1,4 +1,7 @@
 export default {
+  'public.availabilityNoData': '无数据',
+  'public.availability': '可用性',
+  'public.availabilityDuration': '离线 {offline}，未知 {unknown}',
   'public.title': '节点状态 – OrbitBeacon',
   'public.description': '已公开节点的可用性与资源使用情况',
   'public.signIn': '登录',

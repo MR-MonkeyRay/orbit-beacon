@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/nodes"
@@ -70,7 +71,7 @@ func TestPublicCollectionExcludesInactiveNodesAndRawSeries(t *testing.T) {
 			t.Fatalf("private raw series/identity leaked %q", secret)
 		}
 	}
-	records, _, err := f.nodes.ListPublicRecords(ctx, 50, 0)
+	records, _, err := f.nodes.ListPublicRecords(ctx, 50, 0, time.Now())
 	if err != nil || len(records) != 1 {
 		t.Fatalf("candidates: %v %v", records, err)
 	}

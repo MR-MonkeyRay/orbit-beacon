@@ -90,13 +90,13 @@ func acceptReport(ctx context.Context, s *ingest.Service, token string, report v
 }
 
 func publicNode(ctx context.Context, ns *nodes.Service, s *ingest.Service, id string, now time.Time) (ingest.PublicNode, error) {
-	records, _, err := ns.ListPublicRecords(ctx, 100, 0)
+	records, _, err := ns.ListPublicRecords(ctx, 100, 0, time.Now())
 	if err != nil {
 		return ingest.PublicNode{}, err
 	}
 	for _, record := range records {
 		if record.ID == id {
-			return s.ProjectPublicRecord(record, now), nil
+			return s.ProjectPublicRecord(record, now)
 		}
 	}
 	return ingest.PublicNode{}, nodes.ErrNotFound

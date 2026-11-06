@@ -4,9 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"orbitbeacon/internal/server/storage"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -46,7 +51,7 @@ func (c *publicPageConn) QueryContext(ctx context.Context, query string, args []
 	if c.connector.entered != nil {
 		c.connector.entered <- struct{}{}
 	}
-	if len(args) != 2 {
+	if len(args) != 4 {
 		return nil, fmt.Errorf("unexpected per-node query: %s", query)
 	}
 	if c.connector.gate != nil {
@@ -66,7 +71,7 @@ type publicPageRows struct {
 }
 
 func (*publicPageRows) Columns() []string {
-	return []string{"id", "public_settings", "last_seen", "token_hash", "credential_epoch", "run_generation", "report_session_id"}
+	return []string{"id", "public_settings", "last_seen", "token_hash", "credential_epoch", "run_generation", "report_session_id", "availability"}
 }
 func (*publicPageRows) Close() error { return nil }
 func (r *publicPageRows) Next(dest []driver.Value) error {
@@ -75,7 +80,7 @@ func (r *publicPageRows) Next(dest []driver.Value) error {
 	}
 	r.remaining--
 	r.index++
-	values := []driver.Value{fmt.Sprintf("public-%d", r.index), `{"enabled":true,"name":"Public"}`, timekey.Format(r.now), make([]byte, 32), int64(0), "1", "session"}
+	values := []driver.Value{fmt.Sprintf("public-%d", r.index), `{"enabled":true,"name":"Public"}`, timekey.Format(r.now), make([]byte, 32), int64(0), "1", "session", "[]"}
 	copy(dest, values)
 	return nil
 }
@@ -95,6 +100,16 @@ func TestPublicPageQueryCountDoesNotScaleWithPageSize(t *testing.T) {
 			}
 			if got := connector.queries.Load(); got != 1 {
 				t.Fatalf("%d nodes required %d queries", limit, got)
+			}
+			for _, node := range out.Nodes {
+				if len(node.Availability.Days) != 30 || node.Availability.Percent != nil || node.Availability.StartDay != "2026-09-28" {
+					t.Fatalf("empty availability %+v", node.Availability)
+				}
+				for _, percent := range node.Availability.Days {
+					if percent != nil {
+						t.Fatal("unobserved day must be null")
+					}
+				}
 			}
 			if len(s.states) != 0 {
 				t.Fatalf("public page created %d ingest states", len(s.states))
@@ -162,7 +177,7 @@ func TestProjectPublicRecordChecksEveryFenceWithoutCreatingState(t *testing.T) {
 	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
 	s := NewService(nil, Options{})
 	record := nodes.PublicRecord{ID: "public", Settings: nodes.PublicSettings{Name: "Public"}, LastSeen: now, Generation: 1, Session: "session"}
-	out := s.ProjectPublicRecord(record, now)
+	out, _ := s.ProjectPublicRecord(record, now)
 	if out.Status != "online" || out.CPUPercent != nil || len(s.states) != 0 {
 		t.Fatalf("cold projection: %+v states=%d", out, len(s.states))
 	}
@@ -170,7 +185,7 @@ func TestProjectPublicRecordChecksEveryFenceWithoutCreatingState(t *testing.T) {
 	state.generation, state.session = record.Generation, record.Session
 	state.public = publicMetrics{receivedAt: now, cpu: publicMetric{valid: true, value: 25, intervalMS: 10000}}
 	s.releaseState(state)
-	out = s.ProjectPublicRecord(record, now)
+	out, _ = s.ProjectPublicRecord(record, now)
 	if out.CPUPercent == nil || *out.CPUPercent != 25 {
 		t.Fatalf("matching fence: %+v", out)
 	}
@@ -189,7 +204,7 @@ func TestProjectPublicRecordChecksEveryFenceWithoutCreatingState(t *testing.T) {
 			case "received_at":
 				changed.LastSeen = changed.LastSeen.Add(-time.Nanosecond)
 			}
-			out := s.ProjectPublicRecord(changed, now)
+			out, _ := s.ProjectPublicRecord(changed, now)
 			if out.Status != "online" || out.CPUPercent != nil {
 				t.Fatalf("mismatched %s: %+v", fence, out)
 			}
@@ -260,5 +275,89 @@ func TestPublicPageCacheUsesEffectiveWebIntervalAndStaysBounded(t *testing.T) {
 				t.Fatalf("unbounded pages: %d", len(s.publicPages.entries))
 			}
 		})
+	}
+}
+
+// Wrap the real SQLite driver: counting queries must not replace SQL execution.
+type availabilityCountingConnector struct {
+	driver  driver.Driver
+	dsn     string
+	queries atomic.Int64
+}
+
+func (c *availabilityCountingConnector) Connect(context.Context) (driver.Conn, error) {
+	conn, err := c.driver.Open(c.dsn)
+	if err != nil {
+		return nil, err
+	}
+	return availabilityCountingConn{Conn: conn, queries: &c.queries}, nil
+}
+func (c *availabilityCountingConnector) Driver() driver.Driver { return c.driver }
+
+type availabilityCountingConn struct {
+	driver.Conn
+	queries *atomic.Int64
+}
+
+func (c availabilityCountingConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	c.queries.Add(1)
+	return c.Conn.(driver.QueryerContext).QueryContext(ctx, query, args)
+}
+func TestPublicAvailabilityRealSQLiteBatchAndCache(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "public.db")
+	db, err := storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for i := 0; i < 3; i++ {
+		id := fmt.Sprintf("private-node-%d", i)
+		if _, err := db.Exec(`INSERT INTO nodes(id,name,status,token_hash,first_enrolled_at,created_at,public_settings,run_generation,report_session_id,last_seen)
+ VALUES(?,?,'unknown',?,?,?,? ,?,?,?)`, id, "private-name", []byte(strings.Repeat(fmt.Sprint(i), 32)), timekey.Format(now), timekey.Format(now), `{"enabled":true,"name":"Public"}`, fmt.Sprint(i), "session", timekey.Format(now)); err != nil {
+			t.Fatal(err)
+		}
+		// 每个节点的百分比不同，串节点时断言会失败。
+		if _, err := db.Exec(`INSERT INTO node_availability_daily VALUES(?,'2026-11-04',?,?)`, id, 86400-(i+1)*8640, (i+1)*8640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	connector := &availabilityCountingConnector{driver: db.Driver(), dsn: path}
+	reader := sql.OpenDB(connector)
+	defer reader.Close()
+	ns := nodes.NewService(db, nodes.Options{})
+	ns.SetPublicReader(reader)
+	s := NewService(db, Options{})
+	for range 2 {
+		page, err := s.PublicPage(ctx, ns, 100, 0, time.Minute, func() time.Time { return now })
+		if err != nil || len(page.Nodes) != 3 {
+			t.Fatalf("page %v %v", page, err)
+		}
+		for i, n := range page.Nodes {
+			want := float64(90 - i*10)
+			if n.Availability.StartDay != "2026-10-07" || len(n.Availability.Days) != 30 || *n.Availability.Percent != want || *n.Availability.Days[28] != want || n.Availability.Days[29] != nil {
+				t.Fatalf("projection %+v", n.Availability)
+			}
+		}
+		if page.Nodes[0].Status != "unknown" {
+			t.Fatal("identity not ready should be unknown")
+		}
+		raw, err := json.Marshal(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, secret := range []string{"private-node", "private-name", "online_seconds", "offline_seconds", "node_id"} {
+			if strings.Contains(string(raw), secret) {
+				t.Fatalf("leaked %s", raw)
+			}
+		}
+	}
+	if queries := connector.queries.Load(); queries != 1 {
+		t.Fatalf("batch + cache queries %d", queries)
 	}
 }
