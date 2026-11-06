@@ -8,6 +8,7 @@ import (
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/server/announcements"
 	"orbitbeacon/internal/server/availability"
 	"orbitbeacon/internal/server/nodes"
 )
@@ -146,10 +147,11 @@ func (s *Service) ProjectPublicRecord(record nodes.PublicRecord, now time.Time) 
 
 // PublicPage 保持匿名响应的字段顺序与 null 语义。
 type PublicPage struct {
-	Nodes       []PublicNode `json:"nodes"`
-	HasMore     bool         `json:"has_more"`
-	NextOffset  *int         `json:"next_offset"`
-	GeneratedAt time.Time    `json:"generated_at"`
+	Announcements []announcements.Public `json:"announcements"`
+	Nodes         []PublicNode           `json:"nodes"`
+	HasMore       bool                   `json:"has_more"`
+	NextOffset    *int                   `json:"next_offset"`
+	GeneratedAt   time.Time              `json:"generated_at"`
 }
 
 const publicPageCacheLimit = 128
@@ -215,7 +217,10 @@ func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offs
 		cache.mu.Unlock()
 
 		records, more, err := ns.ListPublicRecords(ctx, limit, offset, now)
-		page := PublicPage{Nodes: make([]PublicNode, 0, len(records)), HasMore: more, GeneratedAt: now}
+		page := PublicPage{Announcements: []announcements.Public{}, Nodes: make([]PublicNode, 0, len(records)), HasMore: more, GeneratedAt: now}
+		if err == nil {
+			page.Announcements, err = ns.ListPublicAnnouncements(ctx, now)
+		}
 		if more {
 			next := offset + len(records)
 			page.NextOffset = &next

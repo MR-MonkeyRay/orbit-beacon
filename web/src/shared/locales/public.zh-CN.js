@@ -1,4 +1,9 @@
 export default {
+  'public.announcements': '公告',
+  'alerts.severity.info': '提示',
+  'alerts.severity.warning': '警告',
+  'alerts.severity.critical': '严重',
+
   'public.availabilityNoData': '无数据',
   'public.availability': '可用性',
   'public.availabilityDuration': '离线 {offline}，未知 {unknown}',

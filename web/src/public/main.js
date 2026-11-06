@@ -1,4 +1,5 @@
 import './public.css';
+import {announcementRenderer} from './announcements.js';
 import {translateHTML} from '../shared/translate-html.js';
 import {h} from '../shared/dom.js';
 import {themeButton} from '../shared/theme.js';
@@ -15,6 +16,7 @@ translateHTML();
 const PAGE = 50;
 const $ = (id) => document.getElementById(id);
 const list = $('nodes');
+const renderAnnouncements = announcementRenderer($('announcements'));
 const empty = $('empty');
 const emptyText = $('empty-text');
 const retry = $('retry');
@@ -87,6 +89,7 @@ function applyFilter() {
 // ------------------------------------------------------------------ 渲染
 
 function render(result) {
+  renderAnnouncements(result.announcements);
   const nodes = result.nodes;
   const nextKeys = nodes.map((node) => `${node.name}\u0000${node.region}\u0000${node.provider}`).join('\u0001');
   if (nextKeys !== keys || cards.length !== nodes.length) {
@@ -241,6 +244,7 @@ function start() {
       connection?.close();
       clearTimeout(displayTimer);
       restartCountdown(false);
+      renderAnnouncements([]);
       clearData();
       finish();
       location.replace('/');

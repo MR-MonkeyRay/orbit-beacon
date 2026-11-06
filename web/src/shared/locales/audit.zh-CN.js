@@ -1,4 +1,8 @@
 export default {
+  'audit.announcementCreate': '已创建公告',
+  'audit.announcementUpdate': '已更新公告',
+  'audit.announcementDelete': '已删除公告',
+
   'audit.commandCreate': '创建指令',
   'audit.commandBulk': '批量下发指令',
   'audit.commandSucceeded': '指令成功',

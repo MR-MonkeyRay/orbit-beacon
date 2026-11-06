@@ -130,7 +130,7 @@ func initializeMainSchema(ctx context.Context, db *sql.DB) error {
 	return tx.Commit()
 }
 
-const mainSchema = foundationSchema + alertsSchema + notificationsSchema + trafficSchema + availabilitySchema + probesSchema + backupsSchema
+const mainSchema = foundationSchema + alertsSchema + notificationsSchema + trafficSchema + availabilitySchema + probesSchema + backupsSchema + announcementsSchema
 
 // OpenReader 通过独立的只读池打开已有数据库。
 // 必须先运行 Open，使数据库存在且 schema 已初始化。

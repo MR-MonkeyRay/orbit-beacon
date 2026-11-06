@@ -43,6 +43,16 @@ export class TestElement extends EventTarget {
       this.children.push(child);
     }
   }
+  insertBefore(child, reference) {
+    if (child === reference) return child;
+    const index = reference === null ? -1 : this.children.indexOf(reference);
+    if (reference !== null && index < 0) throw new Error('Reference is not a child');
+    child.remove();
+    child.parentElement = this;
+    const target = reference === null ? this.children.length : this.children.indexOf(reference);
+    this.children.splice(target, 0, child);
+    return child;
+  }
   prepend(child) { this.append(child); this.children.unshift(this.children.pop()); }
   remove() {
     if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((item) => item !== this);

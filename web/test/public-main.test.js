@@ -9,6 +9,7 @@ const source = (await readFile(entry, 'utf8')).replace("import './public.css';",
   .replace(/from '(\.\.?\/[^']+)'/g, (_match, path) => `from '${new URL(path, entry).href}'`);
 let run = 0;
 const payload = (name = 'edge', extra = {}) => ({
+  announcements: [],
   nodes: [{name, region: '', provider: '', status: 'online', last_seen: '2026-10-27T12:34:56Z',
     availability: {start_day: '2026-09-28', percent: null, days: Array(30).fill(null)},
     cpu_percent: 25, memory_percent: null, load1: null, uptime_seconds: 3600,
@@ -26,7 +27,7 @@ async function setup(t, respond) {
   globalThis.localStorage.getItem = (key) => key === 'orbitbeacon-locale' ? 'en' : null;
   env.document.createElement = (tag) => new PublicElement(tag);
   env.document.createElementNS = (_namespace, tag) => new PublicElement(tag);
-  const ids = ['nodes', 'empty', 'empty-text', 'retry', 'headline', 'summary', 'updated', 'announcement', 'refresh', 'countdown', 'filters', 'pagination', 'previous', 'next', 'page', 'constellation', 'theme', 'top-actions', 'locale-error'];
+  const ids = ['announcements', 'nodes', 'empty', 'empty-text', 'retry', 'headline', 'summary', 'updated', 'announcement', 'refresh', 'countdown', 'filters', 'pagination', 'previous', 'next', 'page', 'constellation', 'theme', 'top-actions', 'locale-error'];
   const elements = Object.fromEntries(ids.map((id) => {
     const element = new PublicElement('div'); element.id = id; env.body.append(element); return [id, element];
   }));
@@ -51,6 +52,21 @@ test('public WS snapshots render values; heartbeats and ordinary snapshots do no
   assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'second');
   assert.equal(ui.elements.announcement.textContent, announced);
   assert.equal(ui.requests.length, 0);
+});
+
+test('public page turn keeps the announcement element until the next page replaces it', async (t) => {
+  const ui = await setup(t);
+  const notice = {level: 'warning', title: 'maintenance', body: 'tonight', starts_at: '2026-10-27T00:00:00Z', ends_at: null};
+  ui.sockets[0].open(); ui.sockets[0].message(snapshot(payload('one', {announcements: [notice], has_more: true, next_offset: 50})));
+  const article = ui.elements.announcements.children[0];
+  ui.elements.next.click();
+  assert.equal(ui.elements.announcements.children[0], article);
+  ui.sockets[1].open(); ui.sockets[1].message(snapshot(payload('two', {announcements: [notice]})));
+  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'two');
+  assert.equal(ui.elements.announcements.children[0], article);
+  ui.elements.previous.click();
+  ui.sockets[2].open(); ui.sockets[2].message(snapshot(payload('one', {has_more: true, next_offset: 50})));
+  assert.equal(ui.elements.announcements.children.length, 0);
 });
 
 test('public fallback is transparent and HTTP countdown uses the server interval without heartbeat announcements', async (t) => {

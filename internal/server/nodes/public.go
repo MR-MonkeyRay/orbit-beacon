@@ -16,6 +16,7 @@ import (
 
 	"modernc.org/sqlite"
 
+	"orbitbeacon/internal/server/announcements"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
@@ -303,4 +304,12 @@ func scanPublicRecord(row interface{ Scan(...any) error }) (PublicRecord, error)
 		}
 	}
 	return p, nil
+}
+
+func (s *Service) ListPublicAnnouncements(ctx context.Context, now time.Time) ([]announcements.Public, error) {
+	db := s.publicReader.Load()
+	if db == nil {
+		db = s.db
+	}
+	return announcements.ListPublic(ctx, db, now)
 }

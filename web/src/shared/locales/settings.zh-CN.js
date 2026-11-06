@@ -1,4 +1,16 @@
 export default {
+  'announcements.title': '公告',
+  'announcements.add': '添加公告',
+  'announcements.edit': '编辑公告',
+  'announcements.delete': '删除公告',
+  'announcements.heading': '标题',
+  'announcements.body': '内容',
+  'announcements.level': '级别',
+  'announcements.empty': '暂无公告',
+  'announcements.invalidTitle': '标题须为 1–100 字节的有效 UTF-8 文本，且不含控制字符。',
+  'announcements.invalidBody': '内容须为 1–1000 字节的有效 UTF-8 文本，且除换行外不含控制字符。',
+  'announcements.invalidEnd': '结束时间须晚于开始时间，创建时还须晚于当前时间。',
+
   'settings.settingsIntro': '管理访问权限、状态页和备份。',
   'settings.account': '账户',
   'settings.administrators': '管理员',

@@ -19,9 +19,10 @@ func TestRetentionSummaryIncludesEveryResultField(t *testing.T) {
 		CommandRows:            13,
 		AvailabilityRows:       14,
 		AlertSilences:          15,
+		Announcements:          16,
 	}
 	attrs := retentionAttrs(result)
-	if len(attrs) != 15 {
+	if len(attrs) != 16 {
 		t.Fatalf("summary has %d fields", len(attrs))
 	}
 	want := []string{
@@ -29,6 +30,7 @@ func TestRetentionSummaryIncludesEveryResultField(t *testing.T) {
 		"backup_orphan_files", "backup_local_temps", "alert_events",
 		"history_buckets", "audit_events", "enrollment_tickets", "sessions",
 		"traffic_rows", "probe_rows", "command_rows", "availability_rows", "alert_silences",
+		"announcements",
 	}
 	for i, key := range want {
 		if attrs[i].Key != key || attrs[i].Value.Int64() != int64(i+1) {
@@ -38,7 +40,7 @@ func TestRetentionSummaryIncludesEveryResultField(t *testing.T) {
 }
 
 func TestRetentionChangedIncludesEveryResultField(t *testing.T) {
-	for i := range 15 {
+	for i := range 16 {
 		result := RetentionResult{}
 		switch i {
 		case 0:
@@ -71,6 +73,8 @@ func TestRetentionChangedIncludesEveryResultField(t *testing.T) {
 			result.AvailabilityRows = 1
 		case 14:
 			result.AlertSilences = 1
+		case 15:
+			result.Announcements = 1
 		}
 		if !retentionChanged(result) {
 			t.Fatalf("field %d does not trigger summary", i)

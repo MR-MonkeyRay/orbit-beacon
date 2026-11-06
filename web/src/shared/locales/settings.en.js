@@ -1,4 +1,16 @@
 export default {
+  'announcements.title': 'Announcements',
+  'announcements.add': 'Add announcement',
+  'announcements.edit': 'Edit announcement',
+  'announcements.delete': 'Delete announcement',
+  'announcements.heading': 'Title',
+  'announcements.body': 'Content',
+  'announcements.level': 'Level',
+  'announcements.empty': 'No announcements',
+  'announcements.invalidTitle': 'Use 1–100 UTF-8 bytes without control characters for the title.',
+  'announcements.invalidBody': 'Use 1–1000 UTF-8 bytes with only line breaks as control characters for the content.',
+  'announcements.invalidEnd': 'End time must follow the start time and, when creating, the current time.',
+
   'settings.settingsIntro': 'Manage access, the status page and backups.',
   'settings.account': 'Account',
   'settings.administrators': 'Administrators',

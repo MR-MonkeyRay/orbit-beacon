@@ -1,4 +1,8 @@
 export default {
+  'audit.announcementCreate': 'Announcement created',
+  'audit.announcementUpdate': 'Announcement updated',
+  'audit.announcementDelete': 'Announcement deleted',
+
   'audit.commandCreate': 'Command created',
   'audit.commandBulk': 'Group commands issued',
   'audit.commandSucceeded': 'Command succeeded',

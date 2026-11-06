@@ -38,7 +38,7 @@ test('strict public availability validation invalidates the complete response', 
   }
   for (const value of [null, 0, 95, 99.9, 100]) assert.equal(validAvailability({...base, percent: value, days: Array(30).fill(value)}), true);
   const node = {name: '', region: '', provider: '', status: 'unknown', last_seen: null, cpu_percent: null, memory_percent: null, load1: null, uptime_seconds: null, metric_status: {cpu_percent: 'unavailable', memory_percent: 'unavailable', load1: 'unavailable', uptime_seconds: 'unavailable'}};
-  const response = {nodes: [node], has_more: false, next_offset: null, generated_at: '2026-11-05T00:00:00Z'};
+  const response = {announcements: [], nodes: [node], has_more: false, next_offset: null, generated_at: '2026-11-05T00:00:00Z'};
   assert.equal(validResponse(response), false);
   node.availability = base; assert.equal(validResponse(response), true);
   node.availability.days[0] = -1; assert.equal(validResponse(response), false);

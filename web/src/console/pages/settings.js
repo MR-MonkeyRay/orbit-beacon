@@ -16,6 +16,7 @@ import {auditItem} from '../lib/audit-item.js';
 import {dataOperationsTab} from './data-operations.js';
 import {groupCommandActions} from '../lib/group-commands.js';
 import {showTask} from './backup-task.js';
+import {announcementsPanel} from './settings-announcements.js';
 
 export async function settingsPage() {
   const signal = getNavigationSignal();
@@ -147,9 +148,10 @@ function publicPageTab() {
       h('span', {class: 'switch-text'}, h('strong', null, t('settings.publicEnable')), h('span', null, t('settings.publicEnableHint')))),
     h('p', {class: 'lede'}, t('settings.publicRoutingHint')),
     errorBox, note, retry);
-  return {element,
-    attach() { controller = new AbortController(); void load(); },
-    detach() { controller?.abort(); }
+  const announcements = announcementsPanel(navigation);
+  return {element: h('div', {class: 'stack'}, element, announcements.element),
+    attach() { controller = new AbortController(); void load(); announcements.attach(); },
+    detach() { controller?.abort(); announcements.detach(); }
   };
 }
 

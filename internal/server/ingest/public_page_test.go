@@ -51,6 +51,9 @@ func (c *publicPageConn) QueryContext(ctx context.Context, query string, args []
 	if c.connector.entered != nil {
 		c.connector.entered <- struct{}{}
 	}
+	if strings.Contains(query, "FROM announcements") {
+		return &publicAnnouncementRows{}, nil
+	}
 	if len(args) != 4 {
 		return nil, fmt.Errorf("unexpected per-node query: %s", query)
 	}
@@ -98,7 +101,7 @@ func TestPublicPageQueryCountDoesNotScaleWithPageSize(t *testing.T) {
 			if err != nil || len(out.Nodes) != limit || !out.HasMore || out.NextOffset == nil || *out.NextOffset != limit {
 				t.Fatalf("page: %+v err=%v", out, err)
 			}
-			if got := connector.queries.Load(); got != 1 {
+			if got := connector.queries.Load(); got != 2 {
 				t.Fatalf("%d nodes required %d queries", limit, got)
 			}
 			for _, node := range out.Nodes {
@@ -168,7 +171,7 @@ func TestPublicPageCoalescesMissesAndAllowsWaiterCancellation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := connector.queries.Load(); got != 1 {
+	if got := connector.queries.Load(); got != 2 {
 		t.Fatalf("coalesced page executed %d queries", got)
 	}
 }
@@ -258,12 +261,12 @@ func TestPublicPageCacheUsesEffectiveWebIntervalAndStaysBounded(t *testing.T) {
 			}
 			now = now.Add(ttl - time.Nanosecond)
 			cached, err := s.PublicPage(context.Background(), ns, 1, 0, ttl, clock)
-			if err != nil || !cached.GeneratedAt.Equal(first.GeneratedAt) || connector.queries.Load() != 1 {
+			if err != nil || !cached.GeneratedAt.Equal(first.GeneratedAt) || connector.queries.Load() != 2 {
 				t.Fatalf("cache expired before %v: err=%v queries=%d", ttl, err, connector.queries.Load())
 			}
 			now = now.Add(time.Nanosecond)
 			expired, err := s.PublicPage(context.Background(), ns, 1, 0, ttl, clock)
-			if err != nil || !expired.GeneratedAt.Equal(now) || connector.queries.Load() != 2 {
+			if err != nil || !expired.GeneratedAt.Equal(now) || connector.queries.Load() != 4 {
 				t.Fatalf("cache did not expire at %v: err=%v queries=%d", ttl, err, connector.queries.Load())
 			}
 			for offset := 1; offset <= 140; offset++ {
@@ -357,7 +360,15 @@ func TestPublicAvailabilityRealSQLiteBatchAndCache(t *testing.T) {
 			}
 		}
 	}
-	if queries := connector.queries.Load(); queries != 1 {
+	if queries := connector.queries.Load(); queries != 2 {
 		t.Fatalf("batch + cache queries %d", queries)
 	}
 }
+
+type publicAnnouncementRows struct{}
+
+func (*publicAnnouncementRows) Columns() []string {
+	return []string{"level", "title", "body", "starts_at", "ends_at"}
+}
+func (*publicAnnouncementRows) Close() error              { return nil }
+func (*publicAnnouncementRows) Next([]driver.Value) error { return io.EOF }

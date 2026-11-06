@@ -1,4 +1,9 @@
 export default {
+  'public.announcements': 'Announcements',
+  'alerts.severity.info': 'Info',
+  'alerts.severity.warning': 'Warning',
+  'alerts.severity.critical': 'Critical',
+
   'public.availabilityNoData': 'No data',
   'public.availability': 'Availability',
   'public.availabilityDuration': 'Offline {offline}, unknown {unknown}',

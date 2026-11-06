@@ -17,12 +17,16 @@ const errorKeys = new Set([
 
 export function errorText(error) {
   let code = error?.code;
+  if (code === 'announcement_capacity_reached') code = 'validation_failed';
   if (error?.name === 'TimeoutError') code = 'timeout';
   const message = t(errorKeys.has(code) ? `errors.${code}` : 'errors.generic');
   return error?.requestID ? t('errors.withRequest', {message, id: error.requestID}) : message;
 }
 
 const fieldReasons = new Map([
+  ['invalid announcement title', 'announcements.invalidTitle'],
+  ['invalid announcement body', 'announcements.invalidBody'],
+  ['invalid announcement end', 'announcements.invalidEnd'],
   ['must be after starts_at and now', 'alerts.silences.invalidEnd'],
   ['must be within 30 days of starts_at', 'alerts.silences.tooLong'],
   ['is required', 'fields.required'], ['must be valid UTF-8', 'fields.utf8'],

@@ -58,6 +58,9 @@ func (c publicStreamConn) QueryContext(ctx context.Context, query string, _ []dr
 	if strings.HasPrefix(query, "SELECT id, status, credential_epoch") {
 		return &streamAdmissionRows{}, nil
 	}
+	if strings.Contains(query, "FROM announcements") {
+		return &streamAnnouncementRows{}, nil
+	}
 	if query == "SELECT id FROM nodes" {
 		return &streamAdmissionRows{done: true}, nil
 	}
@@ -650,3 +653,11 @@ func probeIngestLifecycle(t *testing.T, s *ingest.Service) error {
 	_, err = s.AcceptAdmitted(context.Background(), admission, v1.Report{})
 	return err
 }
+
+type streamAnnouncementRows struct{}
+
+func (*streamAnnouncementRows) Columns() []string {
+	return []string{"level", "title", "body", "starts_at", "ends_at"}
+}
+func (*streamAnnouncementRows) Close() error              { return nil }
+func (*streamAnnouncementRows) Next([]driver.Value) error { return io.EOF }

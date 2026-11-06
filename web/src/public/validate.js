@@ -1,5 +1,15 @@
 import {timestampMillis} from '../shared/freshness.js';
 
+export function validAnnouncements(items) {
+  return Array.isArray(items) && items.length <= 5 && Array.from(items).every((item) =>
+    item && typeof item === 'object' && !Array.isArray(item) && Object.keys(item).length === 5 &&
+    ['level', 'title', 'body', 'starts_at', 'ends_at'].every((key) => Object.hasOwn(item, key)) &&
+    ['info', 'warning', 'critical'].includes(item.level) &&
+    ['title', 'body'].every((key) => typeof item[key] === 'string' && item[key].trim().length > 0) &&
+    Number.isFinite(timestampMillis(item.starts_at)) &&
+    (item.ends_at === null || Number.isFinite(timestampMillis(item.ends_at))));
+}
+
 const METRICS = ['cpu_percent', 'memory_percent', 'load1', 'uptime_seconds'];
 
 const validPercent = (value) => value === null || typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100;
@@ -13,7 +23,7 @@ export function validAvailability(value) {
 
 // 无效数据绝不替换最后一次校验通过的公开集合。
 export function validResponse(result, offset = 0) {
-  if (!result || !Array.isArray(result.nodes) || result.nodes.length > 100 || typeof result.has_more !== 'boolean' || !Number.isFinite(timestampMillis(result.generated_at))) return false;
+  if (!result || !validAnnouncements(result.announcements) || !Array.isArray(result.nodes) || result.nodes.length > 100 || typeof result.has_more !== 'boolean' || !Number.isFinite(timestampMillis(result.generated_at))) return false;
   if (result.has_more ? !Number.isSafeInteger(result.next_offset) || result.next_offset <= offset : result.next_offset !== null) return false;
   return result.nodes.every((node) => {
     if (!node || !['name', 'region', 'provider'].every((key) => typeof node[key] === 'string') || !['online', 'offline', 'unknown'].includes(node.status)) return false;
