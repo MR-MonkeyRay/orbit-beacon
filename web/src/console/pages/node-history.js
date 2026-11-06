@@ -40,7 +40,7 @@ export function historyPanel(id, signal, latest) {
   let diskPaths = [];
   let controller;
   let lifecycle;
-  const status = h('p', {class: 'muted', role: 'status'});
+  const status = h('p', {class: 'text-note', role: 'status'});
   const charts = h('div', {class: 'history-grid'});
   const controls = RANGES.map((value) => h('button', {type: 'button', id: `history-range-${value}`, dataset: {range: value},
     'aria-pressed': String(value === range), onclick: () => {

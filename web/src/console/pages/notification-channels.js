@@ -29,7 +29,7 @@ export function channelEditor(item, {signal, saved}) {
       const replaceURL = controls.replaceURL = input({type: 'checkbox', name: 'replace_url'});
       const urlField = add('URL', 'url', {type: 'url', autocomplete: 'off', required: !item});
       controls.url.dataset.field = 'config.url';
-      const urlState = h('p', {class: 'hint'}, item?.config?.url_set ? t('alerts.channels.urlSet', {url: item.config.url_redacted}) : t('alerts.channels.urlNotSet'));
+      const urlState = h('p', {class: 'text-note'}, item?.config?.url_set ? t('alerts.channels.urlSet', {url: item.config.url_redacted}) : t('alerts.channels.urlNotSet'));
       const replaceField = field(t('alerts.channels.replaceURL'), replaceURL);
       const webhook = h('div', {class: 'stack'}, item ? urlState : null, item ? replaceField : null, urlField);
       const chat = add(t('alerts.channels.chatID'), 'chat_id', {value: item?.kind === 'telegram' ? item.config.chat_id : ''}, t('alerts.channels.chatHint'));
@@ -46,11 +46,11 @@ export function channelEditor(item, {signal, saved}) {
       const templateField = field(t('alerts.channels.template'), template, {hint: MESSAGE_TEMPLATE_TOKENS.join(' ')});
       const secret = controls.secret = passwordInput({name: 'secret', autocomplete: 'new-password'});
       validateBytes(secret, 0, 4096, t('alerts.channels.secret'));
-      const secretField = field(t('alerts.channels.signingSecret'), secret, {inner: secret.wrapper, hint: t('alerts.channels.secretHint')});
+      const secretField = field(t('alerts.channels.signingSecret'), secret, {inner: secret.wrapper, hint: item ? t('alerts.channels.secretHint') : undefined});
       const secretLabel = secretField.querySelector('label');
       const replaceSecret = controls.replaceSecret = input({type: 'checkbox', name: 'replace_secret'});
       const replaceSecretField = field(t('alerts.channels.replaceSecret'), replaceSecret);
-      const secretState = h('p', {class: 'hint'}, t(item?.secret_set ? 'alerts.channels.secretSet' : 'alerts.channels.secretNotSet'));
+      const secretState = h('p', {class: 'text-note'}, t(item?.secret_set ? 'alerts.channels.secretSet' : 'alerts.channels.secretNotSet'));
       const sync = () => {
         const k = kind.value;
         webhook.hidden = !usesURL(k);
@@ -125,7 +125,7 @@ export function channelsPanel({channels, signal, saved}) {
     } catch (error) { if (!signal?.aborted) toastError(error); }
   };
   const row = (channel) => {
-    const status = h('p', {class: 'hint', role: 'status'});
+    const status = h('p', {class: 'text-note', role: 'status'});
     const test = button(t('alerts.channels.sendTest'), {small: true, onClick: async () => {
       if (!session.user || !session.csrf || signal?.aborted) return;
       busy(test, true);
@@ -140,20 +140,20 @@ export function channelsPanel({channels, signal, saved}) {
     const destination = usesURL(channel.kind) ? channel.config.url_redacted || t('alerts.channels.urlNotSet')
       : channel.kind === 'telegram' ? channel.config.chat_id : `${channel.config.host}:${channel.config.port} → ${formatList(channel.config.to)}`;
     return h('tr', null, h('td', null, channel.name), h('td', null, KINDS.find(([kind]) => kind === channel.kind)?.[1] || t('alerts.kind.unknown')),
-      h('td', {class: 'alert-destination'}, destination, channel.kind === 'wecom' ? null : h('div', {class: 'hint'}, t(channel.secret_set ? 'alerts.channels.secretSet' : 'alerts.channels.secretNotSet')), status),
+      h('td', {class: 'alert-destination'}, destination, channel.kind === 'wecom' ? null : h('div', {class: 'text-note'}, t(channel.secret_set ? 'alerts.channels.secretSet' : 'alerts.channels.secretNotSet')), status),
       h('td', null, t(channel.enabled ? 'alerts.state.enabled' : 'alerts.state.disabled')),
       h('td', {class: 'actions'}, test, iconButton('edit', t('alerts.editNamed', {name: channel.name}), () => edit(channel)), iconButton('trash', t('alerts.deleteAction', {name: channel.name}), () => remove(channel))));
   };
   return panel(t('alerts.tab.channels'), {action: button(t('alerts.channels.add'), {small: true, variant: 'primary', onClick: () => edit(null)})},
-    h('p', {class: 'lede'}, t('alerts.channels.writeOnlyHint')),
+    h('p', {class: 'text-note'}, t('alerts.channels.writeOnlyHint')),
     channels.length ? dataTable({caption: t('alerts.channels.title'),
       columns: ['name', 'kind', 'destinationSecret', 'state', 'actions'].map((key) => t(`alerts.column.${key}`)),
-      body: h('tbody', null, channels.map(row))}) : h('p', {class: 'muted'}, t('alerts.channels.empty')));
+      body: h('tbody', null, channels.map(row))}) : h('p', {class: 'text-note'}, t('alerts.channels.empty')));
 }
 
 export function deliveriesPanel(channels, signal) {
   const content = h('div');
-  const status = h('p', {class: 'muted', role: 'status'}, t('alerts.deliveries.loading'));
+  const status = h('p', {class: 'text-note', role: 'status'}, t('alerts.deliveries.loading'));
   const reload = async () => {
     if (signal?.aborted) return;
     busy(retry, true);
@@ -164,10 +164,10 @@ export function deliveriesPanel(channels, signal) {
       content.replaceChildren(deliveries.length ? dataTable({caption: t('alerts.deliveries.caption'),
         columns: ['state', 'channel', 'attempts', 'lastErrorCode', 'time'].map((key) => t(`alerts.column.${key}`)),
         body: h('tbody', null, deliveries.map((delivery) => h('tr', null,
-          h('td', null, t(['pending', 'sent', 'failed'].includes(delivery.state) ? `alerts.deliveryState.${delivery.state}` : 'alerts.unknown'), delivery.coalesced_count > 1 ? h('div', {class: 'hint'}, t('alerts.deliveries.coalesced', {count: delivery.coalesced_count})) : null),
+          h('td', null, t(['pending', 'sent', 'failed'].includes(delivery.state) ? `alerts.deliveryState.${delivery.state}` : 'alerts.unknown'), delivery.coalesced_count > 1 ? h('div', {class: 'text-note'}, t('alerts.deliveries.coalesced', {count: delivery.coalesced_count})) : null),
           h('td', null, channels.find((channel) => channel.id === delivery.channel_id)?.name || delivery.channel_id),
           h('td', null, String(delivery.attempts)), h('td', {title: delivery.last_error_code ? errorCodeMessage(delivery.last_error_code) : ''}, delivery.last_error_code || t('common.none')),
-          h('td', null, eventTime(delivery.updated_at)))))}) : h('p', {class: 'muted'}, t('alerts.deliveries.empty')));
+          h('td', null, eventTime(delivery.updated_at)))))}) : h('p', {class: 'text-note'}, t('alerts.deliveries.empty')));
       status.textContent = t('alerts.deliveries.loaded', {count: deliveries.length});
     } catch (error) { if (!signal?.aborted && error.name !== 'AbortError') status.textContent = t('alerts.deliveries.loadFailed', {error: errorText(error)}); }
     finally { busy(retry, false); }

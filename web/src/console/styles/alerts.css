@@ -23,14 +23,14 @@
 .alert-counts {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--sp-4);
-  margin-bottom: var(--sp-3);
+  gap: var(--sp-content);
+  margin-bottom: var(--sp-control);
 }
 
 .alert-count {
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: var(--sp-inline);
 }
 
 .alert-destination {
@@ -41,6 +41,6 @@
 select.alert-multiselect {
   appearance: auto;
   background-image: none;
-  padding: var(--sp-2) var(--sp-3);
+  padding: var(--sp-inline) var(--sp-control);
   min-height: 90px;
 }

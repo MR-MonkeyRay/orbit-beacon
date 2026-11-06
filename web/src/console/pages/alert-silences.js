@@ -66,7 +66,7 @@ export function silenceList(silences, context) {
         h('td', null, eventTime(silence.starts_at)), h('td', null, eventTime(silence.ends_at)),
         h('td', null, t(silence.active ? 'alerts.silences.active' : 'alerts.silences.scheduled')),
         h('td', {class: 'actions'}, iconButton('trash', t('alerts.silences.delete'), () => remove(silence))))))})
-      : h('p', {class: 'muted'}, t('alerts.silences.empty')));
+      : h('p', {class: 'text-note'}, t('alerts.silences.empty')));
 }
 
 export const silencesPanel = (context) => silenceList(context.silences, context);

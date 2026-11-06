@@ -13,7 +13,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--sp-3);
+  gap: var(--sp-control);
   min-height: 72px;
   border-bottom: 1px solid var(--line);
 }
@@ -23,7 +23,7 @@
   align-items: center;
   gap: 10px;
   color: var(--ink);
-  font-weight: var(--font-weight-680);
+  font-weight: var(--fw-brand);
   font-size: var(--fs-lg);
   letter-spacing: -.02em;
   text-decoration: none;
@@ -40,7 +40,7 @@
   min-width: 0;
   min-height: var(--control-h);
   padding: 0 10px;
-  border: 1px solid var(--line-2);
+  border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--panel);
   color: var(--ink);
@@ -53,7 +53,7 @@
 }
 
 .locale-error {
-  margin-top: var(--sp-3);
+  margin-top: var(--sp-control);
   color: var(--bad);
   font-size: var(--fs-sm);
   overflow-wrap: anywhere;
@@ -63,15 +63,15 @@
   display: inline-flex;
   align-items: center;
   min-height: var(--control-h);
-  padding: 0 var(--sp-4);
-  border: 1px solid var(--line-2);
+  padding: 0 var(--sp-content);
+  border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--ink);
   font-size: var(--fs-md);
-  font-weight: var(--font-weight-600);
+  font-weight: var(--fw-semibold);
   text-decoration: none;
   white-space: nowrap;
-  transition: background-color var(--duration-150),border-color var(--duration-150),transform var(--duration-100);
+  transition: background-color var(--motion-fast),border-color var(--motion-fast),transform var(--motion-instant);
 }
 
 /* Hero：集群星座图旁的实时标题 */
@@ -79,14 +79,14 @@
   display: grid;
   grid-template-columns: minmax(0,1.1fr) minmax(0,.9fr);
   align-items: center;
-  gap: var(--sp-5) 40px;
-  padding: 44px 0 var(--sp-6);
+  gap: var(--sp-group) 40px;
+  padding: 44px 0 var(--sp-section);
 }
 
 .hero h1 {
   font-size: clamp(30px,5vw,52px);
-  line-height: var(--line-height-108);
-  font-weight: var(--font-weight-720);
+  line-height: var(--lh-display);
+  font-weight: var(--fw-display);
   letter-spacing: -.035em;
   text-wrap: balance;
   font-variant-numeric: tabular-nums;
@@ -99,16 +99,16 @@
 .summary {
   margin-top: 14px;
   max-width: 46ch;
-  color: var(--ink-2);
+  color: var(--ink-subtle);
   font-size: var(--fs-lg);
 }
 
 .live {
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-3);
+  gap: var(--sp-control);
   margin-top: 28px;
-  padding: var(--sp-2) var(--sp-2) var(--sp-2) 10px;
+  padding: var(--sp-inline) var(--sp-inline) var(--sp-inline) 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--panel);
@@ -118,7 +118,7 @@
 .live-text {
   min-width: 0;
   padding-right: 6px;
-  line-height: var(--line-height-135);
+  line-height: var(--lh-label);
 }
 
 /* 此间距代替时间与模式之间的空隙（flex 项会将其裁掉）；
@@ -128,7 +128,7 @@
   flex-wrap: wrap;
   column-gap: .3em;
   font-size: var(--fs-md);
-  font-weight: var(--font-weight-600);
+  font-weight: var(--fw-semibold);
   font-variant-numeric: tabular-nums;
 }
 
@@ -166,7 +166,7 @@
 .countdown .dot {
   fill: var(--idle);
   stroke: none;
-  transition: fill var(--duration-300);
+  transition: fill var(--motion-normal);
 }
 
 .countdown[data-state="ok"] .dot {
@@ -183,7 +183,7 @@
 
 .countdown[data-state="live"] .dot {
   fill: var(--ok);
-  animation: live-pulse var(--duration-4000) var(--ease-in-out) infinite;
+  animation: live-pulse 4s var(--ease-in-out) infinite;
 }
 
 @keyframes live-pulse {
@@ -214,15 +214,15 @@
   justify-content: center;
   gap: 6px;
   min-height: var(--control-h);
-  padding: 0 var(--sp-4);
-  border: 1px solid var(--line-2);
+  padding: 0 var(--sp-content);
+  border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--panel-2);
+  background: var(--surface);
   color: var(--ink);
   font-size: var(--fs-md);
-  font-weight: var(--font-weight-600);
+  font-weight: var(--fw-semibold);
   cursor: pointer;
-  transition: background-color var(--duration-150),border-color var(--duration-150),color var(--duration-150),opacity var(--duration-150),transform var(--duration-100);
+  transition: background-color var(--motion-fast),border-color var(--motion-fast),color var(--motion-fast),opacity var(--motion-fast),transform var(--motion-instant);
 }
 
 /* 仅在支持悬停的设备上启用 hover，避免触摸点击留下卡住的高亮。 */
@@ -252,7 +252,7 @@ a,button {
 }
 
 .refresh.loading .icon {
-  animation: spin var(--duration-800) var(--ease-linear) infinite;
+  animation: spin 0.8s var(--ease-linear) infinite;
 }
 
 .pagination button:disabled {
@@ -275,23 +275,23 @@ a,button {
 
 .orbits .path {
   fill: none;
-  stroke: var(--line-2);
+  stroke: var(--border);
   stroke-width: 1.2;
   vector-effect: non-scaling-stroke;
 }
 
 .orbits .ring {
-  --d:var(--duration-orbit-public-1);
+  --d:var(--duration-orbit-public-inner);
   transform-origin: 200px 200px;
   animation: orbit var(--d) var(--ease-linear) infinite;
 }
 
 .orbits .r2 {
-  --d:var(--duration-orbit-public-2);
+  --d:var(--duration-orbit-public-middle);
 }
 
 .orbits .r3 {
-  --d:var(--duration-orbit-public-3);
+  --d:var(--duration-orbit-public-outer);
 }
 
 .orbits .sat {
@@ -302,7 +302,7 @@ a,button {
   stroke: var(--bg);
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
-  transition: fill var(--duration-400);
+  transition: fill var(--motion-slow);
 }
 
 .orbits .sat.online {
@@ -315,7 +315,7 @@ a,button {
 
 .orbits .core {
   fill: var(--beacon);
-  transition: fill var(--duration-400);
+  transition: fill var(--motion-slow);
 }
 
 .orbits .halo {
@@ -324,7 +324,7 @@ a,button {
   stroke-width: 2;
   transform-box: fill-box;
   transform-origin: center;
-  animation: ping var(--duration-3200) var(--ease-ping) infinite;
+  animation: ping 3.2s var(--ease-ping) infinite;
 }
 
 .orbits.idle .ring,.orbits.idle .sat,.orbits.paused .ring,.orbits.paused .sat,.orbits.paused .halo {
@@ -352,20 +352,20 @@ a,button {
 .filters {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--sp-2);
-  margin: var(--sp-1) 0 20px;
+  gap: var(--sp-inline);
+  margin: var(--sp-tight) 0 20px;
 }
 
 .filters button {
   min-height: var(--control-h-sm);
   padding: 0 14px;
   background: var(--panel);
-  font-weight: var(--font-weight-550);
+  font-weight: var(--fw-medium);
 }
 
 .filters button .num {
-  color: var(--ink-3);
-  font-weight: var(--font-weight-600);
+  color: var(--ink-muted);
+  font-weight: var(--fw-semibold);
 }
 
 .filters button[aria-pressed="true"] {
@@ -398,7 +398,7 @@ a,button {
 .nodes {
   display: grid;
   grid-template-columns: repeat(auto-fill,minmax(min(100%,300px),1fr));
-  gap: var(--sp-4);
+  gap: var(--sp-content);
 }
 
 .node {
@@ -406,8 +406,8 @@ a,button {
 }
 
 .node.enter {
-  animation: rise var(--duration-500) var(--ease) both;
-  animation-delay: calc(var(--i,0) * var(--duration-40));
+  animation: rise 0.5s var(--ease) both;
+  animation-delay: calc(var(--i,0) * 40ms);
 }
 
 @keyframes rise {
@@ -429,7 +429,7 @@ a,button {
 }
 
 .card.changed {
-  animation: status-changed var(--duration-1200) var(--ease);
+  animation: status-changed 1.2s var(--ease);
 }
 
 .node[data-status="online"] .card {
@@ -450,14 +450,14 @@ a,button {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--sp-3);
+  gap: var(--sp-control);
 }
 
 .card h2 {
   min-width: 0;
   font-size: var(--fs-lg);
-  line-height: var(--line-height-140);
-  font-weight: var(--font-weight-650);
+  line-height: var(--lh-compact);
+  font-weight: var(--fw-heading);
   letter-spacing: -.01em;
   overflow-wrap: anywhere;
 }
@@ -473,16 +473,16 @@ a,button {
 .where {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--sp-1) 14px;
+  gap: var(--sp-tight) 14px;
   margin-top: 6px;
   font-size: var(--fs-sm);
-  color: var(--ink-3);
+  color: var(--ink-muted);
 }
 
 .where>span {
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-1);
+  gap: var(--sp-tight);
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -496,28 +496,28 @@ a,button {
   display: grid;
   gap: 14px;
   margin-block: 20px;
-  transition: opacity var(--duration-300);
+  transition: opacity var(--motion-normal);
 }
 
 .gauge-line {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--sp-3);
+  gap: var(--sp-control);
   font-size: var(--fs-sm);
-  color: var(--ink-2);
+  color: var(--ink-subtle);
 }
 
 .gauge-value {
   font-size: var(--fs-base);
-  font-weight: var(--font-weight-650);
+  font-weight: var(--fw-heading);
   color: var(--ink);
 }
 
 .track {
   display: block;
   height: 6px;
-  margin-top: var(--sp-2);
+  margin-top: var(--sp-inline);
   border-radius: 999px;
   background: var(--line);
   overflow: hidden;
@@ -530,7 +530,7 @@ a,button {
   background: var(--orbit);
   transform-origin: left;
   transform: scaleX(var(--v,0));
-  transition: transform var(--duration-800) var(--ease),background-color var(--duration-400);
+  transition: transform 0.8s var(--ease),background-color var(--motion-slow);
 }
 
 .gauge[data-level="high"] .fill {
@@ -543,9 +543,9 @@ a,button {
 
 .gauge .na {
   display: none;
-  margin-top: var(--sp-1);
+  margin-top: var(--sp-tight);
   font-size: var(--fs-xs);
-  color: var(--ink-3);
+  color: var(--ink-muted);
 }
 
 .gauge.missing .track {
@@ -560,27 +560,27 @@ a,button {
 .stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--sp-3);
+  gap: var(--sp-control);
   margin-top: auto;
   padding-top: 14px;
   border-top: 1px solid var(--line);
-  transition: opacity var(--duration-300);
+  transition: opacity var(--motion-normal);
 }
 
 .stats dt {
   font-size: var(--fs-xs);
-  color: var(--ink-3);
+  color: var(--ink-muted);
 }
 
 .stats dd {
   margin-top: 2px;
   font-size: var(--fs-base);
-  font-weight: var(--font-weight-600);
+  font-weight: var(--fw-semibold);
   overflow-wrap: anywhere;
 }
 
 .metric-stale .gauge-value,.stats .metric-stale {
-  color: var(--ink-3);
+  color: var(--ink-muted);
 }
 
 .gauge.metric-stale .track {
@@ -588,12 +588,12 @@ a,button {
 }
 
 .last-report {
-  margin-top: var(--sp-4);
-  padding-top: var(--sp-3);
+  margin-top: var(--sp-content);
+  padding-top: var(--sp-control);
   border-top: 1px solid var(--line);
   font-size: var(--fs-xs);
-  line-height: var(--line-height-160);
-  color: var(--ink-2);
+  line-height: var(--lh-relaxed);
+  color: var(--ink-subtle);
   overflow-wrap: anywhere;
 }
 
@@ -604,7 +604,7 @@ a,button {
 .sk {
   display: block;
   height: 12px;
-  margin: var(--sp-3) 0;
+  margin: var(--sp-control) 0;
   border-radius: 6px;
 }
 
@@ -633,9 +633,9 @@ a,button {
   justify-items: center;
   gap: 14px;
   padding: 56px 20px;
-  border: 1px dashed var(--line-2);
+  border: 1px dashed var(--border);
   border-radius: var(--r-lg);
-  color: var(--ink-2);
+  color: var(--ink-subtle);
   text-align: center;
 }
 
@@ -643,13 +643,13 @@ a,button {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: var(--sp-4);
-  margin-top: var(--sp-6);
+  gap: var(--sp-content);
+  margin-top: var(--sp-section);
 }
 
 .pagination span {
   font-size: var(--fs-sm);
-  color: var(--ink-3);
+  color: var(--ink-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -662,12 +662,12 @@ footer {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
-  gap: var(--sp-2) var(--sp-5);
+  gap: var(--sp-inline) var(--sp-group);
   margin-top: 56px;
   padding: 22px 0 calc(40px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
   font-size: var(--fs-sm);
-  color: var(--ink-3);
+  color: var(--ink-muted);
 }
 
 @media (pointer:coarse) {
@@ -700,7 +700,7 @@ footer {
 /* 平板：标题保持在较小的星座图旁。 */
 @media (max-width:1023px) {
   .hero {
-    gap: var(--sp-5) 28px;
+    gap: var(--sp-group) 28px;
     padding-top: 36px;
   }
 
@@ -714,7 +714,7 @@ footer {
 @media (max-width:719px) {
   .top {
     flex-wrap: wrap;
-    padding: var(--sp-3) 0;
+    padding: var(--sp-control) 0;
   }
 
   .top-actions {
@@ -723,8 +723,8 @@ footer {
 
   .hero {
     grid-template-columns: minmax(0,1fr);
-    gap: var(--sp-3);
-    padding: 20px 0 var(--sp-5);
+    gap: var(--sp-control);
+    padding: 20px 0 var(--sp-group);
   }
 
   .constellation {
@@ -742,8 +742,8 @@ footer {
     overflow-x: auto;
     scroll-snap-type: x proximity;
     scrollbar-width: none;
-    margin: 0 calc(-1 * var(--gutter)) var(--sp-4);
-    padding: var(--sp-1) var(--gutter);
+    margin: 0 calc(-1 * var(--gutter)) var(--sp-content);
+    padding: var(--sp-tight) var(--gutter);
     scroll-padding-inline: var(--gutter);
     mask-image: linear-gradient(90deg,#000 calc(100% - 24px),transparent);
   }
@@ -805,14 +805,14 @@ footer {
 
 .public-announcements:not([hidden]) {
   display: grid;
-  gap: var(--sp-3);
-  margin-bottom: var(--sp-5);
+  gap: var(--sp-control);
+  margin-bottom: var(--sp-group);
   min-width: 0;
 }
 
 .public-announcement {
   min-width: 0;
-  padding: var(--sp-4);
+  padding: var(--sp-content);
   border: 1px solid var(--line);
   border-left: 4px solid var(--orbit);
   border-radius: var(--r-md);
@@ -823,5 +823,5 @@ footer {
 .public-announcement.warning { border-left-color: var(--warn); }
 .public-announcement.critical { border-left-color: var(--bad); }
 .public-announcement h2 { font-size: var(--fs-lg); }
-.public-announcement .announcement-level { color: var(--ink-2); }
+.public-announcement .announcement-level { color: var(--ink-subtle); }
 .public-announcement .announcement-body { white-space: pre-line; }

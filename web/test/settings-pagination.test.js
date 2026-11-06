@@ -307,6 +307,11 @@ test('administrator forms preserve request boundaries and keep conflicts in the 
     const password = controls.find((element) => element.name === 'password');
     const mustChangePassword = controls.find((element) => element.name === 'must_change_password');
     assert.equal(mustChangePassword.checked, false);
+    assert.equal(mustChangePassword.classList.contains('input'), false);
+    assert.equal(mustChangePassword.parentElement.tagName, 'label');
+    assert.equal(mustChangePassword.parentElement.className, 'check-row');
+    assert.equal(mustChangePassword.parentElement.children[0], mustChangePassword);
+    assert.ok(mustChangePassword.parentElement.textContent.includes(copy('settings.requirePasswordChange')));
     password.value = 'regression password two';
     dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true}));
     await flush();

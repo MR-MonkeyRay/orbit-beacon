@@ -4,15 +4,15 @@
 }
 
 ::view-transition-old(main-view) {
-  animation: vt-out var(--duration-140) var(--ease-in) both;
+  animation: vt-out var(--motion-fast) var(--ease-in) both;
 }
 
 ::view-transition-new(main-view) {
-  animation: vt-in var(--duration-320) var(--ease) both;
+  animation: vt-in var(--motion-slow) var(--ease) both;
 }
 
 ::view-transition-group(nav-pill) {
-  animation-duration: var(--duration-320);
+  animation-duration: var(--motion-slow);
   animation-timing-function: var(--ease);
 }
 
@@ -30,7 +30,7 @@
 }
 
 .enter {
-  animation: vt-in var(--duration-320) var(--ease);
+  animation: vt-in var(--motion-slow) var(--ease);
 }
 
 /* 响应式：仅支持桌面和 iPad 宽度。 */
@@ -52,13 +52,13 @@
   }
 
   .sidebar {
-    padding: var(--sp-4) 10px;
+    padding: var(--sp-content) 10px;
     overflow: visible;
   }
 
   .sidebar .brand {
     justify-content: center;
-    padding: var(--sp-1) 0 18px;
+    padding: var(--sp-tight) 0 18px;
   }
 
   .nav a,.nav-public,.nav .notification-entry {
@@ -81,19 +81,19 @@
     left: calc(100% + 12px);
     top: 50%;
     z-index: var(--z-toast);
-    padding: var(--sp-1) 10px;
+    padding: var(--sp-tight) 10px;
     border-radius: var(--r-sm);
     background: var(--ink);
     color: var(--bg);
     font-size: var(--fs-sm);
-    font-weight: var(--font-weight-600);
-    line-height: var(--line-height-140);
+    font-weight: var(--fw-semibold);
+    line-height: var(--lh-compact);
     white-space: nowrap;
     box-shadow: var(--shadow);
     opacity: 0;
     transform: translate(-4px,-50%);
     pointer-events: none;
-    transition: opacity var(--duration-150),transform var(--duration-150) var(--ease);
+    transition: opacity var(--motion-fast),transform var(--motion-fast) var(--ease);
   }
 
   .sidebar .brand,.account-actions .btn {
@@ -122,8 +122,8 @@
     right: 4px;
     min-width: 18px;
     margin: 0;
-    padding: 0 var(--sp-1);
-    font-size: var(--fs-2xs);
+    padding: 0 var(--sp-tight);
+    font-size: var(--fs-micro);
     line-height: var(--line-height-badge);
   }
 
@@ -133,7 +133,7 @@
 
   .account {
     justify-items: center;
-    padding: var(--sp-3) 0 var(--sp-1);
+    padding: var(--sp-control) 0 var(--sp-tight);
   }
 
   .account .who-text {
@@ -146,8 +146,8 @@
   }
 
   .account-locale select {
-    padding-inline: var(--sp-1);
-    font-size: var(--fs-2xs);
+    padding-inline: var(--sp-tight);
+    font-size: var(--fs-micro);
   }
 
   .account-actions {
@@ -165,7 +165,7 @@
 
 @media (max-width:1023px) {
   .main {
-    padding: 26px var(--sp-5) 56px;
+    padding: 26px var(--sp-group) 56px;
   }
 
   .hide-compact {

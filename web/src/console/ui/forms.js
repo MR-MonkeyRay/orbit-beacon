@@ -19,7 +19,7 @@ export function validateBytes(control, min, max, label) {
   return check;
 }
 
-export const input = (props) => h('input', {class: 'input', type: 'text', ...props});
+export const input = (props = {}) => h('input', {class: ['checkbox', 'radio'].includes(props.type) ? '' : 'input', type: 'text', ...props});
 
 export function textarea(props, value) {
   const element = h('textarea', {class: 'input', rows: 4, ...props});
@@ -76,10 +76,12 @@ export function field(label, control, options = {}) {
     if (control.classList.contains('touched') || control.hasAttribute('aria-invalid')) control.showError(validationText(control));
   });
   control.addEventListener('blur', () => { if (control.value !== '') control.classList.add('touched'); });
+  const check = ['checkbox', 'radio'].includes(control.type) && !options.inner;
   return h('div', {class: 'field'},
-    h('label', {for: control.id, class: 'field-label'}, label),
-    options.inner || control,
-    options.hint ? h('span', {class: 'hint', id: hintID}, options.hint) : null,
+    check ? h('label', {class: 'check-row', for: control.id}, control, h('strong', null, label))
+      : h('label', {for: control.id, class: 'field-label'}, label),
+    check ? null : options.inner || control,
+    options.hint ? h('span', {class: 'text-note', id: hintID}, options.hint) : null,
     error);
 }
 
@@ -234,6 +236,6 @@ export function tagEditor(values) {
   }
   render();
   return h('div', {class: 'field'}, h('label', {for: entry.id, class: 'field-label', id: labelID}, t('controls.tags.label')), box,
-    h('span', {class: 'hint', id: hintID}, t('controls.tags.hint')), error);
+    h('span', {class: 'text-note', id: hintID}, t('controls.tags.hint')), error);
 }
 

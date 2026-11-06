@@ -13,9 +13,9 @@
   border-radius: var(--r-md);
   background: var(--beacon);
   color: var(--beacon-ink);
-  font-weight: var(--font-weight-600);
+  font-weight: var(--fw-semibold);
   text-decoration: none;
-  transition: top var(--duration-200) var(--ease);
+  transition: top var(--motion-fast) var(--ease);
 }
 
 .skip:focus {
@@ -37,13 +37,13 @@
 
 .progress.run {
   opacity: 1;
-  animation: progress var(--duration-2400) var(--ease-progress) forwards;
+  animation: progress 2.4s var(--ease-progress) forwards;
 }
 
 .progress.done {
   opacity: 0;
   transform: scaleX(1);
-  transition: opacity var(--duration-350) var(--duration-100),transform var(--duration-200);
+  transition: opacity var(--motion-slow) var(--motion-instant),transform var(--motion-fast);
 }
 
 @keyframes progress {
@@ -93,9 +93,9 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: var(--sp-1) 10px 18px;
+  padding: var(--sp-tight) 10px 18px;
   color: var(--ink);
-  font-weight: var(--font-weight-680);
+  font-weight: var(--fw-brand);
   font-size: var(--fs-lg);
   letter-spacing: -.02em;
   text-decoration: none;
@@ -112,14 +112,14 @@
   isolation: isolate;
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
+  gap: var(--sp-control);
   min-height: var(--control-h-lg);
-  padding: 0 var(--sp-3);
+  padding: 0 var(--sp-control);
   border-radius: var(--r-md);
-  color: var(--ink-2);
-  font-weight: var(--font-weight-550);
+  color: var(--ink-subtle);
+  font-weight: var(--fw-medium);
   text-decoration: none;
-  transition: color var(--duration-150),background-color var(--duration-150);
+  transition: color var(--motion-fast),background-color var(--motion-fast);
 }
 
 @media (hover:hover) {
@@ -164,7 +164,7 @@
   margin-top: auto;
   display: grid;
   gap: 10px;
-  padding: 14px var(--sp-2) var(--sp-1);
+  padding: 14px var(--sp-inline) var(--sp-tight);
   border-top: 1px solid var(--line);
 }
 
@@ -184,7 +184,7 @@
   border-radius: 50%;
   background: var(--orbit-soft);
   color: var(--orbit);
-  font-weight: var(--font-weight-700);
+  font-weight: var(--fw-bold);
   text-transform: uppercase;
 }
 
@@ -193,7 +193,7 @@
 }
 
 .who-name {
-  font-weight: var(--font-weight-600);
+  font-weight: var(--fw-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -68,7 +68,7 @@ export function announcementList(items, context) {
       return h('tr', null, h('td', null, t(`alerts.severity.${item.level}`)), h('td', null, item.title),
         h('td', null, eventTime(item.starts_at)), h('td', null, item.ends_at ? eventTime(item.ends_at) : t('common.none')),
         h('td', null, t(item.active ? 'alerts.silences.active' : 'alerts.silences.scheduled')), h('td', {class: 'actions'}, edit, deletion));
-    }))}) : h('p', {class: 'muted'}, t('announcements.empty')));
+    }))}) : h('p', {class: 'text-note'}, t('announcements.empty')));
 }
 
 export function announcementsPanel(navigation) {

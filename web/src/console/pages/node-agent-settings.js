@@ -4,11 +4,11 @@ import {absoluteWhen} from '../format.js';
 import {panel, readonlyFacts} from '../ui/components.js';
 
 export function agentSettingsTab(node, runtime) {
-  const guidance = h('p', {class: 'lede'}, t('nodes.agentReadOnly'));
-  const offline = h('p', {class: 'muted', hidden: true});
+  const guidance = h('p', {class: 'text-note'}, t('nodes.agentReadOnly'));
+  const offline = h('p', {class: 'text-note', hidden: true});
   const body = h('div');
   const values = readonlyFacts();
-  const empty = h('p', {class: 'muted'}, t('nodes.agentEmpty'));
+  const empty = h('p', {class: 'text-note'}, t('nodes.agentEmpty'));
   const element = panel(t('nodes.agentSettings'), {}, guidance, offline, body);
   element.snapshot = (current, observed) => {
     offline.hidden = !observed || current.presence !== 'offline';

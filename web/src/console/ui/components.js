@@ -127,7 +127,7 @@ export function dataTable({caption, columns, body, className = '', colgroup, hid
     h('thead', null, h('tr', null, columns.map((label) => h('th', {scope: 'col'}, label)))), body));
 }
 
-export function note(text) { return h('p', {class: 'note'}, icon('info'), h('span', null, text)); }
+export function note(text) { return h('p', {class: 'text-note'}, icon('info'), h('span', null, text)); }
 
 export function callout(text, kind = 'warn') {
   return h('div', {class: `callout ${kind === 'info' ? 'info' : ''}`.trim()}, icon(kind === 'info' ? 'info' : 'alert'), h('span', null, text));

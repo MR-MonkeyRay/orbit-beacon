@@ -83,7 +83,7 @@ function lazyTab(load, render) {
 function publicPageTab() {
   const navigation = getNavigationSignal();
   const control = h('input', {type: 'checkbox', name: 'public_page_enabled', disabled: true});
-  const note = h('p', {class: 'hint', role: 'status'}, t('settings.publicLoading'));
+  const note = h('p', {class: 'text-note', role: 'status'}, t('settings.publicLoading'));
   const errorBox = h('div', {class: 'form-error', role: 'alert', hidden: true});
   const retry = button(t('shell.tryAgain'), {onClick: () => { void load(); }});
   retry.hidden = true;
@@ -166,7 +166,7 @@ function accountTab() {
       [t('account.username'), user.username],
       [t('account.accountCreated'), when(user.created_at)], [t('account.sessionExpires'), session.expires ? when(session.expires) : null]
     ])),
-    panel(t('account.changePassword'), {}, h('p', {class: 'lede'}, t('account.passwordSignOutHint')), form), totpPanel(), apiTokensPanel());
+    panel(t('account.changePassword'), {}, h('p', {class: 'text-note'}, t('account.passwordSignOutHint')), form), totpPanel(), apiTokensPanel());
 }
 
 function administratorsTab(users) {
@@ -233,7 +233,7 @@ function administratorsTab(users) {
         validateBytes(password, 8, 1024, t('account.password'));
         form.append(field(t('account.username'), username),
           field(t('settings.initialPassword'), password, {inner: password.wrapper, hint: t('settings.initialPasswordHint')}),
-          h('label', {class: 'data-check'}, mustChangePassword, h('span', null, t('settings.requirePasswordChange'))));
+          h('label', {class: 'check-row'}, mustChangePassword, h('span', null, t('settings.requirePasswordChange'))));
       },
       action: async () => {
         try {
@@ -269,7 +269,7 @@ function administratorsTab(users) {
       h('thead', null, h('tr', null, h('th', {scope: 'col'}, t('account.username')), h('th', {scope: 'col', class: 'hide-compact'}, t('settings.created')),
         h('th', {scope: 'col'}, t('account.totp')), h('th', {scope: 'col'}, h('span', {class: 'sr'}, t('settings.actions'))))),
       h('tbody', null, users.length ? rows : h('tr', null, h('td', {colspan: 4}, t('settings.noAdministrators')))))),
-    lastAdministrator ? h('p', {class: 'administrator-protection muted'}, t('settings.lastAdministrator')) : null);
+    lastAdministrator ? h('p', {class: 'text-note'}, t('settings.lastAdministrator')) : null);
 }
 
 function groupsTab(groups, nodes) {

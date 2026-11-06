@@ -23,7 +23,7 @@ export async function issueEnrollment(target, title, isDeleted = () => false) {
   // 明文只保留在此对话框中，绝不进入票据列表状态。
   delete ticket.token;
   const countdown = h('span', {class: 'mono', role: 'timer', 'aria-live': 'off'});
-  const status = h('p', {class: 'hint', role: 'status'});
+  const status = h('p', {class: 'text-note', role: 'status'});
   const tick = () => { countdown.textContent = enrollmentCountdown(ticket.expires_at); };
   tick();
   const {closed} = modal(title, (close) => h('div', null,
@@ -89,7 +89,7 @@ export function enrollmentTab(node) {
     finally { busy(issue, false); issue.disabled = Boolean(node.deleted); }
   }});
   const content = panel(t('nodes.enrollAgent'), {action: issue}, h('div', {class: 'stack'},
-    h('p', {class: 'lede'}, t('nodes.enrollment.issueIntro')),
+    h('p', {class: 'text-note'}, t('nodes.enrollment.issueIntro')),
     node.status === 'disabled' ? callout(t('nodes.enrollment.disabled')) : null,
     retry, error, list));
   reload();

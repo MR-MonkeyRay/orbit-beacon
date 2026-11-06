@@ -33,7 +33,7 @@ export function formatProbeUptime(uptime, checks) {
 }
 
 function probeContent(probes) {
-  if (!probes.length) return h('p', {class: 'muted'}, t('nodes.probe.empty'));
+  if (!probes.length) return h('p', {class: 'text-note'}, t('nodes.probe.empty'));
   return h('div', {class: 'stack'},
     h('ul', {class: 'probe-list'}, probes.map((probe) => {
       const status = {up: ['online', t('nodes.probe.up')], down: ['offline', t('nodes.probe.down')], pending: ['pending', t('common.status.pending')]}[probe.status] || ['pending', t('common.status.pending')];
@@ -49,7 +49,7 @@ function probeContent(probes) {
           [t('nodes.probe.uptime'), formatProbeUptime(probe.uptime_24h, probe.checks_24h)]
         ]));
     })),
-    probes.every((probe) => probe.status === 'pending') ? h('p', {class: 'muted'},
+    probes.every((probe) => probe.status === 'pending') ? h('p', {class: 'text-note'},
       t('nodes.probe.pendingHint')) : null);
 }
 
@@ -121,7 +121,7 @@ export function probesPanel(id, signal) {
     const request = new AbortController();
     controller = request;
     content.setAttribute('aria-busy', 'true');
-    if (!content.children.length) content.replaceChildren(h('p', {class: 'muted', role: 'status'}, t('nodes.probe.loading')));
+    if (!content.children.length) content.replaceChildren(h('p', {class: 'text-note', role: 'status'}, t('nodes.probe.loading')));
     try {
       const data = await api(`/nodes/${encodeURIComponent(id)}/probes`, {signal: request.signal});
       if (!Array.isArray(data.probes)) throw Object.assign(new Error('Unreadable probe results'), {code: 'unreadable_response'});

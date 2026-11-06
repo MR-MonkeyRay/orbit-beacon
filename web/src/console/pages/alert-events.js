@@ -37,7 +37,7 @@ export function eventsPanel(state, signal) {
   const rows = h('tbody');
   const table = dataTable({hidden: true, caption: t(active ? 'alerts.events.activeCaption' : 'alerts.events.historyCaption'),
     columns: ['severity', 'rule', 'node', 'value', 'state', 'started', 'resolved'].map((key) => t(`alerts.column.${key}`)), body: rows});
-  const status = h('p', {class: 'muted', role: 'status'}, t('alerts.events.loading'));
+  const status = h('p', {class: 'text-note', role: 'status'}, t('alerts.events.loading'));
   let cursor = '';
   let loading = false;
   let request;
@@ -97,5 +97,5 @@ export function activeAlertsSummary({firing, newest}) {
       h('ul', {class: 'rows'}, newest.map((event) => h('li', null,
         h('div', {class: 'grow'}, h('div', {class: 'title'}, link(`/alerts?event=${encodeURIComponent(event.id)}#history`, event.rule_name || t('alerts.deletedRule')), event.target ? h('div', null, h('code', {class: 'probe-target mono'}, event.target)) : null),
           h('div', {class: 'sub'}, eventSummary(event))),
-        severityPill(event.severity))))] : h('p', {class: 'muted'}, t('alerts.events.noActive')));
+        severityPill(event.severity))))] : h('p', {class: 'text-note'}, t('alerts.events.noActive')));
 }

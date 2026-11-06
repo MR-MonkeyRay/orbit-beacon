@@ -30,9 +30,9 @@ function taskTable(tasks, openTask) {
     body: h('tbody', null, tasks.map((task) => h('tr', null,
       cell(t('data.task.created'), when(task.created_at)),
       cell(t('data.task.source'), task.destination.plan_name || t(task.kind === 'backup_export' ? 'data.task.manual' : 'data.task.deletedPlan'),
-        task.destination.actor_name ? h('small', {class: 'data-secondary'}, t('data.task.startedBy', {name: task.destination.actor_name})) : null),
+        task.destination.actor_name ? h('small', {class: 'muted'}, t('data.task.startedBy', {name: task.destination.actor_name})) : null),
       cell(t('data.categories'), categoryNames(task.categories)),
-      cell(t('data.task.state'), taskStatus(task), task.warning_code ? h('small', {class: 'data-secondary'}, t('data.task.warningDetails')) : null),
+      cell(t('data.task.state'), taskStatus(task), task.warning_code ? h('small', {class: 'muted'}, t('data.task.warningDetails')) : null),
       cell(t('data.task.details'), button(t('data.task.details'), {onClick: () => openTask(task.id)})))))});
 }
 
@@ -41,7 +41,7 @@ function planCard(plan, {openTask, editPlan, deletePlan}) {
   const next = plan.next_runs?.[0];
   return h('article', {class: 'data-plan'},
     h('div', {class: 'data-plan-head'}, h('div', null, h('h3', null, plan.name),
-      h('span', {class: 'data-secondary'}, plan.kind === 'local' ? t('data.plan.localDirectory') : t(backupProviders.find(([id]) => id === plan.destination.provider)?.[1] || 'data.provider.unknown'))),
+      h('span', {class: 'muted'}, plan.kind === 'local' ? t('data.plan.localDirectory') : t(backupProviders.find(([id]) => id === plan.destination.provider)?.[1] || 'data.provider.unknown'))),
     h('span', {class: `data-state ${plan.enabled ? 'data-state-succeeded' : 'data-state-unknown'}`}, t(plan.enabled ? 'data.plan.enabled' : 'data.plan.disabled'))),
     h('p', {class: 'data-location'}, planLocation(plan)),
     h('dl', {class: 'data-plan-facts'},
@@ -67,9 +67,9 @@ export function dataOperationsTab() {
   const dialogs = new Set();
   const taskRows = h('div');
   const planRows = h('div');
-  const taskNote = h('p', {class: 'data-load-note', role: 'status'}, t('controls.loading'));
-  const planNote = h('p', {class: 'data-load-note', role: 'status'}, t('controls.loading'));
-  const timezone = h('p', {class: 'hint'}, t('data.timezone.loading'));
+  const taskNote = h('p', {class: 'text-note', role: 'status'}, t('controls.loading'));
+  const planNote = h('p', {class: 'text-note', role: 'status'}, t('controls.loading'));
+  const timezone = h('p', {class: 'text-note'}, t('data.timezone.loading'));
   const taskPrevious = button(t('data.tasks.newer'), {disabled: true, onClick: () => { taskPager.page -= 1; loadTasks(); }});
   const taskNext = button(t('data.tasks.older'), {disabled: true, onClick: () => { taskPager.page += 1; loadTasks(); }});
   const planPrevious = button(t('data.plans.newer'), {disabled: true, onClick: () => { planPager.page -= 1; loadPlans(); }});
@@ -80,7 +80,7 @@ export function dataOperationsTab() {
   const exportCategories = backupCategoriesField();
   const start = button(t('data.export.start'), {type: 'submit', variant: 'primary'});
   const exportError = h('div', {class: 'form-error', role: 'alert', hidden: true});
-  const exportStatus = h('p', {class: 'data-load-note', role: 'status', hidden: true});
+  const exportStatus = h('p', {class: 'text-note', role: 'status', hidden: true});
   const exportForm = h('form', {class: 'form form-wide'}, exportError, exportCategories.element,
     h('div', {class: 'form-actions'}, start), exportStatus);
   onSubmit(exportForm, start, async () => {
@@ -98,7 +98,7 @@ export function dataOperationsTab() {
   const element = h('div', {class: 'data-operations'},
     panel(t('data.export.title'), {},
       callout(t('data.export.warning')),
-      h('p', {class: 'hint'}, t('data.export.hint')),
+      h('p', {class: 'text-note'}, t('data.export.hint')),
       exportForm),
     panel(t('data.plans.title'), {action: h('div', {class: 'data-actions'}, planRefresh, addPlan)},
       timezone, planNote, planRows,
@@ -108,12 +108,12 @@ export function dataOperationsTab() {
 
   const taskView = {pager: taskPager, path: '/tasks', rows: taskRows, note: taskNote, previous: taskPrevious, next: taskNext, refresh: taskRefresh,
     values: (page) => page.tasks,
-    render: (page) => page.tasks.length ? taskTable(page.tasks, openTask) : h('p', {class: 'data-empty'}, t('data.tasks.empty')),
+    render: (page) => page.tasks.length ? taskTable(page.tasks, openTask) : h('p', {class: 'empty'}, t('data.tasks.empty')),
     success: () => { taskNote.textContent = t('data.tasks.current'); },
     failure: (stale, error) => t(stale ? 'data.tasks.refreshFailedStale' : 'data.tasks.refreshFailed', {error: errorText(error)})};
   const planView = {pager: planPager, path: '/backup-plans', rows: planRows, note: planNote, previous: planPrevious, next: planNext, refresh: planRefresh,
     values: (page) => page.plans,
-    render: (page) => page.plans.length ? h('div', {class: 'data-plan-list'}, page.plans.map((plan) => planCard(plan, {openTask, editPlan, deletePlan}))) : h('p', {class: 'data-empty'}, t('data.plans.empty')),
+    render: (page) => page.plans.length ? h('div', {class: 'data-plan-list'}, page.plans.map((plan) => planCard(plan, {openTask, editPlan, deletePlan}))) : h('p', {class: 'empty'}, t('data.plans.empty')),
     success: (page) => { timezone.textContent = t('data.timezone.label', {timezone: timezoneText(page)}); planNote.textContent = ''; },
     failure: (stale, error) => t(stale ? 'data.plans.refreshFailedStale' : 'data.plans.refreshFailed', {error: errorText(error)})};
 

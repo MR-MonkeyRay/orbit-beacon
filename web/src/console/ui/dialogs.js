@@ -120,6 +120,6 @@ export function formDialog({title, intro, submit, build, action}) {
     }, errorBox);
     const first = form.querySelector('input,select,textarea');
     if (first) first.dataset.autofocus = '';
-    return h('div', {class: 'dialog-body'}, intro ? h('p', {class: 'lede'}, intro) : null, form);
+    return h('div', {class: 'dialog-body'}, intro ? h('p', {class: 'text-note'}, intro) : null, form);
   });
 }

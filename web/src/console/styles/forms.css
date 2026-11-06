@@ -1,7 +1,55 @@
 /* 表单 */
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-control);
+  min-height: var(--control-h-lg);
+  padding: 10px var(--sp-control);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  background: var(--surface);
+}
+
+.check-row:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.check-row input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: var(--sp-tight) 0 0;
+  accent-color: var(--orbit);
+  cursor: pointer;
+}
+
+.check-row>span {
+  min-width: 0;
+}
+
+.check-row strong {
+  display: block;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+}
+
+.check-row small {
+  display: block;
+  margin-top: var(--sp-tight);
+  color: var(--ink-subtle);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-text);
+}
+
+.check-row:has(input:disabled) {
+  cursor: default;
+}
+
 .form {
   display: grid;
-  gap: var(--sp-4);
+  gap: var(--sp-content);
   max-width: 560px;
 }
 
@@ -12,7 +60,7 @@
 .form-row {
   display: grid;
   grid-template-columns: repeat(auto-fit,minmax(min(100%,200px),1fr));
-  gap: var(--sp-4);
+  gap: var(--sp-content);
 }
 
 .field {
@@ -25,8 +73,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: var(--sp-2);
-  margin-bottom: var(--sp-4);
+  gap: var(--sp-inline);
+  margin-bottom: var(--sp-content);
 }
 
 .form-compact .field {
@@ -40,34 +88,29 @@
 
 .field-label,.field>span:first-child {
   font-size: var(--fs-sm);
-  font-weight: var(--font-weight-600);
+  font-weight: var(--fw-semibold);
   color: var(--ink);
-}
-
-.hint {
-  font-size: var(--fs-xs);
-  color: var(--ink-3);
 }
 
 .field-error {
   font-size: var(--fs-xs);
   color: var(--bad);
-  font-weight: var(--font-weight-550);
+  font-weight: var(--fw-medium);
 }
 
 .input {
   width: 100%;
   min-height: var(--control-h);
-  padding: var(--sp-2) var(--sp-3);
-  border: 1px solid var(--line-2);
+  padding: var(--sp-inline) var(--sp-control);
+  border: 1px solid var(--border);
   border-radius: var(--r-md);
-  background: var(--panel-2);
-  transition: border-color var(--duration-150),box-shadow var(--duration-150),background-color var(--duration-150);
+  background: var(--surface);
+  transition: border-color var(--motion-fast),box-shadow var(--motion-fast),background-color var(--motion-fast);
 }
 
 @media (hover:hover) {
   .input:hover {
-    border-color: var(--ink-3);
+    border-color: var(--ink-muted);
   }
 }
 
@@ -93,13 +136,13 @@
 textarea.input {
   min-height: 96px;
   resize: vertical;
-  line-height: var(--line-height-150);
+  line-height: var(--lh-text);
 }
 
 select.input {
   appearance: none;
   padding-right: 36px;
-  background-image: linear-gradient(45deg,transparent 50%,var(--ink-3) 50%),linear-gradient(135deg,var(--ink-3) 50%,transparent 50%);
+  background-image: linear-gradient(45deg,transparent 50%,var(--ink-muted) 50%),linear-gradient(135deg,var(--ink-muted) 50%,transparent 50%);
   background-position: calc(100% - 18px) 50%,calc(100% - 13px) 50%;
   background-size: 5px 5px;
   background-repeat: no-repeat;
@@ -127,14 +170,14 @@ select.input {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  padding-top: var(--sp-1);
+  padding-top: var(--sp-tight);
 }
 
 .dirty-note {
   font-size: var(--fs-sm);
   color: var(--beacon-text);
   opacity: 0;
-  transition: opacity var(--duration-200);
+  transition: opacity var(--motion-fast);
 }
 
 .dirty-note.on {
@@ -144,7 +187,7 @@ select.input {
 .switch {
   display: flex;
   align-items: flex-start;
-  gap: var(--sp-3);
+  gap: var(--sp-control);
   cursor: pointer;
 }
 
@@ -161,8 +204,8 @@ select.input {
   height: 24px;
   margin-top: 1px;
   border-radius: 12px;
-  background: var(--line-2);
-  transition: background-color var(--duration-200) var(--ease);
+  background: var(--border);
+  transition: background-color var(--motion-fast) var(--ease);
 }
 
 .switch-track::after {
@@ -175,7 +218,7 @@ select.input {
   border-radius: 50%;
   background: var(--control-knob);
   box-shadow: 0 1px 3px rgba(0,0,0,.25);
-  transition: transform var(--duration-250) var(--ease);
+  transition: transform var(--motion-normal) var(--ease);
 }
 
 .switch input:checked+.switch-track {
@@ -193,18 +236,18 @@ select.input {
 
 .switch-text strong {
   display: block;
-  font-weight: var(--font-weight-600);
+  font-weight: var(--fw-semibold);
 }
 
 .switch-text span {
   font-size: var(--fs-sm);
-  color: var(--ink-3);
+  color: var(--ink-muted);
 }
 
 .callout {
   display: flex;
-  gap: var(--sp-3);
-  padding: var(--sp-3) 14px;
+  gap: var(--sp-control);
+  padding: var(--sp-control) 14px;
   border-radius: var(--r-md);
   background: var(--warn-bg);
   color: var(--ink);
@@ -231,12 +274,12 @@ select.input {
   align-items: center;
   gap: 6px;
   min-height: var(--control-h-lg);
-  padding: 6px var(--sp-2);
-  border: 1px solid var(--line-2);
+  padding: 6px var(--sp-inline);
+  border: 1px solid var(--border);
   border-radius: var(--r-md);
-  background: var(--panel-2);
+  background: var(--surface);
   cursor: text;
-  transition: border-color var(--duration-150),box-shadow var(--duration-150);
+  transition: border-color var(--motion-fast),box-shadow var(--motion-fast);
 }
 
 .tags:focus-within {
@@ -250,21 +293,21 @@ select.input {
   min-width: 120px;
   border: 0;
   background: transparent;
-  padding: var(--sp-1);
+  padding: var(--sp-tight);
   outline: none;
 }
 
 .tag {
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-1);
+  gap: var(--sp-tight);
   max-width: 100%;
-  padding: var(--sp-1) var(--sp-1) var(--sp-1) 10px;
+  padding: var(--sp-tight) var(--sp-tight) var(--sp-tight) 10px;
   border-radius: 999px;
   background: var(--orbit-soft);
   color: var(--ink);
   font-size: var(--fs-sm);
-  animation: pop var(--duration-200) var(--ease);
+  animation: pop var(--motion-fast) var(--ease);
 }
 
 .tag span {
@@ -281,7 +324,7 @@ select.input {
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: var(--ink-3);
+  color: var(--ink-muted);
   cursor: pointer;
 }
 

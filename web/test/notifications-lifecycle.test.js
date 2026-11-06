@@ -133,3 +133,45 @@ test('open notification inbox refreshes when unread count changes without a new 
     for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
   }
 });
+
+test('notification inbox shares segmented filters, empty state and warning/error messages', async () => {
+  const dom = installDOM();
+  try {
+    const {copy, elements} = await import('./console-dom.js');
+    const {createNotificationInbox} = await import('../src/console/ui/notification-inbox.js');
+    const {closeDialogs} = await import('../src/console/ui/dialogs.js');
+    let fail = false;
+    const inbox = createNotificationInbox({
+      api: async () => {
+        if (fail) throw new Error('Unavailable');
+        return {notifications: [], has_more: false, read_through: null};
+      },
+      isActive: () => true, isStale: () => true,
+      failureText: () => copy('controls.live.stale'), refreshSummary() {}, openTaskDetails() {}
+    });
+    try {
+      await flush();
+      const dialog = dom.body.querySelector('dialog');
+      assert.ok(dialog.classList.contains('notifications-dialog'));
+      const filters = dialog.querySelector('.segmented');
+      assert.equal(filters.getAttribute('role'), 'group');
+      assert.equal(filters.children[0].getAttribute('aria-pressed'), 'true');
+      assert.equal(filters.children[1].getAttribute('aria-pressed'), 'false');
+      assert.equal(dialog.querySelector('.empty').textContent, copy('notifications.noNotifications'));
+      assert.equal(dialog.querySelector('.status-message').getAttribute('role'), 'status');
+      filters.children[1].click(); await flush();
+      assert.equal(filters.children[1].getAttribute('aria-pressed'), 'true');
+      assert.equal(dialog.querySelector('.empty').textContent, copy('notifications.noUnread'));
+      fail = true;
+      elements(dialog).find((element) => element.tagName === 'button' && element.textContent === copy('common.refresh')).click();
+      await flush();
+      const error = elements(dialog).find((element) => element.classList.contains('error'));
+      assert.ok(error.classList.contains('status-message'));
+      assert.equal(error.getAttribute('role'), 'alert');
+      assert.equal(error.hidden, false);
+      assert.equal(dialog.querySelector('.empty').textContent, copy('notifications.noUnread'));
+      inbox.setStale(false);
+      assert.equal(dialog.querySelector('.status-message').hidden, true);
+    } finally { closeDialogs(); await inbox.closed; }
+  } finally { dom.restore(); }
+});

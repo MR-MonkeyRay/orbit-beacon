@@ -18,6 +18,12 @@ test('rule editor toggles offline fields, scopes and channel routing for every a
     admin();
     const dialog = ruleEditor(null, context);
     const root = dom.body;
+    for (const check of elements(root).filter((element) => element.type === 'checkbox')) {
+      assert.equal(check.classList.contains('input'), false);
+      assert.equal(check.parentElement.tagName, 'label');
+      assert.equal(check.parentElement.className, 'check-row');
+      assert.equal(check.parentElement.children[0], check);
+    }
     assert.equal(control(root, 'for_seconds').getAttribute('max'), '1440');
     assert.equal(control(root, 'duration_seconds').getAttribute('max'), '59');
     assert.equal(control(root, 'channel_ids').getAttribute('multiple'), '');
@@ -78,6 +84,12 @@ test('channel editor starts with redacted URL and no secret, supports replacemen
     const context = {signal: new AbortController().signal, saved: async () => {}};
     const dialog = channelEditor(item, context);
     const root = dom.body;
+    for (const check of elements(root).filter((element) => element.type === 'checkbox')) {
+      assert.equal(check.classList.contains('input'), false);
+      assert.equal(check.parentElement.tagName, 'label');
+      assert.equal(check.parentElement.className, 'check-row');
+      assert.equal(check.parentElement.children[0], check);
+    }
     assert.equal(control(root, 'url').value, '');
     assert.equal(control(root, 'secret').value, '');
     assert.equal(control(root, 'url').disabled, true);
@@ -169,7 +181,7 @@ test('channel editor shows templates for Telegram and email, prefills and saves 
     assert.equal(template.disabled, true);
     assert.equal(wrapper.hidden, true);
     assert.equal(wrapper.querySelector('label').textContent, copy('alerts.channels.template'));
-    assert.equal(wrapper.querySelector('.hint').textContent, '{state} {rule} {node} {metric} {target} {severity} {value} {started_at} {resolved_at} {event_id}');
+    assert.equal(wrapper.querySelector('.text-note').textContent, '{state} {rule} {node} {metric} {target} {severity} {value} {started_at} {resolved_at} {event_id}');
     change(control(root, 'kind'), 'telegram');
     assert.equal(template.disabled, false);
     assert.equal(wrapper.hidden, false);
@@ -270,7 +282,7 @@ test('new channel editors switch URL and secret requirements and submit URL temp
       const edited = channelEditor(item, context);
       assert.equal(control(root, 'url').disabled, true);
       assert.equal(control(root, 'template').value, '{node}');
-      if (kind === 'wecom') assert.equal(control(root, 'replace_secret').parentElement.hidden, true);
+      if (kind === 'wecom') assert.equal(control(root, 'replace_secret').parentElement.parentElement.hidden, true);
       control(root, 'template').value = '{rule}';
       elements(root).find((element) => element.tagName === 'form').dispatchEvent(new Event('submit', {cancelable: true}));
       await flush();

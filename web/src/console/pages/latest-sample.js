@@ -50,7 +50,7 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
     if (!latest) {
       metricRecords.clear();
       lastReport.replaceChildren();
-      body.replaceChildren(h('p', {class: 'muted'}, t('nodes.sampleEmpty')));
+      body.replaceChildren(h('p', {class: 'text-note'}, t('nodes.sampleEmpty')));
       freshness.refresh();
       return;
     }

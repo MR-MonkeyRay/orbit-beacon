@@ -52,19 +52,19 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
       details.warning_code === 'storage_outcome_unknown' ? h('p', {class: 'callout'}, t('notifications.storageUnknown')) : null,
       details.warning_code === 'retention_cleanup_failed' ? h('p', {class: 'callout'}, t('notifications.retentionWarning')) : null);
   };
-  const status = h('p', {class: 'notification-status', role: 'status', hidden: !isStale()}, isStale() ? failureText() : '');
-  const actionError = h('p', {class: 'notification-error', role: 'alert', hidden: true});
+  const status = h('p', {class: 'status-message', role: 'status', hidden: !isStale()}, isStale() ? failureText() : '');
+  const actionError = h('p', {class: 'status-message error', role: 'alert', hidden: true});
   const list = h('div', {class: 'notification-list'});
   const detail = h('div', {class: 'notification-detail', hidden: true});
-  const allButton = button(t('notifications.all'), {onClick: () => changeFilter(false)});
-  const unreadButton = button(t('notifications.unread'), {onClick: () => changeFilter(true)});
+  const allButton = h('button', {type: 'button', onclick: () => changeFilter(false)}, t('notifications.all'));
+  const unreadButton = h('button', {type: 'button', onclick: () => changeFilter(true)}, t('notifications.unread'));
   const markAllButton = button(t('notifications.markAllRead'), {onClick: markAll});
   const refreshButton = button(t('common.refresh'), {icon: 'refresh', onClick: () => { loadList(); refreshSummary(); }});
   const moreButton = button(t('common.loadMore'), {onClick: () => loadList(true)});
-  const toolbar = h('div', {class: 'notification-toolbar'}, h('div', {class: 'notification-filters', 'aria-label': t('notifications.notificationFilter')}, allButton, unreadButton), markAllButton, refreshButton);
+  const toolbar = h('div', {class: 'notification-toolbar'}, h('div', {class: 'segmented', role: 'group', 'aria-label': t('notifications.notificationFilter')}, allButton, unreadButton), markAllButton, refreshButton);
   const content = h('div', {class: 'dialog-body notification-inbox'}, toolbar, status, actionError, list, moreButton, detail);
   const dialog = modal(t('shell.notifications'), () => content);
-  content.closest('dialog').classList.add('notifications-dialog');
+  content.parentElement.classList.add('notifications-dialog');
   function clearComponent() { component?.dispose(); component = null; }
   function stopRequests() {
     listRequest?.abort(); listRequest = null;
@@ -102,7 +102,7 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
         h('span', {class: 'notification-row-meta'}, h('span', {class: notification.read ? 'notification-read' : 'notification-unread'}, notification.read ? t('notifications.read') : t('notifications.unread')), when(notification.created_at)),
         notification.kind === 'alert' ? h('span', {class: 'notification-row-subject'}, notification.details?.node_name || notification.details?.node_id || t('notifications.unknownNode')) : h('span', {class: 'notification-row-subject'}, categories(notification.details?.categories)));
     }
-    if (!entries.length) list.append(h('p', {class: 'notification-empty'}, loaded ? (unread ? t('notifications.noUnread') : t('notifications.noNotifications')) : t('notifications.notificationsLoading')));
+    if (!entries.length) list.append(h('p', {class: 'empty'}, loaded ? (unread ? t('notifications.noUnread') : t('notifications.noNotifications')) : t('notifications.notificationsLoading')));
   }
   async function loadList(append = false) {
     if (!alive() || selected || append && (!hasMore || !nextCursor || listRequest)) return;
@@ -121,7 +121,7 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
     } catch (error) {
       if (!alive() || listRequest !== controller || error.name === 'AbortError') return;
       showError(t('notifications.notificationsLoadFailed', {error: errorText(error)}));
-      if (!loaded) list.replaceChildren(h('p', {class: 'notification-empty'}, t('notifications.notificationsUnavailable')));
+      if (!loaded) list.replaceChildren(h('p', {class: 'empty'}, t('notifications.notificationsUnavailable')));
     } finally {
       if (listRequest === controller) { listRequest = null; if (loaded) renderList(); else { moreButton.hidden = true; markAllButton.disabled = true; } }
     }
@@ -153,7 +153,7 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
     try {
       const notification = await api(`/notifications/${encodeURIComponent(id)}`, requestOptions(controller.signal));
       if (!current()) return;
-      const readStatus = h('p', {class: 'notification-read-status', role: 'status'}, notification.read ? t('notifications.read') : t('notifications.unread'));
+      const readStatus = h('p', {class: 'text-note', role: 'status'}, notification.read ? t('notifications.read') : t('notifications.unread'));
       const source = h('section', {class: 'notification-source'}, h('p', null, t('notifications.sourceLoading')));
       body.replaceChildren(h('h3', null, notificationTitle(notification)), readStatus, snapshot(notification), source);
       if (!notification.read) {
@@ -175,12 +175,12 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
         if (task) { component = openTaskDetails(value, {signal: controller.signal}); source.append(component.element); }
       } catch (error) {
         if (!current()) return;
-        source.replaceChildren(h('p', {class: 'notification-source-status'}, error.status === 404 || error.status === 410
+        source.replaceChildren(h('p', {class: 'text-note'}, error.status === 404 || error.status === 410
           ? t(task ? 'notifications.taskUnavailable' : 'notifications.alertUnavailable') : t('notifications.sourceLoadFailed', {error: errorText(error)})));
       }
     } catch (error) {
       if (!current() || error.name === 'AbortError') return;
-      body.replaceChildren(h('p', {class: 'notification-error', role: 'alert'}, error.status === 404 ? t('notifications.notificationMissing') : t('notifications.notificationLoadFailed', {error: errorText(error)})));
+      body.replaceChildren(h('p', {class: 'status-message error', role: 'alert'}, error.status === 404 ? t('notifications.notificationMissing') : t('notifications.notificationLoadFailed', {error: errorText(error)})));
     }
   }
   renderList(); loadList();

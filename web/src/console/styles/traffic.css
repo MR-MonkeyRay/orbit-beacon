@@ -5,20 +5,20 @@
 
 .traffic-content {
   display: grid;
-  gap: var(--sp-5);
+  gap: var(--sp-group);
 }
 
 .traffic-content h3 {
   font-size: var(--fs-md);
-  font-weight: var(--font-weight-650);
-  margin-bottom: var(--sp-2);
+  font-weight: var(--fw-heading);
+  margin-bottom: var(--sp-inline);
 }
 
 .traffic-cycle .facts {
   display: grid;
   grid-template-columns: repeat(3,minmax(0,1fr));
-  gap: var(--sp-3);
-  margin-top: var(--sp-3);
+  gap: var(--sp-control);
+  margin-top: var(--sp-control);
 }
 
 .traffic-cycle .facts>div {
@@ -29,7 +29,7 @@
 }
 
 .traffic-cycle .facts dd {
-  margin-top: var(--sp-1);
+  margin-top: var(--sp-tight);
   overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
 }
@@ -55,15 +55,15 @@
   width: 100%;
   height: 16px;
   appearance: none;
-  border: 1px solid var(--line-2);
+  border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: var(--panel-2);
+  background: var(--surface);
 }
 
 .traffic-quota meter::-webkit-meter-bar {
   border: 0;
   border-radius: var(--r-sm);
-  background: var(--panel-2);
+  background: var(--surface);
 }
 
 .traffic-quota meter::-webkit-meter-optimum-value,.traffic-quota meter::-webkit-meter-suboptimum-value,.traffic-quota meter::-webkit-meter-even-less-good-value {
@@ -76,7 +76,7 @@
   background: var(--traffic-meter);
 }
 
-.traffic-chart>.muted {
+.traffic-chart>.text-note {
   font-size: var(--fs-sm);
   margin-bottom: 10px;
 }

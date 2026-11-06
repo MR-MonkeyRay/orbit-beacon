@@ -121,5 +121,5 @@ export function rulesPanel({rules, groups, nodes, channels, signal, saved}) {
         h('td', null, scopeLabel(rule, groups, nodes)), h('td', null, severityPill(rule.severity)), h('td', null, t(rule.enabled ? 'alerts.state.enabled' : 'alerts.state.disabled')),
         h('td', null, formatList(rule.channel_ids.map((id) => channels.find((channel) => channel.id === id)?.name || id)) || t('common.none')),
         h('td', {class: 'actions'}, iconButton('edit', t('alerts.editNamed', {name: rule.name}), () => edit(rule)), iconButton('trash', t('alerts.deleteAction', {name: rule.name}), () => remove(rule))))))})
-      : h('p', {class: 'muted'}, t('alerts.rules.empty')));
+      : h('p', {class: 'text-note'}, t('alerts.rules.empty')));
 }

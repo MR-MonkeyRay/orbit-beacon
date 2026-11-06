@@ -19,7 +19,7 @@ export function taskDetails(task, {signal} = {}) {
   if (task.state === 'failed') notices.push(h('div', {class: 'callout', role: 'status'}, t(`data.failure.${failureNames.has(task.error_code) ? task.error_code : 'unknown'}`)));
   if (task.warning_code === 'storage_outcome_unknown') notices.push(h('div', {class: 'callout', role: 'status'}, t('data.task.storageUnknown')));
   if (task.warning_code === 'retention_cleanup_failed') notices.push(h('div', {class: 'callout', role: 'status'}, t('data.task.cleanupFailed')));
-  if (task.restored) notices.push(h('p', {class: 'note'}, t('data.task.restored')));
+  if (task.restored) notices.push(h('p', {class: 'text-note'}, t('data.task.restored')));
   const source = task.destination?.plan_name || task.destination?.actor_name || t(task.kind === 'backup_export' ? 'data.task.manual' : 'data.task.deletedPlan');
   element.append(...notices, facts([
     [t('data.task.id'), task.id], [t('data.task.source'), source], [t('data.task.kind'), t({backup_export: 'data.task.manual', backup_local: 'data.task.local', backup_remote: 'data.task.remote'}[task.kind] || 'data.task.unknownKind')],
@@ -32,9 +32,9 @@ export function taskDetails(task, {signal} = {}) {
   ]));
   if (task.kind === 'backup_export' && task.state === 'succeeded') {
     if (task.download_available) element.append(h('a', {class: 'btn btn-primary', href: `/api/v1/tasks/${encodeURIComponent(task.id)}/download`}, t('data.task.download')));
-    else element.append(h('p', {class: 'muted'}, t('data.task.downloadUnavailable')));
+    else element.append(h('p', {class: 'text-note'}, t('data.task.downloadUnavailable')));
   }
-  if (task.kind !== 'backup_export') element.append(h('p', {class: 'muted'}, t('data.task.scheduledDestination')));
+  if (task.kind !== 'backup_export') element.append(h('p', {class: 'text-note'}, t('data.task.scheduledDestination')));
   const password = backupPassword(task, {signal});
   element.append(password.element);
   return {element, dispose: password.dispose};
@@ -42,7 +42,7 @@ export function taskDetails(task, {signal} = {}) {
 
 export function showTask(id, {signal = getNavigationSignal()} = {}) {
   return detailDialog({
-    title: t('data.task.title'), loading: t('data.task.loading'), loadingClass: 'muted', signal,
+    title: t('data.task.title'), loading: t('data.task.loading'), loadingClass: 'text-note', signal,
     valid: isDetailUUID(id), invalid: t('data.task.invalidLink'),
     load: (requestSignal) => api(`/tasks/${encodeURIComponent(id)}`, {signal: requestSignal}),
     render: (task, requestSignal) => {

@@ -138,7 +138,7 @@ function legendKey(label, classes) {
 export function chart({title, unit, series, id, selectedTime}) {
   const timeline = [...new Map(series.flatMap((item) => item.points).map((point) => [timestamp(point), point])).values()]
     .sort((a, b) => timestamp(a) - timestamp(b));
-  if (!timeline.length) return h('p', {class: 'muted'}, t('nodes.chart.empty'));
+  if (!timeline.length) return h('p', {class: 'text-note'}, t('nodes.chart.empty'));
   // 时间戳重叠时也包含两个网络序列各自的峰值。
   const scales = chartScales(series.flatMap((item) => item.points), unit);
   const descriptionID = `${id}-description`;

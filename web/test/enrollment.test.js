@@ -45,7 +45,8 @@ test('ticket dialog copies ticket and commands separately and clears secrets on 
       const blocks = dialog.querySelectorAll('code');
       assert.deepEqual(blocks.map((block) => block.textContent), [secret, installerCommand(location.origin), enrollmentCommand()]);
       assert.equal(dialog.textContent.split(secret).length, 2);
-      assert.equal(dialog.querySelector('.lede'), null);
+      assert.equal(dialog.querySelector('.text-note').getAttribute('role'), 'status');
+      assert.equal(dialog.querySelector('.text-note').textContent, '');
       assert.equal(dialog.querySelector('.callout'), null);
       for (const key of ['copyToken', 'copyInstall', 'copyEnroll']) {
         dialog.querySelectorAll('button').find((button) => button.textContent === copy(`nodes.enrollment.${key}`)).click();

@@ -51,7 +51,7 @@ function fleetPanel(nodes) {
 
 function newestPanel(nodes, groupNames) {
   const list = h('ul', {class: 'rows'});
-  const empty = h('p', {class: 'muted'}, t('nodes.empty'));
+  const empty = h('p', {class: 'text-note'}, t('nodes.empty'));
   const refs = new Map();
   const element = panel(t('nodes.newest'), {action: link('/nodes', t('nodes.allNodes'))}, list, empty);
   element.reload = (current, snapshot = current) => {
@@ -114,7 +114,7 @@ export async function overviewPage() {
   const names = nameLookup(nodes, users, groups);
   const activity = panel(t('nodes.recentActivity'), {action: link('/settings#audit', t('nodes.auditLog'))},
     audit.events.length ? h('ol', {class: 'timeline'}, audit.events.map((event) => auditItem(event, names, false)))
-      : h('p', {class: 'muted'}, t('nodes.activityEmpty')));
+      : h('p', {class: 'text-note'}, t('nodes.activityEmpty')));
   const connection = liveStatus();
   const fleet = fleetPanel(nodes);
   const newest = newestPanel(nodes, new Map(groups.map((group) => [group.id, group.name])));
@@ -157,7 +157,7 @@ export async function overviewPage() {
   const root = h('div', null,
     pageHead(t('nodes.overview'), null, connection.element, addNodeButton(), h('a', {class: 'btn', href: '/'}, icon('external'), t('nodes.openPublic'))),
     fleet,
-    alerts.error ? panel(t('nodes.activeAlerts'), {action: link('/alerts', t('nodes.viewAlerts'))}, h('p', {role: 'status', class: 'muted'}, t('nodes.alertsLoadError', {error: errorText(alerts.error)}))) : activeAlertsSummary(alerts.summary),
+    alerts.error ? panel(t('nodes.activeAlerts'), {action: link('/alerts', t('nodes.viewAlerts'))}, h('p', {role: 'status', class: 'text-note'}, t('nodes.alertsLoadError', {error: errorText(alerts.error)}))) : activeAlertsSummary(alerts.summary),
     h('div', {class: 'grid-2'}, newest, activity), inventoryNotice,
     groupsPanel(nodes, groups));
   const subscribe = () => connectConsoleLive({signal, onState: connection.update, onSnapshot(data) {

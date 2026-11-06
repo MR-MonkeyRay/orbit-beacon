@@ -131,12 +131,12 @@ function trafficContent(data) {
   const empty = !data.updated_at && !daily.length && rx === 0n && tx === 0n && total === 0n;
   return h('div', {class: 'traffic-content'},
     h('section', {class: 'traffic-cycle', 'aria-label': t('nodes.currentCycle')}, h('h3', null, t('nodes.currentCycle')),
-      h('p', {class: 'muted'}, cycleDateLabel(cycle)),
+      h('p', {class: 'text-note'}, cycleDateLabel(cycle)),
       facts([[t('nodes.received'), formatBytes(rx)], [t('nodes.sent'), formatBytes(tx)], [t('nodes.total'), formatBytes(total)]])),
     // 配额为 0 表示无限制，与流量计费表单一致。
     parseTrafficBytes(data.quota_bytes) > 0n ? quotaMeter(used, parseTrafficBytes(data.quota_bytes)) : null,
-    empty ? h('p', {class: 'muted', role: 'status'}, t('nodes.trafficEmpty')) : dailyChart(fillTrafficDays(daily)),
-    data.updated_at ? h('p', {class: 'note'}, tParts('nodes.updated', {time: when(data.updated_at)})) : null);
+    empty ? h('p', {class: 'text-note', role: 'status'}, t('nodes.trafficEmpty')) : dailyChart(fillTrafficDays(daily)),
+    data.updated_at ? h('p', {class: 'text-note'}, tParts('nodes.updated', {time: when(data.updated_at)})) : null);
 }
 
 // 切换详情标签页时保留面板；流量计费设置变更只刷新此面板。
@@ -172,7 +172,7 @@ export function trafficPanel(id, signal) {
     if (signal?.aborted) return;
     const version = ++loadVersion;
     content.setAttribute('aria-busy', 'true');
-    content.replaceChildren(h('p', {class: 'muted', role: 'status'}, t('nodes.trafficLoading')));
+    content.replaceChildren(h('p', {class: 'text-note', role: 'status'}, t('nodes.trafficLoading')));
     try {
       const data = await api(`/nodes/${encodeURIComponent(id)}/traffic?days=30`, {signal});
       if (!signal?.aborted && version === loadVersion) {

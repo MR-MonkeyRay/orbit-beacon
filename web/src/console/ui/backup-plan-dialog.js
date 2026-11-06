@@ -23,7 +23,7 @@ export function backupCategoriesField(selected = ['configuration']) {
   }));
   check();
   const choices = h('div', {class: 'data-category-choices'}, CATEGORIES.map(([, title, hint], index) =>
-    h('label', {class: 'data-check'}, controls[index], hint
+    h('label', {class: 'check-row'}, controls[index], hint
       ? h('span', null, h('strong', null, t(title)), h('small', null, t(hint)))
       : h('strong', null, t(title)))));
   return {element: field(t('data.categories'), controls[0], {inner: choices}), value: () => controls.filter((control) => control.checked).map((control) => control.value)};
@@ -31,7 +31,7 @@ export function backupCategoriesField(selected = ['configuration']) {
 
 function checkField(label, name, checked, hint) {
   const control = input({type: 'checkbox', name, checked});
-  return {control, element: h('label', {class: 'data-check'}, control, h('span', null, h('strong', null, label), hint ? h('small', null, hint) : null))};
+  return {control, element: h('label', {class: 'check-row'}, control, h('span', null, h('strong', null, label), hint ? h('small', null, hint) : null))};
 }
 
 export function timezoneText(info) {
@@ -93,9 +93,9 @@ export function backupPlanDialog(plan, {signal, onSaved}) {
       const token = input({name: 'session_token', 'data-field': 'credentials.session_token', type: 'password', autocomplete: 'new-password'});
       const credentialFields = h('fieldset', {class: 'data-destination'}, h('legend', null, t('data.plan.replacementCredentials')),
         field(t('data.plan.keyID'), keyID), field(t('data.plan.secretKey'), secret), field(t('data.plan.sessionToken'), token));
-      const credentialsNote = h('p', {class: 'hint'}, plan ? t('data.plan.credentialsStatus', {credentials: t(plan.credentials_set ? 'data.plan.set' : 'data.plan.notSet'), token: t(plan.session_token_set ? 'data.plan.set' : 'data.plan.notSet')}) : t('data.plan.credentialsRequired'));
+      const credentialsNote = h('p', {class: 'text-note'}, plan ? t('data.plan.credentialsStatus', {credentials: t(plan.credentials_set ? 'data.plan.set' : 'data.plan.notSet'), token: t(plan.session_token_set ? 'data.plan.set' : 'data.plan.notSet')}) : t('data.plan.credentialsRequired'));
       const allowPrivate = checkField(t('data.plan.allowPrivate'), 'allow_private_networks', destination.allow_private_networks || false, t('data.plan.allowPrivateHint'));
-      const providerHint = h('p', {class: 'hint'});
+      const providerHint = h('p', {class: 'text-note'});
       const recommendation = button(t('data.plan.useEndpoint'), {onClick: () => {
         const suggested = suggestedEndpoint(provider.value, region.value.trim());
         if (suggested) { endpoint.value = suggested; endpoint.dispatchEvent(new Event('input', {bubbles: true})); }
@@ -105,7 +105,7 @@ export function backupPlanDialog(plan, {signal, onSaved}) {
         h('div', {class: 'data-endpoint-help'}, providerHint, recommendation),
         field(t('data.plan.region'), region), field(t('data.plan.bucket'), bucket), field(t('data.plan.prefix'), prefix, {hint: t('data.plan.prefixHint')}),
         pathStyle.element, credentialsNote, replace.element, credentialFields, allowPrivate.element,
-        h('p', {class: 'hint'}, t('data.plan.remoteHint')));
+        h('p', {class: 'text-note'}, t('data.plan.remoteHint')));
       const updateCredentials = () => {
         const providerChanged = Boolean(plan && provider.value !== destination.provider);
         if (providerChanged) replace.control.checked = true;

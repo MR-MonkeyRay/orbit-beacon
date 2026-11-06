@@ -2,7 +2,7 @@
 .history-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit,minmax(min(100%,420px),1fr));
-  gap: var(--sp-5) 20px;
+  gap: var(--sp-group) 20px;
   margin-top: 18px;
 }
 
@@ -21,12 +21,12 @@
 
 .history-metric h3 {
   font-size: var(--fs-md);
-  font-weight: var(--font-weight-650);
+  font-weight: var(--fw-heading);
   margin-bottom: 10px;
 }
 
-.history-metric>.muted {
-  padding: var(--sp-5) 0;
+.history-metric>.text-note {
+  padding: var(--sp-group) 0;
 }
 
 .history-error {
@@ -40,9 +40,9 @@
 .chart-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px var(--sp-4);
+  gap: 6px var(--sp-content);
   font-size: var(--fs-xs);
-  color: var(--ink-2);
+  color: var(--ink-subtle);
   margin-bottom: 6px;
 }
 
@@ -60,7 +60,7 @@
 }
 
 .chart-key .chart-maximum-key {
-  border-top: 1px dotted var(--ink-2);
+  border-top: 1px dotted var(--ink-subtle);
 }
 
 .chart-series {
@@ -99,7 +99,7 @@
 
 /* fitChartText 设置 --chart-k，使标签在任何图表宽度下保持同一 CSS 尺寸。 */
 .chart-axis {
-  fill: var(--ink-2);
+  fill: var(--ink-subtle);
   font-size: calc(var(--fs-xs) * var(--chart-k,1));
   font-family: var(--font);
   font-variant-numeric: tabular-nums;
@@ -146,7 +146,7 @@
 }
 
 .chart-crosshair {
-  stroke: var(--ink-2);
+  stroke: var(--ink-subtle);
   stroke-width: 1;
   stroke-dasharray: 3 3;
   vector-effect: non-scaling-stroke;
@@ -158,8 +158,8 @@
   z-index: 2;
   width: max-content;
   max-width: min(280px,calc(100% - 8px));
-  padding: var(--sp-2) 10px;
-  border: 1px solid var(--line-2);
+  padding: var(--sp-inline) 10px;
+  border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--panel);
   box-shadow: var(--shadow);
@@ -172,8 +172,8 @@
 
 .chart-tooltip strong {
   display: block;
-  color: var(--ink-2);
-  font-size: var(--fs-2xs);
-  font-weight: var(--font-weight-550);
-  margin-bottom: var(--sp-1);
+  color: var(--ink-subtle);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-medium);
+  margin-bottom: var(--sp-tight);
 }
