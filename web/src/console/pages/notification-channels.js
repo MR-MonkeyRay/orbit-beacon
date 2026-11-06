@@ -6,7 +6,7 @@ import {busy, button, dataTable, iconButton, panel} from '../ui/components.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, passwordInput, select, textarea, validateBytes} from '../ui/forms.js';
-import {buildChannelPayload, errorCodeMessage, validateChannel, validationError} from '../lib/alert-utils.js';
+import {MESSAGE_TEMPLATE_TOKENS, buildChannelPayload, errorCodeMessage, validateChannel, validationError} from '../lib/alert-utils.js';
 import {eventTime} from './alert-events.js';
 
 const KINDS = [['webhook', t('alerts.kind.webhook')], ['telegram', 'Telegram'], ['email', t('alerts.kind.email')]];
@@ -42,6 +42,8 @@ export function channelEditor(item, {signal, saved}) {
       const to = controls.to = textarea({name: 'to'}, item?.kind === 'email' ? item.config.to.join('\n') : '');
       email.append(field(t('alerts.channels.to'), to, {hint: t('alerts.channels.toHint')}));
       for (const key of ['host', 'port', 'username', 'from', 'to']) controls[key].dataset.field = `config.${key}`;
+      const template = controls.template = textarea({name: 'template', dataset: {field: 'config.template'}}, item?.config?.template || '');
+      const templateField = field(t('alerts.channels.template'), template, {hint: MESSAGE_TEMPLATE_TOKENS.join(' ')});
       const secret = controls.secret = passwordInput({name: 'secret', autocomplete: 'new-password'});
       validateBytes(secret, 0, 4096, t('alerts.channels.secret'));
       const secretField = field(t('alerts.channels.signingSecret'), secret, {inner: secret.wrapper, hint: t('alerts.channels.secretHint')});
@@ -54,6 +56,8 @@ export function channelEditor(item, {signal, saved}) {
         webhook.hidden = k !== 'webhook';
         chat.hidden = k !== 'telegram';
         email.hidden = k !== 'email';
+        template.disabled = !['telegram', 'email'].includes(k);
+        templateField.hidden = template.disabled;
         controls.url.disabled = k !== 'webhook' || Boolean(item && !replaceURL.checked);
         controls.url.required = !controls.url.disabled;
         urlField.hidden = controls.url.disabled;
@@ -81,7 +85,7 @@ export function channelEditor(item, {signal, saved}) {
         showSecretError(message);
       };
       const configError = h('p', {class: 'field-error', role: 'alert', hidden: true});
-      const configGroup = h('div', {class: 'stack', dataset: {field: 'config'}}, webhook, chat, email, configError);
+      const configGroup = h('div', {class: 'stack', dataset: {field: 'config'}}, webhook, chat, email, templateField, configError);
       configGroup.showError = (message) => { configError.textContent = message; configError.hidden = !message; };
       configGroup.focus = () => (kind.value === 'webhook' ? (controls.url.disabled ? replaceURL : controls.url) : kind.value === 'telegram' ? controls.chat_id : controls.host).focus();
       configGroup.addEventListener('input', () => configGroup.showError(''));
@@ -89,7 +93,7 @@ export function channelEditor(item, {signal, saved}) {
     },
     action: async () => {
       if (!session.user || !session.csrf || signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
-      const values = Object.fromEntries(['name', 'kind', 'url', 'chat_id', 'host', 'port', 'username', 'from', 'to', 'secret'].map((key) => [key, controls[key].value]));
+      const values = Object.fromEntries(['name', 'kind', 'url', 'chat_id', 'host', 'port', 'username', 'from', 'to', 'template', 'secret'].map((key) => [key, controls[key].value]));
       values.enabled = controls.enabled.checked;
       const body = buildChannelPayload(values, {editing: Boolean(item), replaceURL: controls.replaceURL.checked, replaceSecret: controls.replaceSecret.checked});
       const errors = validateChannel(body, {kind: values.kind, existing: item});

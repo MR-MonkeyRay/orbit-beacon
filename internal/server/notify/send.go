@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"orbitbeacon/internal/server/egress"
 )
@@ -109,7 +110,7 @@ func (s *sender) Send(ctx context.Context, c Channel, secret string, p Payload) 
 		raw, _ = json.Marshal(struct {
 			ChatID string `json:"chat_id"`
 			Text   string `json:"text"`
-		}{c.Config.ChatID, message(p)})
+		}{c.Config.ChatID, renderMessage(p, c.Config.Template, 4096)})
 	}
 	req, e := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(raw))
 	if e != nil {
@@ -188,13 +189,40 @@ func networkFailure(e error) Result {
 	}
 	return failure("network_error", true)
 }
-func message(p Payload) string {
-	if p.SummaryCount > 1 {
-		return fmt.Sprintf("OrbitBeacon: %d alert notifications coalesced. Latest: %s: %s on %s (%s, %s)", p.SummaryCount, p.State, p.Rule.Name, p.Node.Name, p.Rule.Metric, p.Rule.Severity)
-	}
-	value := ""
+func renderMessage(p Payload, template string, maxBytes int) string {
+	value, resolved := "", ""
 	if p.Value != nil {
-		value = fmt.Sprintf(" value=%g", *p.Value)
+		value = fmt.Sprintf("%g", *p.Value)
 	}
-	return fmt.Sprintf("OrbitBeacon %s: %s on %s (%s, %s)%s\nEvent: %s\nStarted: %s", p.State, p.Rule.Name, p.Node.Name, p.Rule.Metric, p.Rule.Severity, value, p.EventID, p.StartedAt.UTC().Format(time.RFC3339))
+	if p.ResolvedAt != nil {
+		resolved = p.ResolvedAt.UTC().Format(time.RFC3339)
+	}
+	started := p.StartedAt.UTC().Format(time.RFC3339)
+	var text string
+	if template != "" {
+		text = strings.NewReplacer(
+			"{state}", p.State, "{rule}", p.Rule.Name, "{node}", p.Node.Name,
+			"{metric}", p.Rule.Metric, "{severity}", p.Rule.Severity, "{value}", value,
+			"{started_at}", started, "{resolved_at}", resolved, "{event_id}", p.EventID,
+		).Replace(template)
+		if p.SummaryCount > 1 {
+			text = fmt.Sprintf("OrbitBeacon: %d alert notifications coalesced.\n%s", p.SummaryCount, text)
+		}
+	} else if p.SummaryCount > 1 {
+		text = fmt.Sprintf("OrbitBeacon: %d alert notifications coalesced. Latest: %s: %s on %s (%s, %s)", p.SummaryCount, p.State, p.Rule.Name, p.Node.Name, p.Rule.Metric, p.Rule.Severity)
+	} else {
+		if p.Value != nil {
+			value = " value=" + value
+		}
+		text = fmt.Sprintf("OrbitBeacon %s: %s on %s (%s, %s)%s\nEvent: %s\nStarted: %s", p.State, p.Rule.Name, p.Node.Name, p.Rule.Metric, p.Rule.Severity, value, p.EventID, started)
+	}
+	if maxBytes > 0 && len(text) > maxBytes {
+		const suffix = "…"
+		end := maxBytes - len(suffix)
+		for end > 0 && !utf8.RuneStart(text[end]) {
+			end--
+		}
+		return text[:end] + suffix
+	}
+	return text
 }

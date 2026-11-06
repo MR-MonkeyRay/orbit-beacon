@@ -100,12 +100,15 @@ export function buildChannelPayload(values, {editing = false, replaceURL = false
     host: values.host, port: values.port === '' ? NaN : Number(values.port), username: values.username || '',
     from: values.from, to: Array.isArray(values.to) ? values.to : String(values.to || '').split(/[,\n]/).map((item) => item.trim()).filter(Boolean)
   };
+  if (['telegram', 'email'].includes(values.kind) && values.template !== undefined) body.config.template = values.template.replace(/\r\n/g, '\n').trim();
   if (replaceSecret || values.secret) body.secret = values.secret ?? '';
   return body;
 }
+export const MESSAGE_TEMPLATE_TOKENS = ['{state}', '{rule}', '{node}', '{metric}', '{severity}', '{value}', '{started_at}', '{resolved_at}', '{event_id}'];
 export function validateChannel(body, {kind = body.kind, existing = null} = {}) {
   const fields = {};
   const config = body.config || {};
+  if (config.template !== undefined && (!['telegram', 'email'].includes(kind) || typeof config.template !== 'string' || /[\uD800-\uDFFF]/u.test(config.template) || byteLength(config.template) > 1000 || /[\p{Cc}]/u.test(config.template.replace(/\n/g, '')) || [...config.template.matchAll(/\{[a-z_]+\}/g)].some(([token]) => !MESSAGE_TEMPLATE_TOKENS.includes(token)))) fields['config.template'] = t('alerts.validation.template');
   if (!body.name?.trim() || byteLength(body.name || '') > 100) fields.name = t('alerts.validation.name');
   if (!['webhook', 'telegram', 'email'].includes(kind)) fields.kind = t('alerts.validation.kind');
   if (body.secret !== undefined && (typeof body.secret !== 'string' || byteLength(body.secret || '') > 4096)) fields.secret = t('alerts.validation.secret');

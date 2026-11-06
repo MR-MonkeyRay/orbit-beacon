@@ -273,7 +273,7 @@ func mailMessage(cfg Config, p Payload, now time.Time) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	body := base64.StdEncoding.EncodeToString([]byte(message(p)))
+	body := base64.StdEncoding.EncodeToString([]byte(renderMessage(p, cfg.Template, 0)))
 	var wrapped strings.Builder
 	for len(body) > 0 {
 		n := min(76, len(body))

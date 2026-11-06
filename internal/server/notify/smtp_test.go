@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http/httptest"
+	"net/mail"
 	"strings"
 	"testing"
 	"time"
@@ -350,4 +351,65 @@ func TestSMTPCancellationInterruptsGreeting(t *testing.T) {
 		t.Fatalf("cancellation %+v elapsed %v", result, time.Since(start))
 	}
 	<-done
+}
+
+func checkTemplateMail(t *testing.T, raw string) {
+	t.Helper()
+	msg, err := mail.ReadMessage(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Header.Get("Subject") != "OrbitBeacon alert notification" || msg.Header.Get("Bcc") != "" || len(msg.Header) != 8 {
+		t.Fatalf("headers=%v", msg.Header)
+	}
+	decoded, err := io.ReadAll(base64.NewDecoder(base64.StdEncoding, msg.Body))
+	const expected = "resolved: edge\r\nBcc: attacker@example.com\nCPU"
+	if err != nil || string(decoded) != expected {
+		t.Fatalf("body=%q err=%v", decoded, err)
+	}
+}
+
+func TestMailTemplateBodyKeepsFixedHeaders(t *testing.T) {
+	p := templatePayload()
+	p.Node.Name = "edge\r\nBcc: attacker@example.com"
+	cfg := Config{From: "a@example.com", To: []string{"b@example.com"}, Template: "{state}: {node}\n{rule}"}
+	raw, err := mailMessage(cfg, p, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkTemplateMail(t, raw)
+	p.Node.Name = strings.Repeat("界", 2000)
+	cfg.Template = "{node}"
+	raw, err = mailMessage(cfg, p, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := mail.ReadMessage(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := io.ReadAll(base64.NewDecoder(base64.StdEncoding, msg.Body))
+	if err != nil || string(decoded) != p.Node.Name {
+		t.Fatalf("unlimited body bytes=%d err=%v", len(decoded), err)
+	}
+}
+
+func TestSMTPTemplateSendKeepsFixedHeaders(t *testing.T) {
+	p := templatePayload()
+	p.Node.Name = "edge\r\nBcc: attacker@example.com"
+	cfg, cert, done := fakeSMTP(t, "success")
+	cfg.Template = "{state}: {node}\n{rule}"
+	s := newSender(Options{Now: time.Now, AllowPrivateNetworks: true})
+	defer s.client.CloseIdleConnections()
+	trustTestServer(s, cert)
+	result := s.Send(context.Background(), Channel{Kind: "email", Config: cfg}, "password", p)
+	captured := <-done
+	if !result.OK {
+		t.Fatal(result)
+	}
+	_, message, ok := strings.Cut(captured, "DATA\r\n")
+	if !ok {
+		t.Fatalf("missing DATA: %q", captured)
+	}
+	checkTemplateMail(t, strings.TrimSuffix(message, "QUIT\r\n"))
 }

@@ -19,6 +19,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/secretbox"
@@ -44,6 +46,7 @@ type Config struct {
 	Username    string   `json:"username,omitempty"`
 	From        string   `json:"from,omitempty"`
 	To          []string `json:"to,omitempty"`
+	Template    string   `json:"template,omitempty"`
 }
 type Channel struct {
 	ID        string    `json:"id"`
@@ -115,9 +118,12 @@ func ValidateChannel(c Channel, secret string, allowInsecureWebhooks bool) error
 		return validation.Invalid("name", "must contain 1..100 UTF-8 bytes")
 	}
 	cfg := c.Config
+	if !validTemplate(cfg.Template) {
+		return validation.Invalid("config", "invalid message template")
+	}
 	switch c.Kind {
 	case "webhook":
-		if cfg.ChatID != "" || cfg.Host != "" || cfg.Port != 0 || cfg.Username != "" || cfg.From != "" || len(cfg.To) > 0 {
+		if cfg.Template != "" || cfg.ChatID != "" || cfg.Host != "" || cfg.Port != 0 || cfg.Username != "" || cfg.From != "" || len(cfg.To) > 0 {
 			return validation.Invalid("config", "unexpected fields for webhook")
 		}
 		if cfg.URL == "" && cfg.URLSet {
@@ -284,6 +290,10 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 	}
 	urlReplaced := false
 	if len(p.Config) > 0 {
+		// json.Unmarshal 会把非法字节静默替换成 U+FFFD，必须在解码前拒绝。
+		if !utf8.Valid(p.Config) {
+			return c, validation.Invalid("config", "must be valid UTF-8")
+		}
 		if bytes.Equal(bytes.TrimSpace(p.Config), []byte("null")) {
 			return c, validation.Invalid("config", "cannot be null")
 		}
@@ -297,8 +307,9 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 			allowed["url"] = true
 		case "telegram":
 			allowed["chat_id"] = true
+			allowed["template"] = true
 		case "email":
-			for _, key := range []string{"host", "port", "username", "from", "to"} {
+			for _, key := range []string{"host", "port", "username", "from", "to", "template"} {
 				allowed[key] = true
 			}
 		}
@@ -340,6 +351,7 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 		secret = string(plain)
 		clear(plain)
 	}
+	c.Config.Template = strings.TrimSpace(strings.ReplaceAll(c.Config.Template, "\r\n", "\n"))
 	if e = s.validate(c, secret); e != nil {
 		return c, e
 	}
@@ -480,6 +492,33 @@ func validHost(host string) bool {
 			if !(b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '-') {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+var templateTokenPattern = regexp.MustCompile(`\{[a-z_]+\}`)
+var templateTokens = []string{"{state}", "{rule}", "{node}", "{metric}", "{severity}", "{value}", "{started_at}", "{resolved_at}", "{event_id}"}
+
+func validTemplate(template string) bool {
+	if !utf8.ValidString(template) || len(template) > 1000 {
+		return false
+	}
+	for _, r := range template {
+		if r != '\n' && unicode.IsControl(r) {
+			return false
+		}
+	}
+	for _, token := range templateTokenPattern.FindAllString(template, -1) {
+		known := false
+		for _, allowed := range templateTokens {
+			if token == allowed {
+				known = true
+				break
+			}
+		}
+		if !known {
+			return false
 		}
 	}
 	return true

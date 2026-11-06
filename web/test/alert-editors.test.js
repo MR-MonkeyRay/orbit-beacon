@@ -137,3 +137,76 @@ test('channel test results update accessible live status after failures and succ
     assert.notEqual(status.textContent, unreadable);
   } finally { controller.abort(); globalThis.fetch = originalFetch; dom.restore(); }
 });
+
+test('channel editor shows templates for Telegram and email, prefills and saves or clears them', {timeout: 10000}, async () => {
+  const dom = installDOM();
+  const toasts = dom.document.createElement('div'); toasts.id = 'toasts'; dom.body.append(toasts);
+  const originalFetch = globalThis.fetch;
+  setNavigationSignal(null);
+  admin();
+  const payloads = [];
+  let saves = 0;
+  globalThis.fetch = async (_path, options) => {
+    payloads.push(JSON.parse(options.body));
+    return new Response('{}');
+  };
+  try {
+    const {channelEditor} = await import('../src/console/pages/notification-channels.js');
+    const context = {signal: new AbortController().signal, saved: async () => { saves += 1; }};
+    const dialog = channelEditor(null, context);
+    const root = dom.body;
+    const template = control(root, 'template');
+    const wrapper = elements(root).find((element) => element.children.includes(template));
+    assert.equal(template.tagName, 'textarea');
+    assert.equal(template.disabled, true);
+    assert.equal(wrapper.hidden, true);
+    assert.equal(wrapper.querySelector('label').textContent, copy('alerts.channels.template'));
+    assert.equal(wrapper.querySelector('.hint').textContent, '{state} {rule} {node} {metric} {severity} {value} {started_at} {resolved_at} {event_id}');
+    change(control(root, 'kind'), 'telegram');
+    assert.equal(template.disabled, false);
+    assert.equal(wrapper.hidden, false);
+    template.value = '{unknown}';
+    control(root, 'name').value = 'Bot';
+    control(root, 'chat_id').value = '-123';
+    control(root, 'secret').value = '123:token';
+    const form = elements(root).find((element) => element.tagName === 'form');
+    form.dispatchEvent(new Event('submit', {cancelable: true}));
+    await flush();
+    assert.equal(payloads.length, 0);
+    assert.equal(wrapper.querySelector('.field-error').textContent, copy('alerts.validation.template'));
+    template.value = '{node}';
+    change(control(root, 'kind'), 'email');
+    assert.equal(template.disabled, false);
+    assert.equal(wrapper.hidden, false);
+    change(control(root, 'kind'), 'webhook');
+    assert.equal(template.disabled, true);
+    assert.equal(wrapper.hidden, true);
+    control(root, 'url').value = 'https://example.com/hook';
+    form.dispatchEvent(new Event('submit', {cancelable: true}));
+    await flush();
+    assert.equal(payloads.length, 1, root.textContent);
+    assert.equal(saves, 1, root.textContent);
+    await dialog.closed;
+    assert.deepEqual(payloads[0].config, {url: 'https://example.com/hook'});
+    for (const kind of ['telegram', 'email']) {
+      const item = {id, name: 'Channel', kind, enabled: true, secret_set: true, config: kind === 'telegram' ? {chat_id: '-123', template: '{node}\n{rule}'} : {host: 'smtp.example.com', port: 587, from: 'a@example.com', to: ['b@example.com'], template: '{node}\n{rule}'}};
+      for (const value of [' \r\n{state}\r\n{node} ', ' \t\r\n ']) {
+        const edited = channelEditor(item, context);
+        assert.equal(control(root, 'template').value, item.config.template);
+        assert.equal(control(root, 'template').disabled, false);
+        control(root, 'template').value = value;
+        elements(root).find((element) => element.tagName === 'form').dispatchEvent(new Event('submit', {cancelable: true}));
+        await flush();
+        assert.equal(payloads.length, saves, root.textContent);
+        assert.ok(!elements(root).some((element) => element.getAttribute('role') === 'alert' && !element.hidden), root.textContent);
+        await edited.closed;
+        const payload = payloads.at(-1);
+        assert.equal(payload.config.template, value.includes('{state}') ? '{state}\n{node}' : '');
+        assert.ok(!Object.hasOwn(payload, 'kind'));
+        assert.ok(!Object.hasOwn(payload, 'secret'));
+        assert.ok(!Object.hasOwn(payload.config, 'url'));
+      }
+    }
+    assert.equal(saves, 5);
+  } finally { globalThis.fetch = originalFetch; dom.restore(); }
+});

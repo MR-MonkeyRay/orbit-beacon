@@ -24,6 +24,7 @@ export function errorText(error) {
 }
 
 const fieldReasons = new Map([
+  ['invalid message template', 'alerts.validation.template'],
   ['invalid announcement title', 'announcements.invalidTitle'],
   ['invalid announcement body', 'announcements.invalidBody'],
   ['invalid announcement end', 'announcements.invalidEnd'],

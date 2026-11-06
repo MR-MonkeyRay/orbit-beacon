@@ -211,3 +211,61 @@ func TestWebhookURLPrivacyAndKeyMismatchRepairHTTP(t *testing.T) {
 		t.Fatal("URL in logs")
 	}
 }
+
+func TestNotificationHTTPTemplateRoundTrip(t *testing.T) {
+	f := newHTTP(t, 1)
+	box, _ := secretbox.New(bytes.Repeat([]byte{9}, 32), "orbitbeacon notification channel v1")
+	ns := notify.New(f.db, box, notify.Options{})
+	h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Notifications: ns, PublicURL: publicURL}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.handler = h
+	admin, csrf := login(t, f, "admin")
+	body := `{"name":"Bot","kind":"telegram","enabled":true,"config":{"chat_id":"-123","template":"  {node}\r\n{rule}  "},"secret":"123:token"}`
+	r := request(t, h, "POST", "/api/v1/notification-channels", body, admin, csrf, publicURL)
+	assertHTTPStatus(t, r, 201)
+	id := objectID(t, decodeObject(t, r))
+	path := "/api/v1/notification-channels/" + id
+	check := func(raw []byte, want string) {
+		t.Helper()
+		var channel notify.Channel
+		if err := json.Unmarshal(raw, &channel); err != nil || channel.Config.Template != want {
+			t.Fatalf("response=%s err=%v", raw, err)
+		}
+	}
+	check(r.Body.Bytes(), "{node}\n{rule}")
+	r = request(t, h, "PATCH", path, `{"config":{"chat_id":"-123","template":"  {state}\r\n{event_id}  "}}`, admin, csrf, publicURL)
+	assertHTTPStatus(t, r, 200)
+	check(r.Body.Bytes(), "{state}\n{event_id}")
+	r = request(t, h, "GET", path, "", admin, "", "")
+	assertHTTPStatus(t, r, 200)
+	check(r.Body.Bytes(), "{state}\n{event_id}")
+	r = request(t, h, "GET", "/api/v1/notification-channels", "", admin, "", "")
+	assertHTTPStatus(t, r, 200)
+	var list struct {
+		Channels []notify.Channel `json:"channels"`
+	}
+	if err := json.Unmarshal(r.Body.Bytes(), &list); err != nil || len(list.Channels) != 1 || list.Channels[0].Config.Template != "{state}\n{event_id}" {
+		t.Fatalf("list=%s err=%v", r.Body, err)
+	}
+	r = request(t, h, "PATCH", path, `{"config":{"chat_id":"-123","template":" \r\n\t "}}`, admin, csrf, publicURL)
+	assertHTTPStatus(t, r, 200)
+	r = request(t, h, "GET", path, "", admin, "", "")
+	assertHTTPStatus(t, r, 200)
+	check(r.Body.Bytes(), "")
+	if strings.Contains(r.Body.String(), `"template"`) {
+		t.Fatalf("empty template=%s", r.Body)
+	}
+	for _, template := range []string{"{unknown}", strings.Repeat("a", 1001), "a\tb"} {
+		raw, _ := json.Marshal(map[string]any{"config": map[string]string{"chat_id": "-123", "template": template}})
+		r = request(t, h, "PATCH", path, string(raw), admin, csrf, publicURL)
+		assertHTTPStatus(t, r, 400)
+		var result struct {
+			Fields map[string]string `json:"fields"`
+		}
+		if err := json.Unmarshal(r.Body.Bytes(), &result); err != nil || result.Fields["config"] == "" {
+			t.Fatalf("validation=%s err=%v", r.Body, err)
+		}
+	}
+}

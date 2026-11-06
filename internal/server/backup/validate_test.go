@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -434,5 +435,46 @@ func TestPayloadRejectsPendingNotificationDeliveries(t *testing.T) {
 				t.Fatalf("state=%s: %v", state, err)
 			}
 		})
+	}
+}
+
+func TestPayloadChannelTemplates(t *testing.T) {
+	key := []byte(strings.Repeat("k", 32))
+	box, err := secretbox.New(key, "orbitbeacon notification channel v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"telegram", "email", "webhook"} {
+		for _, template := range []string{"", "{node} {rule}\n{value}", "{unknown}", strings.Repeat("a", 1001)} {
+			t.Run(kind+"/"+fmt.Sprint(len(template)), func(t *testing.T) {
+				db := validationDB(t, Configuration)
+				config := map[string]any{"template": template}
+				var secretCipher, urlCipher []byte
+				switch kind {
+				case "telegram":
+					config["chat_id"] = "-123"
+					secretCipher, err = box.Seal(validationID, []byte("123:token"))
+				case "email":
+					config["host"], config["port"], config["from"], config["to"] = "smtp.example.com", 587, "a@example.com", []string{"b@example.com"}
+				case "webhook":
+					urlCipher, err = box.Seal(validationID+":url", []byte("https://example.com/hook"))
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw, err := json.Marshal(config)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = db.Exec(`INSERT INTO notification_channels(id,name,kind,enabled,config_json,secret_ciphertext,url_ciphertext,created_at,updated_at) VALUES(?,'Channel',?,1,?,?,?,?,?)`, validationID, kind, string(raw), secretCipher, urlCipher, validationTime, validationTime); err != nil {
+					t.Fatal(err)
+				}
+				err = ValidatePayloadData(context.Background(), db, Configuration, key)
+				valid := template == "" || kind != "webhook" && template == "{node} {rule}\n{value}"
+				if (err == nil) != valid {
+					t.Fatalf("kind=%s template=%q valid=%t err=%v", kind, template, valid, err)
+				}
+			})
+		}
 	}
 }

@@ -89,3 +89,27 @@ test('mail host validation mirrors the server rules', () => {
   for (const host of ['smtp.example.com', 'smtp.example.com.', 'mail-1.example', '192.0.2.10', '2001:db8::1']) assert.equal(validHost(host), true, host);
   for (const host of ['', 'smtp_server.example.com', '-bad.example', 'bad-.example', 'a..b', 'fe80::1%eth0', 'smtp host', 'x'.repeat(64) + '.example']) assert.equal(validHost(host), false, host);
 });
+
+test('channel templates validate UTF-8 bytes, closed placeholders and controls', () => {
+  const telegram = {name: 'Bot', kind: 'telegram', secret: '123:token', config: {chat_id: '-123'}};
+  const withTemplate = (template) => ({...telegram, config: {...telegram.config, template}});
+  for (const template of ['', '{state} {rule} {node} {metric} {severity} {value} {started_at} {resolved_at} {event_id}', '{A} {foo1} {} {', 'one\ntwo', '界'.repeat(333) + 'a', '🙂']) {
+    assert.deepEqual(validateChannel(withTemplate(template)), {}, template);
+  }
+  for (const template of ['{unknown}', '{node} {unknown_token}', '界'.repeat(333) + 'ab', 'a'.repeat(1001), 'one\ttwo', 'one\rtwo', '\0', '\x7f', '\u0085', '\ud800', '\udc00', null, 123]) {
+    assert.equal(validateChannel(withTemplate(template))['config.template'], copy('alerts.validation.template'));
+  }
+  const email = {name: 'Mail', kind: 'email', config: {host: 'smtp.example.com', port: 587, from: 'a@example.com', to: ['b@example.com'], template: '{node}'}};
+  assert.deepEqual(validateChannel(email), {});
+  assert.equal(validateChannel({...email, config: {...email.config, template: '{unknown}'}})['config.template'], copy('alerts.validation.template'));
+  const webhook = {name: 'Hook', kind: 'webhook', config: {url: 'https://example.com'}};
+  for (const template of ['', '{node}']) assert.equal(validateChannel({...webhook, config: {...webhook.config, template}})['config.template'], copy('alerts.validation.template'));
+});
+
+test('channel payloads normalize templates and omit them for hidden webhook fields', () => {
+  const values = {name: 'Bot', kind: 'telegram', chat_id: '-123', template: ' \r\n{node}\r\n{rule} \r\n'};
+  assert.equal(buildChannelPayload(values).config.template, '{node}\n{rule}');
+  assert.equal(buildChannelPayload({...values, template: ' \t\r\n '}).config.template, '');
+  assert.equal(buildChannelPayload({...values, kind: 'email'}).config.template, '{node}\n{rule}');
+  assert.ok(!Object.hasOwn(buildChannelPayload({...values, kind: 'webhook', url: 'https://example.com'}).config, 'template'));
+});
