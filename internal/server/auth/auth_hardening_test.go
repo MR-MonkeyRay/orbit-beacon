@@ -171,7 +171,8 @@ func assertWriterAvailableDuringEntropy(t *testing.T, db *sql.DB, random *blocki
 			close(random.release)
 			t.Fatalf("independent write failed while password hashing was blocked: %v", err)
 		}
-	case <-time.After(time.Second):
+	// 大于 busy_timeout：真占写锁时会失败，磁盘繁忙时不会误报。
+	case <-time.After(15 * time.Second):
 		close(random.release)
 		t.Fatal("password hashing held the SQLite writer lock")
 	}
