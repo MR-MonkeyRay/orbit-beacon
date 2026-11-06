@@ -55,6 +55,8 @@ type nodeState struct {
 	session           string
 	seq               uint64
 	latest            []byte
+	cpuPercent        *float64
+	memoryUsedPercent *float64
 	receivedAt        time.Time
 	lastSeenPersisted time.Time
 	probes            probeBuffer
@@ -80,6 +82,7 @@ func (state *nodeState) invalidateIdentity(credential []byte, credentialEpoch in
 	state.credentialEpoch = 0
 	state.generation, state.session, state.seq = 0, "", 0
 	state.latest = nil
+	state.cpuPercent, state.memoryUsedPercent = nil, nil
 	state.receivedAt, state.lastSeenPersisted = time.Time{}, time.Time{}
 	state.public = publicMetrics{}
 }
@@ -483,9 +486,11 @@ func (s *Service) acceptInMemory(ctx context.Context, nodeID string, state *node
 		response.AcceptedSeq = fence.cachedSeq
 		return response, nil
 	}
+	snapshot := snapshotPublic(report.Metrics, now)
 	state.mu.Lock()
 	state.seq, state.latest, state.receivedAt = report.Seq, report.body, now
-	state.public = snapshotPublic(report.Metrics, now)
+	state.public = snapshot
+	state.cpuPercent, state.memoryUsedPercent = liveMetricValue(snapshot.cpu), liveMetricValue(snapshot.memory)
 	state.mu.Unlock()
 	s.recordSample(nodeID, now, report.Metrics)
 	return response, nil
@@ -597,9 +602,11 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 	state.commitTraffic(committed, now)
 	state.commitProbes(probes, report.RunGeneration, report.SessionID)
 	response.TrafficAcks = state.trafficAcks(report.Traffic, now)
+	snapshot := snapshotPublic(report.Metrics, now)
 	state.mu.Lock()
 	state.generation, state.seq, state.latest, state.receivedAt = report.RunGeneration, report.Seq, report.body, now
-	state.public = snapshotPublic(report.Metrics, now)
+	state.public = snapshot
+	state.cpuPercent, state.memoryUsedPercent = liveMetricValue(snapshot.cpu), liveMetricValue(snapshot.memory)
 	copy(state.credential[:], txCredential)
 	state.credentialEpoch = txEpoch
 	state.session = report.SessionID

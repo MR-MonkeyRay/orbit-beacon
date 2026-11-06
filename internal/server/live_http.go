@@ -74,7 +74,7 @@ func (h *handler) consoleDetail(ctx context.Context, id string) (consoleDetailDa
 
 func consoleFleetsEqual(a, b consoleFleetData) bool {
 	return slices.EqualFunc(a.Nodes, b.Nodes, func(a, b nodes.LiveNode) bool {
-		return a.ID == b.ID && a.Status == b.Status && a.Presence == b.Presence && a.Stopped == b.Stopped && a.AgentVersion == b.AgentVersion && equalLiveTime(a.LastSeen, b.LastSeen)
+		return a.ID == b.ID && a.Status == b.Status && a.Presence == b.Presence && a.Stopped == b.Stopped && a.AgentVersion == b.AgentVersion && equalLiveTime(a.LastSeen, b.LastSeen) && equalLiveValue(a.CPUPercent, b.CPUPercent) && equalLiveValue(a.MemoryUsedPercent, b.MemoryUsedPercent)
 	})
 }
 

@@ -65,6 +65,7 @@ func TestLatestAndPublicProjectionFenceReplacementIdentity(t *testing.T) {
 			if err != nil || out.Status != "online" || out.CPUPercent != nil || out.MemoryPercent != nil || out.Load1 != nil || out.UptimeSeconds != nil {
 				t.Fatalf("replacement inherited old public metrics=%+v err=%v", out, err)
 			}
+			assertLiveMetrics(t, liveFleetNode(t, f), nil, nil)
 			assertPublicStatuses(t, out, "unavailable", "unavailable", "unavailable", "unavailable")
 		})
 	}

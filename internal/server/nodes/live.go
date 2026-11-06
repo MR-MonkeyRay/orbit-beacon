@@ -24,12 +24,14 @@ type LiveIdentity struct {
 
 // LiveNode 是节点列表完整且紧凑的传输记录。
 type LiveNode struct {
-	Stopped      bool       `json:"stopped"`
-	ID           string     `json:"id"`
-	Status       string     `json:"status"`
-	Presence     string     `json:"presence"`
-	LastSeen     *time.Time `json:"last_seen"`
-	AgentVersion string     `json:"agent_version"`
+	CPUPercent        *float64   `json:"cpu_percent"`
+	MemoryUsedPercent *float64   `json:"memory_used_percent"`
+	Stopped           bool       `json:"stopped"`
+	ID                string     `json:"id"`
+	Status            string     `json:"status"`
+	Presence          string     `json:"presence"`
+	LastSeen          *time.Time `json:"last_seen"`
+	AgentVersion      string     `json:"agent_version"`
 }
 
 type LiveRecord struct {

@@ -9,9 +9,11 @@ const stringList = (value, max = Infinity) => Array.isArray(value) && value.leng
 const enumList = (value, allowed) => stringList(value, allowed.length) && new Set(value).size === value.length && value.every((item) => allowed.includes(item));
 const number = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const nullableNumber = (value) => value === null || number(value);
+const optionalPercent = (value) => value === undefined || value === null || number(value) && value <= 100;
 const status = (value) => record(value) && uuid.test(value.id) && ['pending', 'online', 'offline', 'unknown', 'disabled'].includes(value.status)
   && ['pending', 'never', 'online', 'offline', 'disabled'].includes(value.presence)
   && typeof value.stopped === 'boolean'
+  && optionalPercent(value.cpu_percent) && optionalPercent(value.memory_used_percent)
   && (value.last_seen === null || time(value.last_seen)) && typeof value.agent_version === 'string';
 const runtime = (value) => value === null || record(value) && Number.isInteger(value.report_interval_seconds)
   && value.report_interval_seconds >= 5 && value.report_interval_seconds <= 60

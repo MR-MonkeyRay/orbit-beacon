@@ -8,18 +8,24 @@ import (
 	"orbitbeacon/internal/server/nodes"
 )
 
-// ProjectLiveRecord 在现有状态锁下仅读取服务端接收时间。
+// ProjectLiveRecord 在身份围栏内读取服务端接收时间和写入时计算的指标摘要。
 // 计算节点列表的在线状态无需分配报告副本或解码报告。
 func (s *Service) ProjectLiveRecord(record *nodes.LiveRecord, now time.Time) nodes.LiveNode {
 	out := record.LiveNode
+	out.CPUPercent, out.MemoryUsedPercent = nil, nil
 	identity := &record.Identity
 	if identity.HasCredential && identity.Generation != 0 && identity.Session != "" {
 		state := s.acquireExistingState(record.ID)
 		if state != nil {
 			state.mu.Lock()
-			if state.matchesIdentity(identity.Credential[:], identity.CredentialEpoch, identity.Generation, identity.Session) && (out.LastSeen == nil || state.receivedAt.After(*out.LastSeen)) {
-				seen := state.receivedAt
-				out.LastSeen = &seen
+			if state.matchesIdentity(identity.Credential[:], identity.CredentialEpoch, identity.Generation, identity.Session) {
+				if out.LastSeen == nil || state.receivedAt.After(*out.LastSeen) {
+					seen := state.receivedAt
+					out.LastSeen = &seen
+				}
+				if nodes.Presence(out.Status, identity.HasCredential, out.LastSeen, now) == "online" {
+					out.CPUPercent, out.MemoryUsedPercent = state.cpuPercent, state.memoryUsedPercent
+				}
 			}
 			state.mu.Unlock()
 			s.releaseState(state)
@@ -27,6 +33,15 @@ func (s *Service) ProjectLiveRecord(record *nodes.LiveRecord, now time.Time) nod
 	}
 	out.Presence = nodes.Presence(out.Status, identity.HasCredential, out.LastSeen, now)
 	return out
+}
+
+// liveMetricValue 复用公开摘要的校验和内存口径，但舰队仅显示报告状态为 ok 的值。
+// 返回值发布后不可变，与 latest 在同一把锁下替换。
+func liveMetricValue(metric publicMetric) *float64 {
+	if !metric.valid || metric.status != "ok" {
+		return nil
+	}
+	return new(metric.value)
 }
 
 // ProjectLiveDetail 使用同一持久化行中的身份和观测数据。即使新事务已提交但内存尚未发布，

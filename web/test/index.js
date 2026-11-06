@@ -7,6 +7,7 @@ import './catalogs.test.js';
 import './translate-html.test.js';
 import './clipboard.test.js';
 import './nodes-filters.test.js';
+import './nodes-metrics.test.js';
 import './i18n-errors.test.js';
 import './contrast.test.js';
 import './dom.test.js';

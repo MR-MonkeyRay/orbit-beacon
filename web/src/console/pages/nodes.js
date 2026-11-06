@@ -52,7 +52,9 @@ export async function nodesPage() {
   }}, label, icon('up')));
   const selectAll = h('input', {type: 'checkbox', 'aria-label': t('nodes.selectAll')});
   const headers = [h('th', {scope: 'col', class: 'selection-cell'}, selectAll),
-    sortable('name', t('nodes.column.name')), sortable('status', t('nodes.presence')), sortable('agent_version', t('nodes.agentVersion')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.lastSeen')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.group')),
+    sortable('name', t('nodes.column.name')), sortable('status', t('nodes.presence')),
+    h('th', {scope: 'col', class: 'hide-compact num'}, t('nodes.cpu')), h('th', {scope: 'col', class: 'hide-compact num'}, t('nodes.memory')),
+    sortable('agent_version', t('nodes.agentVersion')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.lastSeen')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.group')),
     h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.location')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.tags')), sortable('created', t('nodes.added'))];
 
   headers.find((header) => header.dataset.sort === 'agent_version').className = 'hide-compact';

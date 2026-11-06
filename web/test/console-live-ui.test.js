@@ -362,7 +362,7 @@ for (const page of ['nodes', 'overview']) {
   test(`${page} last-seen timestamps remain absolute through quiet heartbeats`, async (t) => {
     const env = await setup(t, {page});
     const times = () => page === 'nodes'
-      ? env.root.querySelectorAll('tbody').flatMap((body) => body.querySelectorAll('tr').map((row) => row.children[4].querySelector('time')))
+      ? env.root.querySelectorAll('tbody').flatMap((body) => body.querySelectorAll('tr').map((row) => row.children[6].querySelector('time')))
       : env.root.querySelectorAll('section').find((item) => item.querySelector('h2')?.textContent === copy('nodes.newest')).querySelectorAll('time');
     assert.equal(times().length, env.inventory.length);
     const assertObservedTime = (time, iso) => {
@@ -601,13 +601,13 @@ test('node list sorts Agent versions and patches the existing version cells', as
   assert.ok(header.classList.contains('hide-compact'));
   assert.equal(header.getAttribute('aria-sort'), 'descending');
   env.send({nodes: [compact({...env.inventory[0], agent_version: '1.9'}), compact({...env.inventory[1], agent_version: '1.10'})]});
-  const versionCells = env.root.querySelector('tbody').querySelectorAll('tr').map((row) => row.children[3]);
+  const versionCells = env.root.querySelector('tbody').querySelectorAll('tr').map((row) => row.children[5]);
   assert.ok(versionCells.every((cell) => cell.classList.contains('hide-compact')));
   assert.deepEqual(versionCells.map((cell) => cell.textContent), ['1.9', '1.10']);
   header.querySelector('button').click();
   assert.equal(header.getAttribute('aria-sort'), 'ascending');
   header.querySelector('button').click();
-  assert.equal(env.root.querySelector('tbody').querySelector('tr').children[3].textContent, '1.10');
+  assert.equal(env.root.querySelector('tbody').querySelector('tr').children[5].textContent, '1.10');
 });
 
 test('Agent command polling detaches on tab changes and clears on navigation', async (t) => {
@@ -682,4 +682,28 @@ test('deletion before lazy tab creation keeps all future controls locked and mon
   env.root.querySelector('#tab-monitor').click(); env.mutations(); await flush();
   assert.equal(sampleFact(env.root, copy('nodes.cpu')), undefined);
   assert.ok(env.root.textContent.includes(copy('nodes.sampleEmpty')));
+});
+
+test('node list live metrics preserve rows and selection without inventory reload or apply-filters notice', async (t) => {
+  const env = await setup(t, {search: '?sort=status&status=online'});
+  const rows = [...env.root.querySelector('tbody').children];
+  const headers = env.root.querySelectorAll('th');
+  assert.equal(headers[3].textContent, copy('nodes.cpu'));
+  assert.equal(headers[4].textContent, copy('nodes.memory'));
+  assert.equal(rows[0].children[3].textContent, '—');
+  const box = env.root.querySelector('input[data-node-id]');
+  box.checked = true; box.dispatchEvent(new Event('change'));
+  const requests = env.requests.length;
+  const query = location.search;
+  for (const value of [0, 42, 100, null]) {
+    env.send({nodes: env.inventory.map((item) => ({...compact(item), cpu_percent: value, memory_used_percent: value}))});
+    await flush();
+    assert.deepEqual(env.root.querySelector('tbody').children, rows);
+    assert.equal(rows[0].children[3].textContent, value === null ? '—' : `${value}%`);
+    assert.equal(rows[0].children[4].textContent, value === null ? '—' : `${value}%`);
+    assert.equal(box.checked, true);
+    assert.equal(location.search, query);
+    assert.equal(env.requests.length, requests);
+    assert.equal(button(env.root, copy('nodes.applyFilters')).parentElement.hidden, true);
+  }
 });

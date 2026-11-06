@@ -3754,7 +3754,7 @@ components:
           items:
             type: object
             additionalProperties: false
-            required: [id, status, presence, last_seen, agent_version, stopped]
+            required: [id, status, presence, last_seen, agent_version, stopped, cpu_percent, memory_used_percent]
             properties:
               id: {$ref: '#/components/schemas/Node/properties/id'}
               status: {$ref: '#/components/schemas/Node/properties/status'}
@@ -3763,6 +3763,16 @@ components:
                 type: [string, 'null']
                 format: date-time
                 description: 当前身份最近已知的服务端接收，含合并的内存上报；上报前或身份重置后为 null。
+              cpu_percent:
+                type: [number, 'null']
+                minimum: 0
+                maximum: 100
+                description: 当前身份最新已接受报告的 CPU 使用率；仅 presence 为 online 且 metric_status 为 ok 时提供，否则为 null。
+              memory_used_percent:
+                type: [number, 'null']
+                minimum: 0
+                maximum: 100
+                description: '100 * (total - available) / total；仅在线且两个内存指标状态均为 ok、值齐全、total > 0 时提供，否则为 null。服务器重启后等待新上报。'
               agent_version: {$ref: '#/components/schemas/Node/properties/agent_version'}
               stopped: {$ref: '#/components/schemas/Node/properties/stopped'}
     ConsoleDetailState:

@@ -29,6 +29,7 @@ func TestLiveFleetProjectsIdentityAwareMemoryWithoutDecodingReports(t *testing.T
 	if fleet.Presence != "online" || fleet.LastSeen == nil || !fleet.LastSeen.Equal(f.now) {
 		t.Fatalf("coalesced fleet=%+v", fleet)
 	}
+	assertLiveMetrics(t, fleet, new(10.0), new(50.0))
 	for _, mutation := range []string{"credential", "epoch", "generation", "session"} {
 		t.Run(mutation, func(t *testing.T) {
 			record := records[0]
@@ -42,7 +43,10 @@ func TestLiveFleetProjectsIdentityAwareMemoryWithoutDecodingReports(t *testing.T
 			case "session":
 				record.Identity.Session = "replacement"
 			}
+			// Even a prepopulated record cannot bypass the identity fence.
+			record.CPUPercent, record.MemoryUsedPercent = new(99.0), new(99.0)
 			fleet := f.service.ProjectLiveRecord(&record, f.now)
+			assertLiveMetrics(t, fleet, nil, nil)
 			if fleet.LastSeen == nil || !fleet.LastSeen.Equal(*record.LastSeen) {
 				t.Fatalf("%s overlaid old memory: %+v", mutation, fleet)
 			}
