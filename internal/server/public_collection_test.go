@@ -45,6 +45,9 @@ func TestPublicCollectionExcludesInactiveNodesAndRawSeries(t *testing.T) {
 	if _, err := f.nodes.PatchPublicSettings(ctx, pending.ID, nodes.PublicSettingsPatch{Enabled: &enabled, Name: &name}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.db.Exec("UPDATE nodes SET expires_on='2028-02-29' WHERE id=?", visible); err != nil {
+		t.Fatal(err)
+	}
 	var report v1.Report
 	if err := json.Unmarshal([]byte(reportBody(1, 1, "private-report-session", 20)), &report); err != nil {
 		t.Fatal(err)
@@ -66,7 +69,7 @@ func TestPublicCollectionExcludesInactiveNodesAndRawSeries(t *testing.T) {
 	if len(result.Nodes) != 1 || string(result.Nodes[0]["name"]) != `"Explicit public"` {
 		t.Fatalf("inactive nodes exposed: %s", raw)
 	}
-	for _, secret := range []string{path, iface, "private-source-2001:db8::99", "private-report-session", visible, token} {
+	for _, secret := range []string{"expires_on", "2028-02-29", path, iface, "private-source-2001:db8::99", "private-report-session", visible, token} {
 		if strings.Contains(string(raw), secret) {
 			t.Fatalf("private raw series/identity leaked %q", secret)
 		}

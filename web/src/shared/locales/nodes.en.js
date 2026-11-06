@@ -1,4 +1,5 @@
 export default {
+  'nodes.expiresOn': 'Expiry date',
   'nodes.command.upgradeAll': 'Upgrade all',
   'nodes.command.targetVersion': 'Target version',
   'nodes.command.result.download': 'Download failed',

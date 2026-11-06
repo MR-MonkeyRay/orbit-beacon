@@ -87,7 +87,7 @@ func consoleDetailsEqual(a, b consoleDetailData) bool {
 	}
 	if a.Node != nil {
 		a, b := a.Node, b.Node
-		if a.ID != b.ID || a.Name != b.Name || a.Status != b.Status || a.Presence != b.Presence || a.Stopped != b.Stopped || a.Notes != b.Notes || a.Region != b.Region || a.Provider != b.Provider || a.AgentVersion != b.AgentVersion || !equalLiveValue(a.GroupID, b.GroupID) || !slices.Equal(a.Tags, b.Tags) || !a.CreatedAt.Equal(b.CreatedAt) || !equalLiveTime(a.LastSeen, b.LastSeen) {
+		if a.ID != b.ID || a.Name != b.Name || a.Status != b.Status || a.Presence != b.Presence || a.Stopped != b.Stopped || a.Notes != b.Notes || a.Region != b.Region || a.Provider != b.Provider || a.AgentVersion != b.AgentVersion || !equalLiveValue(a.GroupID, b.GroupID) || !equalLiveValue(a.ExpiresOn, b.ExpiresOn) || !slices.Equal(a.Tags, b.Tags) || !a.CreatedAt.Equal(b.CreatedAt) || !equalLiveTime(a.LastSeen, b.LastSeen) {
 			return false
 		}
 	}

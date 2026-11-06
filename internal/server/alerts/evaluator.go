@@ -73,6 +73,7 @@ type evaluationNode struct {
 	session            string
 	id, name, status   string
 	group              *string
+	expiresOn          *string
 	enrolled, lastSeen *time.Time
 	credential         bool
 	stopped            bool
@@ -136,7 +137,7 @@ func definition(r Rule) string {
 	return string(raw)
 }
 func (e *Evaluator) readNodes(ctx context.Context) ([]evaluationNode, error) {
-	rows, err := e.service.db.QueryContext(ctx, "SELECT id,name,status,group_id,first_enrolled_at,last_seen,token_hash IS NOT NULL,token_hash,credential_epoch,run_generation,report_session_id, "+commands.StoppedSQL+" FROM nodes")
+	rows, err := e.service.db.QueryContext(ctx, "SELECT id,name,status,group_id,expires_on,first_enrolled_at,last_seen,token_hash IS NOT NULL,token_hash,credential_epoch,run_generation,report_session_id, "+commands.StoppedSQL+" FROM nodes")
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +146,7 @@ func (e *Evaluator) readNodes(ctx context.Context) ([]evaluationNode, error) {
 	for rows.Next() {
 		var n evaluationNode
 		var enrolled, last *string
-		if err := rows.Scan(&n.id, &n.name, &n.status, &n.group, &enrolled, &last, &n.credential, &n.identity, &n.credentialEpoch, &n.generation, &n.session, &n.stopped); err != nil {
+		if err := rows.Scan(&n.id, &n.name, &n.status, &n.group, &n.expiresOn, &enrolled, &last, &n.credential, &n.identity, &n.credentialEpoch, &n.generation, &n.session, &n.stopped); err != nil {
 			return nil, err
 		}
 		for _, p := range []struct {
@@ -190,6 +191,9 @@ func (e *Evaluator) readOpen(ctx context.Context) (map[pair]openEvent, error) {
 	return result, rows.Err()
 }
 func pendingDefinition(r Rule, n evaluationNode, latest ingest.LatestReport) string {
+	if r.Metric == "node_expiry_days" {
+		return definition(r) + "|" + hex.EncodeToString(n.identity) + "|" + strconv.FormatInt(n.credentialEpoch, 10) + "|" + timekey.Format(*n.enrolled)
+	}
 	if r.Metric == "traffic_quota_percent" {
 		latest.SessionID = ""
 	}
@@ -309,7 +313,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 					delete(e.pending, key)
 					continue
 				}
-			} else if latestErr != nil && !errors.Is(latestErr, nodes.ErrNotFound) {
+			} else if r.Metric != "node_expiry_days" && latestErr != nil && !errors.Is(latestErr, nodes.ErrNotFound) {
 				delete(e.pending, key)
 				continue
 			}
@@ -336,7 +340,18 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 				since = seen
 				trueCondition = !seen.After(now) && now.Sub(seen) >= time.Duration(r.ForSeconds)*time.Second
 			} else {
-				if r.Metric == "traffic_quota_percent" {
+				if r.Metric == "node_expiry_days" {
+					value = expiryDays(n.expiresOn, now)
+					if value == nil {
+						delete(e.pending, key)
+						if firing {
+							if err := e.resolve(ctx, o, nil, now); err != nil {
+								evaluationErr = errors.Join(evaluationErr, err)
+							}
+						}
+						continue
+					}
+				} else if r.Metric == "traffic_quota_percent" {
 					v, hasQuota := quotas[n.id]
 					disabled := latestErr == nil && metricDisabled(r.Metric, latest.Runtime)
 					if !hasQuota || (disabled && latestFresh(latest, now)) {
@@ -427,10 +442,11 @@ func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *f
 	result, err := tx.ExecContext(ctx, `INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,rule_name,node_name,rule_snapshot)
  SELECT ?,r.id,nodes.id,'firing',?,?,r.name,nodes.name,? FROM alert_rules r,nodes
  WHERE r.id=? AND r.updated_at=? AND r.enabled=1 AND nodes.id=? AND nodes.status!='disabled'
- AND nodes.token_hash=? AND nodes.credential_epoch=? AND nodes.run_generation=? AND nodes.report_session_id=? AND nodes.first_enrolled_at=?
+ AND nodes.token_hash=? AND nodes.credential_epoch=? AND (r.metric='node_expiry_days' OR (nodes.run_generation=? AND nodes.report_session_id=?)) AND nodes.first_enrolled_at=?
+ AND (r.metric!='node_expiry_days' OR nodes.expires_on IS ?)
  AND (r.scope_kind='all' OR (r.scope_kind='node' AND r.scope_id=nodes.id) OR (r.scope_kind='group' AND r.scope_id=nodes.group_id))
  AND (r.metric!='offline' OR NOT `+commands.StoppedSQL+`)
- AND NOT EXISTS(SELECT 1 FROM alert_events WHERE rule_id=r.id AND node_id=nodes.id AND state='firing')`, id, value, timekey.Format(since), string(raw), r.ID, timekey.Format(r.UpdatedAt), n.id, n.identity, n.credentialEpoch, n.generation, n.session, timekey.Format(*n.enrolled))
+ AND NOT EXISTS(SELECT 1 FROM alert_events WHERE rule_id=r.id AND node_id=nodes.id AND state='firing')`, id, value, timekey.Format(since), string(raw), r.ID, timekey.Format(r.UpdatedAt), n.id, n.identity, n.credentialEpoch, n.generation, n.session, timekey.Format(*n.enrolled), n.expiresOn)
 	if err != nil {
 		return err
 	}
@@ -494,4 +510,17 @@ func (e *Evaluator) resolve(ctx context.Context, o openEvent, value *float64, no
 		e.opts.Notifier.Wake()
 	}
 	return nil
+}
+
+// expiryDays 把到期日当天（UTC）算在内。没有日期时返回 nil，绝不当作 0。
+func expiryDays(raw *string, now time.Time) *float64 {
+	if raw == nil {
+		return nil
+	}
+	date, err := time.Parse(time.DateOnly, *raw)
+	if err != nil || date.Format(time.DateOnly) != *raw {
+		return nil
+	}
+	days := max(0, date.AddDate(0, 0, 1).Sub(now).Hours()/24)
+	return &days
 }

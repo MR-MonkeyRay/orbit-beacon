@@ -1,4 +1,5 @@
 export default {
+  'nodes.expiresOn': '到期日',
   'nodes.command.upgradeAll': '升级全部',
   'nodes.command.targetVersion': '目标版本',
   'nodes.command.result.download': '下载失败',

@@ -1,4 +1,8 @@
 export default {
+  'alerts.metric.nodeExpiry': '距到期天数',
+  'alerts.value.expiryDays': '{value} 天',
+  'alerts.validation.expiryThreshold': '请输入 1 到 365 之间的天数。',
+
   'alerts.title': '告警',
   'alerts.subtitle': '跟踪告警事件，配置告警规则和通知通道。',
   'alerts.sections': '告警分区',
@@ -93,6 +97,7 @@ export default {
   'alerts.rules.thresholdLoad': '阈值（负载）',
   'alerts.rules.thresholdProbes': '阈值（失败的探测数）',
   'alerts.rules.thresholdPercent': '阈值（%）',
+  'alerts.rules.thresholdDays': '阈值（天）',
   'alerts.rules.groupOrNode': '分组或节点',
   'alerts.rules.durationMinutes': '持续时间（分钟）',
   'alerts.rules.durationHint': '总持续时间最多为 24 小时。',

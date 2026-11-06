@@ -1385,6 +1385,7 @@ paths:
               additionalProperties: false
               properties:
                 name: {type: [string, 'null'], x-minLengthBytes: 1, x-maxLengthBytes: 255, description: 非空白名称；null 保持不变。}
+                expires_on: {type: [string, 'null'], format: date, description: 真实的 YYYY-MM-DD 日期；省略保持不变，null 清除。}
                 notes: {type: [string, 'null'], description: 空字符串清除；null 保持不变。}
                 region: {type: [string, 'null'], description: 空字符串清除；null 保持不变。}
                 provider: {type: [string, 'null'], description: 空字符串清除；null 保持不变。}
@@ -2577,6 +2578,7 @@ components:
       description: |
         指标规则须有 comparator 与 threshold。流量配额阈值为 (0,1000]，其他百分比阈值为 0..100；
         load1 阈值须为 0..1000000 的有限数值；probes_down 阈值须为 0..5 的有限数值。
+        node_expiry_days 仅允许 comparator 为 <，阈值 > 0 且 <= 365。按到期日次日 UTC 零点计算连续剩余天数，下限 0；不依赖 Agent 上报，亦为下述最新报告时效限制的例外。无日期不匹配，并恢复已有事件。
         流量配额按账期计费用量评估，可超过 100%；不依赖在线状态。读取失败保留事件，移除配额或账期回落可恢复。
         offline 须 comparator 与 threshold 为 null/省略，且 for_seconds 至少 180（nodes.OnlineWindow）。
         all 作用域须 scope_id 为 null/省略；node/group 作用域须已有 UUID。
@@ -2594,7 +2596,7 @@ components:
         enabled: {type: boolean}
         scope_kind: {type: string, enum: [all, group, node]}
         scope_id: {type: [string, 'null'], format: uuid}
-        metric: {type: string, enum: [cpu_percent, memory_used_percent, swap_used_percent, disk_used_percent, load1, probes_down, traffic_quota_percent, offline]}
+        metric: {type: string, enum: [cpu_percent, memory_used_percent, swap_used_percent, disk_used_percent, load1, probes_down, traffic_quota_percent, node_expiry_days, offline]}
         comparator: {type: [string, 'null'], enum: ['>', '<', null]}
         threshold: {type: [number, 'null'], minimum: 0, maximum: 1000000}
         for_seconds: {type: integer, minimum: 0, maximum: 86400}
@@ -2712,12 +2714,13 @@ components:
     Node:
       type: object
       additionalProperties: false
-      required: [id, name, status, notes, region, provider, group_id, tags, created_at, last_seen, presence, agent_version, stopped]
+      required: [id, name, status, expires_on, notes, region, provider, group_id, tags, created_at, last_seen, presence, agent_version, stopped]
       properties:
         stopped: {type: boolean, description: 最新 stop 成功，且收到它的进程和凭据仍是节点当前值；任何新进程上报后清除。}
         id: {type: string, format: uuid}
         name: {type: string}
         status: {type: string, enum: [pending, online, offline, unknown, disabled]}
+        expires_on: {type: [string, 'null'], format: date}
         notes: {type: string}
         region: {type: string}
         provider: {type: string}

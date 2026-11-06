@@ -167,7 +167,7 @@ func (r payloadRow) floatPointer(k string) *float64 {
 func nullableColumn(table, column string) bool {
 	switch table {
 	case "nodes":
-		return oneOf(column, "group_id", "token_hash", "installation_id", "first_enrolled_at")
+		return oneOf(column, "expires_on", "group_id", "token_hash", "installation_id", "first_enrolled_at")
 	case "alert_rules":
 		return oneOf(column, "scope_id", "comparator", "threshold")
 	case "notification_channels":
@@ -351,6 +351,12 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 }
 
 func validateNode(r payloadRow) error {
+	if r["expires_on"] != nil {
+		date, err := time.Parse(time.DateOnly, r.text("expires_on"))
+		if err != nil || date.Format(time.DateOnly) != r.text("expires_on") {
+			return invalidRow()
+		}
+	}
 	if !validText(r.text("name"), 255) || !oneOf(r.text("status"), "disabled", "unknown", "pending") || (r["group_id"] != nil && !uuid.ValidUUID(r.text("group_id"))) || r.integer("credential_epoch") < 0 {
 		return invalidRow()
 	}

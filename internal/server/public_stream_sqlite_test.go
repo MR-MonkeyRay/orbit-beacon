@@ -44,6 +44,9 @@ func sqliteStreamFrame(t *testing.T, frames <-chan string) (string, string, publ
 			Code string            `json:"code"`
 			Data publicListFixture `json:"data"`
 		}
+		if strings.Contains(data, "expires_on") || strings.Contains(data, "2028-02-29") {
+			t.Fatal("expiry leaked into public stream")
+		}
 		if err := json.Unmarshal([]byte(data), &frame); err != nil {
 			t.Fatal(err)
 		}
@@ -57,6 +60,9 @@ func sqliteStreamFrame(t *testing.T, frames <-chan string) (string, string, publ
 func TestPublicStreamSQLiteAcceptedReportAndUnpublish(t *testing.T) {
 	f := newAgentHTTP(t, 2)
 	id, token := publishCacheNode(t, f)
+	if _, err := f.db.Exec("UPDATE nodes SET expires_on='2028-02-29' WHERE id=?", id); err != nil {
+		t.Fatal(err)
+	}
 	base, started := f.now, time.Now()
 	var err error
 	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return base.Add(time.Since(started)) }, WebUpdateIntervalSeconds: 2}))

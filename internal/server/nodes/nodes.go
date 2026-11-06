@@ -43,6 +43,7 @@ type Node struct {
 	Name         string     `json:"name"`
 	Status       string     `json:"status"`
 	Notes        string     `json:"notes"`
+	ExpiresOn    *string    `json:"expires_on"`
 	Region       string     `json:"region"`
 	Provider     string     `json:"provider"`
 	GroupID      *string    `json:"group_id"`
@@ -63,8 +64,9 @@ type MetadataPatch struct {
 	Region   *string `json:"region"`
 	Provider *string `json:"provider"`
 	// 原始消息为 nil 时不改动分组；JSON null 表示清除。
-	GroupID json.RawMessage `json:"group_id"`
-	Tags    *[]string       `json:"tags"`
+	GroupID   json.RawMessage `json:"group_id"`
+	ExpiresOn json.RawMessage `json:"expires_on"`
+	Tags      *[]string       `json:"tags"`
 }
 
 type BatchRequest struct {
@@ -197,7 +199,7 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 
 type scanner interface{ Scan(...any) error }
 
-const nodeColumns = `id, name, status, created_at, notes, region, provider, group_id,
+const nodeColumns = `id, name, status, created_at, notes, region, provider, group_id, expires_on,
 	(SELECT json_group_array(tag) FROM (SELECT tag FROM node_tags WHERE node_id = nodes.id ORDER BY tag)), last_seen, length(token_hash) > 0, system, ` + commands.StoppedSQL
 
 func scanNode(row scanner, now time.Time) (Node, error) {
@@ -205,7 +207,7 @@ func scanNode(row scanner, now time.Time) (Node, error) {
 	var created, tags, systemJSON string
 	var lastSeen sql.NullString
 	var hasCredential sql.NullBool
-	if err := row.Scan(&node.ID, &node.Name, &node.Status, &created, &node.Notes, &node.Region, &node.Provider, &node.GroupID, &tags, &lastSeen, &hasCredential, &systemJSON, &node.Stopped); err != nil {
+	if err := row.Scan(&node.ID, &node.Name, &node.Status, &created, &node.Notes, &node.Region, &node.Provider, &node.GroupID, &node.ExpiresOn, &tags, &lastSeen, &hasCredential, &systemJSON, &node.Stopped); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Node{}, ErrNotFound
 		}
@@ -285,6 +287,12 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 	if patch.Name != nil && (strings.TrimSpace(*patch.Name) == "" || len(*patch.Name) > 255) {
 		fields["name"] = "must be nonempty and at most 255 bytes"
 	}
+	var expiresOn *string
+	if patch.ExpiresOn != nil {
+		if err := json.Unmarshal(patch.ExpiresOn, &expiresOn); err != nil || (expiresOn != nil && !validExpiryDate(*expiresOn)) {
+			fields["expires_on"] = "must be a real date in YYYY-MM-DD format or null"
+		}
+	}
 	var groupID *string
 	if patch.GroupID != nil {
 		if err := json.Unmarshal(patch.GroupID, &groupID); err != nil || (groupID != nil && !uuid.ValidUUID(*groupID)) {
@@ -320,7 +328,7 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 			return Node{}, validation.Invalid("group_id", "group does not exist")
 		}
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE nodes SET name = COALESCE(?, name), notes = COALESCE(?, notes), region = COALESCE(?, region), provider = COALESCE(?, provider), group_id = CASE WHEN ? THEN ? ELSE group_id END WHERE id = ?`, patch.Name, patch.Notes, patch.Region, patch.Provider, patch.GroupID != nil, groupID, id)
+	result, err := tx.ExecContext(ctx, `UPDATE nodes SET name = COALESCE(?, name), notes = COALESCE(?, notes), region = COALESCE(?, region), provider = COALESCE(?, provider), group_id = CASE WHEN ? THEN ? ELSE group_id END, expires_on = CASE WHEN ? THEN ? ELSE expires_on END WHERE id = ?`, patch.Name, patch.Notes, patch.Region, patch.Provider, patch.GroupID != nil, groupID, patch.ExpiresOn != nil, expiresOn, id)
 	if err := affected(result, err); err != nil {
 		return Node{}, err
 	}
@@ -617,4 +625,9 @@ func (s *Service) PatchTrafficSettings(ctx context.Context, id string, patch Tra
 		return TrafficSettings{}, err
 	}
 	return settings, nil
+}
+
+func validExpiryDate(raw string) bool {
+	date, err := time.Parse(time.DateOnly, raw)
+	return err == nil && date.Format(time.DateOnly) == raw
 }

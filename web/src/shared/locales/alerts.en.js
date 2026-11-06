@@ -1,4 +1,8 @@
 export default {
+  'alerts.metric.nodeExpiry': 'Days until expiry',
+  'alerts.value.expiryDays': '{value} days',
+  'alerts.validation.expiryThreshold': 'Enter 1 to 365 days.',
+
   'alerts.title': 'Alerts',
   'alerts.subtitle': 'Track incidents and configure alert rules and notification channels.',
   'alerts.sections': 'Alert sections',
@@ -93,6 +97,7 @@ export default {
   'alerts.rules.thresholdLoad': 'Threshold (load)',
   'alerts.rules.thresholdProbes': 'Threshold (failing probes)',
   'alerts.rules.thresholdPercent': 'Threshold (%)',
+  'alerts.rules.thresholdDays': 'Threshold (days)',
   'alerts.rules.groupOrNode': 'Group or node',
   'alerts.rules.durationMinutes': 'Duration (minutes)',
   'alerts.rules.durationHint': 'Maximum total duration: 24 hours.',

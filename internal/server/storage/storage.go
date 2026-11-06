@@ -254,7 +254,7 @@ CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
 CREATE TABLE nodes (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
  group_id TEXT REFERENCES groups(id) ON DELETE SET NULL,
- region TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+ region TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', expires_on TEXT,
  token_hash BLOB UNIQUE, installation_id TEXT, first_enrolled_at TEXT, last_seen TEXT,
  credential_epoch INTEGER NOT NULL DEFAULT 0,
  system TEXT NOT NULL DEFAULT '{}', public_settings TEXT NOT NULL DEFAULT '{}',

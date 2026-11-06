@@ -156,3 +156,24 @@ func TestPublicMemoryNeedsBothCurrentValuesAndStatuses(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicNodeHasNoExpiryField(t *testing.T) {
+	typ := reflect.TypeOf(PublicNode{})
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if field.Name == "ExpiresOn" || field.Tag.Get("json") == "expires_on" {
+			t.Fatal("private expiry in public projection")
+		}
+	}
+	raw, err := json.Marshal(PublicNode{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var obj map[string]any
+	if err = json.Unmarshal(raw, &obj); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := obj["expires_on"]; ok {
+		t.Fatal("expiry serialized publicly")
+	}
+}

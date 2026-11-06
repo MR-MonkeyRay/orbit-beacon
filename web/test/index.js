@@ -50,3 +50,4 @@ import './console-observation-time.test.js';
 import './console-live-ui.test.js';
 import './node-commands.test.js';
 import './availability.test.js';
+import './node-expiry.test.js';

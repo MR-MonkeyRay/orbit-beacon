@@ -110,7 +110,7 @@ func condition(r Rule, value float64, firing bool) bool {
 		boundary := threshold + margin
 		if r.Metric == "probes_down" {
 			boundary = min(5, boundary)
-		} else if r.Metric != "load1" && r.Metric != "traffic_quota_percent" {
+		} else if r.Metric != "load1" && r.Metric != "traffic_quota_percent" && r.Metric != "node_expiry_days" {
 			boundary = min(100, boundary)
 		}
 		return value < boundary

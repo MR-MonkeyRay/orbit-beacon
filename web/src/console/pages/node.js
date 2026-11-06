@@ -185,7 +185,7 @@ function detailsTab(node, groups, sample, history, availability, traffic, probes
       [t('nodes.group'), currentGroup ? currentGroup.name : current.group_id ? t('nodes.unknownID', {id: shortID(current.group_id)}) : t('nodes.ungrouped')],
       [t('nodes.region'), current.region], [t('nodes.provider'), current.provider],
       [t('nodes.tags'), current.tags.length ? h('div', {class: 'cell-tags'}, current.tags.map((tag) => h('span', {class: 'tag static'}, tag))) : null],
-      [t('nodes.added'), when(current.created_at)], [t('nodes.notes'), current.notes]
+      [t('nodes.added'), when(current.created_at)], [t('nodes.expiresOn'), current.expires_on], [t('nodes.notes'), current.notes]
     ]);
   };
   snapshot(node);
@@ -201,16 +201,17 @@ function detailsTab(node, groups, sample, history, availability, traffic, probes
   const groupID = select(choices, node.group_id || '', {name: 'group_id', id: 'node-group'});
   const tags = tagEditor(node.tags);
   const tagBox = tags.querySelector('[data-tags]');
+  const expiresOn = input({name: 'expires_on', type: 'date', value: node.expires_on || '', id: 'node-expires-on'});
   const notes = textarea({name: 'notes', id: 'node-notes'}, node.notes);
   const controls = saveBar(t('nodes.saveChanges'), 'node-save');
   const form = h('form', {class: 'form form-wide'},
     field(t('nodes.name'), name, {hint: t('nodes.internalNameHint')}),
     h('div', {class: 'form-row'}, field(t('nodes.region'), region), field(t('nodes.provider'), provider)),
-    field(t('nodes.group'), groupID), tags, field(t('nodes.notes'), notes), controls.bar);
+    field(t('nodes.group'), groupID), tags, field(t('nodes.expiresOn'), expiresOn), field(t('nodes.notes'), notes), controls.bar);
   editableForm(form, controls, async () => {
     if (!tagBox.commit()) throw new Error(t('nodes.tagInvalid'));
     const result = await api(`/nodes/${encodeURIComponent(node.id)}`, {method: 'PATCH', body: {
-      name: name.value, notes: notes.value, region: region.value, provider: provider.value, group_id: groupID.value || null, tags: tagBox.getValue()
+      name: name.value, expires_on: expiresOn.value || null, notes: notes.value, region: region.value, provider: provider.value, group_id: groupID.value || null, tags: tagBox.getValue()
     }});
     invalidate('nodes');
     return t('nodes.saved', {name: result.name});

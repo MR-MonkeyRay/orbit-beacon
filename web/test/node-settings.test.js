@@ -20,7 +20,7 @@ const edit = (form, name, value) => {
   return input;
 };
 
-async function setup({hash = '#details', observed = runtime, presence = 'online', lastSeen = '2026-10-28T10:00:00Z', patchStatus = 200, latest = null} = {}) {
+async function setup({hash = '#details', observed = runtime, presence = 'online', lastSeen = '2026-10-28T10:00:00Z', patchStatus = 200, latest = null, expiresOn = null} = {}) {
   const dom = installDOM();
   const originals = new Map(['fetch', 'window', 'WebSocket', 'matchMedia', 'requestAnimationFrame', 'history', 'performance', 'setTimeout', 'clearTimeout'].map((key) => [key, globalThis[key]]));
   const originalNow = Date.now;
@@ -62,14 +62,14 @@ async function setup({hash = '#details', observed = runtime, presence = 'online'
   setSession(userSession);
   const requests = [];
   const node = {id, name: 'Internal name', status: 'unknown', stopped: false, presence, agent_version: 'test-agent',
-    last_seen: lastSeen, group_id: null, region: '', provider: '', notes: 'Saved notes', tags: [], created_at: '2026-10-27T10:00:00Z'};
+    expires_on: expiresOn, last_seen: lastSeen, group_id: null, region: '', provider: '', notes: 'Saved notes', tags: [], created_at: '2026-10-27T10:00:00Z'};
   const traffic = {billing_day: 1, quota_bytes: '0', cycle: {}, daily: [], updated_at: null};
   globalThis.fetch = async (url, options) => {
     requests.push({url, options});
     let data;
     let status = 200;
     if (url === '/api/v1/me') data = userSession;
-    else if (url === path) data = node;
+    else if (url === path) data = options.method === 'PATCH' ? Object.assign(node, JSON.parse(options.body)) : node;
     else if (url === `${path}/commands`) data = {commands: []};
     else if (url === `${path}/runtime`) data = {runtime: observed};
     else if (url === `${path}/traffic-settings`) {
@@ -289,5 +289,32 @@ test('latest deadline patches leave dirty Notes, focus, current tab, and numeric
     setSession({csrf_token: '', user: null, expires_at: ''});
     assert.equal(env.root.querySelectorAll('.sample-value').length, 0);
     assert.equal(env.deadlines.size, 0);
+  } finally { env.cleanup(); }
+});
+
+test('expiry date appears before notes and clears with explicit null', async () => {
+  const env = await setup({expiresOn: '2028-02-29'});
+  try {
+    const details = formFor(env.root, 'notes');
+    const expiry = control(details, 'expires_on');
+    assert.equal(expiry.type, 'date');
+    assert.equal(expiry.value, '2028-02-29');
+    assert.equal(factValues(env.root)[copy('nodes.expiresOn')], '2028-02-29');
+    const inputs = elements(details).filter((element) => element.name);
+    assert.ok(inputs.indexOf(expiry) < inputs.indexOf(control(details, 'notes')));
+    edit(details, 'expires_on', '');
+    details.dispatchEvent(new Event('submit', {cancelable: true}));
+    await flush();
+    const patch = env.requests.find((request) => request.url === path && request.options.method === 'PATCH');
+    assert.equal(JSON.parse(patch.options.body).expires_on, null);
+    assert.equal(env.node.expires_on, null);
+  } finally { env.cleanup(); }
+});
+
+test('unset expiry uses the existing not-set label', async () => {
+  const env = await setup();
+  try {
+    assert.equal(control(formFor(env.root, 'notes'), 'expires_on').value, '');
+    assert.equal(factValues(env.root)[copy('nodes.expiresOn')], copy('controls.notSet'));
   } finally { env.cleanup(); }
 });

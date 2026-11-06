@@ -19,23 +19,44 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
       const enabled = controls.enabled = input({type: 'checkbox', name: 'enabled', checked: item?.enabled ?? true});
       const metric = controls.metric = select(METRICS, item?.metric || 'cpu_percent', {name: 'metric'});
       const comparator = controls.comparator = select([['>', t('alerts.rules.greaterThan')], ['<', t('alerts.rules.lessThan')]], item?.comparator || '>', {name: 'comparator'});
-      const threshold = controls.threshold = input({type: 'number', name: 'threshold', required: true, min: 0, step: 'any', value: item?.threshold ?? 80});
+      const threshold = controls.threshold = input({type: 'number', name: 'threshold', required: true, min: 0, step: 'any', value: String(item?.threshold ?? 80)});
       const thresholdField = field(t('alerts.rules.threshold'), threshold);
       const thresholdLabel = thresholdField.querySelector('label');
-      const condition = h('div', {class: 'form-row'}, field(t('alerts.rules.comparator'), comparator), thresholdField);
+      const comparatorField = field(t('alerts.rules.comparator'), comparator);
+      const condition = h('div', {class: 'form-row'}, comparatorField, thresholdField);
       const offlineHint = h('p', {class: 'hint'}, t('alerts.rules.offlineHint'));
       const minutes = controls.minutes = input({name: 'for_seconds', type: 'number', min: 0, max: 1440, step: 1, required: true, value: Math.floor((item?.for_seconds ?? 180) / 60)});
       const seconds = controls.seconds = input({name: 'duration_seconds', type: 'number', min: 0, max: 59, step: 1, required: true, value: (item?.for_seconds ?? 180) % 60});
+      let previousMetric = metric.value;
+      let previousComparator = item?.comparator || '>';
+      const validateThreshold = () => {
+        const value = Number(threshold.value);
+        threshold.setCustomValidity(metric.value === 'node_expiry_days' && (!threshold.value.trim() || !Number.isFinite(value) || value < 1 || value > 365) ? t('alerts.validation.expiryThreshold') : '');
+      };
+      threshold.addEventListener('input', validateThreshold);
       const syncMetric = () => {
+        const expiry = metric.value === 'node_expiry_days';
+        if (expiry) {
+          if (previousMetric !== 'node_expiry_days') {
+            previousComparator = comparator.value;
+            threshold.value = '30';
+          }
+          comparator.value = '<';
+        } else if (previousMetric === 'node_expiry_days') comparator.value = previousComparator;
+        previousMetric = metric.value;
+        comparatorField.hidden = expiry;
         const offline = metric.value === 'offline';
         condition.hidden = offline;
-        comparator.disabled = threshold.disabled = offline;
+        comparator.disabled = offline || expiry;
+        threshold.disabled = offline;
         threshold.required = !offline;
         offlineHint.hidden = !offline;
         threshold.max = metricMax(metric.value);
+        threshold.min = expiry ? 1 : 0;
         // 80% 之类的默认值对计数无意义；0 表示任意一次失败。
         if (Number(threshold.value) > threshold.max) threshold.value = metric.value === 'probes_down' ? '0' : String(threshold.max);
-        thresholdLabel.textContent = t(metric.value === 'load1' ? 'alerts.rules.thresholdLoad' : metric.value === 'probes_down' ? 'alerts.rules.thresholdProbes' : 'alerts.rules.thresholdPercent');
+        validateThreshold();
+        thresholdLabel.textContent = t(expiry ? 'alerts.rules.thresholdDays' : metric.value === 'load1' ? 'alerts.rules.thresholdLoad' : metric.value === 'probes_down' ? 'alerts.rules.thresholdProbes' : 'alerts.rules.thresholdPercent');
         minutes.min = offline ? 3 : 0;
       };
       metric.addEventListener('change', syncMetric);
@@ -66,7 +87,7 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
       const c = controls;
       const offline = c.metric.value === 'offline';
       const body = {name: c.name.value, enabled: c.enabled.checked, metric: c.metric.value,
-        comparator: offline ? null : c.comparator.value, threshold: offline ? null : c.threshold.value.trim() === '' ? NaN : Number(c.threshold.value),
+        comparator: offline ? null : c.metric.value === 'node_expiry_days' ? '<' : c.comparator.value, threshold: offline ? null : c.threshold.value.trim() === '' ? NaN : Number(c.threshold.value),
         for_seconds: durationSeconds(c.minutes.value, c.seconds.value), scope_kind: c.scope_kind.value,
         scope_id: c.scope_kind.value === 'all' ? null : c.scope_id.value, severity: c.severity.value,
         channel_ids: [...c.channel_ids.selectedOptions].map((option) => option.value)};
