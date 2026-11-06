@@ -162,3 +162,10 @@ test('temperature chart values and axes use celsius', () => {
   assert.equal(formatAxisValue(50, 'celsius', 150), copy('nodes.celsius', {value: '50'}));
   assert.equal(formatChartValue(null, 'celsius'), copy('common.unavailable'));
 });
+
+test('millisecond chart units format axes and values with the probe latency unit', () => {
+  assert.equal(formatChartValue(12.56, 'ms'), copy('nodes.probe.latencyValue', {value: '12.6'}));
+  assert.equal(formatAxisValue(20, 'ms', 60), copy('nodes.probe.latencyValue', {value: '20'}));
+  assert.equal(formatChartValue(0, 'ms'), copy('nodes.probe.latencyValue', {value: '0'}));
+  assert.equal(formatChartValue(null, 'ms'), copy('common.unavailable'));
+});

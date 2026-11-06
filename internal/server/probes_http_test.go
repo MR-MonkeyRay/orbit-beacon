@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -114,5 +115,91 @@ func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 	assertHTTPStatus(t, emptyResponse, http.StatusOK)
 	if emptyResponse.Body.String() != "{\"probes\":[]}\n" {
 		t.Fatalf("empty probe envelope=%s", emptyResponse.Body)
+	}
+}
+
+func TestProbeHistoryAPIValidationWindowsAndShape(t *testing.T) {
+	f := newHTTP(t, 5)
+	now := time.Date(2026, 11, 6, 12, 34, 56, 0, time.UTC)
+	handler, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, Now: func() time.Time { return now }}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.handler = handler
+	cookie, _ := login(t, f, "admin")
+	node, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: "history"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const target = "https://example.test/health?a=1&b=2"
+	runtime := v1.DefaultRuntimeSettings()
+	runtime.ProbeTargets = []string{target}
+	body, _ := json.Marshal(runtime)
+	if _, err := f.db.Exec(`UPDATE nodes SET token_hash=zeroblob(32),run_generation='1',report_session_id='session',agent_runtime=? WHERE id=?`, string(body), node.ID); err != nil {
+		t.Fatal(err)
+	}
+	route := "/api/v1/nodes/" + node.ID + "/probes/history"
+	targetQuery := "target=" + url.QueryEscape(target)
+	for _, tc := range []struct {
+		query  string
+		fields []string
+	}{
+		{"", []string{"target", "range"}}, {"?range=24h", []string{"target"}}, {"?" + targetQuery, []string{"range"}},
+		{"?" + targetQuery + "&range=1h", []string{"range"}}, {"?target=ftp%3A%2F%2Fexample.test&range=24h", []string{"target"}},
+		{"?" + targetQuery + "&range=24h&range=7d", []string{"range"}}, {"?" + targetQuery + "&target=tcp%3A%2F%2Fexample.test%3A80&range=24h", []string{"target"}},
+	} {
+		response := request(t, f.handler, http.MethodGet, route+tc.query, "", cookie, "", "")
+		raw := apiError(t, response, http.StatusBadRequest, "validation_failed")
+		var fields map[string]string
+		if err := json.Unmarshal(raw["fields"], &fields); err != nil {
+			t.Fatalf("fields: %v body=%s", err, response.Body)
+		}
+		for _, field := range tc.fields {
+			if _, ok := fields[field]; !ok {
+				t.Fatalf("missing field %s: %s", field, response.Body)
+			}
+		}
+	}
+	query := "?" + targetQuery + "&range=24h"
+	empty := request(t, f.handler, http.MethodGet, route+query, "", cookie, "", "")
+	assertHTTPStatus(t, empty, http.StatusOK)
+	if !bytes.Contains(empty.Body.Bytes(), []byte(`"points":[]`)) {
+		t.Fatalf("empty=%s", empty.Body)
+	}
+	apiError(t, request(t, f.handler, http.MethodGet, "/api/v1/nodes/00000000-0000-4000-8000-000000000001/probes/history"+query, "", cookie, "", ""), http.StatusNotFound, "node_not_found")
+	for _, hours := range []int{0, 1, 23, 24, 167, 168} {
+		checks, failures, sum, maximum := 4, 2, 30, 20
+		if hours == 1 {
+			checks, failures, sum, maximum = 2, 2, 0, 0
+		}
+		if _, err := f.db.Exec(`INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms,latency_max_ms) VALUES(?,?,?,?,?,?,?)`, node.ID, target, timekey.Format(now.Truncate(time.Hour).Add(-time.Duration(hours)*time.Hour)), checks, failures, sum, maximum); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		rangeName       string
+		count, boundary int
+	}{{"24h", 3, 23}, {"7d", 5, 167}} {
+		response := request(t, f.handler, http.MethodGet, route+"?"+targetQuery+"&range="+tc.rangeName, "", cookie, "", "")
+		assertHTTPStatus(t, response, http.StatusOK)
+		var data struct {
+			Target, Range, Unit string
+			StepSeconds         int `json:"step_seconds"`
+			Points              []struct {
+				T                time.Time
+				Avg, Max         *float64
+				Checks, Failures int
+			}
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &data); err != nil {
+			t.Fatal(err)
+		}
+		if data.Target != target || data.Range != tc.rangeName || data.Unit != "ms" || data.StepSeconds != 3600 || len(data.Points) != tc.count || !data.Points[0].T.Equal(now.Truncate(time.Hour).Add(-time.Duration(tc.boundary)*time.Hour)) {
+			t.Fatalf("response=%s", response.Body)
+		}
+		failed, mixed := data.Points[len(data.Points)-2], data.Points[len(data.Points)-1]
+		if failed.Avg != nil || failed.Max != nil || failed.Checks != 2 || failed.Failures != 2 || mixed.Avg == nil || *mixed.Avg != 15 || mixed.Max == nil || *mixed.Max != 20 {
+			t.Fatalf("points=%s", response.Body)
+		}
 	}
 }

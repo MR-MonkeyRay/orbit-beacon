@@ -1,6 +1,6 @@
 import {getLocale, t} from '../i18n.js';
 import {h, svg} from '../../shared/dom.js';
-import {formatCelsius, formatLoad, formatPercent, formatRate} from '../format.js';
+import {formatCelsius, formatMilliseconds, formatLoad, formatPercent, formatRate} from '../format.js';
 
 const WIDTH = 640;
 const HEIGHT = 240;
@@ -82,7 +82,7 @@ export function chartPaths(points, scales, stepSeconds, valueKey = 'avg') {
 
 // 小量程时刻度增加小数位，保证接近空闲的图表标签互不相同。
 export function formatAxisValue(value, unit, max) {
-  if (unit === 'percent' || unit === 'celsius' || !(max > 0) || !Number.isFinite(value)) return formatChartValue(value, unit);
+  if (unit === 'percent' || unit === 'celsius' || unit === 'ms' || !(max > 0) || !Number.isFinite(value)) return formatChartValue(value, unit);
   const step = max / 3;
   if (unit === 'bytes_per_second' && step >= 1) return formatRate(value);
   const decimals = Math.min(6, Math.max(unit === 'bytes_per_second' ? 0 : 2, Math.ceil(-Math.log10(step)) + 1));
@@ -93,6 +93,7 @@ export function formatAxisValue(value, unit, max) {
 export function formatChartValue(value, unit) {
   if (unit === 'percent') return formatPercent(value);
   if (unit === 'celsius') return formatCelsius(value);
+  if (unit === 'ms') return formatMilliseconds(value);
   if (unit === 'bytes_per_second') return value > 0 && value < 1 ? t('nodes.chart.belowByte') : formatRate(value);
   return value > 0 && value < 0.01 ? t('nodes.chart.belowLoad') : formatLoad(value);
 }

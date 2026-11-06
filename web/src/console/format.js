@@ -90,6 +90,10 @@ export function formatPercent(value) {
   return Number.isFinite(value) ? `${percentFormat.format(Number(value.toFixed(1)))}%` : t('common.unavailable');
 }
 
+export function formatMilliseconds(value) {
+  return Number.isFinite(value) && value >= 0 ? t('nodes.probe.latencyValue', {value: percentFormat.format(Number(value.toFixed(1)))}) : t('common.unavailable');
+}
+
 export function formatCelsius(value) {
   return Number.isFinite(value) ? t('nodes.celsius', {value: percentFormat.format(Number(value.toFixed(1)))}) : t('common.unavailable');
 }

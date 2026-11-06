@@ -74,7 +74,7 @@ var categoryTables = map[Category][]tableSpec{
 		table("node_availability_daily", "main", "", "node_id TEXT,day TEXT,online_seconds INTEGER,offline_seconds INTEGER", "node_id,day"),
 		table("traffic_daily", "main", "", "node_id TEXT,day TEXT,rx_bytes INTEGER,tx_bytes INTEGER", "node_id,day"),
 		table("probe_latest", "main", "", "node_id TEXT,target TEXT,ok INTEGER,latency_ms REAL,error TEXT,status_code INTEGER,checked_at TEXT,tls_expires_at TEXT", "node_id,target"),
-		table("probe_hourly", "main", "", "node_id TEXT,target TEXT,hour TEXT,checks INTEGER,failures INTEGER,latency_sum_ms REAL", "node_id,target,hour"),
+		table("probe_hourly", "main", "", "node_id TEXT,target TEXT,hour TEXT,checks INTEGER,failures INTEGER,latency_sum_ms REAL,latency_max_ms REAL", "node_id,target,hour"),
 		table("buckets", "metrics", "", "node_id TEXT,metric TEXT,step INTEGER,t INTEGER,total REAL,peak REAL,samples INTEGER", "node_id,metric,step,t"),
 	},
 	Events: {

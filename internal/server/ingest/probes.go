@@ -177,7 +177,7 @@ func (b *probeBuffer) persist(ctx context.Context, tx *sql.Tx, nodeID string, no
 			if result.LatencyMS != nil {
 				latency = *result.LatencyMS
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms) VALUES(?,?,?,1,?,?) ON CONFLICT(node_id,target,hour) DO UPDATE SET checks=probe_hourly.checks+1,failures=probe_hourly.failures+excluded.failures,latency_sum_ms=probe_hourly.latency_sum_ms+excluded.latency_sum_ms`, nodeID, target, timekey.Format(hour), failures, latency); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms,latency_max_ms) VALUES(?,?,?,1,?,?,?) ON CONFLICT(node_id,target,hour) DO UPDATE SET checks=probe_hourly.checks+1,failures=probe_hourly.failures+excluded.failures,latency_sum_ms=probe_hourly.latency_sum_ms+excluded.latency_sum_ms,latency_max_ms=max(probe_hourly.latency_max_ms,excluded.latency_max_ms)`, nodeID, target, timekey.Format(hour), failures, latency, latency); err != nil {
 				return err
 			}
 		}

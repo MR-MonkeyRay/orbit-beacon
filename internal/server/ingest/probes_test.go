@@ -495,3 +495,33 @@ func TestRuntimeTargetRemovalPurgesPendingAtomicallyAndDuplicatesCannotRestore(t
 		}
 	}
 }
+
+func TestProbeHourlyMaximumAndSuccessSum(t *testing.T) {
+	f := newProbeFixture(t)
+	const target = "https://example.test/health"
+	start := f.now
+	// Flush each accepted result to exercise both insert and conflict paths.
+	for i, latency := range []float64{7, 22, 11, 0} {
+		f.now = start.Add(time.Duration(i+1) * time.Second)
+		result := probeResult(target, f.now, i != 3)
+		if result.OK {
+			result.LatencyMS = &latency
+		}
+		f.report.Seq++
+		f.report.ProbeResults = []v1.ProbeResult{result}
+		if _, err := probeAccept(t, f); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.service.drainTraffic(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var checks, failures int
+	var sum, maximum float64
+	if err := f.db.QueryRow(`SELECT checks,failures,latency_sum_ms,latency_max_ms FROM probe_hourly WHERE node_id=? AND target=?`, f.id, target).Scan(&checks, &failures, &sum, &maximum); err != nil {
+		t.Fatal(err)
+	}
+	if checks != 4 || failures != 1 || sum != 40 || maximum != 22 {
+		t.Fatalf("checks=%d failures=%d sum=%v max=%v", checks, failures, sum, maximum)
+	}
+}

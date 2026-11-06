@@ -377,7 +377,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 		return (v1.ProbeResult{TLSExpiresAt: expiry, Target: r.text("target"), OK: r.integer("ok") == 1, LatencyMS: r.floatPointer("latency_ms"), Error: r.text("error"), StatusCode: code, CheckedAt: at}).Validate()
 	case "probe_hourly":
 		at, err := timekey.Parse(r.text("hour"))
-		if err != nil || timekey.Format(at) != r.text("hour") || !at.Equal(at.Truncate(time.Hour)) || r.text("node_id") == "" || r.integer("checks") < 0 || r.integer("failures") < 0 || r.integer("failures") > r.integer("checks") || !finite(r.number("latency_sum_ms")) || r.number("latency_sum_ms") < 0 {
+		if err != nil || timekey.Format(at) != r.text("hour") || !at.Equal(at.Truncate(time.Hour)) || r.text("node_id") == "" || r.integer("checks") < 0 || r.integer("failures") < 0 || r.integer("failures") > r.integer("checks") || !finite(r.number("latency_sum_ms")) || r.number("latency_sum_ms") < 0 || !finite(r.number("latency_max_ms")) || r.number("latency_max_ms") < 0 || r.number("latency_max_ms") > 60000 || r.number("latency_max_ms") > r.number("latency_sum_ms") {
 			return invalidRow()
 		}
 		return v1.ValidateProbeTarget(r.text("target"))

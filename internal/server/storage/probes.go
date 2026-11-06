@@ -19,6 +19,7 @@ CREATE TABLE probe_hourly (
  checks INTEGER NOT NULL CHECK(checks>=0),
  failures INTEGER NOT NULL CHECK(failures>=0 AND failures<=checks),
  latency_sum_ms REAL NOT NULL CHECK(latency_sum_ms>=0),
+ latency_max_ms REAL NOT NULL DEFAULT 0 CHECK(latency_max_ms>=0),
  PRIMARY KEY(node_id,target,hour)
 ) WITHOUT ROWID;
 CREATE INDEX probe_hourly_retention ON probe_hourly(hour);

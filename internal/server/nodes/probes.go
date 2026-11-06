@@ -22,6 +22,64 @@ type ObservedProbe struct {
 	Checks24H    int64
 }
 
+type ProbeHistoryPoint struct {
+	Time     time.Time `json:"t"`
+	Avg      *float64  `json:"avg"`
+	Max      *float64  `json:"max"`
+	Checks   int64     `json:"checks"`
+	Failures int64     `json:"failures"`
+}
+
+func (s *Service) ProbeHistory(ctx context.Context, id, target string, window time.Time) ([]ProbeHistoryPoint, error) {
+	// 一次读取快照把节点是否存在、当前身份选中的目标和历史绑定在一起。
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT nodes.id, hourly.hour, hourly.checks, hourly.failures,
+		       hourly.latency_sum_ms, hourly.latency_max_ms
+		FROM nodes
+		LEFT JOIN probe_hourly AS hourly ON hourly.node_id=nodes.id AND hourly.target=? AND hourly.hour>=?
+		 AND EXISTS (
+		  SELECT 1 FROM json_each(CASE WHEN length(nodes.token_hash)>0 AND nodes.run_generation!='0' AND nodes.report_session_id!='' THEN nullif(nodes.agent_runtime,'') ELSE NULL END, '$.probe_targets') AS selected
+		  WHERE selected.value=hourly.target
+		 )
+		WHERE nodes.id=? ORDER BY hourly.hour`, target, timekey.Format(window), id)
+	if err != nil {
+		return nil, fmt.Errorf("read probe history: %w", err)
+	}
+	defer rows.Close()
+	points := []ProbeHistoryPoint{}
+	found := false
+	for rows.Next() {
+		found = true
+		var nodeID string
+		var hour sql.NullString
+		var checks, failures sql.NullInt64
+		var sum, maximum sql.NullFloat64
+		if err := rows.Scan(&nodeID, &hour, &checks, &failures, &sum, &maximum); err != nil {
+			return nil, err
+		}
+		if !hour.Valid {
+			continue
+		}
+		stamp, err := timekey.Parse(hour.String)
+		if err != nil {
+			return nil, fmt.Errorf("parse probe history hour: %w", err)
+		}
+		point := ProbeHistoryPoint{Time: stamp, Checks: checks.Int64, Failures: failures.Int64}
+		if successes := point.Checks - point.Failures; successes > 0 {
+			avg := sum.Float64 / float64(successes)
+			point.Avg, point.Max = &avg, &maximum.Float64
+		}
+		points = append(points, point)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrNotFound
+	}
+	return points, nil
+}
+
 func (s *Service) ObservedProbes(ctx context.Context, id string, window time.Time) ([]ObservedProbe, error) {
 	// 一次读取快照把目标列表和观测结果绑定到同一凭据。
 	// 轮换不会把旧目标变成新身份的探测项。

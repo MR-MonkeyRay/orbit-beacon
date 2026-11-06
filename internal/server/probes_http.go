@@ -3,7 +3,47 @@ package server
 import (
 	"net/http"
 	"time"
+
+	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/validation"
 )
+
+func (h *handler) nodeProbeHistory(w http.ResponseWriter, r *http.Request, id, requestID string) {
+	query, fields := parseQuery(r.URL.RawQuery, "must be a valid query string", map[string]queryParameter{
+		"target": {repeated: "must be supplied exactly once"},
+		"range":  {repeated: "must be supplied exactly once"},
+	})
+	target, requestedRange := query.Get("target"), query.Get("range")
+	if err := v1.ValidateProbeTarget(target); err != nil {
+		fields["target"] = "must be a valid probe target"
+	}
+	hours := 24
+	switch requestedRange {
+	case "24h":
+	case "7d":
+		hours = 168
+	default:
+		fields["range"] = "must be one of 24h, 7d"
+	}
+	if len(fields) > 0 {
+		h.serviceError(w, &validation.Error{Fields: fields}, requestID)
+		return
+	}
+	window := h.now().UTC().Truncate(time.Hour).Add(-time.Duration(hours-1) * time.Hour)
+	points, err := h.nodes.ProbeHistory(r.Context(), id, target, window)
+	if err != nil {
+		h.serviceError(w, err, requestID)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Target      string                    `json:"target"`
+		Range       string                    `json:"range"`
+		Unit        string                    `json:"unit"`
+		StepSeconds int                       `json:"step_seconds"`
+		Points      []nodes.ProbeHistoryPoint `json:"points"`
+	}{target, requestedRange, "ms", 3600, points})
+}
 
 type probeView struct {
 	Target       string   `json:"target"`

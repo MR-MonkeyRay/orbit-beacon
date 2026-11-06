@@ -71,6 +71,37 @@ func TestAPITokenRouteAllowlistAndOpenAPIMarkers(t *testing.T) {
 	}
 }
 
+func TestAPITokenProbeHistoryForbidden(t *testing.T) {
+	h := openAPITestHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "https://beacon.example.test/api/v1/nodes/00000000-0000-4000-8000-000000000001/probes/history?target=https%3A%2F%2Fexample.test&range=24h", nil)
+	ctx := context.Background()
+	user, err := h.auth.CreateUser(ctx, "history-token-owner", "token regression password", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := h.auth.Login(ctx, user.Username, "token regression password", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, token, err := h.auth.CreateAPIToken(ctx, user.ID, session.Token, "probe-history", nil, "token regression password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(token, "obt_") {
+		t.Fatal("unexpected token prefix")
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, req)
+	var body struct {
+		Code string `json:"code"`
+	}
+	_ = json.Unmarshal(response.Body.Bytes(), &body)
+	if response.Code != http.StatusForbidden || body.Code != "token_forbidden" {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body)
+	}
+}
+
 func TestAPITokenAllManagementRoutesDefaultDeny(t *testing.T) {
 	h := openAPITestHandler(t)
 	ctx := context.Background()

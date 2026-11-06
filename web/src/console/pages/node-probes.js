@@ -1,8 +1,10 @@
-import {getLocale, t} from '../i18n.js';
+import {t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h} from '../../shared/dom.js';
 import {api} from '../api.js';
-import {absoluteWhen, formatPercent, when} from '../format.js';
+import {absoluteWhen, formatMilliseconds, formatPercent, when} from '../format.js';
+import {chart} from '../ui/chart.js';
+import {select} from '../ui/forms.js';
 import {facts, panel} from '../ui/components.js';
 import {historyError} from '../ui/history-error.js';
 import {panelLifecycle} from '../ui/polling-panel.js';
@@ -12,6 +14,7 @@ const ERRORS = {
   tls: t('nodes.probe.tls'), unreachable: t('nodes.probe.unreachable'),
   unsupported: t('nodes.probe.unsupported'), error: t('nodes.probe.error')
 };
+const HISTORY_RANGES = ['24h', '7d'];
 
 export function probeErrorText(error) {
   if (!error) return '';
@@ -20,7 +23,7 @@ export function probeErrorText(error) {
 }
 
 export function formatProbeLatency(value) {
-  return Number.isFinite(value) && value >= 0 ? t('nodes.probe.latencyValue', {value: Number(value.toFixed(1)).toLocaleString(getLocale(), {useGrouping: false, maximumFractionDigits: 1})}) : t('common.unavailable');
+  return formatMilliseconds(value);
 }
 
 export function formatProbeUptime(uptime, checks) {
@@ -57,8 +60,63 @@ function probeContent(probes) {
 export function probesPanel(id, signal) {
   let controller;
   let lifecycle;
+  let historyController;
+  let targets = [];
+  let target = '';
+  let range = '24h';
+  const charts = h('div', {class: 'history-grid', hidden: true});
+  const historyStatus = h('div', {hidden: true});
+  const showHistoryStatus = (...nodes) => {
+    historyStatus.replaceChildren(...nodes);
+    historyStatus.hidden = !nodes.length;
+  };
+  const targetSelect = select([], '', {id: 'probe-history-target', 'aria-label': t('nodes.audit.target'), onchange: () => {
+    if (target === targetSelect.value) return;
+    target = targetSelect.value;
+    loadHistory();
+  }});
+  const targetSelector = h('div', {class: 'head-actions history-disk', hidden: true},
+    h('label', {htmlFor: 'probe-history-target'}, t('nodes.audit.target')), targetSelect);
+  const controls = HISTORY_RANGES.map((value) => h('button', {type: 'button', id: `probe-history-range-${value}`,
+    'aria-pressed': String(value === range), onclick: () => {
+      if (range === value) return;
+      range = value;
+      controls.forEach((control, index) => control.setAttribute('aria-pressed', String(HISTORY_RANGES[index] === range)));
+      loadHistory();
+    }}, t(value === '24h' ? 'nodes.range.hours' : 'nodes.range.days', {count: value === '24h' ? 24 : 7})));
+  const rangeSelector = h('div', {class: 'segmented', role: 'group', 'aria-label': t('nodes.historyRange')}, controls);
+  const historyControls = h('div', {class: 'head-actions', hidden: true}, targetSelector, rangeSelector);
+  async function loadHistory() {
+    historyController?.abort();
+    if (!target || lifecycle?.disposed || signal?.aborted) return;
+    const request = new AbortController();
+    historyController = request;
+    charts.setAttribute('aria-busy', 'true');
+    try {
+      const data = await api(`/nodes/${encodeURIComponent(id)}/probes/history?target=${encodeURIComponent(target)}&range=${range}`, {signal: request.signal});
+      if (request.signal.aborted || signal?.aborted || historyController !== request) return;
+      if (data.unit !== 'ms' || !Array.isArray(data.points)) throw Object.assign(new Error('Unreadable probe history'), {code: 'unreadable_response'});
+      const points = data.points.filter((point) => point && Number.isFinite(Date.parse(point.t)) && Number.isFinite(point.avg) && Number.isFinite(point.max));
+      const focused = charts.contains(document.activeElement) ? document.activeElement : null;
+      const selectedTime = Number(focused?.dataset?.selectedTime) || undefined;
+      const series = [{label: t('nodes.probe.latency'), stepSeconds: data.step_seconds, points}];
+      charts.replaceChildren(...(points.length ? [h('section', {class: 'history-metric', 'aria-label': t('nodes.historyAria', {title: t('nodes.probe.latency')})},
+        h('h3', null, t('nodes.probe.latency')),
+        chart({title: t('nodes.probe.latency'), unit: 'ms', id: 'probe-history-chart', selectedTime, series}))] : []));
+      charts.hidden = !points.length;
+      showHistoryStatus();
+      if (focused) root.querySelector('#probe-history-chart')?.focus({preventScroll: true});
+    } catch (error) {
+      if (!request.signal.aborted && !signal?.aborted && historyController === request && error.name !== 'AbortError') {
+        showHistoryStatus(historyError(t('nodes.historyLoadError', {error: errorText(error)}),
+          {retryID: 'probe-history-retry', onRetry: loadHistory}));
+      }
+    } finally {
+      if (!request.signal.aborted && !signal?.aborted && historyController === request) charts.setAttribute('aria-busy', 'false');
+    }
+  }
   const content = h('div', {class: 'probes-body'});
-  const root = panel(t('nodes.probes'), {}, content);
+  const root = panel(t('nodes.probes'), {}, h('div', {class: 'stack'}, content, historyControls, historyStatus, charts));
   async function load() {
     if (lifecycle?.disposed || signal?.aborted) return;
     controller?.abort();
@@ -69,7 +127,24 @@ export function probesPanel(id, signal) {
     try {
       const data = await api(`/nodes/${encodeURIComponent(id)}/probes`, {signal: request.signal});
       if (!Array.isArray(data.probes)) throw Object.assign(new Error('Unreadable probe results'), {code: 'unreadable_response'});
-      if (!request.signal.aborted && !signal?.aborted && controller === request) content.replaceChildren(probeContent(data.probes));
+      if (!request.signal.aborted && !signal?.aborted && controller === request) {
+        content.replaceChildren(probeContent(data.probes));
+        const next = data.probes.map((probe) => probe.target);
+        if (JSON.stringify(next) !== JSON.stringify(targets)) {
+          targets = next;
+          if (!targets.includes(target)) target = targets[0] || '';
+          targetSelect.replaceChildren(...targets.map((value) => h('option', {value}, value)));
+          targetSelect.value = target;
+          targetSelector.hidden = targets.length <= 1;
+          historyControls.hidden = !targets.length;
+        }
+        if (!target) {
+          historyController?.abort();
+          charts.replaceChildren();
+          charts.hidden = true;
+          showHistoryStatus();
+        } else loadHistory();
+      }
     } catch (error) {
       if (!request.signal.aborted && !signal?.aborted && controller === request && error.name !== 'AbortError') {
         content.replaceChildren(historyError(t('nodes.probe.loadError', {error: errorText(error)}),
@@ -80,6 +155,6 @@ export function probesPanel(id, signal) {
     }
   }
 
-  lifecycle = panelLifecycle({root, signal, load, cancel: () => controller?.abort()});
+  lifecycle = panelLifecycle({root, signal, load, cancel: () => { controller?.abort(); historyController?.abort(); }});
   return root;
 }

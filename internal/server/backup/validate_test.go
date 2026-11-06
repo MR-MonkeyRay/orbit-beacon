@@ -381,7 +381,7 @@ func TestPayloadMonitoringConstraints(t *testing.T) {
 		{"negative traffic", `INSERT INTO traffic_daily(node_id,day,rx_bytes,tx_bytes) VALUES('node','2026-10-27',-1,0)`},
 		{"noncanonical hour", `INSERT INTO traffic_hourly(node_id,epoch,period_start,rx_bytes,tx_bytes,updated_at) VALUES('node','abcd','2026-10-27T00:00:00Z',0,0,'2026-10-27T00:00:00.000000000Z')`},
 		{"invalid probe status", `INSERT INTO probe_latest(node_id,target,ok,latency_ms,error,status_code,checked_at) VALUES('node','https://example.com',1,NULL,'',200,'2026-10-27T00:00:00.000000000Z')`},
-		{"invalid aggregate", `INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms) VALUES('node','https://example.com','2026-10-27T00:00:00.000000000Z',1,2,0)`},
+		{"invalid aggregate", `INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms,latency_max_ms) VALUES('node','https://example.com','2026-10-27T00:00:00.000000000Z',1,2,0,0)`},
 		{"unsafe history", `INSERT INTO buckets(node_id,metric,step,t,total,peak,samples) VALUES('node','cpu_percent',60,0,101,101,1)`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

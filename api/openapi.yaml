@@ -2060,6 +2060,34 @@ paths:
         '404': {$ref: '#/components/responses/Error'}
         '405': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/nodes/{id}/probes/history:
+    parameters:
+      - $ref: '#/components/parameters/NodeID'
+    get:
+      security:
+        - session: []
+      operationId: getNodeProbeHistory
+      description: Hourly latency for a target configured under the current node identity. Read-only API tokens are forbidden. Windows include hours at or after the current UTC hour minus 23 hours (24h) or 167 hours (7d), with no separate upper cutoff. Removed targets and fenced identities return an empty array. Missing nodes return node_not_found.
+      parameters:
+        - name: target
+          in: query
+          required: true
+          schema: {type: string, minLength: 1, x-maxLengthBytes: 1024}
+          description: Target validated with the service-probe target rules.
+        - name: range
+          in: query
+          required: true
+          schema: {type: string, enum: [24h, 7d]}
+      responses:
+        '200':
+          description: Stored hours in ascending order; latency values are null for all-failed hours.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProbeHistory'}
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes/{id}/latest:
     parameters:
       - $ref: '#/components/parameters/NodeID'
@@ -3926,6 +3954,28 @@ components:
           description: 有数据的升序 UTC 天，限于含今天的请求窗口。
           items: {$ref: '#/components/schemas/TrafficDaily'}
         updated_at: {type: [string, 'null'], format: date-time, description: 最新小时行更新时间；无小时行时为 null。}
+    ProbeHistory:
+      type: object
+      additionalProperties: false
+      required: [target, range, unit, step_seconds, points]
+      properties:
+        target: {type: string}
+        range: {type: string, enum: [24h, 7d]}
+        unit: {type: string, const: ms}
+        step_seconds: {type: integer, const: 3600}
+        points:
+          type: array
+          items: {$ref: '#/components/schemas/ProbeHistoryPoint'}
+    ProbeHistoryPoint:
+      type: object
+      additionalProperties: false
+      required: [t, avg, max, checks, failures]
+      properties:
+        t: {type: string, format: date-time}
+        avg: {type: [number, 'null'], minimum: 0, maximum: 60000, description: Latency sum divided by successful checks.}
+        max: {type: [number, 'null'], minimum: 0, maximum: 60000}
+        checks: {type: integer, minimum: 0}
+        failures: {type: integer, minimum: 0}
     ProbeSummary:
       type: object
       additionalProperties: false

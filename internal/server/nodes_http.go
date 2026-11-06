@@ -82,6 +82,10 @@ func (h *handler) nodesRoute(w http.ResponseWriter, r *http.Request, requestID s
 			h.nodeTraffic(w, r, id, requestID)
 			return
 		}
+		if len(parts) == 4 && parts[2] == "probes" && parts[3] == "history" {
+			h.nodeProbeHistory(w, r, id, requestID)
+			return
+		}
 		if len(parts) == 3 && parts[2] == "probes" {
 			h.nodeProbes(w, r, id, requestID)
 			return
