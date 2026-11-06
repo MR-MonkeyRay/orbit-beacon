@@ -1,4 +1,5 @@
 export default {
+  'shell.commandPalette': 'Command palette',
   'shell.consoleTitle': 'OrbitBeacon Console',
   'shell.notFound': 'Not found',
   'shell.pageLoadFailed': 'This page could not load',

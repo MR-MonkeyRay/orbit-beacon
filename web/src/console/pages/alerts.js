@@ -1,3 +1,4 @@
+import {alertTabs} from '../routes.js';
 import {h} from '../../shared/dom.js';
 import {t} from '../i18n.js';
 import {allNodes, api, getNavigationSignal, groupsList} from '../api.js';
@@ -18,13 +19,14 @@ export async function alertsPage() {
   const context = {silences, rules, channels, groups, nodes, signal, saved: refresh};
   const event = new URLSearchParams(location.search).get('event');
   if (event !== null) requestAnimationFrame(() => { if (!signal?.aborted) showAlert(event, signal); });
+  const builds = {
+    'active': () => eventsPanel('firing', signal),
+    'history': () => eventsPanel('all', signal),
+    'rules': () => rulesPanel(context),
+    'silences': () => silencesPanel(context),
+    'channels': () => h('div', null, channelsPanel(context), deliveriesPanel(channels, signal))
+  };
   return h('div', null,
     pageHead(t('alerts.title'), null),
-    tabSet([
-      {id: 'active', label: t('alerts.tab.active'), icon: 'alert', build: () => eventsPanel('firing', signal)},
-      {id: 'history', label: t('alerts.tab.history'), icon: 'list', build: () => eventsPanel('all', signal)},
-      {id: 'rules', label: t('alerts.tab.rules'), icon: 'sliders', build: () => rulesPanel(context)},
-      {id: 'silences', label: t('alerts.silences.title'), icon: 'moon', build: () => silencesPanel(context)},
-      {id: 'channels', label: t('alerts.tab.channels'), icon: 'bell', build: () => h('div', null, channelsPanel(context), deliveriesPanel(channels, signal))}
-    ], t('alerts.sections')));
+    tabSet(alertTabs.map((tab) => ({...tab, label: t(tab.label), build: builds[tab.id]})), t('alerts.sections')));
 }

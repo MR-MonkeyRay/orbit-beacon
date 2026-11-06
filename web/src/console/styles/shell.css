@@ -107,7 +107,7 @@
   gap: 2px;
 }
 
-.nav a,.nav-public,.nav .notification-entry {
+.nav a,.nav-public,.nav .notification-entry,.nav .command-entry {
   position: relative;
   isolation: isolate;
   display: flex;
@@ -123,7 +123,7 @@
 }
 
 @media (hover:hover) {
-  .nav a:hover,.nav-public:hover,.nav .notification-entry:hover {
+  .nav a:hover,.nav-public:hover,.nav .notification-entry:hover,.nav .command-entry:hover {
     color: var(--ink);
     background: var(--orbit-soft);
   }

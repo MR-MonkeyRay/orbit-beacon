@@ -29,6 +29,7 @@ export const hasUnsavedDialogChanges = () => [...dialogs].some((entry) => entry.
 // 原生模态 <dialog>，带进入/退出动画，支持 Escape 和点击背景关闭。
 // 对话框关闭后，closed Promise 以对话框返回值完成。
 export function modal(title, build) {
+  const controller = new AbortController();
   const titleID = uid('dialog');
   const dialog = h('dialog', {'aria-labelledby': titleID});
   const opener = document.activeElement;
@@ -40,6 +41,7 @@ export function modal(title, build) {
   const finish = (value) => {
     if (finished) return;
     finished = true;
+    controller.abort();
     clearTimeout(timer);
     dialogs.delete(entry);
     if (dialog.open) dialog.close(value);
@@ -51,6 +53,7 @@ export function modal(title, build) {
   const close = (value = 'cancel') => {
     if (!dialog.open || dialog.classList.contains('closing')) return;
     if (value === 'cancel') { dismiss(); return; }
+    controller.abort();
     if (reducedMotion.matches) { finish(value); return; }
     dialog.classList.add('closing');
     dialog.addEventListener('animationend', () => finish(value), {once: true});
@@ -78,14 +81,14 @@ export function modal(title, build) {
   dialog.addEventListener('pointerdown', (event) => { pressedBackdrop = event.target === dialog; });
   dialog.addEventListener('click', (event) => { if (event.target === dialog && pressedBackdrop) dismiss(); });
   dialog.addEventListener('close', () => finish(dialog.returnValue));
-  dialog.append(h('div', {class: 'dialog-head'}, h('h2', {id: titleID}, title), iconButton('x', t('controls.dialog.close'), () => close())), build(close));
+  dialog.append(h('div', {class: 'dialog-head'}, h('h2', {id: titleID}, title), iconButton('x', t('controls.dialog.close'), () => close())), build(close, controller.signal));
   initial = snapshot();
   dialogs.add(entry);
   document.body.append(dialog);
   dialog.showModal();
   const preferred = dialog.querySelector('[data-autofocus]');
   if (preferred) preferred.focus();
-  return {close, closed};
+  return {close, closed, signal: controller.signal};
 }
 
 export function confirmDialog({title, message, confirm, danger = false}) {

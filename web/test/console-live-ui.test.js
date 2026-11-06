@@ -22,7 +22,7 @@ const edit = (form, name, value) => {
 };
 const sampleFact = (root, label) => root.querySelectorAll('dt').find((item) => item.textContent === label)?.parentElement.querySelector('dd');
 
-async function setup(t, {page = 'nodes', hash = '#details', count = 2, search = '', sample = latest(), mutate, commands = []} = {}) {
+async function setup(t, {page = 'nodes', hash = '#monitor', count = 2, search = '', sample = latest(), mutate, commands = []} = {}) {
   const original = new Map(['requestAnimationFrame', 'cancelAnimationFrame', 'history', 'matchMedia'].map((key) => [key, globalThis[key]]));
   let scope;
   t.after(() => {
@@ -388,18 +388,18 @@ for (const draft of [{hash: '#details', name: 'notes'}, {hash: '#public', name: 
     const env = await setup(t, {page: 'node', hash: draft.hash});
     const form = formFor(env.root, draft.name); const input = edit(form, draft.name, 'Unsaved text must survive'); input.focus(); input.setSelectionRange(2, 9);
     const panel = env.root.querySelector(`#panel-${draft.hash.slice(1)}`);
-    const cpu = draft.name === 'notes' ? sampleFact(env.root, copy('nodes.cpu')).querySelector('.sample-value') : null;
+    assert.equal(sampleFact(env.root, copy('nodes.cpu')), undefined);
     const requestsBefore = env.requests.length;
     for (let index = 1; index <= 10; index++) {
       env.send({node: {...env.inventory[0], presence: index % 2 ? 'offline' : 'online', notes: 'Changed elsewhere', agent_version: `1.${index}`}, latest: latest(index), runtime: {...runtime, report_interval_seconds: 5}}, index * 10);
       assert.equal(formFor(env.root, draft.name), form); assert.equal(input.value, 'Unsaved text must survive'); assert.equal(form.dataset.dirty, 'true');
       assert.equal(env.document.activeElement, input); assert.equal(input.selectionStart, 2); assert.equal(input.selectionEnd, 9);
       assert.equal(location.hash, draft.hash); assert.equal(env.root.querySelector(`#panel-${draft.hash.slice(1)}`), panel);
-      if (cpu) assert.equal(sampleFact(env.root, copy('nodes.cpu')).querySelector('.sample-value'), cpu);
+
     }
     assert.equal(env.sockets.length, 1); assert.equal(env.root.querySelector('.live-status').textContent, copy('controls.live.live'));
     assert.equal(env.requests.length, requestsBefore, 'live samples do not duplicate independent panel reads');
-    if (draft.name === 'notes') assert.match(sampleFact(env.root, copy('nodes.cpu')).textContent, /10%/);
+
     env.send({node: null, latest: null, runtime: null}, 101);
     assert.equal(env.root.querySelector('.node-deleted-notice').hidden, false); assert.equal(input.value, 'Unsaved text must survive');
     assert.equal(form.dataset.dirty, 'true'); assert.equal(input.readOnly, true);
@@ -412,7 +412,7 @@ test('detail missing sample is not deletion and lazy Agent settings use the newe
   const env = await setup(t, {page: 'node'});
   env.send({node: {...env.inventory[0], status: 'disabled', presence: 'disabled'}, latest: null, runtime: null});
   assert.match(env.root.textContent, copyPattern('nodes.sampleEmpty')); assert.equal(env.root.querySelector('.node-deleted-notice').hidden, true);
-  assert.equal(Boolean(control(env.root, 'notes').readOnly), false);
+  assert.equal(control(env.root, 'notes'), undefined);
   env.send({node: {...env.inventory[0], presence: 'offline'}, latest: latest(3), runtime: {...runtime, report_interval_seconds: 5, interfaces: ['eth1']}});
   env.root.querySelector('#tab-agent').click(); await flush(); env.mutations();
   assert.equal(sampleFact(env.root, copy('nodes.reportInterval')).textContent, copy('nodes.seconds', {count: 5})); assert.equal(sampleFact(env.root, copy('nodes.interfaces')).textContent, 'eth1');
@@ -428,8 +428,8 @@ test('detail missing sample is not deletion and lazy Agent settings use the newe
 
 test('detail heartbeat changes only freshness and navigation closes the one live subscription', async (t) => {
   const env = await setup(t, {page: 'node'}); env.send({node: env.inventory[0], latest: latest(), runtime});
-  const value = sampleFact(env.root, copy('nodes.cpu')).querySelector('.sample-value'); const form = formFor(env.root, 'notes');
-  const input = edit(form, 'notes', 'Retain draft'); input.focus();
+  const value = sampleFact(env.root, copy('nodes.cpu')).querySelector('.sample-value');
+  const input = env.root.querySelector('#tab-monitor'); input.focus();
   await env.advance(10000); env.socket.message(frame('heartbeat', {server_time: '2026-10-28T00:00:10Z'}));
   await env.advance(10000); env.socket.message(frame('heartbeat', {server_time: '2026-10-28T00:00:20Z'}));
   await env.advance(10000); env.socket.message(frame('heartbeat', {server_time: '2026-10-28T00:00:30Z'}));
@@ -500,7 +500,7 @@ test('overview deferred refresh keeps newer fleet status, deleted links and unkn
 
 for (const draft of [{name: 'notes', value: 'Pending metadata draft', hash: '#details', result: node(1)},
   {name: 'public_name', value: 'Pending public draft', hash: '#public', result: {enabled: true, name: 'Saved'}},
-  {name: 'billing_day', value: '2', hash: '#details', result: {billing_day: 2, quota_bytes: '0'}}]) {
+  {name: 'billing_day', value: '2', hash: '#traffic', result: {billing_day: 2, quota_bytes: '0'}}]) {
   test(`detail deletion fences pending ${draft.name} save continuation and keeps its dirty draft`, async (t) => {
     let release;
     const env = await setup(t, {page: 'node', hash: draft.hash, mutate: () => new Promise((resolve) => { release = resolve; })});
@@ -621,4 +621,65 @@ test('Agent command polling detaches on tab changes and clears on navigation', a
   button(env.root, copy('nodes.agentSettings')).click(); env.mutations(); await flush();
   const resumed = commands(); assert.equal(resumed, before + 2);
   env.scope.abort(); env.advance(6000); await flush(); assert.equal(commands(), resumed);
+});
+
+test('node tabs lazily build each panel, retain latest snapshots, and resume only their own polling', async (t) => {
+  const env = await setup(t, {page: 'node', hash: '#enrollment'});
+  const reads = (part) => env.requests.filter((request) => request.url.includes(part));
+  const switchTo = async (id) => { env.root.querySelector(`#tab-${id}`).click(); env.mutations(); await flush(); env.mutations(); };
+  assert.equal(sampleFact(env.root, copy('nodes.cpu')), undefined);
+  assert.equal(control(env.root, 'name'), undefined);
+  assert.equal(reads('/history?').length, 0); assert.equal(reads('/availability?').length, 0);
+  assert.equal(reads('/traffic?').length, 0); assert.equal(reads('/probes').length, 0);
+  env.send({node: {...env.inventory[0], name: 'Renamed before creation', presence: 'offline'}, latest: latest(7), runtime}, 10);
+  assert.equal(env.root.querySelector('h1').textContent, 'Renamed before creation');
+  await switchTo('details');
+  assert.equal(control(env.root, 'name').value, 'Renamed before creation');
+  assert.equal(sampleFact(env.root, copy('nodes.presence')).textContent, copy('common.status.offline'));
+  assert.equal(reads('/history?').length, 0);
+  env.send({node: {...env.inventory[0], name: 'Renamed again', presence: 'online'}, latest: latest(8), runtime}, 20);
+  assert.equal(control(env.root, 'name').value, 'Renamed before creation');
+  assert.equal(sampleFact(env.root, copy('nodes.presence')).textContent, copy('common.status.online'));
+  await switchTo('monitor');
+  const sample = sampleFact(env.root, copy('nodes.cpu')).querySelector('.sample-value');
+  assert.equal(sample.textContent, '8%');
+  assert.ok(reads('/history?').length > 0); assert.equal(reads('/availability?').length, 1);
+  assert.equal(reads('/traffic?').length, 0); assert.equal(reads('/probes').length, 0);
+  assert.equal(env.intervals.size, 1);
+  await switchTo('details'); assert.equal(env.intervals.size, 0);
+  assert.equal(control(env.root, 'name').value, 'Renamed again');
+  env.send({node: {...env.inventory[0], name: 'Hidden monitor update'}, latest: latest(9), runtime}, 30);
+  await env.advance(46000);
+  assert.equal(sample.classList.contains('metric-stale'), false, 'detached sample freshness timer stays paused');
+  await switchTo('monitor');
+  assert.equal(sampleFact(env.root, copy('nodes.cpu')).querySelector('.sample-value'), sample);
+  assert.equal(sample.textContent, '9%'); assert.equal(sample.classList.contains('metric-stale'), true);
+  assert.equal(reads('/availability?').length, 1); assert.equal(env.intervals.size, 1);
+  await switchTo('traffic'); assert.equal(env.intervals.size, 0);
+  assert.equal(reads('/traffic?').length, 1); assert.equal(reads('/probes').length, 0);
+  assert.ok(control(env.root, 'billing_day')); assert.equal(sampleFact(env.root, copy('nodes.cpu')), undefined);
+  await switchTo('probes'); assert.equal(env.intervals.size, 1); assert.equal(reads('/probes').length, 1);
+  await switchTo('details'); assert.equal(env.intervals.size, 0);
+  await switchTo('traffic'); assert.equal(reads('/traffic?').length, 1, 'traffic retains its original explicit-reload lifecycle');
+  await switchTo('probes'); assert.equal(reads('/probes').length, 2);
+  env.scope.abort(); assert.equal(env.intervals.size, 0);
+});
+
+test('deletion before lazy tab creation keeps all future controls locked and monitor empty', async (t) => {
+  const env = await setup(t, {page: 'node', hash: '#public'});
+  env.send({node: null, latest: null, runtime: null});
+  assert.equal(env.root.querySelector('.node-deleted-notice').hidden, false);
+  assert.equal(env.root.querySelector('#tab-enrollment').disabled, true);
+  for (const tab of ['details', 'traffic', 'agent', 'monitor', 'probes']) {
+    env.root.querySelector(`#tab-${tab}`).click(); env.mutations(); await flush(); env.mutations();
+    for (const control of env.root.querySelectorAll('form').flatMap((form) => form.querySelectorAll('input,select,textarea,button'))) {
+      assert.ok(control.readOnly || control.disabled, `${tab} deleted control remains locked`);
+    }
+    if (tab === 'details') assert.equal(sampleFact(env.root, copy('nodes.presence')).textContent, copy('controls.deleted'));
+    if (tab === 'monitor') assert.ok(env.root.textContent.includes(copy('nodes.sampleEmpty')));
+  }
+  env.send({node: env.inventory[0], latest: latest(20), runtime});
+  env.root.querySelector('#tab-monitor').click(); env.mutations(); await flush();
+  assert.equal(sampleFact(env.root, copy('nodes.cpu')), undefined);
+  assert.ok(env.root.textContent.includes(copy('nodes.sampleEmpty')));
 });

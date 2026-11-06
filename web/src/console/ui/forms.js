@@ -2,6 +2,7 @@ import {byteLength, h, icon} from '../../shared/dom.js';
 import {t} from '../i18n.js';
 import {errorText, fieldErrorText} from '../../shared/errors.js';
 import {busy, button, iconButton, uid} from './components.js';
+import {listbox} from './listbox.js';
 import {toastError} from './feedback.js';
 
 // API 限制是 UTF-8 字节数，浏览器的 maxlength 无法表达。
@@ -33,6 +34,78 @@ export function select(choices, value, props = {}) {
   return element;
 }
 
+// 原生 select 保留提交值和约束校验，文本输入只负责搜索和显示名称。
+export function combobox(choices, value, props = {}) {
+  const control = select([], '', props);
+  control.hidden = true;
+  const entry = input({autocomplete: 'off', dataset: {transient: ''}});
+  let searchable = true;
+  control.entry = entry;
+  Object.defineProperty(control, 'visibleControl', {get: () => searchable ? entry : control});
+  const property = (name, changed) => {
+    let owner = control;
+    while (owner && !Object.getOwnPropertyDescriptor(owner, name)?.get) owner = Object.getPrototypeOf(owner);
+    const descriptor = owner && Object.getOwnPropertyDescriptor(owner, name);
+    let fallback = control[name];
+    Object.defineProperty(control, name, {configurable: true,
+      get() { return descriptor ? descriptor.get.call(control) : fallback; },
+      set(next) {
+        if (descriptor) descriptor.set.call(control, next); else fallback = next;
+        changed(next);
+      }
+    });
+  };
+  let items = [];
+  const syncValue = (next) => {
+    const id = String(next);
+    let choice = items.find(([value]) => String(value) === id);
+    if (!choice && id) {
+      choice = [id, t('nodes.unknownID', {id: id.slice(0, 8)})];
+      items.push(choice);
+      control.append(h('option', {value: id}, choice[1]));
+      // 原生 select 在未知选项插入前会把 value 置空。
+      control.value = id;
+      list.setChoices(items);
+      return;
+    }
+    entry.value = id ? choice?.[1] || '' : '';
+  };
+  const list = listbox(entry, {emptyText: t('nodes.noMatching'), onChoose: ([id]) => {
+    control.value = id;
+    control.dispatchEvent(new Event('change', {bubbles: true}));
+  }});
+  property('value', syncValue);
+  property('disabled', (disabled) => { entry.disabled = Boolean(disabled); if (disabled) list.close(); });
+  property('required', (required) => entry.setAttribute('aria-required', String(Boolean(required))));
+  control.disabled = Boolean(props.disabled);
+  control.required = Boolean(props.required);
+  control.setChoices = (next) => {
+    list.close();
+    items = next.map(([id, label]) => [String(id), label]);
+    entry.placeholder = items.find(([id]) => !id)?.[1] || '';
+    control.replaceChildren(...items.map(([id, label]) => h('option', {value: id}, label)));
+    list.setChoices(items);
+    control.value = '';
+  };
+  // 全选后输入即替换当前名称，否则搜索词会接在名称后面。
+  entry.addEventListener('focus', () => entry.select());
+  entry.addEventListener('click', () => { if (list.element.hidden) { entry.select(); list.open(); } });
+  entry.addEventListener('blur', () => syncValue(control.value));
+  control.addEventListener('change', () => syncValue(control.value));
+  const nativeFocus = control.focus.bind(control);
+  control.focus = (options) => searchable ? entry.focus(options) : nativeFocus(options);
+  control.setSearchable = (enabled) => {
+    searchable = enabled;
+    control.hidden = enabled;
+    entry.hidden = !enabled;
+    list.close();
+  };
+  control.wrapper = h('div', {class: 'choice-control'}, control, entry, list.element);
+  control.setChoices(choices);
+  control.value = value;
+  return control;
+}
+
 // 应用只提供 customError。浏览器原生消息
 // 可能与所选界面语言不同。
 function validationText(control) {
@@ -55,32 +128,39 @@ function validationText(control) {
 // 首次提交后，或用户离开非空字段时出现。
 // options.inner 在布局中替换控件本身（如密码包装器）。
 export function field(label, control, options = {}) {
-  if (!control.id) control.id = uid('field');
-  const hintID = options.hint ? `${control.id}-hint` : null;
-  const error = h('span', {class: 'field-error', id: `${control.id}-error`, hidden: true});
-  control.setAttribute('aria-describedby', [hintID, error.id].filter(Boolean).join(' '));
+  const visible = control.entry || control;
+  if (!visible.id) visible.id = uid('field');
+  if (!control.id) control.id = control.entry ? `${visible.id}-value` : visible.id;
+  const hintID = options.hint ? `${visible.id}-hint` : null;
+  const labelID = `${visible.id}-label`;
+  if (control.entry) control.wrapper.querySelector('[role="listbox"]').setAttribute('aria-labelledby', labelID);
+  const error = h('span', {class: 'field-error', id: `${visible.id}-error`, hidden: true});
+  for (const target of new Set([control, visible])) target.setAttribute('aria-describedby', [hintID, error.id].filter(Boolean).join(' '));
   control.showError = (message) => {
     error.textContent = message;
     error.hidden = !message;
-    if (message) control.setAttribute('aria-invalid', 'true');
-    else control.removeAttribute('aria-invalid');
+    for (const target of new Set([control, visible])) {
+      if (message) target.setAttribute('aria-invalid', 'true');
+      else target.removeAttribute('aria-invalid');
+    }
   };
   control.addEventListener('invalid', (event) => {
     event.preventDefault();
-    control.classList.add('touched');
+    visible.classList.add('touched');
     control.showError(validationText(control));
     const active = document.activeElement;
     if (!(active && active.form === control.form && active.matches(':invalid'))) control.focus();
   });
-  control.addEventListener('input', () => {
-    if (control.classList.contains('touched') || control.hasAttribute('aria-invalid')) control.showError(validationText(control));
+  control.addEventListener('change', () => { if (control.entry) control.showError(validationText(control)); });
+  visible.addEventListener('input', () => {
+    if (visible.classList.contains('touched') || visible.hasAttribute('aria-invalid')) control.showError(validationText(control));
   });
-  control.addEventListener('blur', () => { if (control.value !== '') control.classList.add('touched'); });
+  visible.addEventListener('blur', () => { if (control.value !== '') visible.classList.add('touched'); });
   const check = ['checkbox', 'radio'].includes(control.type) && !options.inner;
   return h('div', {class: 'field'},
     check ? h('label', {class: 'check-row', for: control.id}, control, h('strong', null, label))
-      : h('label', {for: control.id, class: 'field-label'}, label),
-    check ? null : options.inner || control,
+      : h('label', {for: visible.id, class: 'field-label', id: labelID}, label),
+    check ? null : options.inner || (control.entry ? control.wrapper : control),
     options.hint ? h('span', {class: 'text-note', id: hintID}, options.hint) : null,
     error);
 }

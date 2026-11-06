@@ -1,3 +1,4 @@
+import {settingsTabs} from '../routes.js';
 import {t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h, icon} from '../../shared/dom.js';
@@ -26,22 +27,23 @@ export async function settingsPage() {
   if (task !== null && location.hash === '#data') {
     requestAnimationFrame(() => { if (!signal?.aborted) showTask(task, {signal}); });
   }
+  const builds = {
+    'account': accountTab,
+    'administrators': lazyTab(usersList, administratorsTab),
+    'groups': lazyTab(
+      () => Promise.all([groupsList(), allNodes()]),
+      ([groups, nodes]) => groupsTab(groups, nodes)
+    ),
+    'audit': lazyTab(
+      () => Promise.all([api('/audit?limit=50&offset=0'), allNodes(), usersList(), groupsList()]),
+      ([audit, nodes, users, groups]) => auditTab(audit, nameLookup(nodes, users, groups))
+    ),
+    'data': dataOperationsTab,
+    'public-page': publicPageTab
+  };
   return h('div', null,
     pageHead(t('shell.settings'), null),
-    tabSet([
-      {id: 'account', label: t('settings.account'), icon: 'user', build: accountTab},
-      {id: 'administrators', label: t('settings.administrators'), icon: 'users', build: lazyTab(usersList, administratorsTab)},
-      {id: 'groups', label: t('settings.groups'), icon: 'folder', build: lazyTab(
-        () => Promise.all([groupsList(), allNodes()]),
-        ([groups, nodes]) => groupsTab(groups, nodes)
-      )},
-      {id: 'audit', label: t('settings.audit'), icon: 'list', build: lazyTab(
-        () => Promise.all([api('/audit?limit=50&offset=0'), allNodes(), usersList(), groupsList()]),
-        ([audit, nodes, users, groups]) => auditTab(audit, nameLookup(nodes, users, groups))
-      )},
-      {id: 'data', label: t('settings.data'), icon: 'cloud', build: dataOperationsTab},
-      {id: 'public-page', label: t('settings.publicPage'), icon: 'globe', build: publicPageTab}
-    ], t('settings.settingsSections')));
+    tabSet(settingsTabs.map((tab) => ({...tab, label: t(tab.label), build: builds[tab.id]})), t('settings.settingsSections')));
 }
 
 function lazyTab(load, render) {

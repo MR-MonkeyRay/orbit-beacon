@@ -61,13 +61,13 @@
     padding: var(--sp-tight) 0 18px;
   }
 
-  .nav a,.nav-public,.nav .notification-entry {
+  .nav a,.nav-public,.nav .notification-entry,.nav .command-entry {
     justify-content: center;
     gap: 0;
     padding: 0;
   }
 
-  .nav .notification-entry {
+  .nav .notification-entry,.nav .command-entry {
     flex-wrap: nowrap;
     padding-block: 0;
   }

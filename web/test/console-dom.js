@@ -74,9 +74,12 @@ export class TestElement extends EventTarget {
   querySelectorAll(selector) {
     return elements(this).slice(1).filter((element) => selector.split(',').some((part) => {
       part = part.trim();
+      const role = part.match(/^\[role="(.+)"\]$/);
+      if (role) return element.getAttribute('role') === role[1];
       if (part === '[data-nav]') return element.dataset.nav !== undefined;
       const nav = part.match(/^\[data-nav="(.+)"\]$/);
       if (nav) return element.dataset.nav === nav[1];
+      if (part === 'input:not([data-transient])') return element.tagName === 'input' && element.dataset.transient === undefined;
       if (part === '[data-autofocus]') return element.dataset.autofocus !== undefined;
       if (part === '[data-tags]') return element.dataset.tags !== undefined;
       if (part === '[name]') return element.name !== '';
@@ -101,6 +104,7 @@ export class TestElement extends EventTarget {
   matches(selector) { return selector === ':invalid' && !this.validity.valid; }
   showModal() { this.open = true; }
   close(value) { this.open = false; this.returnValue = value; this.dispatchEvent(new Event('close')); }
+  select() { this.selected = true; }
   focus() { globalThis.document.activeElement = this; }
   click() { this.dispatchEvent(new Event('click')); }
 }

@@ -51,6 +51,8 @@ export async function nodePage() {
   back.className = 'back';
   let history;
   let currentLatest = latest;
+  let currentServerTime = latest?.server_time;
+  let sample;
   let traffic;
   let availability;
   let billingSettings = trafficSettings;
@@ -63,8 +65,6 @@ export async function nodePage() {
   const connection = liveStatus();
   const actions = lifecycleActions(node);
   const deletedNotice = h('div', {class: 'node-deleted-notice', hidden: true}, callout(t('nodes.deletedNotice')));
-  const sample = latestSamplePanel(node, latest, {signal});
-  sample.detach();
   const userID = session.user?.id;
   const unsubscribe = onSession((current) => {
     if (current.user?.id === userID) return;
@@ -75,16 +75,30 @@ export async function nodePage() {
   signal?.addEventListener('abort', unsubscribe, {once: true});
   if (signal?.aborted) unsubscribe();
   const tabs = tabSet([
+    {id: 'monitor', label: t('common.monitoring'), icon: 'monitor', build: () => {
+      if (!sample) {
+        sample = latestSamplePanel(node, currentLatest, {signal});
+        sample.detach();
+        sample.snapshot(currentLatest, currentServerTime);
+        if (node.deleted) sample.close();
+      }
+      return {element: h('div', {class: 'stack'}, sample.element,
+        history ||= historyPanel(id, signal, currentLatest), availability ||= availabilityPanel(id, signal)),
+      attach: sample.attach, detach: sample.detach};
+    }},
+    {id: 'traffic', label: t('nodes.traffic'), icon: 'cloud', build: () => {
+      traffic ||= trafficPanel(id, signal);
+      const billing = trafficSettingsPanel(id, billingSettings, (settings) => {
+        if (node.deleted) return;
+        billingSettings = settings;
+        return traffic.reload();
+      }, signal, () => node.deleted);
+      return h('div', {class: 'stack'}, traffic, billing);
+    }},
+    {id: 'probes', label: t('nodes.probes'), icon: 'check', build: () => probes ||= probesPanel(id, signal)},
     {id: 'details', label: t('nodes.details'), icon: 'info', build: () => {
-      detailsView = detailsTab(node, groups, sample.element,
-        history ||= historyPanel(id, signal, currentLatest), availability ||= availabilityPanel(id, signal), traffic ||= trafficPanel(id, signal),
-        probes ||= probesPanel(id, signal),
-        trafficSettingsPanel(id, billingSettings, (settings) => {
-          if (node.deleted) return;
-          billingSettings = settings;
-          return traffic.reload();
-        }, signal, () => node.deleted));
-      return {element: detailsView.element, attach: sample.attach, detach: sample.detach};
+      detailsView = detailsTab(node, groups);
+      return detailsView.element;
     }},
     {id: 'public', label: t('nodes.publicPage'), icon: 'globe', build: () => publicTab(node, publicSettings)},
     {id: 'agent', label: t('nodes.agentSettings'), icon: 'sliders', build: () => {
@@ -123,7 +137,7 @@ export async function nodePage() {
   // 懒加载标签页及其独立的异步读取器可能在删除后仍添加控件。
   const deletionObserver = new MutationObserver(lockDeleted);
   signal?.addEventListener('abort', () => deletionObserver.disconnect(), {once: true});
-  connectConsoleLive({nodeID: id, signal, onState: connection.update, onClock: sample.clock,
+  connectConsoleLive({nodeID: id, signal, onState: connection.update, onClock: (serverTime) => { currentServerTime = serverTime; sample?.clock(serverTime); },
     onSnapshot(data, frame) {
       if (!data.node) {
         node.deleted = true;
@@ -134,8 +148,9 @@ export async function nodePage() {
         deletedNotice.hidden = false;
         patchStatusBadge(badge, 'deleted');
         detailsView?.snapshot(node);
-        sample.snapshot(null);
-        sample.close();
+        currentLatest = null;
+        sample?.snapshot(null);
+        sample?.close();
         lockDeleted();
         return;
       }
@@ -148,7 +163,8 @@ export async function nodePage() {
       detailsView?.snapshot(node);
       currentLatest = data.latest;
       history?.snapshot(currentLatest);
-      sample.snapshot(data.latest, frame.server_time);
+      currentServerTime = frame.server_time;
+      sample?.snapshot(data.latest, currentServerTime);
       agent?.snapshot(node, observedRuntime);
       commands?.snapshot(node, observedRuntime);
     }
@@ -175,7 +191,7 @@ function editableForm(form, controls, save, node) {
   });
 }
 
-function detailsTab(node, groups, sample, history, availability, traffic, probes, billing) {
+function detailsTab(node, groups) {
   const group = groups.find((item) => item.id === node.group_id);
   const summaryValues = readonlyFacts();
   const summaryBadge = statusBadge(displayStatus(node));
@@ -219,7 +235,7 @@ function detailsTab(node, groups, sample, history, availability, traffic, probes
     invalidate('nodes');
     return t('nodes.saved', {name: result.name});
   }, node);
-  return {element: h('div', {class: 'stack'}, h('div', {class: 'split'}, summary, panel(t('nodes.editDetails'), {}, form)), sample, history, availability, traffic, billing, probes), snapshot};
+  return {element: h('div', {class: 'stack'}, h('div', {class: 'split'}, summary, panel(t('nodes.editDetails'), {}, form))), snapshot};
 }
 
 function publicPreview() {

@@ -350,3 +350,35 @@ select.input {
     opacity: 0;
   }
 }
+
+/* 搜索结果在文档流内展开，不越过 dialog 的滚动边界。 */
+.choice-control {
+  display: grid;
+  gap: var(--sp-tight);
+  min-width: 0;
+}
+
+.choice-list {
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  padding: var(--sp-tight);
+}
+
+.choice-option {
+  padding: var(--sp-inline) var(--sp-control);
+  border-radius: var(--r-sm);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.choice-option[aria-selected="true"],.choice-option:hover {
+  background: var(--orbit-soft);
+}
+
+.choice-list>.text-note {
+  padding: var(--sp-inline) var(--sp-control);
+}

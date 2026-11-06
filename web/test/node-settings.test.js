@@ -117,9 +117,9 @@ test('node tabs show reported local settings through #agent without the removed 
   const env = await setup({hash: '#agent'});
   try {
     const tabs = elements(env.root).filter((element) => element.getAttribute('role') === 'tab');
-    assert.equal(tabs.length, 4);
-    assert.deepEqual(tabs.map((tab) => tab.id), ['tab-details', 'tab-public', 'tab-agent', 'tab-enrollment']);
-    assert.deepEqual(tabs.map((tab) => tab.querySelector('use').getAttribute('href')), ['#i-info', '#i-globe', '#i-sliders', '#i-key']);
+    assert.equal(tabs.length, 7);
+    assert.deepEqual(tabs.map((tab) => tab.id), ['tab-monitor', 'tab-traffic', 'tab-probes', 'tab-details', 'tab-public', 'tab-agent', 'tab-enrollment']);
+    assert.deepEqual(tabs.map((tab) => tab.querySelector('use').getAttribute('href')), ['#i-monitor', '#i-cloud', '#i-check', '#i-info', '#i-globe', '#i-sliders', '#i-key']);
     assert.equal(env.root.querySelector('#tab-agent').getAttribute('aria-selected'), 'true');
     assert.equal(env.root.querySelector('#tab-config'), null);
     const values = factValues(env.root);
@@ -175,28 +175,26 @@ test('agent settings displays reported selections as inert text without editable
 test('removed #config hash does not alias the local agent settings tab', async () => {
   const env = await setup({hash: '#config'});
   try {
-    assert.equal(env.root.querySelector('#tab-details').getAttribute('aria-selected'), 'true');
+    assert.equal(env.root.querySelector('#tab-monitor').getAttribute('aria-selected'), 'true');
     assert.equal(env.root.querySelector('#tab-config'), null);
   } finally { env.cleanup(); }
 });
 
-test('billing saves exact decimal units, stays clean after submit, and preserves Notes, focus and tab', async () => {
-  const env = await setup();
+test('billing saves exact decimal units, stays clean after submit, and preserves focus and traffic tab', async () => {
+  const env = await setup({hash: '#traffic'});
   try {
     const billing = formFor(env.root, 'billing_day');
-    assert.ok(billing, 'Details has a separate traffic billing form');
+    assert.ok(billing, 'Traffic has a separate billing form');
     const headings = env.root.querySelectorAll('h2').map((heading) => heading.textContent);
     assert.equal(headings[headings.indexOf(copy('nodes.traffic')) + 1], copy('nodes.trafficBilling'));
     assert.deepEqual(control(billing, 'quota_unit').options.map((option) => option.value), ['bytes', 'KB', 'MB', 'GB', 'TB']);
     assert.equal(control(billing, 'billing_day').getAttribute('min'), '1');
     assert.equal(control(billing, 'billing_day').getAttribute('max'), '28');
-    const details = formFor(env.root, 'notes');
-    const notes = edit(details, 'notes', 'Unsaved notes');
     edit(billing, 'billing_day', '2');
     edit(billing, 'quota_value', '01');
     const unit = edit(billing, 'quota_unit', 'GB');
     unit.dispatchEvent(new Event('change'));
-    notes.focus();
+    const quota = control(billing, 'quota_value'); quota.focus();
     const trafficBefore = env.requests.filter((request) => request.url === `${path}/traffic?days=30`).length;
     const requestsBefore = env.requests.length;
     billing.dispatchEvent(new Event('submit', {cancelable: true}));
@@ -205,26 +203,23 @@ test('billing saves exact decimal units, stays clean after submit, and preserves
     assert.deepEqual(JSON.parse(patch.options.body), {billing_day: 2, quota_bytes: '1000000000', billing_mode: 'total'});
     assert.equal(billing.dataset.dirty, 'false');
     assert.equal(billing.querySelector('#billing-save').disabled, true);
-    assert.equal(details.dataset.dirty, 'true');
-    assert.equal(notes.value, 'Unsaved notes');
-    assert.equal(env.document.activeElement, notes);
-    assert.equal(env.root.querySelector('#tab-details').getAttribute('aria-selected'), 'true');
-    assert.equal(location.hash, '#details');
+    assert.equal(env.document.activeElement, quota);
+    assert.equal(env.root.querySelector('#tab-traffic').getAttribute('aria-selected'), 'true');
+    assert.equal(location.hash, '#traffic');
     assert.equal(env.requests.filter((request) => request.url === `${path}/traffic?days=30`).length, trafficBefore + 1);
     assert.deepEqual(env.requests.slice(requestsBefore).map((request) => request.url), [`${path}/traffic-settings`, `${path}/traffic?days=30`]);
     edit(billing, 'quota_value', '2000000000');
     assert.equal(billing.dataset.dirty, 'true');
     billing.querySelectorAll('button').find((button) => button.textContent === copy('controls.discard')).click();
     assert.equal(billing.dataset.dirty, 'false');
-    assert.equal(details.dataset.dirty, 'true');
   } finally { env.cleanup(); }
 });
 
 test('rejected billing saves preserve the draft and do not refresh traffic', async () => {
-  const env = await setup({patchStatus: 400});
+  const env = await setup({hash: '#traffic', patchStatus: 400});
   try {
     const billing = formFor(env.root, 'billing_day');
-    assert.ok(billing, 'Details has a separate traffic billing form');
+    assert.ok(billing, 'Traffic has a separate billing form');
     edit(billing, 'billing_day', '2');
     const before = env.requests.filter((request) => request.url === `${path}/traffic?days=30`).length;
     billing.dispatchEvent(new Event('submit', {cancelable: true}));
@@ -238,7 +233,7 @@ test('rejected billing saves preserve the draft and do not refresh traffic', asy
 });
 
 test('billing revisits use the saved response and honor tab-change discard', async () => {
-  const env = await setup();
+  const env = await setup({hash: '#traffic'});
   try {
     let billing = formFor(env.root, 'billing_day');
     edit(billing, 'billing_day', '2');
@@ -253,7 +248,7 @@ test('billing revisits use the saved response and honor tab-change discard', asy
     dialog.dispatchEvent(new Event('animationend'));
     await flush();
     assert.equal(env.root.querySelector('#tab-agent').getAttribute('aria-selected'), 'true');
-    env.root.querySelector('#tab-details').click();
+    env.root.querySelector('#tab-traffic').click();
     await flush();
     billing = formFor(env.root, 'billing_day');
     assert.equal(control(billing, 'billing_day').value, '2');
@@ -262,16 +257,15 @@ test('billing revisits use the saved response and honor tab-change discard', asy
   } finally { env.cleanup(); }
 });
 
-test('latest deadline patches leave dirty Notes, focus, current tab, and numeric nodes intact', async () => {
+test('latest deadline patches preserve numeric nodes on monitor and session boundaries clear samples', async () => {
   const received = '2026-10-28T10:00:00Z';
   const latest = {received_at: received, sampled_at: received, server_time: received, seq: 1,
     metrics: {cpu_percent: 25, uptime_seconds: 3600, metric_status: {cpu_percent: 'ok', uptime_seconds: 'ok'},
       sources: {cpu: {age_ms: 0, source_interval_ms: 10000}, uptime: {age_ms: 0, source_interval_ms: 10000}}}};
-  const env = await setup({latest});
+  const env = await setup({hash: '', latest});
   try {
-    const details = formFor(env.root, 'notes');
-    const notes = edit(details, 'notes', 'Do not replace this draft');
-    notes.focus();
+    assert.equal(env.root.querySelector('#tab-monitor').getAttribute('aria-selected'), 'true');
+    assert.equal(formFor(env.root, 'notes'), undefined);
     const cpu = env.root.querySelectorAll('dt').find((label) => label.textContent === copy('nodes.cpu')).parentElement.querySelector('.sample-value');
     const before = env.requests.length;
     env.advance(45000);
@@ -280,12 +274,7 @@ test('latest deadline patches leave dirty Notes, focus, current tab, and numeric
     assert.equal(cpu.classList.contains('metric-stale'), true);
     assert.equal(cpu.textContent, '25%');
     assert.equal(env.requests.length, before);
-    assert.equal(formFor(env.root, 'notes'), details);
-    assert.equal(control(details, 'notes'), notes);
-    assert.equal(notes.value, 'Do not replace this draft');
-    assert.equal(details.dataset.dirty, 'true');
-    assert.equal(env.document.activeElement, notes);
-    assert.equal(env.root.querySelector('#tab-details').getAttribute('aria-selected'), 'true');
+    assert.equal(env.root.querySelector('.sample-value'), cpu);
     setSession({csrf_token: '', user: null, expires_at: ''});
     assert.equal(env.root.querySelectorAll('.sample-value').length, 0);
     assert.equal(env.deadlines.size, 0);

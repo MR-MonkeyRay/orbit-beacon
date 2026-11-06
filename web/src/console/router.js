@@ -10,7 +10,7 @@ import {progress} from './ui/feedback.js';
 // History API 路由器。页面是返回元素（或重定向路径字符串）的异步函数。
 // 数据先于切换加载；只有加载慢时才显示骨架屏，
 // 切换在支持时使用视图过渡。
-const view = document.getElementById('view');
+let view;
 let routes = [];
 let navigation = 0;
 let controller;
@@ -169,6 +169,7 @@ function errorPage(error) {
 }
 
 export function startRouter(table) {
+  view = document.getElementById('view');
   routes = table;
   const lifetime = new AbortController();
   const listen = (target, type, listener) => target.addEventListener(type, listener, {signal: lifetime.signal});

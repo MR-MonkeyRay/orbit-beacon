@@ -1,4 +1,5 @@
 import {t} from './i18n.js';
+import {initCommandPalette} from './command-palette.js';
 import {localeSelect} from '../shared/locale-select.js';
 import {confirmLocaleChange, reloadAfterConfirmation} from './router.js';
 import {h} from '../shared/dom.js';
@@ -64,5 +65,6 @@ export function initShell() {
   onSession(renderAccount);
   renderAccount();
   initNotifications();
+  initCommandPalette();
 }
 

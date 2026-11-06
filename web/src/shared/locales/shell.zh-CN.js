@@ -1,4 +1,5 @@
 export default {
+  'shell.commandPalette': '命令面板',
   'shell.consoleTitle': 'OrbitBeacon 控制台',
   'shell.notFound': '未找到',
   'shell.pageLoadFailed': '无法加载此页面',

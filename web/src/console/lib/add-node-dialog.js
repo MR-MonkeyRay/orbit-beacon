@@ -7,7 +7,7 @@ import {formDialog} from '../ui/dialogs.js';
 import {toast} from '../ui/feedback.js';
 import {field, input, validateBytes} from '../ui/forms.js';
 
-function createNodeDialog() {
+export function createNodeDialog() {
   let name;
   formDialog({
     title: t('nodes.add'),
@@ -21,7 +21,7 @@ function createNodeDialog() {
       const node = await api('/nodes', {method: 'POST', body: {name: name.value}});
       invalidate('nodes');
       toast(t('nodes.addedDone', {name: node.name}));
-      void go(`/nodes/${encodeURIComponent(node.id)}`).catch(ignoreNavigationCancellation);
+      void go(`/nodes/${encodeURIComponent(node.id)}#enrollment`).catch(ignoreNavigationCancellation);
     }
   });
 }

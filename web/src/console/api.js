@@ -327,19 +327,21 @@ export function nextOffset(page, offset) {
 // 控制台持有全量节点清单，搜索、筛选和计数都是即时的；
 // max_nodes 保证规模有界。
 export function allNodes() {
-  return cached('nodes', 15000, async () => {
-    const nodes = [];
-    const epoch = sessionEpoch;
-    const signal = navigationSignal;
-    for (let offset = 0; offset < 10000;) {
-      const page = await api(`/nodes?limit=100&offset=${offset}`);
-      if (epoch !== sessionEpoch || signal?.aborted) throw cancelled();
-      nodes.push(...page.nodes);
-      if (!page.has_more) break;
-      offset = nextOffset(page, offset);
-    }
-    return nodes;
-  });
+  return cached('nodes', 15000, () => readNodes());
+}
+
+// 独立读取器允许短生命周期的 UI 中止自己的分页请求，不影响共享缓存。
+export async function readNodes(signal = navigationSignal) {
+  const nodes = [];
+  const epoch = sessionEpoch;
+  for (let offset = 0; offset < 10000;) {
+    const page = await api(`/nodes?limit=100&offset=${offset}`, {signal});
+    if (epoch !== sessionEpoch || signal?.aborted) throw cancelled();
+    nodes.push(...page.nodes);
+    if (!page.has_more) break;
+    offset = nextOffset(page, offset);
+  }
+  return nodes;
 }
 
 export const groupsList = () => cached('groups', 30000, () => api('/groups').then((result) => result.groups));

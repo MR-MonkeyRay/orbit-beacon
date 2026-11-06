@@ -1,4 +1,4 @@
-.notification-entry {
+.notification-entry,.command-entry {
   border: 0;
   background: transparent;
   font: inherit;

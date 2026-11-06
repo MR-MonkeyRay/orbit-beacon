@@ -59,3 +59,6 @@ import './totp.test.js';
 import './api-tokens.test.js';
 
 import './probe-alerts.test.js';
+
+import './combobox.test.js';
+import './command-palette.test.js';

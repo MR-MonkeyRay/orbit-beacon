@@ -20,3 +20,13 @@ test('node details and enrollment tabs use distinct purpose-specific icons', asy
   assert.match(javascript, /id: 'details',[^\n]+icon: 'info'/);
   assert.match(javascript, /id: 'enrollment',[^\n]+icon: 'key'/);
 });
+
+
+test('command palette sidebar button is not treated as a notification counter', async () => {
+  const html = await source('../src/console/index.html');
+  const button = html.match(/<button[^>]+id="command-palette"[^>]*>/)?.[0];
+  assert.ok(button);
+  assert.match(button, /class="command-entry"/);
+  assert.doesNotMatch(button, /notification-entry/);
+  assert.match(button, /aria-haspopup="dialog"/);
+});
