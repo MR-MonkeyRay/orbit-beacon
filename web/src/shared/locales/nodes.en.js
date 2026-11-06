@@ -58,7 +58,6 @@ export default {
   'nodes.feature.traffic': 'Traffic',
   'nodes.feature.probes': 'Probes',
 
-  'nodes.enrollment.tokenWarning': 'Shown only once.',
   'nodes.enrollment.expiry': '{countdown} · Expires {time}',
   'nodes.enrollment.usesValue': '{used} / {total}',
   'nodes.audit.agent': 'Agent',

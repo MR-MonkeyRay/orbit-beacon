@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"orbitbeacon/internal/buildinfo"
-	"orbitbeacon/internal/bundle"
 	"orbitbeacon/internal/config"
 	"orbitbeacon/internal/server/app"
 	"orbitbeacon/internal/server/audit"
@@ -40,11 +39,11 @@ func run(args []string) error {
 
 func runWithLogger(args []string, logger *slog.Logger) error {
 	if len(args) == 0 {
-		return errors.New("缺少子命令：应为 serve、restore、reset-totp、version、health 或 verify-bundle")
+		return errors.New("缺少子命令：应为 serve、restore、reset-totp、version 或 health")
 	}
 	switch args[0] {
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "用法: orbitbeacon-server {serve|restore|reset-totp|version|health|verify-bundle} --help")
+		fmt.Fprintln(os.Stdout, "用法: orbitbeacon-server {serve|restore|reset-totp|version|health} --help")
 		return nil
 	case "serve":
 		return runServe(args[1:], logger)
@@ -56,10 +55,8 @@ func runWithLogger(args []string, logger *slog.Logger) error {
 		return runVersion(args[1:])
 	case "health":
 		return runHealth(args[1:])
-	case "verify-bundle":
-		return runVerifyBundle(args[1:])
 	default:
-		return fmt.Errorf("未知子命令 %q；应为 serve、restore、reset-totp、version、health 或 verify-bundle", args[0])
+		return fmt.Errorf("未知子命令 %q；应为 serve、restore、reset-totp、version 或 health", args[0])
 	}
 }
 
@@ -133,21 +130,6 @@ func runHealth(args []string) error {
 		return err
 	}
 	return checkHealth(*url, *ca)
-}
-
-func runVerifyBundle(args []string) error {
-	fs := flag.NewFlagSet("verify-bundle", flag.ContinueOnError)
-	directory := fs.String("directory", "", "已签名的发布包目录")
-	key := fs.String("public-key", "", "Ed25519 公钥文件，支持 PEM 或原始字节格式")
-	if ok, err := parseCommand(fs, args); !ok {
-		return err
-	}
-	manifest, err := bundle.VerifyBundle(*directory, *key)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stdout, "发布包 %s 校验通过，共 %d 个产物\n", manifest.Version, len(manifest.Artifacts))
-	return nil
 }
 
 func runRestore(args []string) error {

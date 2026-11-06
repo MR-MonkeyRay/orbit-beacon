@@ -28,7 +28,6 @@ export async function issueEnrollment(target, title, isDeleted = () => false) {
   tick();
   const {closed} = modal(title, (close) => h('div', null,
     h('div', {class: 'dialog-body stack'},
-      callout(t('nodes.enrollment.tokenWarning')),
       h('div', null, tParts('nodes.enrollment.expiry', {countdown, time: when(ticket.expires_at)})),
       h('pre', {class: 'code enrollment-token'}, token),
       button(t('nodes.enrollment.copyToken'), {icon: 'copy', onClick: () => copyText(token, status)}),

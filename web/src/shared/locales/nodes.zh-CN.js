@@ -58,7 +58,6 @@ export default {
   'nodes.feature.traffic': '流量',
   'nodes.feature.probes': '探测',
 
-  'nodes.enrollment.tokenWarning': '票据仅显示一次',
   'nodes.enrollment.expiry': '{countdown} · {time}过期',
   'nodes.enrollment.usesValue': '{used} / {total}',
   'nodes.audit.agent': 'Agent',
