@@ -59,6 +59,7 @@ var categoryTables = map[Category][]tableSpec{
 		table("groups", "main", "", "id TEXT,name TEXT", "id"),
 		table("nodes", "main", "", "id TEXT,name TEXT,status TEXT,group_id TEXT,region TEXT,provider TEXT,notes TEXT,expires_on TEXT,created_at TEXT,public_settings TEXT,billing_day INTEGER,quota_bytes TEXT,billing_mode TEXT,token_hash BLOB,credential_epoch INTEGER,installation_id TEXT,first_enrolled_at TEXT,run_generation TEXT,report_session_id TEXT", "id"),
 		table("node_tags", "main", "", "node_id TEXT,tag TEXT", "node_id,tag"),
+		table("alert_silences", "main", "", "id TEXT,reason TEXT,scope_kind TEXT,scope_id TEXT,starts_at TEXT,ends_at TEXT,created_at TEXT", "id"),
 		table("alert_rules", "main", "", "id TEXT,name TEXT,enabled INTEGER,scope_kind TEXT,scope_id TEXT,metric TEXT,comparator TEXT,threshold REAL,for_seconds INTEGER,severity TEXT,created_at TEXT,updated_at TEXT", "id"),
 		table("notification_channels", "main", "", "id TEXT,name TEXT,kind TEXT,enabled INTEGER,config_json TEXT,secret_ciphertext BLOB,url_ciphertext BLOB,created_at TEXT,updated_at TEXT", "id"),
 		table("alert_rule_channels", "main", "", "rule_id TEXT,channel_id TEXT", "rule_id,channel_id"),
@@ -75,7 +76,7 @@ var categoryTables = map[Category][]tableSpec{
 	},
 	Events: {
 		table("audit_events", "main", "", "id TEXT,actor_id TEXT,action TEXT,target_id TEXT,created_at TEXT,details TEXT", "id"),
-		table("alert_events", "main", "", "id TEXT,rule_id TEXT,node_id TEXT,state TEXT,value REAL,started_at TEXT,resolved_at TEXT,last_notified_at TEXT,rule_name TEXT,node_name TEXT,rule_snapshot TEXT", "id"),
+		table("alert_events", "main", "", "id TEXT,rule_id TEXT,node_id TEXT,state TEXT,value REAL,started_at TEXT,resolved_at TEXT,last_notified_at TEXT,rule_name TEXT,node_name TEXT,rule_snapshot TEXT,silenced INTEGER", "id"),
 		table("notification_deliveries", "main", "state IN ('sent','failed')", "id TEXT,channel_id TEXT,event_id TEXT,state TEXT,attempts INTEGER,next_attempt_at TEXT,last_error_code TEXT,lease_until TEXT,payload_json TEXT,coalesced_count INTEGER,created_at TEXT,updated_at TEXT", "id"),
 		table("inbox_notifications", "main", "", "id TEXT,kind TEXT,source_id TEXT,transition TEXT,severity TEXT,created_at TEXT,details_json TEXT", "id"),
 		table("inbox_reads", "main", "", "user_id TEXT,notification_id TEXT,read_at TEXT", "user_id,notification_id"),

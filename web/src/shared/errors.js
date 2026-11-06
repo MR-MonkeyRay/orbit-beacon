@@ -23,6 +23,8 @@ export function errorText(error) {
 }
 
 const fieldReasons = new Map([
+  ['must be after starts_at and now', 'alerts.silences.invalidEnd'],
+  ['must be within 30 days of starts_at', 'alerts.silences.tooLong'],
   ['is required', 'fields.required'], ['must be valid UTF-8', 'fields.utf8'],
   ['must be nonempty when published', 'fields.publishedName'],
   ['must be valid UTF-8 without control characters and at most 255 bytes', 'fields.publicText255'],
@@ -72,6 +74,7 @@ const byteLimits = new Map([
   ['must be nonempty and at most 255 bytes', 255],
   ['entries must be nonempty and at most 255 bytes', 255],
   ['must contain 1..100 UTF-8 bytes', 100],
+  ['must contain 1..255 UTF-8 bytes', 255],
   ['Enter a name of at most 100 bytes.', 100],
   ['must be at most 4096 bytes', 4096]
 ]);

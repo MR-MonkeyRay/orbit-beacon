@@ -192,7 +192,7 @@ func TestExpiryFireRechecksDateAndIgnoresReportSession(t *testing.T) {
 				f.exec(t, "UPDATE nodes SET run_generation='2',report_session_id='new' WHERE id=?", f.node)
 			}
 			value := expiryDays(inventory[0].expiresOn, f.now)
-			if err := f.e.fire(context.Background(), f.rule, inventory[0], value, f.now); err != nil {
+			if err := f.e.fire(context.Background(), f.rule, inventory[0], value, f.now, f.now); err != nil {
 				t.Fatal(err)
 			}
 			want := 0

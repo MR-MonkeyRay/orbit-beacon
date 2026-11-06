@@ -742,6 +742,53 @@ paths:
                   has_more: {type: boolean}
                   next_cursor: {type: string}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/alert-silences:
+    get:
+      operationId: listAlertSilences
+      description: 仅限管理员。返回尚未结束的静默窗口，按 starts_at、id 升序，名称来自当前分组或节点。
+      responses:
+        '200':
+          description: 静默窗口集合。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [silences]
+                properties:
+                  silences: {type: array, items: {$ref: '#/components/schemas/AlertSilence'}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createAlertSilence
+      description: 仅限管理员。与 alert_silence.create 审计原子提交。静默仅在触发事务内判定，不回溯已有事件。结束或提前删除窗口后，下一轮评估补发仍在触发的静默事件。
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AlertSilenceCreate'}
+      responses:
+        '201':
+          description: 已创建的静默窗口。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AlertSilence'}
+        '400': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/alert-silences/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    delete:
+      operationId: deleteAlertSilence
+      description: 仅限管理员。立即删除窗口，与 alert_silence.delete 审计原子提交。
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204': {description: 已删除。}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/alert-rules:
     get:
       operationId: listAlertRules
@@ -2634,10 +2681,34 @@ components:
           type: array
           maxItems: 5
           items: {$ref: '#/components/schemas/AlertEvent'}
+    AlertSilenceCreate:
+      type: object
+      additionalProperties: false
+      required: [reason, scope_kind, ends_at]
+      properties:
+        reason: {type: string, minLength: 1, maxLength: 255, description: 去除首尾空白后为 1–255 UTF-8 字节。}
+        scope_kind: {type: string, enum: [all, group, node]}
+        scope_id: {type: [string, 'null'], format: uuid, description: all 时必须为空；group 或 node 时必须指向现有实体。}
+        starts_at: {type: string, format: date-time, description: 缺省为当前时间。}
+        ends_at: {type: string, format: date-time, description: 必须晚于开始及当前时间，时长不超过 30 天。}
+    AlertSilence:
+      type: object
+      additionalProperties: false
+      required: [id, reason, scope_kind, scope_id, scope_name, starts_at, ends_at, created_at, active]
+      properties:
+        id: {type: string, format: uuid}
+        reason: {type: string}
+        scope_kind: {type: string, enum: [all, group, node]}
+        scope_id: {type: [string, 'null'], format: uuid}
+        scope_name: {type: string, description: 当前名称；all 时为空字符串。}
+        starts_at: {type: string, format: date-time}
+        ends_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+        active: {type: boolean, description: starts_at <= now < ends_at。}
     AlertEvent:
       type: object
       additionalProperties: false
-      required: [id, rule_id, node_id, rule_name, node_name, metric, severity, state, value, started_at, resolved_at, last_notified_at]
+      required: [id, rule_id, node_id, rule_name, node_name, metric, severity, state, value, started_at, resolved_at, last_notified_at, silenced]
       properties:
         id: {type: string, format: uuid}
         rule_id: {type: string, format: uuid}
@@ -2651,6 +2722,7 @@ components:
         started_at: {type: string, format: date-time, description: 待触发条件的起始时间；offline 事件为最近一次在线依据的时间。}
         resolved_at: {type: [string, 'null'], format: date-time}
         last_notified_at: {type: [string, 'null'], format: date-time, description: 最近一次成功通知投递的时间。}
+        silenced: {type: boolean, description: 持久化的静默状态；补发触发通知后清零。}
     Error:
       type: object
       additionalProperties: false

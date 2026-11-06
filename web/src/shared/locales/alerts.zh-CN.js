@@ -1,4 +1,17 @@
 export default {
+  'alerts.silences.title': '静默',
+  'alerts.silences.add': '添加静默',
+  'alerts.silences.delete': '删除静默',
+  'alerts.silences.reason': '原因',
+  'alerts.silences.starts': '开始时间',
+  'alerts.silences.ends': '结束时间',
+  'alerts.silences.active': '生效中',
+  'alerts.silences.scheduled': '已计划',
+  'alerts.silences.silenced': '已静默',
+  'alerts.silences.empty': '暂无静默',
+  'alerts.silences.invalidEnd': '结束时间必须晚于开始时间和当前时间。',
+  'alerts.silences.tooLong': '静默时长不能超过 30 天。',
+
   'alerts.metric.nodeExpiry': '距到期天数',
   'alerts.value.expiryDays': '{value} 天',
   'alerts.validation.expiryThreshold': '请输入 1 到 365 之间的天数。',

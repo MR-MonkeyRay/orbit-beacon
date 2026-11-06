@@ -168,6 +168,8 @@ func nullableColumn(table, column string) bool {
 	switch table {
 	case "nodes":
 		return oneOf(column, "expires_on", "group_id", "token_hash", "installation_id", "first_enrolled_at")
+	case "alert_silences":
+		return column == "scope_id"
 	case "alert_rules":
 		return oneOf(column, "scope_id", "comparator", "threshold")
 	case "notification_channels":
@@ -240,6 +242,16 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 		if !uuid.ValidUUID(r.text("node_id")) || !validText(r.text("tag"), 255) {
 			return invalidRow()
 		}
+	case "alert_silences":
+		start, err := timekey.Parse(r.text("starts_at"))
+		if err != nil {
+			return err
+		}
+		end, err := timekey.Parse(r.text("ends_at"))
+		if err != nil {
+			return err
+		}
+		return alerts.ValidateSilenceSyntax(alerts.Silence{Reason: r.text("reason"), ScopeKind: r.text("scope_kind"), ScopeID: r.pointer("scope_id"), StartsAt: start, EndsAt: end})
 	case "alert_rules":
 		if r.integer("enabled") < 0 || r.integer("enabled") > 1 {
 			return invalidRow()
@@ -318,7 +330,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 			return invalidRow()
 		}
 	case "alert_events":
-		if !oneOf(r.text("state"), "firing", "resolved") || (r.text("state") == "firing") != (r["resolved_at"] == nil) || !jsonObject(r.text("rule_snapshot")) || (r["value"] != nil && !finite(r.number("value"))) {
+		if (r.integer("silenced") != 0 && r.integer("silenced") != 1) || !oneOf(r.text("state"), "firing", "resolved") || (r.text("state") == "firing") != (r["resolved_at"] == nil) || !jsonObject(r.text("rule_snapshot")) || (r["value"] != nil && !finite(r.number("value"))) {
 			return invalidRow()
 		}
 		// 已结束的旧版告警事件允许规则快照为空。

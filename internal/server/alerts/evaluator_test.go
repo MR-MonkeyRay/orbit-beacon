@@ -751,7 +751,7 @@ func TestFireRevalidatesIdentityAndDisabledRules(t *testing.T) {
 			} else {
 				f.exec(t, "UPDATE alert_rules SET enabled=0 WHERE id=?", f.rule.ID)
 			}
-			if err = f.e.fire(context.Background(), f.rule, inventory[0], ptr(90.0), f.now); err != nil {
+			if err = f.e.fire(context.Background(), f.rule, inventory[0], ptr(90.0), f.now, f.now); err != nil {
 				t.Fatal(err)
 			}
 			var inboxCount int

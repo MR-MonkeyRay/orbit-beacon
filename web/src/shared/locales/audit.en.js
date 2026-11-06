@@ -32,6 +32,8 @@ export default {
   'audit.ruleCreate': 'Alert rule created',
   'audit.ruleUpdate': 'Alert rule updated',
   'audit.ruleDelete': 'Alert rule deleted',
+  'audit.silenceCreate': 'Silence created',
+  'audit.silenceDelete': 'Silence deleted',
   'audit.channelCreate': 'Notification channel created',
   'audit.channelUpdate': 'Notification channel updated',
   'audit.channelDelete': 'Notification channel deleted',

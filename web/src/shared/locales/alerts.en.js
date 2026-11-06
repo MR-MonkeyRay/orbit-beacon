@@ -1,4 +1,17 @@
 export default {
+  'alerts.silences.title': 'Silences',
+  'alerts.silences.add': 'Add silence',
+  'alerts.silences.delete': 'Delete silence',
+  'alerts.silences.reason': 'Reason',
+  'alerts.silences.starts': 'Starts',
+  'alerts.silences.ends': 'Ends',
+  'alerts.silences.active': 'Active',
+  'alerts.silences.scheduled': 'Scheduled',
+  'alerts.silences.silenced': 'Silenced',
+  'alerts.silences.empty': 'No silences',
+  'alerts.silences.invalidEnd': 'Ends must be after Starts and the current time.',
+  'alerts.silences.tooLong': 'Silences must last no more than 30 days.',
+
   'alerts.metric.nodeExpiry': 'Days until expiry',
   'alerts.value.expiryDays': '{value} days',
   'alerts.validation.expiryThreshold': 'Enter 1 to 365 days.',

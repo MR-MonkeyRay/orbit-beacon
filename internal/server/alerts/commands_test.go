@@ -55,7 +55,7 @@ func TestOfflineFireRechecksStoppedInsideWriteTransaction(t *testing.T) {
 	}
 	f.advance(180)
 	f.exec(t, `INSERT INTO agent_commands(id,node_id,credential_epoch,kind,state,delivered_generation,requested_by,created_at,expires_at,finished_at) VALUES('stop',?,0,'stop','succeeded','0','operator',?,?,?)`, f.node, timekey.Format(f.now), timekey.Format(f.now.Add(time.Minute)), timekey.Format(f.now))
-	if err := f.e.fire(t.Context(), rule, inventory[0], nil, f.now.Add(-180*time.Second)); err != nil {
+	if err := f.e.fire(t.Context(), rule, inventory[0], nil, f.now.Add(-180*time.Second), f.now); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.events(t, "firing")) != 0 {

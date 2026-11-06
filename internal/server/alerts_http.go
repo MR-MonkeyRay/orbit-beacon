@@ -98,3 +98,33 @@ func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID 
 	}
 	writeJSON(w, status, rule)
 }
+
+func (h *handler) silencesRoute(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method == http.MethodGet {
+		entries, err := h.alerts.Silences(r.Context())
+		if err != nil {
+			h.serviceError(w, err, requestID)
+		} else {
+			writeJSON(w, http.StatusOK, map[string]any{"silences": entries})
+		}
+		return
+	}
+	if r.Method == http.MethodDelete {
+		if err := h.alerts.DeleteSilence(r.Context(), strings.TrimPrefix(r.URL.Path, "/api/v1/alert-silences/")); err != nil {
+			h.serviceError(w, err, requestID)
+		} else {
+			w.WriteHeader(http.StatusNoContent)
+		}
+		return
+	}
+	var req alerts.SilenceRequest
+	if !decode(w, r, &req, requestID) {
+		return
+	}
+	entry, err := h.alerts.CreateSilence(r.Context(), req)
+	if err != nil {
+		h.serviceError(w, err, requestID)
+		return
+	}
+	writeJSON(w, http.StatusCreated, entry)
+}

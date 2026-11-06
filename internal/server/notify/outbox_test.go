@@ -380,3 +380,75 @@ func TestWakeIsNonblockingAndConsumedAfterCommit(t *testing.T) {
 		t.Fatal("worker did not consume wake")
 	}
 }
+
+func TestSilenceSkipsPersistentOutboxUntilRelease(t *testing.T) {
+	f := newFixture(t)
+	e, latest := f.evaluator(t, 1)
+	ctx := context.Background()
+	service := alerts.NewService(f.db, func() time.Time { return f.now })
+	raw, _ := json.Marshal(map[string]any{"reason": "maintenance", "scope_kind": "all", "ends_at": f.now.Add(time.Hour)})
+	var req alerts.SilenceRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateSilence(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Evaluate(ctx, f.now); err != nil {
+		t.Fatal(err)
+	}
+	f.count(t, "SELECT count(*) FROM alert_events WHERE silenced=1", 1)
+	f.count(t, "SELECT count(*) FROM alert_events WHERE last_notified_at IS NOT NULL", 0)
+	f.count(t, "SELECT count(*) FROM notification_rate_limits", 0)
+	f.count(t, "SELECT count(*) FROM notification_deliveries", 0)
+	f.count(t, "SELECT count(*) FROM inbox_notifications", 0)
+	if err := e.Evaluate(ctx, f.now); err != nil {
+		t.Fatal(err)
+	}
+	f.count(t, "SELECT count(*) FROM notification_deliveries", 0)
+	f.now = f.now.Add(time.Hour)
+	if err := e.Evaluate(ctx, f.now); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Evaluate(ctx, f.now); err != nil {
+		t.Fatal(err)
+	}
+	f.count(t, "SELECT count(*) FROM notification_deliveries", 1)
+	f.count(t, "SELECT count(*) FROM inbox_notifications WHERE transition='firing'", 1)
+	latest.value = 10
+	if err := e.Evaluate(ctx, f.now); err != nil {
+		t.Fatal(err)
+	}
+	f.count(t, "SELECT count(*) FROM notification_deliveries", 2)
+	f.count(t, "SELECT count(*) FROM inbox_notifications WHERE transition='resolved'", 1)
+}
+
+func TestSilenceReleaseDeliveryFailurePreservesFlag(t *testing.T) {
+	f := newFixture(t)
+	e, _ := f.evaluator(t, 1)
+	ctx := context.Background()
+	if _, err := f.db.Exec(`INSERT INTO alert_silences(id,reason,scope_kind,starts_at,ends_at,created_at) VALUES('silence','maintenance','all',?,?,?)`, timekey.Format(f.now), timekey.Format(f.now.Add(time.Hour)), timekey.Format(f.now)); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Evaluate(ctx, f.now); err != nil {
+		t.Fatal(err)
+	}
+	f.now = f.now.Add(time.Hour)
+	if _, err := f.db.Exec(`CREATE TRIGGER reject_silence_delivery BEFORE INSERT ON notification_deliveries BEGIN SELECT RAISE(ABORT,'delivery failed'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Evaluate(ctx, f.now); err == nil {
+		t.Fatal("release failure ignored")
+	}
+	f.count(t, "SELECT count(*) FROM alert_events WHERE silenced=1 AND state='firing'", 1)
+	f.count(t, "SELECT count(*) FROM inbox_notifications", 0)
+	f.count(t, "SELECT count(*) FROM notification_deliveries", 0)
+	if _, err := f.db.Exec("DROP TRIGGER reject_silence_delivery"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Evaluate(ctx, f.now); err != nil {
+		t.Fatal(err)
+	}
+	f.count(t, "SELECT count(*) FROM alert_events WHERE silenced=0 AND state='firing'", 1)
+	f.count(t, "SELECT count(*) FROM notification_deliveries", 1)
+}

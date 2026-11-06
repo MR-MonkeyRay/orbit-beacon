@@ -3,11 +3,16 @@ import {getLocale, t, tParts} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {api} from '../api.js';
 import {when} from '../format.js';
-import {busy, button, dataTable, link, panel} from '../ui/components.js';
+import {busy, button, dataTable, link, panel, statusBadge} from '../ui/components.js';
 import {nextCursor} from '../ui/pager.js';
 import {formatMetricValue, severityLabel} from '../lib/alert-utils.js';
 import {panelLifecycle} from '../ui/polling-panel.js';
 
+export const silencedBadge = () => {
+  const badge = statusBadge('disabled');
+  badge.textContent = t('alerts.silences.silenced');
+  return badge;
+};
 export const severityPill = (severity) => h('span', {class: `badge alert-${['info', 'warning', 'critical'].includes(severity) ? severity : 'unknown'}`}, severityLabel(severity));
 export const eventTime = (iso) => h('div', {class: 'alert-time'}, when(iso), h('small', {class: 'muted'}, Number.isFinite(Date.parse(iso)) ? new Date(iso).toLocaleString(getLocale()) : t('alerts.unknownTime')));
 const eventSummary = (event) => {
@@ -22,7 +27,7 @@ export function eventRows(events) {
     h('td', null, link(`/alerts?event=${encodeURIComponent(event.id)}#history`, event.rule_name || t('alerts.deletedRule'))),
     h('td', null, link(`/nodes/${encodeURIComponent(event.node_id)}`, event.node_name || event.node_id)),
     h('td', null, formatMetricValue(event.metric, event.value)),
-    h('td', null, t(event.state === 'firing' ? 'alerts.state.firing' : 'alerts.state.resolved')),
+    h('td', null, t(event.state === 'firing' ? 'alerts.state.firing' : 'alerts.state.resolved'), event.silenced ? [' ', silencedBadge()] : null),
     h('td', null, eventTime(event.started_at)),
     h('td', null, event.resolved_at ? eventTime(event.resolved_at) : '—')));
 }

@@ -23,6 +23,7 @@ const ACTIONS = {
   'session.create': t('audit.signIn'), 'session.delete': t('audit.signOut'),
   'node.credential.revoke': t('audit.credentialRevoke'),
   'alert_rule.create': t('audit.ruleCreate'), 'alert_rule.update': t('audit.ruleUpdate'), 'alert_rule.delete': t('audit.ruleDelete'),
+  'alert_silence.create': t('audit.silenceCreate'), 'alert_silence.delete': t('audit.silenceDelete'),
   'notification_channel.create': t('audit.channelCreate'), 'notification_channel.update': t('audit.channelUpdate'),
   'notification_channel.delete': t('audit.channelDelete'), 'notification_channel.test': t('audit.channelTest'),
   'backup.plan.create': t('audit.backupPlanCreate'), 'backup.plan.update': t('audit.backupPlanUpdate'), 'backup.plan.delete': t('audit.backupPlanDelete'),

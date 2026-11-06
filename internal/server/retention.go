@@ -32,6 +32,7 @@ type RetentionResult struct {
 	BackupOrphanFiles int64
 	BackupLocalTemps  int64
 	AlertEvents       int64
+	AlertSilences     int64
 	HistoryBuckets    int64
 	AuditEvents       int64
 	EnrollmentTickets int64
@@ -69,7 +70,7 @@ func (h *handler) RunRetention(ctx context.Context) {
 func retentionChanged(result RetentionResult) bool {
 	return result.AvailabilityRows != 0 || result.CommandRows != 0 || result.NotificationDeliveries != 0 || result.InboxNotifications != 0 ||
 		result.BackupTasks != 0 || result.BackupOrphanFiles != 0 || result.BackupLocalTemps != 0 ||
-		result.AlertEvents != 0 || result.HistoryBuckets != 0 || result.AuditEvents != 0 ||
+		result.AlertEvents != 0 || result.AlertSilences != 0 || result.HistoryBuckets != 0 || result.AuditEvents != 0 ||
 		result.EnrollmentTickets != 0 || result.Sessions != 0 || result.TrafficRows != 0 || result.ProbeRows != 0
 }
 
@@ -89,6 +90,7 @@ func retentionAttrs(result RetentionResult) []slog.Attr {
 		slog.Int64("probe_rows", result.ProbeRows),
 		slog.Int64("command_rows", result.CommandRows),
 		slog.Int64("availability_rows", result.AvailabilityRows),
+		slog.Int64("alert_silences", result.AlertSilences),
 	}
 }
 
@@ -113,6 +115,10 @@ func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (Retentio
 		}
 	}
 	if h.alerts != nil {
+		result.AlertSilences, err = cleanupRetentionBacklog(ctx, now.Add(-90*24*time.Hour), h.alerts.CleanupSilences)
+		if err != nil {
+			return result, fmt.Errorf("cleanup alert silences: %w", err)
+		}
 		result.AlertEvents, err = cleanupRetentionBacklog(ctx, now.Add(-90*24*time.Hour), h.alerts.Cleanup)
 		if err != nil {
 			return result, fmt.Errorf("cleanup alert events: %w", err)

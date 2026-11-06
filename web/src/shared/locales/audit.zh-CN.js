@@ -32,6 +32,8 @@ export default {
   'audit.ruleCreate': '已创建告警规则',
   'audit.ruleUpdate': '已更新告警规则',
   'audit.ruleDelete': '已删除告警规则',
+  'audit.silenceCreate': '已创建静默',
+  'audit.silenceDelete': '已删除静默',
   'audit.channelCreate': '已创建通知通道',
   'audit.channelUpdate': '已更新通知通道',
   'audit.channelDelete': '已删除通知通道',

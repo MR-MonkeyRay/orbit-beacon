@@ -6,6 +6,7 @@ import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, select, validateBytes} from '../ui/forms.js';
 import {durationSeconds, formatMetricValue, formatRuleDuration, METRICS, metricLabel, metricMax, scopeLabel, SEVERITIES, validateRule, validationError} from '../lib/alert-utils.js';
+import {alertScope} from '../ui/alert-scope.js';
 import {severityPill} from './alert-events.js';
 
 export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
@@ -61,25 +62,15 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
       };
       metric.addEventListener('change', syncMetric);
       syncMetric();
-      const scope = controls.scope_kind = select([['all', t('alerts.scope.all')], ['group', t('alerts.scope.group')], ['node', t('alerts.scope.node')]], item?.scope_kind || 'all', {name: 'scope_kind'});
-      const scopeID = controls.scope_id = select([], '', {name: 'scope_id'});
-      const scopeField = field(t('alerts.rules.groupOrNode'), scopeID);
-      const syncScope = () => {
-        const options = scope.value === 'group' ? groups : nodes;
-        scopeID.replaceChildren(h('option', {value: ''}, t('alerts.choose')), ...options.map((entry) => h('option', {value: entry.id}, entry.name)));
-        scopeID.value = scope.value === item?.scope_kind ? item.scope_id || '' : '';
-        scopeID.disabled = scope.value === 'all';
-        scopeID.required = scope.value !== 'all';
-        scopeField.hidden = scope.value === 'all';
-      };
-      scope.addEventListener('change', syncScope);
-      syncScope();
+      const {scope, scopeID, fields: scopeFields} = alertScope(item, {groups, nodes});
+      controls.scope_kind = scope;
+      controls.scope_id = scopeID;
       const severity = controls.severity = select(SEVERITIES, item?.severity || 'warning', {name: 'severity'});
       const routing = controls.channel_ids = select(channels.map((entry) => [entry.id, entry.enabled ? entry.name : t('alerts.disabledName', {name: entry.name})]), '', {name: 'channel_ids', multiple: true, size: Math.min(6, Math.max(2, channels.length)), class: 'input alert-multiselect'});
       for (const option of routing.options) option.selected = Boolean(item?.channel_ids.includes(option.value));
       form.append(field(t('alerts.column.name'), name), field(t('alerts.state.enabled'), enabled), field(t('alerts.column.metric'), metric), condition, offlineHint,
         h('div', {class: 'form-row'}, field(t('alerts.rules.durationMinutes'), minutes, {hint: t('alerts.rules.durationHint')}), field(t('alerts.rules.additionalSeconds'), seconds)),
-        field(t('alerts.column.scope'), scope), scopeField, field(t('alerts.column.severity'), severity),
+        ...scopeFields, field(t('alerts.column.severity'), severity),
         field(t('alerts.channels.title'), routing, {hint: t(channels.length ? 'alerts.rules.routingHint' : 'alerts.rules.noChannelsHint')}));
     },
     action: async () => {

@@ -143,7 +143,7 @@ func TestPayloadHistoricalReferencesAndFiringSnapshot(t *testing.T) {
 	if err := ValidatePayloadData(context.Background(), db, Events, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,resolved_at,last_notified_at,rule_name,node_name,rule_snapshot) VALUES(?,?,?,'firing',NULL,?,NULL,NULL,'deleted rule','deleted node','{}')", validationID, validationID, validationID, validationTime); err != nil {
+	if _, err := db.Exec("INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,resolved_at,last_notified_at,rule_name,node_name,rule_snapshot,silenced) VALUES(?,?,?,'firing',NULL,?,NULL,NULL,'deleted rule','deleted node','{}',0)", validationID, validationID, validationID, validationTime); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidatePayloadData(context.Background(), db, Events, nil); err == nil {
@@ -342,7 +342,7 @@ func TestPayloadObservationRuntimeValidation(t *testing.T) {
 
 func TestPayloadResolvedDeletedReferencesRemainLegal(t *testing.T) {
 	db := validationDB(t, Events)
-	if _, err := db.Exec(`INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,resolved_at,last_notified_at,rule_name,node_name,rule_snapshot) VALUES(?,'','','resolved',NULL,?,?,NULL,'','','{}')`, validationID, validationTime, validationTime); err != nil {
+	if _, err := db.Exec(`INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,resolved_at,last_notified_at,rule_name,node_name,rule_snapshot,silenced) VALUES(?,'','','resolved',NULL,?,?,NULL,'','','{}',0)`, validationID, validationTime, validationTime); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidatePayloadData(context.Background(), db, Events, nil); err != nil {

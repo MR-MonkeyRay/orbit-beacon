@@ -176,7 +176,7 @@ func (e *Evaluator) readOpen(ctx context.Context) (map[pair]openEvent, error) {
 		var o openEvent
 		var start, raw string
 		var resolved, notified *string
-		if err := rows.Scan(&o.ID, &o.RuleID, &o.NodeID, &o.RuleName, &o.NodeName, &o.State, &o.Value, &start, &resolved, &notified, &raw); err != nil {
+		if err := rows.Scan(&o.ID, &o.RuleID, &o.NodeID, &o.RuleName, &o.NodeName, &o.State, &o.Value, &start, &resolved, &notified, &o.Silenced, &raw); err != nil {
 			return nil, err
 		}
 		o.StartedAt, err = timekey.Parse(start)
@@ -416,14 +416,22 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 			if r.Metric != "offline" {
 				e.pending[key] = pending{since: since, definition: pendingDefinition(r, n, latest)}
 			}
-			if err := e.fire(ctx, r, n, value, since); err != nil {
+			if err := e.fire(ctx, r, n, value, since, now); err != nil {
 				evaluationErr = errors.Join(evaluationErr, err)
 			}
 		}
 	}
+	// 恢复先完成：静默期间已恢复的事件绝不补发触发消息。
+	releasable, err := e.releasableSilences(ctx, open, now)
+	evaluationErr = errors.Join(evaluationErr, err)
+	for _, o := range releasable {
+		if err := e.releaseSilence(ctx, o, now); err != nil {
+			evaluationErr = errors.Join(evaluationErr, err)
+		}
+	}
 	return evaluationErr
 }
-func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *float64, since time.Time) error {
+func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *float64, since, now time.Time) error {
 	id, err := uuid.UUID(rand.Reader)
 	if err != nil {
 		return err
@@ -439,14 +447,14 @@ func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *f
 	defer tx.Rollback()
 	// 在写锁之下重新验证规则版本、清单和范围。在本事务之前已提交的规则编辑/删除
 	// 或节点停用均不会触发。
-	result, err := tx.ExecContext(ctx, `INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,rule_name,node_name,rule_snapshot)
- SELECT ?,r.id,nodes.id,'firing',?,?,r.name,nodes.name,? FROM alert_rules r,nodes
+	result, err := tx.ExecContext(ctx, `INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,rule_name,node_name,rule_snapshot,silenced)
+ SELECT ?,r.id,nodes.id,'firing',?,?,r.name,nodes.name,?,EXISTS(`+activeSilenceSQL+`) FROM alert_rules r,nodes
  WHERE r.id=? AND r.updated_at=? AND r.enabled=1 AND nodes.id=? AND nodes.status!='disabled'
  AND nodes.token_hash=? AND nodes.credential_epoch=? AND (r.metric='node_expiry_days' OR (nodes.run_generation=? AND nodes.report_session_id=?)) AND nodes.first_enrolled_at=?
  AND (r.metric!='node_expiry_days' OR nodes.expires_on IS ?)
  AND (r.scope_kind='all' OR (r.scope_kind='node' AND r.scope_id=nodes.id) OR (r.scope_kind='group' AND r.scope_id=nodes.group_id))
  AND (r.metric!='offline' OR NOT `+commands.StoppedSQL+`)
- AND NOT EXISTS(SELECT 1 FROM alert_events WHERE rule_id=r.id AND node_id=nodes.id AND state='firing')`, id, value, timekey.Format(since), string(raw), r.ID, timekey.Format(r.UpdatedAt), n.id, n.identity, n.credentialEpoch, n.generation, n.session, timekey.Format(*n.enrolled), n.expiresOn)
+ AND NOT EXISTS(SELECT 1 FROM alert_events WHERE rule_id=r.id AND node_id=nodes.id AND state='firing')`, id, value, timekey.Format(since), string(raw), timekey.Format(now), timekey.Format(now), r.ID, timekey.Format(r.UpdatedAt), n.id, n.identity, n.credentialEpoch, n.generation, n.session, timekey.Format(*n.enrolled), n.expiresOn)
 	if err != nil {
 		return err
 	}
@@ -454,7 +462,13 @@ func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *f
 	if err != nil {
 		return err
 	}
+	var silenced bool
 	if count > 0 {
+		if err := tx.QueryRowContext(ctx, "SELECT silenced FROM alert_events WHERE id=?", id).Scan(&silenced); err != nil {
+			return err
+		}
+	}
+	if count > 0 && !silenced {
 		notification := Notification{EventID: id, Rule: r, NodeID: n.id, NodeName: n.name, State: "firing", Value: value, StartedAt: since}
 		if err := insertInbox(ctx, tx, notification, e.opts.Now()); err != nil {
 			return err
@@ -466,7 +480,7 @@ func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *f
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-	if count > 0 {
+	if count > 0 && !silenced {
 		e.opts.Notifier.Wake()
 	}
 	return nil
@@ -485,15 +499,13 @@ func (e *Evaluator) resolve(ctx context.Context, o openEvent, value *float64, no
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, "UPDATE alert_events SET state='resolved',resolved_at=?,value=? WHERE id=? AND state='firing'", timekey.Format(now), value, o.ID)
-	if err != nil {
+	var silenced bool
+	err = tx.QueryRowContext(ctx, "UPDATE alert_events SET state='resolved',resolved_at=?,value=? WHERE id=? AND state='firing' RETURNING silenced", timekey.Format(now), value, o.ID).Scan(&silenced)
+	changed := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if count > 0 {
+	if changed && !silenced {
 		notification := Notification{EventID: o.ID, Rule: o.rule, NodeID: o.NodeID, NodeName: o.NodeName, State: "resolved", Value: value, StartedAt: o.StartedAt, ResolvedAt: &now}
 		if err := insertInbox(ctx, tx, notification, e.opts.Now()); err != nil {
 			return err
@@ -506,7 +518,7 @@ func (e *Evaluator) resolve(ctx context.Context, o openEvent, value *float64, no
 		return err
 	}
 	delete(e.resolutions, key)
-	if count > 0 {
+	if changed && !silenced {
 		e.opts.Notifier.Wake()
 	}
 	return nil
