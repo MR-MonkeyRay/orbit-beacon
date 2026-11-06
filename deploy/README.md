@@ -28,7 +28,7 @@
 | `max_nodes` | `500` | 正整数，包含待注册、禁用节点；不是性能承诺 |
 | `trusted_proxies` | `[]` | 可信代理 IP / CIDR，见下文 |
 | `web_update_interval_seconds` | `10` | 整数 2–60 秒，网页推送合并与 HTTP 轮询周期；重启生效，不改变 Agent 采集周期 |
-| `metrics_listen` | 空字符串 | 独立 HTTP `/metrics` 监听，主监听不提供；须绑定回环或受保护网络 |
+| `metrics_listen` | 空字符串 | 独立 HTTP `/metrics`（服务自身）与 `/metrics/nodes`（节点）监听，主监听不提供；无认证，节点指标含节点名、地区、服务商、磁盘路径和网卡名，须绑定回环或受保护网络 |
 | `access_log` | `false` | 访问日志；健康检查仅记录 5xx，不记录查询字符串、Cookie、Authorization 或注册票据 |
 | `allow_insecure_webhooks` | `false` | 允许字面回环地址的 HTTP Webhook，见[通知网络](#通知网络) |
 | `notification_allow_private_networks` | `false` | 允许内网通知目标，见[通知网络](#通知网络) |

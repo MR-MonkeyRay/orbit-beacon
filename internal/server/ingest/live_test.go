@@ -187,3 +187,48 @@ func TestLiveDetailPrefersAcceptedSampleRuntimeDuringDurablePublicationGap(t *te
 		t.Fatalf("old sample paired with newly durable runtime: runtime=%+v latest=%+v", record.Runtime, latest.Runtime)
 	}
 }
+
+func TestLiveSampleUsesDetailIdentityFence(t *testing.T) {
+	f := newCoalesceFixture(t, 30*time.Second)
+	records, err := f.nodes.LiveRecords(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sample, err := f.service.ProjectLiveSample(&records[0])
+	if err != nil || sample == nil || sample.Seq != f.report.Seq {
+		t.Fatalf("sample=%+v err=%v", sample, err)
+	}
+	for _, mutation := range []string{"credential", "epoch", "generation", "session", "no-credential", "no-generation", "no-session"} {
+		t.Run(mutation, func(t *testing.T) {
+			record := records[0]
+			switch mutation {
+			case "credential":
+				record.Identity.Credential = sha256.Sum256([]byte("other"))
+			case "epoch":
+				record.Identity.CredentialEpoch++
+			case "generation":
+				record.Identity.Generation++
+			case "session":
+				record.Identity.Session = "other"
+			case "no-credential":
+				record.Identity.HasCredential = false
+			case "no-generation":
+				record.Identity.Generation = 0
+			case "no-session":
+				record.Identity.Session = ""
+			}
+			sample, err := f.service.ProjectLiveSample(&record)
+			if err != nil || sample != nil {
+				t.Fatalf("%s: sample=%+v err=%v", mutation, sample, err)
+			}
+		})
+	}
+	state := f.service.acquireExistingState(f.id)
+	state.mu.Lock()
+	state.latest = []byte("broken-json")
+	state.mu.Unlock()
+	f.service.releaseState(state)
+	if _, err := f.service.ProjectLiveSample(&records[0]); err == nil {
+		t.Fatal("invalid report did not return error")
+	}
+}

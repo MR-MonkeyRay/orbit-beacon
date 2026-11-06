@@ -115,32 +115,39 @@ func (m *httpMetrics) observe(method, route string, status int, elapsed time.Dur
 // 调用方决定是否存在 metrics 监听器。
 func (h *handler) MetricsHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/metrics" {
+		switch r.URL.Path {
+		case "/metrics":
+			h.serveMetrics(w, r)
+		case "/metrics/nodes":
+			h.serveNodeMetrics(w, r)
+		default:
 			http.NotFound(w, r)
-			return
-		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", "GET, HEAD")
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		body := h.metrics.exposition()
-		if h.saturation != nil {
-			body += h.saturation.exposition(h)
-		}
-		if h.ingest != nil {
-			body += fmt.Sprintf("# HELP orbitbeacon_history_samples_dropped_total Accepted reports omitted because the history buffer was full.\n# TYPE orbitbeacon_history_samples_dropped_total counter\norbitbeacon_history_samples_dropped_total %d\n", h.ingest.SamplesDropped())
-		}
-		if h.history != nil {
-			body += fmt.Sprintf("# HELP orbitbeacon_history_buckets_dropped_total Samples omitted because pending history buckets reached capacity.\n# TYPE orbitbeacon_history_buckets_dropped_total counter\norbitbeacon_history_buckets_dropped_total %d\n", h.history.DroppedBuckets())
-		}
-		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-		if r.Method != http.MethodHead {
-			_, _ = w.Write([]byte(body))
 		}
 	})
+}
+
+func (h *handler) serveMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	body := h.metrics.exposition()
+	if h.saturation != nil {
+		body += h.saturation.exposition(h)
+	}
+	if h.ingest != nil {
+		body += fmt.Sprintf("# HELP orbitbeacon_history_samples_dropped_total Accepted reports omitted because the history buffer was full.\n# TYPE orbitbeacon_history_samples_dropped_total counter\norbitbeacon_history_samples_dropped_total %d\n", h.ingest.SamplesDropped())
+	}
+	if h.history != nil {
+		body += fmt.Sprintf("# HELP orbitbeacon_history_buckets_dropped_total Samples omitted because pending history buckets reached capacity.\n# TYPE orbitbeacon_history_buckets_dropped_total counter\norbitbeacon_history_buckets_dropped_total %d\n", h.history.DroppedBuckets())
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	if r.Method != http.MethodHead {
+		_, _ = w.Write([]byte(body))
+	}
 }
 
 func prometheusLabel(value string) string {

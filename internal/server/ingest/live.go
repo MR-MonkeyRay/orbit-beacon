@@ -37,21 +37,10 @@ func (s *Service) ProjectLiveDetail(record *nodes.LiveDetailRecord, now time.Tim
 		record.Node.Presence = nodes.Presence(record.Node.Status, identity.HasCredential, record.Node.LastSeen, now)
 		return nil, nil
 	}
-	state := s.acquireExistingState(record.Node.ID)
-	if state == nil {
+	body, received, ok := s.liveSampleSnapshot(record.Node.ID, identity)
+	if !ok {
 		return nil, nil
 	}
-	defer s.releaseState(state)
-	state.mu.Lock()
-	if !state.matchesIdentity(identity.Credential[:], identity.CredentialEpoch, identity.Generation, identity.Session) {
-		state.mu.Unlock()
-		return nil, nil
-	}
-	// 已发布的报告缓冲区不可变，因此解码这一条 detail 时持有引用即可，
-	// 即使有新报告到达。
-	body := state.latest
-	received := state.receivedAt
-	state.mu.Unlock()
 	if record.Node.LastSeen == nil || received.After(*record.Node.LastSeen) {
 		record.Node.LastSeen = &received
 	}
@@ -62,4 +51,36 @@ func (s *Service) ProjectLiveDetail(record *nodes.LiveDetailRecord, now time.Tim
 	}
 	record.Runtime = &report.Runtime
 	return &LatestReport{Report: report, ReceivedAt: received}, nil
+}
+
+// ProjectLiveSample 使用清单已读取的身份围栏，不执行 SQL。
+func (s *Service) ProjectLiveSample(record *nodes.LiveRecord) (*LatestReport, error) {
+	body, received, ok := s.liveSampleSnapshot(record.ID, &record.Identity)
+	if !ok {
+		return nil, nil
+	}
+	var report v1.Report
+	if err := json.Unmarshal(body, &report); err != nil {
+		return nil, err
+	}
+	return &LatestReport{Report: report, ReceivedAt: received}, nil
+}
+
+// liveSampleSnapshot 与详情投影共用完整身份检查。已发布报告缓冲区不可变，
+// 因此释放状态锁后可以安全解码，且不会读取替换身份的旧样本。
+func (s *Service) liveSampleSnapshot(id string, identity *nodes.LiveIdentity) ([]byte, time.Time, bool) {
+	if !identity.HasCredential || identity.Generation == 0 || identity.Session == "" {
+		return nil, time.Time{}, false
+	}
+	state := s.acquireExistingState(id)
+	if state == nil {
+		return nil, time.Time{}, false
+	}
+	defer s.releaseState(state)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if !state.matchesIdentity(identity.Credential[:], identity.CredentialEpoch, identity.Generation, identity.Session) {
+		return nil, time.Time{}, false
+	}
+	return state.latest, state.receivedAt, true
 }

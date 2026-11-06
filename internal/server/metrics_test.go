@@ -40,12 +40,20 @@ func TestMetricsExpositionAndHTTPIsolation(t *testing.T) {
 	if mainResponse.Code != http.StatusNotFound {
 		t.Fatalf("metrics on main listener: %d", mainResponse.Code)
 	}
+	mainNodesResponse := httptest.NewRecorder()
+	h.ServeHTTP(mainNodesResponse, httptest.NewRequest(http.MethodGet, "/metrics/nodes", nil))
+	if mainNodesResponse.Code != http.StatusNotFound {
+		t.Fatalf("node metrics on main listener: %d", mainNodesResponse.Code)
+	}
 	response := httptest.NewRecorder()
 	h.MetricsHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "text/plain; version=0.0.4; charset=utf-8" {
 		t.Fatalf("metrics status/format: %d %v", response.Code, response.Header())
 	}
 	body := response.Body.String()
+	if strings.Contains(body, "orbitbeacon_node_") {
+		t.Fatal("node metrics appeared in service metrics")
+	}
 	for _, line := range []string{
 		`orbitbeacon_http_requests_total{method="GET",route="/api/v1/nodes/{id}",status_class="4xx"} 1`,
 		`orbitbeacon_http_requests_total{method="OTHER",route="unmatched",status_class="4xx"} 1`,
