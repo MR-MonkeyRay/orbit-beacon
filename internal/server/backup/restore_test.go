@@ -330,11 +330,11 @@ func TestRestorePreservesAdministratorLoginsAndIndividualInboxReads(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstSession, err := accounts.Login(ctx, "admin-one", "restore-fixture-password")
+	firstSession, err := accounts.Login(ctx, "admin-one", "restore-fixture-password", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondSession, err := accounts.Login(ctx, second.Username, "second administrator password")
+	secondSession, err := accounts.Login(ctx, second.Username, "second administrator password", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +367,7 @@ func TestRestorePreservesAdministratorLoginsAndIndividualInboxReads(t *testing.T
 		{"admin-one", "restore-fixture-password", restoreUser, task, alert},
 		{second.Username, "second administrator password", second.ID, alert, task},
 	} {
-		session, err := restoredAccounts.Login(ctx, account.username, account.password)
+		session, err := restoredAccounts.Login(ctx, account.username, account.password, "")
 		if err != nil || session.User.ID != account.id {
 			t.Fatalf("restored administrator %s login=%+v err=%v", account.username, session.User, err)
 		}
@@ -402,7 +402,7 @@ func TestRestorePreservesPasswordChangeRestrictionsWithoutSessions(t *testing.T)
 	}
 	accounts := auth.NewService(db, auth.Options{})
 	for _, username := range []string{"normal-admin", "restricted-admin"} {
-		if _, err = accounts.Login(ctx, username, "restore-fixture-password"); err != nil {
+		if _, err = accounts.Login(ctx, username, "restore-fixture-password", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -435,7 +435,7 @@ func TestRestorePreservesPasswordChangeRestrictionsWithoutSessions(t *testing.T)
 	defer writable.Close()
 	restoredAccounts := auth.NewService(writable, auth.Options{})
 	for username, wantRestricted := range map[string]bool{"normal-admin": false, "restricted-admin": true} {
-		session, err := restoredAccounts.Login(ctx, username, "restore-fixture-password")
+		session, err := restoredAccounts.Login(ctx, username, "restore-fixture-password", "")
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -31,7 +31,7 @@ func TestPasswordQueueRejectsOverflowAndCancelsWaiters(t *testing.T) {
 		peers, names := maps.Clone(s.loginPeers), maps.Clone(s.loginNames)
 		peerOverflow, nameOverflow := s.loginPeerOverflow, s.loginNameOverflow
 		started := time.Now()
-		if _, err := s.Login(context.Background(), "admin", "a valid length password"); !errors.Is(err, ErrRateLimited) {
+		if _, err := s.Login(context.Background(), "admin", "a valid length password", ""); !errors.Is(err, ErrRateLimited) {
 			t.Fatalf("overflow login admission=%v", err)
 		}
 		if time.Since(started) != 0 {

@@ -346,11 +346,189 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Error'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/account/totp:
+    get:
+      operationId: getTOTPStatus
+      description: 返回当前管理员的两步验证状态与剩余恢复码数量。
+      responses:
+        '200':
+          description: 已完成。
+          headers:
+            Cache-Control:
+              schema: {type: string, const: no-store}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TOTPStatus'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/account/totp/setup:
+    post:
+      operationId: setupTOTP
+      description: 校验当前密码，生成 20 字节密钥并暂存 10 分钟。已启用返回 409 totp_already_enabled。返回的 Base32 密钥、otpauth URI 和 QR 模块仅用于当前设置流程；响应禁止缓存。
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [password]
+              properties:
+                password: {type: string, x-maxLengthBytes: 1024}
+      responses:
+        '200':
+          description: 已完成。
+          headers:
+            Cache-Control:
+              schema: {type: string, const: no-store}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TOTPSetup'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/account/totp/confirm:
+    post:
+      operationId: confirmTOTP
+      description: 校验待确认密钥的六位验证码与独立失败预算；待确认状态缺失或超过 10 分钟返回 totp_setup_expired。在同一事务启用密钥、记录已使用步长、替换十个恢复码、删除其他会话并审计 user.totp.enable。恢复码只在此响应返回一次。
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code: {type: string, x-maxLengthBytes: 64}
+      responses:
+        '200':
+          description: 已完成。
+          headers:
+            Cache-Control:
+              schema: {type: string, const: no-store}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecoveryCodes'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/account/totp/disable:
+    post:
+      operationId: disableTOTP
+      description: 要求当前密码与未使用的 TOTP 或恢复码。在同一事务消费第二因素、清除密钥与恢复码、删除其他会话并审计 user.totp.disable；保留当前会话。
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [password, otp]
+              properties:
+                password: {type: string, x-maxLengthBytes: 1024}
+                otp: {type: string, x-maxLengthBytes: 64}
+      responses:
+        '204':
+          description: 已完成。
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/account/totp/recovery-codes:
+    post:
+      operationId: regenerateRecoveryCodes
+      description: 要求当前密码与未使用的 TOTP 或恢复码。在同一事务消费第二因素、替换全部恢复码并审计 user.totp.recovery_codes。旧恢复码立即失效；十个新恢复码只在此响应返回一次。
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [password, otp]
+              properties:
+                password: {type: string, x-maxLengthBytes: 1024}
+                otp: {type: string, x-maxLengthBytes: 64}
+      responses:
+        '200':
+          description: 已完成。
+          headers:
+            Cache-Control:
+              schema: {type: string, const: no-store}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecoveryCodes'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/users/{id}/totp/reset:
+    post:
+      operationId: resetUserTOTP
+      description: 要求操作者本人的当前密码；目标为本人返回 400。事务内清空目标全部 TOTP 状态、恢复码与会话，审计 user.totp.reset。所有写操作要求 Origin 与 CSRF。
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [password]
+              properties:
+                password: {type: string, x-maxLengthBytes: 1024}
+      responses:
+        '204':
+          description: 已完成。
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/session:
     post:
       operationId: login
       security: []
       description: |
+        密码通过后，已启用两步验证的账户须提交 otp；缺失返回 401 totp_required，错误返回 401 totp_invalid。
+        otp 接受 TOTP 或一次性恢复码；未启用时忽略。TOTP 失败桶独立于登录成功记录，每 300 秒补一个，突发为 10。
         要求配置的公开 Origin。在数据库查询与 Argon2 之前，
         直连对端与对端/用户名的令牌预算限制计算量；两项预算均允许尝试时才各自扣除令牌。
         IPv4 对端以地址为键，IPv6 对端以 /64 前缀为键。端口与转发头不改变身份。
@@ -376,6 +554,7 @@ paths:
               properties:
                 username: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 128}
                 password: {type: string, x-minLengthBytes: 8, x-maxLengthBytes: 1024}
+                otp: {type: string, x-maxLengthBytes: 64}
       responses:
         '200':
           description: 会话已建立；Set-Cookie 为 orbitbeacon_session，无 Domain（仅主机）、HttpOnly、SameSite=Lax、Path=/，有效期 12 小时。仅当配置的规范公开 Origin 使用 HTTPS 时才设置 Secure，与上游请求或转发头无关。
@@ -2849,7 +3028,7 @@ components:
         code:
           type: string
           description: 机器可读的失败码；validation_failed 可包含逐字段信息。客户端须容忍新的错误码。
-          examples: [unauthenticated, forbidden, password_change_required, public_page_disabled, invalid_old_password, password_unchanged, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, username_conflict, invalid_json, invalid_input, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, backup_queue_full, backup_plan_busy, backup_plan_not_found, task_not_found, artifact_not_ready, artifact_expired, artifact_missing, password_unavailable, password_expired, secret_unreadable, storage_busy, not_available, internal_error]
+          examples: [totp_required, totp_invalid, totp_already_enabled, totp_setup_expired, unauthenticated, forbidden, password_change_required, public_page_disabled, invalid_old_password, password_unchanged, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, username_conflict, invalid_json, invalid_input, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, backup_queue_full, backup_plan_busy, backup_plan_not_found, task_not_found, artifact_not_ready, artifact_expired, artifact_missing, password_unavailable, password_expired, secret_unreadable, storage_busy, not_available, internal_error]
         message: {type: string, minLength: 1}
         request_id: {type: string, format: uuid, description: 将响应与内部服务失败的安全服务端诊断元数据关联。}
         fields:
@@ -2866,14 +3045,46 @@ components:
           description: 与会话绑定的 CSRF 证明，不是会话认证凭据。
         expires_at: {type: string, format: date-time}
         user: {$ref: '#/components/schemas/User'}
+    TOTPStatus:
+      type: object
+      additionalProperties: false
+      required: [enabled, recovery_codes_remaining]
+      properties:
+        enabled: {type: boolean}
+        recovery_codes_remaining: {type: integer, minimum: 0, maximum: 10}
+    TOTPSetup:
+      type: object
+      additionalProperties: false
+      required: [secret, uri, qr]
+      properties:
+        secret: {type: string, pattern: '^[A-Z2-7]{32}$'}
+        uri: {type: string, format: uri}
+        qr:
+          type: object
+          additionalProperties: false
+          required: [size, modules]
+          properties:
+            size: {type: integer, minimum: 21}
+            modules: {type: string, pattern: '^[01]+$', description: 长度为 size 的平方，按行排列，不含静区。}
+    RecoveryCodes:
+      type: object
+      additionalProperties: false
+      required: [recovery_codes]
+      properties:
+        recovery_codes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          items: {type: string, pattern: '^[a-z2-7]{5}(-[a-z2-7]{5}){3}$'}
     User:
       type: object
       additionalProperties: false
-      required: [id, username, created_at, must_change_password]
+      required: [id, username, created_at, must_change_password, totp_enabled]
       properties:
         id: {type: string, format: uuid}
         username: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 128}
         created_at: {type: string, format: date-time, description: UTC RFC3339。}
+        totp_enabled: {type: boolean}
         must_change_password: {type: boolean, description: 始终存在。为 true 时限制管理访问，直至成功改密并重新登录。}
     Group:
       type: object

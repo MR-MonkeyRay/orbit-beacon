@@ -1,4 +1,8 @@
 export default {
+  "audit.totpEnable": "Two-step verification enabled",
+  "audit.totpDisable": "Two-step verification disabled",
+  "audit.totpReset": "Two-step verification reset",
+  "audit.totpRecoveryCodes": "Recovery codes regenerated",
   'audit.announcementCreate': 'Announcement created',
   'audit.announcementUpdate': 'Announcement updated',
   'audit.announcementDelete': 'Announcement deleted',

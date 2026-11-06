@@ -1,4 +1,8 @@
 export default {
+  "audit.totpEnable": "启用两步验证",
+  "audit.totpDisable": "停用两步验证",
+  "audit.totpReset": "重置两步验证",
+  "audit.totpRecoveryCodes": "重新生成恢复码",
   'audit.announcementCreate': '已创建公告',
   'audit.announcementUpdate': '已更新公告',
   'audit.announcementDelete': '已删除公告',

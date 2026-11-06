@@ -95,10 +95,6 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 		return nil, err
 	}
 	a.db = db
-	authService := auth.NewService(db, auth.Options{})
-	if err := authService.InitializeAdministrator(ctx, os.LookupEnv); err != nil {
-		return nil, err
-	}
 	publicReader, err := storage.OpenReader(ctx, databasePath)
 	if err != nil {
 		return nil, err
@@ -124,6 +120,16 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 	ingestService := ingest.NewService(db, ingestOptions)
 	key, err := datadir.LoadKey(filepath.Join(cfg.DataDir, "secrets.key"))
 	if err != nil {
+		return nil, err
+	}
+	accountBox, err := secretbox.New(key, "orbitbeacon account secrets v1")
+	if err != nil {
+		clear(key)
+		return nil, err
+	}
+	authService := auth.NewService(db, auth.Options{SecretBox: accountBox})
+	if err := authService.InitializeAdministrator(ctx, os.LookupEnv); err != nil {
+		clear(key)
 		return nil, err
 	}
 	box, err := secretbox.New(key, "orbitbeacon notification channel v1")

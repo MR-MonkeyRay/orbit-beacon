@@ -35,11 +35,11 @@ func TestInitialAdministratorRequiresPasswordChange(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT must_change_password FROM users WHERE id=?", user.ID).Scan(&required); err != nil || required != 1 {
 		t.Fatalf("stored bootstrap requirement=%d err=%v", required, err)
 	}
-	first, err := service.Login(ctx, user.Username, initialPassword)
+	first, err := service.Login(ctx, user.Username, initialPassword, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := service.Login(ctx, user.Username, initialPassword)
+	second, err := service.Login(ctx, user.Username, initialPassword, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,10 +74,10 @@ func TestInitialAdministratorRequiresPasswordChange(t *testing.T) {
 			t.Fatalf("initial password change did not revoke every old session: %v", err)
 		}
 	}
-	if _, err := service.Login(ctx, user.Username, initialPassword); !errors.Is(err, auth.ErrUnauthenticated) {
+	if _, err := service.Login(ctx, user.Username, initialPassword, ""); !errors.Is(err, auth.ErrUnauthenticated) {
 		t.Fatalf("initial password still accepted: %v", err)
 	}
-	fresh, err := service.Login(ctx, user.Username, "changed initial password")
+	fresh, err := service.Login(ctx, user.Username, "changed initial password", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestInitialPasswordChangeRollsBackRequirementWhenAuditFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := service.Login(ctx, user.Username, initialPassword)
+	session, err := service.Login(ctx, user.Username, initialPassword, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestCreatedUserPasswordRequirementSurvivesReadAndRename(t *testing.T) {
 			if err != nil || got.MustChangePassword != required || got.Username != name {
 				t.Fatalf("renamed user=%+v err=%v", got, err)
 			}
-			session, err := service.Login(ctx, name, initialPassword)
+			session, err := service.Login(ctx, name, initialPassword, "")
 			if err != nil || session.User.MustChangePassword != required {
 				t.Fatalf("login user=%+v err=%v", session.User, err)
 			}

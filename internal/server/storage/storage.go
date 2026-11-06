@@ -242,7 +242,14 @@ const foundationSchema = `
 CREATE TABLE users (
  id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
  must_change_password INTEGER NOT NULL DEFAULT 0 CHECK(must_change_password IN (0,1)),
+ totp_ciphertext BLOB, totp_pending_ciphertext BLOB, totp_pending_at TEXT,
+ totp_last_step INTEGER NOT NULL DEFAULT 0,
  created_at TEXT NOT NULL
+);
+CREATE TABLE recovery_codes (
+ user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ code_hash BLOB NOT NULL,
+ PRIMARY KEY(user_id, code_hash)
 );
 CREATE TABLE sessions (
  token_hash BLOB PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

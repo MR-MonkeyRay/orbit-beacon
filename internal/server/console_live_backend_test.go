@@ -54,7 +54,7 @@ func newConsoleLiveFixture(t *testing.T) *consoleLiveFixture {
 	if _, err := a.CreateUser(context.Background(), "admin", "private-live-password", false); err != nil {
 		t.Fatal(err)
 	}
-	session, err := a.Login(context.Background(), "admin", "private-live-password")
+	session, err := a.Login(context.Background(), "admin", "private-live-password", "")
 	if err != nil {
 		t.Fatal(err)
 	}

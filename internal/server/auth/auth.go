@@ -21,6 +21,7 @@ import (
 
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/management"
+	"orbitbeacon/internal/server/secretbox"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
 )
@@ -30,6 +31,11 @@ type serviceError string
 func (err serviceError) Error() string { return string(err) }
 
 const (
+	ErrTOTPRequired           serviceError = "second factor required"
+	ErrTOTPInvalid            serviceError = "invalid second factor"
+	ErrTOTPAlreadyEnabled     serviceError = "two-step verification already enabled"
+	ErrTOTPSetupExpired       serviceError = "two-step verification setup expired"
+	ErrTOTPUnavailable        serviceError = "account secrets unavailable"
 	ErrAdminExists            serviceError = "administrator already exists"
 	ErrUnauthenticated        serviceError = "authentication required"
 	ErrWrongPassword          serviceError = "current password is incorrect"
@@ -56,6 +62,7 @@ type User struct {
 	Username           string    `json:"username"`
 	MustChangePassword bool      `json:"must_change_password"`
 	CreatedAt          time.Time `json:"created_at"`
+	TOTPEnabled        bool      `json:"totp_enabled"`
 }
 
 type Session struct {
@@ -66,14 +73,16 @@ type Session struct {
 }
 
 type Options struct {
-	Now    func() time.Time
-	Random io.Reader
+	Now       func() time.Time
+	Random    io.Reader
+	SecretBox *secretbox.Box
 }
 
 type Service struct {
 	db     *sql.DB
 	now    func() time.Time
 	random io.Reader
+	box    *secretbox.Box
 	// 每个服务同时只进行一次昂贵的密码计算，也保护注入的随机源，
 	// 因此随机源不必支持并发读取。
 	gate                   chan struct{}
@@ -88,6 +97,8 @@ type Service struct {
 	loginNameOverflow      loginBucket
 	loginFailureOverflow   loginBucket
 	passwordChangeOverflow loginBucket
+	totpFailures           map[string]loginBucket
+	totpFailureOverflow    loginBucket
 }
 
 func NewService(db *sql.DB, opts Options) *Service {
@@ -99,7 +110,8 @@ func NewService(db *sql.DB, opts Options) *Service {
 	}
 	now := opts.Now()
 	return &Service{
-		db: db, now: opts.Now, random: opts.Random,
+		db: db, now: opts.Now, random: opts.Random, box: opts.SecretBox,
+		totpFailures: make(map[string]loginBucket), totpFailureOverflow: loginBucket{tokens: 10, at: now},
 		gate: make(chan struct{}, 1), waiters: make(chan struct{}, 8),
 		loginPeers:             make(map[netip.Addr]loginBucket),
 		loginNames:             make(map[loginIdentityKey]loginBucket),
@@ -312,8 +324,8 @@ func (s *Service) insertUser(ctx context.Context, tx *sql.Tx, user User, hash st
 	return err
 }
 
-func (s *Service) Login(ctx context.Context, username, password string) (Session, error) {
-	if !validUsername(username) || len(password) < 8 || len(password) > 1024 {
+func (s *Service) Login(ctx context.Context, username, password, otp string) (Session, error) {
+	if !validUsername(username) || len(password) < 8 || len(password) > 1024 || len(otp) > 64 {
 		return Session{}, ErrUnauthenticated
 	}
 	if err := ctx.Err(); err != nil {
@@ -348,6 +360,18 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 		s.recordLoginFailure(username)
 		return Session{}, ErrUnauthenticated
 	}
+	state, err := s.readTOTP(ctx, user.ID)
+	if err != nil {
+		return Session{}, err
+	}
+	user.TOTPEnabled = state.cipher != nil
+	factor, err := s.verifySecondFactor(user.ID, state, otp)
+	if err != nil {
+		if errors.Is(err, ErrTOTPInvalid) {
+			s.recordLoginFailure(username)
+		}
+		return Session{}, err
+	}
 	user.CreatedAt, err = timekey.Parse(created)
 	if err != nil {
 		return Session{}, err
@@ -371,6 +395,13 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 		return Session{}, err
 	}
 	defer tx.Rollback()
+	if err := s.consumeSecondFactor(ctx, tx, user.ID, state, factor); err != nil {
+		if errors.Is(err, ErrTOTPInvalid) {
+			s.secondFactorFailure(user.ID, factor.kind)
+			s.recordLoginFailure(username)
+		}
+		return Session{}, err
+	}
 	if newHash != hash {
 		result, err := tx.ExecContext(ctx, "UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?", newHash, user.ID, hash)
 		if err != nil {
@@ -385,7 +416,7 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 		}
 	}
 	// 若其他服务已提交密码修改或用户删除，不能再用先前验证的旧凭据创建会话。
-	result, err := tx.ExecContext(ctx, "INSERT INTO sessions(token_hash, user_id, expires_at) SELECT ?, id, ? FROM users WHERE id = ? AND password_hash = ?", digest[:], session.ExpiresAt.UnixNano(), user.ID, newHash)
+	result, err := tx.ExecContext(ctx, "INSERT INTO sessions(token_hash, user_id, expires_at) SELECT ?, id, ? FROM users WHERE id = ? AND password_hash = ? AND totp_ciphertext IS ?", digest[:], session.ExpiresAt.UnixNano(), user.ID, newHash, state.cipher)
 	if err != nil {
 		return Session{}, err
 	}
@@ -397,6 +428,9 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 		return Session{}, ErrUnauthenticated
 	}
 	details := audit.Details{}
+	if factor.kind != "" {
+		details["second_factor"] = factor.kind
+	}
 	if peer, _ := ctx.Value(loginPeerKey{}).(netip.Addr); peer.IsValid() {
 		details["peer"] = peer.String()
 	}
@@ -451,8 +485,8 @@ func (s *Service) lookupSession(ctx context.Context, token string) (User, int64,
 	var user User
 	var created string
 	var expiry int64
-	err := s.db.QueryRowContext(ctx, `SELECT u.id, u.username, u.created_at, u.must_change_password, s.expires_at
- FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`, digest[:]).Scan(&user.ID, &user.Username, &created, &user.MustChangePassword, &expiry)
+	err := s.db.QueryRowContext(ctx, `SELECT u.id, u.username, u.created_at, u.must_change_password, u.totp_ciphertext IS NOT NULL, s.expires_at
+ FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`, digest[:]).Scan(&user.ID, &user.Username, &created, &user.MustChangePassword, &user.TOTPEnabled, &expiry)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, 0, ErrUnauthenticated
 	}

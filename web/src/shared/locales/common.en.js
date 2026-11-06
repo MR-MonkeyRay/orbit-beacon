@@ -1,4 +1,8 @@
 export default {
+  "errors.totp_required": "Verification code required.",
+  "errors.totp_invalid": "Invalid verification or recovery code.",
+  "errors.totp_already_enabled": "Two-step verification already enabled.",
+  "errors.totp_setup_expired": "Setup expired.",
   'common.status.stopped': 'Stopped',
 
   'common.refresh': 'Refresh',

@@ -453,8 +453,8 @@ func TestAdministratorHTTPContract(t *testing.T) {
 	id := objectID(t, object)
 	assertUser := func(object map[string]any) {
 		t.Helper()
-		if len(object) != 4 || object["id"] == nil || object["username"] == nil || object["created_at"] == nil {
-			t.Errorf("user DTO must contain id, username, created_at and must_change_password: %+v", object)
+		if len(object) != 5 || object["id"] == nil || object["username"] == nil || object["created_at"] == nil || object["totp_enabled"] == nil {
+			t.Errorf("user DTO must contain id, username, created_at, must_change_password and totp_enabled: %+v", object)
 		}
 		if _, ok := object["must_change_password"].(bool); !ok {
 			t.Errorf("user DTO must contain a boolean password-change requirement: %+v", object)

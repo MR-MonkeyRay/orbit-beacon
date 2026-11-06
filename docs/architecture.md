@@ -123,3 +123,5 @@ go run ./cmd/orbitbeacon-load -url http://127.0.0.1:8080 -tickets-file /path/to/
 `-jitter` 决定节点的同步程度：接近间隔一半时近似均匀分布，较小时模拟同时上报。配置 `metrics_listen` 后，可从 `/metrics` 读取连接池、写队列、flush 和 WAL 指标。
 
 节点可用性由 `availability` 后台任务每 60 秒以单条原子 SQL 累计到主库 `node_availability_daily`（UTC 日），增量最多 90 秒，首次 tick 和时钟回拨只重设内存基线，启动 180 秒内只记在线。停机及未观测时长为未知，不进入百分比分母；保留任务分批保留最近 90 个 UTC 日。匿名页在现有缓存未命中路径用一次批量查询返回最近 30 天；公开 SSE/WebSocket 复用该完整页，控制台通过管理员可用性路由读取 30 或 90 天，前端共用时间条渲染器。
+
+管理员丢失验证器和恢复码时，停服后运行 `orbitbeacon-server reset-totp --data-dir <dir> --username <name>`，数据目录锁阻止并发修改；重置撤销该用户全部会话并记录系统审计。

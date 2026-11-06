@@ -8,6 +8,7 @@ import {busy, button, emptyState, facts, iconButton, link, pageHead, panel, skel
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, onSubmit, passwordInput, validateBytes} from '../ui/forms.js';
+import {totpPanel, totpCredentials} from '../ui/totp.js';
 import {passwordChangeForm} from '../ui/password-form.js';
 import {nextCursor} from '../ui/pager.js';
 import {tabSet} from '../ui/tabs.js';
@@ -165,7 +166,7 @@ function accountTab() {
       [t('account.username'), user.username],
       [t('account.accountCreated'), when(user.created_at)], [t('account.sessionExpires'), session.expires ? when(session.expires) : null]
     ])),
-    panel(t('account.changePassword'), {}, h('p', {class: 'lede'}, t('account.passwordSignOutHint')), form));
+    panel(t('account.changePassword'), {}, h('p', {class: 'lede'}, t('account.passwordSignOutHint')), form), totpPanel());
 }
 
 function administratorsTab(users) {
@@ -253,7 +254,13 @@ function administratorsTab(users) {
         h('div', {class: 'administrator-name'}, h('span', {class: 'administrator-username', title: item.username}, item.username),
           self(item) ? h('span', {class: 'muted administrator-self'}, t('settings.you')) : null))),
       h('td', {class: 'muted hide-compact'}, when(item.created_at)),
-      h('td', {class: 'actions'}, iconButton('edit', t('settings.renameAdministratorLabel', {name: item.username}), () => editUser(item)), remove));
+ h('td', null, t(item.totp_enabled ? 'account.totpEnabled' : 'account.totpDisabled')),
+      h('td', {class: 'actions'}, !self(item) && item.totp_enabled ? button(t('account.totpReset'), {small: true, onClick: () => totpCredentials({
+ title: t('account.totpReset'), secondFactor: false, action: async (body) => {
+ await api(`/users/${encodeURIComponent(item.id)}/totp/reset`, {method: 'POST', body});
+ invalidate('users'); await refresh();
+ }
+ })}) : null, iconButton('edit', t('settings.renameAdministratorLabel', {name: item.username}), () => editUser(item)), remove));
   });
 
   return h('section', {class: 'panel', 'aria-labelledby': 'administrators-title'},
@@ -261,8 +268,8 @@ function administratorsTab(users) {
     h('div', {class: 'panel-body flush'}, h('p', {class: 'lede'}, t('settings.fullAccess'))),
     h('div', {class: 'table-wrap'}, h('table', {class: 'table administrators-table'},
       h('thead', null, h('tr', null, h('th', {scope: 'col'}, t('account.username')), h('th', {scope: 'col', class: 'hide-compact'}, t('settings.created')),
-        h('th', {scope: 'col'}, h('span', {class: 'sr'}, t('settings.actions'))))),
-      h('tbody', null, users.length ? rows : h('tr', null, h('td', {colspan: 3}, t('settings.noAdministrators')))))),
+        h('th', {scope: 'col'}, t('account.totp')), h('th', {scope: 'col'}, h('span', {class: 'sr'}, t('settings.actions'))))),
+      h('tbody', null, users.length ? rows : h('tr', null, h('td', {colspan: 4}, t('settings.noAdministrators')))))),
     lastAdministrator ? h('p', {class: 'administrator-protection muted'}, t('settings.lastAdministrator')) : null);
 }
 

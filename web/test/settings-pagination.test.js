@@ -68,7 +68,8 @@ test('settings loads each tab data only when first shown', async () => {
   invalidate('nodes', 'groups', 'users');
   globalThis.fetch = async (path) => {
     calls.push(path);
-    const body = path === '/api/v1/users' ? {users: []}
+    const body = path === '/api/v1/account/totp' ? {enabled: false, recovery_codes_remaining: 0}
+      : path === '/api/v1/users' ? {users: []}
       : path === '/api/v1/groups' ? {groups: []}
         : path.startsWith('/api/v1/nodes?') ? {nodes: [], has_more: false}
           : path.startsWith('/api/v1/audit?') ? {events: [], has_more: false}
@@ -82,14 +83,16 @@ test('settings loads each tab data only when first shown', async () => {
     const {settingsPage} = await import('../src/console/pages/settings.js');
     const page = await settingsPage();
     dom.body.append(page); dom.mutations(); await flush();
-    assert.deepEqual(calls, []);
+    assert.deepEqual(calls, ['/api/v1/account/totp']);
+    calls.length = 0;
 
     const tabs = elements(page).filter((element) => element.getAttribute('role') === 'tab');
     tabs.find((element) => element.id === 'tab-administrators').click(); dom.mutations(); await flush();
     assert.deepEqual(calls, ['/api/v1/users']);
     tabs.find((element) => element.id === 'tab-account').click(); dom.mutations(); await flush();
     tabs.find((element) => element.id === 'tab-administrators').click(); dom.mutations(); await flush();
-    assert.deepEqual(calls, ['/api/v1/users']);
+    assert.deepEqual(calls, ['/api/v1/users', '/api/v1/account/totp']);
+    calls.pop();
 
     tabs.find((element) => element.id === 'tab-groups').click(); dom.mutations(); await flush();
     assert.deepEqual(calls.slice(1).sort(), ['/api/v1/groups', '/api/v1/nodes?limit=100&offset=0']);

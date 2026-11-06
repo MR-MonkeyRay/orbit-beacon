@@ -78,7 +78,7 @@ func TestRestoreCommandCreatesUsableLoginAndRequiresReplace(t *testing.T) {
 		db.Close()
 		t.Fatal("restored initialized administrator is not required to change password")
 	}
-	if _, err = auth.NewService(db, auth.Options{}).Login(context.Background(), "archive-admin", "restore-consumer-password"); err != nil {
+	if _, err = auth.NewService(db, auth.Options{}).Login(context.Background(), "archive-admin", "restore-consumer-password", ""); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}

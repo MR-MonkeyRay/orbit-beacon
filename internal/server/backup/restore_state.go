@@ -176,6 +176,14 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 				query += " WHERE " + spec.Where
 			}
 			var transform restoreRowTransform
+			if spec.Name == "users" && selected[Configuration] {
+				// 待确认密钥属于临时流程，恢复后必须重新开始。
+				transform = func(names []string, values []any) error {
+					values[rowIndex(names, "totp_pending_ciphertext")] = nil
+					values[rowIndex(names, "totp_pending_at")] = nil
+					return nil
+				}
+			}
 			if spec.Name == "nodes" {
 				transform = func(names []string, values []any) error {
 					status := rowIndex(names, "status")
@@ -385,7 +393,7 @@ func validateRestoreDependencies(ctx context.Context, tx *sql.Tx) error {
 				// 仅用一个受限 UUID 标识失败行，不暴露值、SQL 错误、
 				// 归档字符串或任意表名。
 				column := "id"
-				if name == "inbox_reads" {
+				if name == "inbox_reads" || name == "recovery_codes" {
 					column = "user_id"
 				} else if name == "node_tags" {
 					column = "node_id"

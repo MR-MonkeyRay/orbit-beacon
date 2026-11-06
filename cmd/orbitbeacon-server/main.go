@@ -9,14 +9,20 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"orbitbeacon/internal/buildinfo"
 	"orbitbeacon/internal/bundle"
 	"orbitbeacon/internal/config"
 	"orbitbeacon/internal/server/app"
+	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/backup"
+	"orbitbeacon/internal/server/datadir"
+	"orbitbeacon/internal/server/storage"
 )
 
 func main() {
@@ -34,14 +40,16 @@ func run(args []string) error {
 
 func runWithLogger(args []string, logger *slog.Logger) error {
 	if len(args) == 0 {
-		return errors.New("缺少子命令：应为 serve、restore、version、health 或 verify-bundle")
+		return errors.New("缺少子命令：应为 serve、restore、reset-totp、version、health 或 verify-bundle")
 	}
 	switch args[0] {
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "用法: orbitbeacon-server {serve|restore|version|health|verify-bundle} --help")
+		fmt.Fprintln(os.Stdout, "用法: orbitbeacon-server {serve|restore|reset-totp|version|health|verify-bundle} --help")
 		return nil
 	case "serve":
 		return runServe(args[1:], logger)
+	case "reset-totp":
+		return runResetTOTP(args[1:])
 	case "restore":
 		return runRestore(args[1:])
 	case "version":
@@ -51,7 +59,7 @@ func runWithLogger(args []string, logger *slog.Logger) error {
 	case "verify-bundle":
 		return runVerifyBundle(args[1:])
 	default:
-		return fmt.Errorf("未知子命令 %q；应为 serve、restore、version、health 或 verify-bundle", args[0])
+		return fmt.Errorf("未知子命令 %q；应为 serve、restore、reset-totp、version、health 或 verify-bundle", args[0])
 	}
 }
 
@@ -169,5 +177,40 @@ func runRestore(args []string) error {
 	}
 	fmt.Fprintln(os.Stdout, "已恢复归档", result.ArchiveID)
 	fmt.Fprintln(os.Stdout, "回滚文件:", result.RollbackPath)
+	return nil
+}
+
+func runResetTOTP(args []string) error {
+	fs := flag.NewFlagSet("reset-totp", flag.ContinueOnError)
+	dataDir := fs.String("data-dir", "", "本地持久化数据目录")
+	username := fs.String("username", "", "管理员用户名")
+	if ok, err := parseCommand(fs, args); !ok {
+		return err
+	}
+	if *dataDir == "" || *username == "" {
+		return errors.New("reset-totp 需要 --data-dir 和 --username")
+	}
+	lock, err := datadir.Lock(*dataDir)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err = backup.RecoverRestore(*dataDir); err != nil {
+		return err
+	}
+	databasePath := filepath.Join(*dataDir, "orbitbeacon.db")
+	if _, err = os.Stat(databasePath); err != nil {
+		return err
+	}
+	ctx := audit.WithSystemActor(context.Background(), "reset-totp")
+	db, err := storage.Open(ctx, databasePath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err = auth.ResetTOTP(ctx, db, *username, time.Now()); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "已重置 %s 的两步验证\n", *username)
 	return nil
 }

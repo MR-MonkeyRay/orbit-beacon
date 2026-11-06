@@ -117,6 +117,7 @@ var allowedInternalImports = map[string]map[string]bool{
 		"orbitbeacon/internal/uuid":              true,
 		"orbitbeacon/internal/server/audit":      true,
 		"orbitbeacon/internal/server/management": true,
+		"orbitbeacon/internal/server/secretbox":  true,
 		"orbitbeacon/internal/timekey":           true,
 	},
 	"orbitbeacon/internal/server/backup": {

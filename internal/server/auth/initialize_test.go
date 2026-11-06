@@ -64,7 +64,7 @@ func TestInitializeAdministratorCredentials(t *testing.T) {
 			if count != 1 {
 				t.Fatalf("users=%d", count)
 			}
-			session, err := service.Login(t.Context(), tt.username, tt.password)
+			session, err := service.Login(t.Context(), tt.username, tt.password, "")
 			if err != nil || session.User.Username != tt.username || !session.User.MustChangePassword {
 				t.Fatalf("initialized credentials not usable or password change not required: session=%+v err=%v", session, err)
 			}

@@ -23,6 +23,8 @@ func (h *handler) logInternalError(err error, requestID string) {
 func (h *handler) logLoginRejection(err error, r *http.Request, requestID string) {
 	reason := ""
 	switch {
+	case errors.Is(err, auth.ErrTOTPInvalid):
+		reason = "invalid_second_factor"
 	case errors.Is(err, auth.ErrUnauthenticated):
 		reason = "invalid_credentials"
 	case errors.Is(err, auth.ErrRateLimited):

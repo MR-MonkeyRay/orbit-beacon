@@ -30,7 +30,11 @@ func validationDB(t *testing.T, category Category) *sql.DB {
 	for _, table := range tablesFor(category) {
 		columns := make([]string, 0, len(table.Columns))
 		for _, c := range table.Columns {
-			columns = append(columns, c.Name+" "+c.Type)
+			declaration := c.Name + " " + c.Type
+			if c.Name == "totp_last_step" {
+				declaration += " NOT NULL DEFAULT 0"
+			}
+			columns = append(columns, declaration)
 		}
 		if _, err := db.Exec("CREATE TABLE " + table.Name + " (" + strings.Join(columns, ",") + ")"); err != nil {
 			t.Fatal(err)

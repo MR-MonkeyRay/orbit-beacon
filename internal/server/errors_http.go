@@ -40,6 +40,11 @@ type errorMapping struct {
 
 // Agent 专属响应优先于共享的服务映射。
 var errorMappings = []errorMapping{
+	{serviceErrors, matches(auth.ErrTOTPRequired), http.StatusUnauthorized, "totp_required", "Second factor required", false},
+	{serviceErrors, matches(auth.ErrTOTPInvalid), http.StatusUnauthorized, "totp_invalid", "Invalid second factor", false},
+	{serviceErrors, matches(auth.ErrTOTPAlreadyEnabled), http.StatusConflict, "totp_already_enabled", "Two-step verification already enabled", false},
+	{serviceErrors, matches(auth.ErrTOTPSetupExpired), http.StatusBadRequest, "totp_setup_expired", "Two-step verification setup expired", false},
+	{serviceErrors, matches(auth.ErrTOTPUnavailable), http.StatusServiceUnavailable, "not_available", "Account secrets unavailable", false},
 	{serviceErrors, matches(announcements.ErrCapacity), http.StatusConflict, "announcement_capacity_reached", "Maximum of 100 unfinished announcements reached", false},
 	{agentErrors, matches(ingest.ErrProtocolUnsupported, v1.ErrProtocolUnsupported), http.StatusUpgradeRequired, "protocol_unsupported", "Protocol version is not supported", false},
 	{agentErrors, matches(enrollment.ErrConflict), http.StatusConflict, "enrollment_conflict", "Enrollment does not match the bound installation and credential", false},

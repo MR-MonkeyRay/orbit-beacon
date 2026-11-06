@@ -158,7 +158,7 @@ func TestGateTimeoutAndCancellationPreserveExistingLoginState(t *testing.T) {
 				if cancel {
 					go func() { time.Sleep(100 * time.Millisecond); stop() }()
 				}
-				_, err := s.Login(ctx, "admin", "valid password")
+				_, err := s.Login(ctx, "admin", "valid password", "")
 				want := error(ErrRateLimited)
 				if cancel {
 					want = context.Canceled
@@ -186,7 +186,7 @@ func TestQueuedLoginRechecksBothBudgetsBeforeCharging(t *testing.T) {
 		s.gate <- struct{}{}
 		result := make(chan error, 1)
 		go func() {
-			_, err := s.Login(ctx, "admin", "valid password")
+			_, err := s.Login(ctx, "admin", "valid password", "")
 			result <- err
 		}()
 		synctest.Wait()

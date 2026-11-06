@@ -39,10 +39,15 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 		return invalidPayload("category", "")
 	}
 	users := 0
-	var notificationBox, backupBox *secretbox.Box
+	userIDs := make(map[string]bool)
+	var notificationBox, backupBox, accountBox *secretbox.Box
 	if category == Configuration {
 		var err error
 		notificationBox, err = secretbox.New(key, "orbitbeacon notification channel v1")
+		if err != nil {
+			return invalidPayload("key", "")
+		}
+		accountBox, err = secretbox.New(key, "orbitbeacon account secrets v1")
 		if err != nil {
 			return invalidPayload("key", "")
 		}
@@ -106,12 +111,17 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 					}
 				}
 			}
-			if err = validatePayloadRow(table.Name, row, notificationBox, backupBox); err != nil {
+			if err = validatePayloadRow(table.Name, row, notificationBox, backupBox, accountBox); err != nil {
 				rows.Close()
 				return invalidPayload(table.Name, row.text("id"))
 			}
+			if table.Name == "recovery_codes" && !userIDs[row.text("user_id")] {
+				rows.Close()
+				return invalidPayload(table.Name, "")
+			}
 			if table.Name == "users" {
 				users++
+				userIDs[row.text("id")] = true
 			}
 		}
 		err = errors.Join(rows.Err(), rows.Close())
@@ -167,6 +177,8 @@ func (r payloadRow) floatPointer(k string) *float64 {
 }
 func nullableColumn(table, column string) bool {
 	switch table {
+	case "users":
+		return oneOf(column, "totp_ciphertext", "totp_pending_ciphertext", "totp_pending_at")
 	case "announcements":
 		return column == "ends_at"
 	case "nodes":
@@ -218,7 +230,7 @@ func jsonObject(raw string) bool {
 func validText(s string, max int) bool { return strings.TrimSpace(s) != "" && len(s) <= max }
 func invalidRow() error                { return errors.New("invalid row") }
 
-func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *secretbox.Box) error {
+func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, accountBox *secretbox.Box) error {
 	if r["id"] != nil && !uuid.ValidUUID(r.text("id")) {
 		return invalidRow()
 	}
@@ -241,7 +253,27 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 		if r.text("key") != "public_page_enabled" || !oneOf(r.text("value"), "true", "false") {
 			return invalidRow()
 		}
+	case "recovery_codes":
+		if !uuid.ValidUUID(r.text("user_id")) || len(r.blob("code_hash")) != 32 {
+			return invalidRow()
+		}
 	case "users":
+		if r.integer("totp_last_step") < 0 || (r["totp_pending_ciphertext"] == nil) != (r["totp_pending_at"] == nil) {
+			return invalidRow()
+		}
+		for _, column := range []string{"totp_ciphertext", "totp_pending_ciphertext"} {
+			if r[column] != nil {
+				if accountBox == nil {
+					return invalidRow()
+				}
+				plain, err := accountBox.Open("totp:"+r.text("id"), r.blob(column))
+				valid := err == nil && len(plain) == 20
+				clear(plain)
+				if !valid {
+					return invalidRow()
+				}
+			}
+		}
 		if username := r.text("username"); len(username) < 1 || len(username) > 128 || !utf8.ValidString(username) {
 			return invalidRow()
 		}

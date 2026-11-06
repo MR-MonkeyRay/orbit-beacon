@@ -17,11 +17,12 @@ func (h *handler) loginSession(w http.ResponseWriter, r *http.Request, requestID
 	var input struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		OTP      string `json:"otp"`
 	}
 	if !decode(w, r, &input, requestID) {
 		return
 	}
-	session, err := h.auth.Login(auth.WithLoginPeer(r.Context(), h.clientAddr(r)), input.Username, input.Password)
+	session, err := h.auth.Login(auth.WithLoginPeer(r.Context(), h.clientAddr(r)), input.Username, input.Password, input.OTP)
 	if err != nil {
 		h.logLoginRejection(err, r, requestID)
 		h.serviceError(w, err, requestID)

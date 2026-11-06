@@ -1,4 +1,8 @@
 export default {
+  "errors.totp_required": "请输入验证码。",
+  "errors.totp_invalid": "验证码或恢复码无效。",
+  "errors.totp_already_enabled": "两步验证已启用。",
+  "errors.totp_setup_expired": "设置已过期。",
   'common.status.stopped': '已关闭',
 
   'common.refresh': '刷新',

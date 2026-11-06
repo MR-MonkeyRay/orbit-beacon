@@ -301,6 +301,13 @@
   min-width: 0;
 }
 
+.totp-qr {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-inline: auto;
+}
+
 .recovery-secret {
   display: block;
   max-width: 100%;

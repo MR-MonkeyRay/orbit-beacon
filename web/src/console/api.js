@@ -204,15 +204,24 @@ export async function api(path, options = {}) {
     });
     if (request.signal.aborted && response.body && !response.body.locked) void response.body.cancel().catch(() => {});
     assertActive(request.signal);
-    if (response.status === 401 && !(path === '/session' && method === 'POST')) {
+    const accountFactor = path.startsWith('/account/totp/') && method === 'POST';
+    if (response.status === 401 && !(path === '/session' && method === 'POST') && !accountFactor) {
       if (response.body && !response.body.locked) void response.body.cancel().catch(() => {});
       invalidateSession('unauthenticated');
       throw unauthenticated();
     }
     if (response.status === 204) return null;
     let value = null;
-    try { value = await response.json(); } catch { assertActive(request.signal); }
+    try { value = await response.json(); } catch {
+      if (accountFactor && response.status === 401 && epoch === sessionEpoch && request.signal.reason?.name === 'TimeoutError') invalidateSession('unauthenticated');
+      assertActive(request.signal);
+    }
     assertActive(request.signal);
+    if (response.status === 401 && !(path === '/session' && method === 'POST')
+      && !(accountFactor && ['totp_required', 'totp_invalid'].includes(value?.code))) {
+      invalidateSession('unauthenticated');
+      throw unauthenticated();
+    }
     if (value === null) throw new ApiError(response.status, {code: 'unreadable_response'});
     if (!response.ok) {
       if (response.status === 403 && value?.code === 'password_change_required') requirePasswordChange();
