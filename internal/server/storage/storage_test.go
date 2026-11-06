@@ -383,3 +383,24 @@ func TestOpenInitializesEmptyFile(t *testing.T) {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 }
+
+func TestAPITokenRateLimitCheckConstraint(t *testing.T) {
+	db, err := storage.Open(context.Background(), filepath.Join(privateDirectory(t), "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec(`INSERT INTO users(id,username,password_hash,created_at) VALUES('owner','owner','unused','now')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []any{nil, 1, 100000, 0, -1, 100001} {
+		_, err = db.Exec(`INSERT INTO api_tokens(id,name,token_hash,created_by,created_at,rate_limit_per_minute) VALUES('token','name',X'01','owner','now',?)`, value)
+		valid := value == nil || value == 1 || value == 100000
+		if (err == nil) != valid {
+			t.Fatalf("value %v: %v", value, err)
+		}
+		if _, err = db.Exec(`DELETE FROM api_tokens`); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

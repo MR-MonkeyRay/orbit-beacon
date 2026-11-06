@@ -1,4 +1,9 @@
 export default {
+  "account.apiTokenGlobalRate": "Global limit (requests per minute)",
+  "account.apiTokenRate": "Limit (requests per minute)",
+  "account.apiTokenDefaultRate": "Default ({limit})",
+  "account.apiTokenEditRate": "Edit limit",
+  "fields.apiTokenRate": "Enter an integer from 1 to 100000.",
   "fields.apiTokenExpiry": "Choose 30, 90, 365 days or never.",
   "account.apiTokenNever": "Never",
   "account.apiToken365": "365 days",

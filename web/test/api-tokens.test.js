@@ -8,13 +8,13 @@ import {describeAction} from '../src/console/format.js';
 import {closeDialogs} from '../src/console/ui/dialogs.js';
 import {errorText, fieldErrorText} from '../src/shared/errors.js';
 
-const entry = {id: '00000000-0000-4000-8000-000000000001', name: 'scripts', created_by_username: 'operator', created_at: '2026-10-28T00:00:00Z', last_used_at: null, expires_at: null};
+const entry = {id: '00000000-0000-4000-8000-000000000001', name: 'scripts', created_by_username: 'operator', created_at: '2026-10-28T00:00:00Z', last_used_at: null, expires_at: null, rate_limit_per_minute: null};
 const label = (root, text) => elements(root).find((element) => element.tagName === 'button' && element.textContent === text);
 const named = (root, name) => elements(root).find((element) => element.name === name);
 const submit = async (form) => { form.dispatchEvent(new Event('submit', {cancelable: true})); await flush(); await flush(); };
-function setup(t, respond) {
+function setup(t, respond, limits = false) {
   const originals = new Map(['matchMedia', 'requestAnimationFrame', 'navigator'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-  const env = liveHarness(t, respond);
+  const env = liveHarness(t, (request) => !limits && request.url === '/api/v1/settings/api-tokens' ? response({rate_limit_per_minute: 600}) : respond(request));
   globalThis.matchMedia = () => ({matches: true, addEventListener() {}});
   globalThis.requestAnimationFrame = (callback) => callback();
   location.origin = 'https://example.test';
@@ -90,4 +90,63 @@ test('API token actions and errors use translated labels', () => {
   assert.equal(describeAction('api_token.revoke'), copy('audit.apiTokenRevoke'));
   assert.equal(errorText({code: 'api_token_limit'}), copy('errors.api_token_limit'));
   assert.equal(fieldErrorText('must be 30, 90, 365 or null'), copy('fields.apiTokenExpiry'));
+});
+
+test('API token limits save globally, set and clear overrides, and cancel without saving', async (t) => {
+  let global = 600; let override = null;
+  const changes = [];
+  const env = setup(t, (request) => {
+    if (request.url === '/api/v1/settings/api-tokens') {
+      if (request.method === 'PATCH') { global = JSON.parse(request.body).rate_limit_per_minute; changes.push(['global', global]); }
+      return response({rate_limit_per_minute: global});
+    }
+    if (request.method === 'PATCH') { override = JSON.parse(request.body).rate_limit_per_minute; changes.push(['token', override]); return response({rate_limit_per_minute: override}); }
+    return response({api_tokens: [{...entry, rate_limit_per_minute: override}]});
+  }, true);
+  const panel = apiTokensPanel(); env.body.append(panel); await flush();
+  assert.ok(panel.textContent.includes(copy('account.apiTokenDefaultRate', {limit: 600})));
+  named(panel, 'rate_limit_per_minute').value = '12';
+  await submit(panel.querySelector('form'));
+  assert.deepEqual(changes, [['global', 12]]);
+  assert.ok(panel.textContent.includes(copy('account.apiTokenDefaultRate', {limit: 12})));
+  const open = () => { label(panel, copy('account.apiTokenEditRate')).focus(); label(panel, copy('account.apiTokenEditRate')).click(); return document.querySelector('dialog'); };
+  let dialog = open();
+  assert.equal(elements(dialog).some((element) => element.tagName === 'p'), false);
+  assert.equal(document.activeElement, named(dialog, 'rate_limit_per_minute'));
+  named(dialog, 'rate_limit_per_minute').value = '3'; await submit(dialog.querySelector('form'));
+  assert.deepEqual(changes.at(-1), ['token', 3]); assert.equal(document.querySelector('dialog'), null);
+  dialog = open();
+  assert.equal(String(named(dialog, 'rate_limit_per_minute').getAttribute('placeholder')), '12');
+  named(dialog, 'rate_limit_per_minute').value = '';
+  await submit(dialog.querySelector('form'));
+  assert.deepEqual(changes.at(-1), ['token', null]);
+  assert.ok(panel.textContent.includes(copy('account.apiTokenDefaultRate', {limit: 12})));
+  dialog = open(); const opener = label(panel, copy('account.apiTokenEditRate'));
+  const queryControls = dialog.querySelectorAll.bind(dialog);
+  dialog.querySelectorAll = (selector) => selector === 'input:not([data-transient]),select,textarea,[data-tags]'
+    ? elements(dialog).filter((element) => element.tagName === 'input') : queryControls(selector);
+  named(dialog, 'rate_limit_per_minute').value = '99';
+  label(dialog, copy('controls.cancel')).click(); await flush();
+  const discard = elements(document.body).filter((element) => element.tagName === 'dialog').at(-1);
+  label(discard, copy('controls.discard')).click(); await flush(); await flush();
+  assert.equal(document.querySelector('dialog'), null); assert.equal(changes.length, 3);
+  assert.equal(document.activeElement, opener);
+  assert.equal(elements(panel).some((element) => element.hasAttribute('style')), false);
+});
+
+test('API token limit errors remain visible in the panel and modal', async (t) => {
+  const env = setup(t, (request) => request.method === 'PATCH'
+    ? response({code: 'validation_failed', fields: {rate_limit_per_minute: 'must be an integer between 1 and 100000'}}, {status: 400})
+    : request.url === '/api/v1/settings/api-tokens' ? response({rate_limit_per_minute: 600}) : response({api_tokens: [entry]}), true);
+  const panel = apiTokensPanel(); env.body.append(panel); await flush();
+  named(panel, 'rate_limit_per_minute').value = '0'; await submit(panel.querySelector('form'));
+  assert.ok(panel.textContent.includes(copy('errors.validation_failed')));
+  assert.ok(panel.textContent.includes(copy('fields.apiTokenRate')));
+  label(panel, copy('account.apiTokenEditRate')).click();
+  const dialog = document.querySelector('dialog'); named(dialog, 'rate_limit_per_minute').value = '0'; await submit(dialog.querySelector('form'));
+  assert.ok(dialog.textContent.includes(copy('errors.validation_failed')));
+  assert.ok(dialog.textContent.includes(copy('fields.apiTokenRate')));
+  closeDialogs(); await flush();
+  assert.equal(describeAction('api_token.rate_limit.update'), copy('audit.apiTokenRateUpdate'));
+  assert.equal(describeAction('settings.api_token_rate_limit.update'), copy('audit.apiTokenGlobalRateUpdate'));
 });

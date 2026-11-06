@@ -57,7 +57,7 @@ var categoryTables = map[Category][]tableSpec{
 	Configuration: {
 		table("users", "main", "", "id TEXT,username TEXT,password_hash TEXT,created_at TEXT,must_change_password INTEGER,totp_ciphertext BLOB,totp_pending_ciphertext BLOB,totp_pending_at TEXT,totp_last_step INTEGER", "id"),
 		table("recovery_codes", "main", "", "user_id TEXT,code_hash BLOB", "user_id,code_hash"),
-		table("settings", "main", "key = 'public_page_enabled'", "key TEXT,value TEXT", "key"),
+		table("settings", "main", "key IN ('public_page_enabled','api_token_rate_limit_per_minute')", "key TEXT,value TEXT", "key"),
 		table("groups", "main", "", "id TEXT,name TEXT", "id"),
 		table("nodes", "main", "", "id TEXT,name TEXT,status TEXT,group_id TEXT,region TEXT,provider TEXT,notes TEXT,expires_on TEXT,created_at TEXT,public_settings TEXT,billing_day INTEGER,quota_bytes TEXT,billing_mode TEXT,token_hash BLOB,credential_epoch INTEGER,installation_id TEXT,first_enrolled_at TEXT,run_generation TEXT,report_session_id TEXT", "id"),
 		table("node_tags", "main", "", "node_id TEXT,tag TEXT", "node_id,tag"),

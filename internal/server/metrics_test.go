@@ -2,7 +2,9 @@ package server
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"orbitbeacon/internal/server/auth"
 	"os"
 	"path/filepath"
 
@@ -61,6 +63,7 @@ func TestMetricsExpositionAndHTTPIsolation(t *testing.T) {
 		`orbitbeacon_http_request_duration_seconds_bucket{method="POST",route="/api/agent/v1/report",le="+Inf"} 2`,
 		`orbitbeacon_http_request_duration_seconds_count{method="POST",route="/api/agent/v1/report"} 2`,
 		`orbitbeacon_http_requests_in_flight 0`,
+		`orbitbeacon_api_token_rate_limited_total 0`,
 		`orbitbeacon_agent_reports_total{reason="accepted"} 1`,
 		`orbitbeacon_agent_reports_total{reason="unauthenticated"} 1`,
 		`orbitbeacon_login_rejections_total{reason="forbidden"} 1`,
@@ -281,5 +284,24 @@ func TestHistorySeriesRejectedCounterExposition(t *testing.T) {
 		if !strings.Contains(response.Body.String(), line) {
 			t.Fatalf("missing %q: %s", line, response.Body)
 		}
+	}
+}
+
+func TestAPITokenRateLimitRetryEnvelope(t *testing.T) {
+	response := httptest.NewRecorder()
+	if !mappedError(response, &auth.APITokenRateLimitError{RetryAfter: 60}, "rate-request", serviceErrors) {
+		t.Fatal("unmapped rate error")
+	}
+	if response.Code != 429 || response.Header().Get("Retry-After") != "60" {
+		t.Fatal("retry response", response.Code, response.Header())
+	}
+	var body apiError
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || body.Code != "rate_limited" || body.RequestID != "rate-request" || body.Message == "" {
+		t.Fatal("error envelope", body, err)
+	}
+	metrics := newHTTPMetrics("test")
+	metrics.apiTokenRateLimited.Add(1)
+	if !strings.Contains(metrics.exposition(), "orbitbeacon_api_token_rate_limited_total 1\n") {
+		t.Fatal("missing token rate metric")
 	}
 }

@@ -76,6 +76,38 @@ paths:
               schema: {$ref: '#/components/schemas/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/api-tokens/{id}:
+    patch:
+      operationId: updateAPITokenRateLimit
+      security: [{session: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [rate_limit_per_minute]
+              properties:
+                rate_limit_per_minute: {type: [integer, 'null'], minimum: 1, maximum: 100000}
+      responses:
+        '200':
+          description: Saved token override; null uses the global limit.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rate_limit_per_minute]
+                properties:
+                  rate_limit_per_minute: {type: [integer, 'null'], minimum: 1, maximum: 100000}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
     delete:
       operationId: revokeAPIToken
       security: [{session: []}]
@@ -88,6 +120,35 @@ paths:
         - {$ref: '#/components/parameters/CSRF'}
       responses:
         '204': {description: 令牌立即撤销。}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/settings/api-tokens:
+    get:
+      operationId: getAPITokenSettings
+      security: [{session: []}]
+      responses:
+        '200':
+          description: Effective global API token limit; defaults to 600 requests per minute.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/APITokenSettings'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: updateAPITokenSettings
+      security: [{session: []}]
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/APITokenSettings'}
+      responses:
+        '200':
+          description: Saved global limit.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/APITokenSettings'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/settings/public-page:
     get:
@@ -801,6 +862,13 @@ paths:
       operationId: listGroups
       description: 所有已认证管理员均可用。返回完整、不分页的分组列表。
       responses:
+        '429':
+          description: rate_limited; whole seconds until one request is available.
+          headers:
+            Retry-After: {schema: {type: string, pattern: '^[1-9][0-9]*$'}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         '200':
           description: 分组集合。
           content:
@@ -1209,6 +1277,13 @@ paths:
           description: 上一页的不透明 next_cursor；规范的 timestamp/UUID 键集位置，严格早于最后一条事件。无效或空的游标返回 400。
           schema: {type: string, minLength: 90, maxLength: 90}
       responses:
+        '429':
+          description: rate_limited; whole seconds until one request is available.
+          headers:
+            Retry-After: {schema: {type: string, pattern: '^[1-9][0-9]*$'}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         '200':
           description: 分页的告警事件。
           content:
@@ -1232,6 +1307,13 @@ paths:
       operationId: getAlertSummary
       description: 管理员可从一次一致性读取快照中获取触发计数与最多五条最新触发事件。严重级别来自存储的规则快照；缺失或无法识别的严重级别计为 unknown。最新事件使用与 listAlerts 相同的字段，按 started_at DESC、id DESC 排序。
       responses:
+        '429':
+          description: rate_limited; whole seconds until one request is available.
+          headers:
+            Retry-After: {schema: {type: string, pattern: '^[1-9][0-9]*$'}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         '200':
           description: 触发中的告警摘要。
           content:
@@ -1249,6 +1331,13 @@ paths:
       operationId: getAlertEvent
       description: 管理员可直接读取单条事件，无需搜索历史页。使用与 listAlerts 相同的当前名称关联与已删除来源的快照回退。拒绝查询参数。读取不标记任何站内通知为已读。
       responses:
+        '429':
+          description: rate_limited; whole seconds until one request is available.
+          headers:
+            Retry-After: {schema: {type: string, pattern: '^[1-9][0-9]*$'}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         '200':
           description: 告警事件。
           content:
@@ -1703,6 +1792,13 @@ paths:
           in: query
           schema: {type: integer, minimum: 0, default: 0}
       responses:
+        '429':
+          description: rate_limited; whole seconds until one request is available.
+          headers:
+            Retry-After: {schema: {type: string, pattern: '^[1-9][0-9]*$'}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         '200':
           description: 按创建时间再按 UUID 排序；包含待注册与已禁用的资产。
           content:
@@ -1755,6 +1851,13 @@ paths:
         - bearerAuth: []
       operationId: getNode
       responses:
+        '429':
+          description: rate_limited; whole seconds until one request is available.
+          headers:
+            Retry-After: {schema: {type: string, pattern: '^[1-9][0-9]*$'}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         '200':
           description: 不含凭据的节点视图。
           content:
@@ -1841,6 +1944,13 @@ paths:
           description: 绝对磁盘路径，仅适用于 disk_used_percent 和 inode_used_percent；省略时返回聚合。
           schema: {type: string, minLength: 1, maxLength: 1024}
       responses:
+        '429':
+          description: rate_limited; whole seconds until one request is available.
+          headers:
+            Retry-After: {schema: {type: string, pattern: '^[1-9][0-9]*$'}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         '200':
           description: 升序的 UTC 桶时间戳；无 null 或合成的间隙点。范围起点处的相交桶可能早于精确截止点不到一个步长。
           content:
@@ -1869,6 +1979,13 @@ paths:
           schema: {type: integer, enum: [30, 90], default: 30}
           description: 只接受 30 或 90；拒绝重复或未知参数。
       responses:
+        '429':
+          description: rate_limited; whole seconds until one request is available.
+          headers:
+            Retry-After: {schema: {type: string, pattern: '^[1-9][0-9]*$'}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         '200':
           description: 旧到新排列的每日可用性及按秒加权汇总。
           content:
@@ -1893,6 +2010,13 @@ paths:
           required: false
           schema: {type: integer, minimum: 1, maximum: 400, default: 30}
       responses:
+        '429':
+          description: rate_limited; whole seconds until one request is available.
+          headers:
+            Retry-After: {schema: {type: string, pattern: '^[1-9][0-9]*$'}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         '200':
           description: 流量总计。字节计数为规范的无符号十进制字符串。计费周期不含结束时刻。
           content:
@@ -1918,6 +2042,13 @@ paths:
       operationId: getNodeProbes
       description: 所有已认证管理员均可用。按期望配置顺序为每个当前配置的探测目标返回一条；已从配置移除的目标不返回结果。最新结果与小时计数按合并的接收事务节奏持久化，响应可能滞后上报约 30 秒。24 小时窗口包含大于等于当前 UTC 小时减 23 小时的 UTC 小时，无单独的上截止。未知节点返回 node_not_found。
       responses:
+        '429':
+          description: rate_limited; whole seconds until one request is available.
+          headers:
+            Retry-After: {schema: {type: string, pattern: '^[1-9][0-9]*$'}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         '200':
           description: 当前服务探测状态与 24 小时可用率聚合。
           content:
@@ -1942,6 +2073,13 @@ paths:
       operationId: getNodeLatest
       description: 所有已认证管理员均可用。返回当前节点身份最新接受的内存上报，不含凭据、run_generation 或 session_id。节点不存在、服务器启动后无上报、节点已禁用或身份已失效均返回 404 node_not_found。值为最新采样，可能已过期；received_at 是服务端接收时间，非存活保证。上报省略 system 时为 null；agent_version 在持久化节点视图中仍可用。
       responses:
+        '429':
+          description: rate_limited; whole seconds until one request is available.
+          headers:
+            Retry-After: {schema: {type: string, pattern: '^[1-9][0-9]*$'}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         '200':
           description: 最新的私有遥测采样。
           content:
@@ -2470,7 +2608,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: obt_ + base64url(32 random bytes)
-      description: 只读 API 令牌，仅允许显式标记的 GET 操作；携带 obt_ 令牌时优先于 Cookie，其他管理路由返回 token_forbidden。
+      description: 只读 API 令牌，仅允许显式标记的 GET 操作；携带 obt_ 令牌时优先于 Cookie，其他管理路由返回 token_forbidden。每个令牌桶容量等于每分钟限额，每秒补充限额的 1/60；覆盖值优先于全局值（默认 600，范围 1–100000）。重启重置；禁止路由也计费。
     session:
       type: apiKey
       in: cookie
@@ -2590,9 +2728,15 @@ components:
         application/json:
           schema: {$ref: '#/components/schemas/Error'}
   schemas:
+    APITokenSettings:
+      type: object
+      additionalProperties: false
+      required: [rate_limit_per_minute]
+      properties:
+        rate_limit_per_minute: {type: integer, minimum: 1, maximum: 100000}
     APIToken:
       type: object
-      required: [id, name, created_by, created_by_username, created_at, expires_at, last_used_at]
+      required: [id, name, created_by, created_by_username, created_at, expires_at, last_used_at, rate_limit_per_minute]
       properties:
         id: {type: string, format: uuid}
         name: {type: string}
@@ -2601,6 +2745,7 @@ components:
         created_at: {type: string, format: date-time}
         expires_at: {type: [string, 'null'], format: date-time}
         last_used_at: {type: [string, 'null'], format: date-time}
+        rate_limit_per_minute: {type: [integer, 'null'], minimum: 1, maximum: 100000}
     TokenNodePage:
       type: object
       additionalProperties: false
@@ -2670,10 +2815,10 @@ components:
       uniqueItems: true
       description: |
         各类别相互独立；不会隐式添加 configuration。响应按 configuration、monitoring、events 排序。
-        configuration 包含密码哈希、持久化的 Agent 身份、凭据、全局 public_page_enabled 设置
+        configuration 包含密码哈希、持久化的 Agent 身份、凭据、全局 public_page_enabled 与 api_token_rate_limit_per_minute 设置
         及对应的 secrets.key，但不含部署配置、TLS 证书或可执行文件。
-        仅接受该设置键与文本 true/false；允许缺少此设置。恢复 configuration 会替换该开关
-        （缺少时表示启用）；仅恢复数据时保留原开关。monitoring 包含持久化观测与指标历史，
+        仅接受 public_page_enabled 的文本 true/false 与 api_token_rate_limit_per_minute 的 1–100000 整数文本；允许缺少设置。
+        恢复 configuration 会替换设置（缺少时分别表示启用及限额 600）；仅恢复数据时保留原设置。monitoring 包含持久化观测与指标历史，
         不含内存上报。events 不含历史备份密码、待投递通知、待执行任务与下载产物。
         仅为已提交的数据生成快照；主库与指标库各自保持一致，不保证跨库为同一时刻的快照。
       items: {type: string, enum: [configuration, monitoring, events]}

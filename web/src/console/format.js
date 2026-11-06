@@ -22,6 +22,7 @@ const ACTIONS = {
  'user.totp.enable': t('audit.totpEnable'), 'user.totp.disable': t('audit.totpDisable'), 'user.totp.reset': t('audit.totpReset'), 'user.totp.recovery_codes': t('audit.totpRecoveryCodes'),
   'user.password.change': t('audit.password'), 'enrollment.create': t('audit.enrollmentCreate'),
   'enrollment.claim': t('audit.enrollmentClaim'), 'enrollment.revoke': t('audit.enrollmentRevoke'),
+  'api_token.rate_limit.update': t('audit.apiTokenRateUpdate'), 'settings.api_token_rate_limit.update': t('audit.apiTokenGlobalRateUpdate'),
   'api_token.create': t('audit.apiTokenCreate'), 'api_token.revoke': t('audit.apiTokenRevoke'),
   'session.create': t('audit.signIn'), 'session.delete': t('audit.signOut'),
   'node.credential.revoke': t('audit.credentialRevoke'),

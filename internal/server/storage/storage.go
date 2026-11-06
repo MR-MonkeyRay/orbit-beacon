@@ -260,7 +260,8 @@ CREATE INDEX sessions_expiry ON sessions(expires_at);
 CREATE TABLE api_tokens (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash BLOB NOT NULL UNIQUE,
  created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
- created_at TEXT NOT NULL, expires_at TEXT, last_used_at TEXT
+ created_at TEXT NOT NULL, expires_at TEXT, last_used_at TEXT,
+ rate_limit_per_minute INTEGER CHECK (rate_limit_per_minute IS NULL OR rate_limit_per_minute BETWEEN 1 AND 100000)
 );
 CREATE INDEX api_tokens_owner ON api_tokens(created_by);
 CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);

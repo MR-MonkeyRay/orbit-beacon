@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -46,6 +47,9 @@ func (h *handler) serveAPIToken(w http.ResponseWriter, r *http.Request, requestI
 		return
 	}
 	if err := h.auth.AuthenticateAPIToken(r.Context(), strings.TrimPrefix(values[0], "Bearer ")); err != nil {
+		if errors.Is(err, auth.ErrRateLimited) && h.metrics != nil {
+			h.metrics.apiTokenRateLimited.Add(1)
+		}
 		h.serviceError(w, err, requestID)
 		return
 	}

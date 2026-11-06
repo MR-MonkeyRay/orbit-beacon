@@ -1,4 +1,6 @@
 export default {
+  "audit.apiTokenRateUpdate": "Update API token limit",
+  "audit.apiTokenGlobalRateUpdate": "Update global API token limit",
   "audit.apiTokenRevoke": "Revoke API token",
   "audit.apiTokenCreate": "Create API token",
   "audit.totpEnable": "Two-step verification enabled",

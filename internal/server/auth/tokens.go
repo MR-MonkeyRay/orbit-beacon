@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -20,17 +21,18 @@ const ErrAPITokenLimit serviceError = "API token limit reached"
 
 // APIToken 仅含可重复读取的元数据。明文只由创建方法单独返回。
 type APIToken struct {
-	ID                string  `json:"id"`
-	Name              string  `json:"name"`
-	CreatedBy         string  `json:"created_by"`
-	CreatedByUsername string  `json:"created_by_username"`
-	CreatedAt         string  `json:"created_at"`
-	ExpiresAt         *string `json:"expires_at"`
-	LastUsedAt        *string `json:"last_used_at"`
+	ID                 string  `json:"id"`
+	Name               string  `json:"name"`
+	CreatedBy          string  `json:"created_by"`
+	CreatedByUsername  string  `json:"created_by_username"`
+	CreatedAt          string  `json:"created_at"`
+	ExpiresAt          *string `json:"expires_at"`
+	LastUsedAt         *string `json:"last_used_at"`
+	RateLimitPerMinute *int    `json:"rate_limit_per_minute"`
 }
 
 func (s *Service) ListAPITokens(ctx context.Context) ([]APIToken, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id,t.name,t.created_by,u.username,t.created_at,t.expires_at,t.last_used_at FROM api_tokens t JOIN users u ON u.id=t.created_by ORDER BY t.created_at DESC,t.id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id,t.name,t.created_by,u.username,t.created_at,t.expires_at,t.last_used_at,t.rate_limit_per_minute FROM api_tokens t JOIN users u ON u.id=t.created_by ORDER BY t.created_at DESC,t.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +40,7 @@ func (s *Service) ListAPITokens(ctx context.Context) ([]APIToken, error) {
 	tokens := make([]APIToken, 0)
 	for rows.Next() {
 		var t APIToken
-		if err := rows.Scan(&t.ID, &t.Name, &t.CreatedBy, &t.CreatedByUsername, &t.CreatedAt, &t.ExpiresAt, &t.LastUsedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.CreatedBy, &t.CreatedByUsername, &t.CreatedAt, &t.ExpiresAt, &t.LastUsedAt, &t.RateLimitPerMinute); err != nil {
 			return nil, err
 		}
 		tokens = append(tokens, t)
@@ -93,7 +95,7 @@ func (s *Service) CreateAPIToken(ctx context.Context, userID, sessionToken, name
 	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM api_tokens`).Scan(&count); err != nil {
 		return APIToken{}, "", err
 	}
-	if count >= 20 {
+	if count >= maxAPITokens {
 		return APIToken{}, "", ErrAPITokenLimit
 	}
 	token := APIToken{ID: id, Name: name, CreatedBy: userID, CreatedByUsername: username, CreatedAt: timekey.Format(now)}
@@ -130,7 +132,13 @@ func (s *Service) RevokeAPIToken(ctx context.Context, id string) error {
 	if err = audit.InsertDetails(ctx, tx, "api_token.revoke", id, s.now(), audit.Details{"id": id, "name": name}); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	s.rateMu.Lock()
+	delete(s.apiTokenBuckets, id)
+	s.rateMu.Unlock()
+	return nil
 }
 
 // AuthenticateAPIToken 不读取浏览器会话；过期和无效凭据使用同一错误。
@@ -146,7 +154,8 @@ func (s *Service) AuthenticateAPIToken(ctx context.Context, token string) error 
 	var id string
 	var expiry, lastUsed *string
 	var restricted bool
-	err = s.db.QueryRowContext(ctx, `SELECT t.id,t.expires_at,t.last_used_at,u.must_change_password FROM api_tokens t JOIN users u ON u.id=t.created_by WHERE t.token_hash=?`, digest[:]).Scan(&id, &expiry, &lastUsed, &restricted)
+	var storedLimit string
+	err = s.db.QueryRowContext(ctx, `SELECT t.id,t.expires_at,t.last_used_at,u.must_change_password,COALESCE(t.rate_limit_per_minute,(SELECT value FROM settings WHERE key='api_token_rate_limit_per_minute'),'') FROM api_tokens t JOIN users u ON u.id=t.created_by WHERE t.token_hash=?`, digest[:]).Scan(&id, &expiry, &lastUsed, &restricted, &storedLimit)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrUnauthenticated
 	}
@@ -162,6 +171,9 @@ func (s *Service) AuthenticateAPIToken(ctx context.Context, token string) error 
 	}
 	if restricted {
 		return ErrPasswordChangeRequired
+	}
+	if err = s.admitAPIToken(id, effectiveAPITokenLimit(storedLimit), now); err != nil {
+		return err
 	}
 	cutoff := timekey.Format(now.Add(-5 * time.Minute))
 	if lastUsed == nil || *lastUsed <= cutoff {
@@ -184,4 +196,71 @@ func (s *Service) recordAPITokenUse(id string, now time.Time, cutoff string) {
 		defer cancel()
 		_, _ = s.db.ExecContext(ctx, `UPDATE api_tokens SET last_used_at=? WHERE id=? AND (last_used_at IS NULL OR last_used_at<=?)`, timekey.Format(now), id, cutoff)
 	}()
+}
+
+const (
+	DefaultAPITokenRateLimit = 600
+	maxAPITokens             = 20
+)
+
+func effectiveAPITokenLimit(value string) int {
+	limit, err := strconv.Atoi(value)
+	if err != nil || limit < 1 || limit > 100000 {
+		return DefaultAPITokenRateLimit
+	}
+	return limit
+}
+
+func (s *Service) APITokenRateLimit(ctx context.Context) (int, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE((SELECT value FROM settings WHERE key='api_token_rate_limit_per_minute'),'')`).Scan(&value)
+	return effectiveAPITokenLimit(value), err
+}
+
+func (s *Service) SetAPITokenRateLimit(ctx context.Context, id string, limit *int) error {
+	if limit != nil && (*limit < 1 || *limit > 100000) {
+		return ErrInvalidInput
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var old *int
+	err = tx.QueryRowContext(ctx, `SELECT rate_limit_per_minute FROM api_tokens WHERE id=?`, id).Scan(&old)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE api_tokens SET rate_limit_per_minute=? WHERE id=?`, limit, id); err != nil {
+		return err
+	}
+	if err = audit.InsertDetails(ctx, tx, "api_token.rate_limit.update", id, s.now(), audit.Details{"old": old, "new": limit}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Service) SetGlobalAPITokenRateLimit(ctx context.Context, limit int) error {
+	if limit < 1 || limit > 100000 {
+		return ErrInvalidInput
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var value string
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT value FROM settings WHERE key='api_token_rate_limit_per_minute'),'')`).Scan(&value); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES('api_token_rate_limit_per_minute',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, strconv.Itoa(limit)); err != nil {
+		return err
+	}
+	if err = audit.InsertDetails(ctx, tx, "settings.api_token_rate_limit.update", "api_token_rate_limit_per_minute", s.now(), audit.Details{"old": effectiveAPITokenLimit(value), "new": limit}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

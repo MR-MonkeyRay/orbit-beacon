@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -154,6 +156,10 @@ func TestAPITokenRevokedByAccountRecovery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if err = s.AuthenticateAPIToken(ctx, token); err != nil {
+				t.Fatal(err)
+			}
+			s.WaitAPITokenUse()
 			switch operation {
 			case "password":
 				err = s.ChangePassword(ctx, user.ID, initialPassword, "replacement password")
@@ -288,4 +294,175 @@ func TestAPITokenCreationRejectsConcurrentSessionOrPasswordChanges(t *testing.T)
 			}
 		})
 	}
+}
+
+func TestAPITokenRateLimitPrecedenceFallbackAndInvalid(t *testing.T) {
+	for _, tc := range []struct {
+		name, global string
+		override     *int
+		want         int
+	}{
+		{"default", "", nil, 600}, {"global", "2", nil, 2}, {"malformed", "oops", nil, 600}, {"out of range", "100001", nil, 600}, {"fractional", "2.5", nil, 600}, {"override", "2", func() *int { n := 3; return &n }(), 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, db, _ := newAuth(t)
+			ctx := context.Background()
+			user, err := s.CreateUser(ctx, "rate-user", initialPassword, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			token := "obt_" + strings.Repeat("A", 43)
+			digest := sha256.Sum256([]byte(token))
+			if _, err = db.Exec(`INSERT INTO api_tokens(id,name,token_hash,created_by,created_at,rate_limit_per_minute) VALUES('rate','test',?,?,?,?)`, digest[:], user.ID, timekey.Format(time.Now()), tc.override); err != nil {
+				t.Fatal(err)
+			}
+			if tc.global != "" {
+				if _, err = db.Exec(`INSERT INTO settings(key,value) VALUES('api_token_rate_limit_per_minute',?)`, tc.global); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for i := 0; i < tc.want; i++ {
+				if err = s.AuthenticateAPIToken(ctx, token); err != nil {
+					t.Fatalf("request %d: %v", i, err)
+				}
+			}
+			if !errors.Is(s.AuthenticateAPIToken(ctx, token), auth.ErrRateLimited) {
+				t.Fatal("burst exceeded")
+			}
+			if !errors.Is(s.AuthenticateAPIToken(ctx, "obt_"+strings.Repeat("B", 43)), auth.ErrUnauthenticated) {
+				t.Fatal("invalid token accepted")
+			}
+			s.WaitAPITokenUse()
+			if s.APITokenBucketCount() != 1 {
+				t.Fatal("invalid token created bucket")
+			}
+			if err = s.RevokeAPIToken(audit.WithActor(ctx, user.ID), "rate"); err != nil {
+				t.Fatal(err)
+			}
+			if s.APITokenBucketCount() != 0 {
+				t.Fatal("revocation retained bucket")
+			}
+		})
+	}
+}
+
+func TestAPITokenRateLimitUpdatesAuditAndRollback(t *testing.T) {
+	s, db, _ := newAuth(t)
+	ctx := context.Background()
+	user, err := s.CreateUser(ctx, "rate-admin", initialPassword, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx = audit.WithActor(ctx, user.ID)
+	session, err := s.Login(ctx, user.Username, initialPassword, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, token, err := s.CreateAPIToken(ctx, user.ID, session.Token, "limit", nil, initialPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limit := 2
+	if err = s.SetAPITokenRateLimit(ctx, meta.ID, &limit); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetGlobalAPITokenRateLimit(ctx, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetAPITokenRateLimit(ctx, meta.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListAPITokens(ctx)
+	if err != nil || len(list) != 1 || list[0].RateLimitPerMinute != nil {
+		t.Fatal("clear", err)
+	}
+	if err = s.SetAPITokenRateLimit(ctx, "missing", &limit); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatal(err)
+	}
+	var details string
+	if err = db.QueryRow(`SELECT details FROM audit_events WHERE action='settings.api_token_rate_limit.update'`).Scan(&details); err != nil || details != `{"new":7,"old":600}` {
+		t.Fatal("audit", details, err)
+	}
+	if _, err = db.Exec(`CREATE TRIGGER rate_audit_failure BEFORE INSERT ON audit_events WHEN NEW.action IN ('api_token.rate_limit.update','settings.api_token_rate_limit.update') BEGIN SELECT RAISE(FAIL,'blocked'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if s.SetAPITokenRateLimit(ctx, meta.ID, &limit) == nil || s.SetGlobalAPITokenRateLimit(ctx, 9) == nil {
+		t.Fatal("audit failure accepted")
+	}
+	list, err = s.ListAPITokens(ctx)
+	if err != nil || list[0].RateLimitPerMinute != nil {
+		t.Fatal("token not rolled back", err)
+	}
+	if global, err := s.APITokenRateLimit(ctx); err != nil || global != 7 {
+		t.Fatal("global not rolled back", global, err)
+	}
+	if err = s.AuthenticateAPIToken(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	s.WaitAPITokenUse()
+}
+
+func TestAPITokenRateLimitChangesOnNextRequestAndConcurrentAuthentication(t *testing.T) {
+	s, db, now := newAuth(t)
+	ctx := context.Background()
+	user, err := s.CreateUser(ctx, "rate-changes", initialPassword, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "obt_" + strings.Repeat("A", 43)
+	digest := sha256.Sum256([]byte(token))
+	if _, err = db.Exec(`INSERT INTO api_tokens(id,name,token_hash,created_by,created_at) VALUES('rate','test',?,?,?)`, digest[:], user.ID, timekey.Format(*now)); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetGlobalAPITokenRateLimit(ctx, 3); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.AuthenticateAPIToken(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetGlobalAPITokenRateLimit(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.AuthenticateAPIToken(ctx, token); err != nil {
+		t.Fatal("lowered bucket was not clamped", err)
+	}
+	if !errors.Is(s.AuthenticateAPIToken(ctx, token), auth.ErrRateLimited) {
+		t.Fatal("lowered bucket retained excess")
+	}
+	*now = now.Add(30 * time.Second)
+	var limited *auth.APITokenRateLimitError
+	if !errors.As(s.AuthenticateAPIToken(ctx, token), &limited) || limited.RetryAfter != 30 {
+		t.Fatal("clock refill", limited)
+	}
+	*now = now.Add(30 * time.Second)
+	if err = s.AuthenticateAPIToken(ctx, token); err != nil {
+		t.Fatal("refill failed", err)
+	}
+	override := 8
+	if err = s.SetAPITokenRateLimit(ctx, "rate", &override); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(s.AuthenticateAPIToken(ctx, token), auth.ErrRateLimited) {
+		t.Fatal("raising the limit granted requests")
+	}
+	*now = now.Add(time.Minute)
+	var accepted atomic.Int64
+	var wg sync.WaitGroup
+	for i := 0; i < 40; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := s.AuthenticateAPIToken(ctx, token)
+			if err == nil {
+				accepted.Add(1)
+			} else if !errors.Is(err, auth.ErrRateLimited) {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if accepted.Load() != 8 {
+		t.Fatalf("raised budget admitted %d, want 8", accepted.Load())
+	}
+	s.WaitAPITokenUse()
 }

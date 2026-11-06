@@ -209,7 +209,7 @@ func TestAPITokenHTTPFieldsAndWrites(t *testing.T) {
 	}
 	tokens := tokenObject(t, request(t, f.handler, "GET", "/api/v1/api-tokens", "", cookie, "", ""))
 	assertLiteralKeys(t, tokens, "api_tokens")
-	assertLiteralKeys(t, tokens["api_tokens"].([]any)[0], "id", "name", "created_by", "created_by_username", "created_at", "expires_at", "last_used_at")
+	assertLiteralKeys(t, tokens["api_tokens"].([]any)[0], "id", "name", "created_by", "created_by_username", "created_at", "expires_at", "last_used_at", "rate_limit_per_minute")
 	if strings.Contains(stringMustJSON(t, tokens), token) {
 		t.Fatal("list leaked plaintext")
 	}
@@ -483,5 +483,107 @@ func TestAPITokenDiskHistoryQueriesMatchAdministrator(t *testing.T) {
 	}
 	for _, query := range []string{"?metric=load1&range=1h&disk=/", "?metric=disk_used_percent&range=1h&disk=relative", "?metric=inode_used_percent&range=1h&disk=/&disk=/other"} {
 		apiError(t, apiTokenRequest(t, h, "GET", base+query, "Bearer "+token, nil), 400, "validation_failed")
+	}
+}
+
+func TestAPITokenHTTPRateLimitAndAdminSettings(t *testing.T) {
+	f := newHTTP(t, 5)
+	metadata, token, cookie, csrf := createHTTPAPIToken(t, f)
+	patch := func(path, body string) *httptest.ResponseRecorder {
+		return request(t, f.handler, "PATCH", path, body, cookie, csrf, publicURL)
+	}
+	assertHTTPStatus(t, patch("/api/v1/settings/api-tokens", `{"rate_limit_per_minute":1}`), 200)
+	got := request(t, f.handler, "GET", "/api/v1/settings/api-tokens", "", cookie, "", "")
+	assertHTTPStatus(t, got, 200)
+	if got.Body.String() != "{\"rate_limit_per_minute\":1}\n" {
+		t.Fatal(got.Body.String())
+	}
+	assertHTTPStatus(t, patch("/api/v1/api-tokens/"+metadata.ID, `{"rate_limit_per_minute":1}`), 200)
+	// The forbidden request spends the one-request budget before whitelist lookup.
+	apiError(t, apiTokenRequest(t, f.handler, "GET", "/api/v1/settings/api-tokens", "Bearer "+token, cookie), 403, "token_forbidden")
+	limited := apiTokenRequest(t, f.handler, "GET", "/api/v1/nodes", "Bearer "+token, cookie)
+	apiError(t, limited, 429, "rate_limited")
+	if limited.Header().Get("Retry-After") != "60" {
+		t.Fatal("retry", limited.Header())
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(limited.Body.Bytes(), &envelope); err != nil || envelope["message"] == "" || envelope["request_id"] == "" {
+		t.Fatal("envelope", err)
+	}
+	assertHTTPStatus(t, apiTokenRequest(t, f.handler, "GET", "/api/v1/nodes", "", cookie), 200)
+	// The fixture clock is fixed, so a second token covers routes the first can no longer reach.
+	assertHTTPStatus(t, patch("/api/v1/settings/api-tokens", `{"rate_limit_per_minute":20}`), 200)
+	_, token, cookie, _ = createHTTPAPIToken(t, f)
+	for _, endpoint := range []struct{ method, path string }{{"GET", "/api/v1/settings/api-tokens"}, {"PATCH", "/api/v1/settings/api-tokens"}, {"PATCH", "/api/v1/api-tokens/" + metadata.ID}} {
+		apiError(t, apiTokenRequest(t, f.handler, endpoint.method, endpoint.path, "Bearer "+token, cookie), 403, "token_forbidden")
+	}
+	scraper, ok := f.handler.(interface{ MetricsHandler() http.Handler })
+	if !ok {
+		t.Fatal("metrics handler")
+	}
+	metrics := httptest.NewRecorder()
+	scraper.MetricsHandler().ServeHTTP(metrics, httptest.NewRequest("GET", "/metrics", nil))
+	if !strings.Contains(metrics.Body.String(), "orbitbeacon_api_token_rate_limited_total 1\n") {
+		t.Fatal("counter", metrics.Body.String())
+	}
+}
+
+func TestAPITokenHTTPRatePatchValidationAuditAndRollback(t *testing.T) {
+	f := newHTTP(t, 5)
+	metadata, _, cookie, csrf := createHTTPAPIToken(t, f)
+	tokenPath := "/api/v1/api-tokens/" + metadata.ID
+	patch := func(path, body string) *httptest.ResponseRecorder {
+		return request(t, f.handler, "PATCH", path, body, cookie, csrf, publicURL)
+	}
+	for _, path := range []string{tokenPath, "/api/v1/settings/api-tokens"} {
+		for _, body := range []string{`{}`, `{"rate_limit_per_minute":0}`, `{"rate_limit_per_minute":100001}`, `{"rate_limit_per_minute":1.5}`, `{"rate_limit_per_minute":"2"}`, `{"rate_limit_per_minute":true}`, `{"rate_limit_per_minute":2,"password":"never-reflect"}`} {
+			response := patch(path, body)
+			apiError(t, response, 400, "validation_failed")
+			var value struct {
+				Fields map[string]string `json:"fields"`
+			}
+			if json.Unmarshal(response.Body.Bytes(), &value) != nil || len(value.Fields) == 0 {
+				t.Fatal("missing fields")
+			}
+			if body == `{}` && value.Fields["rate_limit_per_minute"] != "is required" {
+				t.Fatal("missing field confused with null")
+			}
+			if strings.Contains(response.Body.String(), "never-reflect") {
+				t.Fatal("request value reflected")
+			}
+		}
+	}
+	apiError(t, patch("/api/v1/settings/api-tokens", `{"rate_limit_per_minute":null}`), 400, "validation_failed")
+	apiError(t, patch("/api/v1/api-tokens/00000000-0000-4000-8000-000000000099", `{"rate_limit_per_minute":2}`), 404, "not_found")
+	var count int
+	f.db.QueryRow(`SELECT count(*) FROM audit_events WHERE action IN ('api_token.rate_limit.update','settings.api_token_rate_limit.update')`).Scan(&count)
+	if count != 0 {
+		t.Fatal("audit on failure", count)
+	}
+	for _, item := range []struct{ path, body string }{{tokenPath, `{"rate_limit_per_minute":2}`}, {tokenPath, `{"rate_limit_per_minute":null}`}, {"/api/v1/settings/api-tokens", `{"rate_limit_per_minute":7}`}} {
+		assertHTTPStatus(t, patch(item.path, item.body), 200)
+	}
+	if err := f.db.QueryRow(`SELECT count(*) FROM audit_events WHERE action IN ('api_token.rate_limit.update','settings.api_token_rate_limit.update')`).Scan(&count); err != nil || count != 3 {
+		t.Fatal("audit", count, err)
+	}
+	if _, err := f.db.Exec(`CREATE TRIGGER rate_http_audit_failure BEFORE INSERT ON audit_events WHEN NEW.action IN ('api_token.rate_limit.update','settings.api_token_rate_limit.update') BEGIN SELECT RAISE(FAIL,'blocked'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertHTTPStatus(t, patch(tokenPath, `{"rate_limit_per_minute":9}`), 500)
+	assertHTTPStatus(t, patch("/api/v1/settings/api-tokens", `{"rate_limit_per_minute":9}`), 500)
+	var override *int
+	var global string
+	if err := f.db.QueryRow(`SELECT rate_limit_per_minute FROM api_tokens WHERE id=?`, metadata.ID).Scan(&override); err != nil || override != nil {
+		t.Fatal("token rollback", err)
+	}
+	if err := f.db.QueryRow(`SELECT value FROM settings WHERE key='api_token_rate_limit_per_minute'`).Scan(&global); err != nil || global != "7" {
+		t.Fatal("global rollback", global, err)
+	}
+	if err := f.db.QueryRow(`SELECT count(*) FROM audit_events WHERE action IN ('api_token.rate_limit.update','settings.api_token_rate_limit.update')`).Scan(&count); err != nil || count != 3 {
+		t.Fatal("failed audit persisted", count, err)
+	}
+	// The same session and CSRF gates as revoke protect both mutation routes.
+	for _, path := range []string{tokenPath, "/api/v1/settings/api-tokens"} {
+		assertHTTPStatus(t, request(t, f.handler, "PATCH", path, `{"rate_limit_per_minute":2}`, cookie, "", publicURL), 403)
 	}
 }

@@ -784,3 +784,21 @@ func TestHostHistoryMetricsRequestTargets(t *testing.T) {
 		}
 	}
 }
+
+func TestRateLimitedToolDoesNotRetry(t *testing.T) {
+	var calls atomic.Int64
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(429)
+		io.WriteString(w, `{"code":"rate_limited"}`)
+	})
+	got := call(t, client, "list_groups", map[string]any{})
+	if got.Error != nil {
+		t.Fatal(got.Error)
+	}
+	value := got.Result.(toolResult)
+	if !value.IsError || value.Content[0].Text != "HTTP 429 rate_limited" || calls.Load() != 1 {
+		t.Fatalf("rate limited result=%+v calls=%d", value, calls.Load())
+	}
+}

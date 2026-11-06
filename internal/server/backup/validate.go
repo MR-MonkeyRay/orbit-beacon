@@ -250,7 +250,17 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 		}
 		return announcements.Validate(&p)
 	case "settings":
-		if r.text("key") != "public_page_enabled" || !oneOf(r.text("value"), "true", "false") {
+		switch r.text("key") {
+		case "public_page_enabled":
+			if !oneOf(r.text("value"), "true", "false") {
+				return invalidRow()
+			}
+		case "api_token_rate_limit_per_minute":
+			limit, err := strconv.Atoi(r.text("value"))
+			if err != nil || limit < 1 || limit > 100000 {
+				return invalidRow()
+			}
+		default:
 			return invalidRow()
 		}
 	case "recovery_codes":

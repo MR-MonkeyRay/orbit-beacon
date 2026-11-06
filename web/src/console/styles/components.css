@@ -870,6 +870,10 @@ dialog.closing::backdrop {
   white-space: nowrap;
 }
 
+.table td.actions>button+button {
+  margin-left: var(--sp-2);
+}
+
 .panel-body.flush {
   padding-bottom: 6px;
 }

@@ -74,7 +74,7 @@ func TestAPITokenResponseSchemasHaveLiteralPropertiesAndValidReferences(t *testi
 	type schema = map[string]any
 	schemas := data["components"].(map[string]any)["schemas"].(map[string]any)
 	for name, keys := range map[string][]string{
-		"APIToken":          {"id", "name", "created_by", "created_by_username", "created_at", "expires_at", "last_used_at"},
+		"APIToken":          {"id", "name", "created_by", "created_by_username", "created_at", "expires_at", "last_used_at", "rate_limit_per_minute"},
 		"TokenNode":         {"stopped", "id", "name", "status", "expires_on", "region", "provider", "group_id", "tags", "created_at", "last_seen", "presence", "agent_version"},
 		"TokenNodePage":     {"nodes", "has_more", "next_offset"},
 		"TokenLatestSample": {"received_at", "sampled_at", "seq", "metrics", "server_time"},

@@ -21,6 +21,23 @@
   min-width: 0;
 }
 
+.form.form-compact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+
+.form-compact .field {
+  flex: 0 1 240px;
+}
+
+.form-compact .form-error {
+  flex-basis: 100%;
+  order: 1;
+}
+
 .field-label,.field>span:first-child {
   font-size: var(--fs-sm);
   font-weight: var(--font-weight-600);

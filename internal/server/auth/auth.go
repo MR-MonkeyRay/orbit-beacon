@@ -91,6 +91,7 @@ type Service struct {
 	gate                   chan struct{}
 	waiters                chan struct{}
 	rateMu                 sync.Mutex
+	apiTokenBuckets        map[string]apiTokenBucket
 	loginPeers             map[netip.Addr]loginBucket
 	loginNames             map[loginIdentityKey]loginBucket
 	loginFailures          map[[sha256.Size]byte]loginBucket
@@ -113,7 +114,8 @@ func NewService(db *sql.DB, opts Options) *Service {
 	}
 	return &Service{
 		db: db, now: opts.Now, random: opts.Random, box: opts.SecretBox,
-		totpFailures: make(map[string]loginBucket), totpFailureOverflow: loginBucket{tokens: 10},
+		apiTokenBuckets: make(map[string]apiTokenBucket),
+		totpFailures:    make(map[string]loginBucket), totpFailureOverflow: loginBucket{tokens: 10},
 		gate: make(chan struct{}, 1), waiters: make(chan struct{}, 8),
 		loginPeers:             make(map[netip.Addr]loginBucket),
 		loginNames:             make(map[loginIdentityKey]loginBucket),

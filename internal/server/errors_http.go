@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/alerts"
@@ -139,7 +140,12 @@ func mappedError(w http.ResponseWriter, err error, requestID string, scope error
 			response.Code = coded.Code
 		}
 		if mapping.retry {
-			w.Header().Set("Retry-After", "1")
+			retryAfter := 1
+			var tokenRate *auth.APITokenRateLimitError
+			if errors.As(err, &tokenRate) {
+				retryAfter = tokenRate.RetryAfter
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		}
 		writeJSON(w, mapping.status, response)
 		return true

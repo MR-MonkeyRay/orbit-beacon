@@ -6,7 +6,7 @@ import {api, getNavigationSignal, session} from '../api.js';
 import {when} from '../format.js';
 import {button, dataTable, panel} from './components.js';
 import {confirmDialog, formDialog, modal} from './dialogs.js';
-import {field, input, passwordInput, select, validateBytes} from './forms.js';
+import {field, input, passwordInput, select, validateBytes, onSubmit} from './forms.js';
 import {toastError} from './feedback.js';
 
 function tokenDialog(token) {
@@ -23,13 +23,31 @@ export function apiTokensPanel() {
   const navigation = getNavigationSignal();
   const alive = () => !navigation?.aborted;
   const load = async () => {
-    const {api_tokens: tokens} = await api('/api-tokens');
+    const [{api_tokens: tokens}, settings] = await Promise.all([api('/api-tokens'), api('/settings/api-tokens')]);
     if (!alive()) return;
-    body.replaceChildren(dataTable({columns: ['apiTokenName', 'apiTokenCreator', 'apiTokenCreated', 'apiTokenLastUsed', 'apiTokenExpires', 'apiTokenActions'].map((key) => t(`account.${key}`)),
+    const globalLimit = input({type: 'number', name: 'rate_limit_per_minute', min: 1, max: 100000, step: 1, required: true, value: settings.rate_limit_per_minute});
+    const save = button(t('settings.save'), {type: 'submit', disabled: !session.csrf});
+    const error = h('div', {class: 'form-error', role: 'alert', hidden: true});
+    const form = h('form', {class: 'form form-compact'}, field(t('account.apiTokenGlobalRate'), globalLimit), error, h('div', {class: 'actions'}, save));
+    onSubmit(form, save, async () => {
+      await api('/settings/api-tokens', {method: 'PATCH', body: {rate_limit_per_minute: Number(globalLimit.value)}});
+      if (alive()) await load();
+    }, error);
+    body.replaceChildren(form, dataTable({columns: ['apiTokenName', 'apiTokenCreator', 'apiTokenCreated', 'apiTokenLastUsed', 'apiTokenExpires', 'apiTokenRate', 'apiTokenActions'].map((key) => t(`account.${key}`)),
       body: h('tbody', null, tokens.map((token) => h('tr', null,
         h('td', null, token.name), h('td', null, token.created_by_username), h('td', null, when(token.created_at)),
         h('td', null, token.last_used_at ? when(token.last_used_at) : '—'), h('td', null, token.expires_at ? when(token.expires_at) : t('account.apiTokenNever')),
-        h('td', {class: 'actions'}, button(t('account.revokeAPIToken'), {small: true, disabled: !session.csrf, onClick: async () => {
+        h('td', null, token.rate_limit_per_minute ?? t('account.apiTokenDefaultRate', {limit: settings.rate_limit_per_minute})),
+        h('td', {class: 'actions'}, button(t('account.apiTokenEditRate'), {small: true, disabled: !session.csrf, onClick: () => {
+          let limit;
+          formDialog({title: t('account.apiTokenEditRate'), submit: t('settings.save'), build(form) {
+            limit = input({type: 'number', name: 'rate_limit_per_minute', min: 1, max: 100000, step: 1, placeholder: String(settings.rate_limit_per_minute), value: token.rate_limit_per_minute ?? ''});
+            form.append(field(t('account.apiTokenRate'), limit));
+          }, action: async () => {
+            await api(`/api-tokens/${encodeURIComponent(token.id)}`, {method: 'PATCH', body: {rate_limit_per_minute: limit.value === '' ? null : Number(limit.value)}});
+            if (alive()) await load();
+          }});
+        }}), button(t('account.revokeAPIToken'), {small: true, disabled: !session.csrf, onClick: async () => {
           if (!(await confirmDialog({title: t('account.revokeAPIToken'), confirm: t('account.revokeAPIToken'), danger: true})) || !alive()) return;
           try { await api(`/api-tokens/${encodeURIComponent(token.id)}`, {method: 'DELETE'}); await load(); }
           catch (error) { if (alive()) toastError(error); }

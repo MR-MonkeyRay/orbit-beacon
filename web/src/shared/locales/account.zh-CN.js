@@ -1,4 +1,9 @@
 export default {
+  "account.apiTokenGlobalRate": "全局限额（请求/分钟）",
+  "account.apiTokenRate": "限额（请求/分钟）",
+  "account.apiTokenDefaultRate": "默认（{limit}）",
+  "account.apiTokenEditRate": "修改限额",
+  "fields.apiTokenRate": "请输入 1 至 100000 的整数。",
   "fields.apiTokenExpiry": "请选择 30、90、365 天或永不。",
   "account.apiTokenNever": "永不",
   "account.apiToken365": "365 天",

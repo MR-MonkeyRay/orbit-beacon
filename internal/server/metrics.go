@@ -26,14 +26,15 @@ type durationMetric struct {
 	buckets [len(durationBuckets)]uint64
 }
 type httpMetrics struct {
-	version       string
-	inflight      atomic.Int64
-	publicStreams atomic.Int64
-	mu            sync.Mutex
-	requests      map[requestLabels]uint64
-	durations     map[durationLabels]*durationMetric
-	reports       map[string]uint64
-	logins        map[string]uint64
+	apiTokenRateLimited atomic.Uint64
+	version             string
+	inflight            atomic.Int64
+	publicStreams       atomic.Int64
+	mu                  sync.Mutex
+	requests            map[requestLabels]uint64
+	durations           map[durationLabels]*durationMetric
+	reports             map[string]uint64
+	logins              map[string]uint64
 }
 
 func newHTTPMetrics(version string) *httpMetrics {
@@ -157,6 +158,7 @@ func prometheusLabel(value string) string {
 
 func (m *httpMetrics) exposition() string {
 	var b strings.Builder
+	fmt.Fprintf(&b, "# HELP orbitbeacon_api_token_rate_limited_total API token requests rejected by the rate limit.\n# TYPE orbitbeacon_api_token_rate_limited_total counter\norbitbeacon_api_token_rate_limited_total %d\n", m.apiTokenRateLimited.Load())
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 	fmt.Fprintln(&b, "# HELP orbitbeacon_http_requests_total Completed HTTP requests.\n# TYPE orbitbeacon_http_requests_total counter")

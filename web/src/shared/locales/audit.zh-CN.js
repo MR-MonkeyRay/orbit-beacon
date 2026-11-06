@@ -1,4 +1,6 @@
 export default {
+  "audit.apiTokenRateUpdate": "修改 API 令牌限额",
+  "audit.apiTokenGlobalRateUpdate": "修改 API 令牌全局限额",
   "audit.apiTokenRevoke": "撤销 API 令牌",
   "audit.apiTokenCreate": "创建 API 令牌",
   "audit.totpEnable": "启用两步验证",
