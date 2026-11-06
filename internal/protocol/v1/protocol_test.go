@@ -41,7 +41,7 @@ const reportJSON = `{
   "cpu_percent":null,"load1":0.5,"load5":1.25,"load15":2,
   "memory_total_bytes":8192,"memory_available_bytes":4096,
   "swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":123,
-  "disks":[{"path":"/","total_bytes":8192,"used_bytes":2048,"sampled_at":"2026-10-26T12:00:00Z"}],
+  "disks":[{"path":"/","total_bytes":8192,"used_bytes":2048,"inodes_total":null,"inodes_used":null,"sampled_at":"2026-10-26T12:00:00Z"}],
   "networks":[{"name":"eth0","rx_bytes_per_sec":null,"tx_bytes_per_sec":null}],
   "metric_status":{"cpu_percent":"stale","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok","disk:/":"ok","network:eth0":"stale"},
   "sources":{"cpu":{"sample_id":"cpu-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":0},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000},"disk:/":{"sample_id":"disk-1","age_ms":10000,"source_interval_ms":60000},"network:eth0":{"sample_id":"net-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":0}}

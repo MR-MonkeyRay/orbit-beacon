@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"reflect"
@@ -736,4 +737,31 @@ func TestProcessConfigurationFailureExitStatus(t *testing.T) {
 	if strings.Contains(stdout.String()+stderr.String(), testToken) {
 		t.Fatal("configuration error leaked credential")
 	}
+}
+
+func TestHistoryDiskArgumentEncoding(t *testing.T) {
+	for _, tool := range toolTable() {
+		if tool.Name != "get_node_history" {
+			continue
+		}
+		if _, ok := tool.InputSchema.Properties["disk"]; !ok {
+			t.Fatal("missing optional disk property")
+		}
+		if slices.Contains(tool.InputSchema.Required, "disk") {
+			t.Fatal("disk must be optional")
+		}
+		path, ok := tool.requestTarget(json.RawMessage(`{"id":"` + testID + `","metric":"inode_used_percent","range":"1h","disk":"/data:a?b&c"}`))
+		if !ok {
+			t.Fatal("disk argument rejected")
+		}
+		parsed, err := url.Parse(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parsed.Query().Get("disk") != "/data:a?b&c" || parsed.Query().Get("metric") != "inode_used_percent" {
+			t.Fatalf("path=%s", path)
+		}
+		return
+	}
+	t.Fatal("missing history tool")
 }

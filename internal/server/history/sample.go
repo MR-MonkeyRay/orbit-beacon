@@ -73,13 +73,27 @@ func Snapshot(nodeID string, receivedAt time.Time, m v1.Metrics) Sample {
 			put("swap_used_percent", 100*float64(used)/float64(total))
 		}
 	}
-	var diskTotal, diskUsed float64
+	var diskTotal, diskUsed, inodeTotal, inodeUsed float64
 	for _, d := range m.Disks {
 		key := v1.DiskMetricKey(d.Path)
-		if d.TotalBytes != nil && d.UsedBytes != nil && ok(key, key) {
+		if !ok(key, key) {
+			continue
+		}
+		if d.TotalBytes != nil && d.UsedBytes != nil {
 			diskTotal += float64(*d.TotalBytes)
 			diskUsed += float64(*d.UsedBytes)
+			if *d.TotalBytes > 0 {
+				put("disk_used_percent:"+d.Path, 100*float64(*d.UsedBytes)/float64(*d.TotalBytes))
+			}
 		}
+		if d.InodesTotal != nil && d.InodesUsed != nil && *d.InodesTotal > 0 && *d.InodesUsed <= *d.InodesTotal {
+			inodeTotal += float64(*d.InodesTotal)
+			inodeUsed += float64(*d.InodesUsed)
+			put("inode_used_percent:"+d.Path, 100*float64(*d.InodesUsed)/float64(*d.InodesTotal))
+		}
+	}
+	if inodeTotal > 0 {
+		put("inode_used_percent", 100*inodeUsed/inodeTotal)
 	}
 	if diskTotal > 0 {
 		put("disk_used_percent", 100*diskUsed/diskTotal)

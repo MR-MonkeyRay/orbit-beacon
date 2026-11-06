@@ -129,7 +129,7 @@ func TestAggregationRejectsOverflowingInputs(t *testing.T) {
 	}
 	stopped(t, s)
 	for _, requestedRange := range []string{"1h", "24h", "30d"} {
-		result, err := s.Query(context.Background(), "node", "load1", requestedRange, now)
+		result, err := s.Query(context.Background(), "node", "load1", requestedRange, now, "")
 		if err != nil || len(result.Points) != 1 || result.Points[0].Avg != 5e5 || result.Points[0].Max != 1e6 {
 			t.Fatalf("range=%s result=%+v err=%v", requestedRange, result, err)
 		}
@@ -148,7 +148,7 @@ func TestQuerySkipsNonFiniteStoredPoints(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	result, err := s.Query(context.Background(), "node", "load1", "1h", now)
+	result, err := s.Query(context.Background(), "node", "load1", "1h", now, "")
 	if err != nil || len(result.Points) != 1 || result.Points[0].Avg != 10 {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
@@ -206,7 +206,7 @@ func TestAggregationWeightedRollupsShutdownAndGaps(t *testing.T) {
 	}{
 		{"1h", 3, 20, 30}, {"6h", 3, 20, 30}, {"24h", 1, 30, 80}, {"7d", 1, 30, 80}, {"30d", 1, 30, 80}, {"90d", 1, 30, 80},
 	} {
-		response, err := s.Query(context.Background(), "one", "cpu_percent", test.rangeName, now.Add(4*time.Minute))
+		response, err := s.Query(context.Background(), "one", "cpu_percent", test.rangeName, now.Add(4*time.Minute), "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -239,11 +239,11 @@ func TestFlushCompletedOnlyAndRestartMergesPartialMinute(t *testing.T) {
 	defer restarted.Close()
 	restarted.samples <- Sample{"node", now.Add(10 * time.Second), map[string]float64{"cpu_percent": 80}}
 	stopped(t, restarted)
-	response, err := restarted.Query(context.Background(), "node", "cpu_percent", "1h", now.Add(20*time.Second))
+	response, err := restarted.Query(context.Background(), "node", "cpu_percent", "1h", now.Add(20*time.Second), "")
 	if err != nil || len(response.Points) != 2 || response.Points[1].Avg != 60 || response.Points[1].Max != 80 {
 		t.Fatalf("response=%+v err=%v", response, err)
 	}
-	rollup, err := restarted.Query(context.Background(), "node", "cpu_percent", "30d", now.Add(20*time.Second))
+	rollup, err := restarted.Query(context.Background(), "node", "cpu_percent", "30d", now.Add(20*time.Second), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,6 +292,8 @@ func TestRetentionAndDeletedNodePurge(t *testing.T) {
 		}
 	}
 	s.add(Sample{deleted.ID, now, map[string]float64{"cpu_percent": 90}})
+	s.paths[live.ID] = map[string]struct{}{"/live": {}}
+	s.paths[deleted.ID] = map[string]struct{}{"/deleted": {}}
 	if err := ns.Delete(context.Background(), deleted.ID, true); err != nil {
 		t.Fatal(err)
 	}
@@ -302,6 +304,9 @@ func TestRetentionAndDeletedNodePurge(t *testing.T) {
 	var count int
 	if err := s.db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id=?`, deleted.ID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("orphan rows=%d err=%v", count, err)
+	}
+	if len(s.paths) != 1 || len(s.paths[live.ID]) != 1 {
+		t.Fatalf("orphan path inventory survived: %v", s.paths)
 	}
 	if len(s.pending) != 0 {
 		t.Fatal("orphan pending bucket survived")
@@ -339,7 +344,7 @@ func TestIndependentWriterLockAndCleanupDrainsQueue(t *testing.T) {
 	if _, err := s.Cleanup(ctx, now); err != nil {
 		t.Fatalf("main writer blocked history: %v", err)
 	}
-	response, err := s.Query(ctx, live.ID, "cpu_percent", "1h", now)
+	response, err := s.Query(ctx, live.ID, "cpu_percent", "1h", now, "")
 	if err != nil || len(response.Points) != 1 {
 		t.Fatalf("queued sample not flushed: %+v %v", response, err)
 	}
@@ -390,7 +395,7 @@ func TestSelectRangeAndEmpty(t *testing.T) {
 	}
 	for metric, unit := range map[string]string{
 		"cpu_percent": "percent", "memory_used_percent": "percent", "swap_used_percent": "percent",
-		"load1": "load", "load5": "load", "load15": "load", "disk_used_percent": "percent",
+		"load1": "load", "load5": "load", "load15": "load", "disk_used_percent": "percent", "inode_used_percent": "percent",
 		"net_rx_bytes_per_second": "bytes_per_second", "net_tx_bytes_per_second": "bytes_per_second",
 	} {
 		response, err := Empty(metric, "90d")
@@ -515,7 +520,7 @@ func TestNetworkRateAggregationOmitsMissingSamples(t *testing.T) {
 		metric    string
 		avg, peak float64
 	}{{"net_rx_bytes_per_second", 200, 300}, {"net_tx_bytes_per_second", 10, 20}} {
-		result, err := s.Query(context.Background(), "node", test.metric, "1h", now.Add(time.Minute))
+		result, err := s.Query(context.Background(), "node", test.metric, "1h", now.Add(time.Minute), "")
 		if err != nil || len(result.Points) != 1 || result.Points[0].Avg != test.avg || result.Points[0].Max != test.peak {
 			t.Fatalf("%s=%+v err=%v", test.metric, result, err)
 		}
@@ -571,7 +576,7 @@ func TestLoadHistoryQueriesAcrossNinetyDays(t *testing.T) {
 	}
 	stopped(t, s)
 	for metric, want := range map[string]float64{"load1": 1.5, "load5": 2.5, "load15": 3.5} {
-		response, err := s.Query(context.Background(), "node", metric, "90d", now)
+		response, err := s.Query(context.Background(), "node", metric, "90d", now, "")
 		if err != nil || response.Unit != "load" || response.StepSeconds != 3600 || len(response.Points) != 3 {
 			t.Fatalf("%s: response=%+v err=%v", metric, response, err)
 		}

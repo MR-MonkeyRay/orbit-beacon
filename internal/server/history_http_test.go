@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -24,7 +25,7 @@ func TestHistoryAPIValidationSecondAdministratorAndDisabledHistory(t *testing.T)
 	route := "/api/v1/nodes/" + node.ID + "/history"
 	valid := "?metric=cpu_percent&range=1h"
 	apiError(t, request(t, f.handler, http.MethodGet, route+valid, "", nil, "", ""), 401, "unauthenticated")
-	for _, query := range []string{"", "?metric=cpu_percent", "?range=1h", "?metric=unknown&range=1h", "?metric=cpu_percent&range=48h", "?metric=cpu_percent&range=1H", "?metric=cpu_percent&metric=load1&range=1h", "?metric=cpu_percent&range=1h&range=6h", "?metric=cpu_percent&range=1h&extra=x", "?metric=cpu_percent&range=%zz"} {
+	for _, query := range []string{"", "?metric=cpu_percent", "?range=1h", "?metric=unknown&range=1h", "?metric=cpu_percent&range=48h", "?metric=cpu_percent&range=1H", "?metric=cpu_percent&metric=load1&range=1h", "?metric=cpu_percent&range=1h&range=6h", "?metric=cpu_percent&range=1h&extra=x", "?metric=cpu_percent&range=%zz", "?metric=load1&range=1h&disk=/", "?metric=disk_used_percent&range=1h&disk=relative", "?metric=inode_used_percent&range=1h&disk=/&disk=/data", "?metric=disk_used_percent&range=1h&disk="} {
 		t.Run(query, func(t *testing.T) {
 			apiError(t, request(t, f.handler, http.MethodGet, route+query, "", second, "", ""), 400, "validation_failed")
 		})
@@ -75,6 +76,7 @@ func TestHistoryHTTPIngestFlushTiersAndDeleteVisibility(t *testing.T) {
 	if err := h.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	hs.Samples() <- history.Sample{NodeID: id, ReceivedAt: f.now, Values: map[string]float64{"disk_used_percent:/data:one": 25, "inode_used_percent:/data:one": 75, "disk_used_percent:/other": 50}}
 	if err := hs.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -104,6 +106,23 @@ func TestHistoryHTTPIngestFlushTiersAndDeleteVisibility(t *testing.T) {
 		}
 		if len(object) != 5 {
 			t.Fatalf("unexpected API fields: %s", response.Body)
+		}
+	}
+	for _, tc := range []struct {
+		metric, disk string
+		points       int
+		avg          float64
+	}{
+		{"disk_used_percent", "/data:one", 1, 25}, {"inode_used_percent", "/data:one", 1, 75}, {"disk_used_percent", "/missing", 0, 0},
+	} {
+		response := request(t, h, http.MethodGet, "/api/v1/nodes/"+id+"/history?metric="+tc.metric+"&range=1h&disk="+url.QueryEscape(tc.disk), "", cookie, "", "")
+		assertHTTPStatus(t, response, 200)
+		var result history.Response
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Metric != tc.metric || len(result.Points) != tc.points || (tc.points > 0 && result.Points[0].Avg != tc.avg) {
+			t.Fatalf("response=%s", response.Body)
 		}
 	}
 	if err := f.nodes.Delete(context.Background(), id, true); err != nil {

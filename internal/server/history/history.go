@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,6 +23,7 @@ const (
 	FlushInterval        = time.Minute
 	maxPendingBuckets    = 8192
 	cleanupBatchSize     = 1000
+	maxDiskPaths         = 16
 )
 
 // 定位到下一个主键节点前缀，而不是为 DISTINCT 遍历每个桶。
@@ -79,6 +81,8 @@ type Service struct {
 	pending           map[bucketKey]map[string]aggregate // owned by run
 	dropped           atomic.Uint64
 	observeFlush      func(time.Duration, int)
+	paths             map[string]map[string]struct{} // owned by run; one entry per observed node
+	seriesRejected    atomic.Uint64
 }
 
 // OpenDatabase 只初始化可信的指标 schema，不启动写入或定期清理任务。
@@ -104,7 +108,7 @@ func Open(ctx context.Context, dataDir string, nodes *sql.DB, opts Options) (*Se
 		opts.Now = time.Now
 	}
 	workCtx, cancel := context.WithCancel(context.Background())
-	s := &Service{db: db, reader: reader, nodes: nodes, samples: make(chan Sample, SampleBufferSize), retention: make(chan retentionRequest), stop: make(chan context.Context, 1), done: make(chan struct{}), cancel: cancel, now: opts.Now, logger: opts.Logger, pending: make(map[bucketKey]map[string]aggregate), observeFlush: opts.ObserveFlush}
+	s := &Service{db: db, reader: reader, nodes: nodes, samples: make(chan Sample, SampleBufferSize), retention: make(chan retentionRequest), stop: make(chan context.Context, 1), done: make(chan struct{}), cancel: cancel, now: opts.Now, logger: opts.Logger, pending: make(map[bucketKey]map[string]aggregate), paths: make(map[string]map[string]struct{}), observeFlush: opts.ObserveFlush}
 	go s.run(workCtx)
 	return s, nil
 }
@@ -113,6 +117,7 @@ func Open(ctx context.Context, dataDir string, nodes *sql.DB, opts Options) (*Se
 // 生产者必须使用非阻塞发送，并自己维护丢弃计数。
 func (s *Service) Samples() chan<- Sample { return s.samples }
 func (s *Service) DroppedBuckets() uint64 { return s.dropped.Load() }
+func (s *Service) SeriesRejected() uint64 { return s.seriesRejected.Load() }
 
 // DatabaseStats 仅在抓取指标时读取两个连接池的快照。
 func (s *Service) DatabaseStats() (writer, reader sql.DBStats) {
@@ -137,6 +142,10 @@ func (s *Service) add(sample Sample) {
 		if !validValue(metric, value) {
 			continue
 		}
+		if path, partitioned := diskSeriesPath(metric); partitioned && !s.admitPath(sample.NodeID, path) {
+			s.seriesRejected.Add(1)
+			continue
+		}
 		a := values[metric]
 		if a.samples == math.MaxInt64 {
 			continue
@@ -146,6 +155,62 @@ func (s *Service) add(sample Sample) {
 		a.samples++
 		values[metric] = a
 	}
+}
+
+// historySeriesQuery 沿主键跳跃，只按序列数访问 B 树；DISTINCT 会扫完该节点的全部桶，
+// 重启后每个节点都要读一次，且运行在历史写入 goroutine 上。
+const historySeriesQuery = `WITH RECURSIVE series(metric) AS (
+	SELECT min(metric) FROM buckets WHERE node_id=?1
+	UNION ALL
+	SELECT (SELECT min(metric) FROM buckets WHERE node_id=?1 AND metric>series.metric) FROM series WHERE series.metric IS NOT NULL
+) SELECT metric FROM series WHERE metric IS NOT NULL`
+
+// diskSeriesPath splits only the first colon; paths may themselves contain colons.
+func diskSeriesPath(metric string) (string, bool) {
+	base, path, found := strings.Cut(metric, ":")
+	return path, found && (base == "disk_used_percent" || base == "inode_used_percent")
+}
+
+// Only run calls admitPath. The first read uses the reader pool outside any write
+// transaction; failures reject partitioned samples and retry on the next sample.
+func (s *Service) admitPath(node, path string) bool {
+	paths, loaded := s.paths[node]
+	if !loaded {
+		paths = make(map[string]struct{})
+		if s.reader != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			rows, err := s.reader.QueryContext(ctx, historySeriesQuery, node)
+			if err != nil {
+				return false
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var metric string
+				if err := rows.Scan(&metric); err != nil {
+					return false
+				}
+				if known, ok := diskSeriesPath(metric); ok {
+					paths[known] = struct{}{}
+				}
+			}
+			if rows.Err() != nil {
+				return false
+			}
+		}
+		if s.paths == nil {
+			s.paths = make(map[string]map[string]struct{})
+		}
+		s.paths[node] = paths
+	}
+	if _, known := paths[path]; known {
+		return true
+	}
+	if len(paths) >= maxDiskPaths {
+		return false
+	}
+	paths[path] = struct{}{}
+	return true
 }
 
 func (s *Service) drain() {
@@ -270,6 +335,9 @@ func (s *Service) cleanup(ctx context.Context, now time.Time) (int64, error) {
 	for key := range s.pending {
 		candidates[key.node] = true
 	}
+	for id := range s.paths {
+		candidates[id] = true
+	}
 	rows, err := s.db.QueryContext(ctx, historyNodesQuery)
 	if err != nil {
 		return 0, err
@@ -352,6 +420,9 @@ func (s *Service) cleanup(ctx context.Context, now time.Time) (int64, error) {
 		if candidates[key.node] || key.t < now.Add(-Retention1m).Truncate(time.Minute).Unix() {
 			delete(s.pending, key)
 		}
+	}
+	for id := range candidates {
+		delete(s.paths, id)
 	}
 	return removed, s.flush(ctx, now, false)
 }

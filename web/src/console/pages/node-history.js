@@ -3,7 +3,8 @@ import {errorText} from '../../shared/errors.js';
 import {h} from '../../shared/dom.js';
 import {api} from '../api.js';
 import {chart} from '../ui/chart.js';
-import {link, note, panel} from '../ui/components.js';
+import {link, panel} from '../ui/components.js';
+import {select} from '../ui/forms.js';
 import {historyError} from '../ui/history-error.js';
 import {panelLifecycle} from '../ui/polling-panel.js';
 
@@ -14,6 +15,7 @@ const CHARTS = [
   {title: t('nodes.memory'), unit: 'percent', metrics: [['memory_used_percent', t('nodes.memory')]]},
   {title: t('nodes.load'), unit: 'load', metrics: [['load1', t('nodes.load')]]},
   {title: t('nodes.disk'), unit: 'percent', metrics: [['disk_used_percent', t('nodes.disk')]]},
+  {title: t('nodes.inode'), unit: 'percent', metrics: [['inode_used_percent', t('nodes.inode')]]},
   {title: t('nodes.network'), unit: 'bytes_per_second', metrics: [['net_rx_bytes_per_second', t('nodes.receiveRx')], ['net_tx_bytes_per_second', t('nodes.sendTx')]]}
 ];
 
@@ -27,9 +29,11 @@ function savedRange() {
 
 // 每个页面生命周期一个面板，切回详情标签页时复用。
 // 路由器的中止信号在刷新/导航时也会销毁计时器。
-export function historyPanel(id, signal) {
+export function historyPanel(id, signal, latest) {
   let range = savedRange();
   let loadMetric = 'load1';
+  let disk = '';
+  let diskPaths = [];
   let controller;
   let lifecycle;
   const status = h('p', {class: 'muted', role: 'status'});
@@ -51,36 +55,52 @@ export function historyPanel(id, signal) {
       load();
     }}, t('nodes.duration.minutes', {minutes: Number(value.slice(4))})));
   const loadSelector = h('div', {class: 'segmented', role: 'group', 'aria-label': t('nodes.load')}, loadControls);
+  const diskSelect = select([], '', {id: 'history-disk', 'aria-label': t('nodes.disk'), onchange: () => {
+    if (disk === diskSelect.value) return;
+    disk = diskSelect.value;
+    load();
+  }});
+  const diskSelector = h('div', {class: 'head-actions history-disk', hidden: true}, h('label', {htmlFor: 'history-disk'}, t('nodes.disk')), diskSelect);
   const metricSection = (item, content) => h('section', {class: 'history-metric', 'aria-label': t('nodes.historyAria', {title: item.title})},
     item.unit === 'load' ? h('div', {class: 'head-actions'}, h('h3', null, item.title), loadSelector) : h('h3', null, item.title), content);
 
-  const root = panel(t('nodes.history'), {action: selector},
-    h('p', {class: 'lede'}, t('nodes.historyIntro')),
-    status, charts, note(t('nodes.historyHint')));
+  const root = panel(t('nodes.history'), {action: selector}, diskSelector, status, charts);
+  // Paths follow the current sample, including updates from the node live stream.
+  root.snapshot = (sample) => {
+    const next = [...new Set((sample?.metrics?.disks || []).map((item) => item.path))];
+    if (JSON.stringify(next) === JSON.stringify(diskPaths)) return;
+    diskPaths = next;
+    const changed = disk && !diskPaths.includes(disk);
+    if (changed) disk = '';
+    diskSelect.replaceChildren(h('option', {value: ''}, t('nodes.allDisks')),
+      ...diskPaths.map((path) => h('option', {value: path}, path)));
+    diskSelect.value = disk;
+    diskSelector.hidden = diskPaths.length <= 1;
+    if (changed && lifecycle) load();
+  };
+  root.snapshot(latest);
   async function load() {
     if (lifecycle?.disposed || signal?.aborted) return;
     controller?.abort();
     const request = new AbortController();
     controller = request;
     const requestedRange = range;
+    const requestedDisk = disk;
     const requestedCharts = CHARTS.map((item) => item.unit === 'load'
       ? {...item, metrics: [[loadMetric, t('nodes.load')]]} : item);
     status.textContent = t('nodes.historyLoading');
     charts.setAttribute('aria-busy', 'true');
-    // 所选范围或负载指标变化时清空图表数据，保留可继续切换的控件。
-    // 刷新时保留已聚焦的图表直到加载完成。
-    if (charts.dataset.range !== range || charts.dataset.loadMetric !== loadMetric) {
-      const focusedControl = loadSelector.contains(document.activeElement) ? document.activeElement : null;
-      charts.replaceChildren(...requestedCharts.map((item) => metricSection(item)));
-      focusedControl?.focus({preventScroll: true});
-    }
+    // Keep rendered charts and their controls until the replacement data arrives.
+    if (!charts.children.length) charts.replaceChildren(...requestedCharts.map((item) => metricSection(item)));
     charts.dataset.range = range;
     charts.dataset.loadMetric = loadMetric;
     const metrics = requestedCharts.flatMap((item) => item.metrics.map(([metric]) => metric));
     const results = new Map();
     await Promise.all(metrics.map(async (metric) => {
       try {
-        const data = await api(`/nodes/${encodeURIComponent(id)}/history?metric=${metric}&range=${requestedRange}`, {signal: request.signal});
+        const diskQuery = requestedDisk && ['disk_used_percent', 'inode_used_percent'].includes(metric)
+          ? `&disk=${encodeURIComponent(requestedDisk)}` : '';
+        const data = await api(`/nodes/${encodeURIComponent(id)}/history?metric=${metric}&range=${requestedRange}${diskQuery}`, {signal: request.signal});
         if (data.unit !== requestedCharts.find((item) => item.metrics.some(([name]) => name === metric)).unit) throw Object.assign(new Error('Unsupported history unit'), {code: 'unreadable_response'});
         results.set(metric, {data});
       } catch (error) {
@@ -88,6 +108,7 @@ export function historyPanel(id, signal) {
         if (error.status === 404 && !request.signal.aborted && !signal?.aborted && controller === request) {
           lifecycle.dispose();
           selector.hidden = true;
+          diskSelector.hidden = true;
           charts.replaceChildren();
           charts.setAttribute('aria-busy', 'false');
           status.replaceChildren(...tParts('nodes.nodeMissingPrefix', {link: link('/nodes', t('nodes.goNodes'))}));

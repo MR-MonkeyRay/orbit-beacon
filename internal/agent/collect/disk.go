@@ -37,6 +37,9 @@ func (c *Collector) finishDisks(job *diskCollection) {
 				sample.status = failureStatus(reading.err)
 			} else {
 				sample.metric.TotalBytes, sample.metric.UsedBytes = &reading.usage.Total, &reading.usage.Used
+				if reading.usage.InodesTotal > 0 && reading.usage.InodesUsed <= reading.usage.InodesTotal {
+					sample.metric.InodesTotal, sample.metric.InodesUsed = &reading.usage.InodesTotal, &reading.usage.InodesUsed
+				}
 			}
 			c.disks[reading.path] = sample
 		}

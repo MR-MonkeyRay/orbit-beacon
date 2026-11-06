@@ -2,6 +2,8 @@ package server
 
 import (
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	"orbitbeacon/internal/server/history"
 	"orbitbeacon/internal/server/validation"
@@ -17,6 +19,7 @@ func (h *handler) readHistory(w http.ResponseWriter, r *http.Request, id, reques
 	query, fields := parseQuery(r.URL.RawQuery, "must be a valid query string", map[string]queryParameter{
 		"metric": {repeated: "must be supplied exactly once"},
 		"range":  {repeated: "must be supplied exactly once"},
+		"disk":   {repeated: "must be supplied exactly once"},
 	})
 	metric, requestedRange := query.Get("metric"), query.Get("range")
 	if !history.ValidMetric(metric) {
@@ -24,6 +27,14 @@ func (h *handler) readHistory(w http.ResponseWriter, r *http.Request, id, reques
 	}
 	if _, err := history.SelectRange(requestedRange); err != nil {
 		fields["range"] = "must be one of 1h, 6h, 24h, 7d, 30d, 90d"
+	}
+	if query.Has("disk") {
+		disk := query.Get("disk")
+		if metric != "disk_used_percent" && metric != "inode_used_percent" {
+			fields["disk"] = "is only valid for disk_used_percent or inode_used_percent"
+		} else if !filepath.IsAbs(disk) || len(disk) > 1024 || strings.ContainsRune(disk, 0) {
+			fields["disk"] = "must be an absolute path of at most 1024 bytes without NUL"
+		}
 	}
 	if len(fields) > 0 {
 		h.serviceError(w, &validation.Error{Fields: fields}, requestID)
@@ -37,7 +48,7 @@ func (h *handler) readHistory(w http.ResponseWriter, r *http.Request, id, reques
 	response, _ := history.Empty(metric, requestedRange)
 	if h.history != nil {
 		var err error
-		response, err = h.history.Query(r.Context(), id, metric, requestedRange, h.now())
+		response, err = h.history.Query(r.Context(), id, metric, requestedRange, h.now(), query.Get("disk"))
 		if err != nil {
 			h.serviceError(w, err, requestID)
 			return history.Response{}, false

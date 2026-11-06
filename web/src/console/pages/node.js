@@ -50,6 +50,7 @@ export async function nodePage() {
   const back = link('/nodes', icon('left'), t('nodes.allNodes'));
   back.className = 'back';
   let history;
+  let currentLatest = latest;
   let traffic;
   let availability;
   let billingSettings = trafficSettings;
@@ -76,7 +77,7 @@ export async function nodePage() {
   const tabs = tabSet([
     {id: 'details', label: t('nodes.details'), icon: 'info', build: () => {
       detailsView = detailsTab(node, groups, sample.element,
-        history ||= historyPanel(id, signal), availability ||= availabilityPanel(id, signal), traffic ||= trafficPanel(id, signal),
+        history ||= historyPanel(id, signal, currentLatest), availability ||= availabilityPanel(id, signal), traffic ||= trafficPanel(id, signal),
         probes ||= probesPanel(id, signal),
         trafficSettingsPanel(id, billingSettings, (settings) => {
           if (node.deleted) return;
@@ -145,6 +146,8 @@ export async function nodePage() {
       patchStatusBadge(badge, displayStatus(node));
       actions.snapshot();
       detailsView?.snapshot(node);
+      currentLatest = data.latest;
+      history?.snapshot(currentLatest);
       sample.snapshot(data.latest, frame.server_time);
       agent?.snapshot(node, observedRuntime);
       commands?.snapshot(node, observedRuntime);

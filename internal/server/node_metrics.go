@@ -27,6 +27,8 @@ var nodeMetricFamilies = [...]struct{ name, help string }{
 	{"uptime_seconds", "Reported uptime seconds."},
 	{"disk_total_bytes", "Total disk bytes."},
 	{"disk_used_bytes", "Used disk bytes."},
+	{"disk_inodes_total", "Total disk inodes."},
+	{"disk_inodes_used", "Used disk inodes."},
 	{"network_receive_bytes_per_second", "Network receive bytes per second."},
 	{"network_transmit_bytes_per_second", "Network transmit bytes per second."},
 }
@@ -152,6 +154,8 @@ func nodeMetricsExposition(snapshots []nodeMetricSnapshot) string {
 			diskLabels := labels + ",path=" + nodeMetricLabel(disk.Path)
 			uintMetric("disk_total_bytes", diskLabels, disk.TotalBytes)
 			uintMetric("disk_used_bytes", diskLabels, disk.UsedBytes)
+			uintMetric("disk_inodes_total", diskLabels, disk.InodesTotal)
+			uintMetric("disk_inodes_used", diskLabels, disk.InodesUsed)
 		}
 		sort.Slice(m.Networks, func(i, j int) bool { return m.Networks[i].Name < m.Networks[j].Name })
 		for _, network := range m.Networks {

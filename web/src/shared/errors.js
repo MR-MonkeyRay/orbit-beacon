@@ -26,6 +26,10 @@ export function errorText(error) {
 }
 
 const fieldReasons = new Map([
+  ['is only valid for disk_used_percent or inode_used_percent', 'fields.historyDiskMetric'],
+  ['must be an absolute path of at most 1024 bytes without NUL', 'fields.absoluteDiskPath'],
+  ['must be supplied exactly once', 'fields.queryOnce'],
+  ['must be a supported history metric', 'fields.metric'],
   ['must be 30, 90, 365 or null', 'fields.apiTokenExpiry'],
   ['invalid message template', 'alerts.validation.template'],
   ['invalid announcement title', 'announcements.invalidTitle'],

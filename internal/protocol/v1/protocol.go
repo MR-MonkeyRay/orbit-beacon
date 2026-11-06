@@ -208,10 +208,12 @@ func (s SourceMetadata) FreshAfter(elapsedMS int64) bool {
 }
 
 type DiskMetrics struct {
-	Path       string    `json:"path"`
-	TotalBytes *uint64   `json:"total_bytes"`
-	UsedBytes  *uint64   `json:"used_bytes"`
-	SampledAt  time.Time `json:"sampled_at"`
+	Path        string    `json:"path"`
+	TotalBytes  *uint64   `json:"total_bytes"`
+	UsedBytes   *uint64   `json:"used_bytes"`
+	InodesTotal *uint64   `json:"inodes_total"`
+	InodesUsed  *uint64   `json:"inodes_used"`
+	SampledAt   time.Time `json:"sampled_at"`
 }
 
 type NetworkMetrics struct {
@@ -324,6 +326,12 @@ func (m Metrics) Validate() error {
 		}
 		if err := checkMissing(DiskMetricKey(disk.Path), disk.TotalBytes == nil || disk.UsedBytes == nil); err != nil {
 			return err
+		}
+		if (disk.InodesTotal == nil) != (disk.InodesUsed == nil) {
+			return errors.New("disk inode total and used must both be present or null")
+		}
+		if disk.InodesTotal != nil && *disk.InodesUsed > *disk.InodesTotal {
+			return errors.New("used disk inodes exceed total")
 		}
 		if disk.TotalBytes != nil && disk.UsedBytes != nil && *disk.UsedBytes > *disk.TotalBytes {
 			return errors.New("used disk bytes exceed total")

@@ -102,6 +102,10 @@ orbitbeacon_node_disk_total_bytes{node_id="ID",path="/z"} 9007199254740993
 # TYPE orbitbeacon_node_disk_used_bytes gauge
 orbitbeacon_node_disk_used_bytes{node_id="ID",path="/a"} 123
 orbitbeacon_node_disk_used_bytes{node_id="ID",path="/z"} 123
+# HELP orbitbeacon_node_disk_inodes_total Total disk inodes.
+# TYPE orbitbeacon_node_disk_inodes_total gauge
+# HELP orbitbeacon_node_disk_inodes_used Used disk inodes.
+# TYPE orbitbeacon_node_disk_inodes_used gauge
 # HELP orbitbeacon_node_network_receive_bytes_per_second Network receive bytes per second.
 # TYPE orbitbeacon_node_network_receive_bytes_per_second gauge
 orbitbeacon_node_network_receive_bytes_per_second{node_id="ID",interface="aeth"} 1.2345678901234567

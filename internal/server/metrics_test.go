@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"orbitbeacon/internal/server/history"
 	"orbitbeacon/internal/server/ingest"
 	"regexp"
 	"strconv"
@@ -266,5 +267,19 @@ func TestSaturationMetricsConcurrentScrape(t *testing.T) {
 	wg.Wait()
 	if !strings.Contains(m.exposition(h), "orbitbeacon_history_flush_duration_seconds_count 1000\n") {
 		t.Fatal("lost flush observations")
+	}
+}
+
+func TestHistorySeriesRejectedCounterExposition(t *testing.T) {
+	h := &handler{metrics: newHTTPMetrics("test"), history: new(history.Service)}
+	response := httptest.NewRecorder()
+	h.MetricsHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, line := range []string{
+		"# TYPE orbitbeacon_history_series_rejected_total counter\n",
+		"orbitbeacon_history_series_rejected_total 0\n",
+	} {
+		if !strings.Contains(response.Body.String(), line) {
+			t.Fatalf("missing %q: %s", line, response.Body)
+		}
 	}
 }

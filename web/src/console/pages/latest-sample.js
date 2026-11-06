@@ -78,7 +78,9 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
     const load = ['load1', 'load5', 'load15'].map((key) => metric([key], 'load', number(metrics[key]), number(metrics[key]) ? formatLoad(metrics[key]) : '—'));
     const disks = Array.isArray(metrics.disks) && metrics.disks.length ? h('div', {class: 'sample-series'}, metrics.disks.map((disk) => metric(
       [`disk:${disk.path}`], `disk:${disk.path}`, bytes(disk.total_bytes) && bytes(disk.used_bytes) && disk.used_bytes <= disk.total_bytes,
-      diskSummary([disk])))) : '—';
+      bytes(disk.inodes_total) && bytes(disk.inodes_used) && disk.inodes_total > 0 && disk.inodes_used <= disk.inodes_total
+        ? t('nodes.diskInodeSummary', {disk: diskSummary([disk]), percent: formatPercent(disk.inodes_used / disk.inodes_total * 100)})
+        : diskSummary([disk])))) : '—';
     const networks = Array.isArray(metrics.networks) && metrics.networks.length ? h('div', {class: 'sample-series'}, metrics.networks.map((network) => metric(
       [`network:${network.name}`], `network:${network.name}`, number(network.rx_bytes_per_sec) && number(network.tx_bytes_per_sec),
       networkSummary([network])))) : '—';

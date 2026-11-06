@@ -1823,18 +1823,23 @@ paths:
         - session: []
         - bearerAuth: []
       operationId: getNodeHistory
-      description: 所有已认证管理员均可用。尽力而为的历史，约每分钟刷盘一次。缺失或失败的测量与间隙不产生数据点。网络速率对成功接口求和。磁盘百分比为所有成功选定磁盘的已用字节总量除以总容量。两个查询参数各须恰好出现一次；拒绝未知参数。1h 与 6h 使用 1 分钟桶，24h 与 7d 使用 5 分钟桶，30d 使用 1 小时桶。聚合平均值按测量次数加权。已禁用的历史存储返回空 points 数组。未知节点返回 node_not_found。
+      description: 所有已认证管理员均可用。尽力而为的历史，约每分钟刷盘一次。缺失或失败的测量与间隙不产生数据点。网络速率对成功接口求和。磁盘百分比为所有成功选定磁盘的已用字节总量除以总容量。metric 和 range 各须恰好出现一次；disk 可选且最多一次，仅用于 disk_used_percent 和 inode_used_percent，值为绝对路径。不指定 disk 时按成功磁盘的容量加权聚合；不存在的路径返回空 points。拒绝未知参数。1h 与 6h 使用 1 分钟桶，24h 与 7d 使用 5 分钟桶，30d 使用 1 小时桶。聚合平均值按测量次数加权。已禁用的历史存储返回空 points 数组。未知节点返回 node_not_found。
       parameters:
         - name: metric
           in: query
           required: true
           schema:
             type: string
-            enum: [cpu_percent, memory_used_percent, swap_used_percent, load1, load5, load15, disk_used_percent, net_rx_bytes_per_second, net_tx_bytes_per_second]
+            enum: [cpu_percent, memory_used_percent, swap_used_percent, load1, load5, load15, disk_used_percent, inode_used_percent, net_rx_bytes_per_second, net_tx_bytes_per_second]
         - name: range
           in: query
           required: true
           schema: {type: string, enum: [1h, 6h, 24h, 7d, 30d, 90d]}
+        - name: disk
+          in: query
+          required: false
+          description: 绝对磁盘路径，仅适用于 disk_used_percent 和 inode_used_percent；省略时返回聚合。
+          schema: {type: string, minLength: 1, maxLength: 1024}
       responses:
         '200':
           description: 升序的 UTC 桶时间戳；无 null 或合成的间隙点。范围起点处的相交桶可能早于精确截止点不到一个步长。
@@ -3354,7 +3359,7 @@ components:
       additionalProperties: false
       required: [metric, unit, range, step_seconds, points]
       properties:
-        metric: {type: string, enum: [cpu_percent, memory_used_percent, swap_used_percent, load1, load5, load15, disk_used_percent, net_rx_bytes_per_second, net_tx_bytes_per_second]}
+        metric: {type: string, enum: [cpu_percent, memory_used_percent, swap_used_percent, load1, load5, load15, disk_used_percent, inode_used_percent, net_rx_bytes_per_second, net_tx_bytes_per_second]}
         unit: {type: string, enum: [percent, load, bytes_per_second]}
         range: {type: string, enum: [1h, 6h, 24h, 7d, 30d, 90d]}
         step_seconds: {type: integer, enum: [60, 300, 3600]}
@@ -3833,11 +3838,13 @@ components:
           items:
             type: object
             additionalProperties: true
-            required: [path, total_bytes, used_bytes, sampled_at]
+            required: [path, total_bytes, used_bytes, inodes_total, inodes_used, sampled_at]
             properties:
               path: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 1024}
               total_bytes: {type: [integer, 'null'], minimum: 0}
               used_bytes: {type: [integer, 'null'], minimum: 0}
+              inodes_total: {type: [integer, 'null'], minimum: 0, description: 与 inodes_used 同时为 null 或有值；不支持 inode 时为 null。}
+              inodes_used: {type: [integer, 'null'], minimum: 0, description: 不超过 inodes_total。}
               sampled_at: {type: string, format: date-time}
         networks:
           type: array

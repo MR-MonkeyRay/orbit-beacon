@@ -3,6 +3,7 @@ package collect_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -26,6 +27,14 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 		prefix := "https://probe" + strconv.Itoa(i) + ".example/"
 		config.ProbeTargets = append(config.ProbeTargets, prefix+strings.Repeat("a", 1024-len(prefix)))
 	}
+	// Five maximum-length targets plus eight maximum-length paths/interfaces exceed
+	// the new reservation. They must fail admission, rather than produce a large report.
+	if err := config.Validate(); !errors.Is(err, v1.ErrReportBudget) {
+		t.Fatalf("oversized selections must be rejected by budget: %v", err)
+	}
+	// Retain four longest targets and fill the last target up to the admission limit.
+	config.ProbeTargets[4] = config.ProbeTargets[4][:566]
+	config.ReportIntervalSeconds, config.DiskIntervalSeconds = 60, 3600
 	collector, err := collect.New(collect.Options{Config: config})
 	if err != nil {
 		t.Fatal(err)
@@ -41,6 +50,7 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 	at := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
 	for i := range metrics.Disks {
 		metrics.Disks[i].TotalBytes, metrics.Disks[i].UsedBytes, metrics.Disks[i].SampledAt = &maxUint, &maxUint, at
+		metrics.Disks[i].InodesTotal, metrics.Disks[i].InodesUsed = &maxUint, &maxUint
 	}
 	for i := range metrics.Networks {
 		metrics.Networks[i].RxBytesPerSec, metrics.Networks[i].TxBytesPerSec = &maxFloat, &maxFloat
@@ -63,11 +73,11 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 		report.CommandResults = append(report.CommandResults, v1.CommandResult{ID: "ffffffff-ffff-4fff-bfff-ffffffffffff", Status: "rejected", Code: "disabled_locally"})
 	}
 	for i := range 24 {
-		report.Traffic = append(report.Traffic, v1.Traffic{Epoch: strings.Repeat("f", 64), PeriodStart: time.Now().UTC().Truncate(time.Hour).Add(-time.Duration(i) * time.Hour), RxBytes: "9223372036854775807", TxBytes: "9223372036854775807"})
+		report.Traffic = append(report.Traffic, v1.Traffic{Epoch: strings.Repeat("f", 64), PeriodStart: at.Truncate(time.Hour).Add(-time.Duration(i) * time.Hour), RxBytes: "9223372036854775807", TxBytes: "9223372036854775807"})
 	}
 	for _, target := range config.ProbeTargets {
-		latency, code := 59999.999999, 200
-		report.ProbeResults = append(report.ProbeResults, v1.ProbeResult{Target: target, OK: true, LatencyMS: &latency, StatusCode: &code, CheckedAt: time.Now().UTC()})
+		latency, code := 0.00010000000000000002, 599
+		report.ProbeResults = append(report.ProbeResults, v1.ProbeResult{Target: target, OK: true, LatencyMS: &latency, StatusCode: &code, CheckedAt: at})
 	}
 	if err := report.Validate(); err != nil {
 		t.Fatalf("selected series lost report validity: %v", err)
@@ -88,9 +98,12 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 		selectionBytes += 2*len(encoded) + 160
 	}
 	envelope := len(data) - selectionBytes
-	t.Logf("maximum ordinary report: %d bytes; fixed envelope: %d bytes", len(data), envelope)
-	if envelope > 13*1024 {
-		t.Fatalf("fixed envelope exceeds reserved 13 KiB: %d", envelope)
+	t.Logf("maximum ordinary report: %d bytes; fixed envelope: %d bytes; wire headroom: %d bytes", len(data), envelope, v1.MaxMessageBytes-len(data))
+	if selectionBytes+14*1024 != v1.MaxMessageBytes {
+		t.Fatalf("test no longer fills the selection budget: %d", selectionBytes+14*1024)
+	}
+	if envelope > 14*1024 {
+		t.Fatalf("fixed envelope exceeds reserved 14 KiB: %d", envelope)
 	}
 	if len(data) > v1.MaxMessageBytes {
 		t.Fatalf("accepted ordinary selections produce %d-byte report", len(data))

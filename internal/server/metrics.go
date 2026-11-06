@@ -142,6 +142,7 @@ func (h *handler) serveMetrics(w http.ResponseWriter, r *http.Request) {
 		body += fmt.Sprintf("# HELP orbitbeacon_history_samples_dropped_total Accepted reports omitted because the history buffer was full.\n# TYPE orbitbeacon_history_samples_dropped_total counter\norbitbeacon_history_samples_dropped_total %d\n", h.ingest.SamplesDropped())
 	}
 	if h.history != nil {
+		body += fmt.Sprintf("# HELP orbitbeacon_history_series_rejected_total Partitioned samples rejected by the per-node path limit or unavailable path inventory.\n# TYPE orbitbeacon_history_series_rejected_total counter\norbitbeacon_history_series_rejected_total %d\n", h.history.SeriesRejected())
 		body += fmt.Sprintf("# HELP orbitbeacon_history_buckets_dropped_total Samples omitted because pending history buckets reached capacity.\n# TYPE orbitbeacon_history_buckets_dropped_total counter\norbitbeacon_history_buckets_dropped_total %d\n", h.history.DroppedBuckets())
 	}
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))

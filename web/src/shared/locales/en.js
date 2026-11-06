@@ -11,6 +11,10 @@ import audit from './audit.en.js';
 import notifications from './notifications.en.js';
 
 export default {
+  'fields.historyDiskMetric': 'Disk is available for disk and inode history only.',
+  'fields.absoluteDiskPath': 'Enter an absolute path of at most 1024 bytes without NUL.',
+  'fields.queryOnce': 'Supply this parameter exactly once.',
+
   'errors.command_same_version': 'Node already runs this version',
   'errors.command_not_allowed': 'Command not allowed',
   'errors.command_active': 'A command is active',

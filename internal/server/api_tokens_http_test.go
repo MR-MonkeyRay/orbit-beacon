@@ -13,9 +13,12 @@ import (
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/server"
 	"orbitbeacon/internal/server/auth"
+	"orbitbeacon/internal/server/history"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/timekey"
+	"os"
 )
 
 func apiTokenRequest(t *testing.T, h http.Handler, verb, path, authorization string, cookie *http.Cookie) *httptest.ResponseRecorder {
@@ -173,7 +176,7 @@ func TestAPITokenHTTPFieldsAndWrites(t *testing.T) {
 			}
 		}
 	}
-	for _, suffix := range []string{"/history?metric=cpu_percent&range=1h", "/availability", "/traffic"} {
+	for _, suffix := range []string{"/history?metric=cpu_percent&range=1h", "/history?metric=disk_used_percent&range=1h&disk=/data:one", "/history?metric=inode_used_percent&range=1h&disk=/data:one", "/availability", "/traffic"} {
 		result := tokenObject(t, apiTokenRequest(t, f.handler, "GET", base+suffix, bearer, cookie))
 		admin := tokenObject(t, request(t, f.handler, "GET", base+suffix, "", cookie, "", ""))
 		switch {
@@ -426,4 +429,58 @@ func tokenDomainSnapshot(t *testing.T, f fixture) []string {
 		}
 	}
 	return result
+}
+
+func TestAPITokenDiskHistoryQueriesMatchAdministrator(t *testing.T) {
+	f := newAgentHTTP(t, 5)
+	ctx := context.Background()
+	if _, err := f.auth.CreateUser(ctx, "admin", password, false); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	hs, err := history.Open(ctx, dir, f.db, history.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hs.Close()
+	h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, History: hs, PublicURL: publicURL, Now: func() time.Time { return f.now }}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Shutdown(ctx)
+	f.handler = h
+	_, token, cookie, _ := createHTTPAPIToken(t, fixture{handler: h, auth: f.auth, nodes: f.nodes, db: f.db})
+	node, err := f.nodes.CreatePending(ctx, nodes.CreateRequest{Name: "disk-history"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs.Samples() <- history.Sample{NodeID: node.ID, ReceivedAt: f.now, Values: map[string]float64{"disk_used_percent:/data:one": 25, "inode_used_percent:/data:one": 75}}
+	if err := hs.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	base := "/api/v1/nodes/" + node.ID + "/history"
+	for metric, value := range map[string]float64{"disk_used_percent": 25, "inode_used_percent": 75} {
+		path := base + "?metric=" + metric + "&range=1h&disk=/data:one"
+		bearer := apiTokenRequest(t, h, "GET", path, "Bearer "+token, nil)
+		admin := request(t, h, "GET", path, "", cookie, "", "")
+		object := tokenObject(t, bearer)
+		assertLiteralKeys(t, object, "metric", "unit", "range", "step_seconds", "points")
+		if bearer.Body.String() != admin.Body.String() {
+			t.Fatalf("token/admin differ: %s %s", bearer.Body, admin.Body)
+		}
+		points := object["points"].([]any)
+		if object["metric"] != metric || len(points) != 1 || points[0].(map[string]any)["avg"] != value {
+			t.Fatalf("body=%s", bearer.Body)
+		}
+	}
+	missing := tokenObject(t, apiTokenRequest(t, h, "GET", base+"?metric=inode_used_percent&range=1h&disk=/missing", "Bearer "+token, nil))
+	if len(missing["points"].([]any)) != 0 {
+		t.Fatalf("missing=%v", missing)
+	}
+	for _, query := range []string{"?metric=load1&range=1h&disk=/", "?metric=disk_used_percent&range=1h&disk=relative", "?metric=inode_used_percent&range=1h&disk=/&disk=/other"} {
+		apiError(t, apiTokenRequest(t, h, "GET", base+query, "Bearer "+token, nil), 400, "validation_failed")
+	}
 }

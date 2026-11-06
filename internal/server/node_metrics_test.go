@@ -217,7 +217,7 @@ func TestNodeMetricsEscapingFamiliesSortingAndNil(t *testing.T) {
 			t.Errorf("missing escaped %s: %s", label, body)
 		}
 	}
-	for _, family := range []string{"cpu_percent", "load1", "load5", "load15", "memory_available_bytes", "swap_total_bytes", "swap_used_bytes", "uptime_seconds", "disk_used_bytes", "network_transmit_bytes_per_second", "last_seen_timestamp_seconds"} {
+	for _, family := range []string{"cpu_percent", "load1", "load5", "load15", "memory_available_bytes", "swap_total_bytes", "swap_used_bytes", "uptime_seconds", "disk_used_bytes", "disk_inodes_total", "disk_inodes_used", "network_transmit_bytes_per_second", "last_seen_timestamp_seconds"} {
 		if len(values["orbitbeacon_node_"+family]) != 0 {
 			t.Errorf("nil field exported: %s", family)
 		}
@@ -255,5 +255,39 @@ func TestNodeMetricsUnavailableAndMethods(t *testing.T) {
 				t.Fatalf("%s: status=%d body=%s", method, w.Code, w.Body.String())
 			}
 		}
+	}
+}
+
+func TestNodeMetricsDiskInodesAndNil(t *testing.T) {
+	total, used := uint64(100), uint64(25)
+	body := nodeMetricsExposition([]nodeMetricSnapshot{{node: nodes.LiveNode{ID: "node", Presence: "online"}, sample: &ingest.LatestReport{Report: v1.Report{Metrics: v1.Metrics{Disks: []v1.DiskMetrics{
+		{Path: "/data:one", InodesTotal: &total, InodesUsed: &used}, {Path: "/unsupported"},
+	}}}}}})
+	values := parseNodeMetrics(t, body)
+	for family, want := range map[string]string{"disk_inodes_total": "100", "disk_inodes_used": "25"} {
+		lines := values["orbitbeacon_node_"+family]
+		expected := `orbitbeacon_node_` + family + `{node_id="node",path="/data:one"} ` + want
+		if len(lines) != 1 || lines[0] != expected {
+			t.Fatalf("%s=%v", family, lines)
+		}
+	}
+}
+
+func TestNodeMetricsMaximumSeriesCount(t *testing.T) {
+	value, total := 100.0, uint64(100)
+	seen := time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
+	m := v1.Metrics{CPUPercent: &value, Load1: &value, Load5: &value, Load15: &value, UptimeSeconds: &value,
+		MemoryTotalBytes: &total, MemoryAvailableBytes: &total, SwapTotalBytes: &total, SwapUsedBytes: &total}
+	for i := range 8 {
+		m.Disks = append(m.Disks, v1.DiskMetrics{Path: fmt.Sprintf("/disk%d", i), TotalBytes: &total, UsedBytes: &total, InodesTotal: &total, InodesUsed: &total})
+		m.Networks = append(m.Networks, v1.NetworkMetrics{Name: fmt.Sprintf("eth%d", i), RxBytesPerSec: &value, TxBytesPerSec: &value})
+	}
+	values := parseNodeMetrics(t, nodeMetricsExposition([]nodeMetricSnapshot{{node: nodes.LiveNode{ID: "node", Presence: "online", LastSeen: &seen}, sample: &ingest.LatestReport{Report: v1.Report{Metrics: m}}}}))
+	var count int
+	for _, lines := range values {
+		count += len(lines)
+	}
+	if count != 60 {
+		t.Fatalf("series=%d want 60", count)
 	}
 }

@@ -11,6 +11,10 @@ import audit from './audit.zh-CN.js';
 import notifications from './notifications.zh-CN.js';
 
 export default {
+  'fields.historyDiskMetric': '磁盘仅适用于磁盘和 inode 历史。',
+  'fields.absoluteDiskPath': '请输入不含 NUL、最多 1024 字节的绝对路径。',
+  'fields.queryOnce': '此参数只能提供一次。',
+
   'errors.command_same_version': '节点已运行此版本',
   'errors.command_not_allowed': '不允许此指令',
   'errors.command_active': '已有活动指令',

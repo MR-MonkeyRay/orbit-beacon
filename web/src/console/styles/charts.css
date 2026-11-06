@@ -6,6 +6,15 @@
   margin-top: 18px;
 }
 
+.history-disk {
+  align-items: center;
+}
+
+.history-disk .input {
+  width: auto;
+  max-width: min(100%,360px);
+}
+
 .history-metric {
   min-width: 0;
 }

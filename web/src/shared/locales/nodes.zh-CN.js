@@ -1,4 +1,8 @@
 export default {
+  'nodes.inode': 'inode',
+  'nodes.allDisks': '全部',
+  'nodes.diskInodeSummary': '{disk} · inode {percent}',
+
   'nodes.expiresOn': '到期日',
   'nodes.command.upgradeAll': '升级全部',
   'nodes.command.targetVersion': '目标版本',

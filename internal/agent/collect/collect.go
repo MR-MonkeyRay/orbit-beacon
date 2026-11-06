@@ -180,6 +180,7 @@ func (c *Collector) finalizeSnapshot(m *v1.Metrics, snapshotAt time.Time) {
 		if !source.Fresh() {
 			m.MetricStatus[key] = "stale"
 			m.Disks[index].TotalBytes, m.Disks[index].UsedBytes = nil, nil
+			m.Disks[index].InodesTotal, m.Disks[index].InodesUsed = nil, nil
 		}
 	}
 	for index, network := range m.Networks {

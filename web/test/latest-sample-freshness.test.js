@@ -161,3 +161,17 @@ test('latest per-series status masks nonnull failures and respects the disk sour
   assert.equal(ui.row(copy('nodes.disk')).querySelector('.sample-value').classList.contains('metric-stale'), true);
   assert.equal(ui.row(copy('nodes.disk')).querySelector('.sample-value').textContent, '/: 1 KiB / 4 KiB (25%)');
 });
+
+test('latest disk row shows inode percent and omits it when inode counts are null', async (t) => {
+  const latest = snapshot();
+  latest.metrics.disks = [{path: '/', total_bytes: 4096, used_bytes: 1024, inodes_total: 100, inodes_used: 25}];
+  latest.metrics.metric_status['disk:/'] = 'ok';
+  latest.metrics.sources['disk:/'] = source(0, 60000);
+  const ui = await setup(t, latest);
+  const value = () => ui.row(copy('nodes.disk')).querySelector('.sample-value').textContent;
+  assert.equal(value(), copy('nodes.diskInodeSummary', {disk: '/: 1 KiB / 4 KiB (25%)', percent: '25%'}));
+  latest.metrics.disks[0].inodes_total = null;
+  latest.metrics.disks[0].inodes_used = null;
+  ui.view.snapshot(latest);
+  assert.equal(value(), '/: 1 KiB / 4 KiB (25%)');
+});

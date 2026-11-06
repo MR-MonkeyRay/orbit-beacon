@@ -22,11 +22,12 @@ func makeReport(o options, n node, seq uint64, now time.Time) v1.Report {
 	for _, family := range v1.SourceFamilies() {
 		report.Metrics.Sources[family] = source
 	}
-	diskTotal, diskUsed := uint64(100<<30), uint64(40<<30)
+	diskTotal, inodesTotal := uint64(100<<30), uint64(10_000_000)
 	for i := range o.disks {
+		diskUsed, inodesUsed := uint64(i%10+1)*(10<<30), uint64(i%10+1)*1_000_000
 		path := fmt.Sprintf("/load/disk%d", i)
 		report.Runtime.DiskPaths = append(report.Runtime.DiskPaths, path)
-		report.Metrics.Disks = append(report.Metrics.Disks, v1.DiskMetrics{Path: path, TotalBytes: &diskTotal, UsedBytes: &diskUsed, SampledAt: now})
+		report.Metrics.Disks = append(report.Metrics.Disks, v1.DiskMetrics{Path: path, TotalBytes: &diskTotal, UsedBytes: &diskUsed, InodesTotal: &inodesTotal, InodesUsed: &inodesUsed, SampledAt: now})
 		key := v1.DiskMetricKey(path)
 		report.Metrics.MetricStatus[key] = "ok"
 		diskSource := source

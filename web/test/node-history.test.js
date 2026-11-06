@@ -4,14 +4,14 @@ import {historyPanel} from '../src/console/pages/node-history.js';
 import {setNavigationSignal} from '../src/console/api.js';
 import {copy, copyPattern, elements, flush, installDOM} from './console-dom.js';
 
-function setup() {
+function setup(disks = []) {
   const dom = installDOM();
   const originalFetch = globalThis.fetch;
   const requests = [];
   globalThis.fetch = (path, options) => new Promise((resolve) => requests.push({path, signal: options.signal, resolve}));
   setNavigationSignal(null);
   const page = new AbortController();
-  const root = historyPanel('node-id', page.signal);
+  const root = historyPanel('node-id', page.signal, {metrics: {disks}});
   dom.body.append(root);
   dom.mutations();
   const respond = (request, status = 200, points = [], unitOverride) => {
@@ -29,18 +29,18 @@ function setup() {
 test('history range changes abort stale requests and late responses cannot repaint', async () => {
   const env = setup();
   try {
-    assert.equal(env.requests.length, 6);
+    assert.equal(env.requests.length, 7);
     const initial = [...env.requests];
     elements(env.root).find((element) => element.id === 'history-range-1h').click();
-    assert.equal(env.requests.length, 12);
+    assert.equal(env.requests.length, 14);
     assert.ok(initial.every((request) => request.signal.aborted));
-    const current = env.requests.slice(6);
+    const current = env.requests.slice(7);
     assert.ok(current.every((request) => request.path.endsWith('range=1h')));
     current.forEach((request) => env.respond(request));
     await flush();
     const charts = env.root.querySelector('.history-grid');
     assert.equal(charts.dataset.range, '1h');
-    assert.equal(charts.children.length, 5);
+    assert.equal(charts.children.length, 6);
     const content = charts.children[0];
     initial.forEach((request) => env.respond(request));
     await flush();
@@ -58,7 +58,7 @@ test('history partial failures render a working retry without announcing each ch
     assert.ok(retry);
     assert.equal(retry.parentElement.querySelector('p').getAttribute('role'), null);
     retry.click();
-    assert.equal(env.requests.length, 12);
+    assert.equal(env.requests.length, 14);
   } finally { env.cleanup(); }
 });
 test('history clears polling and aborts requests on disconnect, and resumes on reattach', async () => {
@@ -72,7 +72,7 @@ test('history clears polling and aborts requests on disconnect, and resumes on r
     env.body.append(env.root);
     env.mutations();
     assert.equal(env.timers.size, 1);
-    assert.equal(env.requests.length, 12);
+    assert.equal(env.requests.length, 14);
     env.page.abort();
     assert.equal(env.timers.size, 0);
   } finally { env.cleanup(); }
@@ -92,7 +92,7 @@ test('history 404 tears down sibling requests, charts and interval permanently',
     assert.match(env.root.textContent, copyPattern('nodes.nodeMissingPrefix', {link: copy('nodes.goNodes')}));
     env.root.remove(); env.mutations(); env.body.append(env.root); env.mutations();
     assert.equal(env.timers.size, 0);
-    assert.equal(env.requests.length, 6);
+    assert.equal(env.requests.length, 7);
   } finally { env.cleanup(); }
 });
 
@@ -103,13 +103,13 @@ test('history offers ninety days and requests the selected range', async () => {
     assert.equal(control.textContent, copy('nodes.range.days', {count: 90}));
     control.click();
     assert.equal(control.getAttribute('aria-pressed'), 'true');
-    assert.ok(env.requests.slice(0, 6).every((request) => request.signal.aborted));
-    const current = env.requests.slice(6);
-    assert.equal(current.length, 6);
+    assert.ok(env.requests.slice(0, 7).every((request) => request.signal.aborted));
+    const current = env.requests.slice(7);
+    assert.equal(current.length, 7);
     assert.ok(current.every((request) => new URL(request.path, 'https://example.com').searchParams.get('range') === '90d'));
     current.forEach((request) => env.respond(request));
     await flush();
-    assert.equal(env.root.querySelector('.history-grid').children.length, 5);
+    assert.equal(env.root.querySelector('.history-grid').children.length, 6);
     assert.doesNotMatch(env.root.textContent, copyPattern('nodes.historyPartial'));
   } finally { env.cleanup(); }
 });
@@ -131,16 +131,16 @@ test('load selector stays in one chart header and requests each selected metric'
       assert.equal(env.document.activeElement, button);
       assert.equal(button.getAttribute('aria-pressed'), 'true');
       const current = env.requests.slice(start);
-      assert.equal(current.length, 6);
+      assert.equal(current.length, 7);
       const metrics = current.map((request) => new URL(request.path, 'https://example.com').searchParams.get('metric'));
-      assert.deepEqual(metrics, ['cpu_percent', 'memory_used_percent', `load${minutes}`, 'disk_used_percent', 'net_rx_bytes_per_second', 'net_tx_bytes_per_second']);
+      assert.deepEqual(metrics, ['cpu_percent', 'memory_used_percent', `load${minutes}`, 'disk_used_percent', 'inode_used_percent', 'net_rx_bytes_per_second', 'net_tx_bytes_per_second']);
       current.forEach((request) => env.respond(request));
       await flush();
-      assert.equal(env.root.querySelector('.history-grid').children.length, 5);
+      assert.equal(env.root.querySelector('.history-grid').children.length, 6);
       assert.equal(env.root.querySelectorAll('.segmented').length, 2);
       assert.equal(env.document.activeElement, button);
       button.click();
-      assert.equal(env.requests.length, start + 6);
+      assert.equal(env.requests.length, start + 7);
       assert.doesNotMatch(env.root.textContent, copyPattern('nodes.historyPartial'));
     }
   } finally { env.cleanup(); }
@@ -151,12 +151,12 @@ test('rapid load and range changes abort old requests and ignore late success an
   try {
     const initial = [...env.requests];
     env.root.querySelector('#history-load-load5').click();
-    const five = env.requests.slice(6);
+    const five = env.requests.slice(7);
     env.root.querySelector('#history-load-load15').click();
-    const fifteen = env.requests.slice(12);
+    const fifteen = env.requests.slice(14);
     env.root.querySelector('#history-range-90d').click();
-    const current = env.requests.slice(18);
-    assert.equal(current.length, 6);
+    const current = env.requests.slice(21);
+    assert.equal(current.length, 7);
     assert.ok([...initial, ...five, ...fifteen].every((request) => request.signal.aborted));
     assert.ok(current.every((request) => !request.signal.aborted && request.path.endsWith('range=90d')));
     assert.ok(current.some((request) => request.path.includes('metric=load15&')));
@@ -166,7 +166,7 @@ test('rapid load and range changes abort old requests and ignore late success an
     const loadChart = charts.querySelector('#history-chart-load15');
     assert.ok(loadChart);
     assert.equal(charts.dataset.range, '90d');
-    assert.equal(charts.children.length, 5);
+    assert.equal(charts.children.length, 6);
     const rendered = [...charts.children];
     initial.forEach((request) => env.respond(request));
     five.forEach((request) => env.respond(request, 404));
@@ -186,15 +186,15 @@ test('selected load keeps retry, unit validation and node removal handling', asy
   const env = setup();
   try {
     env.root.querySelector('#history-load-load5').click();
-    const current = env.requests.slice(6);
+    const current = env.requests.slice(7);
     for (const request of current) env.respond(request, 200, [], request.path.includes('metric=load5&') ? 'percent' : undefined);
     await flush();
     assert.match(env.root.textContent, copyPattern('nodes.historyLoadError', {error: copy('errors.unreadable_response')}));
     const retry = env.root.querySelector('#history-retry-load5');
     assert.ok(retry);
     retry.click();
-    const retried = env.requests.slice(12);
-    assert.equal(retried.length, 6);
+    const retried = env.requests.slice(14);
+    assert.equal(retried.length, 7);
     const load = retried.find((request) => request.path.includes('metric=load5&'));
     assert.ok(load);
     env.respond(load, 404);
@@ -203,5 +203,62 @@ test('selected load keeps retry, unit validation and node removal handling', asy
     assert.equal(env.root.querySelector('.history-grid').children.length, 0);
     assert.equal(env.timers.size, 0);
     assert.match(env.root.textContent, copyPattern('nodes.nodeMissingPrefix', {link: copy('nodes.goNodes')}));
+  } finally { env.cleanup(); }
+});
+
+test('disk selection shares disk and inode queries, aborts old requests and keeps charts visible', async () => {
+  const env = setup([{path: '/'}, {path: '/data:one'}]);
+  try {
+    const selector = env.root.querySelector('#history-disk');
+    assert.equal(selector.parentElement.hidden, false);
+    assert.equal(selector.getAttribute('aria-label'), copy('nodes.disk'));
+    assert.equal(selector.children[0].textContent, copy('nodes.allDisks'));
+    assert.equal(selector.value, '');
+    env.requests.forEach((request) => env.respond(request, 200, [{t: '2026-11-05T12:00:00Z', avg: 25, max: 50}]));
+    await flush();
+    const charts = env.root.querySelector('.history-grid');
+    const rendered = [...charts.children];
+    selector.value = '/data:one';
+    selector.dispatchEvent(new Event('change'));
+    rendered.forEach((section, i) => assert.equal(charts.children[i], section));
+    const diskRequests = env.requests.slice(7);
+    for (const request of diskRequests) {
+      const query = new URL(request.path, 'https://example.com').searchParams;
+      assert.equal(query.get('disk'), ['disk_used_percent', 'inode_used_percent'].includes(query.get('metric')) ? '/data:one' : null);
+    }
+    selector.value = '/';
+    selector.dispatchEvent(new Event('change'));
+    assert.ok(diskRequests.every((request) => request.signal.aborted));
+    const current = env.requests.slice(14);
+    current.forEach((request) => env.respond(request, 200, [{t: '2026-11-05T12:00:00Z', avg: 50, max: 60}]));
+    await flush();
+    const currentCharts = [...charts.children];
+    diskRequests.forEach((request) => env.respond(request, 404));
+    await flush();
+    currentCharts.forEach((section, i) => assert.equal(charts.children[i], section));
+    assert.equal(selector.value, '/');
+    assert.ok(charts.querySelector('#history-chart-inode_used_percent'));
+    selector.value = '';
+    selector.dispatchEvent(new Event('change'));
+    assert.ok(env.requests.slice(21).every((request) => !new URL(request.path, 'https://example.com').searchParams.has('disk')));
+  } finally { env.cleanup(); }
+});
+
+test('single disk hides selection and live snapshots update available paths', () => {
+  const env = setup([{path: '/'}]);
+  try {
+    const selector = env.root.querySelector('#history-disk');
+    assert.equal(selector.parentElement.hidden, true);
+    env.root.snapshot({metrics: {disks: [{path: '/'}, {path: '/new'}]}});
+    assert.equal(selector.parentElement.hidden, false);
+    assert.deepEqual(selector.children.map((option) => option.value), ['', '/', '/new']);
+    selector.value = '/new';
+    selector.dispatchEvent(new Event('change'));
+    const previous = [...env.requests];
+    env.root.snapshot({metrics: {disks: [{path: '/'}]}});
+    assert.equal(selector.value, '');
+    assert.equal(selector.parentElement.hidden, true);
+    assert.ok(previous.every((request) => request.signal.aborted));
+    assert.ok(env.requests.slice(previous.length).every((request) => !new URL(request.path, 'https://example.com').searchParams.has('disk')));
   } finally { env.cleanup(); }
 });

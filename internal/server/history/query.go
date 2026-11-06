@@ -16,7 +16,7 @@ const (
 
 var metricUnits = map[string]string{
 	"cpu_percent": "percent", "memory_used_percent": "percent", "swap_used_percent": "percent",
-	"load1": "load", "load5": "load", "load15": "load", "disk_used_percent": "percent",
+	"load1": "load", "load5": "load", "load15": "load", "disk_used_percent": "percent", "inode_used_percent": "percent",
 	"net_rx_bytes_per_second": "bytes_per_second", "net_tx_bytes_per_second": "bytes_per_second",
 }
 
@@ -73,16 +73,20 @@ func Empty(metric, requestedRange string) (Response, error) {
 	return Response{Metric: metric, Unit: unit, Range: requestedRange, StepSeconds: selection.StepSeconds, Points: []Point{}}, nil
 }
 
-func (s *Service) Query(ctx context.Context, nodeID, metric, requestedRange string, now time.Time) (Response, error) {
+func (s *Service) Query(ctx context.Context, nodeID, metric, requestedRange string, now time.Time, disk string) (Response, error) {
 	response, err := Empty(metric, requestedRange)
 	if err != nil {
 		return Response{}, err
+	}
+	series := metric
+	if disk != "" {
+		series += ":" + disk
 	}
 	selection, _ := SelectRange(requestedRange)
 	// 包含与范围起点相交的桶；缺失数据不补 null 行或零值。
 	// 待写入的桶在落盘后才可查询。
 	start := now.Add(-selection.Duration).Truncate(time.Duration(selection.StepSeconds) * time.Second).Unix()
-	rows, err := s.reader.QueryContext(ctx, `SELECT t, total / samples, peak FROM buckets WHERE node_id=? AND metric=? AND step=? AND t>=? AND t<=? ORDER BY t`, nodeID, metric, selection.StepSeconds, start, now.Unix())
+	rows, err := s.reader.QueryContext(ctx, `SELECT t, total / samples, peak FROM buckets WHERE node_id=? AND metric=? AND step=? AND t>=? AND t<=? ORDER BY t`, nodeID, series, selection.StepSeconds, start, now.Unix())
 	if err != nil {
 		return Response{}, err
 	}

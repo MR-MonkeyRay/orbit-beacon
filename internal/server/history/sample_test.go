@@ -30,7 +30,7 @@ func TestSnapshotScalarMathAndOwnership(t *testing.T) {
 			t.Errorf("%s=%v exists=%v want=%v", metric, got, exists, want)
 		}
 	}
-	if len(sample.Values) != 9 {
+	if len(sample.Values) != 11 {
 		t.Fatalf("unexpected snapshot metrics: %v", sample.Values)
 	}
 	for _, metric := range []string{"uptime_seconds", "memory_total_bytes", "memory_used_bytes", "swap_total_bytes", "swap_used_bytes", "disk_total_bytes", "disk_used_bytes"} {
@@ -103,7 +103,8 @@ func TestSnapshotRejectsUnboundedMetrics(t *testing.T) {
 	for _, test := range []struct {
 		metric string
 		limit  float64
-	}{{"cpu_percent", 100}, {"memory_used_percent", 100}, {"swap_used_percent", 100}, {"disk_used_percent", 100}, {"load1", 1e6}, {"load5", 1e6}, {"load15", 1e6}, {"net_rx_bytes_per_second", 1e15}, {"net_tx_bytes_per_second", 1e15}} {
+	}{{"cpu_percent", 100}, {"memory_used_percent", 100}, {"swap_used_percent", 100}, {"disk_used_percent", 100},
+		{"inode_used_percent", 100}, {"load1", 1e6}, {"load5", 1e6}, {"load15", 1e6}, {"net_rx_bytes_per_second", 1e15}, {"net_tx_bytes_per_second", 1e15}} {
 		for _, value := range []float64{0, test.limit} {
 			if !validValue(test.metric, value) {
 				t.Errorf("rejected %s=%v", test.metric, value)
@@ -140,6 +141,7 @@ func TestSampleSeriesValueBounds(t *testing.T) {
 		limit  float64
 	}{
 		{"disk_used_percent", 100},
+		{"inode_used_percent", 100},
 		{"cpu_percent", 100},
 		{"memory_used_percent", 100},
 		{"swap_used_percent", 100},
@@ -168,5 +170,43 @@ func TestSampleSeriesValueBounds(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestSnapshotDiskAndInodeSeriesFreshnessAndAggregation(t *testing.T) {
+	for _, tc := range []struct {
+		status   string
+		age      int64
+		included bool
+	}{
+		{"ok", 0, true}, {"error", 0, false}, {"stale", 0, false}, {"ok", 180001, false},
+	} {
+		t.Run(tc.status+(time.Duration(tc.age)*time.Millisecond).String(), func(t *testing.T) {
+			m := v1.Metrics{
+				Disks: []v1.DiskMetrics{
+					{Path: "/a:one", TotalBytes: ptr(uint64(100)), UsedBytes: ptr(uint64(25)), InodesTotal: ptr(uint64(40)), InodesUsed: ptr(uint64(30))},
+					{Path: "/b", TotalBytes: ptr(uint64(300)), UsedBytes: ptr(uint64(175)), InodesTotal: ptr(uint64(60)), InodesUsed: ptr(uint64(20))},
+					{Path: "/unsupported", TotalBytes: ptr(uint64(100)), UsedBytes: ptr(uint64(50))},
+				},
+				MetricStatus: map[string]string{"disk:/a:one": tc.status, "disk:/b": "ok", "disk:/unsupported": "ok"},
+				Sources:      map[string]v1.SourceMetadata{"disk:/a:one": {SampleID: "a", AgeMS: tc.age, SourceIntervalMS: 60000}, "disk:/b": {SampleID: "b", SourceIntervalMS: 60000}, "disk:/unsupported": {SampleID: "c", SourceIntervalMS: 60000}},
+			}
+			sample := Snapshot("node", time.Now(), m)
+			expected := map[string]float64{"disk_used_percent:/b": 100 * 175.0 / 300, "inode_used_percent:/b": 100 * 20.0 / 60, "disk_used_percent:/unsupported": 50}
+			if tc.included {
+				expected["disk_used_percent:/a:one"], expected["inode_used_percent:/a:one"] = 25, 75
+				expected["disk_used_percent"], expected["inode_used_percent"] = 50, 50
+			} else {
+				expected["disk_used_percent"], expected["inode_used_percent"] = 100*225.0/400, 100*20.0/60
+			}
+			if len(sample.Values) != len(expected) {
+				t.Fatalf("values=%v want=%v", sample.Values, expected)
+			}
+			for metric, want := range expected {
+				if got, ok := sample.Values[metric]; !ok || math.Abs(got-want) > 1e-10 {
+					t.Errorf("%s=%v present=%v want=%v", metric, got, ok, want)
+				}
+			}
+		})
 	}
 }

@@ -99,7 +99,7 @@ func TestMaximumAdmittedRuntimeReportFitsWireLimit(t *testing.T) {
 	delete(report.Metrics.Sources, "network:eth0")
 	total, used, rate, window := uint64(8192), uint64(4096), 1.0, int64(10000)
 	for _, path := range runtime.DiskPaths {
-		report.Metrics.Disks = append(report.Metrics.Disks, v1.DiskMetrics{Path: path, TotalBytes: &total, UsedBytes: &used, SampledAt: report.SampledAt})
+		report.Metrics.Disks = append(report.Metrics.Disks, v1.DiskMetrics{Path: path, TotalBytes: &total, UsedBytes: &used, InodesTotal: &total, InodesUsed: &used, SampledAt: report.SampledAt})
 		key := v1.DiskMetricKey(path)
 		report.Metrics.MetricStatus[key] = "ok"
 		report.Metrics.Sources[key] = v1.SourceMetadata{SampleID: strings.Repeat("d", 255), SourceIntervalMS: 60000}
