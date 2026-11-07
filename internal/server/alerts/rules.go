@@ -207,7 +207,7 @@ func validate(ctx context.Context, tx *storage.Tx, r Rule) error {
 	}
 	table := "nodes"
 	if r.ScopeKind == "group" {
-		table = "groups"
+		table = "`groups`"
 	}
 	var n int
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM "+table+" WHERE id=?", *r.ScopeID).Scan(&n); err != nil {

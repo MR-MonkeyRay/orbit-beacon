@@ -2,11 +2,15 @@ package storage_test
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"path/filepath"
 	"testing"
 
+	"github.com/go-sql-driver/mysql"
 	"orbitbeacon/internal/server/storage"
 
 	sqlite3 "modernc.org/sqlite/lib"
@@ -64,5 +68,21 @@ func TestBusyClassificationUsesWrappedSQLiteCodesNotMessages(t *testing.T) {
 	}
 	if storage.IsBusy(nil) || storage.IsBusy(errors.New("database is locked")) {
 		t.Fatal("classification accepted a message rather than a SQLite code")
+	}
+}
+
+func TestConnectionFailureExcludesRequestCancellation(t *testing.T) {
+	for _, err := range []error{context.Canceled, context.DeadlineExceeded, fmt.Errorf("request: %w", context.Canceled), fmt.Errorf("request: %w", context.DeadlineExceeded)} {
+		if storage.IsConnectionFailure(err) {
+			t.Errorf("request cancellation classified as connection failure: %v", err)
+		}
+	}
+	for _, err := range []error{driver.ErrBadConn, mysql.ErrInvalidConn, io.EOF, io.ErrUnexpectedEOF, &net.OpError{Op: "read", Net: "tcp", Err: &net.DNSError{IsTimeout: true}}, &mysql.MySQLError{Number: 1290}, &mysql.MySQLError{Number: 2006}, &mysql.MySQLError{Number: 2013}, &mysql.MySQLError{Number: 1053}} {
+		if !storage.IsConnectionFailure(fmt.Errorf("database: %w", err)) {
+			t.Errorf("connection failure not classified: %T", err)
+		}
+	}
+	if storage.IsConnectionFailure(nil) || storage.IsConnectionFailure(&mysql.MySQLError{Number: 1213}) {
+		t.Fatal("nonconnection error classified as connection failure")
 	}
 }

@@ -57,11 +57,12 @@ flowchart LR
 
 ## 存储与保留
 
-- `orbitbeacon.db` 保存账户、资产、身份、设置、流量、探测、审计、告警、通知和备份任务；使用 WAL、外键、`synchronous=FULL` 与 immediate 写事务。
+- 默认 SQLite：`orbitbeacon.db` 保存账户、资产、身份、设置、流量、探测、审计、告警、通知和备份任务，`metrics.db` 保存指标历史；使用 WAL、外键、`synchronous=FULL` 与 immediate 写事务。配置 MySQL primary 后，两个逻辑域分别使用该端点的业务和历史 database，不创建本地替代库。
 - 业务与 SQL 历史分别持有稳定数据库句柄；请求从认证到响应固定同一世代，写 gate 串行化写事务，租约覆盖提交后内存发布。后台通知和备份固定认领、网络操作与结果保存的世代，但不持 SQL 事务等待网络。长连接只在每次认证、读取和发送时持租约，等待更新时释放。
-- 租约取消会传入实际 SQL；排空须等待 Rows、Stmt、事务及驱动回滚真正结束，不能只等待 Go 调用返回。readiness 验证主库可提交写事务，liveness 不依赖数据库。
+- 租约取消会传入实际 SQL；排空须等待 Rows、Stmt、事务及驱动回滚真正结束，不能只等待 Go 调用返回。请求取消或期限到期不标记数据库故障；readiness 通过 guard 写探针解析待决提交、验证主库可提交后才恢复，liveness 不依赖数据库。
 - `metrics.db` 保存标量和分盘使用率（字节及 inode）的分钟聚合及 rollup，不保存原始报告，无数据不补零。每节点最多 16 个不同分盘路径，同一路径的两个序列共享名额；超额的新路径样本丢弃并计入 `orbitbeacon_history_series_rejected_total`，已知路径和聚合继续写入。单 goroutine 管理路径集合和写入，节点首次出现时用读连接池的一条沿主键跳跃的查询在写事务外恢复路径集合；节点删除清理时释放集合，保留期过后不立即释放路径名额，重启按数据库实际内容重算。历史序列上限为 200 节点 × (17 个标量 + 16 路径 × 2) × 3 档精度 = 29,400（每条序列的桶数另受保留期限制）。`buckets.metric` 是普通文本，备份注册表按列原样备份和恢复，含 `:` 的分盘指标无需新增表或改注册表。格式兼容性见[升级](../deploy/README.md#升级)。
-- 可选设置 `history_victoriametrics_url`（文件、环境变量或 `--history-victoriametrics-url`）改用 VictoriaMetrics；`history_victoriametrics_token` 仅支持文件或环境变量 `ORBITBEACON_HISTORY_VICTORIAMETRICS_TOKEN`。远端需配置 `-retentionPeriod` 至少 90 天，且不得对这些数据使用 `-dedup.minScrapeInterval`，否则同一分钟的合并样本会被丢弃。VictoriaMetrics 历史无法生成 SQL 监控快照，选择 Monitoring 的备份返回 `history_unavailable`，不会用空库或旧 `metrics.db` 代替。切换后端不会迁移历史。一个 VictoriaMetrics 实例只能供一台 OrbitBeacon 服务器使用：保留清理会删除本机主库中不存在的节点的 `orbitbeacon_history_*` 序列。
+- MySQL 使用事务型 InnoDB。TCP 省略 `tls` 使用明文，仅限受控网络，凭据和数据不受传输加密保护；显式 `tls: {}` 启用 TLS 1.2+，默认校验系统根与 address 主机名，指定 CA 或 server_name 时按配置验证，失败不回退明文。本机 Unix socket 不接受 TLS。写事务先取得域内写 gate 和数据库 guard，COMMIT 结果未知时先冻结并核对事务 UUID，不能直接重做业务。单库模式不生成复制行日志。池指标读取当前域，MySQL 不报告遗留本地 SQLite WAL。
+- MySQL 启动检查可写、事务型 InnoDB 与持久提交；启用 binlog 还要求同步刷盘及触发器部署条件，详见[数据库部署](../deploy/README.md#数据库)。开发地址和库名见[远程开发环境](../temp/README.md)。
 
 | 数据 | 保留规则 |
 | --- | --- |
@@ -80,7 +81,7 @@ flowchart LR
 ## 备份
 
 - 仅备份已落库数据，不暂停采集或强制冲刷内存；两库分别一致，不保证跨库同一时刻。选择监控数据而历史库不可读时，任务失败。
-- 恢复非监控归档时，允许目标没有本地历史文件（如全新 VictoriaMetrics 部署），仅在私有恢复目录准备空历史库；已存在但损坏的文件或孤立 sidecar 仍拒绝，不覆盖原数据。
+- 恢复非监控归档时，缺失的本地历史只在私有恢复目录按空库准备；已存在但损坏的文件或孤立 sidecar 仍拒绝，不覆盖原数据。MySQL 先保存完整 old/new 私有镜像与 key，再持久化 prepared 决定、逐域替换；committed 前中断恢复全部旧状态，之后只完成新状态。数据库不可达时保留待决操作并拒绝服务，不打开半恢复系统。
 - 按表/列白名单生成传输库，流式压缩加密，不落盘明文归档；恢复校验认证、清单、哈希、DDL 与行值。
 - 全局最多 32 个非终态任务，单个 worker 执行；重启保留 queued，running 标为 `failed` / `interrupted`。存储结果未知时按[计划排障步骤](../deploy/README.md#计划)检查。
 - 同一目录锁保护恢复；prepared journal 回滚旧文件组，committed journal 仅清理日志。操作和故障处理见[恢复](../deploy/README.md#恢复)。
@@ -134,7 +135,7 @@ go run ./cmd/orbitbeacon-load -url http://127.0.0.1:8080 -tickets-file /path/to/
 
 节点可用性由 `availability` 后台任务每 60 秒以单条原子 SQL 累计到主库 `node_availability_daily`（UTC 日），增量最多 90 秒，首次 tick 和时钟回拨只重设内存基线，启动 180 秒内只记在线。停机及未观测时长为未知，不进入百分比分母；保留任务分批保留最近 90 个 UTC 日。匿名页在现有缓存未命中路径用一次批量查询返回最近 30 天；公开 SSE/WebSocket 复用该完整页，控制台通过管理员可用性路由读取 30 或 90 天，前端共用时间条渲染器。
 
-管理员丢失验证器和恢复码时，停服后运行 `orbitbeacon-server reset-totp --data-dir <dir> --username <name>`，数据目录锁阻止并发修改；重置撤销该用户全部会话并记录系统审计。
+管理员丢失验证器和恢复码时，停服后运行 `orbitbeacon-server reset-totp --config /etc/orbitbeacon/server.json --username <name>`；也可沿用 `--data-dir <dir>` 的默认 SQLite 入口。目录锁阻止并发修改，只访问业务域，撤销目标用户全部会话与 API 令牌并记录系统审计。
 
 
 ### 只读 API 令牌

@@ -61,13 +61,20 @@ func (s *Service) Tick(ctx context.Context) error {
 		return txErr
 	}
 	defer tx.Rollback()
-	_, err := tx.ExecContext(ctx, `INSERT INTO node_availability_daily(node_id,day,online_seconds,offline_seconds)
+	query := `INSERT INTO node_availability_daily(node_id,day,online_seconds,offline_seconds)
  SELECT id,?,CASE WHEN last_seen>=? THEN ? ELSE 0 END,CASE WHEN last_seen<? THEN ? ELSE 0 END
  FROM nodes WHERE status!='disabled' AND length(token_hash)>0 AND last_seen IS NOT NULL
- AND NOT `+commands.StoppedSQL+` AND (last_seen>=? OR ?)
- ON CONFLICT(node_id,day) DO UPDATE SET
+ AND NOT ` + commands.StoppedSQL + ` AND (last_seen>=? OR ?)`
+	if tx.Dialect() == storage.MySQL {
+		query += ` ON DUPLICATE KEY UPDATE
+ online_seconds=LEAST(86400-node_availability_daily.offline_seconds,node_availability_daily.online_seconds+VALUES(online_seconds)),
+ offline_seconds=LEAST(86400-node_availability_daily.online_seconds,node_availability_daily.offline_seconds+VALUES(offline_seconds))`
+	} else {
+		query += ` ON CONFLICT(node_id,day) DO UPDATE SET
  online_seconds=MIN(86400-node_availability_daily.offline_seconds,node_availability_daily.online_seconds+excluded.online_seconds),
- offline_seconds=MIN(86400-node_availability_daily.online_seconds,node_availability_daily.offline_seconds+excluded.offline_seconds)`,
+ offline_seconds=MIN(86400-node_availability_daily.online_seconds,node_availability_daily.offline_seconds+excluded.offline_seconds)`
+	}
+	_, err := tx.ExecContext(ctx, query,
 		now.Format(time.DateOnly), timekey.Format(now.Add(-nodes.OnlineWindow)), seconds, timekey.Format(now.Add(-nodes.OnlineWindow)), seconds, timekey.Format(now.Add(-nodes.OnlineWindow)), now.Sub(s.started) >= nodes.OnlineWindow)
 	if err != nil {
 		return err
@@ -102,15 +109,14 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64,
 		return 0, txErr
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `DELETE FROM node_availability_daily WHERE (node_id,day) IN
- (SELECT node_id,day FROM node_availability_daily WHERE day<? ORDER BY day,node_id LIMIT ?)`, now.UTC().AddDate(0, 0, -89).Format(time.DateOnly), limit)
+	count, err := storage.DeleteBatch(ctx, tx, `SELECT node_id,day FROM node_availability_daily WHERE day<? ORDER BY day,node_id LIMIT ?`, `DELETE FROM node_availability_daily WHERE node_id=? AND day=?`, now.UTC().AddDate(0, 0, -89).Format(time.DateOnly), limit)
 	if err != nil {
 		return 0, err
 	}
 	if commitErr := tx.Commit(); commitErr != nil {
 		return 0, commitErr
 	}
-	return result.RowsAffected()
+	return count, nil
 }
 
 type Daily struct {

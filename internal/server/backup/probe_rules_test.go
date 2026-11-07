@@ -66,7 +66,7 @@ func TestProbeRuleBackupRoundTrip(t *testing.T) {
 			}
 			archive, password := restoreArchive(t, source, []Category{Configuration})
 			destination := restoreFixture(t, "target")
-			if _, err = Restore(ctx, destination, archive, password, true); err != nil {
+			if _, err = Restore(ctx, restoreConfig(destination), archive, password, true); err != nil {
 				t.Fatal(err)
 			}
 			var got sql.NullString

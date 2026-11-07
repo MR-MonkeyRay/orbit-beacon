@@ -311,14 +311,14 @@ func (s *Service) Cleanup(ctx context.Context, before time.Time, limit int) (int
 		return 0, txErr
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `DELETE FROM announcements WHERE id IN (SELECT id FROM announcements WHERE ends_at<? ORDER BY ends_at,id LIMIT ?)`, timekey.Format(before), limit)
+	count, err := storage.DeleteBatch(ctx, tx, `SELECT id FROM announcements WHERE ends_at<? ORDER BY ends_at,id LIMIT ?`, `DELETE FROM announcements WHERE id=?`, timekey.Format(before), limit)
 	if err != nil {
 		return 0, err
 	}
 	if commitErr := tx.Commit(); commitErr != nil {
 		return 0, commitErr
 	}
-	return result.RowsAffected()
+	return count, nil
 }
 
 // ListPublic 在每页缓存未命中时调用一次，走公开页只读连接池。

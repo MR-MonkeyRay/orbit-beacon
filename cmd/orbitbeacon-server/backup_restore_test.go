@@ -47,7 +47,7 @@ func commandArchiveFixture(t *testing.T) (string, string) {
 		t.Fatal(err)
 	}
 	archive := filepath.Join(dir, "archive.tar.gz.age")
-	manifest := backup.Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: "70000000-0000-4000-8000-000000000001", CreatedAt: time.Now().UTC(), ServerVersion: "test", SchemaVersion: storage.CurrentSchemaVersion, HistorySchemaVersion: 1, Categories: []backup.Category{backup.Configuration}, Snapshots: payload.Snapshots}
+	manifest := backup.Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: "70000000-0000-4000-8000-000000000001", CreatedAt: time.Now().UTC(), ServerVersion: "test", SchemaVersion: storage.CurrentSchemaVersion, HistorySchemaVersion: storage.HistorySchemaVersion, Categories: []backup.Category{backup.Configuration}, Snapshots: payload.Snapshots}
 	if _, err = backup.WriteArchive(ctx, archive, manifest, payload.Files, password); err != nil {
 		t.Fatal(err)
 	}

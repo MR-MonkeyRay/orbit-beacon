@@ -122,7 +122,11 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 	var epoch int64
 	var credential sql.NullBool
 	var stopped bool
-	err = tx.QueryRowContext(ctx, `SELECT name,status,agent_runtime,credential_epoch,length(token_hash)>0,run_generation,report_session_id,CASE WHEN json_valid(system) THEN COALESCE(json_extract(system,'$.agent_version'),'') ELSE '' END,`+StoppedSQL+` FROM nodes WHERE id=?`, nodeID).Scan(&name, &status, &raw, &epoch, &credential, &generation, &session, &version, &stopped)
+	versionSQL := "CASE WHEN json_valid(`system`) THEN COALESCE(json_extract(`system`,'$.agent_version'),'') ELSE '' END"
+	if tx.Dialect() == storage.MySQL {
+		versionSQL = "CASE WHEN JSON_VALID(`system`) THEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(`system`,'$.agent_version')) COLLATE utf8mb4_0900_bin,'') ELSE '' END"
+	}
+	err = tx.QueryRowContext(ctx, `SELECT name,status,agent_runtime,credential_epoch,length(token_hash)>0,run_generation,report_session_id,`+versionSQL+`,`+StoppedSQL+` FROM nodes WHERE id=?`, nodeID).Scan(&name, &status, &raw, &epoch, &credential, &generation, &session, &version, &stopped)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
@@ -193,7 +197,7 @@ func (s *Service) CreateGroup(ctx context.Context, groupID, actor string, req Cr
 	}
 	defer lease.Close()
 	ctx = lease.Context()
-	if err := lease.QueryRowContext(ctx, `SELECT name FROM groups WHERE id=?`, groupID).Scan(&name); err != nil {
+	if err := lease.QueryRowContext(ctx, "SELECT name FROM `groups` WHERE id=?", groupID).Scan(&name); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return result, ErrNotFound
 		}
@@ -485,11 +489,7 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64,
 			return 0, err
 		}
 	}
-	result, err := tx.ExecContext(ctx, `DELETE FROM agent_commands WHERE id IN (SELECT c.id FROM agent_commands c WHERE c.state NOT IN ('pending','delivered') AND c.finished_at<? AND c.id<>(SELECT n.id FROM agent_commands n WHERE n.node_id=c.node_id ORDER BY n.created_at DESC,n.id DESC LIMIT 1) ORDER BY c.finished_at LIMIT ?)`, timekey.Format(now.Add(-Retention)), limit)
-	if err != nil {
-		return 0, err
-	}
-	count, err := result.RowsAffected()
+	count, err := storage.DeleteBatch(ctx, tx, `SELECT c.id FROM agent_commands c WHERE c.state NOT IN ('pending','delivered') AND c.finished_at<? AND c.id<>(SELECT n.id FROM agent_commands n WHERE n.node_id=c.node_id ORDER BY n.created_at DESC,n.id DESC LIMIT 1) ORDER BY c.finished_at LIMIT ?`, `DELETE FROM agent_commands WHERE id=?`, timekey.Format(now.Add(-Retention)), limit)
 	if err != nil {
 		return 0, err
 	}

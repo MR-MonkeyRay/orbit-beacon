@@ -56,7 +56,7 @@ func TestRestoreRejectsMalformedInboxDetailsBeforeInstall(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = Restore(ctx, target, archive, password, true)
+			_, err = Restore(ctx, restoreConfig(target), archive, password, true)
 			if restoreCode(err) != "restore_invalid_data" {
 				t.Errorf("malformed inbox details restore error = %v, want restore_invalid_data", err)
 			}

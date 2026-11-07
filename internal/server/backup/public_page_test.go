@@ -117,7 +117,7 @@ func TestPublicPageSettingRestoreCategorySemantics(t *testing.T) {
 				}
 			}
 			archive, password := restoreArchive(t, source, categories)
-			if _, err = Restore(ctx, target, archive, password, true); err != nil {
+			if _, err = Restore(ctx, restoreConfig(target), archive, password, true); err != nil {
 				t.Fatal(err)
 			}
 			restored := restoreDB(t, target)
@@ -156,7 +156,7 @@ func TestConfigurationRestoreReplacesPublicPageSettingWithDefault(t *testing.T) 
 	}
 	db.Close()
 	archive, password := restoreArchive(t, source, []Category{Configuration})
-	if _, err = Restore(ctx, target, archive, password, true); err != nil {
+	if _, err = Restore(ctx, restoreConfig(target), archive, password, true); err != nil {
 		t.Fatal(err)
 	}
 	var value string
@@ -183,7 +183,7 @@ func TestPublicPageSettingDataOnlyRestoreKeepsDisabled(t *testing.T) {
 			}
 			db.Close()
 			archive, password := restoreArchive(t, source, categories)
-			if _, err = Restore(ctx, target, archive, password, true); err != nil {
+			if _, err = Restore(ctx, restoreConfig(target), archive, password, true); err != nil {
 				t.Fatal(err)
 			}
 			var value string

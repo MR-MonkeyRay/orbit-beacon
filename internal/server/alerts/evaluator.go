@@ -179,7 +179,7 @@ func (e *Evaluator) readOpen(ctx context.Context) (map[pair]openEvent, error) {
 	}
 	defer lease.Close()
 	ctx = lease.Context()
-	rows, err := lease.QueryContext(ctx, "SELECT "+eventColumns+",e.rule_snapshot FROM alert_events e LEFT JOIN alert_rules r ON r.id=e.rule_id LEFT JOIN nodes n ON n.id=e.node_id WHERE e.state='firing'")
+	rows, err := lease.QueryContext(ctx, "SELECT "+eventColumns(lease.Dialect())+",e.rule_snapshot FROM alert_events e LEFT JOIN alert_rules r ON r.id=e.rule_id LEFT JOIN nodes n ON n.id=e.node_id WHERE e.state='firing'")
 	if err != nil {
 		return nil, err
 	}
@@ -472,14 +472,24 @@ func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *f
 	defer tx.Rollback()
 	// 在写锁之下重新验证规则版本、清单和范围。在本事务之前已提交的规则编辑/删除
 	// 或节点停用均不会触发。
+	var alreadyFiring bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM alert_events WHERE rule_id=? AND node_id=? AND state='firing')`, r.ID, n.id).Scan(&alreadyFiring); err != nil {
+		return err
+	}
+	if alreadyFiring {
+		return tx.Commit()
+	}
+	equal := " IS "
+	if tx.Dialect() == storage.MySQL {
+		equal = " <=> "
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,rule_name,node_name,rule_snapshot,silenced)
  SELECT ?,r.id,nodes.id,'firing',?,?,r.name,nodes.name,?,EXISTS(`+activeSilenceSQL+`) FROM alert_rules r,nodes
  WHERE r.id=? AND r.updated_at=? AND r.enabled=1 AND nodes.id=? AND nodes.status!='disabled'
  AND nodes.token_hash=? AND nodes.credential_epoch=? AND (r.metric='node_expiry_days' OR (nodes.run_generation=? AND nodes.report_session_id=?)) AND nodes.first_enrolled_at=?
- AND (r.metric!='node_expiry_days' OR nodes.expires_on IS ?)
+ AND (r.metric!='node_expiry_days' OR nodes.expires_on`+equal+`?)
  AND (r.scope_kind='all' OR (r.scope_kind='node' AND r.scope_id=nodes.id) OR (r.scope_kind='group' AND r.scope_id=nodes.group_id))
- AND (r.metric!='offline' OR NOT `+commands.StoppedSQL+`)
- AND NOT EXISTS(SELECT 1 FROM alert_events WHERE rule_id=r.id AND node_id=nodes.id AND state='firing')`, id, value, timekey.Format(since), string(raw), timekey.Format(now), timekey.Format(now), r.ID, timekey.Format(r.UpdatedAt), n.id, n.identity, n.credentialEpoch, n.generation, n.session, timekey.Format(*n.enrolled), n.expiresOn)
+ AND (r.metric!='offline' OR NOT `+commands.StoppedSQL+`)`, id, value, timekey.Format(since), string(raw), timekey.Format(now), timekey.Format(now), r.ID, timekey.Format(r.UpdatedAt), n.id, n.identity, n.credentialEpoch, n.generation, n.session, timekey.Format(*n.enrolled), n.expiresOn)
 	if err != nil {
 		return err
 	}
@@ -531,8 +541,11 @@ func (e *Evaluator) resolve(ctx context.Context, o openEvent, value *float64, no
 	}
 	defer tx.Rollback()
 	var silenced bool
-	err = tx.QueryRowContext(ctx, "UPDATE alert_events SET state='resolved',resolved_at=?,value=? WHERE id=? AND state='firing' RETURNING silenced", timekey.Format(now), value, o.ID).Scan(&silenced)
+	err = tx.QueryRowContext(ctx, "SELECT silenced FROM alert_events WHERE id=? AND state='firing'", o.ID).Scan(&silenced)
 	changed := err == nil
+	if changed {
+		_, err = tx.ExecContext(ctx, "UPDATE alert_events SET state='resolved',resolved_at=?,value=? WHERE id=? AND state='firing'", timekey.Format(now), value, o.ID)
+	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}

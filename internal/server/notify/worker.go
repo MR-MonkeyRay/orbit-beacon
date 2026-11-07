@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -71,6 +72,13 @@ func (s *Service) Enqueue(ctx context.Context, tx *storage.Tx, n alerts.Notifica
 	p := notificationPayload(n)
 	raw, _ := json.Marshal(p)
 	for _, id := range ids {
+		duplicate, err := deliveryPayloadExists(ctx, tx, id, n.EventID, raw, "")
+		if err != nil {
+			return err
+		}
+		if duplicate {
+			continue
+		}
 		// 合并将每通道 pending 限制在约 100 行，下面两条查询在写锁内的开销有界。
 		var count int
 		if e = tx.QueryRowContext(ctx, "SELECT count(*) FROM notification_deliveries WHERE channel_id=? AND state='pending'", id).Scan(&count); e != nil {
@@ -86,6 +94,13 @@ func (s *Service) Enqueue(ctx context.Context, tx *storage.Tx, n alerts.Notifica
 				p.SummaryCount = total + 1
 				summaryRaw, _ := json.Marshal(p)
 				p.SummaryCount = 0
+				conflict, err := deliveryPayloadExists(ctx, tx, id, n.EventID, summaryRaw, summaryID)
+				if err != nil {
+					return err
+				}
+				if conflict {
+					return errors.New("notification summary payload conflict")
+				}
 				_, e = tx.ExecContext(ctx, "UPDATE notification_deliveries SET payload_json=?,event_id=?,coalesced_count=?,attempts=0,last_error_code='',updated_at=? WHERE id=?", string(summaryRaw), n.EventID, total+1, now, summaryID)
 				if e != nil {
 					return e
@@ -100,12 +115,31 @@ func (s *Service) Enqueue(ctx context.Context, tx *storage.Tx, n alerts.Notifica
 		if e != nil {
 			return e
 		}
-		_, e = tx.ExecContext(ctx, `INSERT OR IGNORE INTO notification_deliveries(id,channel_id,event_id,state,next_attempt_at,payload_json,created_at,updated_at) VALUES(?,?,?,'pending',?,?,?,?)`, deliveryID, id, n.EventID, now, string(raw), now, now)
+		_, e = tx.ExecContext(ctx, `INSERT INTO notification_deliveries(id,channel_id,event_id,state,next_attempt_at,payload_json,created_at,updated_at) VALUES(?,?,?,'pending',?,?,?,?)`, deliveryID, id, n.EventID, now, string(raw), now, now)
 		if e != nil {
 			return e
 		}
 	}
 	return nil
+}
+
+func deliveryPayloadExists(ctx context.Context, tx *storage.Tx, channel, event string, payload []byte, exclude string) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id,payload_json FROM notification_deliveries WHERE channel_id=? AND event_id=?`, channel, event)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var raw []byte
+		if err := rows.Scan(&id, &raw); err != nil {
+			return false, err
+		}
+		if id != exclude && bytes.Equal(raw, payload) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // Wake 只传递提示；容量为一的信号可合并，持久化轮询保证最终处理。
@@ -213,7 +247,11 @@ func (s *Service) reserveRate(ctx context.Context, tx *storage.Tx, id string) (b
 	if count >= 20 {
 		return false, window.Add(time.Minute), nil
 	}
-	_, e = tx.ExecContext(ctx, `INSERT INTO notification_rate_limits(channel_id,window_start,count) VALUES(?,?,?) ON CONFLICT(channel_id) DO UPDATE SET window_start=excluded.window_start,count=excluded.count`, id, timekey.Format(window), count+1)
+	query := `INSERT INTO notification_rate_limits(channel_id,window_start,count) VALUES(?,?,?) ON CONFLICT(channel_id) DO UPDATE SET window_start=excluded.window_start,count=excluded.count`
+	if tx.Dialect() == storage.MySQL {
+		query = `INSERT INTO notification_rate_limits(channel_id,window_start,count) VALUES(?,?,?) ON DUPLICATE KEY UPDATE window_start=VALUES(window_start),count=VALUES(count)`
+	}
+	_, e = tx.ExecContext(ctx, query, id, timekey.Format(window), count+1)
 	return true, time.Time{}, e
 }
 func (s *Service) claim(ctx context.Context, channel string) (deliveryWork, bool, error) {
@@ -433,12 +471,12 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64,
 		return 0, txErr
 	}
 	defer tx.Rollback()
-	r, e := tx.ExecContext(ctx, `DELETE FROM notification_deliveries WHERE id IN (SELECT id FROM notification_deliveries WHERE state IN ('sent','failed') AND updated_at<? ORDER BY updated_at,id LIMIT ?)`, timekey.Format(now.Add(-30*24*time.Hour)), limit)
+	count, e := storage.DeleteBatch(ctx, tx, `SELECT id FROM notification_deliveries WHERE state IN ('sent','failed') AND updated_at<? ORDER BY updated_at,id LIMIT ?`, `DELETE FROM notification_deliveries WHERE id=?`, timekey.Format(now.Add(-30*24*time.Hour)), limit)
 	if e != nil {
 		return 0, e
 	}
 	if commitErr := tx.Commit(); commitErr != nil {
 		return 0, commitErr
 	}
-	return r.RowsAffected()
+	return count, nil
 }

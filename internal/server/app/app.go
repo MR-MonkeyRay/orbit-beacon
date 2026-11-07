@@ -83,18 +83,24 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 		return nil, err
 	}
 	a.lock = dataLock
-	if err := backup.RecoverRestore(cfg.DataDir); err != nil {
+	if err := backup.RecoverRestore(ctx, cfg); err != nil {
 		return nil, err
 	}
-	if err := datadir.Prepare(cfg.DataDir); err != nil {
+	if err := datadir.ValidateRestore(cfg.DataDir); err != nil {
 		return nil, err
 	}
-	databasePath := filepath.Join(cfg.DataDir, "orbitbeacon.db")
-	db, err := storage.OpenMain(ctx, databasePath)
-	if err != nil {
+	databases, openErr := storage.OpenDatabases(ctx, cfg.Database, cfg.DataDir)
+	if openErr != nil {
+		if databases == nil || databases.Main == nil || cfg.Database.Primary.Driver == "mysql" {
+			return nil, openErr
+		}
+		logger.LogAttrs(ctx, slog.LevelWarn, "history_disabled", logging.ErrorAttrs(openErr, "history_open_failed")...)
+	}
+	a.db = databases
+	db := databases.Main
+	if err := prepareDatabaseKey(ctx, cfg.DataDir, db); err != nil {
 		return nil, err
 	}
-	a.db = db
 	nodeService := nodes.NewService(db, nodes.Options{MaxNodes: cfg.MaxNodes})
 
 	var saturation *server.SaturationMetrics
@@ -103,7 +109,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 		saturation = server.NewSaturationMetrics(db, cfg.DataDir)
 		observeFlush = saturation.ObserveHistoryFlush
 	}
-	metricHistory := openMetricHistory(ctx, cfg, db, logger, observeFlush)
+	metricHistory := openMetricHistory(db, databases.History, logger, observeFlush)
 	if metricHistory != nil {
 		a.history = metricHistory
 	}

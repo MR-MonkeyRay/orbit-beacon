@@ -79,6 +79,24 @@ func TestListPublicRecordsVisibilityOrderingPaginationAndIdentity(t *testing.T) 
 	}
 }
 
+func TestPublicPaginationSkipsCorruptIdentityRows(t *testing.T) {
+	s, raw := newNodes(t, 10)
+	now := time.Date(2026, 11, 1, 2, 3, 4, 0, time.UTC)
+	for i, mutation := range []string{"token_hash=x'01'", "run_generation='broken'", "last_seen='broken'", "credential_epoch=-1"} {
+		n := pending(t, s, "corrupt")
+		publishRecord(t, raw, n, now.Add(time.Duration(i)*time.Second), now, "Published", 1, "session")
+		if _, err := raw.Exec("UPDATE nodes SET "+mutation+" WHERE id=?", n.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	valid := pending(t, s, "valid")
+	publishRecord(t, raw, valid, now.Add(time.Minute), now, "Published", 1, "session")
+	page, more, err := s.ListPublicRecords(context.Background(), 1, 0, now)
+	if err != nil || more || len(page) != 1 || page[0].ID != valid.ID {
+		t.Fatalf("page=%+v more=%v err=%v", page, more, err)
+	}
+}
+
 func TestListPublicRecordsRejectsClosedDatabase(t *testing.T) {
 	service, _ := newNodes(t, 2)
 	if err := service.Database().Close(); err != nil {

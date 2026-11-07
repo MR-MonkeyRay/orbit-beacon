@@ -1,6 +1,6 @@
 # OrbitBeacon
 
-自托管的多节点监控系统：Go 服务器提供 API、内嵌网页与 SQLite 存储；Linux Agent 以非 root 身份采集并通过 HTTP / HTTPS 上报。控制台与状态页均支持简体中文（zh-CN）和英文（en）。
+自托管的多节点监控系统：Go 服务器提供 API、内嵌网页，默认使用 SQLite，也可配置 [MySQL](deploy/README.md#数据库)；Linux Agent 以非 root 身份采集并通过 HTTP / HTTPS 上报。控制台与状态页均支持简体中文（zh-CN）和英文（en）。
 
 ## 功能
 

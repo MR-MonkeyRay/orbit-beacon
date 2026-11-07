@@ -203,8 +203,15 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 
 type scanner interface{ Scan(...any) error }
 
-const nodeColumns = `id, name, status, created_at, notes, region, provider, group_id, expires_on,
-	(SELECT json_group_array(tag) FROM (SELECT tag FROM node_tags WHERE node_id = nodes.id ORDER BY tag)), last_seen, length(token_hash) > 0, system, ` + commands.StoppedSQL
+const nodeColumnsBase = `id, name, status, created_at, notes, region, provider, group_id, expires_on,`
+const nodeColumnsTail = ", last_seen, length(token_hash) > 0, `system`, " + commands.StoppedSQL
+
+func nodeColumns(dialect storage.Dialect) string {
+	if dialect == storage.MySQL {
+		return nodeColumnsBase + `COALESCE((SELECT JSON_ARRAYAGG(tag) OVER (ORDER BY tag ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM node_tags WHERE node_id=nodes.id LIMIT 1),JSON_ARRAY())` + nodeColumnsTail
+	}
+	return nodeColumnsBase + `(SELECT json_group_array(tag) FROM (SELECT tag FROM node_tags WHERE node_id = nodes.id ORDER BY tag))` + nodeColumnsTail
+}
 
 func scanNode(row scanner, now time.Time) (Node, error) {
 	var node Node
@@ -251,7 +258,7 @@ func (s *Service) Get(ctx context.Context, id string) (Node, error) {
 	}
 	defer lease.Close()
 	ctx = lease.Context()
-	return scanNode(lease.QueryRowContext(ctx, "SELECT "+nodeColumns+" FROM nodes WHERE id = ?", id), s.now())
+	return scanNode(lease.QueryRowContext(ctx, "SELECT "+nodeColumns(lease.Dialect())+" FROM nodes WHERE id = ?", id), s.now())
 }
 
 // ListPage 在同一条查询里多取一行，用于判断是否还有下一页。
@@ -277,7 +284,7 @@ func (s *Service) list(ctx context.Context, limit, offset int) ([]Node, error) {
 	}
 	defer lease.Close()
 	ctx = lease.Context()
-	rows, err := lease.QueryContext(ctx, "SELECT "+nodeColumns+" FROM nodes ORDER BY created_at, id LIMIT ? OFFSET ?", limit, offset)
+	rows, err := lease.QueryContext(ctx, "SELECT "+nodeColumns(lease.Dialect())+" FROM nodes ORDER BY created_at, id LIMIT ? OFFSET ?", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +350,7 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 	defer tx.Rollback()
 	if groupID != nil {
 		var exists bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM groups WHERE id = ?)", *groupID).Scan(&exists); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM `groups` WHERE id = ?)", *groupID).Scan(&exists); err != nil {
 			return Node{}, err
 		}
 		if !exists {
@@ -364,7 +371,7 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 			}
 		}
 	}
-	node, err := scanNode(tx.QueryRowContext(ctx, "SELECT "+nodeColumns+" FROM nodes WHERE id = ?", id), s.now())
+	node, err := scanNode(tx.QueryRowContext(ctx, "SELECT "+nodeColumns(tx.Dialect())+" FROM nodes WHERE id = ?", id), s.now())
 	if err != nil {
 		return Node{}, err
 	}
@@ -436,7 +443,7 @@ func (s *Service) RevokeCredential(ctx context.Context, id string) error {
 	defer tx.Rollback()
 	// 耗尽时必须回滚，不能让 SQLite 把身份围栏提升为 REAL。
 	// 现有 NOT NULL 约束只拒绝实际的自增。
-	result, err := tx.ExecContext(ctx, `UPDATE nodes SET credential_epoch = CASE WHEN length(token_hash)>0 THEN CASE WHEN credential_epoch < 9223372036854775807 THEN credential_epoch + 1 ELSE NULL END ELSE credential_epoch END, token_hash = NULL, installation_id = NULL, run_generation = '0', report_session_id = '', agent_runtime = '', last_seen = NULL, system = '{}', status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'pending' END WHERE id = ?`, id)
+	result, err := tx.ExecContext(ctx, "UPDATE nodes SET credential_epoch = CASE WHEN length(token_hash)>0 THEN CASE WHEN credential_epoch < 9223372036854775807 THEN credential_epoch + 1 ELSE NULL END ELSE credential_epoch END, token_hash = NULL, installation_id = NULL, run_generation = '0', report_session_id = '', agent_runtime = '', last_seen = NULL, `system` = '{}', status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'pending' END WHERE id = ?", id)
 	if err := affected(result, err); err != nil {
 		return err
 	}

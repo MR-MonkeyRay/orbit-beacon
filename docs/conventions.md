@@ -30,7 +30,7 @@ Go 日志约定：
 - 每个可执行程序创建一个 `slog` logger：服务器使用 JSON，Agent 使用 text；向组件注入，不调用全局 `slog`。
 - `msg` 使用稳定的小写 `snake_case` 事件名，如 `server_started`、`retention_cleanup_failed`。
 - 字段名使用 `snake_case`：`component`、`request_id`、`route`、`method`、`status`、`duration_ms`、`node_id`、`task_id`、`channel_id`；`route` 是有界路由标签，不记录原始路径。
-- 错误仅记录 `error_kind`、`error_code`，SQLite 错误可加 `sqlite_code`；使用 `internal/logging.ErrorAttrs`，不记录原始错误文本。
+- 错误仅记录 `error_kind`、`error_code`；SQLite 可加 `sqlite_code`，MySQL 可加 `mysql_code`。统一使用 `internal/logging.ErrorAttrs`，不记录原始错误文本、SQL、绑定值或 DSN；MySQL 驱动日志也只输出类型及数值元数据。
 - INFO 表示生命周期与完成；WARN 表示降级与重试；ERROR 表示操作失败。同一错误只记录一次，不逐层重复。
 - CLI 帮助和命令输出（包括 stderr 上的命令错误）使用纯文本；显式 `--json` 输出仍按命令约定提供 JSON。
 

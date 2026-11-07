@@ -43,7 +43,7 @@ func TestAPITokensExcludedAndRestoreRevokesOldTokens(t *testing.T) {
 			target := restoreFixture(t, "target")
 			seed(target)
 			archive, password := restoreArchive(t, source, []Category{category})
-			if _, err := Restore(ctx, target, archive, password, true); err != nil {
+			if _, err := Restore(ctx, restoreConfig(target), archive, password, true); err != nil {
 				t.Fatal(err)
 			}
 			restored := restoreDB(t, target)

@@ -73,8 +73,7 @@ func liveIdentity(credential []byte, epoch int64, generation, session string) (L
 	return identity, err
 }
 
-// LiveRecords 用一条查询读取数量受限的完整节点清单。SQLite 只提取节点列表所需的
-// 单个 system 字段；不解码 report、runtime 或 notes。
+// LiveRecords 一次读取完整节点清单，只提取 system 中的 Agent 版本。
 func (s *Service) LiveRecords(ctx context.Context) ([]LiveRecord, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -82,9 +81,11 @@ func (s *Service) LiveRecords(ctx context.Context) ([]LiveRecord, error) {
 	}
 	defer lease.Close()
 	ctx = lease.Context()
-	rows, err := lease.QueryContext(ctx, `SELECT id,status,last_seen,
-		CASE WHEN json_valid(system) THEN COALESCE(json_extract(system,'$.agent_version'),'') ELSE '' END,
-		token_hash,credential_epoch,run_generation,report_session_id, `+commands.StoppedSQL+` FROM nodes ORDER BY created_at,id`)
+	version := "CASE WHEN json_valid(`system`) THEN COALESCE(json_extract(`system`,'$.agent_version'),'') ELSE '' END"
+	if lease.Dialect() == storage.MySQL {
+		version = "CASE WHEN JSON_VALID(`system`) THEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(`system`,'$.agent_version')) COLLATE utf8mb4_0900_bin,'') ELSE '' END"
+	}
+	rows, err := lease.QueryContext(ctx, `SELECT id,status,last_seen,`+version+`,token_hash,credential_epoch,run_generation,report_session_id, `+commands.StoppedSQL+` FROM nodes ORDER BY created_at,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +141,7 @@ func (s *Service) LiveDetail(ctx context.Context, id string) (LiveDetailRecord, 
 	}
 	defer lease.Close()
 	ctx = lease.Context()
-	row := lease.QueryRowContext(ctx, "SELECT "+nodeColumns+",token_hash,credential_epoch,run_generation,report_session_id,agent_runtime FROM nodes WHERE id=?", id)
+	row := lease.QueryRowContext(ctx, "SELECT "+nodeColumns(lease.Dialect())+",token_hash,credential_epoch,run_generation,report_session_id,agent_runtime FROM nodes WHERE id=?", id)
 	node, err := scanNode(liveDetailScanner{row, &credential, &epoch, &generation, &session, &runtime}, s.now())
 	if err != nil {
 		return record, err

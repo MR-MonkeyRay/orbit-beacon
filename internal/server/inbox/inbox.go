@@ -85,7 +85,22 @@ func Insert(ctx context.Context, tx *storage.Tx, event Event) error {
 	if !uuid.ValidUUID(event.ID) {
 		return ErrInvalidInput
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO inbox_notifications(id,kind,source_id,transition,severity,created_at,details_json) VALUES(?,?,?,?,?,?,?) ON CONFLICT(kind,source_id,transition) DO NOTHING`, event.ID, event.Kind, event.SourceID, event.Transition, event.Severity, timekey.Format(event.CreatedAt), string(event.Details))
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM inbox_notifications WHERE kind=? AND source_id=? AND transition=?)`, event.Kind, event.SourceID, event.Transition).Scan(&exists); err != nil || exists {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE inbox_sequence SET value=value+1 WHERE id=1 AND value<9223372036854775807`)
+	if err != nil {
+		return err
+	}
+	if count, err := result.RowsAffected(); err != nil || count != 1 {
+		return errors.Join(errors.New("inbox sequence exhausted or missing"), err)
+	}
+	var sequence int64
+	if err := tx.QueryRowContext(ctx, `SELECT value FROM inbox_sequence WHERE id=1`).Scan(&sequence); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO inbox_notifications(sequence,id,kind,source_id,transition,severity,created_at,details_json) VALUES(?,?,?,?,?,?,?,?)`, sequence, event.ID, event.Kind, event.SourceID, event.Transition, event.Severity, timekey.Format(event.CreatedAt), string(event.Details))
 	return err
 }
 
@@ -250,7 +265,11 @@ func (s *Service) MarkRead(ctx context.Context, who Identity, id string, now tim
 	} else if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO inbox_reads(user_id,notification_id,read_at) VALUES(?,?,?) ON CONFLICT(user_id,notification_id) DO NOTHING`, who.UserID, id, timekey.Format(now)); err != nil {
+	query := `INSERT INTO inbox_reads(user_id,notification_id,read_at) VALUES(?,?,?) ON CONFLICT(user_id,notification_id) DO NOTHING`
+	if tx.Dialect() == storage.MySQL {
+		query = `INSERT INTO inbox_reads(user_id,notification_id,read_at) VALUES(?,?,?) ON DUPLICATE KEY UPDATE read_at=inbox_reads.read_at`
+	}
+	if _, err = tx.ExecContext(ctx, query, who.UserID, id, timekey.Format(now)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -277,7 +296,11 @@ func (s *Service) MarkAllRead(ctx context.Context, who Identity, through string,
 	} else if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO inbox_reads(user_id,notification_id,read_at) SELECT ?,n.id,? FROM inbox_notifications n WHERE n.sequence<=? ON CONFLICT(user_id,notification_id) DO NOTHING`, who.UserID, timekey.Format(now), sequence)
+	query := `INSERT INTO inbox_reads(user_id,notification_id,read_at) SELECT ?,n.id,? FROM inbox_notifications n WHERE n.sequence<=? ON CONFLICT(user_id,notification_id) DO NOTHING`
+	if tx.Dialect() == storage.MySQL {
+		query = `INSERT INTO inbox_reads(user_id,notification_id,read_at) SELECT ?,n.id,? FROM inbox_notifications n WHERE n.sequence<=? ON DUPLICATE KEY UPDATE read_at=inbox_reads.read_at`
+	}
+	_, err = tx.ExecContext(ctx, query, who.UserID, timekey.Format(now), sequence)
 	if err != nil {
 		return err
 	}
@@ -300,12 +323,12 @@ func (s *Service) Cleanup(ctx context.Context, before time.Time, limit int) (int
 		return 0, txErr
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `DELETE FROM inbox_notifications WHERE id IN (SELECT id FROM inbox_notifications WHERE created_at<? ORDER BY created_at,id LIMIT ?)`, timekey.Format(before), limit)
+	count, err := storage.DeleteBatch(ctx, tx, `SELECT id FROM inbox_notifications WHERE created_at<? ORDER BY created_at,id LIMIT ?`, `DELETE FROM inbox_notifications WHERE id=?`, timekey.Format(before), limit)
 	if err != nil {
 		return 0, err
 	}
 	if commitErr := tx.Commit(); commitErr != nil {
 		return 0, commitErr
 	}
-	return result.RowsAffected()
+	return count, nil
 }

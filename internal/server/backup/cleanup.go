@@ -36,11 +36,10 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64,
 	ctx = lease.Context()
 	budget := cleanupLimit(limit)
 	var count int64
-	result, err := execTaskUpdate(ctx, lease, `UPDATE backup_tasks SET password_ciphertext=NULL WHERE id IN (SELECT id FROM backup_tasks WHERE state IN ('succeeded','failed') AND password_ciphertext IS NOT NULL AND password_expires_at IS NOT NULL AND password_expires_at<=? ORDER BY password_expires_at,id LIMIT ?)`, timekey.Format(now), budget)
+	n, err := execTaskBatch(ctx, lease, `SELECT id FROM backup_tasks WHERE state IN ('succeeded','failed') AND password_ciphertext IS NOT NULL AND password_expires_at IS NOT NULL AND password_expires_at<=? ORDER BY password_expires_at,id LIMIT ?`, `UPDATE backup_tasks SET password_ciphertext=NULL`, timekey.Format(now), budget)
 	if err != nil {
 		return count, err
 	}
-	n, err := result.RowsAffected()
 	count += n
 	budget -= int(n)
 	if err != nil || budget == 0 {
@@ -88,22 +87,57 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64,
 	}
 	// 删除文件失败时，历史记录过期后仅保留固定的私有导出定位符。
 	// 密文过期另行处理。
-	result, err = execTaskUpdate(ctx, lease, `UPDATE backup_tasks SET plan_id=NULL,actor_id=NULL,categories_json='[]',destination_json='{}',input_credentials_ciphertext=NULL,scheduled_at=NULL,started_at=NULL,artifact_bytes=NULL,artifact_sha256=NULL,result_location=NULL,error_code='',warning_code='' WHERE id IN (SELECT id FROM backup_tasks WHERE state IN ('succeeded','failed') AND finished_at<=? AND kind='backup_export' AND restored=0 AND artifact_name IS NOT NULL AND artifact_deleted_at IS NULL AND (plan_id IS NOT NULL OR actor_id IS NOT NULL OR categories_json!='[]' OR destination_json!='{}' OR input_credentials_ciphertext IS NOT NULL OR scheduled_at IS NOT NULL OR started_at IS NOT NULL OR artifact_bytes IS NOT NULL OR artifact_sha256 IS NOT NULL OR result_location IS NOT NULL OR error_code!='' OR warning_code!='') ORDER BY finished_at,id LIMIT ?)`, timekey.Format(now.Add(-taskLifetime)), budget)
+	n, err = execTaskBatch(ctx, lease, `SELECT id FROM backup_tasks WHERE state IN ('succeeded','failed') AND finished_at<=? AND kind='backup_export' AND restored=0 AND artifact_name IS NOT NULL AND artifact_deleted_at IS NULL AND (plan_id IS NOT NULL OR actor_id IS NOT NULL OR categories_json!='[]' OR destination_json!='{}' OR input_credentials_ciphertext IS NOT NULL OR scheduled_at IS NOT NULL OR started_at IS NOT NULL OR artifact_bytes IS NOT NULL OR artifact_sha256 IS NOT NULL OR result_location IS NOT NULL OR error_code!='' OR warning_code!='') ORDER BY finished_at,id LIMIT ?`, `UPDATE backup_tasks SET plan_id=NULL,actor_id=NULL,categories_json='[]',destination_json='{}',input_credentials_ciphertext=NULL,scheduled_at=NULL,started_at=NULL,artifact_bytes=NULL,artifact_sha256=NULL,result_location=NULL,error_code='',warning_code=''`, timekey.Format(now.Add(-taskLifetime)), budget)
 	if err != nil {
 		return count, err
 	}
-	n, err = result.RowsAffected()
 	count += n
 	budget -= int(n)
 	if err != nil || budget == 0 {
 		return count, err
 	}
-	result, err = execTaskUpdate(ctx, lease, `DELETE FROM backup_tasks WHERE id IN (SELECT id FROM backup_tasks WHERE state IN ('succeeded','failed') AND finished_at<=? AND (kind!='backup_export' OR restored=1 OR artifact_name IS NULL OR artifact_deleted_at IS NOT NULL) ORDER BY finished_at,id LIMIT ?)`, timekey.Format(now.Add(-taskLifetime)), budget)
+	n, err = execTaskBatch(ctx, lease, `SELECT id FROM backup_tasks WHERE state IN ('succeeded','failed') AND finished_at<=? AND (kind!='backup_export' OR restored=1 OR artifact_name IS NULL OR artifact_deleted_at IS NOT NULL) ORDER BY finished_at,id LIMIT ?`, `DELETE FROM backup_tasks`, timekey.Format(now.Add(-taskLifetime)), budget)
 	if err != nil {
 		return count, err
 	}
-	n, err = result.RowsAffected()
 	return count + n, err
+}
+
+// 先在写 guard 内选取有界主键，再变更，避免 MySQL 同表子查询限制。
+func execTaskBatch(ctx context.Context, lease *storage.Lease, selection, mutation string, args ...any) (int64, error) {
+	tx, err := lease.BeginWrite(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, selection, args...)
+	if err != nil {
+		return 0, err
+	}
+	var ids []any
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
+		ids = append(ids, id)
+	}
+	err = errors.Join(err, rows.Err(), rows.Close())
+	if err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, tx.Commit()
+	}
+	result, err := tx.ExecContext(ctx, mutation+" WHERE id IN ("+strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+")", ids...)
+	if err != nil {
+		return 0, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return n, tx.Commit()
 }
 
 func (s *Service) removeTaskArtifact(task Task) error {

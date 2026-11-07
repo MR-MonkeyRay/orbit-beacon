@@ -93,7 +93,7 @@ func (s *Service) Groups(ctx context.Context) ([]Group, error) {
 	}
 	defer lease.Close()
 	ctx = lease.Context()
-	rows, err := lease.QueryContext(ctx, "SELECT id, name FROM groups ORDER BY name, id")
+	rows, err := lease.QueryContext(ctx, "SELECT id, name FROM `groups` ORDER BY name, id")
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +116,7 @@ func (s *Service) Group(ctx context.Context, id string) (Group, error) {
 	}
 	defer lease.Close()
 	ctx = lease.Context()
-	return scanGroup(lease.QueryRowContext(ctx, "SELECT id, name FROM groups WHERE id = ?", id))
+	return scanGroup(lease.QueryRowContext(ctx, "SELECT id, name FROM `groups` WHERE id = ?", id))
 }
 
 func (s *Service) SaveGroup(ctx context.Context, id, name string) (Group, error) {
@@ -145,17 +145,17 @@ func (s *Service) SaveGroup(ctx context.Context, id, name string) (Group, error)
 	}
 	defer tx.Rollback()
 	var duplicate int
-	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM groups WHERE name = ? AND id <> ?", name, id).Scan(&duplicate); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM `groups` WHERE name = ? AND id <> ?", name, id).Scan(&duplicate); err != nil {
 		return Group{}, err
 	}
 	if duplicate != 0 {
 		return Group{}, ErrInvalidInput
 	}
 	if create {
-		_, err = tx.ExecContext(ctx, "INSERT INTO groups(id, name) VALUES (?, ?)", id, name)
+		_, err = tx.ExecContext(ctx, "INSERT INTO `groups`(id, name) VALUES (?, ?)", id, name)
 	} else {
 		var result sql.Result
-		result, err = tx.ExecContext(ctx, "UPDATE groups SET name = ? WHERE id = ?", name, id)
+		result, err = tx.ExecContext(ctx, "UPDATE `groups` SET name = ? WHERE id = ?", name, id)
 		if err == nil {
 			err = requireRow(result)
 		}
@@ -199,7 +199,7 @@ func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 		return err
 	}
 	// ON DELETE SET NULL 在同一事务中解除节点与注册引用的关联。
-	result, err := tx.ExecContext(ctx, "DELETE FROM groups WHERE id = ?", id)
+	result, err := tx.ExecContext(ctx, "DELETE FROM `groups` WHERE id = ?", id)
 	if err != nil {
 		return err
 	}
@@ -285,18 +285,12 @@ func (s *Service) CleanupAuditEvents(ctx context.Context, before time.Time, limi
 		return 0, txErr
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `DELETE FROM audit_events
-WHERE id IN (
-	SELECT id FROM audit_events
-	WHERE created_at < ?
-	ORDER BY created_at ASC, id ASC
-	LIMIT ?
-	)`, timekey.Format(before), limit)
+	count, err := storage.DeleteBatch(ctx, tx, `SELECT id FROM audit_events WHERE created_at<? ORDER BY created_at,id LIMIT ?`, `DELETE FROM audit_events WHERE id=?`, timekey.Format(before), limit)
 	if err != nil {
 		return 0, err
 	}
 	if commitErr := tx.Commit(); commitErr != nil {
 		return 0, commitErr
 	}
-	return result.RowsAffected()
+	return count, nil
 }

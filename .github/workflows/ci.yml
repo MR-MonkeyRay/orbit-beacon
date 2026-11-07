@@ -61,6 +61,33 @@ jobs:
           go test -count=1 -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out
 
+      # 仅受信任主分支可读取远程管理员凭据；未配置基础设施时明确记录未执行。
+      - name: 运行远程独立 schema MySQL 集成测试
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          ORBITBEACON_TEST_MYSQL_ADMIN_CONFIG: ${{ secrets.ORBITBEACON_TEST_MYSQL_ADMIN_CONFIG }}
+          ORBITBEACON_TEST_MYSQL_ADMIN_PASSWORD: ${{ secrets.ORBITBEACON_TEST_MYSQL_ADMIN_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "$ORBITBEACON_TEST_MYSQL_ADMIN_CONFIG" ] && [ -z "$ORBITBEACON_TEST_MYSQL_ADMIN_PASSWORD" ]; then
+            echo '远程 MySQL 集成未执行：未配置管理员配置与密码 secrets。' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ -z "$ORBITBEACON_TEST_MYSQL_ADMIN_CONFIG" ] || [ -z "$ORBITBEACON_TEST_MYSQL_ADMIN_PASSWORD" ]; then
+            echo '远程 MySQL 集成必须同时配置管理员配置与密码 secrets。' >&2
+            exit 1
+          fi
+          umask 077
+          private_dir="$(mktemp -d "$RUNNER_TEMP/orbitbeacon-mysql.XXXXXX")"
+          trap 'rm -f "$private_dir/admin.json" "$private_dir/admin.password"; rmdir "$private_dir"' EXIT
+          printf '%s' "$ORBITBEACON_TEST_MYSQL_ADMIN_PASSWORD" > "$private_dir/admin.password"
+          printf '%s' "$ORBITBEACON_TEST_MYSQL_ADMIN_CONFIG" | jq --arg password_file "$private_dir/admin.password" '.database.primary.password_file = $password_file' > "$private_dir/admin.json"
+          chmod 0600 "$private_dir/admin.json" "$private_dir/admin.password"
+          unset ORBITBEACON_TEST_MYSQL_ADMIN_CONFIG ORBITBEACON_TEST_MYSQL_ADMIN_PASSWORD
+          export ORBITBEACON_TEST_MYSQL=1
+          export ORBITBEACON_TEST_MYSQL_CONFIG="$private_dir/admin.json"
+          go test -count=1 -timeout=20m ./internal/server ./internal/server/storage ./internal/server/history ./internal/server/auth ./internal/server/nodes ./internal/server/enrollment ./internal/server/ingest ./internal/server/backup ./internal/server/notify ./internal/server/inbox ./internal/server/alerts ./internal/server/management ./internal/server/app ./cmd/orbitbeacon-server
+
       - name: 运行竞态测试
         env:
           CGO_ENABLED: '1'

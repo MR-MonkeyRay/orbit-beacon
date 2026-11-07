@@ -107,6 +107,31 @@ func TestServiceStoreFailedWriteRetainsPending(t *testing.T) {
 	}
 }
 
+func TestUnknownHistoryCommitKeepsImmutableInflight(t *testing.T) {
+	store := &fakeStore{writeErr: storage.ErrCommitUnknown}
+	s := stoppedStoreService(t, store, nil, Options{})
+	now := time.Now().UTC().Truncate(time.Minute)
+	at := now.Add(-time.Minute)
+	s.add(Sample{"node", at, map[string]float64{"cpu_percent": 20}})
+	if err := s.flush(context.Background(), now, false); !errors.Is(err, storage.ErrCommitUnknown) {
+		t.Fatal(err)
+	}
+	if len(s.inflight) != 1 || len(s.pending) != 0 {
+		t.Fatalf("inflight=%v pending=%v", s.inflight, s.pending)
+	}
+	s.add(Sample{"node", at, map[string]float64{"cpu_percent": 30}})
+	if s.inflight[0].Total != 20 {
+		t.Fatal("new sample changed uncertain batch")
+	}
+	store.writeErr = nil
+	if err := s.flush(context.Background(), now, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) != 3 || !reflect.DeepEqual(store.writes[0], store.writes[1]) || store.writes[2][0].Total != 30 || len(s.inflight) != 0 || len(s.pending) != 0 {
+		t.Fatalf("writes=%v pending=%v inflight=%v", store.writes, s.pending, s.inflight)
+	}
+}
+
 func emptyTestMain(t *testing.T) *storage.Database {
 	t.Helper()
 	dir := t.TempDir()

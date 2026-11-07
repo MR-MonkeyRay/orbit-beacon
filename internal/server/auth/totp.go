@@ -147,11 +147,15 @@ func (s *Service) verifySecondFactor(id string, state totpState, otp string) (se
 func (s *Service) consumeSecondFactor(ctx context.Context, tx *storage.Tx, id string, state totpState, factor secondFactor) error {
 	var result sql.Result
 	var err error
+	equal := " IS "
+	if tx.Dialect() == storage.MySQL {
+		equal = " <=> "
+	}
 	switch factor.kind {
 	case "totp":
-		result, err = tx.ExecContext(ctx, `UPDATE users SET totp_last_step=? WHERE id=? AND totp_last_step<? AND totp_ciphertext IS ?`, factor.step, id, factor.step, state.cipher)
+		result, err = tx.ExecContext(ctx, `UPDATE users SET totp_last_step=? WHERE id=? AND totp_last_step<? AND totp_ciphertext`+equal+`?`, factor.step, id, factor.step, state.cipher)
 	case "recovery":
-		result, err = tx.ExecContext(ctx, `DELETE FROM recovery_codes WHERE user_id=? AND code_hash=? AND EXISTS(SELECT 1 FROM users WHERE id=? AND totp_ciphertext IS ?)`, id, factor.hash[:], id, state.cipher)
+		result, err = tx.ExecContext(ctx, `DELETE FROM recovery_codes WHERE user_id=? AND code_hash=? AND EXISTS(SELECT 1 FROM users WHERE id=? AND totp_ciphertext`+equal+`?)`, id, factor.hash[:], id, state.cipher)
 	default:
 		return nil
 	}
@@ -393,7 +397,11 @@ func (s *Service) ConfirmTOTP(ctx context.Context, id, token, code string) ([]st
 	if err = requireTOTPSession(ctx, tx, id, token, s.now()); err != nil {
 		return nil, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE users SET totp_ciphertext=totp_pending_ciphertext,totp_pending_ciphertext=NULL,totp_pending_at=NULL,totp_last_step=? WHERE id=? AND totp_ciphertext IS NULL AND totp_pending_ciphertext IS ? AND totp_pending_at=? AND totp_last_step<?`, step, id, state.pending, state.pendingAt.String, step)
+	equal := " IS "
+	if tx.Dialect() == storage.MySQL {
+		equal = " <=> "
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE users SET totp_ciphertext=totp_pending_ciphertext,totp_pending_ciphertext=NULL,totp_pending_at=NULL,totp_last_step=? WHERE id=? AND totp_ciphertext IS NULL AND totp_pending_ciphertext`+equal+`? AND totp_pending_at=? AND totp_last_step<?`, step, id, state.pending, state.pendingAt.String, step)
 	if err = requireChanged(result, err, ErrTOTPSetupExpired); err != nil {
 		return nil, err
 	}
@@ -469,7 +477,11 @@ func (s *Service) changeTOTP(ctx context.Context, id, token, password, otp strin
 		}
 		return nil, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE users SET totp_last_step=totp_last_step WHERE id=? AND password_hash=? AND totp_ciphertext IS ?`, id, hash, state.cipher)
+	equal := " IS "
+	if tx.Dialect() == storage.MySQL {
+		equal = " <=> "
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE users SET totp_last_step=totp_last_step WHERE id=? AND password_hash=? AND totp_ciphertext`+equal+`?`, id, hash, state.cipher)
 	if err = requireChanged(result, err, ErrWrongPassword); err != nil {
 		return nil, err
 	}

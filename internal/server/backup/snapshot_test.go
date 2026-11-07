@@ -203,3 +203,19 @@ func TestPayloadIntegrityRejectsCorruptedSQLite(t *testing.T) {
 		t.Fatal("corrupt SQLite accepted")
 	}
 }
+
+func TestSnapshotRejectsMixedSchemaLedger(t *testing.T) {
+	dir := framingTempDir(t)
+	source := filepath.Join(dir, "source.db")
+	db, err := storage.Open(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO schema_migrations(version,applied_at) VALUES(1,'old')`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if err = SnapshotDatabase(context.Background(), source, filepath.Join(dir, "snapshot.db"), storage.CurrentSchemaVersion); err == nil {
+		t.Fatal("mixed schema ledger accepted")
+	}
+}

@@ -195,7 +195,14 @@ func persistTrafficPending(ctx context.Context, tx *storage.Tx, nodeID string, p
 			continue
 		}
 		var stored trafficCounters
-		err := tx.QueryRowContext(ctx, `INSERT INTO traffic_hourly(node_id,epoch,period_start,rx_bytes,tx_bytes,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(node_id,epoch,period_start) DO UPDATE SET rx_bytes=MAX(traffic_hourly.rx_bytes,excluded.rx_bytes),tx_bytes=MAX(traffic_hourly.tx_bytes,excluded.tx_bytes),updated_at=MAX(traffic_hourly.updated_at,excluded.updated_at) RETURNING rx_bytes,tx_bytes`, nodeID, key.epoch, key.period, value.rx, value.tx, timekey.Format(now)).Scan(&stored.rx, &stored.tx)
+		query := `INSERT INTO traffic_hourly(node_id,epoch,period_start,rx_bytes,tx_bytes,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(node_id,epoch,period_start) DO UPDATE SET rx_bytes=MAX(traffic_hourly.rx_bytes,excluded.rx_bytes),tx_bytes=MAX(traffic_hourly.tx_bytes,excluded.tx_bytes),updated_at=MAX(traffic_hourly.updated_at,excluded.updated_at)`
+		if tx.Dialect() == storage.MySQL {
+			query = `INSERT INTO traffic_hourly(node_id,epoch,period_start,rx_bytes,tx_bytes,updated_at) VALUES(?,?,?,?,?,?) ON DUPLICATE KEY UPDATE rx_bytes=GREATEST(rx_bytes,VALUES(rx_bytes)),tx_bytes=GREATEST(tx_bytes,VALUES(tx_bytes)),updated_at=GREATEST(updated_at,VALUES(updated_at))`
+		}
+		if _, err := tx.ExecContext(ctx, query, nodeID, key.epoch, key.period, value.rx, value.tx, timekey.Format(now)); err != nil {
+			return nil, err
+		}
+		err := tx.QueryRowContext(ctx, `SELECT rx_bytes,tx_bytes FROM traffic_hourly WHERE node_id=? AND epoch=? AND period_start=?`, nodeID, key.epoch, key.period).Scan(&stored.rx, &stored.tx)
 		if err != nil {
 			return nil, err
 		}

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -425,7 +426,7 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	var storedCredential []byte
 	var storedEpoch int64
 	var activeCommand bool
-	if err := lease.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status, COALESCE(system, ''), agent_runtime, last_seen, EXISTS(SELECT 1 FROM agent_commands WHERE node_id=nodes.id AND state IN ('pending','delivered')) FROM nodes WHERE id = ?", nodeID).Scan(&generationText, &session, &storedCredential, &storedEpoch, &status, &storedSystem, &storedRuntime, &lastSeenText, &activeCommand); err != nil {
+	if err := lease.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status, COALESCE(`system`, ''), agent_runtime, last_seen, EXISTS(SELECT 1 FROM agent_commands WHERE node_id=nodes.id AND state IN ('pending','delivered')) FROM nodes WHERE id = ?", nodeID).Scan(&generationText, &session, &storedCredential, &storedEpoch, &status, &storedSystem, &storedRuntime, &lastSeenText, &activeCommand); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return v1.ReportResponse{}, nodes.ErrUnauthenticated
 		}
@@ -577,8 +578,16 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 	probes := state.copyProbes(txCredential, txEpoch, fence.generation, txSession)
 	probes.retainTargets(currentRuntime.ProbeTargets)
 	if !fence.duplicate && txRuntime != string(report.runtimeJSON) {
+		args := []any{nodeID}
+		condition := ""
+		if len(currentRuntime.ProbeTargets) > 0 {
+			condition = " AND target NOT IN (" + strings.TrimSuffix(strings.Repeat("?,", len(currentRuntime.ProbeTargets)), ",") + ")"
+			for _, target := range currentRuntime.ProbeTargets {
+				args = append(args, target)
+			}
+		}
 		for _, table := range []string{"probe_latest", "probe_hourly"} {
-			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE node_id=? AND target NOT IN (SELECT value FROM json_each(?, '$.probe_targets'))", nodeID, string(report.runtimeJSON)); err != nil {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE node_id=?"+condition, args...); err != nil {
 				return v1.ReportResponse{}, err
 			}
 		}
@@ -612,7 +621,7 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 	if err != nil {
 		return v1.ReportResponse{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET run_generation = ?, report_session_id = ?, last_seen = ?, system = COALESCE(?, system), agent_runtime = ? WHERE id = ?`, strconv.FormatUint(report.RunGeneration, 10), report.SessionID, timekey.Format(now), report.system, string(report.runtimeJSON), nodeID); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE nodes SET run_generation = ?, report_session_id = ?, last_seen = ?, `system` = COALESCE(?, `system`), agent_runtime = ? WHERE id = ?", strconv.FormatUint(report.RunGeneration, 10), report.SessionID, timekey.Format(now), report.system, string(report.runtimeJSON), nodeID); err != nil {
 		return v1.ReportResponse{}, err
 	}
 	if err := tx.Commit(); err != nil {

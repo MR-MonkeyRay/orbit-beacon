@@ -130,7 +130,7 @@ func (s *Service) CreateSilence(ctx context.Context, req SilenceRequest) (Silenc
 	if silence.ScopeKind != "all" {
 		table := "nodes"
 		if silence.ScopeKind == "group" {
-			table = "groups"
+			table = "`groups`"
 		}
 		err = tx.QueryRowContext(ctx, "SELECT name FROM "+table+" WHERE id=?", *silence.ScopeID).Scan(&silence.ScopeName)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -161,7 +161,7 @@ func (s *Service) Silences(ctx context.Context) ([]Silence, error) {
 	now := s.now().UTC()
 	rows, err := lease.QueryContext(ctx, `SELECT s.id,s.reason,s.scope_kind,s.scope_id,s.starts_at,s.ends_at,s.created_at,
  COALESCE(g.name,n.name,'') FROM alert_silences s
- LEFT JOIN groups g ON s.scope_group_id=g.id LEFT JOIN nodes n ON s.scope_node_id=n.id
+	LEFT JOIN `+"`groups`"+` g ON s.scope_group_id=g.id LEFT JOIN nodes n ON s.scope_node_id=n.id
  WHERE s.ends_at>? ORDER BY s.starts_at,s.id`, timekey.Format(now))
 	if err != nil {
 		return nil, err
@@ -233,14 +233,14 @@ func (s *Service) CleanupSilences(ctx context.Context, before time.Time, limit i
 		return 0, txErr
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `DELETE FROM alert_silences WHERE id IN (SELECT id FROM alert_silences WHERE ends_at<? ORDER BY ends_at,id LIMIT ?)`, timekey.Format(before), limit)
+	count, err := storage.DeleteBatch(ctx, tx, `SELECT id FROM alert_silences WHERE ends_at<? ORDER BY ends_at,id LIMIT ?`, `DELETE FROM alert_silences WHERE id=?`, timekey.Format(before), limit)
 	if err != nil {
 		return 0, err
 	}
 	if commitErr := tx.Commit(); commitErr != nil {
 		return 0, commitErr
 	}
-	return result.RowsAffected()
+	return count, nil
 }
 
 // releasableSilences 先用读查询筛选。窗口生效期间不开写事务，否则全局静默时

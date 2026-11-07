@@ -207,8 +207,7 @@ func TestSQLiteStoreReportsPools(t *testing.T) {
 	}
 }
 
-// SQLite 查询固定桶起点；远端范围查询以请求的 start 为求值网格。
-// VictoriaMetrics 删除样本后，标签索引仍可能保留旧节点名。
+// 查询固定桶起点，非对齐边界不改变聚合网格。
 func TestSQLiteStoreUnalignedRange(t *testing.T) {
 	store := openTestSQLiteStore(t)
 	ctx := context.Background()

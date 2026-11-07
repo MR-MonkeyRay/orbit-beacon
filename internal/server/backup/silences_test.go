@@ -75,7 +75,7 @@ func TestSilenceBackupRoundtripPreservesFlag(t *testing.T) {
 	}
 	archive, password := restoreArchive(t, source, []Category{Configuration, Events})
 	target := restoreFixture(t, "target")
-	if _, err = Restore(ctx, target, archive, password, true); err != nil {
+	if _, err = Restore(ctx, restoreConfig(target), archive, password, true); err != nil {
 		t.Fatal(err)
 	}
 	restored := restoreDB(t, target)

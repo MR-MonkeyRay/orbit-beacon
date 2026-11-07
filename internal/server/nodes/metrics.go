@@ -19,7 +19,7 @@ func (s *Service) MetricsMetadataRecords(ctx context.Context) ([]MetricsMetadata
 	defer lease.Close()
 	ctx = lease.Context()
 	rows, err := lease.QueryContext(ctx, `SELECT n.id,n.name,n.region,n.provider,COALESCE(g.name,'')
-		FROM nodes n LEFT JOIN groups g ON g.id=n.group_id ORDER BY n.id`)
+		FROM nodes n LEFT JOIN `+"`groups`"+` g ON g.id=n.group_id ORDER BY n.id`)
 	if err != nil {
 		return nil, err
 	}

@@ -21,7 +21,7 @@ func (h *handler) health(w http.ResponseWriter, r *http.Request, requestID strin
 		http.NotFound(w, r)
 		return
 	}
-	if !h.readyState() || h.nodes == nil || !h.nodes.Database().Ready() {
+	if !h.readyState() || h.nodes == nil {
 		writeJSON(w, http.StatusServiceUnavailable, healthStatus{Status: "not_ready"})
 		return
 	}
@@ -39,7 +39,7 @@ func (h *handler) health(w http.ResponseWriter, r *http.Request, requestID strin
 		return
 	}
 	defer tx.Rollback()
-	if err := tx.Commit(); err != nil || !h.readyState() {
+	if err := tx.Commit(); err != nil || !h.readyState() || !h.nodes.Database().Ready() {
 		writeJSON(w, http.StatusServiceUnavailable, healthStatus{Status: "not_ready"})
 		return
 	}

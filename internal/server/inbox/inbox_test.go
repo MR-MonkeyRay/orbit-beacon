@@ -168,4 +168,11 @@ func TestInsertRollsBackWithSourceAndDeduplicatesTransition(t *testing.T) {
 	if e = db.QueryRow(`SELECT count(*) FROM inbox_notifications`).Scan(&n); e != nil || n != 1 {
 		t.Fatalf("duplicate transition count=%d err=%v", n, e)
 	}
+	var sequence, counter int64
+	if e = db.QueryRow(`SELECT sequence FROM inbox_notifications`).Scan(&sequence); e != nil {
+		t.Fatal(e)
+	}
+	if e = db.QueryRow(`SELECT value FROM inbox_sequence WHERE id=1`).Scan(&counter); e != nil || counter != sequence || counter != 1 {
+		t.Fatalf("sequence=%d counter=%d err=%v", sequence, counter, e)
+	}
 }

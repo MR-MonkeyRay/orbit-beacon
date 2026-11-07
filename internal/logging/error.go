@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"reflect"
 
+	"github.com/go-sql-driver/mysql"
 	"modernc.org/sqlite"
 )
 
@@ -31,6 +32,11 @@ func ErrorAttrs(err error, code string) []slog.Attr {
 	if errors.As(err, &sqliteError) && sqliteError != nil {
 		attrs[0] = slog.String("error_kind", "sqlite")
 		attrs = append(attrs, slog.Int("sqlite_code", sqliteError.Code()))
+	}
+	var mysqlError *mysql.MySQLError
+	if errors.As(err, &mysqlError) && mysqlError != nil {
+		attrs[0] = slog.String("error_kind", "mysql")
+		attrs = append(attrs, slog.Int("mysql_code", int(mysqlError.Number)))
 	}
 	return attrs
 }

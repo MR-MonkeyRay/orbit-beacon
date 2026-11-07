@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"orbitbeacon/internal/config"
 	"orbitbeacon/internal/server/storage"
 )
 
@@ -77,4 +78,17 @@ func snapshotSources(t *testing.T, dir string) SnapshotSources {
 	history := sources.History
 	t.Cleanup(func() { history.Close() })
 	return sources
+}
+
+func restoreConfig(dir string) config.Server { return config.Server{DataDir: dir} }
+
+// writableRestoreFixture 只用于准备测试拥有的可信 SQLite 状态；生产 reader 保持只读。
+func writableRestoreFixture(t *testing.T, dir string) *sql.DB {
+	t.Helper()
+	db, err := storage.Open(t.Context(), filepath.Join(dir, "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
 }

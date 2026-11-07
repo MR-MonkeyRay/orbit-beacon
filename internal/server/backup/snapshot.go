@@ -34,10 +34,11 @@ func SnapshotDatabase(ctx context.Context, source, output string, version int) e
 	}
 	defer reader.Close()
 	var got sql.NullInt64
-	if err = reader.QueryRowContext(ctx, "SELECT max(version) FROM schema_migrations").Scan(&got); err != nil {
+	var versions int
+	if err = reader.QueryRowContext(ctx, "SELECT count(*),max(version) FROM schema_migrations").Scan(&versions, &got); err != nil {
 		return err
 	}
-	if !got.Valid || got.Int64 != int64(version) {
+	if versions != 1 || !got.Valid || got.Int64 != int64(version) {
 		return errors.New("unsupported snapshot schema version")
 	}
 	conn, err := reader.Conn(ctx)
@@ -99,7 +100,7 @@ func CreateSnapshotPayloads(ctx context.Context, sources SnapshotSources, dataDi
 	defer mainLease.Close()
 	ctx = mainLease.Context()
 	mainPath := filepath.Join(work, "main-snapshot.sqlite")
-	if err = mainLease.SnapshotSQLite(ctx, mainPath, storage.CurrentSchemaVersion); err != nil {
+	if err = mainLease.Snapshot(ctx, mainPath); err != nil {
 		return SnapshotPayloads{}, fmt.Errorf("snapshot_failed: %w", err)
 	}
 	result := SnapshotPayloads{Snapshots: Snapshots{MainAt: now().UTC()}}
@@ -121,7 +122,7 @@ func CreateSnapshotPayloads(ctx context.Context, sources SnapshotSources, dataDi
 			}
 			defer historyLease.Close()
 			ctx = historyLease.Context()
-			if err = historyLease.SnapshotSQLite(ctx, path, storage.HistorySchemaVersion); err != nil {
+			if err = historyLease.Snapshot(ctx, path); err != nil {
 				return SnapshotPayloads{}, &Error{Code: "history_unavailable"}
 			}
 			at := now().UTC()

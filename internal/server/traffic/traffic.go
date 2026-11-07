@@ -247,15 +247,14 @@ func (s *Service) Quota(ctx context.Context, now time.Time) (map[string]float64,
 		}
 	}
 	// 节点设置和 UNION ALL 共用读取快照，保留事务不会造成漏计或重复。
-	// 先在 SQLite 内按天聚合，读取器只处理节点数 × 天数行。结果只用于百分比，
-	// total() 的浮点值足够，且不会像 sum() 那样在整数溢出时使整批读取失败。
+	// 按天浮点聚合只用于百分比，避免整数 SUM 溢出。
 	rows, err := lease.QueryContext(ctx, `
 WITH eligible AS (SELECT id,billing_day,billing_mode,quota_bytes FROM nodes WHERE quota_bytes NOT IN ('0','')),
  counters(node_id,day,rx_bytes,tx_bytes) AS (
  SELECT n.id,t.day,t.rx_bytes,t.tx_bytes FROM eligible n JOIN traffic_daily t ON t.node_id=n.id WHERE t.day>=? AND t.day<?
  UNION ALL
  SELECT n.id,substr(t.period_start,1,10),t.rx_bytes,t.tx_bytes FROM eligible n JOIN traffic_hourly t ON t.node_id=n.id WHERE t.period_start>=? AND t.period_start<?
-), daily AS (SELECT node_id,day,total(rx_bytes) AS rx,total(tx_bytes) AS tx FROM counters GROUP BY node_id,day)
+), daily AS (SELECT node_id,day,COALESCE(SUM(1e0*rx_bytes),0.0) AS rx,COALESCE(SUM(1e0*tx_bytes),0.0) AS tx FROM counters GROUP BY node_id,day)
 SELECT n.id,n.billing_day,n.billing_mode,n.quota_bytes,d.day,d.rx,d.tx
 FROM eligible n LEFT JOIN daily d ON d.node_id=n.id`, start.Format(dayLayout), end.Format(dayLayout), timekey.Format(start), timekey.Format(end))
 	if err != nil {
@@ -393,7 +392,11 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64,
 		}
 		combinedRx := saturatingAdd(value.rx, existingRx)
 		combinedTx := saturatingAdd(value.tx, existingTx)
-		if _, err := tx.ExecContext(ctx, `INSERT INTO traffic_daily(node_id,day,rx_bytes,tx_bytes) VALUES(?,?,?,?) ON CONFLICT(node_id,day) DO UPDATE SET rx_bytes=excluded.rx_bytes,tx_bytes=excluded.tx_bytes`, key.nodeID, key.day, combinedRx, combinedTx); err != nil {
+		query := `INSERT INTO traffic_daily(node_id,day,rx_bytes,tx_bytes) VALUES(?,?,?,?) ON CONFLICT(node_id,day) DO UPDATE SET rx_bytes=excluded.rx_bytes,tx_bytes=excluded.tx_bytes`
+		if tx.Dialect() == storage.MySQL {
+			query = `INSERT INTO traffic_daily(node_id,day,rx_bytes,tx_bytes) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE rx_bytes=VALUES(rx_bytes),tx_bytes=VALUES(tx_bytes)`
+		}
+		if _, err := tx.ExecContext(ctx, query, key.nodeID, key.day, combinedRx, combinedTx); err != nil {
 			return 0, fmt.Errorf("roll up daily traffic: %w", err)
 		}
 	}
@@ -406,13 +409,9 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64,
 	removed := int64(len(hourly))
 	remaining := limit - len(hourly)
 	if remaining > 0 {
-		result, err := tx.ExecContext(ctx, `DELETE FROM traffic_daily WHERE (node_id,day) IN (SELECT node_id,day FROM traffic_daily WHERE day<? ORDER BY day,node_id LIMIT ?)`, dailyCutoff, remaining)
+		deleted, err := storage.DeleteBatch(ctx, tx, `SELECT node_id,day FROM traffic_daily WHERE day<? ORDER BY day,node_id LIMIT ?`, `DELETE FROM traffic_daily WHERE node_id=? AND day=?`, dailyCutoff, remaining)
 		if err != nil {
 			return 0, fmt.Errorf("delete expired daily traffic: %w", err)
-		}
-		deleted, err := result.RowsAffected()
-		if err != nil {
-			return 0, fmt.Errorf("count expired daily traffic: %w", err)
 		}
 		removed += deleted
 	}

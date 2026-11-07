@@ -5,7 +5,7 @@ import (
 	"database/sql"
 )
 
-const HistorySchemaVersion = 1
+const HistorySchemaVersion = 2
 const historySchema = `CREATE TABLE buckets (
  node_id TEXT NOT NULL, metric TEXT NOT NULL, step INTEGER NOT NULL,
  t INTEGER NOT NULL, total REAL NOT NULL, peak REAL NOT NULL, samples INTEGER NOT NULL CHECK(samples > 0),
@@ -15,7 +15,15 @@ CREATE INDEX buckets_retention ON buckets(step, t);`
 
 // OpenHistorySQLite 仅供离线恢复的私有暂存库使用。
 func OpenHistorySQLite(ctx context.Context, path string) (*sql.DB, error) {
-	return OpenWithMigrations(ctx, path, []Migration{{Version: HistorySchemaVersion, SQL: historySchema}})
+	db, err := openDatabase(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	if err = initializeSQLiteSchema(ctx, db, historySchema, HistorySchemaVersion); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
 }
 
 func OpenHistory(ctx context.Context, path string) (*Database, error) {

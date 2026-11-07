@@ -66,7 +66,7 @@ func TestAnnouncementBackupRoundTrip(t *testing.T) {
 		t.Fatalf("snapshot %d %v", count, err)
 	}
 	archive, password := restoreArchive(t, source, []Category{Configuration})
-	if _, err = Restore(ctx, target, archive, password, true); err != nil {
+	if _, err = Restore(ctx, restoreConfig(target), archive, password, true); err != nil {
 		t.Fatal(err)
 	}
 	var body string

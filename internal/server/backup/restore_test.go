@@ -178,7 +178,7 @@ func TestRestoreSevenCategoryCombinations(t *testing.T) {
 				}
 			}
 			archive, password := restoreArchive(t, source, cats)
-			result, err := Restore(context.Background(), target, archive, password, true)
+			result, err := Restore(context.Background(), restoreConfig(target), archive, password, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -301,7 +301,7 @@ func TestRestoreNormalizesObservedRuntime(t *testing.T) {
 				t.Fatal(err)
 			}
 			archive, password := restoreArchive(t, source, tc.categories)
-			if _, err = Restore(ctx, target, archive, password, true); err != nil {
+			if _, err = Restore(ctx, restoreConfig(target), archive, password, true); err != nil {
 				t.Fatal(err)
 			}
 			var runtime string
@@ -339,7 +339,7 @@ func TestRestorePreservesAdministratorLoginsAndIndividualInboxReads(t *testing.T
 	task := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	alert := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 	at := timekey.Format(time.Now().UTC())
-	if _, err = db.Exec(`INSERT INTO inbox_notifications(id,kind,source_id,transition,severity,created_at,details_json) VALUES(?,'task','historical-task','succeeded','info',?,'{}'),(?,'alert','historical-alert','firing','warning',?,'{}')`, task, at, alert, at); err != nil {
+	if _, err = db.Exec(`INSERT INTO inbox_notifications(sequence,id,kind,source_id,transition,severity,created_at,details_json) VALUES(1,?,'task','historical-task','succeeded','info',?,'{}'),(2,?,'alert','historical-alert','firing','warning',?,'{}')`, task, at, alert, at); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = db.Exec(`INSERT INTO inbox_reads(user_id,notification_id,read_at) VALUES(?,?,?),(?,?,?)`, restoreUser, task, at, second.ID, alert, at); err != nil {
@@ -347,7 +347,7 @@ func TestRestorePreservesAdministratorLoginsAndIndividualInboxReads(t *testing.T
 	}
 	archive, password := restoreArchive(t, source, []Category{Configuration, Events})
 	target := framingTempDir(t)
-	if _, err = Restore(ctx, target, archive, password, false); err != nil {
+	if _, err = Restore(ctx, restoreConfig(target), archive, password, false); err != nil {
 		t.Fatal(err)
 	}
 	restored, err := storage.Open(ctx, filepath.Join(target, "orbitbeacon.db"))
@@ -406,7 +406,7 @@ func TestRestorePreservesPasswordChangeRestrictionsWithoutSessions(t *testing.T)
 	}
 	archive, password := restoreArchive(t, source, []Category{Configuration})
 	target := framingTempDir(t)
-	if _, err = Restore(ctx, target, archive, password, false); err != nil {
+	if _, err = Restore(ctx, restoreConfig(target), archive, password, false); err != nil {
 		t.Fatal(err)
 	}
 	restored := restoreDB(t, target)
@@ -459,13 +459,13 @@ func TestRestoreEmptyAndRefusalNeverMutateLive(t *testing.T) {
 	data, _ := restoreArchive(t, source, []Category{Events})
 	empty := t.TempDir()
 	os.Chmod(empty, 0700)
-	if _, err := Restore(context.Background(), empty, data, password, false); restoreCode(err) != "configuration_required" {
+	if _, err := Restore(context.Background(), restoreConfig(empty), data, password, false); restoreCode(err) != "configuration_required" {
 		t.Fatalf("empty data=%v", err)
 	}
 	if _, err := os.Stat(filepath.Join(empty, "secrets.key")); !os.IsNotExist(err) {
 		t.Fatal("key created on refusal")
 	}
-	if _, err := Restore(context.Background(), empty, config, password, false); err != nil {
+	if _, err := Restore(context.Background(), restoreConfig(empty), config, password, false); err != nil {
 		t.Fatal(err)
 	}
 	db := restoreDB(t, empty)
@@ -488,7 +488,7 @@ func TestRestoreEmptyAndRefusalNeverMutateLive(t *testing.T) {
 		replace  bool
 		code     string
 	}{{password, false, "restore_requires_replace"}, {"wrong", true, ""}} {
-		_, err := Restore(context.Background(), target, config, test.password, test.replace)
+		_, err := Restore(context.Background(), restoreConfig(target), config, test.password, test.replace)
 		if err == nil || test.code != "" && restoreCode(err) != test.code {
 			t.Fatalf("refusal=%v", err)
 		}
@@ -506,7 +506,7 @@ func TestRestoreEmptyAndRefusalNeverMutateLive(t *testing.T) {
 	if err = os.WriteFile(tamper, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = Restore(context.Background(), target, tamper, password, true); err == nil {
+	if _, err = Restore(context.Background(), restoreConfig(target), tamper, password, true); err == nil {
 		t.Fatal("tamper accepted")
 	}
 	if !bytes.Equal(before, restoreBytes(t, target)) {
@@ -565,7 +565,7 @@ func TestRestoreActiveWorkAndRetainedPassword(t *testing.T) {
 				cats = append(cats, Events)
 			}
 			archive, password := restoreArchive(t, source, cats)
-			if _, err := Restore(context.Background(), target, archive, password, true); err != nil {
+			if _, err := Restore(context.Background(), restoreConfig(target), archive, password, true); err != nil {
 				t.Fatal(err)
 			}
 			db := restoreDB(t, target)
@@ -633,7 +633,7 @@ func TestRestoreMissingOldKeyConditionalAndDamagedSources(t *testing.T) {
 			if err := os.Remove(filepath.Join(target, "secrets.key")); err != nil {
 				t.Fatal(err)
 			}
-			_, err := Restore(context.Background(), target, config, password, true)
+			_, err := Restore(context.Background(), restoreConfig(target), config, password, true)
 			if passwordPresent {
 				if restoreCode(err) != "restore_secret_conflict" {
 					t.Fatalf("missing key=%v", err)
@@ -650,18 +650,18 @@ func TestRestoreMissingOldKeyConditionalAndDamagedSources(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(target, name), []byte("corrupted"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := Restore(context.Background(), target, config, password, true); err == nil {
+			if _, err := Restore(context.Background(), restoreConfig(target), config, password, true); err == nil {
 				t.Fatal("damaged omitted source accepted")
 			}
 			assertNoPrepared(t, target)
-			if _, err := Restore(context.Background(), target, all, password, true); err != nil {
+			if _, err := Restore(context.Background(), restoreConfig(target), all, password, true); err != nil {
 				t.Fatal(err)
 			}
 		})
 	}
 }
 
-func TestRestoreConfigurationFromFreshVictoriaMetricsDeployment(t *testing.T) {
+func TestRestoreConfigurationWithMissingOrDamagedHistory(t *testing.T) {
 	for _, damaged := range []bool{false, true} {
 		t.Run(fmt.Sprintf("damaged_local_history=%t", damaged), func(t *testing.T) {
 			ctx := t.Context()
@@ -674,19 +674,11 @@ func TestRestoreConfigurationFromFreshVictoriaMetricsDeployment(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { main.Close() })
-			if _, err := auth.NewService(main, auth.Options{}).BootstrapAdministrator(ctx, "vm-admin", "fresh-vm-administrator-password"); err != nil {
+			if _, err := auth.NewService(main, auth.Options{}).BootstrapAdministrator(ctx, "sql-admin", "fresh-sql-administrator-password"); err != nil {
 				t.Fatal(err)
-			}
-			remote, err := history.OpenVictoriaMetrics(ctx, dir, "http://127.0.0.1:1", "", main, history.Options{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { remote.Close() })
-			if remote.Database() != nil {
-				t.Fatal("remote history exposed a local snapshot source")
 			}
 			work := framingTempDir(t)
-			payloads, err := CreateSnapshotPayloads(ctx, SnapshotSources{Main: main, History: remote.Database()}, dir, filepath.Join(work, "payloads"), []Category{Configuration}, time.Now)
+			payloads, err := CreateSnapshotPayloads(ctx, SnapshotSources{Main: main}, dir, filepath.Join(work, "payloads"), []Category{Configuration}, time.Now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -695,15 +687,12 @@ func TestRestoreConfigurationFromFreshVictoriaMetricsDeployment(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := remote.Close(); err != nil {
-				t.Fatal(err)
-			}
 			if err := main.Close(); err != nil {
 				t.Fatal(err)
 			}
 			metricsPath := filepath.Join(dir, "metrics.db")
 			if _, err := os.Stat(metricsPath); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("VM configuration backup created local history: %v", err)
+				t.Fatalf("configuration backup created local history: %v", err)
 			}
 			before := restoreBytes(t, dir)
 			if damaged {
@@ -711,7 +700,7 @@ func TestRestoreConfigurationFromFreshVictoriaMetricsDeployment(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			result, err := Restore(ctx, dir, archive, password, true)
+			result, err := Restore(ctx, restoreConfig(dir), archive, password, true)
 			if damaged {
 				if restoreCode(err) != "restore_invalid_data" {
 					t.Fatalf("damaged retained history accepted: %v", err)
@@ -727,14 +716,14 @@ func TestRestoreConfigurationFromFreshVictoriaMetricsDeployment(t *testing.T) {
 				return
 			}
 			if err != nil || result.RollbackPath == "" {
-				t.Fatalf("replace fresh VM deployment: %+v/%v", result, err)
+				t.Fatalf("replace deployment without history: %+v/%v", result, err)
 			}
 			restored, err := storage.OpenMain(ctx, filepath.Join(dir, "orbitbeacon.db"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer restored.Close()
-			if _, err := auth.NewService(restored, auth.Options{}).Login(ctx, "vm-admin", "fresh-vm-administrator-password", ""); err != nil {
+			if _, err := auth.NewService(restored, auth.Options{}).Login(ctx, "sql-admin", "fresh-sql-administrator-password", ""); err != nil {
 				t.Fatalf("restored administrator cannot log in: %v", err)
 			}
 			metrics, err := storage.OpenReader(ctx, metricsPath)
@@ -785,7 +774,7 @@ func TestRestoreMonitoringDependencyConflict(t *testing.T) {
 	db.Close()
 	archive, password := restoreArchive(t, source, []Category{Monitoring})
 	before := restoreBytes(t, target)
-	_, err = Restore(context.Background(), target, archive, password, true)
+	_, err = Restore(context.Background(), restoreConfig(target), archive, password, true)
 	if restoreCode(err) != "restore_dependency_conflict" {
 		t.Fatalf("dependency=%v", err)
 	}
@@ -803,7 +792,7 @@ func TestRestoreImportedEventsNeverOwnSecretsOrArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := timekey.Format(time.Now().UTC())
-	if _, err = db.Exec(`INSERT INTO inbox_notifications(id,kind,source_id,transition,severity,created_at,details_json) VALUES('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','task',?,'succeeded','info',?,'{}'),('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','alert','removed-event','resolved','info',?,'{}')`, restoreTask, at, at); err != nil {
+	if _, err = db.Exec(`INSERT INTO inbox_notifications(sequence,id,kind,source_id,transition,severity,created_at,details_json) VALUES(1,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','task',?,'succeeded','info',?,'{}'),(2,'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','alert','removed-event','resolved','info',?,'{}')`, restoreTask, at, at); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = db.Exec(`INSERT INTO inbox_reads(user_id,notification_id,read_at) VALUES(?,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',?)`, restoreUser, at); err != nil {
@@ -812,7 +801,7 @@ func TestRestoreImportedEventsNeverOwnSecretsOrArtifacts(t *testing.T) {
 	db.Close()
 	archive, password := restoreArchive(t, source, []Category{Events})
 	target := restoreFixture(t, "target")
-	if _, err = Restore(context.Background(), target, archive, password, true); err != nil {
+	if _, err = Restore(context.Background(), restoreConfig(target), archive, password, true); err != nil {
 		t.Fatal(err)
 	}
 	restored := restoreDB(t, target)
@@ -925,7 +914,7 @@ func TestRestoreHistoricalAlertsNeverReenqueueDeliveries(t *testing.T) {
 	}
 	target := restoreFixture(t, "target")
 	archive, password := restoreArchive(t, source, []Category{Configuration, Monitoring, Events})
-	if _, err = Restore(ctx, target, archive, password, true); err != nil {
+	if _, err = Restore(ctx, restoreConfig(target), archive, password, true); err != nil {
 		t.Fatal(err)
 	}
 	restored, err := storage.Open(ctx, filepath.Join(target, "orbitbeacon.db"))

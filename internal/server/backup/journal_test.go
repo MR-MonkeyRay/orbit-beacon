@@ -134,7 +134,7 @@ func TestRestoreJournalCommit(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(data, restoreJournalName)); !os.IsNotExist(err) {
 		t.Fatalf("journal remains: %v", err)
 	}
-	if err := RecoverRestore(data); err != nil {
+	if err := RecoverRestore(context.Background(), restoreConfig(data)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -154,7 +154,7 @@ func TestRestoreJournalAbsentOriginalAndCancellation(t *testing.T) {
 	}
 	journalAssertFiles(t, data, old)
 	journalCrash(t, "commit", "prepared:durable", data, next)
-	if err := RecoverRestore(data); err != nil {
+	if err := RecoverRestore(context.Background(), restoreConfig(data)); err != nil {
 		t.Fatal(err)
 	}
 	journalAssertFiles(t, data, old)
@@ -232,7 +232,7 @@ func TestRestoreJournalEveryCommitOperation(t *testing.T) {
 				// 钩子在每次操作前运行；只有完成的已提交
 				// journal 重命名才授权整个新文件组。
 				committed := expectNew
-				if err := RecoverRestore(data); err != nil {
+				if err := RecoverRestore(context.Background(), restoreConfig(data)); err != nil {
 					t.Fatal(err)
 				}
 				if committed {
@@ -271,7 +271,7 @@ func TestRestoreJournalEveryRecoveryOperation(t *testing.T) {
 						t.Fatalf("fault not propagated: %v", err)
 					}
 				}
-				if err := RecoverRestore(data); err != nil {
+				if err := RecoverRestore(context.Background(), restoreConfig(data)); err != nil {
 					t.Fatal(err)
 				}
 				journalAssertFiles(t, data, old)
@@ -294,7 +294,7 @@ func TestRestoreJournalCommittedNeverReadsOld(t *testing.T) {
 	if err := os.Remove(filepath.Join(data, ".restore-"+journal.ID, "old", "secrets.key")); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecoverRestore(data); err != nil {
+	if err := RecoverRestore(context.Background(), restoreConfig(data)); err != nil {
 		t.Fatal(err)
 	}
 	journalAssertFiles(t, data, fresh)
@@ -359,7 +359,7 @@ func TestRestoreJournalRecoveryAbsentAndCommittedOperations(t *testing.T) {
 							t.Fatalf("fault not propagated: %v", err)
 						}
 					}
-					if err := RecoverRestore(data); err != nil {
+					if err := RecoverRestore(context.Background(), restoreConfig(data)); err != nil {
 						t.Fatal(err)
 					}
 					journalAssertFiles(t, data, want)
@@ -416,7 +416,7 @@ func TestRestoreJournalRejectsCorruptionWithoutMutation(t *testing.T) {
 					before[name] = value
 				}
 			}
-			err = RecoverRestore(data)
+			err = RecoverRestore(context.Background(), restoreConfig(data))
 			var safe *Error
 			if !errors.As(err, &safe) || safe.Code != "restore_recovery_failed" {
 				t.Fatalf("corrupt journal accepted: %v", err)

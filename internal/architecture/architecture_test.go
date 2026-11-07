@@ -21,6 +21,12 @@ var allowedInternalImports = map[string]map[string]bool{
 		"orbitbeacon/internal/uuid":      true,
 	},
 	"orbitbeacon/internal/logging": {},
+	"orbitbeacon/internal/server/storagetest": {
+		"orbitbeacon/internal/config":          true,
+		"orbitbeacon/internal/server/storage":  true,
+		"orbitbeacon/internal/logging":         true,
+		"orbitbeacon/internal/server/securefs": true,
+	},
 	"orbitbeacon/internal/server/app": {
 		"orbitbeacon/internal/server/availability": true,
 		"orbitbeacon/internal/buildinfo":           true,
@@ -38,6 +44,7 @@ var allowedInternalImports = map[string]map[string]bool{
 		"orbitbeacon/internal/server/nodes":        true,
 		"orbitbeacon/internal/server/notify":       true,
 		"orbitbeacon/internal/server/secretbox":    true,
+		"orbitbeacon/internal/server/securefs":     true,
 		"orbitbeacon/internal/server/storage":      true,
 		"orbitbeacon/internal/server/traffic":      true,
 	},
@@ -128,6 +135,7 @@ var allowedInternalImports = map[string]map[string]bool{
 		"orbitbeacon/internal/timekey":           true,
 	},
 	"orbitbeacon/internal/server/backup": {
+		"orbitbeacon/internal/config":               true,
 		"orbitbeacon/internal/server/announcements": true,
 		"orbitbeacon/internal/uuid":                 true,
 		"orbitbeacon/internal/protocol/v1":          true,
@@ -234,6 +242,7 @@ var allowedInternalImports = map[string]map[string]bool{
 	},
 	"orbitbeacon/internal/server/storage": {
 		"orbitbeacon/internal/config":          true,
+		"orbitbeacon/internal/logging":         true,
 		"orbitbeacon/internal/uuid":            true,
 		"orbitbeacon/internal/protocol/v1":     true,
 		"orbitbeacon/internal/server/securefs": true,

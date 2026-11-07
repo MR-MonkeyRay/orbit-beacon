@@ -64,6 +64,7 @@ type Service struct {
 	now            func() time.Time
 	logger         *slog.Logger
 	pending        map[bucketKey]map[string]aggregate // owned by run
+	inflight       []Bucket                           // 提交未明的不可变批次，不与新样本混合
 	dropped        atomic.Uint64
 	observeFlush   func(time.Duration, int)
 	paths          map[string]map[string]struct{} // owned by run; one entry per observed node
@@ -78,6 +79,11 @@ func Open(ctx context.Context, dataDir string, nodes *storage.Database, opts Opt
 		return nil, err
 	}
 	return newService(store, nodes, opts), nil
+}
+
+// OpenWithDatabase 接管历史句柄；Shutdown 排空采样后 Close 才关闭连接池。
+func OpenWithDatabase(database, nodes *storage.Database, opts Options) *Service {
+	return newService(&sqliteStore{db: database}, nodes, opts)
 }
 
 // newService 在存储就绪后启动采样、刷写和清理任务。
@@ -105,7 +111,7 @@ func (s *Service) DatabaseStats() (writer, reader sql.DBStats, ok bool) {
 	return s.store.DatabaseStats()
 }
 
-// Database 只返回实际 SQLite 历史源；远端 Store 不暴露空本地库。
+// Database 返回当前 SQL 历史域，不构造空本地替代库。
 func (s *Service) Database() *storage.Database {
 	if store, ok := s.store.(*sqliteStore); ok {
 		return store.db
@@ -238,6 +244,12 @@ func (s *Service) run(ctx context.Context) {
 // flush 将每分钟的精确总和与样本数交给存储，由存储提供各聚合层级。
 // 提交成功后才释放待写状态，因此失败时可以重试。
 func (s *Service) flush(ctx context.Context, now time.Time, all bool) error {
+	if len(s.inflight) > 0 {
+		if _, err := s.store.Write(ctx, s.inflight); err != nil {
+			return err
+		}
+		s.inflight = nil
+	}
 	var started time.Time
 	if s.observeFlush != nil {
 		started = time.Now()
@@ -262,6 +274,12 @@ func (s *Service) flush(ctx context.Context, now time.Time, all bool) error {
 	var err error
 	entries, err = s.store.Write(ctx, buckets)
 	if err != nil {
+		if errors.Is(err, storage.ErrCommitUnknown) {
+			s.inflight = buckets
+			for _, key := range keys {
+				delete(s.pending, key)
+			}
+		}
 		return err
 	}
 	for _, key := range keys {
@@ -290,6 +308,12 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time) (int64, error) {
 }
 
 func (s *Service) cleanup(ctx context.Context, now time.Time) (int64, error) {
+	if len(s.inflight) > 0 {
+		if _, err := s.store.Write(ctx, s.inflight); err != nil {
+			return 0, err
+		}
+		s.inflight = nil
+	}
 	var mainLease *storage.Lease
 	if s.nodes != nil {
 		lease, err := s.nodes.Acquire(ctx, storage.Reader)

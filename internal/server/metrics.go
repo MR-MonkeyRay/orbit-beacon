@@ -305,7 +305,20 @@ func (m *SaturationMetrics) exposition(h *handler) string {
 	}
 	fmt.Fprintf(&b, "orbitbeacon_history_flush_entries_bucket{le=\"+Inf\"} %d\norbitbeacon_history_flush_entries_sum %d\norbitbeacon_history_flush_entries_count %d\n", flush.duration.count, flush.entries, flush.duration.count)
 	fmt.Fprintln(&b, "# HELP orbitbeacon_db_wal_size_bytes WAL file size at scrape time; absent files are zero, other stat errors omit the sample.\n# TYPE orbitbeacon_db_wal_size_bytes gauge")
-	for _, db := range []struct{ name, file string }{{"main", "orbitbeacon.db-wal"}, {"metrics", "metrics.db-wal"}} {
+	var historyDatabase *storage.Database
+	if h.history != nil {
+		historyDatabase = h.history.Database()
+	}
+	for _, db := range []struct {
+		name, file string
+		database   *storage.Database
+	}{{"main", "orbitbeacon.db-wal", m.database}, {"metrics", "metrics.db-wal", historyDatabase}} {
+		if db.database == nil {
+			continue
+		}
+		if dialect, ok := db.database.Dialect(); !ok || dialect != storage.SQLite {
+			continue
+		}
 		info, err := os.Stat(filepath.Join(m.dataDir, db.file))
 		if err == nil {
 			fmt.Fprintf(&b, "orbitbeacon_db_wal_size_bytes{database=%q} %d\n", db.name, info.Size())

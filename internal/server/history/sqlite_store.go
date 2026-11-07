@@ -3,7 +3,11 @@ package history
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"slices"
+	"strings"
+	"sync"
 	"time"
 
 	"orbitbeacon/internal/server/storage"
@@ -29,7 +33,10 @@ const historySeriesQuery = `WITH RECURSIVE series(metric) AS (
 ) SELECT metric FROM series WHERE metric IS NOT NULL`
 
 type sqliteStore struct {
-	db *storage.Database
+	db         *storage.Database
+	writeMu    sync.Mutex
+	unresolved *storage.Tx
+	inflight   []Bucket
 }
 
 var _ Store = (*sqliteStore)(nil)
@@ -50,6 +57,21 @@ func openSQLiteStore(ctx context.Context, path string) (*sqliteStore, error) {
 
 // Write 在同一事务内合并三个层级；失败时仍报告计划写入的行数。
 func (s *sqliteStore) Write(ctx context.Context, buckets []Bucket) (rows int, err error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if s.unresolved != nil {
+		if !slices.Equal(s.inflight, buckets) {
+			return 3 * len(buckets), storage.ErrCommitUnknown
+		}
+		committed, resolveErr := s.unresolved.ResolveCommit(ctx)
+		if resolveErr != nil {
+			return 3 * len(buckets), errors.Join(storage.ErrCommitUnknown, resolveErr)
+		}
+		s.unresolved, s.inflight = nil, nil
+		if committed {
+			return 3 * len(buckets), nil
+		}
+	}
 	lease, err := s.db.Acquire(ctx, storage.Writer)
 	if err != nil {
 		return 3 * len(buckets), err
@@ -62,6 +84,19 @@ func (s *sqliteStore) Write(ctx context.Context, buckets []Bucket) (rows int, er
 		return rows, err
 	}
 	defer tx.Rollback()
+	if tx.Dialect() == storage.MySQL {
+		for next := 0; next < rows; {
+			query, args, end, err := mysqlHistoryBatch(buckets, next)
+			if err != nil {
+				return rows, err
+			}
+			if _, err = tx.ExecContext(ctx, query, args...); err != nil {
+				return rows, err
+			}
+			next = end
+		}
+		return rows, s.commitHistory(ctx, tx, lease, buckets)
+	}
 	statement, err := tx.PrepareContext(ctx, `INSERT INTO buckets(node_id,metric,step,t,total,peak,samples) VALUES(?,?,?,?,?,?,?) ON CONFLICT(node_id,metric,step,t) DO UPDATE SET total=total+excluded.total, peak=max(peak,excluded.peak), samples=samples+excluded.samples`)
 	if err != nil {
 		return rows, err
@@ -75,7 +110,70 @@ func (s *sqliteStore) Write(ctx context.Context, buckets []Bucket) (rows int, er
 			}
 		}
 	}
-	return rows, tx.Commit()
+	return rows, s.commitHistory(ctx, tx, lease, buckets)
+}
+
+// 未知提交保留原 UUID；先释放租约再核对 guard，不能重放累加语句。
+func (s *sqliteStore) commitHistory(ctx context.Context, tx *storage.Tx, lease *storage.Lease, buckets []Bucket) error {
+	err := tx.Commit()
+	if !errors.Is(err, storage.ErrCommitUnknown) {
+		return err
+	}
+	lease.Close()
+	s.unresolved, s.inflight = tx, slices.Clone(buckets)
+	resolveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	committed, resolveErr := tx.ResolveCommit(resolveCtx)
+	if resolveErr != nil {
+		return errors.Join(storage.ErrCommitUnknown, resolveErr)
+	}
+	s.unresolved, s.inflight = nil, nil
+	if committed {
+		return nil
+	}
+	return errors.New("history transaction rolled back")
+}
+
+const mysqlHistoryInsert = "INSERT INTO buckets(node_id,metric,step,t,total,peak,samples) VALUES "
+const mysqlHistoryUpdate = " ON DUPLICATE KEY UPDATE total=buckets.total+VALUES(total),peak=GREATEST(buckets.peak,VALUES(peak)),samples=buckets.samples+VALUES(samples)"
+
+// 估算驱动插值的最坏编码尺寸，包含二进制/文本转义及数值。
+func historyArgsBytes(args []any) int {
+	n := 0
+	for _, arg := range args {
+		if text, ok := arg.(string); ok {
+			n += 2*len(text) + 2
+		} else {
+			n += 32
+		}
+	}
+	return n
+}
+
+func mysqlHistoryBatch(buckets []Bucket, start int) (string, []any, int, error) {
+	var values strings.Builder
+	args := make([]any, 0, 256*7)
+	bytes, end := len(mysqlHistoryInsert)+len(mysqlHistoryUpdate), start
+	for end < len(buckets)*3 && end-start < 256 {
+		bucket := buckets[end/3]
+		step := [...]int64{60, 300, 3600}[end%3]
+		row := [...]any{bucket.Node, bucket.Series, step, time.Unix(bucket.T, 0).Truncate(time.Duration(step) * time.Second).Unix(), bucket.Total, bucket.Peak, bucket.Samples}
+		size := len("(?,?,?,?,?,?,?),") + historyArgsBytes(row[:])
+		if bytes+size > 1<<20 {
+			if end == start {
+				return "", nil, start, errors.New("history row exceeds batch limit")
+			}
+			break
+		}
+		if end > start {
+			values.WriteByte(',')
+		}
+		values.WriteString("(?,?,?,?,?,?,?)")
+		args = append(args, row[:]...)
+		bytes += size
+		end++
+	}
+	return mysqlHistoryInsert + values.String() + mysqlHistoryUpdate, args, end, nil
 }
 
 func (s *sqliteStore) Query(ctx context.Context, node, series string, stepSeconds int, start, end int64) ([]Point, error) {
@@ -113,6 +211,34 @@ func (s *sqliteStore) Series(ctx context.Context, node string) ([]string, error)
 	}
 	defer lease.Close()
 	ctx = lease.Context()
+	if lease.Dialect() == storage.MySQL {
+		tx, err := lease.BeginRead(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback()
+		var result []string
+		var after string
+		first := true
+		for {
+			var metric string
+			var err error
+			if first {
+				err = tx.QueryRowContext(ctx, `SELECT metric FROM buckets WHERE node_id=? ORDER BY metric LIMIT 1`, node).Scan(&metric)
+			} else {
+				err = tx.QueryRowContext(ctx, `SELECT metric FROM buckets WHERE node_id=? AND metric>? ORDER BY metric LIMIT 1`, node, after).Scan(&metric)
+			}
+			if errors.Is(err, sql.ErrNoRows) {
+				return result, nil
+			}
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, metric)
+			after = metric
+			first = false
+		}
+	}
 	rows, err := lease.QueryContext(ctx, historySeriesQuery, node)
 	if err != nil {
 		return nil, err
@@ -136,6 +262,33 @@ func (s *sqliteStore) NodeIDs(ctx context.Context, visit func(string)) error {
 	}
 	defer lease.Close()
 	ctx = lease.Context()
+	if lease.Dialect() == storage.MySQL {
+		tx, err := lease.BeginRead(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		var after string
+		first := true
+		for {
+			var id string
+			var err error
+			if first {
+				err = tx.QueryRowContext(ctx, `SELECT node_id FROM buckets ORDER BY node_id LIMIT 1`).Scan(&id)
+			} else {
+				err = tx.QueryRowContext(ctx, `SELECT node_id FROM buckets WHERE node_id>? ORDER BY node_id LIMIT 1`, after).Scan(&id)
+			}
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			visit(id)
+			after = id
+			first = false
+		}
+	}
 	rows, err := lease.QueryContext(ctx, historyNodesQuery)
 	if err != nil {
 		return err
@@ -180,7 +333,29 @@ func deleteBatch(ctx context.Context, lease *storage.Lease, query string, args .
 		return 0, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, query, args...)
+	keys, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	var primary []any
+	var placeholders []string
+	for keys.Next() {
+		var node, metric string
+		var step, t int64
+		if err = keys.Scan(&node, &metric, &step, &t); err != nil {
+			break
+		}
+		primary = append(primary, node, metric, step, t)
+		placeholders = append(placeholders, "(?,?,?,?)")
+	}
+	err = errors.Join(err, keys.Err(), keys.Close())
+	if err != nil {
+		return 0, err
+	}
+	if len(primary) == 0 {
+		return 0, tx.Commit()
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM buckets WHERE (node_id,metric,step,t) IN (`+strings.Join(placeholders, ",")+")", primary...)
 	if err != nil {
 		return 0, err
 	}
@@ -195,7 +370,7 @@ func deleteBatch(ctx context.Context, lease *storage.Lease, query string, args .
 }
 
 func (s *sqliteStore) DeleteNode(ctx context.Context, node string, yield func()) (int64, error) {
-	return s.deleteBatches(ctx, yield, `DELETE FROM buckets WHERE (node_id,metric,step,t) IN (SELECT node_id,metric,step,t FROM buckets WHERE node_id=? LIMIT ?)`, node, cleanupBatchSize)
+	return s.deleteBatches(ctx, yield, `SELECT node_id,metric,step,t FROM buckets WHERE node_id=? ORDER BY node_id,metric,step,t LIMIT ?`, node, cleanupBatchSize)
 }
 
 func (s *sqliteStore) DeleteExpired(ctx context.Context, now time.Time, yield func()) (int64, error) {
@@ -204,7 +379,7 @@ func (s *sqliteStore) DeleteExpired(ctx context.Context, now time.Time, yield fu
 		step int
 		keep time.Duration
 	}{{60, Retention1m}, {300, Retention5m}, {3600, Retention1h}} {
-		n, err := s.deleteBatches(ctx, yield, `DELETE FROM buckets WHERE (node_id,metric,step,t) IN (SELECT node_id,metric,step,t FROM buckets WHERE step=? AND t<? LIMIT ?)`, tier.step, now.Add(-tier.keep).Truncate(time.Duration(tier.step)*time.Second).Unix(), cleanupBatchSize)
+		n, err := s.deleteBatches(ctx, yield, `SELECT node_id,metric,step,t FROM buckets WHERE step=? AND t<? ORDER BY node_id,metric,step,t LIMIT ?`, tier.step, now.Add(-tier.keep).Truncate(time.Duration(tier.step)*time.Second).Unix(), cleanupBatchSize)
 		removed += n
 		if err != nil {
 			return removed, err

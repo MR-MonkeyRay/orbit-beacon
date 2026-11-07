@@ -141,11 +141,14 @@ func (s *Service) RevokeAPIToken(ctx context.Context, id string) error {
 	}
 	defer tx.Rollback()
 	var name string
-	err = tx.QueryRowContext(ctx, `DELETE FROM api_tokens WHERE id=? RETURNING name`, id).Scan(&name)
+	err = tx.QueryRowContext(ctx, `SELECT name FROM api_tokens WHERE id=?`, id).Scan(&name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM api_tokens WHERE id=?`, id); err != nil {
 		return err
 	}
 	if err = audit.InsertDetails(ctx, tx, "api_token.revoke", id, s.now(), audit.Details{"id": id, "name": name}); err != nil {
@@ -180,7 +183,7 @@ func (s *Service) AuthenticateAPIToken(ctx context.Context, token string) error 
 	}
 	defer lease.Close()
 	ctx = lease.Context()
-	err = lease.QueryRowContext(ctx, `SELECT t.id,t.expires_at,t.last_used_at,u.must_change_password,COALESCE(t.rate_limit_per_minute,(SELECT value FROM settings WHERE key='api_token_rate_limit_per_minute'),'') FROM api_tokens t JOIN users u ON u.id=t.created_by WHERE t.token_hash=?`, digest[:]).Scan(&id, &expiry, &lastUsed, &restricted, &storedLimit)
+	err = lease.QueryRowContext(ctx, "SELECT t.id,t.expires_at,t.last_used_at,u.must_change_password,COALESCE(t.rate_limit_per_minute,(SELECT value FROM settings WHERE `key`='api_token_rate_limit_per_minute'),'') FROM api_tokens t JOIN users u ON u.id=t.created_by WHERE t.token_hash=?", digest[:]).Scan(&id, &expiry, &lastUsed, &restricted, &storedLimit)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrUnauthenticated
 	}
@@ -257,7 +260,7 @@ func (s *Service) APITokenRateLimit(ctx context.Context) (int, error) {
 	}
 	defer lease.Close()
 	ctx = lease.Context()
-	err := lease.QueryRowContext(ctx, `SELECT COALESCE((SELECT value FROM settings WHERE key='api_token_rate_limit_per_minute'),'')`).Scan(&value)
+	err := lease.QueryRowContext(ctx, "SELECT COALESCE((SELECT value FROM settings WHERE `key`='api_token_rate_limit_per_minute'),'')").Scan(&value)
 	return effectiveAPITokenLimit(value), err
 }
 
@@ -309,10 +312,14 @@ func (s *Service) SetGlobalAPITokenRateLimit(ctx context.Context, limit int) err
 	}
 	defer tx.Rollback()
 	var value string
-	if err = tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT value FROM settings WHERE key='api_token_rate_limit_per_minute'),'')`).Scan(&value); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT COALESCE((SELECT value FROM settings WHERE `key`='api_token_rate_limit_per_minute'),'')").Scan(&value); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES('api_token_rate_limit_per_minute',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, strconv.Itoa(limit)); err != nil {
+	query := "INSERT INTO settings(`key`,value) VALUES('api_token_rate_limit_per_minute',?) ON CONFLICT(`key`) DO UPDATE SET value=excluded.value"
+	if tx.Dialect() == storage.MySQL {
+		query = "INSERT INTO settings(`key`,value) VALUES('api_token_rate_limit_per_minute',?) ON DUPLICATE KEY UPDATE value=VALUES(value)"
+	}
+	if _, err = tx.ExecContext(ctx, query, strconv.Itoa(limit)); err != nil {
 		return err
 	}
 	if err = audit.InsertDetails(ctx, tx, "settings.api_token_rate_limit.update", "api_token_rate_limit_per_minute", s.now(), audit.Details{"old": effectiveAPITokenLimit(value), "new": limit}); err != nil {

@@ -78,7 +78,6 @@ func runServe(args []string, logger *slog.Logger) error {
 	configPath := fs.String("config", "", "JSON 配置文件")
 	fs.String("data-dir", "", "本地持久化数据目录")
 	fs.String("listen-addr", "127.0.0.1:8080", "HTTP 监听地址")
-	fs.String("history-victoriametrics-url", "", "可选的 VictoriaMetrics 历史存储 HTTP 地址")
 	fs.String("metrics-listen", "", "可选的独立 Prometheus 指标监听地址")
 	fs.Bool("access-log", false, "每个请求写一条结构化访问日志")
 	fs.Bool("allow-insecure-webhooks", false, "仅允许使用回环 IP 地址的 HTTP webhook URL")
@@ -135,6 +134,7 @@ func runHealth(args []string) error {
 
 func runRestore(args []string) error {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
+	configPath := fs.String("config", "", "JSON 配置文件")
 	dataDir := fs.String("data-dir", "", "本地持久化数据目录")
 	input := fs.String("input", "", "待恢复的归档文件")
 	replace := fs.Bool("replace", false, "替换现有数据目录中选定的类别")
@@ -142,14 +142,18 @@ func runRestore(args []string) error {
 	if ok, err := parseCommand(fs, args); !ok {
 		return err
 	}
-	if *dataDir == "" || *input == "" {
-		return errors.New("restore 需要 --data-dir 和 --input")
+	if *input == "" {
+		return errors.New("restore 需要 --input")
+	}
+	cfg, err := offlineConfig(fs, *configPath, *dataDir)
+	if err != nil {
+		return err
 	}
 	password, err := readRestorePassword(*passwordFile)
 	if err != nil {
 		return err
 	}
-	result, err := backup.Restore(context.Background(), *dataDir, *input, password, *replace)
+	result, err := backup.Restore(context.Background(), cfg, *input, password, *replace)
 	password = ""
 	if err != nil {
 		var detail *backup.DependencyConflict
@@ -165,35 +169,54 @@ func runRestore(args []string) error {
 
 func runResetTOTP(args []string) error {
 	fs := flag.NewFlagSet("reset-totp", flag.ContinueOnError)
+	configPath := fs.String("config", "", "JSON 配置文件")
 	dataDir := fs.String("data-dir", "", "本地持久化数据目录")
 	username := fs.String("username", "", "管理员用户名")
 	if ok, err := parseCommand(fs, args); !ok {
 		return err
 	}
-	if *dataDir == "" || *username == "" {
-		return errors.New("reset-totp 需要 --data-dir 和 --username")
+	if *username == "" {
+		return errors.New("reset-totp 需要 --username")
 	}
-	lock, err := datadir.Lock(*dataDir)
+	cfg, err := offlineConfig(fs, *configPath, *dataDir)
+	if err != nil {
+		return err
+	}
+	lock, err := datadir.Lock(cfg.DataDir)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
-	if err = backup.RecoverRestore(*dataDir); err != nil {
+	if err = backup.RecoverRestore(context.Background(), cfg); err != nil {
 		return err
 	}
-	databasePath := filepath.Join(*dataDir, "orbitbeacon.db")
-	if _, err = os.Stat(databasePath); err != nil {
-		return err
+	if cfg.Database.Primary.Driver != "mysql" {
+		if _, err = os.Stat(filepath.Join(cfg.DataDir, "orbitbeacon.db")); err != nil {
+			return err
+		}
+	}
+	if cfg.Database.Standby != nil {
+		return storage.ErrUnsupportedTopology
 	}
 	ctx := audit.WithSystemActor(context.Background(), "reset-totp")
-	db, err := storage.OpenMain(ctx, databasePath)
+	database, err := storage.OpenDomain(ctx, cfg.Database.Primary, storage.MainDomain, cfg.DataDir)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	if err = auth.ResetTOTP(ctx, db, *username, time.Now()); err != nil {
+	defer database.Close()
+	if err = auth.ResetTOTP(ctx, database, *username, time.Now()); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "已重置 %s 的两步验证\n", *username)
 	return nil
+}
+
+func offlineConfig(fs *flag.FlagSet, path, dataDir string) (config.Server, error) {
+	flags := make(map[string]string)
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "data-dir" {
+			flags["data_dir"] = dataDir
+		}
+	})
+	return config.LoadServer(config.LoadOptions{File: path, Flags: flags})
 }

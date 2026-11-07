@@ -47,7 +47,7 @@ func TestExpiryBackupRoundTrip(t *testing.T) {
 			db.Close()
 			target := restoreFixture(t, "target")
 			archive, password := restoreArchive(t, source, []Category{Configuration})
-			if _, err = Restore(ctx, target, archive, password, true); err != nil {
+			if _, err = Restore(ctx, restoreConfig(target), archive, password, true); err != nil {
 				t.Fatal(err)
 			}
 			var got sql.NullString

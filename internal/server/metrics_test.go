@@ -204,7 +204,6 @@ func TestSaturationMetricsExposition(t *testing.T) {
 		`orbitbeacon_history_flush_duration_seconds_count 4`,
 		`orbitbeacon_history_flush_duration_seconds_sum 40.621`,
 		`orbitbeacon_db_wal_size_bytes{database="main"} 123`,
-		`orbitbeacon_db_wal_size_bytes{database="metrics"} 0`,
 	} {
 		if !strings.Contains(response.Body.String(), line+"\n") {
 			t.Errorf("missing %s\n%s", line, response.Body.String())

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"orbitbeacon/internal/config"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/backup"
 	"orbitbeacon/internal/server/datadir"
@@ -162,7 +163,7 @@ func TestResetTOTPSurvivesCrashedRestoreJournal(t *testing.T) {
 	if err = run([]string{"reset-totp", "--data-dir", dir, "--username", username}); err != nil {
 		t.Fatal(err)
 	}
-	if err = backup.RecoverRestore(dir); err != nil {
+	if err = backup.RecoverRestore(context.Background(), config.Server{DataDir: dir}); err != nil {
 		t.Fatal(err)
 	}
 	if count := secondFactorCount(t, dir); count != 0 {

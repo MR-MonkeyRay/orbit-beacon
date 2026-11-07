@@ -247,11 +247,14 @@ func TestEnqueueEnabledChannelsAndIdempotency(t *testing.T) {
 	f.enqueue(t, n)
 	f.enqueue(t, n)
 	f.count(t, "SELECT count(*) FROM notification_deliveries", 1)
+	n.NodeName += " "
+	f.enqueue(t, n)
+	f.count(t, "SELECT count(*) FROM notification_deliveries", 2)
 	if _, err := f.s.Save(context.Background(), f.channel.ID, Patch{Enabled: new(bool)}); err != nil {
 		t.Fatal(err)
 	}
 	f.enqueue(t, f.note("disabled-channel"))
-	f.count(t, "SELECT count(*) FROM notification_deliveries", 1)
+	f.count(t, "SELECT count(*) FROM notification_deliveries", 2)
 }
 
 func TestCoalescingRollbackKeepsOriginalSummary(t *testing.T) {

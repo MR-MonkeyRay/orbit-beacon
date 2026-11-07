@@ -32,6 +32,7 @@
 | `access_log` | `false` | 访问日志；健康检查仅记录 5xx，不记录查询字符串、Cookie、Authorization 或注册票据 |
 | `allow_insecure_webhooks` | `false` | 允许字面回环地址的 HTTP Webhook，见[通知网络](#通知网络) |
 | `notification_allow_private_networks` | `false` | 允许内网通知目标，见[通知网络](#通知网络) |
+| `database` | `{}` | 默认 SQLite；MySQL 使用完整 JSON 对象，见[数据库](#数据库) |
 
 `public_url` 与 Origin：
 
@@ -133,8 +134,51 @@ curl --fail http://localhost:8080/healthz/ready
 /usr/local/bin/orbitbeacon-server health --url https://beacon.your-domain.com
 ```
 
-- `/healthz/live` 检查进程，`/healthz/ready` 检查接流状态与 SQLite，均无需认证；不证明 Agent 已上报，另查节点最近上报。
+- `/healthz/live` 只检查进程，`/healthz/ready` 检查接流状态与当前业务域可读写，均无需认证；历史单独故障不代表业务域失效。它们不证明 Agent 已上报，另查节点最近上报。
 - 排障记录响应 `code` 与 `request_id`，不发送 Cookie、密码或凭据。日志字段见[约定](../docs/conventions.md#日志)。
+
+## 数据库
+
+省略 `database` 或使用 `{}` 保持本地 SQLite。MySQL 使用两个预建 database，业务和历史分别存储；`data_dir` 仍须持久化目录锁、加密 key、归档工作文件及恢复决定。当前开发基准为 MySQL 26.10.0，启动按事务、持久化及触发器所需能力检查，不按版本字符串设门槛。
+
+```json
+{
+  "database": {
+    "primary": {
+      "driver": "mysql",
+      "network": "tcp",
+      "address": "db.example:3306",
+      "user": "orbitbeacon",
+      "password_file": "/run/secrets/database-password",
+      "main_database": "orbitbeacon",
+      "history_database": "orbitbeacon_history"
+    }
+  }
+}
+```
+
+- `ORBITBEACON_DATABASE` 整体替换 JSON 对象，不与文件中的 endpoint 或 failover 字段深合并。不提供携带数据库密码的 flag；`password_file` 必须归运行用户所有、`0600`、非空且不超过 64 KiB，只移除一个末尾 LF。
+- TCP 省略 `tls` 使用明文，仅限本机或受控网络；数据库凭据与业务数据不受传输加密保护。显式 `tls: {}` 启用 TLS 1.2+，校验系统根 CA 与 address 主机名；可用 `ca_file` 和 `server_name` 指定私有 CA 与验证名称。配置 TLS 后，证书、主机名或握手失败均拒绝连接，不跳过校验，也不回退明文。本机 Unix socket 使用 `network: "unix"` 与绝对 socket 路径，不带 `tls`。
+- 私有 CA 示例：在 endpoint 中加入 `"tls": {"server_name": "db.example", "ca_file": "/etc/orbitbeacon/mysql-ca.pem"}`，并将 CA 文件只读挂载到相同路径。
+- `network` 默认 `tcp`；database 名只接受 ASCII 字母/下划线开头、随后字母数字下划线，最长 64 字节，两个名称不得相同。默认名称如上。SQLite endpoint 不接受 MySQL 字段或自定义路径。
+- 应用账户只需两个 database 内的 `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER`；不需 SUPER 或全局 CREATE DATABASE。仅此 Server 写入应用 schema，不运行第二个使用不同 data_dir 的 Server，也不要由 DBA 直接修改业务行。
+- MySQL 必须可写并使用支持事务的 InnoDB，`innodb_flush_log_at_trx_commit=1`；启用 binlog 时 DBA 须设 `sync_binlog=1` 与 `log_bin_trust_function_creators=1`。Server 校验部署条件，不擅自更改全局变量。所有连接固定 5 秒连接、读、写超时。
+- COMMIT 结果未知返回 `503 storage_commit_unknown`，先查询当前状态，不直接重发写请求。主库故障不返回旧缓存伪造成功；历史库不能读取时，包含 Monitoring 的归档失败。
+- 保留并备份与数据库匹配的 `data_dir/secrets.key`。已有 TOTP、通知或备份加密数据而 key 缺失时拒绝启动，不生成替代 key；恢复原 key 或使用完整、可验证的配置归档恢复。
+- systemd 沿用 `/etc/orbitbeacon/server.json`，secret 放在 `ProtectHome` 之外的 `/etc/orbitbeacon` 或 `/run`。Docker 的配置、secret 和 CA 另作只读挂载，secret 属主为 `65532:65532` 且 `0600`；不因容器读不到而放宽权限。默认 Compose 不添加 MySQL 服务。
+
+Docker 可用 override 文件补充现有服务：
+
+```yaml
+services:
+  orbitbeacon:
+    command: ["serve", "--config", "/etc/orbitbeacon/server.json"]
+    volumes:
+      - /etc/orbitbeacon/server.json:/etc/orbitbeacon/server.json:ro
+      - /etc/orbitbeacon/database-password:/run/secrets/database-password:ro
+```
+
+远程开发地址、database 名与 Redis DB 索引见 [远程开发环境](../temp/README.md)。凭据只保存在私有文件中，不写入文档或命令行。
 
 ## 通知网络
 
@@ -175,7 +219,7 @@ return hmac.Equal(got, mac.Sum(nil))
 | 事件 / Events | 审计、告警、已结束投递、站内通知及已结束任务历史；不含历史备份密码 |
 
 - 至少选择一类，默认仅配置。不归档登录会话、注册票据、待执行任务、待发送通知、旧下载产物，以及机器部署配置、TLS 证书、可执行文件；这些部署文件另存。
-- settings 只接受 `public_page_enabled` 的文本 `true` / `false`。配置恢复整体替换开关，归档缺失时默认开启；仅监控 / 事件恢复保留当前开关。
+- 配置 settings 仅包含全站状态页开关、API 令牌全局限额及存储故障通知订阅；各项校验结构和值，不接受任意键。配置恢复整体替换这些设置；仅监控 / 事件恢复保留当前值。缺失状态页开关时默认开启。
 - 每包为 `.tar.gz.age`，独立 16 位随机大小写字母/数字密码；在详情主动显示、复制或下载恢复信息。密码不随远程包上传，没有主密码托管。
 - 另存每包密码；原机丢失或密码记录过期且未另存时无法恢复。下载与密码有效期见[存储与保留](../docs/architecture.md#存储与保留)，快照边界见[备份](../docs/architecture.md#备份)。
 
@@ -214,14 +258,14 @@ return hmac.Equal(got, mac.Sum(nil))
 2. 密码文件归运行用户所有、`0600`，含该包密码，可带换行；省略 `--password-file` 则终端无回显输入，不接受参数或环境变量明文密码。
 
 ```sh
-sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore --data-dir /var/lib/orbitbeacon \
+sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore --config /etc/orbitbeacon/server.json \
   --input /backup/orbitbeacon-....tar.gz.age \
   --replace --password-file /backup/password.txt
 ```
 
 - 目标已有业务数据须加 `--replace`；空目录可省略，但包内须含配置。所选类别整体替换，未选类别保留，不逐条合并；稳定 ID 依赖不满足则整次拒绝。
 - 配置恢复后计划全部停用；事件不重放任务或投递，目标原活动工作标为恢复中断。开关处理见[归档范围](#归档范围)。
-- 失败时通过 `restore-journal.json` 回滚旧文件组；成功输出 `.restore-<id>/old/` 原副本位置，不自动删除，确认正常后妥善处理。
+- `prepared` 决定回滚完整旧状态，`committed` 决定只完成新状态。SQLite 使用原子文件组安装；含 MySQL 时各域分别在 guard 事务内替换，并与 key 共用本地恢复决定。目标不可达时保留日志并拒绝服务，不启动半恢复状态。成功输出 `.restore-<id>/old/` 原副本位置，确认正常后再妥善处理。
 - 再启动并按[日常检查](#日常检查)验证 readiness、登录、节点上报及通知凭据。
 - Compose 先停服务，再用一次性 `compose run` 将归档和密码文件只读挂载，使用相同数据卷及运行身份执行恢复。
 
@@ -231,9 +275,9 @@ sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore --data-dir /var/li
 
 `SHA256SUMS` 与二进制同源，只防传输损坏，不能防发布源入侵；没有签名验证。不接受此信任边界的节点应从本地 `remote_commands` 移除 `upgrade`。
 
-数据库结构调整直接更新对应的建库、建表 SQL。升级前保留数据备份和原版本程序。
+当前主库、历史库及归档要求 schema baseline **2**。旧 baseline 1 数据库和归档明确拒绝，不提供自动迁移或清空。使用新数据目录与空的专用 MySQL schema；升级前保留旧数据库、key、归档密码和原二进制。结构调整直接更新可信原生建表 SQL。
 
-升级步骤：
+以下步骤仅适用于 schema 相同的版本更新；跨 baseline 不直接复用旧数据目录或旧归档。
 
 1. 完成所需类别备份，另存密码、部署配置和证书，停止服务器。
 2. systemd 替换二进制；Compose 设置目标镜像标签，执行 `pull orbitbeacon`、`up -d orbitbeacon`。

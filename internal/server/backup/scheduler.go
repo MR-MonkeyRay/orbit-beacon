@@ -177,17 +177,15 @@ func (s *Service) Tick(ctx context.Context, now time.Time) error {
 		if e != nil {
 			return e
 		}
-		// 唯一性约束是防止重放已调度 UTC 时刻的第二道持久屏障，
-		// 也涵盖夏令时切换时重复出现的本地时间。
-		result, e := tx.ExecContext(ctx, `INSERT INTO backup_tasks(id,kind,state,plan_id,categories_json,destination_json,input_credentials_ciphertext,scheduled_at,created_at) VALUES(?,?,'queued',?,?,?,?,?,?) ON CONFLICT(plan_id,scheduled_at) DO NOTHING`, id, kind, p.ID, string(cats), string(target), cipher, timekey.Format(*p.NextRunAt), timekey.Format(now))
-		if e != nil {
+		// guard 内检查完整唯一键，只跳过已调度时刻，不吞其他约束错误。
+		var exists bool
+		if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM backup_tasks WHERE plan_id=? AND scheduled_at=?)`, p.ID, timekey.Format(*p.NextRunAt)).Scan(&exists); e != nil {
 			return e
 		}
-		inserted, e := result.RowsAffected()
-		if e != nil {
-			return e
-		}
-		if inserted == 1 {
+		if !exists {
+			if _, e = tx.ExecContext(ctx, `INSERT INTO backup_tasks(id,kind,state,plan_id,categories_json,destination_json,input_credentials_ciphertext,scheduled_at,created_at) VALUES(?,?,'queued',?,?,?,?,?,?)`, id, kind, p.ID, string(cats), string(target), cipher, timekey.Format(*p.NextRunAt), timekey.Format(now)); e != nil {
+				return e
+			}
 			active++
 			enqueued = true
 			if e = audit.InsertDetails(ctx, tx, "backup.schedule", id, now, audit.Details{"plan_id": p.ID, "categories": p.Categories, "state": "queued"}); e != nil {

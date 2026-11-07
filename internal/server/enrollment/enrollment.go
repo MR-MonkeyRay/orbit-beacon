@@ -140,7 +140,7 @@ func (s *Service) create(ctx context.Context, nodeID, groupID *string, lifetime 
 	if nodeID != nil {
 		err = tx.QueryRowContext(ctx, "SELECT count(*) FROM nodes WHERE id = ?", *nodeID).Scan(&exists)
 	} else {
-		err = tx.QueryRowContext(ctx, "SELECT count(*) FROM groups WHERE id = ?", *groupID).Scan(&exists)
+		err = tx.QueryRowContext(ctx, "SELECT count(*) FROM `groups` WHERE id = ?", *groupID).Scan(&exists)
 	}
 	if err != nil {
 		return CreatedTicket{}, err
@@ -244,17 +244,7 @@ func (s *Service) CleanupExpiredTickets(ctx context.Context, before time.Time, l
 		return 0, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `DELETE FROM enrollment_tokens
-WHERE id IN (
-	SELECT id FROM enrollment_tokens
-	WHERE expires_at < ?
-	ORDER BY expires_at ASC, id ASC
-	LIMIT ?
-	)`, timekey.Format(before), limit)
-	if err != nil {
-		return 0, err
-	}
-	count, err := result.RowsAffected()
+	count, err := storage.DeleteBatch(ctx, tx, `SELECT id FROM enrollment_tokens WHERE expires_at<? ORDER BY expires_at,id LIMIT ?`, `DELETE FROM enrollment_tokens WHERE id=?`, timekey.Format(before), limit)
 	if err != nil {
 		return 0, err
 	}
@@ -467,7 +457,7 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 		}
 	}
 	// 凭据未变时不增加 epoch；需要增加但已达整数上限时，NOT NULL 约束使整个认领回滚。
-	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET credential_epoch = CASE WHEN token_hash = ? THEN credential_epoch WHEN credential_epoch < 9223372036854775807 THEN credential_epoch + 1 ELSE NULL END, run_generation = CASE WHEN token_hash = ? THEN run_generation ELSE '0' END, report_session_id = CASE WHEN token_hash = ? THEN report_session_id ELSE '' END, agent_runtime = CASE WHEN token_hash = ? THEN agent_runtime ELSE '' END, last_seen = CASE WHEN token_hash = ? THEN last_seen ELSE NULL END, system = CASE WHEN token_hash = ? THEN system ELSE ? END, token_hash = ?, installation_id = ?, first_enrolled_at = COALESCE(first_enrolled_at, ?), status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'unknown' END WHERE id = ?`, nodeHash[:], nodeHash[:], nodeHash[:], nodeHash[:], nodeHash[:], nodeHash[:], string(system), nodeHash[:], req.InstallationID, timekey.Format(now), nodeID); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE nodes SET credential_epoch = CASE WHEN token_hash = ? THEN credential_epoch WHEN credential_epoch < 9223372036854775807 THEN credential_epoch + 1 ELSE NULL END, run_generation = CASE WHEN token_hash = ? THEN run_generation ELSE '0' END, report_session_id = CASE WHEN token_hash = ? THEN report_session_id ELSE '' END, agent_runtime = CASE WHEN token_hash = ? THEN agent_runtime ELSE '' END, last_seen = CASE WHEN token_hash = ? THEN last_seen ELSE NULL END, `system` = CASE WHEN token_hash = ? THEN `system` ELSE ? END, token_hash = ?, installation_id = ?, first_enrolled_at = COALESCE(first_enrolled_at, ?), status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'unknown' END WHERE id = ?", nodeHash[:], nodeHash[:], nodeHash[:], nodeHash[:], nodeHash[:], nodeHash[:], string(system), nodeHash[:], req.InstallationID, timekey.Format(now), nodeID); err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO enrollment_claims(enrollment_id, installation_id, node_id, token_hash, claimed_at) VALUES (?, ?, ?, ?, ?)`, ticket.ID, req.InstallationID, nodeID, nodeHash[:], timekey.Format(now)); err != nil {

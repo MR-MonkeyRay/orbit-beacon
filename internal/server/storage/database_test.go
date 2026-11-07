@@ -262,7 +262,7 @@ func TestSnapshotPinsActiveGenerationAndPreservesReadOnlyPool(t *testing.T) {
 	if err := os.Chmod(filepath.Dir(output), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := lease.SnapshotSQLite(lease.Context(), output, CurrentSchemaVersion); err != nil {
+	if err := lease.Snapshot(lease.Context(), output); err != nil {
 		t.Fatal(err)
 	}
 	copy, err := OpenReader(context.Background(), output)
@@ -273,6 +273,11 @@ func TestSnapshotPinsActiveGenerationAndPreservesReadOnlyPool(t *testing.T) {
 	var value string
 	if err := copy.QueryRow("SELECT value FROM settings WHERE key='snapshot'").Scan(&value); err != nil || value != "active" {
 		t.Fatalf("snapshot=%q err=%v", value, err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if _, err := os.Stat(output + suffix); !os.IsNotExist(err) {
+			t.Fatalf("snapshot created sidecar %s: %v", suffix, err)
+		}
 	}
 	var readonly int
 	if err := lease.gen.reader.QueryRow("PRAGMA query_only").Scan(&readonly); err != nil || readonly != 1 {

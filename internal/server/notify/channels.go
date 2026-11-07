@@ -398,7 +398,11 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 		c.UpdatedAt = previousUpdated.Add(time.Nanosecond)
 	}
 	raw, _ := json.Marshal(c.Config)
-	_, e = tx.ExecContext(ctx, `INSERT INTO notification_channels(`+channelColumns+`) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,enabled=excluded.enabled,config_json=excluded.config_json,secret_ciphertext=excluded.secret_ciphertext,url_ciphertext=excluded.url_ciphertext,updated_at=excluded.updated_at`, c.ID, c.Name, c.Kind, c.Enabled, string(raw), cipher, urlCipher, timekey.Format(c.CreatedAt), timekey.Format(c.UpdatedAt))
+	query := `INSERT INTO notification_channels(` + channelColumns + `) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,enabled=excluded.enabled,config_json=excluded.config_json,secret_ciphertext=excluded.secret_ciphertext,url_ciphertext=excluded.url_ciphertext,updated_at=excluded.updated_at`
+	if tx.Dialect() == storage.MySQL {
+		query = `INSERT INTO notification_channels(` + channelColumns + `) VALUES(?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name),enabled=VALUES(enabled),config_json=VALUES(config_json),secret_ciphertext=VALUES(secret_ciphertext),url_ciphertext=VALUES(url_ciphertext),updated_at=VALUES(updated_at)`
+	}
+	_, e = tx.ExecContext(ctx, query, c.ID, c.Name, c.Kind, c.Enabled, string(raw), cipher, urlCipher, timekey.Format(c.CreatedAt), timekey.Format(c.UpdatedAt))
 	if e != nil {
 		return c, e
 	}
