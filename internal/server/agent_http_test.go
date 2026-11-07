@@ -46,12 +46,17 @@ func newAgentHTTP(t *testing.T, capacity int) *agentFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	stable, err := storage.OpenMain(context.Background(), filepath.Join(dir, "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stable.Close() })
 	f := &agentFixture{db: db, now: time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)}
 	clock := func() time.Time { return f.now }
-	f.nodes = nodes.NewService(db, nodes.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{21})})
-	f.enrollments = enrollment.NewService(db, enrollment.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{22})})
-	f.ingest = ingest.NewService(db, ingest.Options{Now: clock, DisablePersistOffset: true})
-	f.auth = auth.NewService(db, auth.Options{Now: clock})
+	f.nodes = nodes.NewService(stable, nodes.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{21})})
+	f.enrollments = enrollment.NewService(stable, enrollment.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{22})})
+	f.ingest = ingest.NewService(stable, ingest.Options{Now: clock, DisablePersistOffset: true})
+	f.auth = auth.NewService(stable, auth.Options{Now: clock})
 	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: clock, WebUpdateIntervalSeconds: 2}))
 	if err != nil {
 		t.Fatal(err)
@@ -309,7 +314,7 @@ func TestReportGenerationSessionAndSequenceOrdering(t *testing.T) {
 		t.Fatalf("replacement not authoritative: %+v %v", latest, err)
 	}
 	// 重建服务只丢失内存中的 seq 去重状态，不丢失持久化的进程隔离边界。
-	restarted := ingest.NewService(f.db, ingest.Options{Now: func() time.Time { return f.now }})
+	restarted := ingest.NewService(f.nodes.Database(), ingest.Options{Now: func() time.Time { return f.now }})
 	if _, err := acceptReport(context.Background(), restarted, token, mustReport(t, reportBody(5, 1000, "current", 99))); err == nil {
 		t.Fatal("generation fence lost on server restart")
 	}

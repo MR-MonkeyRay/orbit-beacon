@@ -392,7 +392,7 @@ func TestPublicHTTPRotationRestartPaginationAndWithdrawal(t *testing.T) {
 
 	// 重建 ingest 只丢失内存中的资源快照；
 	// 持久化的 last_seen 仍提供活跃性。
-	f.ingest = ingest.NewService(f.db, ingest.Options{Now: func() time.Time { return f.now }})
+	f.ingest = ingest.NewService(f.nodes.Database(), ingest.Options{Now: func() time.Time { return f.now }})
 	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return f.now }, WebUpdateIntervalSeconds: 2}))
 	if err != nil {
 		t.Fatal(err)

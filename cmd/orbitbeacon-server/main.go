@@ -186,7 +186,7 @@ func runResetTOTP(args []string) error {
 		return err
 	}
 	ctx := audit.WithSystemActor(context.Background(), "reset-totp")
-	db, err := storage.Open(ctx, databasePath)
+	db, err := storage.OpenMain(ctx, databasePath)
 	if err != nil {
 		return err
 	}

@@ -51,7 +51,7 @@ func newCoalesceFixtureWithOptions(t *testing.T, opts Options, targets ...string
 	t.Cleanup(func() { db.Close() })
 	f := &coalesceFixture{db: db, now: time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)}
 	clock := func() time.Time { return f.now }
-	f.nodes = nodes.NewService(db, nodes.Options{Now: clock})
+	f.nodes = nodes.NewService(stableDatabase(t, db), nodes.Options{Now: clock})
 	node, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: "coalesce"})
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func newCoalesceFixtureWithOptions(t *testing.T, opts Options, targets ...string
 		t.Fatal(err)
 	}
 	opts.Now = clock
-	f.service = NewService(db, opts)
+	f.service = NewService(stableDatabase(t, db), opts)
 	cpu, load, uptime := 10.0, 0.5, 100.0
 	total, available, zero := uint64(8192), uint64(4096), uint64(0)
 	window := int64(10000)
@@ -110,7 +110,7 @@ func TestCoalesceDurabilityConditions(t *testing.T) {
 		{"system changed", func(t *testing.T, f *coalesceFixture) { f.report.System.Hostname = "changed" }, true},
 		{"new run", func(t *testing.T, f *coalesceFixture) { f.report.RunGeneration++; f.report.SessionID = "next" }, true},
 		{"restart", func(t *testing.T, f *coalesceFixture) {
-			f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }})
+			f.service = NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }})
 		}, true},
 		{"runtime changed", func(t *testing.T, f *coalesceFixture) { f.report.Runtime.ReportIntervalSeconds = 5 }, true},
 		{"interval boundary", func(t *testing.T, f *coalesceFixture) { f.now = f.now.Add(time.Second) }, true},
@@ -225,7 +225,14 @@ func TestCoalesceConcurrentReportsReadersAndPruning(t *testing.T) {
 					errors <- fmt.Errorf("projection=%+v err=%v", out, err)
 					return
 				}
-				if err := f.service.prune(ctx, f.db); err != nil {
+				lease, err := f.nodes.Database().Acquire(ctx, storage.Reader)
+				if err != nil {
+					errors <- err
+					return
+				}
+				err = f.service.prune(lease.Context(), lease)
+				lease.Close()
+				if err != nil {
 					errors <- err
 					return
 				}
@@ -443,7 +450,7 @@ func TestCoalesceCredentialABAReclaimsBeforeAndAfterRead(t *testing.T) {
 				if err := f.nodes.RevokeCredential(ctx, f.id); err != nil {
 					t.Fatal(err)
 				}
-				enrollments := enrollment.NewService(f.db, enrollment.Options{Now: func() time.Time { return f.now }})
+				enrollments := enrollment.NewService(f.nodes.Database(), enrollment.Options{Now: func() time.Time { return f.now }})
 				ticket, err := enrollments.CreateSingle(ctx, f.id)
 				if err != nil {
 					t.Fatal(err)
@@ -496,7 +503,7 @@ func TestFreshCredentialEpochRejectsQueuedExactABA(t *testing.T) {
 	f := newCoalesceFixture(t, 0)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	enrollments := enrollment.NewService(f.db, enrollment.Options{Now: func() time.Time { return f.now }})
+	enrollments := enrollment.NewService(f.nodes.Database(), enrollment.Options{Now: func() time.Time { return f.now }})
 	rebind := func() {
 		t.Helper()
 		if err := f.nodes.RevokeCredential(ctx, f.id); err != nil {
@@ -513,7 +520,7 @@ func TestFreshCredentialEpochRejectsQueuedExactABA(t *testing.T) {
 	rebind()
 	// 该身份下没有接受过任何报告：下面撤销/重绑前后，
 	// A/0/'' 都是确切的持久化身份。
-	f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }})
+	f.service = NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }})
 	target := "tcp://queued-identity.test:443"
 	f.report.Runtime.ProbeTargets = []string{target}
 	f.report.ProbeResults = []v1.ProbeResult{probeResult(target, f.now, true)}
@@ -802,4 +809,27 @@ func TestNormalizeCapabilityNilSlicesAsEmptyObservations(t *testing.T) {
 	if len(normalized.Runtime.RemoteCommands) != 0 || len(normalized.Runtime.DisabledFeatures) != 0 {
 		t.Fatal("observation received defaults")
 	}
+}
+
+var fixtureDatabases sync.Map
+
+func stableDatabase(t *testing.T, db *sql.DB) *storage.Database {
+	t.Helper()
+	if stable, ok := fixtureDatabases.Load(db); ok {
+		return stable.(*storage.Database)
+	}
+	var path string
+	if err := db.QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	stable, err := storage.OpenMain(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureDatabases.Store(db, stable)
+	t.Cleanup(func() {
+		fixtureDatabases.Delete(db)
+		_ = stable.Close()
+	})
+	return stable
 }

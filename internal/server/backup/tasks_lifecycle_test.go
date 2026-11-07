@@ -38,14 +38,14 @@ func lifecycleService(t *testing.T) (*Service, time.Time) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
-	s := &Service{db: db, box: box, opts: Options{DataDir: dir, Now: func() time.Time { return now }}}
+	s := &Service{db: mainHandle(t, db), box: box, opts: Options{DataDir: dir, Now: func() time.Time { return now }}}
 	t.Cleanup(s.closeCleanup)
 	return s, now
 }
 
 func lifecycleTask(t *testing.T, s *Service, id, state string, created, finished time.Time) string {
 	t.Helper()
-	return lifecycleTaskUsing(t, s, s.db, id, state, created, finished)
+	return lifecycleTaskUsing(t, s, observeMain(t, s), id, state, created, finished)
 }
 
 func lifecycleTaskUsing(t *testing.T, s *Service, exec interface {
@@ -107,7 +107,7 @@ func TestTaskLifecyclePasswordVisibilityAndAudit(t *testing.T) {
 		t.Fatal("unsafe task JSON")
 	}
 	actor := "20000000-0000-4000-8000-000000000001"
-	if _, err = s.db.Exec(`INSERT INTO users(id,username,password_hash,created_at,must_change_password) VALUES (?,'reader','hash',?,0)`, actor, timekey.Format(now)); err != nil {
+	if _, err = observeMain(t, s).Exec(`INSERT INTO users(id,username,password_hash,created_at,must_change_password) VALUES (?,'reader','hash',?,0)`, actor, timekey.Format(now)); err != nil {
 		t.Fatal(err)
 	}
 	result, err := s.Password(audit.WithActor(ctx, actor), lifecycleID)
@@ -118,29 +118,29 @@ func TestTaskLifecyclePasswordVisibilityAndAudit(t *testing.T) {
 		t.Fatalf("result=%+v", result)
 	}
 	var details, target string
-	if err = s.db.QueryRow(`SELECT details,target_id FROM audit_events WHERE action='backup.password'`).Scan(&details, &target); err != nil {
+	if err = observeMain(t, s).QueryRow(`SELECT details,target_id FROM audit_events WHERE action='backup.password'`).Scan(&details, &target); err != nil {
 		t.Fatal(err)
 	}
 	if details != "{}" || target != lifecycleID {
 		t.Fatalf("audit leaked data: %s %s", details, target)
 	}
-	if _, err = s.db.Exec(`UPDATE backup_tasks SET state='failed',warning_code='storage_outcome_unknown' WHERE id=?`, lifecycleID); err != nil {
+	if _, err = observeMain(t, s).Exec(`UPDATE backup_tasks SET state='failed',warning_code='storage_outcome_unknown' WHERE id=?`, lifecycleID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.Password(ctx, lifecycleID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`UPDATE backup_tasks SET warning_code='' WHERE id=?`, lifecycleID); err != nil {
+	if _, err = observeMain(t, s).Exec(`UPDATE backup_tasks SET warning_code='' WHERE id=?`, lifecycleID); err != nil {
 		t.Fatal(err)
 	}
 	_, err = s.Password(ctx, lifecycleID)
 	lifecycleCode(t, err, "password_unavailable")
-	if _, err = s.db.Exec(`UPDATE backup_tasks SET state='succeeded',password_expires_at=? WHERE id=?`, timekey.Format(now), lifecycleID); err != nil {
+	if _, err = observeMain(t, s).Exec(`UPDATE backup_tasks SET state='succeeded',password_expires_at=? WHERE id=?`, timekey.Format(now), lifecycleID); err != nil {
 		t.Fatal(err)
 	}
 	_, err = s.Password(ctx, lifecycleID)
 	lifecycleCode(t, err, "password_expired")
-	if _, err = s.db.Exec(`UPDATE backup_tasks SET password_expires_at=?,restored=1 WHERE id=?`, timekey.Format(now.Add(time.Hour)), lifecycleID); err != nil {
+	if _, err = observeMain(t, s).Exec(`UPDATE backup_tasks SET password_expires_at=?,restored=1 WHERE id=?`, timekey.Format(now.Add(time.Hour)), lifecycleID); err != nil {
 		t.Fatal(err)
 	}
 	_, err = s.Password(ctx, lifecycleID)
@@ -153,7 +153,7 @@ func TestTaskLifecyclePasswordWrongKeyAndIncompleteMetadata(t *testing.T) {
 	s.box, _ = secretbox.New(bytes.Repeat([]byte{9}, 32), "orbitbeacon backup secrets v1")
 	_, err := s.Password(context.Background(), lifecycleID)
 	lifecycleCode(t, err, "secret_unreadable")
-	if _, err = s.db.Exec(`UPDATE backup_tasks SET result_location=NULL WHERE id=?`, lifecycleID); err != nil {
+	if _, err = observeMain(t, s).Exec(`UPDATE backup_tasks SET result_location=NULL WHERE id=?`, lifecycleID); err != nil {
 		t.Fatal(err)
 	}
 	task, err := s.Task(context.Background(), lifecycleID)
@@ -193,22 +193,22 @@ func TestTaskLifecycleOpenArtifactIsSeekableAndEnforcesOwnership(t *testing.T) {
 	if err = os.Chmod(path, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`UPDATE backup_tasks SET artifact_expires_at=? WHERE id=?`, timekey.Format(now), lifecycleID); err != nil {
+	if _, err = observeMain(t, s).Exec(`UPDATE backup_tasks SET artifact_expires_at=? WHERE id=?`, timekey.Format(now), lifecycleID); err != nil {
 		t.Fatal(err)
 	}
 	_, _, err = s.OpenArtifact(ctx, lifecycleID)
 	lifecycleCode(t, err, "artifact_expired")
-	if _, err = s.db.Exec(`UPDATE backup_tasks SET artifact_expires_at=?,state='running' WHERE id=?`, timekey.Format(now.Add(time.Hour)), lifecycleID); err != nil {
+	if _, err = observeMain(t, s).Exec(`UPDATE backup_tasks SET artifact_expires_at=?,state='running' WHERE id=?`, timekey.Format(now.Add(time.Hour)), lifecycleID); err != nil {
 		t.Fatal(err)
 	}
 	_, _, err = s.OpenArtifact(ctx, lifecycleID)
 	lifecycleCode(t, err, "artifact_not_ready")
-	if _, err = s.db.Exec(`UPDATE backup_tasks SET state='succeeded',restored=1 WHERE id=?`, lifecycleID); err != nil {
+	if _, err = observeMain(t, s).Exec(`UPDATE backup_tasks SET state='succeeded',restored=1 WHERE id=?`, lifecycleID); err != nil {
 		t.Fatal(err)
 	}
 	_, _, err = s.OpenArtifact(ctx, lifecycleID)
 	lifecycleCode(t, err, "artifact_missing")
-	if _, err = s.db.Exec(`UPDATE backup_tasks SET restored=0,artifact_name='../elsewhere' WHERE id=?`, lifecycleID); err != nil {
+	if _, err = observeMain(t, s).Exec(`UPDATE backup_tasks SET restored=0,artifact_name='../elsewhere' WHERE id=?`, lifecycleID); err != nil {
 		t.Fatal(err)
 	}
 	_, _, err = s.OpenArtifact(ctx, lifecycleID)
@@ -248,7 +248,7 @@ func TestTaskLifecycleRetentionActivePasswordAndFinishedLifetime(t *testing.T) {
 	s, now := lifecycleService(t)
 	ctx := context.Background()
 	lifecycleTask(t, s, lifecycleID, "running", now.Add(-100*24*time.Hour), time.Time{})
-	if _, err := s.db.Exec(`UPDATE backup_tasks SET password_expires_at=? WHERE id=?`, timekey.Format(now.Add(-time.Hour)), lifecycleID); err != nil {
+	if _, err := observeMain(t, s).Exec(`UPDATE backup_tasks SET password_expires_at=? WHERE id=?`, timekey.Format(now.Add(-time.Hour)), lifecycleID); err != nil {
 		t.Fatal(err)
 	}
 	recent := "10000000-0000-4000-8000-000000000002"
@@ -262,13 +262,13 @@ func TestTaskLifecycleRetentionActivePasswordAndFinishedLifetime(t *testing.T) {
 	}
 	for _, id := range []string{lifecycleID, recent} {
 		var cipher []byte
-		if err := s.db.QueryRow(`SELECT password_ciphertext FROM backup_tasks WHERE id=?`, id).Scan(&cipher); err != nil || len(cipher) == 0 {
+		if err := observeMain(t, s).QueryRow(`SELECT password_ciphertext FROM backup_tasks WHERE id=?`, id).Scan(&cipher); err != nil || len(cipher) == 0 {
 			t.Fatalf("password removed %s %v", id, err)
 		}
 	}
 	var cipher []byte
 	var after string
-	if err := s.db.QueryRow(`SELECT password_ciphertext,artifact_cleanup_after FROM backup_tasks WHERE id=?`, old).Scan(&cipher, &after); err != nil {
+	if err := observeMain(t, s).QueryRow(`SELECT password_ciphertext,artifact_cleanup_after FROM backup_tasks WHERE id=?`, old).Scan(&cipher, &after); err != nil {
 		t.Fatal(err)
 	}
 	if len(cipher) != 0 || after != timekey.Format(now.Add(time.Hour)) {
@@ -279,7 +279,7 @@ func TestTaskLifecycleRetentionActivePasswordAndFinishedLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := s.db.QueryRow(`SELECT count(*) FROM backup_tasks WHERE id=?`, old).Scan(&count); err != nil || count != 0 {
+	if err := observeMain(t, s).QueryRow(`SELECT count(*) FROM backup_tasks WHERE id=?`, old).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("old row retained count=%d err=%v", count, err)
 	}
 }
@@ -288,7 +288,7 @@ func TestTaskLifecycleCleanupFairnessAndMissingFileConvergence(t *testing.T) {
 	s, now := lifecycleService(t)
 	ctx := context.Background()
 	var first string
-	tx, err := s.db.Begin()
+	tx, err := observeMain(t, s).Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestTaskLifecycleCleanupFairnessAndMissingFileConvergence(t *testing.T) {
 		}
 	}
 	var count int
-	if err := s.db.QueryRow(`SELECT count(*) FROM backup_tasks`).Scan(&count); err != nil || count != 1 {
+	if err := observeMain(t, s).QueryRow(`SELECT count(*) FROM backup_tasks`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("starvation count=%d err=%v", count, err)
 	}
 	if err := os.Remove(first); err != nil {
@@ -326,7 +326,7 @@ func TestTaskLifecycleCleanupFairnessAndMissingFileConvergence(t *testing.T) {
 	if _, err := s.Cleanup(ctx, now.Add(time.Hour), 500); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.db.QueryRow(`SELECT count(*) FROM backup_tasks`).Scan(&count); err != nil || count != 0 {
+	if err := observeMain(t, s).QueryRow(`SELECT count(*) FROM backup_tasks`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("ENOENT failed count=%d err=%v", count, err)
 	}
 }
@@ -344,7 +344,7 @@ func TestTaskLifecycleOrphansRespectUUIDAndRestoredOwnership(t *testing.T) {
 	if err := os.WriteFile(external, []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`UPDATE backup_tasks SET restored=1,result_location=? WHERE id=?`, external, lifecycleID); err != nil {
+	if _, err := observeMain(t, s).Exec(`UPDATE backup_tasks SET restored=1,result_location=? WHERE id=?`, external, lifecycleID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.CleanupOrphans(ctx, 500); err != nil {
@@ -405,7 +405,7 @@ func TestTaskLifecycleLocalRetentionOwnFilesOnly(t *testing.T) {
 func TestTaskLifecycleExpiredPasswordStillReportsExpiryAfterCleanup(t *testing.T) {
 	s, now := lifecycleService(t)
 	lifecycleTask(t, s, lifecycleID, "succeeded", now.Add(-100*24*time.Hour), now.Add(-time.Hour))
-	if _, err := s.db.Exec(`UPDATE backup_tasks SET password_expires_at=?,password_ciphertext=NULL WHERE id=?`, timekey.Format(now), lifecycleID); err != nil {
+	if _, err := observeMain(t, s).Exec(`UPDATE backup_tasks SET password_expires_at=?,password_ciphertext=NULL WHERE id=?`, timekey.Format(now), lifecycleID); err != nil {
 		t.Fatal(err)
 	}
 	_, err := s.Password(context.Background(), lifecycleID)
@@ -478,7 +478,7 @@ func TestTaskLifecycleLocalTempsOnlyInactiveRecordedOwnFiles(t *testing.T) {
 		id := fmt.Sprintf("10000000-0000-4000-8000-%012d", i+1)
 		name := lifecycleTask(t, s, id, state, now, now)
 		restored := i == 2
-		if _, err := s.db.Exec(`UPDATE backup_tasks SET kind='backup_local',plan_id=?,destination_json=?,restored=? WHERE id=?`, planID, string(target), restored, id); err != nil {
+		if _, err := observeMain(t, s).Exec(`UPDATE backup_tasks SET kind='backup_local',plan_id=?,destination_json=?,restored=? WHERE id=?`, planID, string(target), restored, id); err != nil {
 			t.Fatal(err)
 		}
 		path := filepath.Join(dir, "."+name+".tmp")

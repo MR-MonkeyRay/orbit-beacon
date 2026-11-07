@@ -42,7 +42,7 @@ func newNodes(t *testing.T, capacity int) (*nodes.Service, *sql.DB) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	service := nodes.NewService(db, nodes.Options{
+	service := nodes.NewService(stableDatabase(t, db), nodes.Options{
 		MaxNodes: capacity,
 		Now:      func() time.Time { return time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC) },
 		Random:   &lockedReader{r: rand.NewChaCha8([32]byte{23})},
@@ -234,4 +234,27 @@ func TestDeletionFailureRollsBackIdentityChanges(t *testing.T) {
 			}
 		})
 	}
+}
+
+var fixtureDatabases sync.Map
+
+func stableDatabase(t *testing.T, db *sql.DB) *storage.Database {
+	t.Helper()
+	if stable, ok := fixtureDatabases.Load(db); ok {
+		return stable.(*storage.Database)
+	}
+	var path string
+	if err := db.QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	stable, err := storage.OpenMain(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureDatabases.Store(db, stable)
+	t.Cleanup(func() {
+		fixtureDatabases.Delete(db)
+		_ = stable.Close()
+	})
+	return stable
 }

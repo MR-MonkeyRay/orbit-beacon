@@ -102,7 +102,7 @@ func Restore(ctx context.Context, dataDir, input, password string, replace bool)
 		}
 		defer target.Close()
 		if !selected[Monitoring] {
-			metrics, err = restoreTargetSnapshot(ctx, dir, work, "metrics.db", history.CurrentSchemaVersion)
+			metrics, err = restoreTargetHistorySnapshot(ctx, dir, work)
 			if err != nil {
 				return result, err
 			}
@@ -190,6 +190,24 @@ func restoreTargetEmpty(dir string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+func restoreTargetHistorySnapshot(ctx context.Context, dir, work string) (*sql.DB, error) {
+	path := filepath.Join(dir, "metrics.db")
+	exists, err := securefs.ValidateFile(path)
+	if err != nil {
+		return nil, &Error{Code: "restore_invalid_data", Err: err}
+	}
+	if exists {
+		return restoreTargetSnapshot(ctx, dir, work, "metrics.db", history.CurrentSchemaVersion)
+	}
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if exists, err := securefs.ValidateFile(path + suffix); err != nil || exists {
+			return nil, &Error{Code: "restore_invalid_data", Err: err}
+		}
+	}
+	// VM 部署可以没有本地历史；空库仅在离线恢复的私有工作目录中准备。
+	return history.OpenDatabase(ctx, filepath.Join(work, "target-metrics.db"))
 }
 
 // 打开之前先复制完整的 SQLite 文件组。恢复/checkpoint 活动

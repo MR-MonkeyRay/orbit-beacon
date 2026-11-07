@@ -3,15 +3,17 @@ package history
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
-	"io"
 	"maps"
 	"math"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"testing"
 	"time"
+
+	"orbitbeacon/internal/server/storage"
 )
 
 type fakeStore struct {
@@ -66,7 +68,7 @@ func (f *fakeStore) DatabaseStats() (sql.DBStats, sql.DBStats, bool) {
 }
 func (f *fakeStore) Close() error { f.closed = true; return nil }
 
-func stoppedStoreService(t *testing.T, store Store, nodes *sql.DB, opts Options) *Service {
+func stoppedStoreService(t *testing.T, store Store, nodes *storage.Database, opts Options) *Service {
 	t.Helper()
 	s := newService(store, nodes, opts)
 	stopped(t, s)
@@ -105,35 +107,24 @@ func TestServiceStoreFailedWriteRetainsPending(t *testing.T) {
 	}
 }
 
-// 空节点快照使用内存驱动，隔离历史清理的失败语义与文件权限检查。
-type emptyNodesConnector struct{}
-type emptyNodesDriver struct{}
-type emptyNodesConn struct{}
-type emptyNodesRows struct{}
-
-func (emptyNodesConnector) Connect(context.Context) (driver.Conn, error) {
-	return emptyNodesConn{}, nil
-}
-func (emptyNodesConnector) Driver() driver.Driver          { return emptyNodesDriver{} }
-func (emptyNodesDriver) Open(string) (driver.Conn, error)  { return emptyNodesConn{}, nil }
-func (emptyNodesConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
-func (emptyNodesConn) Close() error                        { return nil }
-func (emptyNodesConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
-func (emptyNodesConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
-	if query != "SELECT id FROM nodes" {
-		return nil, errors.New("unexpected nodes query")
+func emptyTestMain(t *testing.T) *storage.Database {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
 	}
-	return emptyNodesRows{}, nil
+	db, err := storage.OpenMain(t.Context(), filepath.Join(dir, "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
 }
-func (emptyNodesRows) Columns() []string         { return []string{"id"} }
-func (emptyNodesRows) Close() error              { return nil }
-func (emptyNodesRows) Next([]driver.Value) error { return io.EOF }
 
 func TestServiceStoreFailedDeleteKeepsPathsAndPending(t *testing.T) {
 	failure := errors.New("delete failed")
 	store := &fakeStore{deleteErr: failure, ids: []string{"orphan"}}
-	nodes := sql.OpenDB(emptyNodesConnector{})
-	defer nodes.Close()
+	nodes := emptyTestMain(t)
 	s := stoppedStoreService(t, store, nodes, Options{})
 	now := time.Now().UTC().Truncate(time.Minute)
 	s.add(Sample{"orphan", now.Add(-time.Minute), diskValues("/data")})
@@ -204,8 +195,7 @@ func TestServiceStoreQueryErrors(t *testing.T) {
 
 func TestServiceStoreCleanupFreezesCandidatesBeforeDraining(t *testing.T) {
 	store := &fakeStore{}
-	nodes := sql.OpenDB(emptyNodesConnector{})
-	defer nodes.Close()
+	nodes := emptyTestMain(t)
 	s := stoppedStoreService(t, store, nodes, Options{})
 	now := time.Now().UTC().Truncate(time.Minute)
 	s.add(Sample{"pending", now.Add(-time.Minute), map[string]float64{"cpu_percent": 10}})

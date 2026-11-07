@@ -3,7 +3,6 @@ package history
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 
@@ -21,13 +20,6 @@ const historyNodesQuery = `WITH RECURSIVE history_nodes(node_id) AS (
  FROM history_nodes WHERE node_id IS NOT NULL
 ) SELECT node_id FROM history_nodes WHERE node_id IS NOT NULL`
 
-const schema = `CREATE TABLE buckets (
- node_id TEXT NOT NULL, metric TEXT NOT NULL, step INTEGER NOT NULL,
- t INTEGER NOT NULL, total REAL NOT NULL, peak REAL NOT NULL, samples INTEGER NOT NULL CHECK(samples > 0),
- PRIMARY KEY(node_id, metric, step, t)
-) WITHOUT ROWID;
-CREATE INDEX buckets_retention ON buckets(step, t);`
-
 // historySeriesQuery 沿主键跳跃，只按序列数访问 B 树；DISTINCT 会扫完该节点的全部桶，
 // 重启后每个节点都要读一次，且运行在历史写入 goroutine 上。
 const historySeriesQuery = `WITH RECURSIVE series(metric) AS (
@@ -37,7 +29,7 @@ const historySeriesQuery = `WITH RECURSIVE series(metric) AS (
 ) SELECT metric FROM series WHERE metric IS NOT NULL`
 
 type sqliteStore struct {
-	db, reader *sql.DB
+	db *storage.Database
 }
 
 var _ Store = (*sqliteStore)(nil)
@@ -45,26 +37,27 @@ var _ Store = (*sqliteStore)(nil)
 // OpenDatabase 只初始化可信的指标 schema，不启动写入或定期清理任务。
 // 离线恢复用它创建私有暂存库。
 func OpenDatabase(ctx context.Context, path string) (*sql.DB, error) {
-	return storage.OpenWithMigrations(ctx, path, []storage.Migration{{Version: CurrentSchemaVersion, SQL: schema}})
+	return storage.OpenHistorySQLite(ctx, path)
 }
 
 func openSQLiteStore(ctx context.Context, path string) (*sqliteStore, error) {
-	db, err := OpenDatabase(ctx, path)
+	db, err := storage.OpenHistory(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("open metric history: %w", err)
 	}
-	reader, err := storage.OpenReader(ctx, path)
-	if err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("open metric history reader: %w", err)
-	}
-	return &sqliteStore{db: db, reader: reader}, nil
+	return &sqliteStore{db: db}, nil
 }
 
 // Write 在同一事务内合并三个层级；失败时仍报告计划写入的行数。
 func (s *sqliteStore) Write(ctx context.Context, buckets []Bucket) (rows int, err error) {
+	lease, err := s.db.Acquire(ctx, storage.Writer)
+	if err != nil {
+		return 3 * len(buckets), err
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	rows = 3 * len(buckets)
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return rows, err
 	}
@@ -86,7 +79,13 @@ func (s *sqliteStore) Write(ctx context.Context, buckets []Bucket) (rows int, er
 }
 
 func (s *sqliteStore) Query(ctx context.Context, node, series string, stepSeconds int, start, end int64) ([]Point, error) {
-	rows, err := s.reader.QueryContext(ctx, `SELECT t, total / samples, peak FROM buckets WHERE node_id=? AND metric=? AND step=? AND t>=? AND t<=? ORDER BY t`, node, series, stepSeconds, start, end)
+	lease, err := s.db.Acquire(ctx, storage.Reader)
+	if err != nil {
+		return nil, err
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, err := lease.QueryContext(ctx, `SELECT t, total / samples, peak FROM buckets WHERE node_id=? AND metric=? AND step=? AND t>=? AND t<=? ORDER BY t`, node, series, stepSeconds, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +107,13 @@ func (s *sqliteStore) Query(ctx context.Context, node, series string, stepSecond
 }
 
 func (s *sqliteStore) Series(ctx context.Context, node string) ([]string, error) {
-	rows, err := s.reader.QueryContext(ctx, historySeriesQuery, node)
+	lease, err := s.db.Acquire(ctx, storage.Reader)
+	if err != nil {
+		return nil, err
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, err := lease.QueryContext(ctx, historySeriesQuery, node)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +130,13 @@ func (s *sqliteStore) Series(ctx context.Context, node string) ([]string, error)
 }
 
 func (s *sqliteStore) NodeIDs(ctx context.Context, visit func(string)) error {
-	rows, err := s.db.QueryContext(ctx, historyNodesQuery)
+	lease, err := s.db.Acquire(ctx, storage.Reader)
+	if err != nil {
+		return err
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, err := lease.QueryContext(ctx, historyNodesQuery)
 	if err != nil {
 		return err
 	}
@@ -140,15 +151,15 @@ func (s *sqliteStore) NodeIDs(ctx context.Context, visit func(string)) error {
 	return rows.Err()
 }
 
-// 每个 Exec 都是自己的短自动提交事务。该表是 WITHOUT ROWID，
-// 因此每次删除最多选择一批复合主键。
+// 每批使用独立短写事务，复合主键限制每次删除的工作量。
 func (s *sqliteStore) deleteBatches(ctx context.Context, yield func(), query string, args ...any) (removed int64, err error) {
 	for {
-		result, err := s.db.ExecContext(ctx, query, args...)
+		lease, err := s.db.Acquire(ctx, storage.Writer)
 		if err != nil {
 			return removed, err
 		}
-		n, err := result.RowsAffected()
+		n, err := deleteBatch(lease.Context(), lease, query, args...)
+		lease.Close()
 		if err != nil {
 			return removed, err
 		}
@@ -161,6 +172,26 @@ func (s *sqliteStore) deleteBatches(ctx context.Context, yield func(), query str
 			return removed, nil
 		}
 	}
+}
+
+func deleteBatch(ctx context.Context, lease *storage.Lease, query string, args ...any) (int64, error) {
+	tx, err := lease.BeginWrite(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 func (s *sqliteStore) DeleteNode(ctx context.Context, node string, yield func()) (int64, error) {
@@ -183,9 +214,9 @@ func (s *sqliteStore) DeleteExpired(ctx context.Context, now time.Time, yield fu
 }
 
 func (s *sqliteStore) DatabaseStats() (writer, reader sql.DBStats, ok bool) {
-	return s.db.Stats(), s.reader.Stats(), true
+	return s.db.Stats()
 }
 
 func (s *sqliteStore) Close() error {
-	return errors.Join(s.reader.Close(), s.db.Close())
+	return s.db.Close()
 }

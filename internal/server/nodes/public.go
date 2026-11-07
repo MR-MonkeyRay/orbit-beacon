@@ -18,6 +18,7 @@ import (
 
 	"orbitbeacon/internal/server/announcements"
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
@@ -106,7 +107,13 @@ func decodePublic(raw string) (PublicSettings, error) {
 
 func (s *Service) GetPublicSettings(ctx context.Context, id string) (PublicSettings, error) {
 	var raw string
-	if err := s.db.QueryRowContext(ctx, "SELECT public_settings FROM nodes WHERE id = ?", id).Scan(&raw); err != nil {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return PublicSettings{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	if err := lease.QueryRowContext(ctx, "SELECT public_settings FROM nodes WHERE id = ?", id).Scan(&raw); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return PublicSettings{}, ErrNotFound
 		}
@@ -119,7 +126,13 @@ func (s *Service) PatchPublicSettings(ctx context.Context, id string, patch Publ
 	if !uuid.ValidUUID(id) {
 		return PublicSettings{}, ErrInvalidInput
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return PublicSettings{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return PublicSettings{}, err
 	}
@@ -208,21 +221,19 @@ func (s *Service) PublicVisibilityVersion() uint64 {
 	return s.publicVersion
 }
 
-// SetPublicReader 选择仅供匿名页面查询使用的隔离连接池。
-// 传 nil 恢复为现有构造函数使用的主连接池。
-func (s *Service) SetPublicReader(db *sql.DB) { s.publicReader.Store(db) }
-
 // ListPublicRecords 用一条查询返回一页记录及其最近 30 个 UTC 日的可用性计数。
 func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int, now time.Time) ([]PublicRecord, bool, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, false, ErrInvalidInput
 	}
-	db := s.publicReader.Load()
-	if db == nil {
-		db = s.db
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, false, leaseErr
 	}
+	defer lease.Close()
+	ctx = lease.Context()
 	now = now.UTC()
-	rows, err := db.QueryContext(ctx, `WITH page AS (
+	rows, err := lease.QueryContext(ctx, `WITH page AS (
  SELECT created_at,id,public_settings,last_seen,token_hash,credential_epoch,run_generation,report_session_id
  FROM nodes WHERE `+publicVisibility+` ORDER BY created_at,id LIMIT ? OFFSET ?
 ), daily AS (
@@ -307,9 +318,11 @@ func scanPublicRecord(row interface{ Scan(...any) error }) (PublicRecord, error)
 }
 
 func (s *Service) ListPublicAnnouncements(ctx context.Context, now time.Time) ([]announcements.Public, error) {
-	db := s.publicReader.Load()
-	if db == nil {
-		db = s.db
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
 	}
-	return announcements.ListPublic(ctx, db, now)
+	defer lease.Close()
+	ctx = lease.Context()
+	return announcements.ListPublic(ctx, s.db, now)
 }

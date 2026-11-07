@@ -58,8 +58,10 @@ flowchart LR
 ## 存储与保留
 
 - `orbitbeacon.db` 保存账户、资产、身份、设置、流量、探测、审计、告警、通知和备份任务；使用 WAL、外键、`synchronous=FULL` 与 immediate 写事务。
+- 业务与 SQL 历史分别持有稳定数据库句柄；请求从认证到响应固定同一世代，写 gate 串行化写事务，租约覆盖提交后内存发布。后台通知和备份固定认领、网络操作与结果保存的世代，但不持 SQL 事务等待网络。长连接只在每次认证、读取和发送时持租约，等待更新时释放。
+- 租约取消会传入实际 SQL；排空须等待 Rows、Stmt、事务及驱动回滚真正结束，不能只等待 Go 调用返回。readiness 验证主库可提交写事务，liveness 不依赖数据库。
 - `metrics.db` 保存标量和分盘使用率（字节及 inode）的分钟聚合及 rollup，不保存原始报告，无数据不补零。每节点最多 16 个不同分盘路径，同一路径的两个序列共享名额；超额的新路径样本丢弃并计入 `orbitbeacon_history_series_rejected_total`，已知路径和聚合继续写入。单 goroutine 管理路径集合和写入，节点首次出现时用读连接池的一条沿主键跳跃的查询在写事务外恢复路径集合；节点删除清理时释放集合，保留期过后不立即释放路径名额，重启按数据库实际内容重算。历史序列上限为 200 节点 × (17 个标量 + 16 路径 × 2) × 3 档精度 = 29,400（每条序列的桶数另受保留期限制）。`buckets.metric` 是普通文本，备份注册表按列原样备份和恢复，含 `:` 的分盘指标无需新增表或改注册表。格式兼容性见[升级](../deploy/README.md#升级)。
-- 可选设置 `history_victoriametrics_url`（文件、环境变量或 `--history-victoriametrics-url`）改用 VictoriaMetrics；`history_victoriametrics_token` 仅支持文件或环境变量 `ORBITBEACON_HISTORY_VICTORIAMETRICS_TOKEN`。远端需配置 `-retentionPeriod` 至少 90 天，且不得对这些数据使用 `-dedup.minScrapeInterval`，否则同一分钟的合并样本会被丢弃。VictoriaMetrics 中的历史不包含在 OrbitBeacon 备份内；新安装的 `metrics.db` 为空，从 SQLite 切换后保留已有文件，不再写入、查询或清理，但仍随 Monitoring 类别备份。切换后端不会迁移历史。一个 VictoriaMetrics 实例只能供一台 OrbitBeacon 服务器使用：保留清理会删除本机主库中不存在的节点的 `orbitbeacon_history_*` 序列。
+- 可选设置 `history_victoriametrics_url`（文件、环境变量或 `--history-victoriametrics-url`）改用 VictoriaMetrics；`history_victoriametrics_token` 仅支持文件或环境变量 `ORBITBEACON_HISTORY_VICTORIAMETRICS_TOKEN`。远端需配置 `-retentionPeriod` 至少 90 天，且不得对这些数据使用 `-dedup.minScrapeInterval`，否则同一分钟的合并样本会被丢弃。VictoriaMetrics 历史无法生成 SQL 监控快照，选择 Monitoring 的备份返回 `history_unavailable`，不会用空库或旧 `metrics.db` 代替。切换后端不会迁移历史。一个 VictoriaMetrics 实例只能供一台 OrbitBeacon 服务器使用：保留清理会删除本机主库中不存在的节点的 `orbitbeacon_history_*` 序列。
 
 | 数据 | 保留规则 |
 | --- | --- |
@@ -78,6 +80,7 @@ flowchart LR
 ## 备份
 
 - 仅备份已落库数据，不暂停采集或强制冲刷内存；两库分别一致，不保证跨库同一时刻。选择监控数据而历史库不可读时，任务失败。
+- 恢复非监控归档时，允许目标没有本地历史文件（如全新 VictoriaMetrics 部署），仅在私有恢复目录准备空历史库；已存在但损坏的文件或孤立 sidecar 仍拒绝，不覆盖原数据。
 - 按表/列白名单生成传输库，流式压缩加密，不落盘明文归档；恢复校验认证、清单、哈希、DDL 与行值。
 - 全局最多 32 个非终态任务，单个 worker 执行；重启保留 queued，running 标为 `failed` / `interrupted`。存储结果未知时按[计划排障步骤](../deploy/README.md#计划)检查。
 - 同一目录锁保护恢复；prepared journal 回滚旧文件组，committed journal 仅清理日志。操作和故障处理见[恢复](../deploy/README.md#恢复)。

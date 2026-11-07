@@ -79,27 +79,13 @@ func TestListPublicRecordsVisibilityOrderingPaginationAndIdentity(t *testing.T) 
 	}
 }
 
-func TestListPublicRecordsUsesConfiguredReaderAndNilFallsBack(t *testing.T) {
-	service, db := newNodes(t, 2)
-	node := pending(t, service, "public")
-	now := time.Date(2026, 4, 5, 6, 7, 8, 0, time.UTC)
-	publishRecord(t, db, node, now, now, "Public", 1, "session")
-
-	closed, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "closed.db")+"?mode=memory")
-	if err != nil {
+func TestListPublicRecordsRejectsClosedDatabase(t *testing.T) {
+	service, _ := newNodes(t, 2)
+	if err := service.Database().Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := closed.Close(); err != nil {
-		t.Fatal(err)
-	}
-	service.SetPublicReader(closed)
-	if _, _, err := service.ListPublicRecords(context.Background(), 1, 0, time.Now()); err == nil {
-		t.Fatal("ListPublicRecords succeeded through a configured closed reader")
-	}
-	service.SetPublicReader(nil)
-	records, more, err := service.ListPublicRecords(context.Background(), 1, 0, time.Now())
-	if err != nil || more || len(records) != 1 || records[0].ID != node.ID {
-		t.Fatalf("fallback page = %+v, more=%v, err=%v", records, more, err)
+	if _, _, err := service.ListPublicRecords(context.Background(), 1, 0, time.Now()); !errors.Is(err, storage.ErrUnavailable) {
+		t.Fatalf("closed database read = %v", err)
 	}
 }
 
@@ -188,17 +174,23 @@ func TestListPublicRecordsWithSeparateReadOnlyPool(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	reader, err := storage.OpenReader(context.Background(), path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = reader.Close() })
-	service := nodes.NewService(db, nodes.Options{MaxNodes: 2})
+	service := nodes.NewService(stableDatabase(t, db), nodes.Options{MaxNodes: 2})
 	node := pending(t, service, "public")
 	now := time.Date(2026, 4, 5, 6, 7, 8, 0, time.UTC)
 	publishRecord(t, db, node, now, now, "Public", 1, "session")
-	service.SetPublicReader(reader)
-	records, more, err := service.ListPublicRecords(context.Background(), 1, 0, time.Now())
+	lease, err := service.Database().Acquire(context.Background(), storage.Writer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	tx, err := lease.BeginWrite(lease.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	records, more, err := service.ListPublicRecords(ctx, 1, 0, time.Now())
 	if err != nil || more || len(records) != 1 || records[0].ID != node.ID {
 		t.Fatalf("reader page = %+v, more=%v, err=%v", records, more, err)
 	}

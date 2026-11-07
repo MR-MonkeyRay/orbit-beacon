@@ -1,15 +1,12 @@
 package server
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"orbitbeacon/internal/server/auth"
 	"os"
 	"path/filepath"
 
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"orbitbeacon/internal/server/history"
@@ -23,7 +20,8 @@ import (
 )
 
 func TestMetricsExpositionAndHTTPIsolation(t *testing.T) {
-	h := &handler{origin: "https://beacon.test", metrics: newHTTPMetrics("test"), logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	h := newConsoleLiveFixture(t).h
+	h.metrics = newHTTPMetrics("test")
 	for _, target := range []struct{ method, path string }{
 		{http.MethodGet, "/healthz/live"},
 		{http.MethodGet, "/api/v1/nodes/00000000-0000-4000-8000-000000000001"},
@@ -166,23 +164,13 @@ func TestPrometheusBuildLabelEscaping(t *testing.T) {
 }
 
 func TestSaturationMetricsExposition(t *testing.T) {
-	// 只创建连接池句柄，不建立数据库连接或触碰受 securefs 约束的文件。
-	writer, err := sql.Open("sqlite", "unused-metrics-writer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer writer.Close()
-	reader, err := sql.Open("sqlite", "unused-metrics-reader")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reader.Close()
+	_, stable := testMainDatabases(t)
 	dir := t.TempDir()
 	wal := filepath.Join(dir, "orbitbeacon.db-wal")
 	if err := os.WriteFile(wal, make([]byte, 123), 0600); err != nil {
 		t.Fatal(err)
 	}
-	m := NewSaturationMetrics(writer, reader, dir)
+	m := NewSaturationMetrics(stable, dir)
 	service := ingest.NewService(nil, ingest.Options{})
 	h := &handler{metrics: newHTTPMetrics("test"), saturation: m, ingest: service}
 	for _, d := range []time.Duration{time.Millisecond, 20 * time.Millisecond, 600 * time.Millisecond, 40 * time.Second} {
@@ -242,7 +230,7 @@ func TestSaturationMetricsDisabled(t *testing.T) {
 }
 
 func TestSaturationMetricsConcurrentScrape(t *testing.T) {
-	m := NewSaturationMetrics(nil, nil, t.TempDir())
+	m := NewSaturationMetrics(nil, t.TempDir())
 	h := &handler{saturation: m}
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -307,7 +295,7 @@ func TestAPITokenRateLimitRetryEnvelope(t *testing.T) {
 }
 
 func TestSaturationMetricsHistoryWithoutPools(t *testing.T) {
-	m := NewSaturationMetrics(nil, nil, t.TempDir())
+	m := NewSaturationMetrics(nil, t.TempDir())
 	body := m.exposition(&handler{history: new(history.Service)})
 	for _, name := range []string{"orbitbeacon_db_connections_in_use", "orbitbeacon_db_wait_count_total", "orbitbeacon_db_wait_duration_seconds_total"} {
 		if strings.Contains(body, name+`{database="metrics"`) {

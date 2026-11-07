@@ -89,13 +89,6 @@ func restoreFixture(t *testing.T, marker string) string {
 			t.Fatal(err)
 		}
 	}
-	metrics, err := history.Open(context.Background(), dir, db, history.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = metrics.Close(); err != nil {
-		t.Fatal(err)
-	}
 	buckets, err := history.OpenDatabase(context.Background(), filepath.Join(dir, "metrics.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -121,13 +114,18 @@ func restoreArchive(t *testing.T, dir string, categories []Category) (string, st
 	ctx := context.Background()
 	work := t.TempDir()
 	os.Chmod(work, 0700)
-	payloads, err := CreateSnapshotPayloads(ctx, dir, filepath.Join(work, "payloads"), categories, time.Now)
+	sources := snapshotSources(t, dir)
+	payloads, err := CreateSnapshotPayloads(ctx, sources, dir, filepath.Join(work, "payloads"), categories, time.Now)
+	if sources.History != nil {
+		sources.History.Close()
+	}
+	sources.Main.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
 	archive := filepath.Join(work, "backup.tar.gz.age")
 	password := "AbCdEf0123456789"
-	_, err = WriteArchive(ctx, archive, Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: "88888888-8888-4888-8888-888888888888", CreatedAt: time.Now().UTC(), ServerVersion: "test", SchemaVersion: storage.CurrentSchemaVersion, HistorySchemaVersion: 1, Categories: categories, Snapshots: payloads.Snapshots}, payloads.Files, password)
+	_, err = WriteArchive(ctx, archive, Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: "88888888-8888-4888-8888-888888888888", CreatedAt: time.Now().UTC(), ServerVersion: "test", SchemaVersion: storage.CurrentSchemaVersion, HistorySchemaVersion: storage.HistorySchemaVersion, Categories: categories, Snapshots: payloads.Snapshots}, payloads.Files, password)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +323,7 @@ func TestRestorePreservesAdministratorLoginsAndIndividualInboxReads(t *testing.T
 		t.Fatal(err)
 	}
 	defer db.Close()
-	accounts := auth.NewService(db, auth.Options{})
+	accounts := auth.NewService(mainHandle(t, db), auth.Options{})
 	second, err := accounts.CreateUser(ctx, "admin-two", "second administrator password", false)
 	if err != nil {
 		t.Fatal(err)
@@ -357,7 +355,7 @@ func TestRestorePreservesAdministratorLoginsAndIndividualInboxReads(t *testing.T
 		t.Fatal(err)
 	}
 	defer restored.Close()
-	restoredAccounts := auth.NewService(restored, auth.Options{})
+	restoredAccounts := auth.NewService(mainHandle(t, restored), auth.Options{})
 	for _, session := range []auth.Session{firstSession, secondSession} {
 		if _, err = restoredAccounts.Authenticate(ctx, session.Token); !errors.Is(err, auth.ErrUnauthenticated) {
 			t.Fatalf("restored original session for %s: %v", session.User.ID, err)
@@ -371,7 +369,7 @@ func TestRestorePreservesAdministratorLoginsAndIndividualInboxReads(t *testing.T
 		if err != nil || session.User.ID != account.id {
 			t.Fatalf("restored administrator %s login=%+v err=%v", account.username, session.User, err)
 		}
-		notifications := inbox.New(restored)
+		notifications := inbox.New(mainHandle(t, restored))
 		who := inbox.Identity{UserID: account.id}
 		summary, err := notifications.Summary(ctx, who)
 		if err != nil || summary.UnreadCount != 1 {
@@ -400,7 +398,7 @@ func TestRestorePreservesPasswordChangeRestrictionsWithoutSessions(t *testing.T)
 	if _, err = db.Exec(`INSERT INTO users(id,username,password_hash,created_at,must_change_password) SELECT ?,'restricted-admin',password_hash,created_at,1 FROM users WHERE id=?`, restrictedID, restoreUser); err != nil {
 		t.Fatal(err)
 	}
-	accounts := auth.NewService(db, auth.Options{})
+	accounts := auth.NewService(mainHandle(t, db), auth.Options{})
 	for _, username := range []string{"normal-admin", "restricted-admin"} {
 		if _, err = accounts.Login(ctx, username, "restore-fixture-password", ""); err != nil {
 			t.Fatal(err)
@@ -433,7 +431,7 @@ func TestRestorePreservesPasswordChangeRestrictionsWithoutSessions(t *testing.T)
 		t.Fatal(err)
 	}
 	defer writable.Close()
-	restoredAccounts := auth.NewService(writable, auth.Options{})
+	restoredAccounts := auth.NewService(mainHandle(t, writable), auth.Options{})
 	for username, wantRestricted := range map[string]bool{"normal-admin": false, "restricted-admin": true} {
 		session, err := restoredAccounts.Login(ctx, username, "restore-fixture-password", "")
 		if err != nil {
@@ -663,6 +661,117 @@ func TestRestoreMissingOldKeyConditionalAndDamagedSources(t *testing.T) {
 	}
 }
 
+func TestRestoreConfigurationFromFreshVictoriaMetricsDeployment(t *testing.T) {
+	for _, damaged := range []bool{false, true} {
+		t.Run(fmt.Sprintf("damaged_local_history=%t", damaged), func(t *testing.T) {
+			ctx := t.Context()
+			dir := framingTempDir(t)
+			if err := datadir.Prepare(dir); err != nil {
+				t.Fatal(err)
+			}
+			main, err := storage.OpenMain(ctx, filepath.Join(dir, "orbitbeacon.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { main.Close() })
+			if _, err := auth.NewService(main, auth.Options{}).BootstrapAdministrator(ctx, "vm-admin", "fresh-vm-administrator-password"); err != nil {
+				t.Fatal(err)
+			}
+			remote, err := history.OpenVictoriaMetrics(ctx, dir, "http://127.0.0.1:1", "", main, history.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { remote.Close() })
+			if remote.Database() != nil {
+				t.Fatal("remote history exposed a local snapshot source")
+			}
+			work := framingTempDir(t)
+			payloads, err := CreateSnapshotPayloads(ctx, SnapshotSources{Main: main, History: remote.Database()}, dir, filepath.Join(work, "payloads"), []Category{Configuration}, time.Now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			archive, password := filepath.Join(work, "backup.tar.gz.age"), "AbCdEf0123456789"
+			_, err = WriteArchive(ctx, archive, Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: "88888888-8888-4888-8888-888888888888", CreatedAt: time.Now().UTC(), ServerVersion: "test", SchemaVersion: storage.CurrentSchemaVersion, HistorySchemaVersion: storage.HistorySchemaVersion, Categories: []Category{Configuration}, Snapshots: payloads.Snapshots}, payloads.Files, password)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := remote.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := main.Close(); err != nil {
+				t.Fatal(err)
+			}
+			metricsPath := filepath.Join(dir, "metrics.db")
+			if _, err := os.Stat(metricsPath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("VM configuration backup created local history: %v", err)
+			}
+			before := restoreBytes(t, dir)
+			if damaged {
+				if err := os.WriteFile(metricsPath, []byte("corrupted"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, err := Restore(ctx, dir, archive, password, true)
+			if damaged {
+				if restoreCode(err) != "restore_invalid_data" {
+					t.Fatalf("damaged retained history accepted: %v", err)
+				}
+				if !bytes.Equal(before, restoreBytes(t, dir)) {
+					t.Fatal("failed restore changed main database")
+				}
+				data, readErr := os.ReadFile(metricsPath)
+				if readErr != nil || string(data) != "corrupted" {
+					t.Fatalf("failed restore changed retained history: %q/%v", data, readErr)
+				}
+				assertNoPrepared(t, dir)
+				return
+			}
+			if err != nil || result.RollbackPath == "" {
+				t.Fatalf("replace fresh VM deployment: %+v/%v", result, err)
+			}
+			restored, err := storage.OpenMain(ctx, filepath.Join(dir, "orbitbeacon.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer restored.Close()
+			if _, err := auth.NewService(restored, auth.Options{}).Login(ctx, "vm-admin", "fresh-vm-administrator-password", ""); err != nil {
+				t.Fatalf("restored administrator cannot log in: %v", err)
+			}
+			metrics, err := storage.OpenReader(ctx, metricsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer metrics.Close()
+			var count int
+			if err := metrics.QueryRowContext(ctx, "SELECT count(*) FROM buckets").Scan(&count); err != nil || count != 0 {
+				t.Fatalf("restored private empty history: %d/%v", count, err)
+			}
+		})
+	}
+}
+
+func TestRestoreRejectsOrphanedHistorySidecars(t *testing.T) {
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		t.Run(suffix, func(t *testing.T) {
+			dir := framingTempDir(t)
+			path := filepath.Join(dir, "metrics.db"+suffix)
+			if err := os.WriteFile(path, []byte("retained history"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := restoreTargetHistorySnapshot(t.Context(), dir, framingTempDir(t)); restoreCode(err) != "restore_invalid_data" {
+				t.Fatalf("orphaned sidecar accepted: %v", err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != "retained history" {
+				t.Fatalf("sidecar changed: %q/%v", data, err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "metrics.db")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("production database created: %v", err)
+			}
+		})
+	}
+}
+
 func TestRestoreMonitoringDependencyConflict(t *testing.T) {
 	source := restoreFixture(t, "source")
 	target := restoreFixture(t, "target")
@@ -749,7 +858,7 @@ func TestRestoreHistoricalAlertsNeverReenqueueDeliveries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	notifications := notify.New(db, box, notify.Options{AllowPrivateNetworks: true, AllowInsecureWebhooks: true})
+	notifications := notify.New(mainHandle(t, db), box, notify.Options{AllowPrivateNetworks: true, AllowInsecureWebhooks: true})
 	config, err := json.Marshal(notify.Config{URL: ts.URL})
 	if err != nil {
 		t.Fatal(err)
@@ -762,7 +871,7 @@ func TestRestoreHistoricalAlertsNeverReenqueueDeliveries(t *testing.T) {
 	if err = json.Unmarshal([]byte(`{"name":"historical","enabled":true,"scope_kind":"all","metric":"cpu_percent","comparator":">","threshold":80,"for_seconds":0,"severity":"warning","channel_ids":["`+channel+`"]}`), &patch); err != nil {
 		t.Fatal(err)
 	}
-	rule, err := alerts.NewService(db, nil).Save(ctx, "", patch)
+	rule, err := alerts.NewService(mainHandle(t, db), nil).Save(ctx, "", patch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -772,6 +881,11 @@ func TestRestoreHistoricalAlertsNeverReenqueueDeliveries(t *testing.T) {
 	}
 	at := time.Now().UTC()
 	stamp := timekey.Format(at)
+	lease, err := mainHandle(t, db).Acquire(ctx, storage.Writer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
 	for i, state := range []string{"pending", "sent", "failed"} {
 		id := fmt.Sprintf("aaaaaaaa-aaaa-4aaa-8aaa-%012d", i+1)
 		eventState := "resolved"
@@ -782,7 +896,7 @@ func TestRestoreHistoricalAlertsNeverReenqueueDeliveries(t *testing.T) {
 		if _, err = db.Exec(`INSERT INTO alert_events(id,rule_id,node_id,state,started_at,resolved_at,rule_name,node_name,rule_snapshot) VALUES(?,?,?,?,?,?,'historical','source',?)`, id, rule.ID, restoreNode, eventState, stamp, resolved, string(rawRule)); err != nil {
 			t.Fatal(err)
 		}
-		tx, err := db.BeginTx(ctx, nil)
+		tx, err := lease.BeginWrite(lease.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -790,17 +904,21 @@ func TestRestoreHistoricalAlertsNeverReenqueueDeliveries(t *testing.T) {
 		if resolved != nil {
 			n.ResolvedAt = &at
 		}
-		if err = notifications.Enqueue(ctx, tx, n); err != nil {
+		if err = notifications.Enqueue(lease.Context(), tx, n); err != nil {
 			tx.Rollback()
 			t.Fatal(err)
 		}
-		if _, err = tx.Exec("UPDATE notification_deliveries SET state=? WHERE event_id=?", state, id); err != nil {
+		if _, err = tx.ExecContext(lease.Context(), "UPDATE notification_deliveries SET state=? WHERE event_id=?", state, id); err != nil {
 			tx.Rollback()
 			t.Fatal(err)
 		}
 		if err = tx.Commit(); err != nil {
 			t.Fatal(err)
 		}
+	}
+	lease.Close()
+	if err := mainHandle(t, db).Close(); err != nil {
+		t.Fatal(err)
 	}
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
@@ -824,9 +942,9 @@ func TestRestoreHistoricalAlertsNeverReenqueueDeliveries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker := notify.New(restored, box, notify.Options{AllowPrivateNetworks: true, AllowInsecureWebhooks: true})
+	worker := notify.New(mainHandle(t, restored), box, notify.Options{AllowPrivateNetworks: true, AllowInsecureWebhooks: true})
 	// 历史 firing 事件仍在；没有新观测不构成恢复，也不得补发历史 firing。
-	evaluator := alerts.NewEvaluator(alerts.NewService(restored, nil), nil, alerts.EvaluatorOptions{Notifier: worker})
+	evaluator := alerts.NewEvaluator(alerts.NewService(mainHandle(t, restored), nil), nil, alerts.EvaluatorOptions{Notifier: worker})
 	if err = evaluator.Evaluate(ctx, time.Now()); err != nil {
 		t.Fatal(err)
 	}

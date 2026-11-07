@@ -1,12 +1,7 @@
 package server
 
 import (
-	"context"
-	"database/sql"
-	"database/sql/driver"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -19,137 +14,98 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/timekey"
 )
 
-// 只统计只读 SQL 的驱动；不模拟 ingest 内存样本。
-type nodeMetricsBatchConnector struct {
-	queries      *[]string
-	failMetadata bool
-	deleted      int
-}
-
-func (c nodeMetricsBatchConnector) Connect(context.Context) (driver.Conn, error) {
-	return nodeMetricsBatchConn{c}, nil
-}
-func (nodeMetricsBatchConnector) Driver() driver.Driver { return publicStreamDriver{} }
-
-type nodeMetricsBatchConn struct{ nodeMetricsBatchConnector }
-
-func (nodeMetricsBatchConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
-func (nodeMetricsBatchConn) Close() error                        { return nil }
-func (nodeMetricsBatchConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
-func (c nodeMetricsBatchConn) QueryContext(ctx context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
+func TestNodeMetricsHoldsGenerationUntilResponseWriteCompletes(t *testing.T) {
+	f := newConsoleLiveFixture(t)
+	unblock, release := liveTestGate(t)
+	w := &blockedLiveWriter{streamRecorder: newStreamRecorder(), entered: make(chan struct{}), unblock: unblock}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.h.MetricsHandler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics/nodes", nil))
+	}()
+	select {
+	case <-w.entered:
+	case <-time.After(time.Second):
+		t.Fatal("metrics response did not start")
 	}
-	*c.queries = append(*c.queries, query)
-	if strings.Contains(query, "LEFT JOIN groups") {
-		if c.failMetadata {
-			return nil, errors.New("metadata read failed")
+	closed := make(chan error, 1)
+	go func() { closed <- f.h.nodes.Database().Close() }()
+	select {
+	case err := <-closed:
+		t.Fatalf("generation drained before response write completed: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	release()
+	waitStreamDone(t, done)
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
 		}
-		return &nodeMetricsMetadataRows{count: 500 - c.deleted}, nil
-	}
-	return &nodeMetricsInventoryRows{}, nil
-}
-
-type nodeMetricsInventoryRows struct{ index int }
-
-func (*nodeMetricsInventoryRows) Columns() []string { return (&consoleFleetBatchRows{}).Columns() }
-func (*nodeMetricsInventoryRows) Close() error      { return nil }
-func (r *nodeMetricsInventoryRows) Next(dest []driver.Value) error {
-	if r.index == 500 {
-		return io.EOF
-	}
-	// 返回倒序，要求指标层自行按 id 排序。
-	copy(dest, []driver.Value{fmt.Sprintf("%03d", 499-r.index), "pending", nil, "", nil, int64(0), "0", "", int64(0)})
-	r.index++
-	return nil
-}
-
-type nodeMetricsMetadataRows struct {
-	index int
-	count int
-}
-
-func (*nodeMetricsMetadataRows) Columns() []string {
-	return []string{"id", "name", "region", "provider", "group"}
-}
-func (*nodeMetricsMetadataRows) Close() error { return nil }
-func (r *nodeMetricsMetadataRows) Next(dest []driver.Value) error {
-	if r.index == r.count {
-		return io.EOF
-	}
-	copy(dest, []driver.Value{fmt.Sprintf("%03d", r.index), "node", "region", "provider", ""})
-	r.index++
-	return nil
-}
-
-func TestNodeMetricsSkipsNodeDeletedBetweenReads(t *testing.T) {
-	var queries []string
-	db := sql.OpenDB(nodeMetricsBatchConnector{queries: &queries, deleted: 1})
-	defer db.Close()
-	h := &handler{nodes: nodes.NewService(db, nodes.Options{}), ingest: ingest.NewService(nil, ingest.Options{}), now: time.Now}
-	w := httptest.NewRecorder()
-	h.MetricsHandler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics/nodes", nil))
-	if w.Code != 200 {
-		t.Fatalf("status=%d", w.Code)
-	}
-	if lines := parseNodeMetrics(t, w.Body.String())["orbitbeacon_node_up"]; len(lines) != 499 {
-		t.Fatalf("samples=%d", len(lines))
+	case <-time.After(time.Second):
+		t.Fatal("generation remained pinned after response completed")
 	}
 }
 
-func TestNodeMetricsBatchReadsSortingAndAtomicFailure(t *testing.T) {
+func TestNodeMetricsSortingAndAtomicFailure(t *testing.T) {
 	for _, failure := range []bool{false, true} {
-		var queries []string
-		db := sql.OpenDB(nodeMetricsBatchConnector{queries: &queries, failMetadata: failure})
-		h := &handler{nodes: nodes.NewService(db, nodes.Options{}), ingest: ingest.NewService(nil, ingest.Options{}), now: time.Now}
-		w := httptest.NewRecorder()
-		h.MetricsHandler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics/nodes", nil))
-		db.Close()
-		if len(queries) != 2 {
-			t.Fatalf("queries=%d want 2", len(queries))
-		}
-		for _, query := range queries {
-			if strings.Contains(query, "SELECT *") || strings.Contains(query, "notes") {
-				t.Fatalf("unexpected SQL: %s", query)
+		t.Run(strconv.FormatBool(failure), func(t *testing.T) {
+			f := newConsoleLiveFixture(t)
+			tx, err := f.db.Begin()
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-		if failure {
-			if w.Code != 500 || w.Body.Len() != 0 {
-				t.Fatalf("partial result: %d %s", w.Code, w.Body.String())
-			}
-			continue
-		}
-		if w.Code != 200 {
-			t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
-		}
-		values := parseNodeMetrics(t, w.Body.String())
-		for _, name := range []string{"info", "up"} {
-			lines := values["orbitbeacon_node_"+name]
-			if len(lines) != 500 {
-				t.Fatalf("%s samples=%d", name, len(lines))
-			}
-			for i, line := range lines {
-				if !strings.Contains(line, fmt.Sprintf("node_id=\"%03d\"", i)) {
-					t.Fatalf("unsorted sample: %s", line)
+			defer tx.Rollback()
+			for i := 499; i >= 0; i-- {
+				if _, err := tx.Exec("INSERT INTO nodes(id,name,region,provider,created_at) VALUES(?, 'node', 'region', 'provider', ?)", fmt.Sprintf("%03d", i), timekey.Format(f.h.now())); err != nil {
+					t.Fatal(err)
 				}
 			}
-		}
-		for _, method := range []string{http.MethodGet, http.MethodHead} {
-			// 新句柄验证 HEAD 同样计算完整结果的长度。
-			db := sql.OpenDB(nodeMetricsBatchConnector{queries: &queries})
-			h.nodes = nodes.NewService(db, nodes.Options{})
-			response := httptest.NewRecorder()
-			h.MetricsHandler().ServeHTTP(response, httptest.NewRequest(method, "/metrics/nodes", nil))
-			db.Close()
-			if response.Code != 200 || response.Header().Get("Content-Length") != strconv.Itoa(w.Body.Len()) || response.Header().Get("Content-Type") != "text/plain; version=0.0.4; charset=utf-8" || response.Header().Get("Cache-Control") != "no-store" {
-				t.Fatalf("response=%d %v", response.Code, response.Header())
+			if err := tx.Commit(); err != nil {
+				t.Fatal(err)
 			}
-			if method == http.MethodHead && response.Body.Len() != 0 {
-				t.Fatal("HEAD has a body")
+			if failure {
+				if _, err := f.db.Exec("DROP TABLE groups"); err != nil {
+					t.Fatal(err)
+				}
 			}
-		}
+			w := httptest.NewRecorder()
+			f.h.MetricsHandler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics/nodes", nil))
+			if failure {
+				if w.Code != 500 || w.Body.Len() != 0 {
+					t.Fatalf("partial result: %d %s", w.Code, w.Body.String())
+				}
+				return
+			}
+			if w.Code != 200 {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+			}
+			values := parseNodeMetrics(t, w.Body.String())
+			for _, name := range []string{"info", "up"} {
+				lines := values["orbitbeacon_node_"+name]
+				if len(lines) != 500 {
+					t.Fatalf("%s samples=%d", name, len(lines))
+				}
+				for i, line := range lines {
+					if !strings.Contains(line, fmt.Sprintf("node_id=\"%03d\"", i)) {
+						t.Fatalf("unsorted sample: %s", line)
+					}
+				}
+			}
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				response := httptest.NewRecorder()
+				f.h.MetricsHandler().ServeHTTP(response, httptest.NewRequest(method, "/metrics/nodes", nil))
+				if response.Code != 200 || response.Header().Get("Content-Length") != strconv.Itoa(w.Body.Len()) || response.Header().Get("Content-Type") != "text/plain; version=0.0.4; charset=utf-8" || response.Header().Get("Cache-Control") != "no-store" {
+					t.Fatalf("response=%d %v", response.Code, response.Header())
+				}
+				if method == http.MethodHead && response.Body.Len() != 0 {
+					t.Fatal("HEAD has a body")
+				}
+			}
+		})
 	}
 }
 

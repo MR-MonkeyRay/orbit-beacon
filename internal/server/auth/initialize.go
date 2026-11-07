@@ -3,11 +3,18 @@ package auth
 import (
 	"context"
 	"errors"
+	"orbitbeacon/internal/server/storage"
 )
 
 func (s *Service) InitializeAdministrator(ctx context.Context, lookupEnv func(string) (string, bool)) error {
 	var exists bool
-	if err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users)").Scan(&exists); err != nil {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	if err := lease.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users)").Scan(&exists); err != nil {
 		return err
 	}
 	if exists {

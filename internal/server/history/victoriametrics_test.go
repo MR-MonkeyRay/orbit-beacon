@@ -325,8 +325,17 @@ func TestVictoriaMetricsOpenPreservesLocalDatabase(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if s.Database() != nil {
+				t.Fatal("remote history exposed a local snapshot source")
+			}
 			if err := s.Close(); err != nil {
 				t.Fatal(err)
+			}
+			if !existing {
+				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("remote history created a local database: %v", err)
+				}
+				return
 			}
 			db, err := OpenDatabase(context.Background(), path)
 			if err != nil {

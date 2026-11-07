@@ -13,6 +13,8 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"orbitbeacon/internal/server/nodes"
 )
 
 const routingContractID = "01234567-89ab-4cde-abcd-0123456789ab"
@@ -220,6 +222,8 @@ func TestRoutingContractUnknownAPIPaths(t *testing.T) {
 
 func TestRoutingContractAcceptedPathSpellings(t *testing.T) {
 	h := routingContractHandler(t)
+	_, stable := testMainDatabases(t)
+	h.nodes = nodes.NewService(stable, nodes.Options{})
 	for _, path := range []string{
 		"/api/v1/nodes/" + routingContractID,
 		"/api/v1/nodes/" + strings.ToUpper(routingContractID),
@@ -320,6 +324,8 @@ func TestRoutingContractConsolePaths(t *testing.T) {
 
 func TestRoutingContractPublicPageGate(t *testing.T) {
 	h := routingContractHandler(t)
+	_, stable := testMainDatabases(t)
+	h.nodes = nodes.NewService(stable, nodes.Options{})
 	h.publicPageDisabled.Store(true)
 	for _, path := range []string{"/api/public/v1/nodes", "/api/public/v1/stream", "/api/public/v1/ws"} {
 		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodHead, http.MethodOptions} {

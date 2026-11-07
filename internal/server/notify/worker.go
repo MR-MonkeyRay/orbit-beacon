@@ -13,6 +13,7 @@ import (
 	"orbitbeacon/internal/logging"
 	"orbitbeacon/internal/server/alerts"
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
@@ -37,7 +38,7 @@ func notificationPayload(n alerts.Notification) Payload {
 }
 
 // Enqueue 只使用告警调用方的事务，不自行提交或发送网络请求。
-func (s *Service) Enqueue(ctx context.Context, tx *sql.Tx, n alerts.Notification) error {
+func (s *Service) Enqueue(ctx context.Context, tx *storage.Tx, n alerts.Notification) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -165,7 +166,13 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 func (s *Service) process(ctx context.Context) {
-	rows, e := s.db.QueryContext(ctx, `SELECT channel_id FROM notification_deliveries WHERE state='pending' AND next_attempt_at<=? GROUP BY channel_id ORDER BY min(next_attempt_at),channel_id LIMIT 4`, timekey.Format(s.opts.Now()))
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, e := lease.QueryContext(ctx, `SELECT channel_id FROM notification_deliveries WHERE state='pending' AND next_attempt_at<=? GROUP BY channel_id ORDER BY min(next_attempt_at),channel_id LIMIT 4`, timekey.Format(s.opts.Now()))
 	if e != nil {
 		return
 	}
@@ -190,7 +197,7 @@ func (s *Service) process(ctx context.Context) {
 }
 
 // reserveRate 由测试发送和 worker 共用，重启后依然持久。
-func (s *Service) reserveRate(ctx context.Context, tx *sql.Tx, id string) (bool, time.Time, error) {
+func (s *Service) reserveRate(ctx context.Context, tx *storage.Tx, id string) (bool, time.Time, error) {
 	now := s.opts.Now().UTC()
 	var start string
 	var count int
@@ -210,8 +217,14 @@ func (s *Service) reserveRate(ctx context.Context, tx *sql.Tx, id string) (bool,
 	return true, time.Time{}, e
 }
 func (s *Service) claim(ctx context.Context, channel string) (deliveryWork, bool, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return deliveryWork{}, false, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	var d deliveryWork
-	tx, e := s.db.BeginTx(ctx, nil)
+	tx, e := lease.BeginWrite(ctx)
 	if e != nil {
 		return d, false, e
 	}
@@ -262,6 +275,12 @@ func (s *Service) claim(ctx context.Context, channel string) (deliveryWork, bool
 	return d, true, tx.Commit()
 }
 func (s *Service) deliver(ctx context.Context, channel string) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	d, ok, e := s.claim(ctx, channel)
 	if e != nil || !ok {
 		return
@@ -291,7 +310,7 @@ func (s *Service) deliver(ctx context.Context, channel string) {
 		state = "pending"
 		next = next.Add(max(backoffs[d.attempts-1], result.retryAfter))
 	}
-	tx, e := s.db.BeginTx(ctx, nil)
+	tx, e := lease.BeginWrite(ctx)
 	if e != nil {
 		return
 	}
@@ -357,6 +376,12 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	}
 }
 func (s *Service) Test(ctx context.Context, id string) (Result, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return Result{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if s.closed.Load() {
 		return Result{}, ErrUnavailable
 	}
@@ -368,7 +393,7 @@ func (s *Service) Test(ctx context.Context, id string) (Result, error) {
 	if e != nil {
 		return Result{}, e
 	}
-	tx, e := s.db.BeginTx(ctx, nil)
+	tx, e := lease.BeginWrite(ctx)
 	if e != nil {
 		return Result{}, e
 	}
@@ -394,12 +419,26 @@ func (s *Service) Test(ctx context.Context, id string) (Result, error) {
 	return s.sender.Send(ctx, c, secret, p), nil
 }
 func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return 0, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if limit < 1 || limit > 1000 {
 		return 0, validation.Invalid("limit", "must be between 1 and 1000")
 	}
-	r, e := s.db.ExecContext(ctx, `DELETE FROM notification_deliveries WHERE id IN (SELECT id FROM notification_deliveries WHERE state IN ('sent','failed') AND updated_at<? ORDER BY updated_at,id LIMIT ?)`, timekey.Format(now.Add(-30*24*time.Hour)), limit)
+	tx, txErr := lease.BeginWrite(ctx)
+	if txErr != nil {
+		return 0, txErr
+	}
+	defer tx.Rollback()
+	r, e := tx.ExecContext(ctx, `DELETE FROM notification_deliveries WHERE id IN (SELECT id FROM notification_deliveries WHERE state IN ('sent','failed') AND updated_at<? ORDER BY updated_at,id LIMIT ?)`, timekey.Format(now.Add(-30*24*time.Hour)), limit)
 	if e != nil {
 		return 0, e
+	}
+	if commitErr := tx.Commit(); commitErr != nil {
+		return 0, commitErr
 	}
 	return r.RowsAffected()
 }

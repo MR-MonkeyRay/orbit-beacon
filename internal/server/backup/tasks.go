@@ -8,6 +8,7 @@ import (
 
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/management"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
 )
@@ -56,6 +57,12 @@ func (s *Service) projectTask(task Task, now time.Time) Task {
 }
 
 func (s *Service) Task(ctx context.Context, id string) (Task, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Task{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if !uuid.ValidUUID(id) {
 		return Task{}, &Error{Code: "task_not_found"}
 	}
@@ -74,6 +81,12 @@ func (s *Service) Task(ctx context.Context, id string) (Task, error) {
 }
 
 func (s *Service) Tasks(ctx context.Context, limit int, before string) (TaskPage, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return TaskPage{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	page := TaskPage{Tasks: make([]Task, 0)}
 	if limit < 1 || limit > 100 {
 		return page, &Error{Code: "invalid_input"}
@@ -91,7 +104,7 @@ func (s *Service) Tasks(ctx context.Context, limit int, before string) (TaskPage
 	}
 	query += ` ORDER BY created_at DESC,id DESC LIMIT ?`
 	args = append(args, limit+1)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := lease.QueryContext(ctx, query, args...)
 	if err != nil {
 		return page, err
 	}
@@ -125,11 +138,17 @@ func (s *Service) Tasks(ctx context.Context, limit int, before string) (TaskPage
 
 // Password 是一次显式且有审计的读取。Task 和 Tasks 都不会解密机密。
 func (s *Service) Password(ctx context.Context, id string) (PasswordResult, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return PasswordResult{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	var result PasswordResult
 	if !uuid.ValidUUID(id) {
 		return result, &Error{Code: "task_not_found"}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return result, err
 	}

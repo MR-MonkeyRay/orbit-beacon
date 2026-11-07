@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,7 +38,7 @@ func newAuth(t *testing.T) (*auth.Service, *sql.DB, *time.Time) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	service := auth.NewService(db, auth.Options{
+	service := auth.NewService(stableDatabase(t, db), auth.Options{
 		Now: func() time.Time { return now }, Random: rand.NewChaCha8([32]byte{17}),
 	})
 	return service, db, &now
@@ -112,7 +113,7 @@ func TestBootstrapRefusesToReplaceExistingAdministrator(t *testing.T) {
 		t.Fatalf("bootstrap user = %+v", original)
 	}
 	// 重建服务绝不能重新打开引导窗口。
-	service = auth.NewService(db, auth.Options{
+	service = auth.NewService(stableDatabase(t, db), auth.Options{
 		Now:    func() time.Time { return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) },
 		Random: rand.NewChaCha8([32]byte{18}),
 	})
@@ -255,7 +256,7 @@ func TestLoginRefusesFailedSessionEntropy(t *testing.T) {
 	if _, err := service.CreateUser(ctx, "admin", initialPassword, false); err != nil {
 		t.Fatal(err)
 	}
-	service = auth.NewService(db, auth.Options{
+	service = auth.NewService(stableDatabase(t, db), auth.Options{
 		Now: func() time.Time { return *now }, Random: bytes.NewReader(nil),
 	})
 	if _, err := service.Login(ctx, "admin", initialPassword, ""); err == nil {
@@ -389,7 +390,7 @@ func TestLoginAdmissionRejectsBeforeDatabaseAndDoesNotLockOtherPeers(t *testing.
 	if _, err := service.Login(attacker, "admin", initialPassword, ""); err != nil {
 		t.Fatalf("one invalid username locked every account at the peer: %v", err)
 	}
-	if err := db.Close(); err != nil {
+	if err := stableDatabase(t, db).Close(); err != nil {
 		t.Fatal(err)
 	}
 	samePeerNewPort := auth.WithLoginPeer(context.Background(), "192.0.2.1:9999")
@@ -400,7 +401,7 @@ func TestLoginAdmissionRejectsBeforeDatabaseAndDoesNotLockOtherPeers(t *testing.
 
 func TestConcurrentUserCreationReturnsOneDomainConflict(t *testing.T) {
 	first, db, _ := newAuth(t)
-	second := auth.NewService(db, auth.Options{})
+	second := auth.NewService(stableDatabase(t, db), auth.Options{})
 	results := make(chan error, 2)
 	for _, service := range []*auth.Service{first, second} {
 		go func(service *auth.Service) {
@@ -435,7 +436,7 @@ func TestBootstrapRefusesWhenCreatedAdministratorAlreadyExists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service = auth.NewService(db, auth.Options{})
+	service = auth.NewService(stableDatabase(t, db), auth.Options{})
 	if _, err := service.BootstrapAdministrator(ctx, "admin-one", "replacement password"); !errors.Is(err, auth.ErrAdminExists) {
 		t.Fatalf("bootstrap with an existing account = %v, want ErrAdminExists", err)
 	}
@@ -459,7 +460,7 @@ func TestConcurrentIndependentServicesCannotDeleteEveryAdministrator(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	second := auth.NewService(db, auth.Options{Now: func() time.Time { return *now }})
+	second := auth.NewService(stableDatabase(t, db), auth.Options{Now: func() time.Time { return *now }})
 	start := make(chan struct{})
 	type deletionResult struct {
 		id  string
@@ -760,4 +761,27 @@ func authRowCount(t *testing.T, db *sql.DB, query string, args ...any) int {
 		t.Fatal(err)
 	}
 	return count
+}
+
+var fixtureDatabases sync.Map
+
+func stableDatabase(t *testing.T, db *sql.DB) *storage.Database {
+	t.Helper()
+	if stable, ok := fixtureDatabases.Load(db); ok {
+		return stable.(*storage.Database)
+	}
+	var path string
+	if err := db.QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	stable, err := storage.OpenMain(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureDatabases.Store(db, stable)
+	t.Cleanup(func() {
+		fixtureDatabases.Delete(db)
+		_ = stable.Close()
+	})
+	return stable
 }

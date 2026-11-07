@@ -66,7 +66,7 @@ func TestPublicPageSettingSnapshotWhitelist(t *testing.T) {
 	}
 	db.Close()
 	work := filepath.Join(framingTempDir(t), "payloads")
-	if _, err = CreateSnapshotPayloads(ctx, source, work, []Category{Configuration}, time.Now); err != nil {
+	if _, err = CreateSnapshotPayloads(ctx, snapshotSources(t, source), source, work, []Category{Configuration}, time.Now); err != nil {
 		t.Fatal(err)
 	}
 	payload, err := openPayload(ctx, filepath.Join(work, "configuration.sqlite"))

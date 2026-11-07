@@ -193,7 +193,7 @@ func openAPITestHandler(t *testing.T) *handler {
 	if err := os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	db, err := storage.Open(context.Background(), filepath.Join(dir, "orbitbeacon.db"))
+	db, err := storage.OpenMain(context.Background(), filepath.Join(dir, "orbitbeacon.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

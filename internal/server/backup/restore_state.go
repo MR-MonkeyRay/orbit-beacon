@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
-	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/inbox"
 	"orbitbeacon/internal/server/secretbox"
@@ -333,7 +333,15 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 						if e != nil {
 							return invalidPayload("backup_tasks", id)
 						}
-						return inbox.Insert(ctx, tx, inbox.Event{Kind: "task", SourceID: id, Transition: "failed", Severity: "warning", CreatedAt: now, Details: details})
+						if inbox.ValidateDetails("task", details) != nil {
+							return invalidPayload("backup_tasks", id)
+						}
+						notificationID, e := uuid.UUID(rand.Reader)
+						if e != nil {
+							return e
+						}
+						_, e = tx.ExecContext(ctx, `INSERT INTO inbox_notifications(id,kind,source_id,transition,severity,created_at,details_json) VALUES(?,'task',?,'failed','warning',?,?) ON CONFLICT(kind,source_id,transition) DO NOTHING`, notificationID, id, timekey.Format(now), string(details))
+						return e
 					}
 				}
 			}
@@ -357,7 +365,15 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 	if err = validateRestoreDependencies(ctx, tx); err != nil {
 		return err
 	}
-	if err = audit.InsertDetails(audit.WithSystemActor(ctx, "restore"), tx, "backup.restore", archiveID, now, audit.Details{"archive_id": archiveID, "state": "succeeded"}); err != nil {
+	auditID, err := uuid.UUID(rand.Reader)
+	if err != nil {
+		return err
+	}
+	details, err := json.Marshal(map[string]any{"actor_kind": "restore", "archive_id": archiveID, "state": "succeeded"})
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO audit_events(id,actor_id,action,target_id,created_at,details) VALUES(?,NULL,'backup.restore',?,?,?)`, auditID, archiveID, timekey.Format(now), string(details)); err != nil {
 		return err
 	}
 	if err = mt.Commit(); err != nil {

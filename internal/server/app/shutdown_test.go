@@ -96,7 +96,7 @@ func shutdownApp(trace *shutdownTrace, stallHTTP bool) *App {
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		handler: traceHandler{trace}, httpServer: shutdownHTTP{trace, stallHTTP},
 		ingest: shutdownIngest{trace}, notifications: shutdownNotify{trace}, history: shutdownHistory{trace},
-		reader: shutdownCloser{trace, "reader_closed"}, db: shutdownCloser{trace, "writer_closed"}, lock: shutdownCloser{trace, "lock_released"},
+		db: shutdownCloser{trace, "database_closed"}, lock: shutdownCloser{trace, "lock_released"},
 	}
 }
 func TestShutdownPreservesOrderAndDeadlines(t *testing.T) {
@@ -111,7 +111,7 @@ func TestShutdownPreservesOrderAndDeadlines(t *testing.T) {
 			t.Fatalf("ingest preceded %s: %v", event, trace.events)
 		}
 	}
-	want := []string{"ingest_stopped", "notify_stopped", "history_flushed_and_closed", "reader_closed", "writer_closed", "lock_released"}
+	want := []string{"ingest_stopped", "notify_stopped", "history_flushed_and_closed", "database_closed", "lock_released"}
 	if got := trace.events[len(trace.events)-len(want):]; !slices.Equal(got, want) {
 		t.Fatalf("shutdown tail %v want %v", got, want)
 	}

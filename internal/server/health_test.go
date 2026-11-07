@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
@@ -20,7 +21,7 @@ func TestHealthEndpointsExposeLivenessAndReadinessWithoutAuthentication(t *testi
 	if err := os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	db, err := storage.Open(context.Background(), filepath.Join(dir, "orbitbeacon.db"))
+	db, err := storage.OpenMain(context.Background(), filepath.Join(dir, "orbitbeacon.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,5 +82,31 @@ func TestHealthEndpointsExposeLivenessAndReadinessWithoutAuthentication(t *testi
 	if response := request("/healthz/ready"); response.Code != http.StatusServiceUnavailable || response.Body.String() != `{"status":"not_ready"}
 ` {
 		t.Fatalf("readiness after shutdown=%d %q", response.Code, response.Body.String())
+	}
+}
+
+func TestUnavailableDatabasePreservesHealthAndMethodBoundaries(t *testing.T) {
+	f := newConsoleLiveFixture(t)
+	if err := f.h.nodes.Database().Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		method, path string
+		status       int
+	}{
+		{http.MethodGet, "/healthz/live", http.StatusOK},
+		{http.MethodGet, "/healthz/ready", http.StatusServiceUnavailable},
+		{http.MethodGet, "/api/v1/nodes", http.StatusServiceUnavailable},
+		{http.MethodPut, "/api/v1/nodes", http.StatusMethodNotAllowed},
+		{http.MethodGet, "/api/v1/missing", http.StatusNotFound},
+	} {
+		w := httptest.NewRecorder()
+		f.h.ServeHTTP(w, httptest.NewRequest(tc.method, "https://beacon.test"+tc.path, nil))
+		if w.Code != tc.status {
+			t.Fatalf("%s %s: %d %s", tc.method, tc.path, w.Code, w.Body)
+		}
+		if tc.path == "/api/v1/nodes" && tc.method == http.MethodGet && (w.Header().Get("Retry-After") != "1" || !strings.Contains(w.Body.String(), `"code":"storage_unavailable"`)) {
+			t.Fatalf("missing safe retry response: %v %s", w.Header(), w.Body)
+		}
 	}
 }

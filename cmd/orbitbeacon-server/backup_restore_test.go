@@ -28,11 +28,15 @@ func commandArchiveFixture(t *testing.T) (string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = auth.NewService(db, auth.Options{}).BootstrapAdministrator(ctx, "archive-admin", "restore-consumer-password"); err != nil {
+	stable := commandMainHandle(t, db)
+	if _, err = auth.NewService(stable, auth.Options{}).BootstrapAdministrator(ctx, "archive-admin", "restore-consumer-password"); err != nil {
 		t.Fatal(err)
 	}
-	payload, err := backup.CreateSnapshotPayloads(ctx, dir, filepath.Join(dir, "work"), []backup.Category{backup.Configuration}, time.Now)
+	payload, err := backup.CreateSnapshotPayloads(ctx, backup.SnapshotSources{Main: stable}, dir, filepath.Join(dir, "work"), []backup.Category{backup.Configuration}, time.Now)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err = stable.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.Close(); err != nil {
@@ -78,8 +82,12 @@ func TestRestoreCommandCreatesUsableLoginAndRequiresReplace(t *testing.T) {
 		db.Close()
 		t.Fatal("restored initialized administrator is not required to change password")
 	}
-	if _, err = auth.NewService(db, auth.Options{}).Login(context.Background(), "archive-admin", "restore-consumer-password", ""); err != nil {
+	restored := commandMainHandle(t, db)
+	if _, err = auth.NewService(restored, auth.Options{}).Login(context.Background(), "archive-admin", "restore-consumer-password", ""); err != nil {
 		db.Close()
+		t.Fatal(err)
+	}
+	if err = restored.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.Close(); err != nil {

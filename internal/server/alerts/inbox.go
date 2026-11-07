@@ -2,14 +2,14 @@ package alerts
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"time"
 
 	"orbitbeacon/internal/server/inbox"
+	"orbitbeacon/internal/server/storage"
 )
 
-func insertInbox(ctx context.Context, tx *sql.Tx, n Notification, created time.Time) error {
+func insertInbox(ctx context.Context, tx *storage.Tx, n Notification, created time.Time) error {
 	details, err := json.Marshal(struct {
 		RuleID     string     `json:"rule_id"`
 		RuleName   string     `json:"rule_name"`

@@ -2,37 +2,24 @@ package history
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"testing"
 	"time"
 )
 
-func TestFlushMetricsWithoutDatabaseIO(t *testing.T) {
-	// 不打开连接；已取消的上下文确保本测试不会执行 SQL 或文件操作。
-	db, err := sql.Open("sqlite", "unused-history-metrics")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	reader, err := sql.Open("sqlite", "unused-history-reader")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reader.Close()
-	db.SetMaxOpenConns(3)
-	reader.SetMaxOpenConns(4)
+func TestFlushMetricsWithCanceledWrite(t *testing.T) {
+	s, _ := testService(t, nil)
+	stopped(t, s)
 	calls, entries := 0, 0
-	s := &Service{store: &sqliteStore{db: db, reader: reader}, pending: make(map[bucketKey]map[string]aggregate), observeFlush: func(elapsed time.Duration, n int) {
+	s.observeFlush = func(elapsed time.Duration, n int) {
 		calls++
 		entries = n
 		if elapsed < 0 {
 			t.Error("negative flush duration")
 		}
-	}}
-	writerStats, readerStats, _ := s.DatabaseStats()
-	if writerStats.MaxOpenConnections != 3 || readerStats.MaxOpenConnections != 4 {
-		t.Fatalf("pool stats=%+v %+v", writerStats, readerStats)
+	}
+	if _, _, ok := s.DatabaseStats(); !ok {
+		t.Fatal("SQLite history hid database stats")
 	}
 	now := time.Now().UTC().Truncate(time.Minute)
 	if err := s.flush(context.Background(), now, false); err != nil {

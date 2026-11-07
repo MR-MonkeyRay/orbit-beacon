@@ -27,7 +27,7 @@ func TestResetTOTPCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	s := auth.NewService(db, auth.Options{})
+	s := auth.NewService(commandMainHandle(t, db), auth.Options{})
 	user, err := s.CreateUser(ctx, "rescue-admin", "rescue-password", false)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +89,9 @@ func enrolledDataDir(t *testing.T) (string, string) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	user, err := auth.NewService(db, auth.Options{}).CreateUser(ctx, "journal-admin", "journal-password", false)
+	stable := commandMainHandle(t, db)
+	defer stable.Close()
+	user, err := auth.NewService(stable, auth.Options{}).CreateUser(ctx, "journal-admin", "journal-password", false)
 	if err != nil {
 		t.Fatal(err)
 	}

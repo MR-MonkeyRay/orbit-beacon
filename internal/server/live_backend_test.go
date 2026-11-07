@@ -228,9 +228,7 @@ func TestPublicLiveOrdinaryChangesAreThrottledAndQuietPagesAreNotRepeated(t *tes
 	defer func() { cancel(); waitStreamDone(t, done) }()
 	_ = nextFlush(t, w)
 	changed := time.Now()
-	f.store.mu.Lock()
-	f.store.name = "New public text"
-	f.store.mu.Unlock()
+	setStreamPublicSettings(t, f.db, true, "New public text")
 	seconds.Store(10)
 	select {
 	case frame := <-w.flushed:
@@ -352,12 +350,11 @@ func TestPublicLiveWebSocketSharesCapacityAndShutdownRegistry(t *testing.T) {
 
 func TestPublicLiveShutdownWaitsForQueryExitBeforeIngest(t *testing.T) {
 	f := newStreamFixture(t, false)
+	probe := newIngestLifecycleProbe(t, f.h.ingest)
 	queryStarted := make(chan struct{}, 1)
-	queryCanceled := make(chan struct{}, 1)
 	releaseQuery, release := liveTestGate(t)
 	f.store.onQuery = func() { queryStarted <- struct{}{} }
 	f.store.queryWait = make(chan struct{})
-	f.store.queryCanceled = queryCanceled
 	f.store.queryExitGate = releaseQuery
 	w := newStreamRecorder()
 	_, done := startPublicStream(t, f.h, w)
@@ -366,12 +363,13 @@ func TestPublicLiveShutdownWaitsForQueryExitBeforeIngest(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("query did not start")
 	}
+	stream := f.h.streams.snapshot(false)[0]
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	shutdown := make(chan error, 1)
 	go func() { shutdown <- f.h.Shutdown(ctx) }()
 	select {
-	case <-queryCanceled:
+	case <-stream.ctx.Done():
 	case <-time.After(time.Second):
 		t.Fatal("shutdown did not cancel the query")
 	}
@@ -380,7 +378,7 @@ func TestPublicLiveShutdownWaitsForQueryExitBeforeIngest(t *testing.T) {
 		t.Fatalf("shutdown returned before query exit: %v", err)
 	default:
 	}
-	err := probeIngestLifecycle(t, f.h.ingest)
+	err := probe()
 	if !errors.Is(err, ingest.ErrProtocolUnsupported) {
 		t.Fatalf("ingest drained while a public query remained active: %v", err)
 	}
@@ -394,7 +392,7 @@ func TestPublicLiveShutdownWaitsForQueryExitBeforeIngest(t *testing.T) {
 		t.Fatal("shutdown did not finish after query exited")
 	}
 	waitStreamDone(t, done)
-	err = probeIngestLifecycle(t, f.h.ingest)
+	err = probe()
 	if !errors.Is(err, ingest.ErrServiceClosed) {
 		t.Fatalf("ingest did not drain after streams: %v", err)
 	}
@@ -402,6 +400,7 @@ func TestPublicLiveShutdownWaitsForQueryExitBeforeIngest(t *testing.T) {
 
 func TestPublicLiveFailedDrainDoesNotStartIngestShutdown(t *testing.T) {
 	f := newStreamFixture(t, false)
+	probe := newIngestLifecycleProbe(t, f.h.ingest)
 	queryStarted := make(chan struct{}, 1)
 	releaseQuery, release := liveTestGate(t)
 	f.store.onQuery = func() { queryStarted <- struct{}{} }
@@ -419,7 +418,7 @@ func TestPublicLiveFailedDrainDoesNotStartIngestShutdown(t *testing.T) {
 	if err := f.h.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("shutdown=%v", err)
 	}
-	err := probeIngestLifecycle(t, f.h.ingest)
+	err := probe()
 	if !errors.Is(err, ingest.ErrProtocolUnsupported) {
 		t.Fatalf("deadline started ingestion drain before stream exit: %v", err)
 	}
@@ -561,6 +560,7 @@ func TestPublicLiveWebSocketStopsBeforePayloadOnThreeVisibilityRaces(t *testing.
 
 func TestPublicLiveShutdownWaitsForBlockedProjectionBeforeIngest(t *testing.T) {
 	f := newStreamFixture(t, false)
+	probe := newIngestLifecycleProbe(t, f.h.ingest)
 	base := f.h.now()
 	projectionEntered := make(chan struct{}, 1)
 	releaseProjection, release := liveTestGate(t)
@@ -588,7 +588,7 @@ func TestPublicLiveShutdownWaitsForBlockedProjectionBeforeIngest(t *testing.T) {
 		t.Fatalf("shutdown passed a blocked projection: %v", err)
 	case <-time.After(20 * time.Millisecond):
 	}
-	err := probeIngestLifecycle(t, f.h.ingest)
+	err := probe()
 	if !errors.Is(err, ingest.ErrProtocolUnsupported) {
 		t.Fatalf("ingest drained while projection remained active: %v", err)
 	}
@@ -602,7 +602,7 @@ func TestPublicLiveShutdownWaitsForBlockedProjectionBeforeIngest(t *testing.T) {
 		t.Fatal("projection exit did not release shutdown")
 	}
 	waitStreamDone(t, done)
-	err = probeIngestLifecycle(t, f.h.ingest)
+	err = probe()
 	if !errors.Is(err, ingest.ErrServiceClosed) {
 		t.Fatalf("ingest not drained after projection exit: %v", err)
 	}
@@ -678,7 +678,7 @@ func TestPublicLiveShutdownClosesActualHijackedBlockedWebSocketWriter(t *testing
 
 func TestPublicLiveLifetimeInterruptsAnActiveSSEWrite(t *testing.T) {
 	f := newStreamFixture(t, false)
-	f.h.streamLifetime = 25 * time.Millisecond
+	f.h.streamLifetime = 500 * time.Millisecond
 	w := &blockedLiveWriter{streamRecorder: newStreamRecorder(), entered: make(chan struct{}), unblock: make(chan struct{})}
 	done := make(chan struct{})
 	go func() {
@@ -724,39 +724,40 @@ func TestPublicLiveRegistryDoesNotHoldAdmissionLockDuringInterrupt(t *testing.T)
 	}
 }
 
-func TestPublicLiveSnapshotAndQueryCadenceRespectsConfiguredIntervals(t *testing.T) {
-	for _, seconds := range []int{2, 10, 30, 60} {
-		f := newStreamFixture(t, false)
-		f.h.webUpdateIntervalSeconds = seconds
-		if f.h.liveSeconds() != seconds {
-			t.Fatalf("wire interval=%d", f.h.liveSeconds())
+func TestPublicLiveSnapshotCadenceDelaysOrdinaryUpdates(t *testing.T) {
+	f := newStreamFixture(t, true)
+	f.h.webUpdateIntervalSeconds = 2
+	f.h.streamInterval = 0
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	stream := reserveLiveTestStream(t, f.h, "cadence-test")
+	var first time.Time
+	var snapshots int
+	f.h.runPublicLive(ctx, ctx, stream, 50, 0, func(_ context.Context, body []byte) error {
+		var frame struct {
+			Type string `json:"type"`
 		}
-		f.h.streamInterval = 0
-		if f.h.liveInterval() != time.Duration(seconds)*time.Second {
-			t.Fatalf("projection interval=%v want=%ds", f.h.liveInterval(), seconds)
+		if err := json.Unmarshal(body, &frame); err != nil {
+			t.Fatal(err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
-		stream := reserveLiveTestStream(t, f.h, "cadence-test")
-		var frames int
-		f.h.runPublicLive(ctx, ctx, stream, 50, 0, func(_ context.Context, body []byte) error {
-			var frame struct {
-				Type string `json:"type"`
-			}
-			if err := json.Unmarshal(body, &frame); err != nil {
-				t.Fatal(err)
-			}
-			if frame.Type == "snapshot" {
-				frames++
-			}
+		if frame.Type != "snapshot" {
 			return nil
-		})
-		cancel()
-		f.store.mu.Lock()
-		queries := f.store.queries
-		f.store.mu.Unlock()
-		if frames != 1 || queries != 1 {
-			t.Fatalf("configured=%ds frames=%d queries=%d before interval elapsed", seconds, frames, queries)
 		}
+		snapshots++
+		if snapshots == 1 {
+			first = time.Now()
+			setStreamPublicSettings(t, f.db, true, "Current public label")
+			f.h.nodes.InvalidatePublic()
+			return nil
+		}
+		if time.Since(first) < 2*time.Second || !strings.Contains(string(body), "Current public label") {
+			t.Fatalf("ordinary update escaped cadence: elapsed=%v frame=%s", time.Since(first), body)
+		}
+		cancel()
+		return nil
+	})
+	if snapshots != 2 {
+		t.Fatalf("snapshot count=%d", snapshots)
 	}
 }
 
@@ -800,9 +801,7 @@ func TestPublicLiveHTTPRetriesOneVisibilityRaceAndEmitsOnlyCurrentData(t *testin
 	var once sync.Once
 	f.store.onQuery = func() {
 		once.Do(func() {
-			f.store.mu.Lock()
-			f.store.visible = false
-			f.store.mu.Unlock()
+			setStreamPublicSettings(t, f.db, false, "Public node")
 			f.h.nodes.InvalidatePublicSafety()
 		})
 	}

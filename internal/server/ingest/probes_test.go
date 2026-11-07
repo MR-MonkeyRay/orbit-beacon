@@ -85,7 +85,7 @@ func TestProbeCheckedAtDedupeCadenceAndRestart(t *testing.T) {
 	}
 
 	// 新服务从数据库加载去重水位线，避免对重发结果重复计数。
-	f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }, PersistInterval: 30 * time.Second})
+	f.service = NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }, PersistInterval: 30 * time.Second})
 	f.report.Seq++
 	f.report.ProbeResults = []v1.ProbeResult{probeResult(target, first.Add(2*time.Second), true)}
 	if _, err := probeAccept(t, f); err != nil {
@@ -123,7 +123,7 @@ func TestProbeDrainPersistsPendingAndOwnsCallerPointers(t *testing.T) {
 	if err := f.db.QueryRow(`SELECT tls_expires_at FROM probe_latest WHERE node_id=? AND target=?`, f.id, target).Scan(&gotExpiry); err != nil || gotExpiry != timekey.Format(wantExpiry) {
 		t.Fatalf("expiry=%s err=%v", gotExpiry, err)
 	}
-	observed, err := nodes.NewService(f.db, nodes.Options{}).ObservedProbes(t.Context(), f.id, f.now.Add(-24*time.Hour))
+	observed, err := nodes.NewService(f.nodes.Database(), nodes.Options{}).ObservedProbes(t.Context(), f.id, f.now.Add(-24*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestProbeDrainPersistsPendingAndOwnsCallerPointers(t *testing.T) {
 		t.Fatal("stored probe not returned")
 	}
 
-	f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }, PersistInterval: 30 * time.Second})
+	f.service = NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }, PersistInterval: 30 * time.Second})
 	f.now = f.now.Add(time.Minute)
 	f.report.Seq++
 	failed := probeResult(target, f.now, false)
@@ -321,7 +321,7 @@ func TestProbeOverlappingWritersRebasePartialQueue(t *testing.T) {
 	}
 
 	// 第二个服务共享同一持久化进程身份并提交 t1。
-	other := NewService(f.db, Options{Now: func() time.Time { return f.now }, PersistInterval: 30 * time.Second})
+	other := NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }, PersistInterval: 30 * time.Second})
 	report := f.report
 	report.Seq++
 	report.ProbeResults = []v1.ProbeResult{probeResult(target, t1, false)}

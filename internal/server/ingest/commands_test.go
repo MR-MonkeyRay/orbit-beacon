@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"orbitbeacon/internal/server/storage"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 
 func createTestCommand(t *testing.T, f *coalesceFixture, kind string) commands.Record {
 	t.Helper()
-	r, err := commands.New(f.db, func() time.Time { return f.now }).Create(t.Context(), f.id, "operator", commands.CreateRequest{Kind: kind, Confirm: "coalesce"})
+	r, err := commands.New(f.nodes.Database(), func() time.Time { return f.now }).Create(t.Context(), f.id, "operator", commands.CreateRequest{Kind: kind, Confirm: "coalesce"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +112,7 @@ func TestCommandsRevocationDisableAndReenrollmentCancel(t *testing.T) {
 				t.Fatal(err)
 			}
 			if mutation == "reenroll" || mutation == "rotation" {
-				es := enrollment.NewService(f.db, enrollment.Options{})
+				es := enrollment.NewService(f.nodes.Database(), enrollment.Options{})
 				ticket, err := es.CreateSingle(t.Context(), f.id)
 				if err != nil {
 					t.Fatal(err)
@@ -184,11 +185,16 @@ func TestCommandResultsCannotRewriteOtherNodeOrEpoch(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, change := range []string{fmt.Sprintf("node_id='%s'", other.ID), "credential_epoch=credential_epoch+1"} {
-		tx, err := f.db.BeginTx(t.Context(), nil)
+		lease, err := f.nodes.Database().Acquire(t.Context(), storage.Writer)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tx.Exec(`UPDATE agent_commands SET `+change+` WHERE id=?`, c.ID); err != nil {
+		defer lease.Close()
+		tx, err := lease.BeginWrite(lease.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(lease.Context(), `UPDATE agent_commands SET `+change+` WHERE id=?`, c.ID); err != nil {
 			tx.Rollback()
 			t.Fatal(err)
 		}
@@ -199,7 +205,7 @@ func TestCommandResultsCannotRewriteOtherNodeOrEpoch(t *testing.T) {
 			t.Fatal(err)
 		}
 		var state string
-		if err := tx.QueryRow(`SELECT state FROM agent_commands WHERE id=?`, c.ID).Scan(&state); err != nil {
+		if err := tx.QueryRowContext(lease.Context(), `SELECT state FROM agent_commands WHERE id=?`, c.ID).Scan(&state); err != nil {
 			tx.Rollback()
 			t.Fatal(err)
 		}
@@ -371,7 +377,7 @@ func TestStoppedOnlyDescribesTheRunThatReceivedTheCommand(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.now = f.now.Add(time.Second)
-		restarted := NewService(f.db, Options{Now: func() time.Time { return f.now }})
+		restarted := NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }})
 		if _, err := acceptReport(t.Context(), restarted, coalesceToken, f.report); err != nil {
 			t.Fatal(err)
 		}

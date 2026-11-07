@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"orbitbeacon/internal/server/management"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 )
@@ -15,6 +16,12 @@ type DeliveryPage struct {
 }
 
 func (s *Service) Deliveries(ctx context.Context, limit int, before string) (DeliveryPage, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return DeliveryPage{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	page := DeliveryPage{Deliveries: make([]Delivery, 0)}
 	if limit < 1 || limit > 100 {
 		return page, validation.Invalid("limit", "must be between 1 and 100")
@@ -31,7 +38,7 @@ func (s *Service) Deliveries(ctx context.Context, limit int, before string) (Del
 	}
 	query += " ORDER BY created_at DESC,id DESC LIMIT ?"
 	args = append(args, limit+1)
-	rows, e := s.db.QueryContext(ctx, query, args...)
+	rows, e := lease.QueryContext(ctx, query, args...)
 	if e != nil {
 		return page, e
 	}

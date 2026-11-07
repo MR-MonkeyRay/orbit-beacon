@@ -140,7 +140,7 @@ func TestUnreadableDeliveryBackoffAndKeyRestoration(t *testing.T) {
 		t.Fatalf("unbounded/missing log: %s", logs.String())
 	}
 	// 用恢复后的密钥和已持久化的待处理任务重启。
-	restored := New(f.db, original, f.s.opts)
+	restored := New(mainHandle(t, f.db), original, f.s.opts)
 	restored.process(context.Background())
 	if st, attempts, _, _ := state(t, f.db); st != "sent" || attempts != 3 || calls.Load() != 1 {
 		t.Fatalf("did not resume: %s %d", st, attempts)

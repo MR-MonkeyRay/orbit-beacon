@@ -135,7 +135,7 @@ func TestLiveMetricsNullWhenOfflineDisabledRevokedOrRestarted(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "restart":
-				f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }})
+				f.service = NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }})
 			}
 			assertLiveMetrics(t, liveFleetNode(t, f), nil, nil)
 		})

@@ -41,7 +41,7 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(func() { db.Close() })
 	f := &fixture{db: db, now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)}
 	box, _ := secretbox.New(bytes.Repeat([]byte{7}, 32), "orbitbeacon notification channel v1")
-	f.s = New(db, box, Options{Now: func() time.Time { return f.now }, AllowPrivateNetworks: true, AllowInsecureWebhooks: true})
+	f.s = New(mainHandle(t, db), box, Options{Now: func() time.Time { return f.now }, AllowPrivateNetworks: true, AllowInsecureWebhooks: true})
 	var p Patch
 	json.Unmarshal([]byte(`{"name":"webhook","kind":"webhook","enabled":true,"config":{"url":"https://example.com/hook"},"secret":"never-expose-this-secret"}`), &p)
 	f.channel, e = f.s.Save(context.Background(), "", p)
@@ -50,7 +50,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	var rp alerts.Patch
 	json.Unmarshal([]byte(`{"name":"CPU","enabled":true,"scope_kind":"all","metric":"cpu_percent","comparator":">","threshold":80,"for_seconds":0,"severity":"warning","channel_ids":["`+f.channel.ID+`"]}`), &rp)
-	f.rule, e = alerts.NewService(db, func() time.Time { return f.now }).Save(context.Background(), "", rp)
+	f.rule, e = alerts.NewService(mainHandle(t, db), func() time.Time { return f.now }).Save(context.Background(), "", rp)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -58,7 +58,12 @@ func newFixture(t *testing.T) *fixture {
 }
 func (f *fixture) enqueue(t *testing.T, n alerts.Notification) {
 	t.Helper()
-	tx, err := f.db.BeginTx(context.Background(), nil)
+	lease, err := mainHandle(t, f.db).Acquire(context.Background(), storage.Writer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	tx, err := lease.BeginWrite(lease.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +131,7 @@ func TestDurableRetryBackoffAndRestart(t *testing.T) {
 	f.db.Exec("DELETE FROM notification_deliveries")
 	f.enqueue(t, f.note("restart"))
 	box, _ := secretbox.New(bytes.Repeat([]byte{7}, 32), "orbitbeacon notification channel v1")
-	restarted := New(f.db, box, f.s.opts)
+	restarted := New(mainHandle(t, f.db), box, f.s.opts)
 	status = 200
 	restarted.process(context.Background())
 	if s, n, _, _ := state(t, f.db); s != "sent" || n != 1 {
@@ -164,7 +169,7 @@ func TestRateLimitCoalescingAndRetention(t *testing.T) {
 		t.Fatalf("rate=%d", calls.Load())
 	}
 	// 重启必须保留已耗尽的速率窗口。
-	restarted := New(f.db, f.s.box, f.s.opts)
+	restarted := New(mainHandle(t, f.db), f.s.box, f.s.opts)
 	restarted.process(context.Background())
 	if calls.Load() != 20 {
 		t.Fatal("restart bypassed rate limit")
@@ -210,7 +215,7 @@ func TestShutdownCancelsInflightAndRejectsEnqueue(t *testing.T) {
 	if time.Since(started) > time.Second {
 		t.Fatal("shutdown budget exceeded")
 	}
-	tx, err := f.db.BeginTx(context.Background(), nil)
+	tx, err := beginMainWrite(t, f.db, context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +343,7 @@ func TestFloodCoalescesAlreadyAttemptedRetries(t *testing.T) {
 }
 func TestEnqueueUsesCallerTransactionAndCancellation(t *testing.T) {
 	f := newFixture(t)
-	tx, err := f.db.BeginTx(context.Background(), nil)
+	tx, err := beginMainWrite(t, f.db, context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +399,7 @@ func TestWorkerConcurrencyBound(t *testing.T) {
 		ids = append(ids, c.ID)
 	}
 	raw, _ := json.Marshal(ids)
-	_, e := alerts.NewService(f.db, nil).Save(context.Background(), f.rule.ID, alerts.Patch{ChannelIDs: raw})
+	_, e := alerts.NewService(mainHandle(t, f.db), nil).Save(context.Background(), f.rule.ID, alerts.Patch{ChannelIDs: raw})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -476,7 +481,7 @@ func TestChannelKindValidationAndInsecureOptIn(t *testing.T) {
 		}
 	}
 	for _, opts := range []Options{{}, {AllowPrivateNetworks: true}, {AllowInsecureWebhooks: true}, {AllowPrivateNetworks: true, AllowInsecureWebhooks: true}} {
-		s := New(f.db, f.s.box, opts)
+		s := New(mainHandle(t, f.db), f.s.box, opts)
 		var p Patch
 		json.Unmarshal([]byte(`{"name":"local","kind":"webhook","enabled":true,"config":{"url":"http://127.0.0.1:8080"}}`), &p)
 		_, e := s.Save(context.Background(), "", p)

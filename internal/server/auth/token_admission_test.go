@@ -2,9 +2,11 @@ package auth
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
+	"orbitbeacon/internal/server/storage"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -167,7 +169,11 @@ func TestAPITokenPruningPreservesDepletedBuckets(t *testing.T) {
 // A cancelled query must return while rateMu is held elsewhere: the lock also guards
 // logins, so holding it across the database read would stall them behind a slow query.
 func TestAuthenticateAPITokenQueriesOutsideRateLock(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.OpenMain(t.Context(), filepath.Join(dir, "tokens.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

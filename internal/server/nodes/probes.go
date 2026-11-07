@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -32,7 +33,13 @@ type ProbeHistoryPoint struct {
 
 func (s *Service) ProbeHistory(ctx context.Context, id, target string, window time.Time) ([]ProbeHistoryPoint, error) {
 	// 一次读取快照把节点是否存在、当前身份选中的目标和历史绑定在一起。
-	rows, err := s.db.QueryContext(ctx, `
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, err := lease.QueryContext(ctx, `
 		SELECT nodes.id, hourly.hour, hourly.checks, hourly.failures,
 		       hourly.latency_sum_ms, hourly.latency_max_ms
 		FROM nodes
@@ -83,7 +90,13 @@ func (s *Service) ProbeHistory(ctx context.Context, id, target string, window ti
 func (s *Service) ObservedProbes(ctx context.Context, id string, window time.Time) ([]ObservedProbe, error) {
 	// 一次读取快照把目标列表和观测结果绑定到同一凭据。
 	// 轮换不会把旧目标变成新身份的探测项。
-	rows, err := s.db.QueryContext(ctx, `
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, err := lease.QueryContext(ctx, `
 		SELECT nodes.id, selected.value, latest.ok, latest.latency_ms, latest.error,
 		       latest.status_code, latest.checked_at, latest.tls_expires_at,
 		       coalesce(sum(hourly.checks),0), coalesce(sum(hourly.failures),0)
@@ -157,19 +170,41 @@ func (s *Service) CleanupProbeHistory(ctx context.Context, cutoff time.Time, lim
 	if s == nil || s.db == nil || limit < 1 {
 		return 0, errors.New("probe retention is unavailable")
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM probe_hourly
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return 0, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `DELETE FROM probe_hourly
 WHERE (node_id,target,hour) IN (
  SELECT node_id,target,hour FROM probe_hourly WHERE hour < ? ORDER BY hour LIMIT ?
 )`, timekey.Format(cutoff), limit)
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return count, tx.Commit()
 }
 
 func (s *Service) Ping(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return errors.New("node database is unavailable")
 	}
-	return s.db.PingContext(ctx)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	var present int
+	return lease.QueryRowContext(ctx, "SELECT 1").Scan(&present)
 }

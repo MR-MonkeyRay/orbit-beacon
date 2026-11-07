@@ -10,11 +10,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"orbitbeacon/internal/server/storage"
 )
 
 const (
@@ -32,19 +33,12 @@ type victoriaMetricsStore struct {
 
 var _ Store = (*victoriaMetricsStore)(nil)
 
-// OpenVictoriaMetrics 保留本地历史文件供备份使用，启动时不访问远端。
-func OpenVictoriaMetrics(ctx context.Context, dataDir, base, token string, nodes *sql.DB, opts Options) (*Service, error) {
+// OpenVictoriaMetrics 启动时不访问远端，也不创建冒充历史源的本地空库。
+func OpenVictoriaMetrics(ctx context.Context, dataDir, base, token string, nodes *storage.Database, opts Options) (*Service, error) {
 	return openVictoriaMetrics(ctx, dataDir, nodes, opts, newVictoriaMetricsStore(base, token, nil, opts.Now))
 }
 
-func openVictoriaMetrics(ctx context.Context, dataDir string, nodes *sql.DB, opts Options, store *victoriaMetricsStore) (*Service, error) {
-	db, err := OpenDatabase(ctx, filepath.Join(dataDir, "metrics.db"))
-	if err != nil {
-		return nil, err
-	}
-	if err := db.Close(); err != nil {
-		return nil, err
-	}
+func openVictoriaMetrics(ctx context.Context, dataDir string, nodes *storage.Database, opts Options, store *victoriaMetricsStore) (*Service, error) {
 	return newService(store, nodes, opts), nil
 }
 

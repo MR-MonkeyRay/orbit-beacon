@@ -10,6 +10,7 @@ import (
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -158,7 +159,7 @@ func (state *nodeState) trafficAcks(entries []v1.Traffic, now time.Time) []v1.Tr
 	return acks
 }
 
-func (state *nodeState) persistTraffic(ctx context.Context, tx *sql.Tx, nodeID string, now time.Time) (map[trafficKey]trafficCounters, error) {
+func (state *nodeState) persistTraffic(ctx context.Context, tx *storage.Tx, nodeID string, now time.Time) (map[trafficKey]trafficCounters, error) {
 	// 调用方须按本事务内读取的已认证节点身份校验缓冲区，清除旧身份的数据。
 	// acceptGate 保证 I/O 期间缓冲区稳定。
 	state.mu.Lock()
@@ -186,7 +187,7 @@ func copyTrafficPending(pending map[trafficKey]trafficCounters) map[trafficKey]t
 	return owned
 }
 
-func persistTrafficPending(ctx context.Context, tx *sql.Tx, nodeID string, pending map[trafficKey]trafficCounters, now time.Time) (map[trafficKey]trafficCounters, error) {
+func persistTrafficPending(ctx context.Context, tx *storage.Tx, nodeID string, pending map[trafficKey]trafficCounters, now time.Time) (map[trafficKey]trafficCounters, error) {
 	committed := make(map[trafficKey]trafficCounters, len(pending))
 	for key, value := range pending {
 		period, _ := timekey.Parse(key.period)
@@ -270,7 +271,13 @@ func (s *Service) drainNodeTraffic(ctx context.Context, id string, state *nodeSt
 	if !pending {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}

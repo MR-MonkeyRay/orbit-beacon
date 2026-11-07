@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/server/management"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
 )
@@ -58,13 +59,13 @@ type Summary struct {
 	UnreadCount int64   `json:"unread_count"`
 	LatestID    *string `json:"latest_id"`
 }
-type Service struct{ db *sql.DB }
+type Service struct{ db *storage.Database }
 
-func New(db *sql.DB) *Service { return &Service{db: db} }
+func New(db *storage.Database) *Service { return &Service{db: db} }
 
 // Insert 在来源操作的事务内插入通知。同一来源的状态转换重复处理时保持幂等；
 // 其他约束冲突仍会中止调用方的事务。
-func Insert(ctx context.Context, tx *sql.Tx, event Event) error {
+func Insert(ctx context.Context, tx *storage.Tx, event Event) error {
 	if (event.Kind != "task" && event.Kind != "alert") || event.SourceID == "" || event.Transition == "" || event.CreatedAt.IsZero() {
 		return ErrInvalidInput
 	}
@@ -107,7 +108,7 @@ func scan(row scanner) (Notification, error) {
 	return n, err
 }
 
-func latest(ctx context.Context, tx *sql.Tx) (*string, error) {
+func latest(ctx context.Context, tx *storage.Tx) (*string, error) {
 	var id string
 	err := tx.QueryRowContext(ctx, `SELECT n.id FROM inbox_notifications n ORDER BY n.sequence DESC LIMIT 1`).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -120,6 +121,12 @@ func latest(ctx context.Context, tx *sql.Tx) (*string, error) {
 }
 
 func (s *Service) List(ctx context.Context, who Identity, filter Filter) (Page, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Page{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if who.UserID == "" || filter.Limit < 1 || filter.Limit > 100 {
 		return Page{}, ErrInvalidInput
 	}
@@ -141,7 +148,7 @@ func (s *Service) List(ctx context.Context, who Identity, filter Filter) (Page, 
 	}
 	query += ` ORDER BY n.created_at DESC,n.id DESC LIMIT ?`
 	args = append(args, filter.Limit+1)
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := lease.BeginRead(ctx)
 	if err != nil {
 		return Page{}, err
 	}
@@ -180,10 +187,16 @@ func (s *Service) List(ctx context.Context, who Identity, filter Filter) (Page, 
 }
 
 func (s *Service) Summary(ctx context.Context, who Identity) (Summary, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Summary{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if who.UserID == "" {
 		return Summary{}, ErrInvalidInput
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := lease.BeginRead(ctx)
 	if err != nil {
 		return Summary{}, err
 	}
@@ -204,17 +217,29 @@ func (s *Service) Summary(ctx context.Context, who Identity) (Summary, error) {
 }
 
 func (s *Service) Detail(ctx context.Context, who Identity, id string) (Notification, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Notification{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if who.UserID == "" {
 		return Notification{}, ErrInvalidInput
 	}
-	return scan(s.db.QueryRowContext(ctx, selectNotification+` WHERE n.id=?`, who.UserID, id))
+	return scan(lease.QueryRowContext(ctx, selectNotification+` WHERE n.id=?`, who.UserID, id))
 }
 
 func (s *Service) MarkRead(ctx context.Context, who Identity, id string, now time.Time) error {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if who.UserID == "" {
 		return ErrInvalidInput
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -232,10 +257,16 @@ func (s *Service) MarkRead(ctx context.Context, who Identity, id string, now tim
 }
 
 func (s *Service) MarkAllRead(ctx context.Context, who Identity, through string, now time.Time) error {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if who.UserID == "" {
 		return ErrInvalidInput
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -255,12 +286,26 @@ func (s *Service) MarkAllRead(ctx context.Context, who Identity, through string,
 
 // Cleanup 删除有界批次；保留期限由调用方控制。
 func (s *Service) Cleanup(ctx context.Context, before time.Time, limit int) (int64, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return 0, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if limit < 1 || limit > 500 {
 		return 0, ErrInvalidInput
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM inbox_notifications WHERE id IN (SELECT id FROM inbox_notifications WHERE created_at<? ORDER BY created_at,id LIMIT ?)`, timekey.Format(before), limit)
+	tx, txErr := lease.BeginWrite(ctx)
+	if txErr != nil {
+		return 0, txErr
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `DELETE FROM inbox_notifications WHERE id IN (SELECT id FROM inbox_notifications WHERE created_at<? ORDER BY created_at,id LIMIT ?)`, timekey.Format(before), limit)
 	if err != nil {
 		return 0, err
+	}
+	if commitErr := tx.Commit(); commitErr != nil {
+		return 0, commitErr
 	}
 	return result.RowsAffected()
 }

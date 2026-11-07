@@ -297,7 +297,7 @@ func canonicalUUID(value string) bool {
 }
 
 func validateManifest(m Manifest) error {
-	if m.Format != "orbitbeacon-backup" || m.Version != 1 || m.SchemaVersion != storage.CurrentSchemaVersion || m.HistorySchemaVersion != 1 {
+	if m.Format != "orbitbeacon-backup" || m.Version != 1 || m.SchemaVersion != storage.CurrentSchemaVersion || m.HistorySchemaVersion != storage.HistorySchemaVersion {
 		return invalidArchive(nil)
 	}
 	if !canonicalUUID(m.ArchiveID) {

@@ -36,7 +36,7 @@ func TestEvaluatorRealLatestFencesIdentityMutations(t *testing.T) {
 			token := strings.Repeat("A", 43)
 			credential := sha256.Sum256([]byte(token))
 			f.exec(t, "UPDATE nodes SET token_hash=? WHERE id=?", credential[:], f.node)
-			real := ingest.NewService(f.db, ingest.Options{Now: func() time.Time { return f.now }})
+			real := ingest.NewService(mainHandle(t, f.db), ingest.Options{Now: func() time.Time { return f.now }})
 			report := f.latest.report.Report
 			report.ProtocolVersion, report.RunGeneration, report.Seq = 1, 1, 1
 			report.SessionID, report.SampledAt = "one", f.now
@@ -71,7 +71,7 @@ func TestEvaluatorRealLatestFencesIdentityMutations(t *testing.T) {
 			reader := &identityFenceReader{LatestReader: real}
 			notifier := &recordingNotifier{}
 			f.e = NewEvaluator(f.s, reader, EvaluatorOptions{Notifier: notifier})
-			ns := nodes.NewService(f.db, nodes.Options{Now: func() time.Time { return f.now }})
+			ns := nodes.NewService(mainHandle(t, f.db), nodes.Options{Now: func() time.Time { return f.now }})
 			switch mutation {
 			case "revoke":
 				if err := ns.RevokeCredential(ctx, f.node); err != nil {
@@ -91,7 +91,7 @@ func TestEvaluatorRealLatestFencesIdentityMutations(t *testing.T) {
 				if err := ns.RevokeCredential(ctx, f.node); err != nil {
 					t.Fatal(err)
 				}
-				es := enrollment.NewService(f.db, enrollment.Options{Now: func() time.Time { return f.now }})
+				es := enrollment.NewService(mainHandle(t, f.db), enrollment.Options{Now: func() time.Time { return f.now }})
 				ticket, err := es.CreateSingle(ctx, f.node)
 				if err != nil {
 					t.Fatal(err)
@@ -101,7 +101,7 @@ func TestEvaluatorRealLatestFencesIdentityMutations(t *testing.T) {
 				}
 				// 新实例推进持久化身份，原实例的 CPU=90 仍留在内存。
 				report.Metrics.CPUPercent = ptr(10.0)
-				accept(ingest.NewService(f.db, ingest.Options{Now: func() time.Time { return f.now }}), token)
+				accept(ingest.NewService(mainHandle(t, f.db), ingest.Options{Now: func() time.Time { return f.now }}), token)
 			case "delete-recreate-same-id":
 				if err := ns.Delete(ctx, f.node, true); err != nil {
 					t.Fatal(err)

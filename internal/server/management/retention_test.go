@@ -27,7 +27,7 @@ func TestCleanupAuditEventsIsBoundedAndRetainsRecentEvents(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	removed, err := NewService(db).CleanupAuditEvents(context.Background(), time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC), 1)
+	removed, err := NewService(mainHandle(t, db)).CleanupAuditEvents(context.Background(), time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestCleanupAuditEventsIsBoundedAndRetainsRecentEvents(t *testing.T) {
 	if recentCount != 1 {
 		t.Fatal("recent audit event was deleted")
 	}
-	if _, err := NewService(db).CleanupAuditEvents(context.Background(), time.Now(), 0); err != ErrInvalidInput {
+	if _, err := NewService(mainHandle(t, db)).CleanupAuditEvents(context.Background(), time.Now(), 0); err != ErrInvalidInput {
 		t.Fatalf("limit 0 error=%v, want ErrInvalidInput", err)
 	}
 }

@@ -20,6 +20,11 @@ func TestCleanupExpiredTicketsIsBoundedAndCascadesReceipts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	stable, err := storage.OpenMain(context.Background(), filepath.Join(dir, "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stable.Close()
 	if _, err := db.Exec(`INSERT INTO nodes(id, name, created_at) VALUES ('node', 'node', ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +38,7 @@ func TestCleanupExpiredTicketsIsBoundedAndCascadesReceipts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	removed, err := NewService(db, Options{}).CleanupExpiredTickets(context.Background(), time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC), 1)
+	removed, err := NewService(stable, Options{}).CleanupExpiredTickets(context.Background(), time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +61,7 @@ func TestCleanupExpiredTicketsIsBoundedAndCascadesReceipts(t *testing.T) {
 	if oldTickets != 1 || oldReceipts != 1 || recentTickets != 1 || recentReceipts != 1 {
 		t.Fatalf("bounded cleanup state: old tickets=%d old receipts=%d recent tickets=%d recent receipts=%d", oldTickets, oldReceipts, recentTickets, recentReceipts)
 	}
-	if _, err := NewService(db, Options{}).CleanupExpiredTickets(context.Background(), time.Now(), 0); err != ErrInvalidInput {
+	if _, err := NewService(stable, Options{}).CleanupExpiredTickets(context.Background(), time.Now(), 0); err != ErrInvalidInput {
 		t.Fatalf("limit 0 error=%v, want ErrInvalidInput", err)
 	}
 }

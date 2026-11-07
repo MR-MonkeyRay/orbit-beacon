@@ -13,7 +13,7 @@ import (
 func TestSamplesDurableCoalescedDuplicateAndRejected(t *testing.T) {
 	f := newCoalesceFixture(t, 0)
 	samples := make(chan history.Sample, 4)
-	f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }, Samples: samples, DisablePersistOffset: true})
+	f.service = NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }, Samples: samples, DisablePersistOffset: true})
 	ctx := context.Background()
 	// 新服务通过持久化路径重新接受此上报；只有成功接受的快照才计数。
 	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != nil {
@@ -72,7 +72,7 @@ func TestSamplesFullSinkNeverBlocksAndCountsDrops(t *testing.T) {
 	f := newCoalesceFixture(t, 0)
 	samples := make(chan history.Sample, 1)
 	samples <- history.Sample{}
-	f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }, Samples: samples})
+	f.service = NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }, Samples: samples})
 	result := make(chan error, 1)
 	go func() {
 		_, err := acceptReport(context.Background(), f.service, coalesceToken, f.report)

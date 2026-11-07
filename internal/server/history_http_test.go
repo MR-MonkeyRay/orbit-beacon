@@ -59,7 +59,7 @@ func TestHistoryHTTPIngestFlushTiersAndDeleteVisibility(t *testing.T) {
 	if err := os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	hs, err := history.Open(context.Background(), dir, f.db, history.Options{})
+	hs, err := history.Open(context.Background(), dir, f.nodes.Database(), history.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,8 +16,7 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-// SnapshotDatabase 使用专用 mode=ro 连接。关闭 query_only 是为了允许 VACUUM
-// 的内部输出，绝不写入或迁移在线源库。
+// SnapshotDatabase 仅用于离线恢复私有副本与观察测试；在线快照必须使用租约。
 func SnapshotDatabase(ctx context.Context, source, output string, version int) error {
 	if err := securefs.ValidateDirectory(filepath.Dir(output)); err != nil {
 		return err
@@ -66,7 +65,11 @@ type SnapshotPayloads struct {
 	Snapshots Snapshots
 }
 
-func CreateSnapshotPayloads(ctx context.Context, dataDir, work string, categories []Category, now func() time.Time) (SnapshotPayloads, error) {
+type SnapshotSources struct {
+	Main, History *storage.Database
+}
+
+func CreateSnapshotPayloads(ctx context.Context, sources SnapshotSources, dataDir, work string, categories []Category, now func() time.Time) (SnapshotPayloads, error) {
 	selected, err := ValidateCategories(categories)
 	if err != nil {
 		return SnapshotPayloads{}, err
@@ -86,8 +89,17 @@ func CreateSnapshotPayloads(ctx context.Context, dataDir, work string, categorie
 	if err = securefs.ValidateDirectory(work); err != nil {
 		return SnapshotPayloads{}, err
 	}
+	if sources.Main == nil {
+		return SnapshotPayloads{}, &Error{Code: "snapshot_failed"}
+	}
+	mainLease, err := sources.Main.Acquire(ctx, storage.Reader)
+	if err != nil {
+		return SnapshotPayloads{}, err
+	}
+	defer mainLease.Close()
+	ctx = mainLease.Context()
 	mainPath := filepath.Join(work, "main-snapshot.sqlite")
-	if err = SnapshotDatabase(ctx, filepath.Join(dataDir, "orbitbeacon.db"), mainPath, storage.CurrentSchemaVersion); err != nil {
+	if err = mainLease.SnapshotSQLite(ctx, mainPath, storage.CurrentSchemaVersion); err != nil {
 		return SnapshotPayloads{}, fmt.Errorf("snapshot_failed: %w", err)
 	}
 	result := SnapshotPayloads{Snapshots: Snapshots{MainAt: now().UTC()}}
@@ -100,7 +112,16 @@ func CreateSnapshotPayloads(ctx context.Context, dataDir, work string, categorie
 	for _, category := range selected {
 		if category == Monitoring {
 			path := filepath.Join(work, "metrics-snapshot.sqlite")
-			if err = SnapshotDatabase(ctx, filepath.Join(dataDir, "metrics.db"), path, 1); err != nil {
+			if sources.History == nil {
+				return SnapshotPayloads{}, &Error{Code: "history_unavailable"}
+			}
+			historyLease, err := sources.History.Acquire(ctx, storage.Reader)
+			if err != nil {
+				return SnapshotPayloads{}, &Error{Code: "history_unavailable"}
+			}
+			defer historyLease.Close()
+			ctx = historyLease.Context()
+			if err = historyLease.SnapshotSQLite(ctx, path, storage.HistorySchemaVersion); err != nil {
 				return SnapshotPayloads{}, &Error{Code: "history_unavailable"}
 			}
 			at := now().UTC()

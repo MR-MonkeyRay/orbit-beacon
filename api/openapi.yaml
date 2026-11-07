@@ -2742,7 +2742,7 @@ components:
         application/octet-stream:
           schema: {type: string, format: binary}
     Error:
-      description: 结构化失败。无效 JSON/输入或未变更的新密码（password_unchanged）返回 400，无效凭据返回 401，浏览器 Origin/CSRF 失败、受限管理会话（password_change_required）、全局禁用的匿名访问（public_page_disabled）或已禁用节点的 Agent 请求返回 403，资源不存在返回 404，计划忙碌/密钥/注册/身份/用户名或最后管理员冲突返回 409，过期或缺失的备份产物/密码返回 410，超过 64 KiB 的请求体返回 413，不支持的 Agent 协议返回 426，限流或备份队列容量返回 429，可重试的 SQLite 争用返回 503 storage_busy。不支持的方法在认证前返回 405 并附 Allow；未知 API 路由返回 404。API 错误不返回 SPA 外壳。
+      description: 结构化失败。无效 JSON/输入或未变更的新密码（password_unchanged）返回 400，无效凭据返回 401，浏览器 Origin/CSRF 失败、受限管理会话（password_change_required）、全局禁用的匿名访问（public_page_disabled）或已禁用节点的 Agent 请求返回 403，资源不存在返回 404，计划忙碌/密钥/注册/身份/用户名或最后管理员冲突返回 409，过期或缺失的备份产物/密码返回 410，超过 64 KiB 的请求体返回 413，不支持的 Agent 协议返回 426，限流或备份队列容量返回 429，可重试的 SQLite 争用返回 503 storage_busy，数据库准入暂不可用返回 503 storage_unavailable；两者附 Retry-After。不支持的方法在认证前返回 405 并附 Allow；未知 API 路由返回 404。API 错误不返回 SPA 外壳。
       headers:
         X-Request-ID:
           schema: {type: string, format: uuid}
@@ -3420,7 +3420,7 @@ components:
         code:
           type: string
           description: 机器可读的失败码；validation_failed 可包含逐字段信息。客户端须容忍新的错误码。
-          examples: [totp_required, totp_invalid, totp_already_enabled, totp_setup_expired, unauthenticated, forbidden, password_change_required, public_page_disabled, invalid_old_password, password_unchanged, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, username_conflict, invalid_json, invalid_input, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, backup_queue_full, backup_plan_busy, backup_plan_not_found, task_not_found, artifact_not_ready, artifact_expired, artifact_missing, password_unavailable, password_expired, secret_unreadable, storage_busy, not_available, internal_error]
+          examples: [totp_required, totp_invalid, totp_already_enabled, totp_setup_expired, unauthenticated, forbidden, password_change_required, public_page_disabled, invalid_old_password, password_unchanged, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, username_conflict, invalid_json, invalid_input, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, backup_queue_full, backup_plan_busy, backup_plan_not_found, task_not_found, artifact_not_ready, artifact_expired, artifact_missing, password_unavailable, password_expired, secret_unreadable, storage_busy, storage_unavailable, not_available, internal_error]
         message: {type: string, minLength: 1}
         request_id: {type: string, format: uuid, description: 将响应与内部服务失败的安全服务端诊断元数据关联。}
         fields:

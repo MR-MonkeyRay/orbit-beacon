@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
 )
@@ -77,8 +78,14 @@ func (s *Service) PreviewCron(raw string, now time.Time) (CronPreview, error) {
 // Tick 将每个到期计划原子地合并为至多一个任务。被阻塞的计划
 // 保留其原始到期时间戳；合并后的唤醒会在完成时重试它们。
 func (s *Service) Tick(ctx context.Context, now time.Time) error {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	now = now.UTC()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -203,8 +210,14 @@ func (s *Service) Tick(ctx context.Context, now time.Time) error {
 // 到期未执行的计划可能被容量或自身的活跃任务阻塞。绝不为它们设置过去时间戳的定时器：
 // 完成/变更会唤醒它们，这个有界兜底同时覆盖瞬时的数据库故障。
 func (s *Service) schedulerWait(ctx context.Context, now time.Time) (time.Duration, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return time.Second, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	var raw string
-	err := s.db.QueryRowContext(ctx, `SELECT next_run_at FROM backup_plans WHERE enabled=1 AND next_run_at>? ORDER BY next_run_at,id LIMIT 1`, timekey.Format(now)).Scan(&raw)
+	err := lease.QueryRowContext(ctx, `SELECT next_run_at FROM backup_plans WHERE enabled=1 AND next_run_at>? ORDER BY next_run_at,id LIMIT 1`, timekey.Format(now)).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Minute, nil
 	}

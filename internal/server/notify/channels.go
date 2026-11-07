@@ -23,6 +23,7 @@ import (
 
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/secretbox"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
@@ -81,7 +82,7 @@ type Options struct {
 	Logger                *slog.Logger
 }
 type Service struct {
-	db             *sql.DB
+	db             *storage.Database
 	box            *secretbox.Box
 	opts           Options
 	sender         *sender
@@ -96,7 +97,7 @@ type Service struct {
 	logger         *slog.Logger
 }
 
-func New(db *sql.DB, box *secretbox.Box, opts Options) *Service {
+func New(db *storage.Database, box *secretbox.Box, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -218,11 +219,23 @@ func scanChannel(row scanner) (Channel, []byte, []byte, error) {
 	return c, cipher, urlCipher, err
 }
 func (s *Service) Get(ctx context.Context, id string) (Channel, error) {
-	c, _, _, e := scanChannel(s.db.QueryRowContext(ctx, "SELECT "+channelColumns+" FROM notification_channels WHERE id=?", id))
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Channel{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	c, _, _, e := scanChannel(lease.QueryRowContext(ctx, "SELECT "+channelColumns+" FROM notification_channels WHERE id=?", id))
 	return c, e
 }
 func (s *Service) List(ctx context.Context) ([]Channel, error) {
-	rows, e := s.db.QueryContext(ctx, "SELECT "+channelColumns+" FROM notification_channels ORDER BY created_at,id")
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, e := lease.QueryContext(ctx, "SELECT "+channelColumns+" FROM notification_channels ORDER BY created_at,id")
 	if e != nil {
 		return nil, e
 	}
@@ -238,10 +251,16 @@ func (s *Service) List(ctx context.Context) ([]Channel, error) {
 	return out, rows.Err()
 }
 func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return Channel{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if s.box == nil {
 		return Channel{}, ErrUnavailable
 	}
-	tx, e := s.db.BeginTx(ctx, nil)
+	tx, e := lease.BeginWrite(ctx)
 	if e != nil {
 		return Channel{}, e
 	}
@@ -393,7 +412,13 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 	return c, tx.Commit()
 }
 func (s *Service) Delete(ctx context.Context, id string) error {
-	tx, e := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, e := lease.BeginWrite(ctx)
 	if e != nil {
 		return e
 	}
@@ -425,7 +450,13 @@ func (s *Service) openSecret(id string, encrypted []byte) ([]byte, error) {
 	return plain, nil
 }
 func (s *Service) load(ctx context.Context, id string) (Channel, string, error) {
-	c, encrypted, urlCipher, e := scanChannel(s.db.QueryRowContext(ctx, "SELECT "+channelColumns+" FROM notification_channels WHERE id=?", id))
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Channel{}, "", leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	c, encrypted, urlCipher, e := scanChannel(lease.QueryRowContext(ctx, "SELECT "+channelColumns+" FROM notification_channels WHERE id=?", id))
 	if e != nil {
 		return c, "", e
 	}

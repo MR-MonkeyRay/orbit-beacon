@@ -15,9 +15,7 @@ func TestPublicLiveOrdinaryFrameRaceNeverSendsOldDataOrSafetyRenew(t *testing.T)
 	var calls atomic.Int64
 	f.h.now = func() time.Time {
 		if calls.Add(1) == 2 {
-			f.store.mu.Lock()
-			f.store.name = "Current public label"
-			f.store.mu.Unlock()
+			setStreamPublicSettings(t, f.db, true, "Current public label")
 			f.h.nodes.InvalidatePublic()
 		}
 		return base

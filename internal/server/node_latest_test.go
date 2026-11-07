@@ -104,7 +104,7 @@ func TestManagementLatestSample(t *testing.T) {
 		t.Fatalf("sample=%s", got.Body)
 	}
 	// 尽管有持久化的节点元数据，重启后的服务没有报告缓存。
-	restarted, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: ingest.NewService(f.db, ingest.Options{}), PublicURL: publicURL}))
+	restarted, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: ingest.NewService(f.nodes.Database(), ingest.Options{}), PublicURL: publicURL}))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/server/inbox"
+	"orbitbeacon/internal/server/storage"
 )
 
 const inboxAlertID = "ffffffff-ffff-4fff-8fff-ffffffffffff"
@@ -16,12 +17,17 @@ const inboxTaskID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
 
 func insertHTTPInbox(t *testing.T, f fixture, id, kind string, at time.Time) {
 	t.Helper()
-	tx, err := f.db.Begin()
+	lease, err := f.nodes.Database().Acquire(context.Background(), storage.Writer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	tx, err := lease.BeginWrite(lease.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	err = inbox.Insert(context.Background(), tx, inbox.Event{ID: id, Kind: kind, SourceID: id, Transition: "succeeded", Severity: "info", CreatedAt: at, Details: json.RawMessage(`{"name":"Retained source snapshot","state":"succeeded"}`)})
+	err = inbox.Insert(lease.Context(), tx, inbox.Event{ID: id, Kind: kind, SourceID: id, Transition: "succeeded", Severity: "info", CreatedAt: at, Details: json.RawMessage(`{"name":"Retained source snapshot","state":"succeeded"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,6 +18,7 @@ import (
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/commands"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
 )
@@ -43,7 +44,7 @@ type Options struct {
 }
 
 type Service struct {
-	db            *sql.DB
+	db            *storage.Database
 	maxNodes      int
 	now           func() time.Time
 	random        io.Reader
@@ -55,7 +56,7 @@ type Service struct {
 	invalidGlobal invalidBucket
 }
 
-func NewService(db *sql.DB, opts Options) *Service {
+func NewService(db *storage.Database, opts Options) *Service {
 	if opts.MaxNodes <= 0 {
 		opts.MaxNodes = 500
 	}
@@ -124,7 +125,13 @@ func (s *Service) create(ctx context.Context, nodeID, groupID *string, lifetime 
 	now := s.now().UTC()
 	created := CreatedTicket{Ticket: Ticket{ID: id, NodeID: nodeID, GroupID: groupID, ExpiresAt: now.Add(lifetime), MaxUses: maxUses}, Token: base64.RawURLEncoding.EncodeToString(secret[:])}
 	digest := sha256.Sum256([]byte(created.Token))
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return CreatedTicket{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return CreatedTicket{}, err
 	}
@@ -183,7 +190,13 @@ func scanTicket(row scanner) (Ticket, error) {
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Ticket, error) {
-	return scanTicket(s.db.QueryRowContext(ctx, "SELECT "+ticketColumns+" FROM enrollment_tokens WHERE id = ?", id))
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Ticket{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	return scanTicket(lease.QueryRowContext(ctx, "SELECT "+ticketColumns+" FROM enrollment_tokens WHERE id = ?", id))
 }
 
 func (s *Service) List(ctx context.Context, limit, offset int) ([]Ticket, error) {
@@ -191,7 +204,13 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]Ticket, error)
 	if limit < 1 || limit > 101 || offset < 0 {
 		return nil, ErrInvalidInput
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT "+ticketColumns+" FROM enrollment_tokens ORDER BY expires_at DESC, id LIMIT ? OFFSET ?", limit, offset)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, err := lease.QueryContext(ctx, "SELECT "+ticketColumns+" FROM enrollment_tokens ORDER BY expires_at DESC, id LIMIT ? OFFSET ?", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +233,18 @@ func (s *Service) CleanupExpiredTickets(ctx context.Context, before time.Time, l
 	if limit < 1 {
 		return 0, ErrInvalidInput
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM enrollment_tokens
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return 0, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `DELETE FROM enrollment_tokens
 WHERE id IN (
 	SELECT id FROM enrollment_tokens
 	WHERE expires_at < ?
@@ -224,11 +254,21 @@ WHERE id IN (
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return count, tx.Commit()
 }
 
 func (s *Service) Revoke(ctx context.Context, id string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -261,7 +301,13 @@ func (s *Service) Recover(ctx context.Context, token string, req v1.RecoveryRequ
 	}
 	digest := sha256.Sum256([]byte(token))
 	var nodeID, status string
-	err := s.db.QueryRowContext(ctx, "SELECT id, status FROM nodes WHERE token_hash = ? AND installation_id = ?", digest[:], req.InstallationID).Scan(&nodeID, &status)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return v1.EnrollmentResponse{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	err := lease.QueryRowContext(ctx, "SELECT id, status FROM nodes WHERE token_hash = ? AND installation_id = ?", digest[:], req.InstallationID).Scan(&nodeID, &status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v1.EnrollmentResponse{}, ErrUnauthenticated
 	}
@@ -288,7 +334,13 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 	}
 	ticketHash := sha256.Sum256([]byte(token))
 	nodeHash := sha256.Sum256([]byte(req.NodeToken))
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return v1.EnrollmentResponse{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return v1.EnrollmentResponse{}, err
 	}

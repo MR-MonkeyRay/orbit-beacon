@@ -13,6 +13,7 @@ import (
 
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/auth"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -166,7 +167,7 @@ func TestAPITokenRevokedByAccountRecovery(t *testing.T) {
 			case "online-totp":
 				err = s.ResetUserTOTP(ctx, actor.ID, session.Token, user.ID, initialPassword)
 			case "offline-totp":
-				err = auth.ResetTOTP(ctx, db, user.Username, *now)
+				err = auth.ResetTOTP(ctx, stableDatabase(t, db), user.Username, *now)
 			case "delete":
 				err = s.DeleteUser(ctx, user.ID)
 			}
@@ -260,7 +261,7 @@ func TestAPITokenCreationRejectsConcurrentSessionOrPasswordChanges(t *testing.T)
 				t.Fatal(err)
 			}
 			random := newBlockingReader(93)
-			service = auth.NewService(db, auth.Options{Now: func() time.Time { return *now }, Random: random})
+			service = auth.NewService(stableDatabase(t, db), auth.Options{Now: func() time.Time { return *now }, Random: random})
 			result := make(chan error, 1)
 			go func() {
 				_, _, err := service.CreateAPIToken(ctx, user.ID, session.Token, "race", nil, initialPassword)
@@ -465,4 +466,45 @@ func TestAPITokenRateLimitChangesOnNextRequestAndConcurrentAuthentication(t *tes
 		t.Fatalf("raised budget admitted %d, want 8", accepted.Load())
 	}
 	s.WaitAPITokenUse()
+}
+
+func TestAPITokenUseRetainsDatabaseLeaseAfterRequestCancellation(t *testing.T) {
+	s, db, _ := newAuth(t)
+	ctx := context.Background()
+	user, err := s.CreateUser(ctx, "lease-token", initialPassword, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := s.Login(ctx, user.Username, initialPassword, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, token, err := s.CreateAPIToken(ctx, user.ID, session.Token, "usage", nil, initialPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := stableDatabase(t, db).Acquire(ctx, storage.Writer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	tx, err := lease.BeginWrite(lease.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	requestCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if err := s.AuthenticateAPIToken(requestCtx, token); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	s.WaitAPITokenUse()
+	var used int
+	if err := db.QueryRow("SELECT count(last_used_at) FROM api_tokens WHERE id=?", metadata.ID).Scan(&used); err != nil || used != 1 {
+		t.Fatalf("request cancellation lost usage update: used=%d err=%v", used, err)
+	}
 }

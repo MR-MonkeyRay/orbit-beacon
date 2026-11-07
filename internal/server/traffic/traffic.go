@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -24,9 +25,9 @@ var (
 	ErrInvalidInput = errors.New("invalid traffic request")
 )
 
-type Service struct{ db *sql.DB }
+type Service struct{ db *storage.Database }
 
-func NewService(db *sql.DB) *Service { return &Service{db: db} }
+func NewService(db *storage.Database) *Service { return &Service{db: db} }
 
 type Summary struct {
 	BillingMode string     `json:"billing_mode"`
@@ -89,11 +90,17 @@ func (s *Service) Read(ctx context.Context, nodeID string, days int, now time.Ti
 	if s == nil || s.db == nil || nodeID == "" || days < 1 || days > 400 {
 		return Summary{}, ErrInvalidInput
 	}
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Summary{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	now = now.UTC()
 	var billing sql.NullInt64
 	var quota sql.NullString
 	var mode string
-	if err := s.db.QueryRowContext(ctx, `SELECT billing_day,quota_bytes,billing_mode FROM nodes WHERE id=?`, nodeID).Scan(&billing, &quota, &mode); err != nil {
+	if err := lease.QueryRowContext(ctx, `SELECT billing_day,quota_bytes,billing_mode FROM nodes WHERE id=?`, nodeID).Scan(&billing, &quota, &mode); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Summary{}, ErrNotFound
 		}
@@ -138,7 +145,7 @@ func (s *Service) Read(ctx context.Context, nodeID string, days int, now time.Ti
 	// UNION ALL 在同一个 SQLite 读取快照下运行。因此并发的保留事务
 	// 不会让某行在独立的按天和按小时查询之间消失，
 	// 也不会让同一计数同时以两种形式可见。
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := lease.QueryContext(ctx, `
 WITH counters(day,rx_bytes,tx_bytes) AS (
  SELECT day,rx_bytes,tx_bytes FROM traffic_daily WHERE node_id=? AND day>=? AND day<?
  UNION ALL
@@ -223,6 +230,12 @@ func (s *Service) Quota(ctx context.Context, now time.Time) (map[string]float64,
 	if s == nil || s.db == nil {
 		return nil, ErrInvalidInput
 	}
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	start, end := CycleBounds(now, 1)
 	for day := 2; day <= 28; day++ {
 		a, b := CycleBounds(now, day)
@@ -236,7 +249,7 @@ func (s *Service) Quota(ctx context.Context, now time.Time) (map[string]float64,
 	// 节点设置和 UNION ALL 共用读取快照，保留事务不会造成漏计或重复。
 	// 先在 SQLite 内按天聚合，读取器只处理节点数 × 天数行。结果只用于百分比，
 	// total() 的浮点值足够，且不会像 sum() 那样在整数溢出时使整批读取失败。
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := lease.QueryContext(ctx, `
 WITH eligible AS (SELECT id,billing_day,billing_mode,quota_bytes FROM nodes WHERE quota_bytes NOT IN ('0','')),
  counters(node_id,day,rx_bytes,tx_bytes) AS (
  SELECT n.id,t.day,t.rx_bytes,t.tx_bytes FROM eligible n JOIN traffic_daily t ON t.node_id=n.id WHERE t.day>=? AND t.day<?
@@ -321,12 +334,18 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64,
 	if s == nil || s.db == nil || limit <= 0 {
 		return 0, ErrInvalidInput
 	}
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return 0, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	now = now.UTC()
 	cutoff := now.Add(-hourlyRetention)
 	hourlyBefore := time.Date(cutoff.Year(), cutoff.Month(), cutoff.Day(), 0, 0, 0, 0, time.UTC)
 	dailyCutoff := now.Add(-dailyRetention).Format(dayLayout)
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("begin traffic cleanup: %w", err)
 	}

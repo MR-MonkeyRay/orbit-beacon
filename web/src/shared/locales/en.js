@@ -40,6 +40,7 @@ export default {
   'errors.username_conflict': 'This username is already in use.',
   'errors.last_administrator': 'At least one administrator must remain.',
   'errors.storage_busy': 'Storage is busy. Try again later.',
+  'errors.storage_unavailable': 'Storage is temporarily unavailable. Try again later.',
   'errors.not_available': 'This service is unavailable.',
   'errors.body_too_large': 'The request is too large.',
   'errors.internal_error': 'The operation could not be completed.',

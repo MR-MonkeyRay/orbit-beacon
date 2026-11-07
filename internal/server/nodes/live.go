@@ -9,6 +9,7 @@ import (
 
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/commands"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -75,7 +76,13 @@ func liveIdentity(credential []byte, epoch int64, generation, session string) (L
 // LiveRecords 用一条查询读取数量受限的完整节点清单。SQLite 只提取节点列表所需的
 // 单个 system 字段；不解码 report、runtime 或 notes。
 func (s *Service) LiveRecords(ctx context.Context) ([]LiveRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,status,last_seen,
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, err := lease.QueryContext(ctx, `SELECT id,status,last_seen,
 		CASE WHEN json_valid(system) THEN COALESCE(json_extract(system,'$.agent_version'),'') ELSE '' END,
 		token_hash,credential_epoch,run_generation,report_session_id, `+commands.StoppedSQL+` FROM nodes ORDER BY created_at,id`)
 	if err != nil {
@@ -127,7 +134,13 @@ func (s *Service) LiveDetail(ctx context.Context, id string) (LiveDetailRecord, 
 	var credential []byte
 	var epoch int64
 	var generation, session, runtime string
-	row := s.db.QueryRowContext(ctx, "SELECT "+nodeColumns+",token_hash,credential_epoch,run_generation,report_session_id,agent_runtime FROM nodes WHERE id=?", id)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return LiveDetailRecord{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	row := lease.QueryRowContext(ctx, "SELECT "+nodeColumns+",token_hash,credential_epoch,run_generation,report_session_id,agent_runtime FROM nodes WHERE id=?", id)
 	node, err := scanNode(liveDetailScanner{row, &credential, &epoch, &generation, &session, &runtime}, s.now())
 	if err != nil {
 		return record, err

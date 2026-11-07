@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
@@ -74,6 +75,12 @@ func ValidateSilenceSyntax(s Silence) error {
 }
 
 func (s *Service) CreateSilence(ctx context.Context, req SilenceRequest) (Silence, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return Silence{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	now := s.now().UTC()
 	silence := Silence{StartsAt: now, CreatedAt: now}
 	for _, f := range []struct {
@@ -115,7 +122,7 @@ func (s *Service) CreateSilence(ctx context.Context, req SilenceRequest) (Silenc
 		return Silence{}, err
 	}
 	silence.ID = id
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return Silence{}, err
 	}
@@ -145,8 +152,14 @@ func (s *Service) CreateSilence(ctx context.Context, req SilenceRequest) (Silenc
 }
 
 func (s *Service) Silences(ctx context.Context) ([]Silence, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	now := s.now().UTC()
-	rows, err := s.db.QueryContext(ctx, `SELECT s.id,s.reason,s.scope_kind,s.scope_id,s.starts_at,s.ends_at,s.created_at,
+	rows, err := lease.QueryContext(ctx, `SELECT s.id,s.reason,s.scope_kind,s.scope_id,s.starts_at,s.ends_at,s.created_at,
  COALESCE(g.name,n.name,'') FROM alert_silences s
  LEFT JOIN groups g ON s.scope_group_id=g.id LEFT JOIN nodes n ON s.scope_node_id=n.id
  WHERE s.ends_at>? ORDER BY s.starts_at,s.id`, timekey.Format(now))
@@ -177,7 +190,13 @@ func (s *Service) Silences(ctx context.Context) ([]Silence, error) {
 }
 
 func (s *Service) DeleteSilence(ctx context.Context, id string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -200,12 +219,26 @@ func (s *Service) DeleteSilence(ctx context.Context, id string) error {
 }
 
 func (s *Service) CleanupSilences(ctx context.Context, before time.Time, limit int) (int64, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return 0, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if limit < 1 {
 		return 0, validation.Invalid("limit", "must be positive")
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM alert_silences WHERE id IN (SELECT id FROM alert_silences WHERE ends_at<? ORDER BY ends_at,id LIMIT ?)`, timekey.Format(before), limit)
+	tx, txErr := lease.BeginWrite(ctx)
+	if txErr != nil {
+		return 0, txErr
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `DELETE FROM alert_silences WHERE id IN (SELECT id FROM alert_silences WHERE ends_at<? ORDER BY ends_at,id LIMIT ?)`, timekey.Format(before), limit)
 	if err != nil {
 		return 0, err
+	}
+	if commitErr := tx.Commit(); commitErr != nil {
+		return 0, commitErr
 	}
 	return result.RowsAffected()
 }
@@ -213,6 +246,12 @@ func (s *Service) CleanupSilences(ctx context.Context, before time.Time, limit i
 // releasableSilences 先用读查询筛选。窗口生效期间不开写事务，否则全局静默时
 // 每轮都有上千次空写与上报争抢写锁。
 func (e *Evaluator) releasableSilences(ctx context.Context, open map[pair]openEvent, now time.Time) ([]openEvent, error) {
+	lease, leaseErr := e.service.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	silenced := false
 	for _, o := range open {
 		silenced = silenced || o.Silenced
@@ -221,7 +260,7 @@ func (e *Evaluator) releasableSilences(ctx context.Context, open map[pair]openEv
 		return nil, nil
 	}
 	stamp := timekey.Format(now)
-	rows, err := e.service.db.QueryContext(ctx, `SELECT id,rule_id,node_id FROM alert_events WHERE `+releasableEventSQL, stamp, stamp)
+	rows, err := lease.QueryContext(ctx, `SELECT id,rule_id,node_id FROM alert_events WHERE `+releasableEventSQL, stamp, stamp)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +281,13 @@ func (e *Evaluator) releasableSilences(ctx context.Context, open map[pair]openEv
 }
 
 func (e *Evaluator) releaseSilence(ctx context.Context, o openEvent, now time.Time) error {
-	tx, err := e.service.db.BeginTx(ctx, nil)
+	lease, leaseErr := e.service.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}

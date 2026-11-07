@@ -11,6 +11,7 @@ import (
 	"orbitbeacon/internal/server/announcements"
 	"orbitbeacon/internal/server/availability"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/storage"
 )
 
 // PublicNode 是严格的匿名投影，独立于内部清单。
@@ -181,6 +182,12 @@ type publicPageCache struct {
 // PublicPage 合并并发的缓存未命中，并限制缓存页数。可见性版本在查询前捕获：
 // 竞争的变更无法用新版本为旧数据背书。缓存期间的返回页面不可变。
 func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offset int, ttl time.Duration, clock func() time.Time) (PublicPage, error) {
+	lease, leaseErr := ns.Database().Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return PublicPage{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	key := publicPageKey{service: ns, limit: limit, offset: offset, ttl: ttl}
 	cache := &s.publicPages
 	for {

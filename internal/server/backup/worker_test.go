@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"orbitbeacon/internal/server/storage"
 )
 
 type recordingUploader struct {
@@ -47,7 +49,7 @@ func enqueueRemote(t *testing.T, s *Service, id string, created time.Time) {
 		t.Fatal(err)
 	}
 	destination := `{"plan_name":"Remote","actor_name":"","target":{"provider":"s3_compatible","endpoint":"https://storage.example.com","region":"test","bucket":"test","prefix":"","path_style":true,"allow_private_networks":false}}`
-	_, err = s.db.Exec(`INSERT INTO backup_tasks(id,kind,state,plan_id,categories_json,destination_json,input_credentials_ciphertext,created_at) VALUES(?,'backup_remote','queued',?,'["configuration"]',?,?,?)`, id, id, destination, cipher, created.UTC().Format("2006-01-02T15:04:05.000000000Z"))
+	_, err = observeMain(t, s).Exec(`INSERT INTO backup_tasks(id,kind,state,plan_id,categories_json,destination_json,input_credentials_ciphertext,created_at) VALUES(?,'backup_remote','queued',?,'["configuration"]',?,?,?)`, id, id, destination, cipher, created.UTC().Format("2006-01-02T15:04:05.000000000Z"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +72,7 @@ func runWorker(t *testing.T, s *Service) context.CancelFunc {
 
 func TestWorkerRealArchiveSurvivesRequestCancelAndUsesTaskArchiveID(t *testing.T) {
 	db, opts := workerFixture(t)
-	s, err := New(db, opts)
+	s, err := New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,14 +136,14 @@ func TestWorkerPublicationOnceAcrossAtomicFinalizationFailures(t *testing.T) {
 					return nil
 				}
 			} else {
-				opts.beforeTerminal = func(tx *sql.Tx) error {
+				opts.beforeTerminal = func(tx *storage.Tx) error {
 					if attempts.Add(1) == 1 {
 						var state string
 						var n int
-						if err := tx.QueryRow(`SELECT state FROM backup_tasks WHERE kind='backup_remote'`).Scan(&state); err != nil {
+						if err := tx.QueryRowContext(t.Context(), `SELECT state FROM backup_tasks WHERE kind='backup_remote'`).Scan(&state); err != nil {
 							return err
 						}
-						if err := tx.QueryRow(`SELECT count(*) FROM inbox_notifications WHERE kind='task'`).Scan(&n); err != nil {
+						if err := tx.QueryRowContext(t.Context(), `SELECT count(*) FROM inbox_notifications WHERE kind='task'`).Scan(&n); err != nil {
 							return err
 						}
 						if state != "succeeded" || n != 1 {
@@ -152,7 +154,7 @@ func TestWorkerPublicationOnceAcrossAtomicFinalizationFailures(t *testing.T) {
 					return nil
 				}
 			}
-			s, err := New(db, opts)
+			s, err := New(mainHandle(t, db), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -175,7 +177,7 @@ func TestWorkerRestartPreservesQueuedAndFailsRunningWithoutRepublish(t *testing.
 	db, opts := workerFixture(t)
 	u := &recordingUploader{}
 	opts.Uploader = u
-	s, err := New(db, opts)
+	s, err := New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +214,7 @@ func TestWorkerRemoteFIFOAndFailureClassification(t *testing.T) {
 	db, opts := workerFixture(t)
 	u := &recordingUploader{result: UploadResult{OutcomeUnknown: true}, err: &Error{Code: "storage_upload_failed"}}
 	opts.Uploader = u
-	s, err := New(db, opts)
+	s, err := New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +259,7 @@ func TestWorkerRemoteFIFOAndFailureClassification(t *testing.T) {
 func TestWorkerRemoteResultIdentifiesObjectKeyWithoutInventingURL(t *testing.T) {
 	db, opts := workerFixture(t)
 	opts.Uploader = &recordingUploader{}
-	s, err := New(db, opts)
+	s, err := New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +294,7 @@ func TestWorkerRemoteResultIdentifiesObjectKeyWithoutInventingURL(t *testing.T) 
 
 func TestWorkerStartupCleansOnlyInactiveOwnedStaging(t *testing.T) {
 	db, opts := workerFixture(t)
-	s, err := New(db, opts)
+	s, err := New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +338,7 @@ func TestWorkerStartupCleansOnlyInactiveOwnedStaging(t *testing.T) {
 func TestWorkerExplicitRemoteRejectionDoesNotClaimUnknownOutcome(t *testing.T) {
 	db, opts := workerFixture(t)
 	opts.Uploader = &recordingUploader{err: &Error{Code: "storage_auth_failed", Err: errors.New("https://secret-user:secret-pass@storage.invalid")}}
-	s, err := New(db, opts)
+	s, err := New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}

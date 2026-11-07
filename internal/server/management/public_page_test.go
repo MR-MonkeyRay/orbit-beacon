@@ -20,7 +20,7 @@ func TestPublicPageSettingPersistenceAndAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	service := NewService(db)
+	service := NewService(mainHandle(t, db))
 	ctx := audit.WithActor(context.Background(), "public-page-admin")
 	setting, err := service.PublicPageSettings(ctx)
 	if err != nil || !setting.Enabled {
@@ -46,7 +46,7 @@ func TestPublicPageSettingPersistenceAndAudit(t *testing.T) {
 	if count() != 1 {
 		t.Fatal("disable audit missing")
 	}
-	setting, err = NewService(db).PublicPageSettings(ctx)
+	setting, err = NewService(mainHandle(t, db)).PublicPageSettings(ctx)
 	if err != nil || setting.Enabled {
 		t.Fatalf("disabled not persistent: %+v %v", setting, err)
 	}

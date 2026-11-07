@@ -18,6 +18,7 @@ import (
 	"orbitbeacon/internal/server/commands"
 	"orbitbeacon/internal/server/history"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -91,7 +92,7 @@ type Service struct {
 	samples              chan<- history.Sample
 	samplesDropped       atomic.Uint64
 	publicPages          publicPageCache
-	db                   *sql.DB
+	db                   *storage.Database
 	now                  func() time.Time
 	persistInterval      time.Duration
 	disablePersistOffset bool
@@ -113,7 +114,7 @@ type stateCandidate struct {
 	touch uint64
 }
 
-func NewService(db *sql.DB, opts Options) *Service {
+func NewService(db *storage.Database, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -232,7 +233,13 @@ func (s *Service) AdmitToken(ctx context.Context, token string) (*Admission, err
 	digest := sha256.Sum256([]byte(token))
 	var nodeID, status string
 	var credentialEpoch int64
-	if err := s.db.QueryRowContext(ctx, "SELECT id, status, credential_epoch FROM nodes WHERE token_hash = ?", digest[:]).Scan(&nodeID, &status, &credentialEpoch); err != nil {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	if err := lease.QueryRowContext(ctx, "SELECT id, status, credential_epoch FROM nodes WHERE token_hash = ?", digest[:]).Scan(&nodeID, &status, &credentialEpoch); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nodes.ErrUnauthenticated
 		}
@@ -246,7 +253,7 @@ func (s *Service) AdmitToken(ctx context.Context, token string) (*Admission, err
 	_, exists := s.states[nodeID]
 	s.mu.Unlock()
 	if !exists {
-		if err := s.prune(ctx, s.db); err != nil {
+		if err := s.prune(ctx, lease); err != nil {
 			return nil, err
 		}
 	}
@@ -391,6 +398,12 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 		return v1.ReportResponse{}, err
 	}
 	report = normalized.Report
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return v1.ReportResponse{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	state := s.acquireState(nodeID)
 	defer s.releaseState(state)
 	// 同一节点的上报串行处理，但已取消的请求无需等待该节点的慢写入操作。
@@ -412,7 +425,7 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	var storedCredential []byte
 	var storedEpoch int64
 	var activeCommand bool
-	if err := s.db.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status, COALESCE(system, ''), agent_runtime, last_seen, EXISTS(SELECT 1 FROM agent_commands WHERE node_id=nodes.id AND state IN ('pending','delivered')) FROM nodes WHERE id = ?", nodeID).Scan(&generationText, &session, &storedCredential, &storedEpoch, &status, &storedSystem, &storedRuntime, &lastSeenText, &activeCommand); err != nil {
+	if err := lease.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status, COALESCE(system, ''), agent_runtime, last_seen, EXISTS(SELECT 1 FROM agent_commands WHERE node_id=nodes.id AND state IN ('pending','delivered')) FROM nodes WHERE id = ?", nodeID).Scan(&generationText, &session, &storedCredential, &storedEpoch, &status, &storedSystem, &storedRuntime, &lastSeenText, &activeCommand); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return v1.ReportResponse{}, nodes.ErrUnauthenticated
 		}
@@ -459,12 +472,12 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	fence := acceptanceSnapshot{credential: storedCredential, epoch: storedEpoch, generationText: generationText, generation: generation, session: session, runtime: storedRuntime,
 		cachedCredential: cachedCredential, cachedEpoch: cachedEpoch, cachedGeneration: cachedGeneration, cachedSession: cachedSession, cachedSeq: cachedSeq, hasLatest: hasLatest, duplicate: duplicate}
 	if !durable {
-		return s.acceptInMemory(ctx, nodeID, state, normalized, fence, response)
+		return s.acceptInMemory(ctx, lease, nodeID, state, normalized, fence, response)
 	}
 	return s.persistReport(ctx, nodeID, credential, state, normalized, fence, response)
 }
 
-func (s *Service) acceptInMemory(ctx context.Context, nodeID string, state *nodeState, report normalizedReport, fence acceptanceSnapshot, response v1.ReportResponse) (v1.ReportResponse, error) {
+func (s *Service) acceptInMemory(ctx context.Context, lease *storage.Lease, nodeID string, state *nodeState, report normalizedReport, fence acceptanceSnapshot, response v1.ReportResponse) (v1.ReportResponse, error) {
 	now := response.ServerTime
 	var err error
 	probes := state.copyProbes(fence.credential, fence.epoch, fence.generation, fence.session)
@@ -476,7 +489,7 @@ func (s *Service) acceptInMemory(ctx context.Context, nodeID string, state *node
 		}
 	}
 	probes.retainTargets(currentRuntime.ProbeTargets)
-	if err := probes.buffer(ctx, s.db, nodeID, report.ProbeResults, currentRuntime.ProbeTargets); err != nil {
+	if err := probes.buffer(ctx, lease, nodeID, report.ProbeResults, currentRuntime.ProbeTargets); err != nil {
 		return v1.ReportResponse{}, err
 	}
 	state.commitProbes(probes, fence.generation, fence.session)
@@ -505,7 +518,13 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 	}
 	defer releaseWrite()
 	state.stageTraffic(fence.credential, fence.epoch, report.Report, fence.generation, fence.session, now)
-	tx, err := s.db.BeginTx(ctx, nil)
+	writer, err := s.db.Acquire(ctx, storage.Writer)
+	if err != nil {
+		return v1.ReportResponse{}, err
+	}
+	defer writer.Close()
+	ctx = writer.Context()
+	tx, err := writer.BeginWrite(ctx)
 	if err != nil {
 		return v1.ReportResponse{}, err
 	}
@@ -617,7 +636,7 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 }
 
 type rowQueryer interface {
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryContext(context.Context, string, ...any) (*storage.Rows, error)
 }
 
 func (s *Service) prune(ctx context.Context, query rowQueryer) error {
@@ -685,7 +704,13 @@ func (s *Service) Latest(ctx context.Context, nodeID string) (LatestReport, erro
 	var credential []byte
 	var credentialEpoch int64
 	var status, generationText, session string
-	if err := s.db.QueryRowContext(ctx, "SELECT token_hash, credential_epoch, status, run_generation, report_session_id FROM nodes WHERE id = ?", nodeID).Scan(&credential, &credentialEpoch, &status, &generationText, &session); err != nil {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return LatestReport{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	if err := lease.QueryRowContext(ctx, "SELECT token_hash, credential_epoch, status, run_generation, report_session_id FROM nodes WHERE id = ?", nodeID).Scan(&credential, &credentialEpoch, &status, &generationText, &session); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return LatestReport{}, nodes.ErrNotFound
 		}

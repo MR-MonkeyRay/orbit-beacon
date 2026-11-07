@@ -9,6 +9,7 @@ import (
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -31,7 +32,13 @@ func (s *Service) CheckClaim(ctx context.Context, token string, req v1.Enrollmen
 	var uses, maxUses int
 	var nodeID, claimed sql.NullString
 	var candidate []byte
-	err := s.db.QueryRowContext(ctx, `SELECT t.expires_at, t.revoked_at IS NOT NULL, t.uses, t.max_uses,
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return v1.EnrollmentCheckResponse{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	err := lease.QueryRowContext(ctx, `SELECT t.expires_at, t.revoked_at IS NOT NULL, t.uses, t.max_uses,
  c.node_id, c.token_hash, c.claimed_at,
  EXISTS(SELECT 1 FROM nodes n WHERE n.id=c.node_id AND n.token_hash=c.token_hash),
  EXISTS(SELECT 1 FROM nodes n WHERE n.installation_id=? AND n.token_hash=?)

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -34,7 +35,7 @@ type probeBuffer struct {
 }
 
 type probeQueryer interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryRowContext(context.Context, string, ...any) *storage.Row
 }
 
 // 节点的接受闸门串行化缓冲区变更与提交。身份是缓冲时观测到的持久化身份，
@@ -140,7 +141,7 @@ func (b *probeBuffer) buffer(ctx context.Context, q probeQueryer, nodeID string,
 	return nil
 }
 
-func (b *probeBuffer) persist(ctx context.Context, tx *sql.Tx, nodeID string, now time.Time) error {
+func (b *probeBuffer) persist(ctx context.Context, tx *storage.Tx, nodeID string, now time.Time) error {
 	for target, entry := range b.targets {
 		if len(entry.pending) == 0 {
 			continue

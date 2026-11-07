@@ -2,17 +2,17 @@ package app
 
 import (
 	"context"
-	"database/sql"
 	"log/slog"
 	"time"
 
 	"orbitbeacon/internal/config"
 	"orbitbeacon/internal/logging"
 	"orbitbeacon/internal/server/history"
+	"orbitbeacon/internal/server/storage"
 )
 
 // 历史记录异常不得阻断监控；恢复主库后遗留的 metrics.db 可能使用更新的 schema。
-func openMetricHistory(ctx context.Context, cfg config.Server, nodes *sql.DB, logger *slog.Logger, observeFlush func(time.Duration, int)) *history.Service {
+func openMetricHistory(ctx context.Context, cfg config.Server, nodes *storage.Database, logger *slog.Logger, observeFlush func(time.Duration, int)) *history.Service {
 	opts := history.Options{Logger: logger, ObserveFlush: observeFlush}
 	var service *history.Service
 	var err error

@@ -221,7 +221,7 @@ func TestNodeMetricsReadFailureIsAtomic(t *testing.T) {
 			enrollHTTP(t, f, "metrics-node", 1)
 			switch failure {
 			case "inventory":
-				if err := f.db.Close(); err != nil {
+				if err := f.nodes.Database().Close(); err != nil {
 					t.Fatal(err)
 				}
 			case "metadata":

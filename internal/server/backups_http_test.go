@@ -51,7 +51,7 @@ func newBackupHTTP(t *testing.T) backupHTTPFixture {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
-	s, err := backup.New(f.db, backup.Options{DataDir: dir, SecretBox: box, Now: func() time.Time { return now }, Location: time.FixedZone("Server/+02", 7200), ServerVersion: "test"})
+	s, err := backup.New(f.nodes.Database(), backup.Options{DataDir: dir, SecretBox: box, Now: func() time.Time { return now }, Location: time.FixedZone("Server/+02", 7200), ServerVersion: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}

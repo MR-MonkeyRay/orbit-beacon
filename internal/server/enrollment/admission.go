@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"time"
 
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -39,7 +40,13 @@ func (s *Service) usableTicket(ctx context.Context, token string) error {
 		return ErrUnauthenticated
 	}
 	digest := sha256.Sum256([]byte(token))
-	ticket, err := scanTicket(s.db.QueryRowContext(ctx, "SELECT "+ticketColumns+" FROM enrollment_tokens WHERE token_hash = ?", digest[:]))
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	ticket, err := scanTicket(lease.QueryRowContext(ctx, "SELECT "+ticketColumns+" FROM enrollment_tokens WHERE token_hash = ?", digest[:]))
 	if errors.Is(err, ErrNotFound) {
 		return ErrUnauthenticated
 	}
@@ -56,7 +63,7 @@ func (s *Service) usableTicket(ctx context.Context, token string) error {
 	// 过期票据仍可能认证一次精确重试。不读取请求体就无法选择回执，
 	// 因此仅在存在活跃回执时才准入；
 	// 事务会验证安装实例、凭据、配额和过期时间。
-	rows, err := s.db.QueryContext(ctx, "SELECT claimed_at FROM enrollment_claims WHERE enrollment_id = ?", ticket.ID)
+	rows, err := lease.QueryContext(ctx, "SELECT claimed_at FROM enrollment_claims WHERE enrollment_id = ?", ticket.ID)
 	if err != nil {
 		return err
 	}

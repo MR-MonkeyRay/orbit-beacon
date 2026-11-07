@@ -45,9 +45,14 @@ func newHTTP(t *testing.T, capacity int) fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	stable, err := storage.OpenMain(context.Background(), filepath.Join(dir, "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stable.Close() })
 	now := func() time.Time { return time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC) }
-	authService := auth.NewService(db, auth.Options{Now: now, Random: rand.NewChaCha8([32]byte{31})})
-	nodeService := nodes.NewService(db, nodes.Options{MaxNodes: capacity, Now: now, Random: rand.NewChaCha8([32]byte{32})})
+	authService := auth.NewService(stable, auth.Options{Now: now, Random: rand.NewChaCha8([32]byte{31})})
+	nodeService := nodes.NewService(stable, nodes.Options{MaxNodes: capacity, Now: now, Random: rand.NewChaCha8([32]byte{32})})
 	if _, err := authService.CreateUser(context.Background(), "admin", password, false); err != nil {
 		t.Fatal(err)
 	}

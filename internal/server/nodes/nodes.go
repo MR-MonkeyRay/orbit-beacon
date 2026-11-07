@@ -11,7 +11,6 @@ import (
 	"io"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
@@ -104,15 +103,14 @@ type Service struct {
 	publicMu            sync.RWMutex
 	publicVersion       uint64
 	publicSafetyChanges change.Notifier
-	publicReader        atomic.Pointer[sql.DB]
-	db                  *sql.DB
+	db                  *storage.Database
 	maxNodes            int
 	now                 func() time.Time
 	random              io.Reader
 	randomMu            sync.Mutex
 }
 
-func NewService(db *sql.DB, opts Options) *Service {
+func NewService(db *storage.Database, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -126,7 +124,7 @@ func NewService(db *sql.DB, opts Options) *Service {
 }
 
 // Database 和 Capacity 让默认 HTTP 服务共用同一存储策略。
-func (s *Service) Database() *sql.DB { return s.db }
+func (s *Service) Database() *storage.Database { return s.db }
 
 func (s *Service) Capacity() int { return s.maxNodes }
 
@@ -173,7 +171,13 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 	node := Node{ID: id, Name: req.Name, Status: "pending", Presence: "pending", Tags: []string{}, CreatedAt: s.now().UTC()}
 	// BEGIN IMMEDIATE 在检查容量前先占住写锁，
 	// 对使用同一持久化数据库的多个独立服务也生效。
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return Node{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return Node{}, err
 	}
@@ -241,7 +245,13 @@ func scanNode(row scanner, now time.Time) (Node, error) {
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Node, error) {
-	return scanNode(s.db.QueryRowContext(ctx, "SELECT "+nodeColumns+" FROM nodes WHERE id = ?", id), s.now())
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Node{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	return scanNode(lease.QueryRowContext(ctx, "SELECT "+nodeColumns+" FROM nodes WHERE id = ?", id), s.now())
 }
 
 // ListPage 在同一条查询里多取一行，用于判断是否还有下一页。
@@ -261,7 +271,13 @@ func (s *Service) ListPage(ctx context.Context, limit, offset int) ([]Node, bool
 }
 
 func (s *Service) list(ctx context.Context, limit, offset int) ([]Node, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+nodeColumns+" FROM nodes ORDER BY created_at, id LIMIT ? OFFSET ?", limit, offset)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, err := lease.QueryContext(ctx, "SELECT "+nodeColumns+" FROM nodes ORDER BY created_at, id LIMIT ? OFFSET ?", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +330,13 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 	if len(fields) != 0 {
 		return Node{}, &validation.Error{Fields: fields}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return Node{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return Node{}, err
 	}
@@ -356,7 +378,13 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 }
 
 func (s *Service) SetDisabled(ctx context.Context, id string, disabled bool) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -395,7 +423,13 @@ func (s *Service) RevokeCredential(ctx context.Context, id string) error {
 	if !uuid.ValidUUID(id) {
 		return ErrInvalidInput
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -453,7 +487,13 @@ func (s *Service) AuthenticateToken(ctx context.Context, token string) (Authenti
 	var identity Authentication
 	var status string
 	var stored []byte
-	err := s.db.QueryRowContext(ctx, "SELECT id, credential_epoch, token_hash, status FROM nodes WHERE token_hash = ?", digest[:]).Scan(&identity.ID, &identity.CredentialEpoch, &stored, &status)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Authentication{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	err := lease.QueryRowContext(ctx, "SELECT id, credential_epoch, token_hash, status FROM nodes WHERE token_hash = ?", digest[:]).Scan(&identity.ID, &identity.CredentialEpoch, &stored, &status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Authentication{}, ErrUnauthenticated
 	}
@@ -474,7 +514,13 @@ func (s *Service) Delete(ctx context.Context, id string, confirm bool) error {
 	if !confirm {
 		return ErrInvalidInput
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -500,6 +546,12 @@ func (s *Service) Delete(ctx context.Context, id string, confirm bool) error {
 }
 
 func (s *Service) Batch(ctx context.Context, req BatchRequest) ([]BatchResult, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if len(req.NodeIDs) == 0 || len(req.NodeIDs) > 500 {
 		return nil, ErrInvalidInput
 	}
@@ -543,7 +595,13 @@ func (s *Service) Batch(ctx context.Context, req BatchRequest) ([]BatchResult, e
 // GetRuntime 返回当前身份最近一次观测到的 Agent 设置。
 func (s *Service) GetRuntime(ctx context.Context, id string) (*v1.RuntimeSettings, error) {
 	var raw string
-	if err := s.db.QueryRowContext(ctx, "SELECT CASE WHEN length(token_hash)>0 AND run_generation!='0' AND report_session_id!='' THEN agent_runtime ELSE '' END FROM nodes WHERE id=?", id).Scan(&raw); err != nil {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	if err := lease.QueryRowContext(ctx, "SELECT CASE WHEN length(token_hash)>0 AND run_generation!='0' AND report_session_id!='' THEN agent_runtime ELSE '' END FROM nodes WHERE id=?", id).Scan(&raw); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -560,7 +618,7 @@ func (s *Service) GetRuntime(ctx context.Context, id string) (*v1.RuntimeSetting
 }
 
 func readTrafficSettings(ctx context.Context, q interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryRowContext(context.Context, string, ...any) *storage.Row
 }, id string) (TrafficSettings, error) {
 	var settings TrafficSettings
 	err := q.QueryRowContext(ctx, "SELECT billing_day, quota_bytes, billing_mode FROM nodes WHERE id=?", id).Scan(&settings.BillingDay, &settings.QuotaBytes, &settings.BillingMode)
@@ -571,7 +629,13 @@ func readTrafficSettings(ctx context.Context, q interface {
 }
 
 func (s *Service) GetTrafficSettings(ctx context.Context, id string) (TrafficSettings, error) {
-	return readTrafficSettings(ctx, s.db, id)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return TrafficSettings{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	return readTrafficSettings(ctx, lease, id)
 }
 
 func (s *Service) PatchTrafficSettings(ctx context.Context, id string, patch TrafficSettingsPatch) (TrafficSettings, error) {
@@ -593,7 +657,13 @@ func (s *Service) PatchTrafficSettings(ctx context.Context, id string, patch Tra
 	if len(fields) != 0 {
 		return TrafficSettings{}, &validation.Error{Fields: fields}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return TrafficSettings{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return TrafficSettings{}, err
 	}

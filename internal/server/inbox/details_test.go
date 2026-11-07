@@ -76,7 +76,7 @@ func TestInsertValidatesDetailsShapes(t *testing.T) {
 			if tc.valid && validationErr != nil || !tc.valid && validationErr != inbox.ErrInvalidInput {
 				t.Fatalf("pure validation error = %v, valid = %t", validationErr, tc.valid)
 			}
-			tx, err := db.BeginTx(ctx, nil)
+			tx, err := beginMainWrite(t, db, ctx)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -48,9 +47,14 @@ func TestNewerHistorySchemaDisablesHistoryWithoutChangingFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	stable, err := storage.OpenMain(context.Background(), filepath.Join(dir, "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stable.Close()
 	var output bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&output, nil))
-	if service := openMetricHistory(context.Background(), config.Server{DataDir: dir}, db, logger, nil); service != nil {
+	if service := openMetricHistory(context.Background(), config.Server{DataDir: dir}, stable, logger, nil); service != nil {
 		service.Close()
 		t.Fatal("opened newer schema")
 	}
@@ -77,7 +81,7 @@ func TestOpenMetricHistorySelectsBackend(t *testing.T) {
 	if err := datadir.Prepare(dir); err != nil {
 		t.Fatal(err)
 	}
-	db, err := storage.Open(ctx, filepath.Join(dir, "orbitbeacon.db"))
+	db, err := storage.OpenMain(ctx, filepath.Join(dir, "orbitbeacon.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +121,7 @@ func TestOpenMetricHistorySelectsBackend(t *testing.T) {
 	}
 }
 
-func TestVictoriaMetricsMonitoringBackupEmptyHistory(t *testing.T) {
+func TestVictoriaMetricsMonitoringBackupRejectsUnavailableSQLHistory(t *testing.T) {
 	ctx := context.Background()
 	dir, err := os.MkdirTemp("", "orbitbeacon-f2-backup-")
 	if err != nil {
@@ -127,7 +131,7 @@ func TestVictoriaMetricsMonitoringBackupEmptyHistory(t *testing.T) {
 	if err := datadir.Prepare(dir); err != nil {
 		t.Fatal(err)
 	}
-	db, err := storage.Open(ctx, filepath.Join(dir, "orbitbeacon.db"))
+	db, err := storage.OpenMain(ctx, filepath.Join(dir, "orbitbeacon.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,44 +148,8 @@ func TestVictoriaMetricsMonitoringBackupEmptyHistory(t *testing.T) {
 	if err := service.Close(); err != nil {
 		t.Fatal(err)
 	}
-	metrics, err := storage.OpenReader(ctx, filepath.Join(dir, "metrics.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var count int
-	if err := metrics.QueryRow(`SELECT count(*) FROM buckets`).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if err := metrics.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if count != 0 {
-		t.Fatalf("local buckets=%d", count)
-	}
-	now := time.Now().UTC()
-	payloads, err := backup.CreateSnapshotPayloads(ctx, dir, filepath.Join(dir, "orbitbeacon-f2-snapshot"), []backup.Category{backup.Monitoring}, func() time.Time { return now })
-	if err != nil {
-		t.Fatal(err)
-	}
-	archive := filepath.Join(dir, "orbitbeacon-f2-monitoring.tar.gz.age")
-	password, err := backup.GeneratePassword(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest := backup.Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: "50000000-0000-4000-8000-000000000001", CreatedAt: now, ServerVersion: "test", SchemaVersion: storage.CurrentSchemaVersion, HistorySchemaVersion: history.CurrentSchemaVersion, Categories: []backup.Category{backup.Monitoring}, Snapshots: payloads.Snapshots}
-	if _, err := backup.WriteArchive(ctx, archive, manifest, payloads.Files, password); err != nil {
-		t.Fatal(err)
-	}
-	stage := filepath.Join(dir, "orbitbeacon-f2-read")
-	if _, err := backup.ReadArchive(ctx, archive, password, stage); err != nil {
-		t.Fatal(err)
-	}
-	payload, err := storage.OpenReader(ctx, filepath.Join(stage, "monitoring.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer payload.Close()
-	if err := payload.QueryRow(`SELECT count(*) FROM buckets`).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("backup buckets=%d err=%v", count, err)
+	_, err = backup.CreateSnapshotPayloads(ctx, backup.SnapshotSources{Main: db}, dir, filepath.Join(dir, "orbitbeacon-f2-snapshot"), []backup.Category{backup.Monitoring}, time.Now)
+	if err == nil || err.Error() != "history_unavailable" {
+		t.Fatalf("VM monitoring backup=%v", err)
 	}
 }

@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"orbitbeacon/internal/server/storage"
 )
 
 var durationBuckets = [...]float64{0.005, 0.025, 0.1, 0.5, 1, 5, 15, 30}
@@ -218,10 +220,10 @@ func (m *httpMetrics) exposition() string {
 // SaturationMetrics 只在启用独立指标监听时创建；写路径不获取采集锁。
 // history 的单个写入任务发布不可变快照，抓取不会与刷写争用锁。
 type SaturationMetrics struct {
-	writer, reader *sql.DB
-	dataDir        string
-	reportBusy     atomic.Uint64
-	flush          atomic.Pointer[historyFlushMetric]
+	database   *storage.Database
+	dataDir    string
+	reportBusy atomic.Uint64
+	flush      atomic.Pointer[historyFlushMetric]
 }
 
 type historyFlushMetric struct {
@@ -230,8 +232,8 @@ type historyFlushMetric struct {
 	entryBuckets [len(flushEntryBuckets)]uint64
 }
 
-func NewSaturationMetrics(writer, reader *sql.DB, dataDir string) *SaturationMetrics {
-	return &SaturationMetrics{writer: writer, reader: reader, dataDir: dataDir}
+func NewSaturationMetrics(database *storage.Database, dataDir string) *SaturationMetrics {
+	return &SaturationMetrics{database: database, dataDir: dataDir}
 }
 
 // ObserveHistoryFlush 由单个 history 写入任务调用，记录非空刷写尝试（含失败）。
@@ -272,11 +274,11 @@ func (m *SaturationMetrics) exposition(h *handler) string {
 		fmt.Fprintf(&b, "orbitbeacon_db_wait_count_total{%s} %d\n", labels, stats.WaitCount)
 		fmt.Fprintf(&b, "orbitbeacon_db_wait_duration_seconds_total{%s} %g\n", labels, stats.WaitDuration.Seconds())
 	}
-	if m.writer != nil {
-		writeStats("main", "writer", m.writer.Stats())
-	}
-	if m.reader != nil {
-		writeStats("main", "reader", m.reader.Stats())
+	if m.database != nil {
+		if writer, reader, ok := m.database.Stats(); ok {
+			writeStats("main", "writer", writer)
+			writeStats("main", "reader", reader)
+		}
 	}
 	if h.history != nil {
 		if writer, reader, ok := h.history.DatabaseStats(); ok {

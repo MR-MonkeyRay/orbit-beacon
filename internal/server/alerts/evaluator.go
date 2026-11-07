@@ -16,6 +16,7 @@ import (
 	"orbitbeacon/internal/server/commands"
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
 )
@@ -34,13 +35,13 @@ type Notification struct {
 // Notifier 在调用方事务内持久化投递，失败时由调用方回滚告警变化。
 // Wake 仅在提交后调用，必须非阻塞；即使唤醒丢失，投递也由持久化轮询兜底。
 type Notifier interface {
-	Enqueue(context.Context, *sql.Tx, Notification) error
+	Enqueue(context.Context, *storage.Tx, Notification) error
 	Wake()
 }
 type NoopNotifier struct{}
 
-func (NoopNotifier) Enqueue(context.Context, *sql.Tx, Notification) error { return nil }
-func (NoopNotifier) Wake()                                                {}
+func (NoopNotifier) Enqueue(context.Context, *storage.Tx, Notification) error { return nil }
+func (NoopNotifier) Wake()                                                    {}
 
 type LatestReader interface {
 	Latest(context.Context, string) (ingest.LatestReport, error)
@@ -137,7 +138,13 @@ func definition(r Rule) string {
 	return string(raw)
 }
 func (e *Evaluator) readNodes(ctx context.Context) ([]evaluationNode, error) {
-	rows, err := e.service.db.QueryContext(ctx, "SELECT id,name,status,group_id,expires_on,first_enrolled_at,last_seen,token_hash IS NOT NULL,token_hash,credential_epoch,run_generation,report_session_id, "+commands.StoppedSQL+" FROM nodes")
+	lease, leaseErr := e.service.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, err := lease.QueryContext(ctx, "SELECT id,name,status,group_id,expires_on,first_enrolled_at,last_seen,token_hash IS NOT NULL,token_hash,credential_epoch,run_generation,report_session_id, "+commands.StoppedSQL+" FROM nodes")
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +173,13 @@ func (e *Evaluator) readNodes(ctx context.Context) ([]evaluationNode, error) {
 	return result, rows.Err()
 }
 func (e *Evaluator) readOpen(ctx context.Context) (map[pair]openEvent, error) {
-	rows, err := e.service.db.QueryContext(ctx, "SELECT "+eventColumns+",e.rule_snapshot FROM alert_events e LEFT JOIN alert_rules r ON r.id=e.rule_id LEFT JOIN nodes n ON n.id=e.node_id WHERE e.state='firing'")
+	lease, leaseErr := e.service.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, err := lease.QueryContext(ctx, "SELECT "+eventColumns+",e.rule_snapshot FROM alert_events e LEFT JOIN alert_rules r ON r.id=e.rule_id LEFT JOIN nodes n ON n.id=e.node_id WHERE e.state='firing'")
 	if err != nil {
 		return nil, err
 	}
@@ -218,6 +231,12 @@ func matches(r Rule, n evaluationNode) bool {
 // Evaluate 执行一次确定性的评估。待触发状态和待重试的恢复操作数量受当前规则/节点对数限制；
 // 每次重新加载未结束的事件，避免重启后重复创建事件。
 func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
+	lease, leaseErr := e.service.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now = now.UTC()
@@ -432,6 +451,12 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 	return evaluationErr
 }
 func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *float64, since, now time.Time) error {
+	lease, leaseErr := e.service.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	id, err := uuid.UUID(rand.Reader)
 	if err != nil {
 		return err
@@ -440,7 +465,7 @@ func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *f
 	if err != nil {
 		return err
 	}
-	tx, err := e.service.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -486,6 +511,12 @@ func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *f
 	return nil
 }
 func (e *Evaluator) resolve(ctx context.Context, o openEvent, value *float64, now time.Time) error {
+	lease, leaseErr := e.service.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	key := pair{o.RuleID, o.NodeID}
 	intent, exists := e.resolutions[key]
 	if !exists || intent.eventID != o.ID {
@@ -494,7 +525,7 @@ func (e *Evaluator) resolve(ctx context.Context, o openEvent, value *float64, no
 	}
 	// 即使后续某个 tick 再次越限，也保留最初观测到的恢复。
 	now, value = intent.observedAt, intent.value
-	tx, err := e.service.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}

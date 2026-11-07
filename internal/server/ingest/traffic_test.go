@@ -54,7 +54,7 @@ func TestTrafficCoalescesAcksAfterCommitAndMaxUpsert(t *testing.T) {
 		t.Fatalf("max ack=%+v err=%v", response, err)
 	}
 	// 重启后没有 ack 缓存；必须由 RETURNING 恢复现有最大值。
-	f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }})
+	f.service = NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }})
 	f.report.Seq++
 	response, err = trafficAccept(t, f)
 	if err != nil || len(response.TrafficAcks) != 1 || response.TrafficAcks[0].RxBytes != "15" || response.TrafficAcks[0].TxBytes != "25" {

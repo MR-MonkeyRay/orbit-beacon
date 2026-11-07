@@ -55,7 +55,7 @@ type App struct {
 	logger                    *slog.Logger
 	version                   string
 	lock                      io.Closer
-	db, reader                io.Closer
+	db                        io.Closer
 	history                   historyService
 	ingest                    interface{ Shutdown(context.Context) error }
 	notifications             notificationService
@@ -90,26 +90,20 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 		return nil, err
 	}
 	databasePath := filepath.Join(cfg.DataDir, "orbitbeacon.db")
-	db, err := storage.Open(ctx, databasePath)
+	db, err := storage.OpenMain(ctx, databasePath)
 	if err != nil {
 		return nil, err
 	}
 	a.db = db
-	publicReader, err := storage.OpenReader(ctx, databasePath)
-	if err != nil {
-		return nil, err
-	}
-	a.reader = publicReader
 	nodeService := nodes.NewService(db, nodes.Options{MaxNodes: cfg.MaxNodes})
-	nodeService.SetPublicReader(publicReader)
 
 	var saturation *server.SaturationMetrics
 	var observeFlush func(time.Duration, int)
 	if cfg.MetricsListen != "" {
-		saturation = server.NewSaturationMetrics(db, publicReader, cfg.DataDir)
+		saturation = server.NewSaturationMetrics(db, cfg.DataDir)
 		observeFlush = saturation.ObserveHistoryFlush
 	}
-	metricHistory := openMetricHistory(ctx, cfg, publicReader, logger, observeFlush)
+	metricHistory := openMetricHistory(ctx, cfg, db, logger, observeFlush)
 	if metricHistory != nil {
 		a.history = metricHistory
 	}
@@ -142,7 +136,11 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 	if err != nil {
 		return nil, err
 	}
-	backups, err := backup.New(db, backup.Options{DataDir: cfg.DataDir, SecretBox: backupBox, ServerVersion: version, Uploader: backup.NewObjectUploader()})
+	backupOptions := backup.Options{DataDir: cfg.DataDir, SecretBox: backupBox, ServerVersion: version, Uploader: backup.NewObjectUploader()}
+	if metricHistory != nil {
+		backupOptions.History = metricHistory.Database()
+	}
+	backups, err := backup.New(db, backupOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -301,10 +299,6 @@ func (a *App) close(ctx context.Context) error {
 	if a.history != nil {
 		failures = append(failures, a.history.CloseContext(ctx))
 		a.history = nil
-	}
-	if a.reader != nil {
-		failures = append(failures, a.reader.Close())
-		a.reader = nil
 	}
 	if a.db != nil {
 		failures = append(failures, a.db.Close())

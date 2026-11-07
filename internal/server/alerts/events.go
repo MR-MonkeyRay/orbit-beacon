@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/server/management"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 )
@@ -78,7 +79,13 @@ const eventSelect = "SELECT " + eventColumns + ",COALESCE(json_extract(e.rule_sn
 
 // Event 按 ID 直接读取历史事件，沿用列表中的当前名称回退规则和不可变快照字段。
 func (s *Service) Event(ctx context.Context, id string) (Event, error) {
-	event, err := scanEvent(s.db.QueryRowContext(ctx, eventSelect+" WHERE e.id=?", id))
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Event{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	event, err := scanEvent(lease.QueryRowContext(ctx, eventSelect+" WHERE e.id=?", id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Event{}, ErrNotFound
 	}
@@ -87,9 +94,13 @@ func (s *Service) Event(ctx context.Context, id string) (Event, error) {
 
 // Summary 从一个一致的快照中读取计数和最新事件。
 func (s *Service) Summary(ctx context.Context) (AlertSummary, error) {
-	// SQLite 驱动对 ReadOnly 事务使用普通的 BEGIN，绕过了主连接池的 _txlock=immediate，
-	// 因此这里绝不会占用写锁。
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return AlertSummary{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginRead(ctx)
 	if err != nil {
 		return AlertSummary{}, err
 	}
@@ -130,6 +141,12 @@ func (s *Service) Summary(ctx context.Context) (AlertSummary, error) {
 }
 
 func (s *Service) Events(ctx context.Context, state string, limit int, before string) (EventPage, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return EventPage{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if state == "" {
 		state = "all"
 	}
@@ -156,7 +173,7 @@ func (s *Service) Events(ctx context.Context, state string, limit int, before st
 	}
 	query += " ORDER BY e.started_at DESC,e.id DESC LIMIT ?"
 	args = append(args, limit+1)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := lease.QueryContext(ctx, query, args...)
 	if err != nil {
 		return EventPage{}, err
 	}
@@ -181,12 +198,26 @@ func (s *Service) Events(ctx context.Context, state string, limit int, before st
 	return page, nil
 }
 func (s *Service) Cleanup(ctx context.Context, before time.Time, limit int) (int64, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return 0, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if limit < 1 {
 		return 0, validation.Invalid("limit", "must be positive")
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM alert_events WHERE id IN (SELECT id FROM alert_events WHERE state='resolved' AND resolved_at<? ORDER BY resolved_at,id LIMIT ?)`, timekey.Format(before), limit)
+	tx, txErr := lease.BeginWrite(ctx)
+	if txErr != nil {
+		return 0, txErr
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `DELETE FROM alert_events WHERE id IN (SELECT id FROM alert_events WHERE state='resolved' AND resolved_at<? ORDER BY resolved_at,id LIMIT ?)`, timekey.Format(before), limit)
 	if err != nil {
 		return 0, err
+	}
+	if commitErr := tx.Commit(); commitErr != nil {
+		return 0, commitErr
 	}
 	return result.RowsAffected()
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"orbitbeacon/internal/server/auth"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/uuid"
 )
 
@@ -216,13 +217,23 @@ func (registry *routeRegistry) serve(h *handler, w http.ResponseWriter, r *http.
 	if requested := registry.endpoints[r.Method+" "+entry.label]; requested != nil {
 		level = requested.auth
 	}
-	if level == admin || level == pendingPasswordAllowed {
-		if carriesAPIToken(r) {
-			h.serveAPIToken(w, r, requestID, r.Method+" "+entry.label)
+	tokenRequest := (level == admin || level == pendingPasswordAllowed) && carriesAPIToken(r)
+	if !tokenRequest && !method(w, r, requestID, registry.methods[entry.label]...) {
+		return
+	}
+	stream := entry.label == "/api/public/v1/stream" || entry.label == "/api/public/v1/ws" ||
+		entry.label == "/api/v1/live/stream" || entry.label == "/api/v1/live/ws"
+	if !stream && !strings.HasPrefix(entry.label, "/healthz/") {
+		lease, err := h.nodes.Database().Acquire(r.Context(), storage.Reader)
+		if err != nil {
+			h.serviceError(w, err, requestID)
 			return
 		}
+		defer lease.Close()
+		r = r.WithContext(lease.Context())
 	}
-	if !method(w, r, requestID, registry.methods[entry.label]...) {
+	if tokenRequest {
+		h.serveAPIToken(w, r, requestID, r.Method+" "+entry.label)
 		return
 	}
 	entry, ok := registry.endpoints[r.Method+" "+entry.label]

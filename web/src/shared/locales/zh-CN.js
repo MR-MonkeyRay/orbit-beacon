@@ -40,6 +40,7 @@ export default {
   'errors.username_conflict': '该用户名已被使用。',
   'errors.last_administrator': '至少需要保留一名管理员。',
   'errors.storage_busy': '存储繁忙，请稍后重试。',
+  'errors.storage_unavailable': '存储暂不可用，请稍后重试。',
   'errors.not_available': '此服务暂不可用。',
   'errors.body_too_large': '请求内容过大。',
   'errors.internal_error': '无法完成此操作。',

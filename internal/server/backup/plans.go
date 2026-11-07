@@ -12,6 +12,7 @@ import (
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/server/securefs"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
@@ -119,6 +120,12 @@ func (s *Service) planCredentials(p planRecord) (ObjectCredentials, error) {
 	return c, nil
 }
 func (s *Service) projectPlan(ctx context.Context, p planRecord, now time.Time) (Plan, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Plan{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	p.CredentialsSet = len(p.cipher) > 0
 	if p.CredentialsSet {
 		c, err := s.planCredentials(p)
@@ -141,7 +148,7 @@ func (s *Service) projectPlan(ctx context.Context, p planRecord, now time.Time) 
 			return Plan{}, err
 		}
 	}
-	task, err := scanTask(s.db.QueryRowContext(ctx, taskSelect+` WHERE plan_id=? AND (state NOT IN ('succeeded','failed') OR finished_at IS NULL OR finished_at>?) ORDER BY created_at DESC,id DESC LIMIT 1`, p.ID, timekey.Format(now.Add(-taskLifetime))))
+	task, err := scanTask(lease.QueryRowContext(ctx, taskSelect+` WHERE plan_id=? AND (state NOT IN ('succeeded','failed') OR finished_at IS NULL OR finished_at>?) ORDER BY created_at DESC,id DESC LIMIT 1`, p.ID, timekey.Format(now.Add(-taskLifetime))))
 	if err == nil {
 		p.LastTask = &PlanTaskSummary{ID: task.ID, State: task.State, CreatedAt: task.CreatedAt, FinishedAt: task.FinishedAt, ErrorCode: task.ErrorCode, WarningCode: task.WarningCode}
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -150,16 +157,28 @@ func (s *Service) projectPlan(ctx context.Context, p planRecord, now time.Time) 
 	return p.Plan, nil
 }
 func (s *Service) Plan(ctx context.Context, id string) (Plan, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Plan{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if !uuid.ValidUUID(id) {
 		return Plan{}, &Error{Code: "backup_plan_not_found"}
 	}
-	p, err := scanPlan(s.db.QueryRowContext(ctx, planSelect+` WHERE id=?`, id))
+	p, err := scanPlan(lease.QueryRowContext(ctx, planSelect+` WHERE id=?`, id))
 	if err != nil {
 		return Plan{}, planMissing(err)
 	}
 	return s.projectPlan(ctx, p, s.opts.Now())
 }
 func (s *Service) Plans(ctx context.Context, limit int, before string) (PlanPage, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return PlanPage{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	now := s.opts.Now()
 	page := PlanPage{Plans: make([]Plan, 0), TimezoneInfo: s.timezoneInfo(now)}
 	if limit < 1 || limit > 100 {
@@ -177,7 +196,7 @@ func (s *Service) Plans(ctx context.Context, limit int, before string) (PlanPage
 	}
 	query += ` ORDER BY created_at DESC,id DESC LIMIT ?`
 	args = append(args, limit+1)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := lease.QueryContext(ctx, query, args...)
 	if err != nil {
 		return page, err
 	}
@@ -208,7 +227,7 @@ func (s *Service) Plans(ctx context.Context, limit int, before string) (PlanPage
 	}
 	return page, nil
 }
-func planBusy(ctx context.Context, tx *sql.Tx, id string) error {
+func planBusy(ctx context.Context, tx *storage.Tx, id string) error {
 	var active bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM backup_tasks WHERE plan_id=? AND state IN ('queued','running'))`, id).Scan(&active); err != nil {
 		return err
@@ -301,6 +320,12 @@ func validatePlanDirectory(raw json.RawMessage) error {
 	return nil
 }
 func (s *Service) SavePlan(ctx context.Context, id string, patch PlanPatch) (Plan, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return Plan{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	creating := id == ""
 	if !creating && !uuid.ValidUUID(id) {
 		return Plan{}, &Error{Code: "backup_plan_not_found"}
@@ -314,7 +339,7 @@ func (s *Service) SavePlan(ctx context.Context, id string, patch PlanPatch) (Pla
 			return Plan{}, &Error{Code: "internal_error"}
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -452,10 +477,16 @@ func (s *Service) SavePlan(ctx context.Context, id string, patch PlanPatch) (Pla
 }
 func maskedCredential(value string) bool { return strings.Trim(value, "*• ") == "" }
 func (s *Service) DeletePlan(ctx context.Context, id string) error {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if !uuid.ValidUUID(id) {
 		return &Error{Code: "backup_plan_not_found"}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}

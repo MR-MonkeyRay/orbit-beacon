@@ -13,10 +13,11 @@ import (
 	"time"
 
 	"orbitbeacon/internal/logging"
+	"orbitbeacon/internal/server/storage"
 )
 
 const (
-	CurrentSchemaVersion = 1
+	CurrentSchemaVersion = storage.HistorySchemaVersion
 	SampleBufferSize     = 4096
 	FlushInterval        = time.Minute
 	maxPendingBuckets    = 8192
@@ -52,7 +53,7 @@ type retentionResult struct {
 
 type Service struct {
 	store          Store
-	nodes          *sql.DB
+	nodes          *storage.Database
 	samples        chan Sample
 	retention      chan retentionRequest
 	stop           chan context.Context
@@ -70,9 +71,8 @@ type Service struct {
 	seriesRetryAt  time.Time // owned by run
 }
 
-// Open 创建 metrics.db，使用自己的迁移台账和只读查询池。
-// 主库连接池仅用于清理孤立历史记录前读取现有节点 ID。
-func Open(ctx context.Context, dataDir string, nodes *sql.DB, opts Options) (*Service, error) {
+// Open 创建独立历史域；清理时先固定主库，再访问历史库。
+func Open(ctx context.Context, dataDir string, nodes *storage.Database, opts Options) (*Service, error) {
 	store, err := openSQLiteStore(ctx, filepath.Join(dataDir, "metrics.db"))
 	if err != nil {
 		return nil, err
@@ -81,7 +81,7 @@ func Open(ctx context.Context, dataDir string, nodes *sql.DB, opts Options) (*Se
 }
 
 // newService 在存储就绪后启动采样、刷写和清理任务。
-func newService(store Store, nodes *sql.DB, opts Options) *Service {
+func newService(store Store, nodes *storage.Database, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -103,6 +103,14 @@ func (s *Service) DatabaseStats() (writer, reader sql.DBStats, ok bool) {
 		return writer, reader, false
 	}
 	return s.store.DatabaseStats()
+}
+
+// Database 只返回实际 SQLite 历史源；远端 Store 不暴露空本地库。
+func (s *Service) Database() *storage.Database {
+	if store, ok := s.store.(*sqliteStore); ok {
+		return store.db
+	}
+	return nil
 }
 
 func (s *Service) add(sample Sample) {
@@ -282,6 +290,16 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time) (int64, error) {
 }
 
 func (s *Service) cleanup(ctx context.Context, now time.Time) (int64, error) {
+	var mainLease *storage.Lease
+	if s.nodes != nil {
+		lease, err := s.nodes.Acquire(ctx, storage.Reader)
+		if err != nil {
+			return 0, err
+		}
+		defer lease.Close()
+		ctx = lease.Context()
+		mainLease = lease
+	}
 	candidates := make(map[string]bool)
 	for key := range s.pending {
 		candidates[key.node] = true
@@ -299,7 +317,7 @@ func (s *Service) cleanup(ctx context.Context, now time.Time) (int64, error) {
 	// 在读取活跃 ID 之前冻结候选。排空可能添加待处理节点，
 	// 但在这份存在性快照之后，它们不可能成为孤儿候选。
 	if s.nodes != nil {
-		rows, err := s.nodes.QueryContext(ctx, `SELECT id FROM nodes`)
+		rows, err := mainLease.QueryContext(ctx, `SELECT id FROM nodes`)
 		if err != nil {
 			return 0, err
 		}
