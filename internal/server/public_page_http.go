@@ -36,8 +36,8 @@ func (h *handler) publicPageSettings(w http.ResponseWriter, r *http.Request, req
 		fail(w, http.StatusBadRequest, "validation_failed", "enabled must be a boolean", requestID)
 		return
 	}
-	// Keep persistence, publication and withdrawal in commit order. Reads use
-	// only the published state, including the short transaction-to-Store gap.
+	// 按提交顺序持久化、发布或撤回设置；即使事务已提交而 Store 尚未执行，
+	// 读取也只使用已发布的运行时状态。
 	h.publicPageMu.Lock()
 	defer h.publicPageMu.Unlock()
 	settings, err := h.management.SetPublicPageEnabled(r.Context(), *input.Enabled)
@@ -51,8 +51,8 @@ func (h *handler) publicPageSettings(w http.ResponseWriter, r *http.Request, req
 	writeJSON(w, http.StatusOK, settings)
 }
 
-// publicPageRoot runs before asset mapping and conditional cache handling.
-// An enabled public page is independent of every management session state.
+// publicPageRoot 在资源映射和条件缓存处理之前运行。
+// 已启用的公开页独立于所有管理会话状态。
 func (h *handler) publicPageRoot(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Set("Cache-Control", "no-store")
 	if h.publicPageAccess() == nil {

@@ -54,15 +54,14 @@ func newHTTP(t *testing.T, capacity int) fixture {
 	if _, err := authService.CreateUser(context.Background(), "admin-two", password, false); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := server.NewHandler(server.Options{
+	handler, err := server.NewHandler(testHandlerOptions(t, server.Options{
 		Auth: authService, Nodes: nodeService, PublicURL: publicURL,
 		Assets: fstest.MapFS{
 			"200.html":               &fstest.MapFile{Data: []byte("<!doctype html><main>regression SPA shell</main>")},
 			"public.html":            &fstest.MapFile{Data: []byte("<!doctype html><main>regression public shell</main>")},
-			"login.html":             &fstest.MapFile{Data: []byte("<!doctype html><main>regression login shell</main>")},
 			"_app/immutable/main.js": &fstest.MapFile{Data: []byte("export const fixture = true;")},
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +242,7 @@ func TestMutationsRequireBothTrustedOriginAndSessionBoundCSRF(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("valid mutation rejected: %d %s", response.Code, response.Body)
 	}
-	// A client-controlled Host cannot redefine which Origin is trusted.
+	// 客户端可控的 Host 不能重新定义哪个 Origin 受信任。
 	req := httptest.NewRequest(http.MethodPost, "https://attacker.example.test/api/v1/nodes", strings.NewReader(`{"name":"host spoof"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "https://attacker.example.test")
@@ -338,7 +337,7 @@ func TestAPIFailuresHaveStructuredErrorsAndNeverSPAFallback(t *testing.T) {
 	if response.Header().Get("Allow") == "" {
 		t.Error("405 response does not declare allowed methods")
 	}
-	// There is deliberately no anonymous first-administrator registration route.
+	// 有意不提供匿名首个管理员注册路由。
 	response = request(t, f.handler, http.MethodPost, "/api/v1/bootstrap", `{"username":"attacker","password":"takeover"}`, nil, "", publicURL)
 	if response.Code != http.StatusNotFound {
 		t.Errorf("public bootstrap route returned %d, want 404", response.Code)
@@ -354,7 +353,7 @@ func TestStaticFallbackIsLimitedToDeclaredUIRoutes(t *testing.T) {
 			if response.Code != http.StatusOK || !strings.HasPrefix(response.Header().Get("Content-Type"), "text/html") {
 				t.Errorf("declared SPA route returned %d, type=%q", response.Code, response.Header().Get("Content-Type"))
 			}
-			if !bytes.Contains(response.Body.Bytes(), []byte("regression SPA shell")) && !bytes.Contains(response.Body.Bytes(), []byte("regression login shell")) {
+			if !bytes.Contains(response.Body.Bytes(), []byte("regression SPA shell")) {
 				t.Error("declared route did not serve a UI document")
 			}
 		})

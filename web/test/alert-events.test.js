@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {activeAlertsSummary, eventRows, eventsPanel} from '../src/console/pages/alert-events.js';
 import {invalidate, setNavigationSignal, setSession} from '../src/console/api.js';
-import {elements, flush, installDOM} from './console-dom.js';
+import {copy, elements, flush, installDOM} from './console-dom.js';
 
 const event = (id, extra = {}) => ({id, rule_id: 'deleted-rule', rule_name: 'High CPU', node_id: 'node-id', node_name: 'Edge', metric: 'cpu_percent', severity: 'critical', state: 'firing', value: 90.1, started_at: '2026-10-27T12:00:00Z', resolved_at: null, ...extra});
 const respond = (body) => new Response(JSON.stringify(body));
@@ -80,7 +80,7 @@ test('alert history follows next_cursor and appends the last full page without g
     const root = eventsPanel('all', page.signal);
     dom.body.append(root); dom.mutations();
     await flush();
-    const more = elements(root).find((element) => element.tagName === 'button' && element.textContent === 'Load more');
+    const more = elements(root).find((element) => element.tagName === 'button' && element.textContent === copy('common.loadMore'));
     assert.equal(more.hidden, false);
     more.click();
     await flush();

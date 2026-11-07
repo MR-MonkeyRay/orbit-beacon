@@ -1,0 +1,28 @@
+import {t} from '../i18n.js';
+import {api, getNavigationSignal} from '../api.js';
+import {busy, button} from '../ui/components.js';
+import {typedConfirmation, upgradeConfirmation} from '../ui/typed-confirmation.js';
+import {toast, toastError} from '../ui/feedback.js';
+
+export function groupCommandActions(group, signal = getNavigationSignal()) {
+  let running = false;
+  const controls = ['upgrade', 'restart', 'stop'].map((kind) => button(t(`nodes.command.${kind}All`), {
+    small: true, variant: kind === 'stop' ? 'danger' : undefined, onClick: async () => {
+      if (running || signal?.aborted) return;
+      running = true;
+      controls.forEach((control) => busy(control, true));
+      try {
+        const targetVersion = kind === 'upgrade' ? await upgradeConfirmation({title: t('nodes.command.upgradeAll'), expected: group.name}) : undefined;
+        if (!(kind === 'upgrade' ? targetVersion : await typedConfirmation({title: t(`nodes.command.${kind}All`), expected: group.name,
+          message: kind === 'stop' ? t('nodes.command.stopConsequence') : undefined,
+          confirm: t(`nodes.command.${kind}All`)})) || signal?.aborted) return;
+        const result = await api(`/groups/${encodeURIComponent(group.id)}/commands`, {
+          method: 'POST', body: {kind, confirm: group.name, ...(kind === 'upgrade' ? {target_version: targetVersion} : {})}, signal
+        });
+        if (!signal?.aborted) toast(t('nodes.command.bulkResult', result));
+      } catch (error) { if (!signal?.aborted && error.name !== 'AbortError') toastError(error); }
+      finally { running = false; controls.forEach((control) => busy(control, false)); }
+    }
+  }));
+  return controls;
+}

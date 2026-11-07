@@ -1,20 +1,77 @@
 package v1
 
-import "errors"
+import (
+	"encoding/json"
+	"errors"
+	"slices"
+)
 
-// RuntimeSettings is the agent-owned collection and reporting configuration.
-// Defaults are applied only at the local configuration boundary, never to reports.
+const (
+	RemoteCommandUpgrade = "upgrade"
+	RemoteCommandRestart = "restart"
+	RemoteCommandStop    = "stop"
+	FeatureDisk          = "disk"
+	FeatureDiskIO        = "disk_io"
+	FeaturePressure      = "pressure"
+	FeatureTemperature   = "temperature"
+	FeatureNetwork       = "network"
+	FeatureTraffic       = "traffic"
+	FeatureProbes        = "probes"
+)
+
+// RemoteCommandOrder 返回远程指令的规范顺序，调用方可安全修改返回值。
+func RemoteCommandOrder() []string {
+	return []string{RemoteCommandUpgrade, RemoteCommandRestart, RemoteCommandStop}
+}
+
+// DisabledFeatureOrder 返回可关闭功能的规范顺序。
+func DisabledFeatureOrder() []string {
+	return []string{FeatureDisk, FeatureNetwork, FeatureTraffic, FeatureProbes, FeatureDiskIO, FeaturePressure, FeatureTemperature}
+}
+
+// RuntimeSettings 是由 Agent 管理的采集与上报配置。
+// 默认值仅在读取本地配置时补齐，不用于补齐收到的上报。
 type RuntimeSettings struct {
 	ReportIntervalSeconds int      `json:"report_interval_seconds"`
 	DiskIntervalSeconds   int      `json:"disk_interval_seconds"`
 	Interfaces            []string `json:"interfaces"`
 	DiskPaths             []string `json:"disk_paths"`
 	ProbeTargets          []string `json:"probe_targets"`
+	RemoteCommands        []string `json:"remote_commands"`
+	DisabledFeatures      []string `json:"disabled_features"`
 }
 
 func DefaultRuntimeSettings() RuntimeSettings {
 	return RuntimeSettings{ReportIntervalSeconds: 10, DiskIntervalSeconds: 60,
-		Interfaces: []string{}, DiskPaths: []string{}, ProbeTargets: []string{}}
+		Interfaces: []string{}, DiskPaths: []string{}, ProbeTargets: []string{}, RemoteCommands: RemoteCommandOrder(), DisabledFeatures: []string{}}
+}
+
+// Equal 比较完整的生效配置；空切片与 nil 的内容相等。
+func (c RuntimeSettings) Equal(other RuntimeSettings) bool {
+	return c.ReportIntervalSeconds == other.ReportIntervalSeconds && c.DiskIntervalSeconds == other.DiskIntervalSeconds &&
+		slices.Equal(c.Interfaces, other.Interfaces) && slices.Equal(c.DiskPaths, other.DiskPaths) &&
+		slices.Equal(c.ProbeTargets, other.ProbeTargets) && slices.Equal(c.RemoteCommands, other.RemoteCommands) &&
+		slices.Equal(c.DisabledFeatures, other.DisabledFeatures)
+}
+
+// Normalized 把缺失的列表写成空数组，让存储和接口始终看到同一种编码。
+func (c RuntimeSettings) Normalized() RuntimeSettings {
+	for _, list := range []*[]string{&c.Interfaces, &c.DiskPaths, &c.ProbeTargets, &c.RemoteCommands, &c.DisabledFeatures} {
+		if *list == nil {
+			*list = []string{}
+		}
+	}
+	return c
+}
+
+// AllowsCommand 供 Agent 执行指令前检查本地许可；未知指令始终拒绝。
+func (c RuntimeSettings) AllowsCommand(name string) bool {
+	return slices.Contains(RemoteCommandOrder(), name) && slices.Contains(c.RemoteCommands, name)
+}
+
+// FeatureDisabled 同时保护直接使用采集器的调用方：关闭网络也关闭流量，关闭磁盘也关闭磁盘 IO。
+func (c RuntimeSettings) FeatureDisabled(name string) bool {
+	return slices.Contains(c.DisabledFeatures, name) || name == FeatureTraffic && slices.Contains(c.DisabledFeatures, FeatureNetwork) || name == FeatureDiskIO && slices.Contains(c.DisabledFeatures, FeatureDisk)
 }
 
 type ValidationError struct {
@@ -34,6 +91,24 @@ func (c RuntimeSettings) Validate() error {
 	}
 	if c.DiskIntervalSeconds < 60 || c.DiskIntervalSeconds > 3600 {
 		fields["disk_interval_seconds"] = "must be between 60 and 3600"
+	}
+	for _, selection := range []struct {
+		field           string
+		values, allowed []string
+	}{
+		{"remote_commands", c.RemoteCommands, RemoteCommandOrder()},
+		{"disabled_features", c.DisabledFeatures, DisabledFeatureOrder()},
+	} {
+		for i, value := range selection.values {
+			if !slices.Contains(selection.allowed, value) {
+				fields[selection.field] = "unknown entry"
+				break
+			}
+			if slices.Contains(selection.values[:i], value) {
+				fields[selection.field] = "entries must be unique"
+				break
+			}
+		}
 	}
 	budget := false
 	budgetFields := 0
@@ -66,8 +141,7 @@ func (c RuntimeSettings) Validate() error {
 	return nil
 }
 
-// ValidateSelection applies the bounded device selection and encoded-report
-// budget contract before any collector or probe configuration is changed.
+// ValidateSelection 在变更采集器或探测配置前，校验设备选择范围与上报编码大小。
 func (c RuntimeSettings) ValidateSelection() error {
 	var fields map[string]string
 	for _, selection := range [...]struct {
@@ -124,4 +198,13 @@ func (c RuntimeSettings) ValidateSelection() error {
 		return &ValidationError{Fields: fields}
 	}
 	return nil
+}
+
+// DecodeRuntimeSettings 解码并校验观测到的运行时配置。
+func DecodeRuntimeSettings(raw string) (RuntimeSettings, error) {
+	var runtime RuntimeSettings
+	if err := json.Unmarshal([]byte(raw), &runtime); err != nil {
+		return runtime, err
+	}
+	return runtime, runtime.Validate()
 }

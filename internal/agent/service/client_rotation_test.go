@@ -40,7 +40,7 @@ func TestRotationStagingFailureDoesNotSendRequestOrReplaceActiveToken(t *testing
 	}
 	old := state.Current()
 	before := requests.Load()
-	// A directory cannot be atomically replaced by an identity file, even as root.
+	// 目录无法被身份文件原子替换，即使以 root 身份也不行。
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
@@ -67,8 +67,8 @@ func TestMissingReceiptCredentialStateFailsBeforeClaimOrStaging(t *testing.T) {
 	var claims atomic.Int64
 	https := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/agent/v1/enroll/check" {
-			// An older or incomplete response cannot distinguish a committed
-			// credential with a lost local node binding from a new identity.
+			// 更旧或不完整的响应无法区分已提交但本地节点绑定丢失的凭据
+			// 与一个新身份。
 			_, _ = w.Write([]byte(`{"claimed":false,"server_time":"2026-10-26T12:00:00Z"}`))
 			return
 		}

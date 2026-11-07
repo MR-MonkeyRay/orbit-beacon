@@ -3,7 +3,9 @@ package backup
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +30,11 @@ func validationDB(t *testing.T, category Category) *sql.DB {
 	for _, table := range tablesFor(category) {
 		columns := make([]string, 0, len(table.Columns))
 		for _, c := range table.Columns {
-			columns = append(columns, c.Name+" "+c.Type)
+			declaration := c.Name + " " + c.Type
+			if c.Name == "totp_last_step" {
+				declaration += " NOT NULL DEFAULT 0"
+			}
+			columns = append(columns, declaration)
 		}
 		if _, err := db.Exec("CREATE TABLE " + table.Name + " (" + strings.Join(columns, ",") + ")"); err != nil {
 			t.Fatal(err)
@@ -143,7 +149,7 @@ func TestPayloadHistoricalReferencesAndFiringSnapshot(t *testing.T) {
 	if err := ValidatePayloadData(context.Background(), db, Events, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,resolved_at,last_notified_at,rule_name,node_name,rule_snapshot) VALUES(?,?,?,'firing',NULL,?,NULL,NULL,'deleted rule','deleted node','{}')", validationID, validationID, validationID, validationTime); err != nil {
+	if _, err := db.Exec("INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,resolved_at,last_notified_at,rule_name,node_name,rule_snapshot,silenced) VALUES(?,?,?,'firing',NULL,?,NULL,NULL,'deleted rule','deleted node','{}',0)", validationID, validationID, validationID, validationTime); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidatePayloadData(context.Background(), db, Events, nil); err == nil {
@@ -184,7 +190,7 @@ func TestPayloadChannelCiphertextUsesExistingPurposeAndAAD(t *testing.T) {
 
 func TestPayloadNodeGenerationAndTrafficSettings(t *testing.T) {
 	db := validationDB(t, Configuration)
-	_, err := db.Exec(`INSERT INTO nodes(id,name,status,group_id,region,provider,notes,created_at,public_settings,billing_day,quota_bytes,token_hash,credential_epoch,installation_id,first_enrolled_at,run_generation,report_session_id) VALUES(?,'Node','pending',NULL,'','','',?,'{}',1,'0',NULL,0,NULL,NULL,'0','')`, validationID, validationTime)
+	_, err := db.Exec(`INSERT INTO nodes(id,name,status,group_id,region,provider,notes,created_at,public_settings,billing_day,quota_bytes,billing_mode,token_hash,credential_epoch,installation_id,first_enrolled_at,run_generation,report_session_id) VALUES(?,'Node','pending',NULL,'','','',?,'{}',1,'0','total',NULL,0,NULL,NULL,'0','')`, validationID, validationTime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +223,16 @@ func TestPayloadNodeGenerationAndTrafficSettings(t *testing.T) {
 	if err = ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err != nil {
 		t.Fatalf("valid maximum billing settings rejected: %v", err)
 	}
-	db.Exec("UPDATE nodes SET public_settings='null'")
+	for _, mode := range []string{"total", "max", "rx", "tx", "invalid", ""} {
+		if _, err = db.Exec("UPDATE nodes SET billing_mode=?", mode); err != nil {
+			t.Fatal(err)
+		}
+		err = ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32))
+		if (mode == "invalid" || mode == "") != (err != nil) {
+			t.Fatalf("billing mode %q: %v", mode, err)
+		}
+	}
+	db.Exec("UPDATE nodes SET billing_mode='total', public_settings='null'")
 	if err = ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err == nil {
 		t.Fatal("accepted null public settings")
 	}
@@ -225,7 +240,7 @@ func TestPayloadNodeGenerationAndTrafficSettings(t *testing.T) {
 
 func TestPayloadNodeCredentialEpochRequiresNonnegativeInteger(t *testing.T) {
 	db := validationDB(t, Configuration)
-	if _, err := db.Exec(`INSERT INTO nodes(id,name,status,group_id,region,provider,notes,created_at,public_settings,billing_day,quota_bytes,token_hash,credential_epoch,installation_id,first_enrolled_at,run_generation,report_session_id) VALUES(?,'Node','pending',NULL,'','','',?,'{}',1,'0',NULL,0,NULL,NULL,'0','')`, validationID, validationTime); err != nil {
+	if _, err := db.Exec(`INSERT INTO nodes(id,name,status,group_id,region,provider,notes,created_at,public_settings,billing_day,quota_bytes,billing_mode,token_hash,credential_epoch,installation_id,first_enrolled_at,run_generation,report_session_id) VALUES(?,'Node','pending',NULL,'','','',?,'{}',1,'0','total',NULL,0,NULL,NULL,'0','')`, validationID, validationTime); err != nil {
 		t.Fatal(err)
 	}
 	for _, epoch := range []int64{0, 23, 9223372036854775807} {
@@ -333,7 +348,7 @@ func TestPayloadObservationRuntimeValidation(t *testing.T) {
 
 func TestPayloadResolvedDeletedReferencesRemainLegal(t *testing.T) {
 	db := validationDB(t, Events)
-	if _, err := db.Exec(`INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,resolved_at,last_notified_at,rule_name,node_name,rule_snapshot) VALUES(?,'','','resolved',NULL,?,?,NULL,'','','{}')`, validationID, validationTime, validationTime); err != nil {
+	if _, err := db.Exec(`INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,resolved_at,last_notified_at,rule_name,node_name,rule_snapshot,silenced) VALUES(?,'','','resolved',NULL,?,?,NULL,'','','{}',0)`, validationID, validationTime, validationTime); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidatePayloadData(context.Background(), db, Events, nil); err != nil {
@@ -366,7 +381,7 @@ func TestPayloadMonitoringConstraints(t *testing.T) {
 		{"negative traffic", `INSERT INTO traffic_daily(node_id,day,rx_bytes,tx_bytes) VALUES('node','2026-10-27',-1,0)`},
 		{"noncanonical hour", `INSERT INTO traffic_hourly(node_id,epoch,period_start,rx_bytes,tx_bytes,updated_at) VALUES('node','abcd','2026-10-27T00:00:00Z',0,0,'2026-10-27T00:00:00.000000000Z')`},
 		{"invalid probe status", `INSERT INTO probe_latest(node_id,target,ok,latency_ms,error,status_code,checked_at) VALUES('node','https://example.com',1,NULL,'',200,'2026-10-27T00:00:00.000000000Z')`},
-		{"invalid aggregate", `INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms) VALUES('node','https://example.com','2026-10-27T00:00:00.000000000Z',1,2,0)`},
+		{"invalid aggregate", `INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms,latency_max_ms) VALUES('node','https://example.com','2026-10-27T00:00:00.000000000Z',1,2,0,0)`},
 		{"unsafe history", `INSERT INTO buckets(node_id,metric,step,t,total,peak,samples) VALUES('node','cpu_percent',60,0,101,101,1)`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -376,6 +391,140 @@ func TestPayloadMonitoringConstraints(t *testing.T) {
 			}
 			if err := ValidatePayloadData(context.Background(), db, Monitoring, nil); err == nil {
 				t.Fatal("accepted invalid row")
+			}
+		})
+	}
+}
+
+func TestPayloadBucketSeriesValueBounds(t *testing.T) {
+	for _, metric := range []string{"disk_used_percent", "disk_used_percent:/x", "disk_used_percent:/x:y"} {
+		for _, tc := range []struct {
+			name        string
+			total, peak float64
+			samples     int
+			valid       bool
+		}{
+			{"zero", 0, 0, 1, true},
+			{"upper bound", 100, 100, 1, true},
+			{"sum above upper bound", 200, 100, 2, true},
+			{"value above upper bound", 101, 101, 1, false},
+			{"peak above upper bound", 200, 101, 2, false},
+			{"average above upper bound", 202, 100, 2, false},
+		} {
+			t.Run(metric+"/"+tc.name, func(t *testing.T) {
+				db := validationDB(t, Monitoring)
+				if _, err := db.Exec(`INSERT INTO buckets(node_id,metric,step,t,total,peak,samples) VALUES('node',?,60,0,?,?,?)`, metric, tc.total, tc.peak, tc.samples); err != nil {
+					t.Fatal(err)
+				}
+				err := ValidatePayloadData(context.Background(), db, Monitoring, nil)
+				if tc.valid && err != nil {
+					t.Fatalf("valid bucket rejected: %v", err)
+				}
+				if !tc.valid && (err == nil || !strings.Contains(err.Error(), "restore_invalid_data")) {
+					t.Fatalf("invalid bucket accepted or unexpected error: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestPayloadRejectsPendingNotificationDeliveries(t *testing.T) {
+	for _, state := range []string{"sent", "failed", "pending"} {
+		t.Run(state, func(t *testing.T) {
+			db := validationDB(t, Events)
+			if _, err := db.Exec(`INSERT INTO notification_deliveries(id,channel_id,event_id,state,attempts,next_attempt_at,last_error_code,lease_until,payload_json,coalesced_count,created_at,updated_at) VALUES(?,?,?,?,0,?,'','','{}',1,?,?)`, validationID, validationID, validationID, state, validationTime, validationTime, validationTime); err != nil {
+				t.Fatal(err)
+			}
+			err := ValidatePayloadData(context.Background(), db, Events, nil)
+			if (err == nil) != (state != "pending") {
+				t.Fatalf("state=%s: %v", state, err)
+			}
+		})
+	}
+}
+
+func TestPayloadChannelTemplates(t *testing.T) {
+	key := []byte(strings.Repeat("k", 32))
+	box, err := secretbox.New(key, "orbitbeacon notification channel v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"telegram", "email", "webhook"} {
+		for _, template := range []string{"", "{node} {rule}\n{value}", "{unknown}", strings.Repeat("a", 1001)} {
+			t.Run(kind+"/"+fmt.Sprint(len(template)), func(t *testing.T) {
+				db := validationDB(t, Configuration)
+				config := map[string]any{"template": template}
+				var secretCipher, urlCipher []byte
+				switch kind {
+				case "telegram":
+					config["chat_id"] = "-123"
+					secretCipher, err = box.Seal(validationID, []byte("123:token"))
+				case "email":
+					config["host"], config["port"], config["from"], config["to"] = "smtp.example.com", 587, "a@example.com", []string{"b@example.com"}
+				case "webhook":
+					urlCipher, err = box.Seal(validationID+":url", []byte("https://example.com/hook"))
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw, err := json.Marshal(config)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = db.Exec(`INSERT INTO notification_channels(id,name,kind,enabled,config_json,secret_ciphertext,url_ciphertext,created_at,updated_at) VALUES(?,'Channel',?,1,?,?,?,?,?)`, validationID, kind, string(raw), secretCipher, urlCipher, validationTime, validationTime); err != nil {
+					t.Fatal(err)
+				}
+				err = ValidatePayloadData(context.Background(), db, Configuration, key)
+				valid := template == "" || kind != "webhook" && template == "{node} {rule}\n{value}"
+				if (err == nil) != valid {
+					t.Fatalf("kind=%s template=%q valid=%t err=%v", kind, template, valid, err)
+				}
+			})
+		}
+	}
+}
+
+func TestPayloadIMChannelURLs(t *testing.T) {
+	key := []byte(strings.Repeat("k", 32))
+	box, err := secretbox.New(key, "orbitbeacon notification channel v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		kind, target, secret string
+		valid                bool
+	}{
+		{"feishu", "https://open.feishu.cn/open-apis/bot/v2/hook/private-token", "", true},
+		{"dingtalk", "https://oapi.dingtalk.com/robot/send?access_token=private-token", "", true},
+		{"wecom", "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=private-token", "", true},
+		{"bark", "https://bark.example", "device-key", true},
+		{"ntfy", "https://ntfy.example/topic", "access-token", true},
+		{"telegram", "https://example.com/topic", "123:token", false},
+		{"bark", "https://bark.example/private-token", "device-key", false},
+	} {
+		t.Run(tt.kind+strconv.FormatBool(tt.valid), func(t *testing.T) {
+			db := validationDB(t, Configuration)
+			encrypted, err := box.Seal(validationID+":url", []byte(tt.target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var secret []byte
+			if tt.secret != "" {
+				secret, err = box.Seal(validationID, []byte(tt.secret))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := `{"template":"{node}"}`
+			if tt.kind == "telegram" {
+				cfg = `{"chat_id":"-123"}`
+			}
+			if _, err = db.Exec(`INSERT INTO notification_channels(id,name,kind,enabled,config_json,secret_ciphertext,url_ciphertext,created_at,updated_at) VALUES(?,'Channel',?,1,?,?,?,?,?)`, validationID, tt.kind, cfg, secret, encrypted, validationTime, validationTime); err != nil {
+				t.Fatal(err)
+			}
+			err = ValidatePayloadData(context.Background(), db, Configuration, key)
+			if (err == nil) != tt.valid {
+				t.Fatalf("valid=%t err=%v", tt.valid, err)
 			}
 		})
 	}

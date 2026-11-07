@@ -6,10 +6,10 @@ import (
 	"errors"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 const taskLifetime = 90 * 24 * time.Hour
@@ -56,7 +56,7 @@ func (s *Service) projectTask(task Task, now time.Time) Task {
 }
 
 func (s *Service) Task(ctx context.Context, id string) (Task, error) {
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return Task{}, &Error{Code: "task_not_found"}
 	}
 	task, err := s.loadTask(ctx, id)
@@ -113,7 +113,7 @@ func (s *Service) Tasks(ctx context.Context, limit int, before string) (TaskPage
 		cursor := management.EncodeEventCursor(last.CreatedAt, last.ID)
 		page.NextCursor = &cursor
 	}
-	// Close the read cursor before filesystem checks; no database lease is needed.
+	// 文件系统检查前关闭读游标，释放数据库连接。
 	if err := rows.Close(); err != nil {
 		return page, err
 	}
@@ -123,10 +123,10 @@ func (s *Service) Tasks(ctx context.Context, limit int, before string) (TaskPage
 	return page, nil
 }
 
-// Password is an explicit audited read. Neither Task nor Tasks decrypts secrets.
+// Password 是一次显式且有审计的读取。Task 和 Tasks 都不会解密机密。
 func (s *Service) Password(ctx context.Context, id string) (PasswordResult, error) {
 	var result PasswordResult
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return result, &Error{Code: "task_not_found"}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

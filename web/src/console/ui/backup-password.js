@@ -1,16 +1,16 @@
 import {h} from '../../shared/dom.js';
-import {t, getLocale} from '../../shared/i18n.js';
+import {t, getLocale} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {api} from '../api.js';
 import {busy, button} from './components.js';
 
-// Password material exists only inside this mounted component and is never
-// prefetched by details/list/polling. Dispose on dialog close or navigation.
+// 密码只保留在当前挂载的组件中，详情、列表和轮询均不得预取。
+// 对话框关闭或离开页面时清除。
 export function backupPassword(task, {signal} = {}) {
   const element = h('section', {class: 'backup-password', 'aria-label': t('data.password.section')});
-  const status = h('p', {class: 'muted', role: 'status'});
+  const status = h('p', {class: 'text-note', role: 'status'});
   const value = h('code', {class: 'recovery-secret', tabindex: '0', 'aria-label': t('data.password.value'), hidden: true});
-  const warning = h('p', {class: 'note'}, t('data.password.warning'));
+  const warning = h('p', {class: 'text-note'}, t('data.password.warning'));
   let secret;
   let request;
   let timer;
@@ -101,7 +101,7 @@ export function backupPassword(task, {signal} = {}) {
   element.addEventListener('keydown', touch);
   element.append(h('h3', null, t('data.password.heading')), warning);
   if (task.password_available) element.append(h('div', {class: 'head-actions'}, controls), value, status);
-  else element.append(h('p', {class: 'muted'}, t(task.restored ? 'data.password.restored' : 'data.password.absent')));
+  else element.append(h('p', {class: 'text-note'}, t(task.restored ? 'data.password.restored' : 'data.password.absent')));
   if (signal?.aborted) dispose();
   return {element, dispose};
 }

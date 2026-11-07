@@ -92,7 +92,7 @@ func TestNormalReportRecoversDurableRotationAfterUnauthorized(t *testing.T) {
 							return
 						}
 					}
-					// Decode only to inspect the retry; preserve the request for the real handler.
+					// 仅为检查重试而解码；为真实处理程序保留原始请求。
 					data, err := json.Marshal(report)
 					if err != nil {
 						t.Error(err)
@@ -113,7 +113,7 @@ func TestNormalReportRecoversDurableRotationAfterUnauthorized(t *testing.T) {
 			if _, err := rotator.Enroll(ctx, initial.Token); err != nil {
 				t.Fatal(err)
 			}
-			// Independent stores model a running process whose in-memory identity is stale.
+			// 独立的存储模拟一个内存身份已过期的运行进程。
 			stale, err := identity.Open(t.Context(), path, identity.Options{})
 			if err != nil {
 				t.Fatal(err)

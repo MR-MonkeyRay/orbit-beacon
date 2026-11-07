@@ -2,48 +2,57 @@ package server
 
 import (
 	"net/http"
-	"net/url"
+	"path/filepath"
+	"strings"
 
 	"orbitbeacon/internal/server/history"
-	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/validation"
 )
 
 func (h *handler) nodeHistory(w http.ResponseWriter, r *http.Request, id, requestID string) {
-	query, err := url.ParseQuery(r.URL.RawQuery)
-	fields := make(map[string]string)
-	if err != nil {
-		fields["query"] = "must be a valid query string"
+	if response, ok := h.readHistory(w, r, id, requestID); ok {
+		writeJSON(w, http.StatusOK, response)
 	}
-	for key, values := range query {
-		if key != "metric" && key != "range" {
-			fields[key] = "unknown parameter"
-		} else if len(values) != 1 {
-			fields[key] = "must be supplied exactly once"
-		}
-	}
+}
+
+func (h *handler) readHistory(w http.ResponseWriter, r *http.Request, id, requestID string) (history.Response, bool) {
+	query, fields := parseQuery(r.URL.RawQuery, "must be a valid query string", map[string]queryParameter{
+		"metric": {repeated: "must be supplied exactly once"},
+		"range":  {repeated: "must be supplied exactly once"},
+		"disk":   {repeated: "must be supplied exactly once"},
+	})
 	metric, requestedRange := query.Get("metric"), query.Get("range")
 	if !history.ValidMetric(metric) {
 		fields["metric"] = "must be a supported history metric"
 	}
 	if _, err := history.SelectRange(requestedRange); err != nil {
-		fields["range"] = "must be one of 1h, 6h, 24h, 7d, 30d"
+		fields["range"] = "must be one of 1h, 6h, 24h, 7d, 30d, 90d"
+	}
+	if query.Has("disk") {
+		disk := query.Get("disk")
+		if metric != "disk_used_percent" && metric != "inode_used_percent" {
+			fields["disk"] = "is only valid for disk_used_percent or inode_used_percent"
+		} else if !filepath.IsAbs(disk) || len(disk) > 1024 || strings.ContainsRune(disk, 0) {
+			fields["disk"] = "must be an absolute path of at most 1024 bytes without NUL"
+		}
 	}
 	if len(fields) > 0 {
-		h.serviceError(w, &nodes.ValidationError{Fields: fields}, requestID)
-		return
+		h.serviceError(w, &validation.Error{Fields: fields}, requestID)
+		return history.Response{}, false
 	}
-	// Existence is checked even when best-effort history was disabled at startup.
+	// 即使启动时禁用了历史记录，仍须确认节点存在。
 	if _, err := h.nodes.Get(r.Context(), id); err != nil {
 		h.serviceError(w, err, requestID)
-		return
+		return history.Response{}, false
 	}
 	response, _ := history.Empty(metric, requestedRange)
 	if h.history != nil {
-		response, err = h.history.Query(r.Context(), id, metric, requestedRange, h.now())
+		var err error
+		response, err = h.history.Query(r.Context(), id, metric, requestedRange, h.now(), query.Get("disk"))
 		if err != nil {
 			h.serviceError(w, err, requestID)
-			return
+			return history.Response{}, false
 		}
 	}
-	writeJSON(w, http.StatusOK, response)
+	return response, true
 }

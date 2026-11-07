@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"orbitbeacon/internal/agent/collect"
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/enrollment"
 	"orbitbeacon/internal/server/nodes"
@@ -33,6 +35,11 @@ type coalesceFixture struct {
 
 func newCoalesceFixture(t *testing.T, interval time.Duration, targets ...string) *coalesceFixture {
 	t.Helper()
+	return newCoalesceFixtureWithOptions(t, Options{PersistInterval: interval, DisablePersistOffset: true}, targets...)
+}
+
+func newCoalesceFixtureWithOptions(t *testing.T, opts Options, targets ...string) *coalesceFixture {
+	t.Helper()
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -50,15 +57,16 @@ func newCoalesceFixture(t *testing.T, interval time.Duration, targets ...string)
 		t.Fatal(err)
 	}
 	f.id = node.ID
-	credential := sha256.Sum256([]byte("coalesce-test-credential"))
+	credential := sha256.Sum256([]byte(coalesceToken))
 	if _, err := db.Exec(`UPDATE nodes SET token_hash=?,status='unknown',first_enrolled_at=?,public_settings='{"enabled":true,"name":"Coalesce"}' WHERE id=?`, credential[:], timekey.Format(f.now), f.id); err != nil {
 		t.Fatal(err)
 	}
-	// Count row persistence, including identical-value UPDATEs.
+	// 统计行的持久化，包括相同值的 UPDATE。
 	if _, err := db.Exec(`CREATE TABLE report_writes (n INTEGER NOT NULL); INSERT INTO report_writes VALUES(0); CREATE TRIGGER count_report_writes AFTER UPDATE OF last_seen ON nodes BEGIN UPDATE report_writes SET n=n+1; END`); err != nil {
 		t.Fatal(err)
 	}
-	f.service = NewService(db, Options{Now: clock, PersistInterval: interval})
+	opts.Now = clock
+	f.service = NewService(db, opts)
 	cpu, load, uptime := 10.0, 0.5, 100.0
 	total, available, zero := uint64(8192), uint64(4096), uint64(0)
 	window := int64(10000)
@@ -76,7 +84,7 @@ func newCoalesceFixture(t *testing.T, interval time.Duration, targets ...string)
 	if len(targets) != 0 {
 		f.report.Runtime.ProbeTargets = targets
 	}
-	if _, err := f.service.Accept(context.Background(), f.id, f.report); err != nil {
+	if _, err := acceptReport(context.Background(), f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -112,7 +120,7 @@ func TestCoalesceDurabilityConditions(t *testing.T) {
 			f.now = f.now.Add(time.Second)
 			f.report.Seq++
 			test.mutate(t, f)
-			_, err := f.service.Accept(context.Background(), f.id, f.report)
+			_, err := acceptReport(context.Background(), f.service, coalesceToken, f.report)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -137,13 +145,13 @@ func TestCoalesceRuntimeChangeAndDuplicate(t *testing.T) {
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
 	f.report.Runtime.ReportIntervalSeconds = 5
-	if _, err := f.service.Accept(ctx, f.id, f.report); err != nil {
+	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
 	f.report.Runtime.ReportIntervalSeconds = 10
-	if _, err := f.service.Accept(ctx, f.id, f.report); err != nil {
+	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
 	if f.writes(t) != 3 {
@@ -155,7 +163,7 @@ func TestCoalesceRuntimeChangeAndDuplicate(t *testing.T) {
 	}
 	f.now = f.now.Add(time.Second)
 	f.report.Seq--
-	response, err := f.service.Accept(ctx, f.id, f.report)
+	response, err := acceptReport(ctx, f.service, coalesceToken, f.report)
 	if err != nil || response.AcceptedSeq != latest.Seq {
 		t.Fatalf("duplicate response=%+v err=%v", response, err)
 	}
@@ -167,7 +175,7 @@ func TestCoalesceRuntimeChangeAndDuplicate(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.report.Seq = 4
-	if _, err := f.service.Accept(ctx, f.id, f.report); err != ErrServiceClosed {
+	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != ErrServiceClosed {
 		t.Fatalf("closed fast path returned %v", err)
 	}
 }
@@ -186,7 +194,7 @@ func TestCoalesceConcurrentReportsReadersAndPruning(t *testing.T) {
 			<-start
 			report := f.report
 			report.Seq = seq
-			if _, err := f.service.Accept(ctx, f.id, report); err != nil {
+			if _, err := acceptReport(ctx, f.service, coalesceToken, report); err != nil {
 				errors <- err
 			}
 		}()
@@ -206,13 +214,13 @@ func TestCoalesceConcurrentReportsReadersAndPruning(t *testing.T) {
 					errors <- fmt.Errorf("invalid snapshot seq %d", latest.Seq)
 					return
 				}
-				// Caller mutations must never alter the owned snapshot.
+				// 调用方修改返回值不能改变服务内部持有的快照。
 				latest.Metrics.MetricStatus["cpu_percent"] = "error"
 				if _, err := json.Marshal(latest); err != nil {
 					errors <- err
 					return
 				}
-				out, err := f.service.PublicNode(ctx, f.id, f.now)
+				out, err := publicNode(ctx, f.nodes, f.service, f.id, f.now)
 				if err != nil || out.Status != "online" {
 					errors <- fmt.Errorf("projection=%+v err=%v", out, err)
 					return
@@ -265,13 +273,13 @@ func TestCoalesceConcurrentMutationBeforeAuthentication(t *testing.T) {
 				}
 			}()
 			result := make(chan error, 1)
-			credential := sha256.Sum256([]byte("coalesce-test-credential"))
+			credential := sha256.Sum256([]byte(coalesceToken))
 			go func() {
-				_, err := f.service.accept(ctx, f.id, credential[:], 0, f.report, false)
+				_, err := f.service.accept(ctx, f.id, credential[:], 0, f.report)
 				result <- err
 			}()
-			// Hold the report before its current-state SELECT, then commit the
-			// mutation. Cached credentials or a pre-lock SELECT would accept it.
+			// 在报告的当前状态 SELECT 之前持有报告，然后提交变更。
+			// 缓存的凭据或加锁前的 SELECT 都会错误地接受它。
 			for {
 				f.service.mu.Lock()
 				refs := state.refs
@@ -357,8 +365,8 @@ func TestCoalesceLatestFencesMutationAfterFastPathRead(t *testing.T) {
 			resume := make(chan struct{})
 			var release sync.Once
 			defer release.Do(func() { close(resume) })
-			// The acceptance clock is sampled after the plain SELECT. Stop the
-			// report there so the mutation commits before its memory update.
+			// 接受时钟在普通 SELECT 之后采样。让报告在那里停下，
+			// 使变更在其内存更新之前提交。
 			f.service.now = func() time.Time {
 				close(read)
 				select {
@@ -368,9 +376,9 @@ func TestCoalesceLatestFencesMutationAfterFastPathRead(t *testing.T) {
 				return f.now
 			}
 			result := make(chan error, 1)
-			credential := sha256.Sum256([]byte("coalesce-test-credential"))
+			credential := sha256.Sum256([]byte(coalesceToken))
 			go func() {
-				_, err := f.service.accept(ctx, f.id, credential[:], 0, f.report, false)
+				_, err := f.service.accept(ctx, f.id, credential[:], 0, f.report)
 				result <- err
 			}()
 			select {
@@ -427,7 +435,7 @@ func TestCoalesceCredentialABAReclaimsBeforeAndAfterRead(t *testing.T) {
 				t.Fatal(err)
 			}
 			f.report.Seq = 100
-			if _, err := f.service.accept(ctx, f.id, nil, 0, f.report, false); err != nil {
+			if _, err := f.service.accept(ctx, f.id, nil, 0, f.report); err != nil {
 				t.Fatal(err)
 			}
 			f.now = f.now.Add(time.Second)
@@ -448,7 +456,7 @@ func TestCoalesceCredentialABAReclaimsBeforeAndAfterRead(t *testing.T) {
 				}
 			}
 			if resetAfterRead {
-				// Make persistence due, then reuse A after its first SELECT.
+				// 让持久化到期，然后在 A 的首次 SELECT 之后复用它。
 				f.now = f.now.Add(30 * time.Second)
 				var once sync.Once
 				f.service.now = func() time.Time { once.Do(reenroll); return f.now }
@@ -456,12 +464,12 @@ func TestCoalesceCredentialABAReclaimsBeforeAndAfterRead(t *testing.T) {
 				reenroll()
 			}
 			f.report.Seq = 2
-			response, err := f.service.accept(ctx, f.id, nil, 0, f.report, false)
+			response, err := f.service.accept(ctx, f.id, nil, 0, f.report)
 			if resetAfterRead {
 				if !errors.Is(err, ErrIdentityConflict) {
 					t.Fatalf("queued pre-reset report error=%v", err)
 				}
-				response, err = f.service.accept(ctx, f.id, nil, 0, f.report, false)
+				response, err = f.service.accept(ctx, f.id, nil, 0, f.report)
 			}
 			if err != nil || response.AcceptedSeq != 2 {
 				t.Fatalf("ABA report deduplicated: response=%+v err=%v", response, err)
@@ -474,7 +482,7 @@ func TestCoalesceCredentialABAReclaimsBeforeAndAfterRead(t *testing.T) {
 				t.Fatalf("identity not reclaimed: generation=%s session=%q", generation, session)
 			}
 			f.report.Seq++
-			if response, err := f.service.accept(ctx, f.id, nil, 0, f.report, false); err != nil || response.AcceptedSeq != 3 {
+			if response, err := f.service.accept(ctx, f.id, nil, 0, f.report); err != nil || response.AcceptedSeq != 3 {
 				t.Fatalf("sequence history survived ABA: response=%+v err=%v", response, err)
 			}
 			if latest, err := f.service.Latest(ctx, f.id); err != nil || latest.Seq != 3 {
@@ -503,8 +511,8 @@ func TestFreshCredentialEpochRejectsQueuedExactABA(t *testing.T) {
 		}
 	}
 	rebind()
-	// No report has been accepted under this identity: A/0/'' is the exact
-	// durable identity both before and after the revoke/rebind below.
+	// 该身份下没有接受过任何报告：下面撤销/重绑前后，
+	// A/0/'' 都是确切的持久化身份。
 	f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }})
 	target := "tcp://queued-identity.test:443"
 	f.report.Runtime.ProbeTargets = []string{target}
@@ -515,7 +523,7 @@ func TestFreshCredentialEpochRejectsQueuedExactABA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	releaseWrite, err := f.service.beginWrite(ctx)
+	releaseWrite, err := holdWriter(ctx, f.service)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,13 +568,13 @@ func TestFreshCredentialEpochRejectsQueuedExactABA(t *testing.T) {
 	if _, err := f.service.Latest(ctx, f.id); !errors.Is(err, nodes.ErrNotFound) {
 		t.Fatalf("queued report exposed latest: %v", err)
 	}
-	// A request authenticated after the reset can claim the fresh identity;
-	// neither the rejected report nor its pending counters may produce ACKs.
+	// 重置之后认证的请求可以声明新身份；
+	// 被拒绝的报告及其待处理计数都不得产生 ACK。
 	f.report.Traffic = nil
 	f.report.ProbeResults = nil
 	f.report.Runtime.ProbeTargets = nil
 	f.report.System.Hostname = "fresh-host"
-	response, err := f.service.AcceptToken(ctx, coalesceToken, f.report)
+	response, err := acceptReport(ctx, f.service, coalesceToken, f.report)
 	if err != nil || response.AcceptedSeq != 1 || len(response.TrafficAcks) != 0 {
 		t.Fatalf("fresh report response=%+v err=%v", response, err)
 	}
@@ -585,8 +593,8 @@ func TestCoalesceCanceledSameNodeWaiterDoesNotBlockShutdown(t *testing.T) {
 	f := newCoalesceFixture(t, 0)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	// Occupy writer admission so a durable report holds the node gate.
-	releaseWrite, err := f.service.beginWrite(ctx)
+	// 占用写入准入，使持久化报告持有节点闸门。
+	releaseWrite, err := holdWriter(ctx, f.service)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -598,7 +606,7 @@ func TestCoalesceCanceledSameNodeWaiterDoesNotBlockShutdown(t *testing.T) {
 	defer cancelSlow()
 	slow := make(chan error, 1)
 	go func() {
-		_, err := f.service.accept(slowCtx, f.id, nil, 0, f.report, false)
+		_, err := f.service.accept(slowCtx, f.id, nil, 0, f.report)
 		slow <- err
 	}()
 	for len(f.service.writerQueue) != 2 {
@@ -617,7 +625,7 @@ func TestCoalesceCanceledSameNodeWaiterDoesNotBlockShutdown(t *testing.T) {
 	defer cancelWaiter()
 	waiter := make(chan error, 1)
 	go func() {
-		_, err := f.service.accept(waiterCtx, f.id, nil, 0, f.report, false)
+		_, err := f.service.accept(waiterCtx, f.id, nil, 0, f.report)
 		waiter <- err
 	}()
 	state := f.service.acquireExistingState(f.id)
@@ -646,7 +654,7 @@ func TestCoalesceCanceledSameNodeWaiterDoesNotBlockShutdown(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("cancelled same-node waiter remained blocked by durable report")
 	}
-	// The gate is still occupied when the cancelled waiter leaves the drain.
+	// 已取消的等待者离开排空时，闸门仍被占用。
 	f.service.lifecycleMu.Lock()
 	inflight := f.service.inflight
 	f.service.lifecycleMu.Unlock()
@@ -680,7 +688,7 @@ func TestTypedRuntimeSelectionsStayCanonicalWithoutAnotherDurableWrite(t *testin
 	f.report.Runtime.Interfaces = nil
 	f.report.Runtime.DiskPaths = nil
 	f.report.Runtime.ProbeTargets = nil
-	if _, err := f.service.accept(context.Background(), f.id, nil, 0, f.report, false); err != nil {
+	if _, err := f.service.accept(context.Background(), f.id, nil, 0, f.report); err != nil {
 		t.Fatal(err)
 	}
 	latest, err := f.service.Latest(context.Background(), f.id)
@@ -693,5 +701,105 @@ func TestTypedRuntimeSelectionsStayCanonicalWithoutAnotherDurableWrite(t *testin
 	}
 	if f.writes(t) != 1 {
 		t.Fatal("equivalent empty runtime selections caused another durable write")
+	}
+}
+
+// holdWriter 以持久化报告的方式占用写入准入：它被 Shutdown 跟踪，
+// 并预留一个写入槽。
+func holdWriter(ctx context.Context, s *Service) (func(), error) {
+	finish, err := s.beginUse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.queueWrite(ctx, finish)
+}
+
+func acceptReport(ctx context.Context, s *Service, token string, report v1.Report) (v1.ReportResponse, error) {
+	admission, err := s.AdmitToken(ctx, token)
+	if err != nil {
+		return v1.ReportResponse{}, err
+	}
+	return s.AcceptAdmitted(ctx, admission, report)
+}
+
+func publicNode(ctx context.Context, ns *nodes.Service, s *Service, id string, now time.Time) (PublicNode, error) {
+	records, _, err := ns.ListPublicRecords(ctx, 100, 0, time.Now())
+	if err != nil {
+		return PublicNode{}, err
+	}
+	for _, record := range records {
+		if record.ID == id {
+			return s.ProjectPublicRecord(record, now)
+		}
+	}
+	return PublicNode{}, nodes.ErrNotFound
+}
+
+func TestNormalizedCapabilitiesAvoidExtraDurableWrite(t *testing.T) {
+	f := newCoalesceFixture(t, time.Hour)
+	policy := config.InstallPolicy{ServerURL: "https://example.test", StateDir: t.TempDir(), InstallMode: "native"}
+	load := func(commands, features string) config.Agent {
+		cfg, err := config.LoadAgent(config.LoadOptions{LookupEnv: func(key string) (string, bool) {
+			switch key {
+			case "ORBITBEACON_REMOTE_COMMANDS":
+				return commands, true
+			case "ORBITBEACON_DISABLED_FEATURES":
+				return features, true
+			}
+			return "", false
+		}}, &policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	first := load(`["stop","restart","upgrade"]`, `["probes","network","disk"]`)
+	f.report.Runtime = first.RuntimeSettings
+	f.report.Seq++
+	f.now = f.now.Add(time.Second)
+	if _, err := acceptReport(t.Context(), f.service, coalesceToken, f.report); err != nil {
+		t.Fatal(err)
+	}
+	writes := f.writes(t)
+	second := load(`["upgrade","restart","stop"]`, `["disk","network","traffic","probes"]`)
+	f.report.Runtime = second.RuntimeSettings
+	f.report.Seq++
+	f.now = f.now.Add(time.Second)
+	if _, err := acceptReport(t.Context(), f.service, coalesceToken, f.report); err != nil {
+		t.Fatal(err)
+	}
+	if f.writes(t) != writes {
+		t.Fatal("reordered capabilities caused durable write")
+	}
+	latest, err := f.service.Latest(t.Context(), f.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !latest.Runtime.Equal(second.RuntimeSettings) || len(latest.Metrics.Disks) != 0 || len(latest.Metrics.Networks) != 0 || len(latest.Traffic) != 0 {
+		t.Fatalf("empty disabled series rejected: %+v", latest)
+	}
+}
+
+func TestNormalizeCapabilityNilSlicesAsEmptyObservations(t *testing.T) {
+	settings := v1.DefaultRuntimeSettings()
+	c, err := collect.New(collect.Options{Config: settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	metrics, _ := c.Collect(ctx)
+	report := v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "normalize", Seq: 1, SampledAt: time.Now().UTC(), Runtime: settings, Metrics: metrics, Traffic: []v1.Traffic{}}
+	report.Runtime.RemoteCommands = nil
+	report.Runtime.DisabledFeatures = nil
+	normalized, err := normalizeReport(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Runtime.RemoteCommands == nil || normalized.Runtime.DisabledFeatures == nil {
+		t.Fatal("nil capabilities leaked into stored observation")
+	}
+	if len(normalized.Runtime.RemoteCommands) != 0 || len(normalized.Runtime.DisabledFeatures) != 0 {
+		t.Fatal("observation received defaults")
 	}
 }

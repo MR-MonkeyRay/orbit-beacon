@@ -5,6 +5,7 @@ import {validResponse} from '../src/public/validate.js';
 
 function node(overrides = {}) {
   return {
+    availability: {start_day: '2026-09-28', percent: null, days: Array(30).fill(null)},
     name: 'edge-1',
     region: 'us-west',
     provider: 'Orbit',
@@ -21,6 +22,7 @@ function node(overrides = {}) {
 
 function response(overrides = {}) {
   return {
+    announcements: [],
     nodes: [node()],
     has_more: false,
     next_offset: null,

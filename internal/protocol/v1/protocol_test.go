@@ -35,13 +35,13 @@ func assertJSONRoundTrip(t *testing.T, input string, dst any) {
 
 const reportJSON = `{
  "protocol_version":1,"run_generation":7,"session_id":"run-seven","seq":9,
- "sampled_at":"2026-10-26T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":["eth0"],"disk_paths":["/"],"probe_targets":[]},
+ "sampled_at":"2026-10-26T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":["eth0"],"disk_paths":["/"],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]},
  "system":{"hostname":"same-hostname","os":"linux","arch":"amd64"},
- "metrics":{
+ "metrics":{"disk_io":null,"pressure":null,"temperature_celsius":null,
   "cpu_percent":null,"load1":0.5,"load5":1.25,"load15":2,
   "memory_total_bytes":8192,"memory_available_bytes":4096,
   "swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":123,
-  "disks":[{"path":"/","total_bytes":8192,"used_bytes":2048,"sampled_at":"2026-10-26T12:00:00Z"}],
+  "disks":[{"path":"/","total_bytes":8192,"used_bytes":2048,"inodes_total":null,"inodes_used":null,"sampled_at":"2026-10-26T12:00:00Z"}],
   "networks":[{"name":"eth0","rx_bytes_per_sec":null,"tx_bytes_per_sec":null}],
   "metric_status":{"cpu_percent":"stale","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok","disk:/":"ok","network:eth0":"stale"},
   "sources":{"cpu":{"sample_id":"cpu-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":0},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000},"disk:/":{"sample_id":"disk-1","age_ms":10000,"source_interval_ms":60000},"network:eth0":{"sample_id":"net-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":0}}
@@ -381,5 +381,26 @@ func TestSelectionRejectsAggregateReportExpansion(t *testing.T) {
 		t.Fatal("probe target expansion alone can exceed the report budget")
 	} else if validation, ok := err.(*v1.ValidationError); !ok || validation.Fields["probe_targets"] == "" {
 		t.Fatalf("probe target budget error missing probe_targets field: %v", err)
+	}
+}
+
+func TestSourceFreshAfterReceptionBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		age, interval, elapsed int64
+		want                   bool
+	}{
+		{10000, 10000, 35000, true},
+		{10000, 10000, 35001, false},
+		{45001, 10000, 0, false},
+		{math.MaxInt64, math.MaxInt64, math.MaxInt64, true},
+		{math.MaxInt64, 10000, 1, false},
+		{-1, 10000, 0, false},
+		{0, 0, 0, false},
+		{0, math.MaxInt64 / 3, math.MaxInt64, false},
+	} {
+		source := v1.SourceMetadata{AgeMS: test.age, SourceIntervalMS: test.interval}
+		if got := source.FreshAfter(test.elapsed); got != test.want {
+			t.Errorf("source=%+v elapsed=%d got=%v want=%v", source, test.elapsed, got, test.want)
+		}
 	}
 }

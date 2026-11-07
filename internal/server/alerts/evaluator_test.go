@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -273,7 +274,7 @@ func TestDisableDeletionRevocationAndScopeChangesResolve(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			// Reloading includes deleted resource IDs and snapshots.
+			// 重新加载包含已删除资源的 ID 和快照。
 			f.e = NewEvaluator(f.s, f.latest, EvaluatorOptions{})
 			f.tick(t)
 			events := f.events(t, "resolved")
@@ -304,7 +305,7 @@ func TestMetricComputationAndLessThanHysteresis(t *testing.T) {
 	}
 	f.latest.report.Metrics = m
 	for metric, want := range map[string]float64{"memory_used_percent": 80, "swap_used_percent": 30, "load1": 2.5, "disk_used_percent": 90} {
-		v := metricValue(f.latest.report, metric, f.now)
+		v := metricValue(f.latest.report, Rule{Metric: metric}, f.now)
 		if v == nil || *v != want {
 			t.Errorf("%s=%v want %v", metric, v, want)
 		}
@@ -325,12 +326,12 @@ func TestProbesDownMetricCountsFailuresAndEmptyIsZero(t *testing.T) {
 			{Target: "icmp://three.example", OK: false},
 		}},
 	}
-	value := metricValue(latest, "probes_down", now)
+	value := metricValue(latest, Rule{Metric: "probes_down"}, now)
 	if value == nil || *value != 2 {
 		t.Fatalf("probes_down=%v want 2", value)
 	}
 	latest.ProbeResults = nil
-	value = metricValue(latest, "probes_down", now)
+	value = metricValue(latest, Rule{Metric: "probes_down"}, now)
 	if value == nil || *value != 0 {
 		t.Fatalf("empty probes_down=%v want 0", value)
 	}
@@ -374,32 +375,54 @@ func TestProbesDownFiresAndEmptyResultsResolve(t *testing.T) {
 	}
 }
 
-type blockingNotifier struct{ entered chan Notification }
+type recordingNotifier struct {
+	notifications []Notification
+	wakes         int
+}
 
-func (n blockingNotifier) Notify(ctx context.Context, v Notification) { n.entered <- v; <-ctx.Done() }
-func TestNotifierIsBoundedAfterCommitAndStopsWithContext(t *testing.T) {
+func (n *recordingNotifier) Enqueue(_ context.Context, _ *sql.Tx, v Notification) error {
+	n.notifications = append(n.notifications, v)
+	return nil
+}
+func (n *recordingNotifier) Wake() { n.wakes++ }
+
+// 检查事务内可见的来源，避免把投递重新移到提交之后。
+type checkingNotifier struct {
+	t *testing.T
+	f *alertFixture
+}
+
+func (n checkingNotifier) Enqueue(ctx context.Context, tx *sql.Tx, v Notification) error {
+	n.t.Helper()
+	var state string
+	if err := tx.QueryRowContext(ctx, "SELECT state FROM alert_events WHERE id=?", v.EventID).Scan(&state); err != nil || state != v.State {
+		n.t.Fatalf("event unavailable inside enqueue: %s %v", state, err)
+	}
+	var count int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM inbox_notifications WHERE source_id=? AND transition=?", v.EventID, v.State).Scan(&count); err != nil || count != 1 {
+		n.t.Fatalf("inbox unavailable inside enqueue: %d %v", count, err)
+	}
+	return nil
+}
+func (n checkingNotifier) Wake() {
+	if len(n.f.events(n.t, "all")) != 1 {
+		n.t.Fatal("wake before commit")
+	}
+}
+
+func TestNotifierEnqueuesInTransactionAndWakesAfterCommit(t *testing.T) {
 	f := newFixture(t, 0)
-	entered := make(chan Notification, 1)
-	notifier := blockingNotifier{entered: entered}
-	f.e = NewEvaluator(f.s, f.latest, EvaluatorOptions{Notifier: notifier, Interval: time.Millisecond, QueueSize: 1, Now: func() time.Time { return f.now }})
+	f.e.opts.Notifier = checkingNotifier{t: t, f: f}
+	f.tick(t)
+	f.value(10)
+	f.tick(t)
+}
+
+func TestEvaluatorRunStopsWithContext(t *testing.T) {
+	f := newFixture(t, 0)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { defer close(done); f.e.Run(ctx) }()
-	select {
-	case n := <-entered:
-		if n.State != "firing" || len(f.events(t, "firing")) != 1 {
-			t.Fatal("notify before commit")
-		}
-	case <-time.After(5 * time.Second):
-		cancel()
-		t.Fatal("no notification")
-	}
-	// A blocked notifier cannot hold the evaluator. Its queue stays bounded.
-	f.e.enqueue(Notification{})
-	f.e.enqueue(Notification{})
-	if f.e.NotificationsDropped() != 1 {
-		t.Fatal("queue not bounded")
-	}
 	cancel()
 	select {
 	case <-done:
@@ -487,11 +510,13 @@ func TestPendingResetsOnCredentialEpochChange(t *testing.T) {
 }
 func TestFailedEventWriteDoesNotNotify(t *testing.T) {
 	f := newFixture(t, 0)
+	notifier := &recordingNotifier{}
+	f.e.opts.Notifier = notifier
 	f.exec(t, `CREATE TRIGGER reject_alert BEFORE INSERT ON alert_events BEGIN SELECT RAISE(ABORT,'event failure'); END`)
 	if err := f.e.Evaluate(context.Background(), f.now); err == nil {
 		t.Fatal("lost event write failure")
 	}
-	if len(f.e.queue) != 0 || len(f.events(t, "all")) != 0 {
+	if len(notifier.notifications) != 0 || notifier.wakes != 0 || len(f.events(t, "all")) != 0 {
 		t.Fatal("failed commit notified or persisted")
 	}
 }
@@ -500,6 +525,8 @@ func TestFailedResolutionRetriesBeforeRebreach(t *testing.T) {
 	for _, seconds := range []int{0, 60} {
 		t.Run((time.Duration(seconds) * time.Second).String(), func(t *testing.T) {
 			f := newFixture(t, seconds)
+			notifier := &recordingNotifier{}
+			f.e.opts.Notifier = notifier
 			f.tick(t)
 			if seconds > 0 {
 				f.advance(seconds)
@@ -511,11 +538,11 @@ func TestFailedResolutionRetriesBeforeRebreach(t *testing.T) {
 				t.Fatalf("expected initial firing episode: %+v", events)
 			}
 			old := events[0]
-			select {
-			case <-f.e.queue:
-			default:
+			if len(notifier.notifications) != 1 || notifier.notifications[0].State != "firing" || notifier.wakes != 1 {
 				t.Fatal("missing initial firing notification")
 			}
+			notifier.notifications = nil
+			notifier.wakes = 0
 			f.advance(30)
 			recoveredAt := f.now
 			f.value(10)
@@ -523,13 +550,13 @@ func TestFailedResolutionRetriesBeforeRebreach(t *testing.T) {
 			if err := f.e.Evaluate(context.Background(), f.now); err == nil || !strings.Contains(err.Error(), "injected resolution failure") {
 				t.Fatalf("expected recovery write failure, got %v", err)
 			}
-			// The condition breaches again while the old resolution still fails.
+			// 告警恢复仍无法写入时，条件再次越限。
 			f.advance(30)
 			f.value(90)
 			if err := f.e.Evaluate(context.Background(), f.now); err == nil || !strings.Contains(err.Error(), "injected resolution failure") {
 				t.Fatalf("re-breach did not retry the observed recovery: %v", err)
 			}
-			if events := f.events(t, "all"); len(events) != 1 || events[0].ID != old.ID || events[0].State != "firing" || len(f.e.queue) != 0 {
+			if events := f.events(t, "all"); len(events) != 1 || events[0].ID != old.ID || events[0].State != "firing" || len(notifier.notifications) != 0 || notifier.wakes != 0 {
 				t.Fatalf("failed resolution started or notified another episode: %+v", events)
 			}
 			if len(f.e.pending) != 0 || len(f.e.resolutions) != 1 {
@@ -547,13 +574,12 @@ func TestFailedResolutionRetriesBeforeRebreach(t *testing.T) {
 			if len(f.e.resolutions) != 0 {
 				t.Fatal("committed resolution retained its intent")
 			}
-			select {
-			case n := <-f.e.queue:
-				if n.EventID != old.ID || n.State != "resolved" || n.ResolvedAt == nil || !n.ResolvedAt.Equal(recoveredAt) || n.Value == nil || *n.Value != 10 {
-					t.Fatalf("incorrect recovery notification: %+v", n)
-				}
-			default:
+			if len(notifier.notifications) == 0 || notifier.wakes == 0 {
 				t.Fatal("missing recovery notification")
+			}
+			n := notifier.notifications[0]
+			if n.EventID != old.ID || n.State != "resolved" || n.ResolvedAt == nil || !n.ResolvedAt.Equal(recoveredAt) || n.Value == nil || *n.Value != 10 {
+				t.Fatalf("incorrect recovery notification: %+v", n)
 			}
 			if seconds > 0 {
 				if events := f.events(t, "firing"); len(events) != 0 {
@@ -629,7 +655,7 @@ func TestPendingResetSurvivesOtherEventWriteFailure(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					// Force both processing orders independently of generated IDs.
+					// 强制两种处理顺序，使其不依赖生成的 ID。
 					created := start.Add(time.Second)
 					if order == "after" {
 						created = start.Add(-time.Second)
@@ -712,6 +738,8 @@ func TestFireRevalidatesIdentityAndDisabledRules(t *testing.T) {
 	for _, mode := range []string{"identity", "credential_epoch", "disabled"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newFixture(t, 0)
+			notifier := &recordingNotifier{}
+			f.e.opts.Notifier = notifier
 			inventory, err := f.e.readNodes(context.Background())
 			if err != nil {
 				t.Fatal(err)
@@ -723,10 +751,14 @@ func TestFireRevalidatesIdentityAndDisabledRules(t *testing.T) {
 			} else {
 				f.exec(t, "UPDATE alert_rules SET enabled=0 WHERE id=?", f.rule.ID)
 			}
-			if err = f.e.fire(context.Background(), f.rule, inventory[0], ptr(90.0), f.now); err != nil {
+			if err = f.e.fire(context.Background(), f.rule, inventory[0], ptr(90.0), f.now, f.now); err != nil {
 				t.Fatal(err)
 			}
-			if len(f.events(t, "all")) != 0 || len(f.e.queue) != 0 {
+			var inboxCount int
+			if err := f.db.QueryRow("SELECT count(*) FROM inbox_notifications").Scan(&inboxCount); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.events(t, "all")) != 0 || inboxCount != 0 || len(notifier.notifications) != 0 || notifier.wakes != 0 {
 				t.Fatal("stale evaluation committed after identity/disable")
 			}
 		})
@@ -738,14 +770,21 @@ func TestRealIngestIdentityFence(t *testing.T) {
 	f.e = NewEvaluator(f.s, real, EvaluatorOptions{})
 	f.exec(t, "UPDATE nodes SET run_generation='1',report_session_id='one' WHERE id=?", f.node)
 	var report v1.Report
-	raw := `{"protocol_version":1,"run_generation":1,"session_id":"one","seq":1,"sampled_at":"2026-10-27T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]},"metrics":{"cpu_percent":90,"load1":0,"load5":0,"load15":0,"memory_total_bytes":100,"memory_available_bytes":50,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":10,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000}}},"traffic":[]}`
+	raw := `{"protocol_version":1,"run_generation":1,"session_id":"one","seq":1,"sampled_at":"2026-10-27T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]},"metrics":{"cpu_percent":90,"load1":0,"load5":0,"load15":0,"memory_total_bytes":100,"memory_available_bytes":50,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":10,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000}}},"traffic":[]}`
 	if err := json.Unmarshal([]byte(raw), &report); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := real.Accept(context.Background(), f.node, report); err != nil {
+	token := strings.Repeat("A", 43)
+	credential := sha256.Sum256([]byte(token))
+	f.exec(t, "UPDATE nodes SET token_hash=? WHERE id=?", credential[:], f.node)
+	admission, err := real.AdmitToken(context.Background(), token)
+	if err != nil {
 		t.Fatal(err)
 	}
-	// Rotating the credential fences the old in-memory metric before evaluation.
+	if _, err := real.AcceptAdmitted(context.Background(), admission, report); err != nil {
+		t.Fatal(err)
+	}
+	// 轮换凭据会在评估之前隔离旧的内存指标。
 	f.exec(t, "UPDATE nodes SET token_hash=x'02' WHERE id=?", f.node)
 	f.tick(t)
 	if len(f.events(t, "all")) != 0 {
@@ -788,5 +827,53 @@ func TestConcurrentMetadataEditPreservesPendingDuration(t *testing.T) {
 	events := f.events(t, "firing")
 	if len(events) != 1 || events[0].RuleName != "new name" || !events[0].StartedAt.Equal(f.now.Add(-61*time.Second)) {
 		t.Fatalf("metadata edit lost pending duration: %+v", events)
+	}
+}
+
+func TestLocallyDisabledFeatureResolvesItsFiringAlert(t *testing.T) {
+	disk := v1.Metrics{Disks: []v1.DiskMetrics{{Path: "/", TotalBytes: ptr(uint64(100)), UsedBytes: ptr(uint64(90))}}, MetricStatus: map[string]string{"disk:/": "ok"}, Sources: map[string]v1.SourceMetadata{"disk:/": {SampleID: "disk", SourceIntervalMS: 60000}}}
+	for _, test := range []struct {
+		name, rule, feature string
+		metrics             v1.Metrics
+	}{
+		{"disk", `{"name":"disk full","enabled":true,"scope_kind":"all","metric":"disk_used_percent","comparator":">","threshold":80,"for_seconds":0,"severity":"warning"}`, v1.FeatureDisk, disk},
+		{"probes", `{"name":"no probes","enabled":true,"scope_kind":"all","metric":"probes_down","comparator":"<","threshold":1,"for_seconds":0,"severity":"warning"}`, v1.FeatureProbes, v1.Metrics{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t, 0)
+			if _, err := f.s.Save(context.Background(), "", patch(t, test.rule)); err != nil {
+				t.Fatal(err)
+			}
+			f.latest.report = ingest.LatestReport{ReceivedAt: f.now, Report: v1.Report{Runtime: v1.DefaultRuntimeSettings(), Metrics: test.metrics}}
+			f.tick(t)
+			if len(f.events(t, "firing")) != 1 {
+				t.Fatalf("events=%+v", f.events(t, "all"))
+			}
+			if test.name == "disk" {
+				// 数据缺失而功能未关闭时不能判定恢复。
+				f.latest.report.Metrics = v1.Metrics{}
+				f.tick(t)
+				if len(f.events(t, "firing")) != 1 {
+					t.Fatal("missing data resolved the alert")
+				}
+			}
+			f.latest.report.Metrics = v1.Metrics{}
+			f.latest.report.Runtime.DisabledFeatures = []string{test.feature}
+			// 过期报告中的关闭决定不算数。
+			f.advance(int(nodes.OnlineWindow/time.Second) + 1)
+			f.tick(t)
+			if len(f.events(t, "firing")) != 1 {
+				t.Fatal("stale report resolved the alert")
+			}
+			f.latest.report.ReceivedAt = f.now
+			f.tick(t)
+			if events := f.events(t, "firing"); len(events) != 0 {
+				t.Fatalf("disabled feature left alert firing: %+v", events)
+			}
+			f.tick(t)
+			if len(f.events(t, "all")) != 1 {
+				t.Fatal("disabled feature fired again")
+			}
+		})
 	}
 }

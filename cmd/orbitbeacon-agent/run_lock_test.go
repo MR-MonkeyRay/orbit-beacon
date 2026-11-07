@@ -61,7 +61,7 @@ func TestRunLockAcrossProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Cancellation alone must not release ownership before runtime cleanup ends.
+	// 仅取消不得在运行时清理结束前释放所有权。
 	cancel()
 	command := exec.Command(os.Args[0], "-test.run=^TestRunLockAcrossProcesses$")
 	command.Env = append(os.Environ(), "ORBITBEACON_TEST_RUN_LOCK="+directory)

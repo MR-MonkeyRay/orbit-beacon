@@ -62,7 +62,7 @@ func TestPublicPageRootMatrixAndConditionalRequests(t *testing.T) {
 			}
 		}
 	}
-	// Old public ETags must never bypass the disabled gate.
+	// 旧的公开 ETag 绝不能绕过已禁用的闸门。
 	assertHTTPStatus(t, request(t, f.handler, http.MethodPatch, publicPageRoute, `{"enabled":true}`, admin, csrf, publicURL), 200)
 	etag := request(t, f.handler, http.MethodGet, "/", "", nil, "", "").Header().Get("ETag")
 	assertHTTPStatus(t, request(t, f.handler, http.MethodPatch, publicPageRoute, `{"enabled":false}`, admin, csrf, publicURL), 200)
@@ -135,7 +135,7 @@ func TestPublicPageHTTPValidationAuthorizationAndRollback(t *testing.T) {
 	if _, err := f.db.Exec("UPDATE settings SET value='true' WHERE key='public_page_enabled'"); err != nil {
 		t.Fatal(err)
 	}
-	// GET uses published runtime, not a second database read.
+	// GET 使用已发布的 runtime，而不是第二次数据库读取。
 	if got := request(t, f.handler, http.MethodGet, publicPageRoute, "", admin, "", ""); !strings.Contains(got.Body.String(), `"enabled":false`) {
 		t.Fatalf("GET bypassed runtime: %s", got.Body)
 	}
@@ -145,7 +145,7 @@ func TestPublicPageStartupPersistenceCorruptionAndRootDatabaseFailure(t *testing
 	f := newHTTP(t, 2)
 	admin, csrf := login(t, f, "admin")
 	assertHTTPStatus(t, request(t, f.handler, http.MethodPatch, publicPageRoute, `{"enabled":false}`, admin, csrf, publicURL), 200)
-	h, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL})
+	h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestPublicPageStartupPersistenceCorruptionAndRootDatabaseFailure(t *testing
 	if _, err := f.db.Exec("UPDATE settings SET value='TRUE' WHERE key='public_page_enabled'"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL}); err == nil {
+	if _, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL})); err == nil {
 		t.Fatal("corrupt public setting allowed startup")
 	}
 	if err := f.db.Close(); err != nil {

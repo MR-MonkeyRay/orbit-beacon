@@ -55,8 +55,8 @@ func TestEnrollmentRetryRequiresDirectorySyncBeforePublishing(t *testing.T) {
 			if first == "stage" && (candidate.NodeToken == before.NodeToken || visible.PendingNodeToken != candidate.NodeToken) {
 				t.Fatal("rename did not publish the rotation candidate")
 			}
-			// A second Store must read the actual file and establish durability;
-			// it cannot treat another instance's visible replacement as confirmed.
+			// 另一个 Store 实例必须读取实际文件并确认其已持久化；
+			// 不能把另一实例替换后可见的文件视为已持久化。
 			other.syncDirectory = store.syncDirectory
 			for _, reader := range []*Store{store, other} {
 				for range 2 {
@@ -87,7 +87,7 @@ func TestEnrollmentRetryRequiresDirectorySyncBeforePublishing(t *testing.T) {
 			}
 			for _, reader := range []*Store{store, other} {
 				reader.syncDirectory = syncIdentityDirectory
-				// No entropy is available: recovery must reuse the on-disk operation.
+				// 没有可用熵：恢复必须复用磁盘上的操作。
 				reader.random = bytes.NewReader(nil)
 				got, operation, err = reader.StageEnrollment(ctx, ticket, true)
 				if err != nil || got != visible.Identity || operation != candidate || reader.Current() != visible.Identity {

@@ -1,8 +1,7 @@
 #!/bin/sh
-# POSIX sh installer. Never invoke with sh -x: enrollment input is secret.
+# POSIX sh 安装器。禁止用 sh -x 运行，避免泄露注册票据。
 set -eu
-# Even if a caller accidentally enabled xtrace, do not allow secret handling
-# below to be traced. This is intentionally never re-enabled.
+# 即使调用方误开 xtrace，也先关闭追踪以保护下方的敏感信息，之后不再启用。
 set +x
 umask 077
 LC_ALL=C
@@ -12,22 +11,26 @@ say() { printf '%s\n' "[orbitbeacon] $*"; }
 die() { printf '%s\n' "[orbitbeacon] ERROR: $*" >&2; exit 1; }
 usage() {
     cat <<'USAGE'
-Usage: sh install-agent.sh --server http[s]://HOST[:PORT] --version VERSION
-       [--ca-file FILE] [--token-file FILE] [--binary FILE]
-       sh install-agent.sh --uninstall [--yes]
-Run as root. --binary replaces downloading (then --version is optional).
-Supply the enrollment token through a file, stdin, or the hidden terminal prompt.
-Tokens are never accepted as command-line arguments. Existing identity is kept.
+用法：sh install-agent.sh --server http[s]://HOST[:PORT] --version VERSION
+      [--ca-file FILE] [--token-file FILE] [--binary FILE] [--update-base-url URL]
+      sh install-agent.sh --uninstall [--yes]
+以 root 运行。--binary 替代下载（此时 --version 可选）。
+通过文件、标准输入或终端的隐藏输入提示提供注册票据。
+不接受通过命令行参数传入票据。保留已有身份。
 USAGE
 }
 
 server='' version='' ca_source='' token_source='' local_binary=''
+default_update_base=https://github.com/mr-monkeyray/orbit-beacon/releases/download
+update_base_url=$default_update_base
+update_base_set=0
 uninstall=0 yes=0
 while [ "$#" -gt 0 ]; do
     case $1 in
-        --server|--version|--ca-file|--token-file|--binary)
-            if [ "$#" -lt 2 ] || [ -z "$2" ]; then die "Missing value for $1"; fi
+        --server|--version|--ca-file|--token-file|--binary|--update-base-url)
+            if [ "$#" -lt 2 ] || [ -z "$2" ]; then die "缺少 $1 的参数值"; fi
             case $1 in
+                --update-base-url) update_base_url=$2; update_base_set=1 ;;
                 --server) server=$2 ;;
                 --version) version=$2 ;;
                 --ca-file) ca_source=$2 ;;
@@ -38,90 +41,98 @@ while [ "$#" -gt 0 ]; do
         --uninstall) uninstall=1; shift ;;
         --yes) yes=1; shift ;;
         --help|-h) usage; exit 0 ;;
-        *) die 'Unknown option. Use --help; pass tokens only through stdin or --token-file.' ;;
+        *) die '未知选项。请使用 --help；票据只能通过文件、标准输入或终端隐藏输入提示提供。' ;;
     esac
 done
 
-# TEST HOOKS ONLY: both opt-in variables and a sentinel are mandatory. Normal
-# installs always use real absolute paths. The harness supplies command stubs.
+# 仅测试钩子：两个启用变量和哨兵文件缺一不可。正常安装始终使用真实绝对路径，测试框架提供命令桩。
 root=
 if [ "${ORBITBEACON_INSTALL_TEST:-}" = 1 ]; then
     root=${ORBITBEACON_INSTALL_ROOT:-}
-    case $root in /tmp/*) ;; *) die 'Test root must be a private directory under /tmp.' ;; esac
-    case $root in *[!A-Za-z0-9_./-]*) die 'Unsafe test root.' ;; esac
-    if [ ! -d "$root" ] || [ ! -f "$root/.orbitbeacon-install-test-root" ]; then die 'Missing test root sentinel.'; fi
-    [ "$(cd "$root" && pwd -P)" = "$root" ] || die 'Test root must be canonical and contain no symlinks.'
+    case $root in /tmp/*) ;; *) die '测试根目录必须是 /tmp 下的私有目录。' ;; esac
+    case $root in *[!A-Za-z0-9_./-]*) die '不安全的测试根目录。' ;; esac
+    if [ ! -d "$root" ] || [ ! -f "$root/.orbitbeacon-install-test-root" ]; then die '缺少测试根目录哨兵文件。'; fi
+    [ "$(cd "$root" && pwd -P)" = "$root" ] || die '测试根目录必须是规范路径且不含符号链接。'
 elif [ -n "${ORBITBEACON_INSTALL_ROOT:-}" ]; then
-    die 'A root prefix is only supported by the guarded test harness.'
+    die '根前缀仅受保护的测试框架支持。'
 fi
-[ "$(id -u)" = 0 ] || die 'Run this installer as root.'
-[ "$(uname -s)" = Linux ] || die 'Only Linux is supported.'
+[ "$(id -u)" = 0 ] || die '须以 root 运行此安装器。'
+[ "$(uname -s)" = Linux ] || die '仅支持 Linux。'
 
 account=orbitbeacon-agent
-bin_dir=$root/usr/local/bin
+install_root=$root/opt/orbit-beacon
+bin_dir=$install_root/bin
+libexec=$install_root/libexec
 binary=$bin_dir/orbitbeacon-agent
-config_dir=$root/etc/orbitbeacon
+config_dir=$install_root/etc
 policy=$config_dir/install-policy.json
 runtime_config=$config_dir/agent.json
 ca_copy=$config_dir/ca.pem
-state=$root/var/lib/orbitbeacon-agent
+state=$install_root/state
 token_file=$state/enrollment.token
 unit_dir=$root/etc/systemd/system
 unit=$unit_dir/orbitbeacon-agent.service
-tmp='' policy_tmp='' binary_tmp='' unit_tmp='' tty_state=''
+tmp='' policy_tmp='' binary_tmp='' token_tmp='' unit_tmp='' tty_state=''
 cleanup() {
     if [ -n "$tty_state" ]; then stty "$tty_state" </dev/tty || :; fi
     [ -z "$policy_tmp" ] || rm -f -- "$policy_tmp"
     [ -z "$binary_tmp" ] || rm -f -- "$binary_tmp"
+    [ -z "$token_tmp" ] || rm -f -- "$token_tmp"
     [ -z "$unit_tmp" ] || rm -f -- "$unit_tmp"
     [ -z "$tmp" ] || rm -rf -- "$tmp"
 }
 trap cleanup 0
 trap 'exit 1' HUP INT TERM
 
-# Refuse symlinks in destinations and their ancestors, including during removal.
+# 拒绝目标路径及其祖先目录中的符号链接，卸载时同样适用。
 safe_path() {
     checked=$1
     while [ "$checked" != / ]; do
-        [ ! -L "$checked" ] || die "Refusing symbolic link: $checked"
+        [ ! -L "$checked" ] || die "拒绝符号链接：$checked"
         checked=${checked%/*}
         [ -n "$checked" ] || checked=/
     done
 }
-for path in "$binary" "$policy" "$runtime_config" "$ca_copy" "$token_file" "$state/identity.json" "$unit"; do
+# bin/state 的目录入口由 root 所有的安装根保护；叶子由不跟随链接的操作处理。
+for path in "$bin_dir" "$libexec" "$state" "$policy" "$runtime_config" "$ca_copy" "$unit"; do
     safe_path "$path"
 done
 has_systemd() {
     command -v systemctl >/dev/null 2>&1 && [ -d "$root/run/systemd/system" ]
 }
+has_identity() {
+    # stat 默认检查链接本身；root 只探测类型，不读取 Agent 可控制的身份文件。
+    [ "$(stat -c '%F' -- "$state/identity.json" 2>/dev/null)" = 'regular file' ]
+}
 
 if [ "$uninstall" = 1 ]; then
-    [ -z "$server$version$ca_source$token_source$local_binary" ] || die 'Do not combine install options with --uninstall.'
-    say 'Revoke this node credential in the console first; local deletion does not revoke it.'
-    say 'Uninstall removes the service, binary, policy, local configuration, CA copy and ALL agent state. Stop any foreground agent first.'
+    if [ "$update_base_set" != 0 ] || [ -n "$server$version$ca_source$token_source$local_binary" ]; then die '不要将安装选项与 --uninstall 混用。'; fi
+    say '请先在控制台吊销该节点凭据；本地删除不会吊销。'
+    say '卸载将删除服务、二进制、策略、本地配置、CA 副本及全部 Agent 状态。请先停止前台 Agent。'
     if [ "$yes" != 1 ]; then
-        printf 'Type yes to permanently remove this installation: ' >&2
+        printf '输入 yes 永久移除此安装：' >&2
         answer=
         read -r answer || :
-        [ "$answer" = yes ] || die 'Uninstall cancelled; no files removed.'
+        [ "$answer" = yes ] || die '卸载已取消；未删除任何文件。'
     fi
     if has_systemd; then
-        # A unit can remain loaded/enabled after a partial previous uninstall.
-        # A missing unit is harmless; continue removing local files.
+        # 上次卸载不完整时 unit 可能仍处于加载/启用状态。
+        # unit 不存在无影响；继续删除本地文件。
         systemctl disable --now orbitbeacon-agent >/dev/null 2>&1 || :
     fi
-    rm -f -- "$unit" "$binary" "$policy" "$runtime_config" "$ca_copy"
-    rm -rf -- "$state"
+    rm -f -- "$unit"
+    # 不加末尾斜杠；rm 不跟随树内的符号链接，也不运行 Agent 二进制。
+    rm -rf -- "$install_root"
     if has_systemd; then systemctl daemon-reload; fi
-    say 'Uninstalled. The system account is retained; revoke the server credential if not already done.'
+    say '已卸载。系统账户保留；如尚未吊销服务端凭据请自行处理。'
     exit 0
 fi
-[ "$yes" = 0 ] || die '--yes is only valid with --uninstall.'
-[ ! -e "$runtime_config" ] || [ -f "$runtime_config" ] || die 'Local agent configuration must be a regular file.'
-[ -n "$server" ] || die '--server is required.'
-# A conservative ASCII origin grammar also guarantees JSON and shell safety.
-# Permit a single root slash and normalize it away. No userinfo, path, query,
-# fragment, whitespace, quote, backslash, zone ID or percent-encoded host.
+[ "$yes" = 0 ] || die '--yes 仅与 --uninstall 搭配使用。'
+[ ! -e "$runtime_config" ] || [ -f "$runtime_config" ] || die '本地 Agent 配置必须是普通文件。'
+[ -n "$server" ] || die '必须指定 --server。'
+# 保守的 ASCII Origin 语法同时保证 JSON 和 shell 安全。
+# 允许单个末尾斜杠并规范化去除。禁止用户信息、路径、查询参数、
+# 片段、空白、引号、反斜杠、IPv6 区域标识或百分号编码主机。
 server=${server%/}
 if ! printf '%s\n' "$server" | awk '
     function valid6(s, a, b, i, n, c) {
@@ -145,10 +156,10 @@ if ! printf '%s\n' "$server" | awk '
       for (i=1; i<=c; i++) if (labels[i] !~ /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/) exit 1
       exit 0 }
 '; then
-    die '--server must be an http:// or https:// origin with no path, query, fragment or userinfo.'
+    die '--server 必须是 http:// 或 https:// Origin，不含路径、查询参数、片段或用户信息。'
 fi
 case $server in
-    http://*) [ -z "$ca_source" ] || die '--ca-file requires an HTTPS server.' ;;
+    http://*) [ -z "$ca_source" ] || die '--ca-file 仅适用于 HTTPS 服务器。' ;;
 esac
 authority=${server#*://}
 case $authority in
@@ -158,31 +169,44 @@ case $authority in
     *) port= ;;
 esac
 if [ -n "$port" ]; then
-    if [ "${#port}" -gt 5 ] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then die 'Invalid server port.'; fi
+    if [ "${#port}" -gt 5 ] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then die '无效的服务器端口。'; fi
+fi
+# 重装沿用已有发布源；显式空值或无法提取时保持关闭，绝不改回默认源。
+if [ "$update_base_set" = 0 ] && [ -f "$policy" ] && grep -q '"update_base_url"' "$policy"; then
+    update_base_url=$(sed -n 's/.*"update_base_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$policy")
+fi
+# HTTPS 根地址同时用于安装下载和后续远程升级；限制字符以安全写入 JSON。
+update_base_url=$(printf '%s' "$update_base_url" | sed 's:/*$::')
+if [ -n "$update_base_url" ]; then
+    # 用变量传正则：BusyBox awk 不接受字面量里字符类中的 /。
+    printf '%s\n' "$update_base_url" | awk -v re='^https://([A-Za-z0-9.-]+|[[][0-9A-Fa-f:]+])(:[0-9]+)?(/[A-Za-z0-9._~!$&()*+,;=:@%/-]*)?$' '
+        NR != 1 || $0 !~ re { bad=1 }
+        END { exit bad }
+    ' || die '--update-base-url 必须是 HTTPS 地址，且不含用户信息、查询或片段。'
 fi
 if [ -n "$version" ]; then
     printf '%s\n' "$version" | awk '
         NR != 1 || $0 !~ /^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$/ { bad=1 }
         END { exit bad }
-    ' || die 'Invalid version (use e.g. 0.1.0, without v).'
+    ' || die '无效版本号（示例：0.1.0，不带 v）。'
 fi
-[ -n "$local_binary" ] || [ -n "$version" ] || die '--version or --binary is required.'
+[ -n "$local_binary" ] || [ -n "$version" ] || die '必须指定 --version 或 --binary。'
 case $(uname -m) in
     x86_64) arch=amd64 ;;
     aarch64|arm64) arch=arm64 ;;
-    *) die 'Unsupported architecture (supported: x86_64, aarch64, arm64).' ;;
+    *) die '不支持的架构（支持：x86_64、aarch64、arm64）。' ;;
 esac
 if [ -n "$local_binary" ]; then
-    if [ ! -f "$local_binary" ] || [ ! -s "$local_binary" ]; then die '--binary must name a nonempty regular file.'; fi
+    if [ ! -f "$local_binary" ] || [ ! -s "$local_binary" ]; then die '--binary 必须指定非空普通文件。'; fi
 fi
-[ -z "$ca_source" ] || [ -f "$ca_source" ] || die '--ca-file must name a regular PEM file.'
-[ -z "$token_source" ] || [ -f "$token_source" ] || die '--token-file must name a regular file.'
+[ -z "$ca_source" ] || [ -f "$ca_source" ] || die '--ca-file 必须指定 PEM 普通文件。'
+[ -z "$token_source" ] || [ -f "$token_source" ] || die '--token-file 必须指定普通文件。'
 if command -v runuser >/dev/null 2>&1; then
     use_runuser=1
 elif command -v su >/dev/null 2>&1; then
     use_runuser=0
 else
-    die 'Install runuser or su to enroll as the non-root agent user.'
+    die '请安装 runuser 或 su，以便使用非 root 的 Agent 用户注册。'
 fi
 
 temp_parent=$root/tmp
@@ -192,33 +216,32 @@ tmp=$(mktemp -d "$temp_parent/orbitbeacon-install.XXXXXXXX")
 chmod 0700 "$tmp"
 
 if [ -n "$local_binary" ]; then
-    say 'Using the supplied local binary (verify its provenance before installing).'
+    say '使用提供的本地二进制（安装前请自行验证来源）。'
     cp -- "$local_binary" "$tmp/agent"
 else
-    say "Downloading release v$version for $arch..."
-    archive=orbitbeacon-$version-linux.tar.gz
-    release=https://github.com/mr-monkeyray/orbit-beacon/releases/download/v$version
-    for asset in "$archive" SHA256SUMS; do
+    say "正在下载 v$version 的 $arch 发布包..."
+    agent_asset=orbitbeacon-agent-linux-$arch
+    release=${update_base_url:-$default_update_base}/v$version
+    for asset in "$agent_asset" SHA256SUMS; do
         curl --fail --silent --show-error --location --proto '=https' \
-            --proto-redir '=https' --tlsv1.2 --output "$tmp/$asset" "$release/$asset"
+            --proto-redir '=https' --max-redirs 5 --tlsv1.2 --output "$tmp/$asset" "$release/$asset"
     done
-    # Select exactly one entry, never trust unrelated manifest paths/options.
-    awk -v name="$archive" '
+    # 仅选取一条记录，不信任无关的清单路径或选项。
+    awk -v name="$agent_asset" '
         ($2 == name || $2 == "*" name) {
             if (NF != 2 || length($1) != 64 || $1 !~ /^[[:xdigit:]]+$/) bad=1
             print $1 "  " name
             count++
         }
         END { if (count != 1 || bad) exit 1 }
-    ' "$tmp/SHA256SUMS" > "$tmp/verify.sha256" || die 'Missing or malformed release checksum.'
-    say 'Verifying release checksum...'
-    (cd "$tmp" && sha256sum -c verify.sha256) || die 'Checksum verification failed; nothing installed.'
-    # Output only this exact member, never extract archive paths or permissions.
-    tar -xzOf "$tmp/$archive" "orbitbeacon-$version/orbitbeacon-agent-linux-$arch" > "$tmp/agent"
-    [ -s "$tmp/agent" ] || die 'Release binary is empty or missing.'
+    ' "$tmp/SHA256SUMS" > "$tmp/verify.sha256" || die '缺少或格式错误的发布校验和。'
+    say '正在校验发布包...'
+    (cd "$tmp" && sha256sum -c verify.sha256) || die '校验和验证失败；未安装任何文件。'
+    mv -- "$tmp/$agent_asset" "$tmp/agent"
+    [ -s "$tmp/agent" ] || die '发布二进制为空或不存在。'
 fi
 
-say 'Checking the dedicated system account...'
+say '正在检查专用系统账户...'
 group_name_exists() {
     if command -v getent >/dev/null 2>&1; then
         getent group "$account" >/dev/null 2>&1
@@ -236,45 +259,85 @@ if ! id -u "$account" >/dev/null 2>&1; then
                 --no-create-home --shell /usr/sbin/nologin "$account"
         fi
     elif command -v adduser >/dev/null 2>&1 && command -v addgroup >/dev/null 2>&1; then
-        # BusyBox/Alpine equivalent; preserve a pre-existing system group.
+        # BusyBox/Alpine 等效操作；保留已有的系统组。
         if ! group_name_exists; then addgroup -S "$account"; fi
         adduser -S -D -H -h "$state" -s /usr/sbin/nologin -G "$account" "$account"
     else
-        die 'Install useradd, or BusyBox adduser/addgroup, and retry.'
+        die '须安装 useradd 或 BusyBox adduser/addgroup 后重试。'
     fi
 fi
 agent_uid=$(id -u "$account")
 agent_gid=$(id -g "$account")
-case $agent_uid:$agent_gid in *[!0-9:]*|:*|*:) die 'Cannot determine numeric agent UID/GID.' ;; esac
-if [ "$agent_uid" -eq 0 ] || [ "$agent_gid" -eq 0 ]; then die 'The agent account must have a non-root UID and GID.'; fi
-[ "$(id -gn "$account")" = "$account" ] || die 'The agent primary group must be orbitbeacon-agent (as required by the service unit).'
+case $agent_uid:$agent_gid in *[!0-9:]*|:*|*:) die '无法确定 Agent 的数字 UID/GID。' ;; esac
+if [ "$agent_uid" -eq 0 ] || [ "$agent_gid" -eq 0 ]; then die 'Agent 账户的 UID 和 GID 不得为 root。'; fi
+[ "$(id -gn "$account")" = "$account" ] || die 'Agent 主组必须是 orbitbeacon-agent（systemd 服务单元要求）。'
 
-say 'Installing binary, private state directory and root-owned policy...'
-mkdir -p "$bin_dir" "$config_dir" "$state"
-chown root:root "$bin_dir" "$config_dir"
-chmod 0755 "$bin_dir" "$config_dir"
-chown "$agent_uid:$agent_gid" "$state"
+say '正在安装二进制、私有状态目录和归 root 所有的策略...'
+# 先固定 root 所有的父目录，Agent 无法替换 bin/state/etc 的目录入口。
+mkdir -p "$install_root"
+chown -h "root:$agent_gid" "$install_root"
+chmod 0750 "$install_root"
+mkdir -p "$bin_dir" "$config_dir" "$state" "$libexec"
+chown -h root:root "$libexec"
+chmod 0755 "$libexec"
+chown -h "root:$agent_gid" "$config_dir"
+chmod 0750 "$config_dir"
+chown -h "$agent_uid:$agent_gid" "$bin_dir" "$state"
+chmod 0750 "$bin_dir"
 chmod 0700 "$state"
-# Rename in the destination filesystem also permits replacing a running binary.
-binary_tmp=$(mktemp "$bin_dir/.orbitbeacon-agent.XXXXXXXX")
-install -m 0755 "$tmp/agent" "$binary_tmp"
-chown root:root "$binary_tmp"
-mv -f -- "$binary_tmp" "$binary"
+# 暂存于同一文件系统内、Agent 不可写的父目录，避免 bin 内临时文件被调包。
+# chown 后不再读写暂存文件；-T 原子替换叶子链接，绝不跟随目标目录链接。
+binary_tmp=$(mktemp "$install_root/.orbitbeacon-agent.XXXXXXXX")
+install -m 0750 "$tmp/agent" "$binary_tmp"
+chown -h "$agent_uid:$agent_gid" "$binary_tmp"
+mv -fT -- "$binary_tmp" "$binary"
 binary_tmp=
 ca_file=
 if [ -n "$ca_source" ]; then
-    # Stage the CA in the root-owned config directory, including same-file reruns.
+    # 将 CA 暂存到 root 所有的配置目录，重复安装同一文件也适用。
     policy_tmp=$(mktemp "$config_dir/.ca.XXXXXXXX")
-    install -m 0644 "$ca_source" "$policy_tmp"
-    chown root:root "$policy_tmp"
-    mv -f -- "$policy_tmp" "$ca_copy"
+    install -m 0640 "$ca_source" "$policy_tmp"
+    chown -h "root:$agent_gid" "$policy_tmp"
+    mv -fT -- "$policy_tmp" "$ca_copy"
     policy_tmp=
     ca_file=$ca_copy
 fi
+# 内嵌脚本与 deploy/orbitbeacon-agent-rollback 保持一致。
+policy_tmp=$(mktemp "$libexec/.rollback.XXXXXXXX")
+cat > "$policy_tmp" <<'ROLLBACK'
+#!/bin/sh
+# 以 Agent 用户运行；绝不执行 bin 中的文件。
+# 唯一参数用于测试根目录，systemd 不传参数。
+root=${1:-/opt/orbit-beacon}
+marker=$root/state/upgrade-pending
+[ -f "$marker" ] || exit 0
+# 第四次启动仍未确认时回滚；异常内容按超限处理。
+case $(cat "$marker" 2>/dev/null) in
+    0) count=1 ;;
+    1) count=2 ;;
+    2) count=3 ;;
+    *) count=4 ;;
+esac
+tmp=$(mktemp "$root/state/.upgrade-pending.XXXXXXXX") || exit 0
+if ! printf '%s' "$count" > "$tmp" || ! mv -f "$tmp" "$marker"; then
+    rm -f "$tmp"
+    exit 0
+fi
+[ "$count" = 4 ] && [ -f "$root/bin/orbitbeacon-agent.prev" ] || exit 0
+if mv -f "$root/bin/orbitbeacon-agent.prev" "$root/bin/orbitbeacon-agent"; then
+    mv -f "$marker" "$root/state/upgrade-rolled-back" || :
+fi
+exit 0
+ROLLBACK
+chown -h root:root "$policy_tmp"
+chmod 0755 "$policy_tmp"
+mv -fT -- "$policy_tmp" "$libexec/orbitbeacon-agent-rollback"
+policy_tmp=
 policy_tmp=$(mktemp "$config_dir/.install-policy.XXXXXXXX")
 cat > "$policy_tmp" <<EOF
 {
   "server_url": "$server",
+  "update_base_url": "$update_base_url",
   "ca_file": "$ca_file",
   "state_dir": "$state",
   "expected_uid": $agent_uid,
@@ -283,29 +346,29 @@ cat > "$policy_tmp" <<EOF
   "install_mode": "native"
 }
 EOF
-chown root:root "$policy_tmp"
-chmod 0644 "$policy_tmp"
-mv -f -- "$policy_tmp" "$policy"
+chown -h "root:$agent_gid" "$policy_tmp"
+chmod 0640 "$policy_tmp"
+mv -fT -- "$policy_tmp" "$policy"
 policy_tmp=
-# Keep administrator edits on reinstall; the root-owned directory prevents the
-# agent from replacing this file or planting a symlink during creation.
+# 重装时保留管理员修改；root 所有的目录阻止 Agent 替换此文件或植入符号链接。
 safe_path "$runtime_config"
 if [ ! -e "$runtime_config" ]; then
     policy_tmp=$(mktemp "$config_dir/.agent.XXXXXXXX")
     printf '%s\n' '{}' > "$policy_tmp"
-    chown "root:$agent_gid" "$policy_tmp"
-    chmod 0640 "$policy_tmp"
     mv -fT -- "$policy_tmp" "$runtime_config"
     policy_tmp=
 fi
+# 重装也固定属主和权限，保留管理员修改的内容。
+chown -h "root:$agent_gid" "$runtime_config"
+chmod 0640 "$runtime_config"
 
-# Read secrets using shell builtins/redirection only; never put one in argv.
+# 仅通过标准输入、文件或终端读取票据；绝不将其放入命令行参数。
 if [ -n "$token_source" ]; then
     cat -- "$token_source" > "$tmp/token"
 elif [ ! -t 0 ]; then
     cat > "$tmp/token"
-elif [ ! -f "$state/identity.json" ]; then
-    printf 'Enrollment token (hidden): ' >/dev/tty
+elif ! has_identity; then
+    printf '注册票据（隐藏输入）：' >/dev/tty
     tty_state=$(stty -g </dev/tty)
     stty -echo </dev/tty
     token=
@@ -317,71 +380,71 @@ elif [ ! -f "$state/identity.json" ]; then
     unset token
 fi
 if [ -s "$tmp/token" ]; then
-    # Do not replace a symlink planted in an existing state directory.
-    safe_path "$token_file"
-    chmod 0600 "$tmp/token"
-    chown "$agent_uid:$agent_gid" "$tmp/token"
-    # GNU/BusyBox mv -T treats the target as a file even if the agent races us
-    # with a symlink to a directory. Never chown a path in agent-owned state as
-    # root after moving the staged file into that directory.
-    mv -fT -- "$tmp/token" "$token_file"
-    say 'Enrolling as the non-root agent user...'
-    # Quiet the child: even a failed/malicious endpoint must not echo a token.
-    # Do not redirect diagnostics to a log that could retain the token either.
+    # 在同一文件系统的 root 所有目录内准备票据，避免跨文件系统时 mv 退化为复制。
+    token_tmp=$(mktemp "$install_root/.enrollment.XXXXXXXX")
+    install -m 0600 "$tmp/token" "$token_tmp"
+    chown -h "$agent_uid:$agent_gid" "$token_tmp"
+    # GNU/BusyBox mv -T 将目标视为文件，即使 Agent 抢先创建了目录符号链接。
+    # 移入暂存文件后，绝不以 root 对 Agent 状态目录中的路径执行属主变更。
+    mv -fT -- "$token_tmp" "$token_file"
+    token_tmp=
+    say '正在以非 root Agent 用户注册...'
+    # 静默子进程：即使端点故障或恶意也不得回显票据。
+    # 也不将诊断输出重定向到可能留存票据的日志。
     if [ "$use_runuser" = 1 ]; then
         if runuser -u "$account" -- "$binary" enroll --install-policy "$policy" --config "$runtime_config" --token-file "$token_file" >/dev/null 2>&1; then
             enrolled=1
         else enrolled=0
         fi
     else
-        # All interpolated paths are fixed, or guarded ASCII test-root paths.
+        # 所有插值路径均为固定值或受保护的 ASCII 测试根路径。
         if su -s /bin/sh "$account" -c "exec '$binary' enroll --install-policy '$policy' --config '$runtime_config' --token-file '$token_file'" >/dev/null 2>&1; then
             enrolled=1
         else enrolled=0
         fi
     fi
     if [ "$enrolled" != 1 ]; then
-        say "Enrollment failed. Keep $token_file; do not delete it before retrying."
-        say "Retry as $account: $binary enroll --install-policy $policy --config $runtime_config --token-file $token_file"
-        die 'Check the server URL, CA, network and token expiry. Service was not enabled.'
+        say "注册失败。请保留 $token_file；重试前不要删除。"
+        say "以 $account 身份重试：$binary enroll --install-policy $policy --config $runtime_config --token-file $token_file"
+        die '请检查服务器 URL、CA、网络和票据有效期。服务未启用。'
     fi
-    say 'Enrollment succeeded (the agent removes the token on success).'
-elif [ -f "$state/identity.json" ]; then
-    say 'Existing identity found; keeping it and skipping enrollment.'
+    say '注册成功（Agent 在成功后自行删除票据）。'
+elif has_identity; then
+    say '已有身份；保留并跳过注册。'
 else
-    die 'No enrollment token supplied. Use --token-file, stdin or the terminal prompt and retry.'
+    die '未提供注册票据。请通过 --token-file、stdin 或终端提示输入后重试。'
 fi
 
-say 'Installing the systemd service unit...'
+say '正在安装 systemd 服务单元...'
 mkdir -p "$unit_dir"
 chown root:root "$unit_dir"
 chmod 0755 "$unit_dir"
 unit_tmp=$(mktemp "$unit_dir/.orbitbeacon-agent.XXXXXXXX")
-# Keep this embedded unit exactly in sync with deploy/systemd/orbitbeacon-agent.service.
+# 此内嵌 unit 须与 deploy/systemd/orbitbeacon-agent.service 逐字节一致。
 cat > "$unit_tmp" <<'UNIT'
 [Unit]
-Description=OrbitBeacon monitoring agent
+Description=OrbitBeacon Agent
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-# These accounts must match expected_uid/expected_gid in the install policy.
+# 该账户须与安装策略中的 expected_uid/expected_gid 一致。
 User=orbitbeacon-agent
 Group=orbitbeacon-agent
-StateDirectory=orbitbeacon-agent
-StateDirectoryMode=0700
-ExecStart=/usr/local/bin/orbitbeacon-agent run --install-policy /etc/orbitbeacon/install-policy.json --config /etc/orbitbeacon/agent.json
+ExecStartPre=-/opt/orbit-beacon/libexec/orbitbeacon-agent-rollback
+ExecStart=/opt/orbit-beacon/bin/orbitbeacon-agent run --install-policy /opt/orbit-beacon/etc/install-policy.json --config /opt/orbit-beacon/etc/agent.json
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10s
-# A clone must be enrolled separately instead of reclaiming the same identity.
+# 克隆主机须单独注册，不得复用同一身份。
 RestartPreventExitStatus=3
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
-# Keep home mounts visible so their disk statistics describe the actual host.
+ReadWritePaths=/opt/orbit-beacon/bin /opt/orbit-beacon/state
+# 保留 home 挂载可见，使磁盘统计反映真实主机。
 ProtectHome=read-only
 ProtectKernelTunables=true
 ProtectKernelModules=true
@@ -397,7 +460,7 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
-# Interface lookups need netlink; host CPU statistics also need all of /proc.
+# 网卡查询需要 netlink；主机 CPU 统计还需要完整的 /proc。
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 UMask=0077
 MemoryMax=128M
@@ -413,11 +476,11 @@ unit_tmp=
 if has_systemd; then
     systemctl daemon-reload
     systemctl enable --now orbitbeacon-agent
-    # enable --now leaves an already-running service on the previous binary.
+    # enable --now 不会替换已运行服务的旧二进制。
     systemctl restart orbitbeacon-agent
-    say 'Installed and started. View logs: journalctl -u orbitbeacon-agent.service'
+    say '已安装并启动。查看日志：journalctl -u orbitbeacon-agent.service'
 else
-    say 'systemd is not running. Run in the foreground as the agent user:'
+    say 'systemd 未运行。以 Agent 用户前台执行：'
     if [ "$use_runuser" = 1 ]; then
         say "runuser -u $account -- $binary run --install-policy $policy --config $runtime_config"
     else

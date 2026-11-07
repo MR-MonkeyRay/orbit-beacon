@@ -1,4 +1,4 @@
-// Package alerts owns rule validation, durable alert episodes and evaluation.
+// Package alerts 负责规则校验、持久化告警事件和评估。
 package alerts
 
 import (
@@ -11,10 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"orbitbeacon/internal/identity"
+	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 var (
@@ -32,6 +34,7 @@ type Rule struct {
 	ScopeKind  string    `json:"scope_kind"`
 	ScopeID    *string   `json:"scope_id"`
 	Metric     string    `json:"metric"`
+	Target     *string   `json:"target"`
 	Comparator *string   `json:"comparator"`
 	Threshold  *float64  `json:"threshold"`
 	ForSeconds int       `json:"for_seconds"`
@@ -40,8 +43,8 @@ type Rule struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-// Raw members distinguish omission from explicit null. Only scope_id,
-// comparator and threshold accept null. POST requires nonnullable members.
+// json.RawMessage 区分字段省略和显式 null；仅 scope_id、target、comparator 和 threshold 接受 null。
+// POST 必须提供不接受 null 的字段。
 type Patch struct {
 	ChannelIDs json.RawMessage `json:"channel_ids"`
 	Name       json.RawMessage `json:"name"`
@@ -49,6 +52,7 @@ type Patch struct {
 	ScopeKind  json.RawMessage `json:"scope_kind"`
 	ScopeID    json.RawMessage `json:"scope_id"`
 	Metric     json.RawMessage `json:"metric"`
+	Target     json.RawMessage `json:"target"`
 	Comparator json.RawMessage `json:"comparator"`
 	Threshold  json.RawMessage `json:"threshold"`
 	ForSeconds json.RawMessage `json:"for_seconds"`
@@ -66,9 +70,6 @@ func NewService(db *sql.DB, now func() time.Time) *Service {
 	}
 	return &Service{db: db, now: now}
 }
-func invalid(field, message string) error {
-	return &nodes.ValidationError{Fields: map[string]string{field: message}}
-}
 func apply(r *Rule, p Patch, create bool) error {
 	for _, f := range []struct {
 		name     string
@@ -78,32 +79,32 @@ func apply(r *Rule, p Patch, create bool) error {
 	}{
 		{"name", p.Name, &r.Name, false}, {"enabled", p.Enabled, &r.Enabled, false},
 		{"scope_kind", p.ScopeKind, &r.ScopeKind, false}, {"scope_id", p.ScopeID, &r.ScopeID, true},
-		{"metric", p.Metric, &r.Metric, false}, {"comparator", p.Comparator, &r.Comparator, true},
+		{"metric", p.Metric, &r.Metric, false}, {"target", p.Target, &r.Target, true}, {"comparator", p.Comparator, &r.Comparator, true},
 		{"threshold", p.Threshold, &r.Threshold, true}, {"for_seconds", p.ForSeconds, &r.ForSeconds, false},
 		{"severity", p.Severity, &r.Severity, false},
 	} {
 		if len(f.raw) == 0 {
 			if create && !f.nullable {
-				return invalid(f.name, "is required")
+				return validation.Invalid(f.name, "is required")
 			}
 			continue
 		}
 		if !f.nullable && strings.TrimSpace(string(f.raw)) == "null" {
-			return invalid(f.name, "cannot be null")
+			return validation.Invalid(f.name, "cannot be null")
 		}
 		if err := json.Unmarshal(f.raw, f.dest); err != nil {
-			return invalid(f.name, "has an invalid type")
+			return validation.Invalid(f.name, "has an invalid type")
 		}
 	}
 	return nil
 }
 
-// ParseRuleSnapshot shares the evaluator's persisted rule representation.
-// Scope IDs are checked syntactically, never against entities deleted since firing.
+// ParseRuleSnapshot 与 evaluator 共用持久化的规则表示。
+// 范围 ID 只做语法检查，绝不校验触发后已删除的实体。
 func ParseRuleSnapshot(raw []byte) (Rule, error) {
 	var r Rule
 	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
-		return r, invalid("rule_snapshot", "must be an object")
+		return r, validation.Invalid("rule_snapshot", "must be an object")
 	}
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return r, err
@@ -111,54 +112,87 @@ func ParseRuleSnapshot(raw []byte) (Rule, error) {
 	return r, ValidateRuleSyntax(r)
 }
 
-// ValidateRuleSyntax checks rule values without querying scope dependencies.
+// ValidateRuleSyntax 检查规则值，不查询范围依赖。
 func ValidateRuleSyntax(r Rule) error {
 	if strings.TrimSpace(r.Name) == "" || len(r.Name) > 100 {
-		return invalid("name", "must contain 1..100 UTF-8 bytes")
+		return validation.Invalid("name", "must contain 1..100 UTF-8 bytes")
 	}
 	if r.ForSeconds < 0 || r.ForSeconds > 86400 {
-		return invalid("for_seconds", "must be between 0 and 86400")
+		return validation.Invalid("for_seconds", "must be between 0 and 86400")
 	}
 	if r.Severity != "info" && r.Severity != "warning" && r.Severity != "critical" {
-		return invalid("severity", "must be info, warning or critical")
+		return validation.Invalid("severity", "must be info, warning or critical")
+	}
+	if targetMetric(r.Metric) {
+		if r.Target == nil || v1.ValidateProbeTarget(*r.Target) != nil {
+			return validation.Invalid("target", "must be a valid probe target")
+		}
+	} else if r.Target != nil {
+		return validation.Invalid("target", "must be null for this metric")
 	}
 	switch r.Metric {
 	case "offline":
 		if r.Comparator != nil || r.Threshold != nil {
-			return invalid("metric", "offline has no comparator or threshold")
+			return validation.Invalid("metric", "offline has no comparator or threshold")
 		}
 		if time.Duration(r.ForSeconds)*time.Second < nodes.OnlineWindow {
-			return invalid("for_seconds", "offline duration must be at least the online window")
+			return validation.Invalid("for_seconds", "offline duration must be at least the online window")
 		}
-	case "cpu_percent", "memory_used_percent", "swap_used_percent", "disk_used_percent", "load1", "probes_down":
+	case "cpu_percent", "memory_used_percent", "swap_used_percent", "disk_used_percent", "load1", "probes_down", "traffic_quota_percent", "node_expiry_days", "probe_failed", "probe_latency_ms", "probe_tls_expiry_days":
 		bound := 100.0
-		if r.Metric == "load1" {
+		if r.Metric == "probe_failed" {
+			bound = 0
+			if r.Comparator == nil || *r.Comparator != ">" {
+				return validation.Invalid("comparator", "must be >")
+			}
+		} else if r.Metric == "probe_latency_ms" {
+			bound = 60000
+			if r.Threshold != nil && *r.Threshold <= 0 {
+				return validation.Invalid("threshold", "must be greater than zero")
+			}
+		} else if r.Metric == "node_expiry_days" || r.Metric == "probe_tls_expiry_days" {
+			bound = 365
+			if r.Metric == "probe_tls_expiry_days" {
+				bound = 3650
+			}
+			if r.Comparator == nil || *r.Comparator != "<" {
+				return validation.Invalid("comparator", "must be <")
+			}
+			if r.Threshold != nil && *r.Threshold <= 0 {
+				return validation.Invalid("threshold", "must be greater than zero")
+			}
+		} else if r.Metric == "traffic_quota_percent" {
+			bound = 1000
+			if r.Threshold != nil && *r.Threshold <= 0 {
+				return validation.Invalid("threshold", "must be greater than zero")
+			}
+		} else if r.Metric == "load1" {
 			bound = 1e6
 		} else if r.Metric == "probes_down" {
 			bound = 5
 		}
 		if r.Threshold == nil || math.IsNaN(*r.Threshold) || math.IsInf(*r.Threshold, 0) || *r.Threshold < 0 || *r.Threshold > bound {
-			return invalid("threshold", "must be finite and within the metric bounds")
+			return validation.Invalid("threshold", "must be finite and within the metric bounds")
 		}
 		if r.Comparator == nil || (*r.Comparator != ">" && *r.Comparator != "<") {
-			return invalid("comparator", "must be > or <")
+			return validation.Invalid("comparator", "must be > or <")
 		}
 	default:
-		return invalid("metric", "unsupported metric")
+		return validation.Invalid("metric", "unsupported metric")
 	}
 	if r.ScopeKind == "all" {
 		if r.ScopeID != nil {
-			return invalid("scope_id", "must be null for all")
+			return validation.Invalid("scope_id", "must be null for all")
 		}
 		return nil
 	}
 	switch r.ScopeKind {
 	case "group", "node":
 	default:
-		return invalid("scope_kind", "must be all, group or node")
+		return validation.Invalid("scope_kind", "must be all, group or node")
 	}
-	if r.ScopeID == nil || !identity.ValidUUID(*r.ScopeID) {
-		return invalid("scope_id", "must identify an existing scope")
+	if r.ScopeID == nil || !uuid.ValidUUID(*r.ScopeID) {
+		return validation.Invalid("scope_id", "must identify an existing scope")
 	}
 	return nil
 }
@@ -179,19 +213,19 @@ func validate(ctx context.Context, tx *sql.Tx, r Rule) error {
 		return err
 	}
 	if n == 0 {
-		return invalid("scope_id", "scope does not exist")
+		return validation.Invalid("scope_id", "scope does not exist")
 	}
 	return nil
 }
 
-const ruleColumns = "id,name,enabled,scope_kind,scope_id,metric,comparator,threshold,for_seconds,severity,created_at,updated_at"
+const ruleColumns = "id,name,enabled,scope_kind,scope_id,metric,target,comparator,threshold,for_seconds,severity,created_at,updated_at"
 
 type scanner interface{ Scan(...any) error }
 
 func scanRule(row scanner) (Rule, error) {
 	var r Rule
 	var created, updated string
-	err := row.Scan(&r.ID, &r.Name, &r.Enabled, &r.ScopeKind, &r.ScopeID, &r.Metric, &r.Comparator, &r.Threshold, &r.ForSeconds, &r.Severity, &created, &updated)
+	err := row.Scan(&r.ID, &r.Name, &r.Enabled, &r.ScopeKind, &r.ScopeID, &r.Metric, &r.Target, &r.Comparator, &r.Threshold, &r.ForSeconds, &r.Severity, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
@@ -254,7 +288,7 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Rule, error) {
 		if count >= MaxRules {
 			return r, ErrCapacity
 		}
-		r.ID, err = identity.UUID(rand.Reader)
+		r.ID, err = uuid.UUID(rand.Reader)
 		if err != nil {
 			return r, err
 		}
@@ -277,24 +311,24 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Rule, error) {
 	}
 	r.UpdatedAt = updated
 	if create {
-		_, err = tx.ExecContext(ctx, "INSERT INTO alert_rules("+ruleColumns+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", r.ID, r.Name, r.Enabled, r.ScopeKind, r.ScopeID, r.Metric, r.Comparator, r.Threshold, r.ForSeconds, r.Severity, timekey.Format(r.CreatedAt), timekey.Format(r.UpdatedAt))
+		_, err = tx.ExecContext(ctx, "INSERT INTO alert_rules("+ruleColumns+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", r.ID, r.Name, r.Enabled, r.ScopeKind, r.ScopeID, r.Metric, r.Target, r.Comparator, r.Threshold, r.ForSeconds, r.Severity, timekey.Format(r.CreatedAt), timekey.Format(r.UpdatedAt))
 	} else {
-		_, err = tx.ExecContext(ctx, "UPDATE alert_rules SET name=?,enabled=?,scope_kind=?,scope_id=?,metric=?,comparator=?,threshold=?,for_seconds=?,severity=?,updated_at=? WHERE id=?", r.Name, r.Enabled, r.ScopeKind, r.ScopeID, r.Metric, r.Comparator, r.Threshold, r.ForSeconds, r.Severity, timekey.Format(r.UpdatedAt), id)
+		_, err = tx.ExecContext(ctx, "UPDATE alert_rules SET name=?,enabled=?,scope_kind=?,scope_id=?,metric=?,target=?,comparator=?,threshold=?,for_seconds=?,severity=?,updated_at=? WHERE id=?", r.Name, r.Enabled, r.ScopeKind, r.ScopeID, r.Metric, r.Target, r.Comparator, r.Threshold, r.ForSeconds, r.Severity, timekey.Format(r.UpdatedAt), id)
 	}
 	if err != nil {
 		return Rule{}, err
 	}
 	if len(p.ChannelIDs) > 0 {
 		if strings.TrimSpace(string(p.ChannelIDs)) == "null" || json.Unmarshal(p.ChannelIDs, &r.ChannelIDs) != nil || len(r.ChannelIDs) > 20 {
-			return Rule{}, invalid("channel_ids", "must be an array of at most 20 existing channel IDs")
+			return Rule{}, validation.Invalid("channel_ids", "must be an array of at most 20 existing channel IDs")
 		}
 		if _, err = tx.ExecContext(ctx, "DELETE FROM alert_rule_channels WHERE rule_id=?", r.ID); err != nil {
 			return Rule{}, err
 		}
 		seen := map[string]bool{}
 		for _, channelID := range r.ChannelIDs {
-			if !identity.ValidUUID(channelID) || seen[channelID] {
-				return Rule{}, invalid("channel_ids", "must contain unique existing channel IDs")
+			if !uuid.ValidUUID(channelID) || seen[channelID] {
+				return Rule{}, validation.Invalid("channel_ids", "must contain unique existing channel IDs")
 			}
 			seen[channelID] = true
 			var exists int
@@ -302,7 +336,7 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Rule, error) {
 				return Rule{}, err
 			}
 			if exists == 0 {
-				return Rule{}, invalid("channel_ids", "channel does not exist")
+				return Rule{}, validation.Invalid("channel_ids", "channel does not exist")
 			}
 			if _, err = tx.ExecContext(ctx, "INSERT INTO alert_rule_channels(rule_id,channel_id) VALUES(?,?)", r.ID, channelID); err != nil {
 				return Rule{}, err
@@ -345,7 +379,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
-// Routing is saved with the rule and its audit record under the same writer lock.
+// 路由与规则及其审计记录在同一把写锁下保存。
 func ruleChannels(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }, id string) ([]string, error) {

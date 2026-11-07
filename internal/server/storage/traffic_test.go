@@ -36,6 +36,17 @@ func TestTrafficSchemaCreatesTablesConstraintsAndRetentionIndex(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO nodes(id,name,created_at) VALUES('node','node','now')`); err != nil {
 		t.Fatal(err)
 	}
+	var mode string
+	if err := db.QueryRow("SELECT billing_mode FROM nodes WHERE id='node'").Scan(&mode); err != nil || mode != "total" {
+		t.Fatalf("default billing mode=%q err=%v", mode, err)
+	}
+	for _, value := range []any{"total", "max", "rx", "tx", "invalid", nil} {
+		_, err := db.Exec("UPDATE nodes SET billing_mode=? WHERE id='node'", value)
+		valid := value != nil && value != "invalid"
+		if valid != (err == nil) {
+			t.Fatalf("billing mode %v: %v", value, err)
+		}
+	}
 	if _, err := db.Exec(`INSERT INTO traffic_hourly(node_id,epoch,period_start,rx_bytes,tx_bytes,updated_at) VALUES('node','epoch','2026-10-27T00:00:00.000000000Z',-1,0,'now')`); err == nil {
 		t.Fatal("traffic_hourly accepted a negative counter")
 	}

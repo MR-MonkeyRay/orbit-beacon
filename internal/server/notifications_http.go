@@ -2,46 +2,28 @@ package server
 
 import (
 	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
 
-	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/notify"
+	"orbitbeacon/internal/server/validation"
 )
 
-func (h *handler) notificationsRoute(w http.ResponseWriter, r *http.Request, requestID string) bool {
+func (h *handler) notificationsRoute(w http.ResponseWriter, r *http.Request, requestID string) {
 	p := r.URL.Path
-	if p != "/api/v1/notification-deliveries" && p != "/api/v1/notification-channels" && !strings.HasPrefix(p, "/api/v1/notification-channels/") {
-		return false
-	}
 	if h.notifications == nil {
 		fail(w, http.StatusServiceUnavailable, "not_available", "Notification service is unavailable", requestID)
-		return true
+		return
 	}
 	if p == "/api/v1/notification-deliveries" {
-		query, e := url.ParseQuery(r.URL.RawQuery)
-		fields := map[string]string{}
-		if e != nil {
-			fields["query"] = "invalid query string"
-		}
-		for key, values := range query {
-			if key != "limit" && key != "before" {
-				fields[key] = "unknown parameter"
-			} else if len(values) != 1 || values[0] == "" {
-				fields[key] = "must be supplied once and nonempty"
-			}
-		}
-		limit := 50
-		if query.Has("limit") {
-			limit, e = strconv.Atoi(query.Get("limit"))
-			if e != nil {
-				fields["limit"] = "must be an integer"
-			}
-		}
+		const suppliedOnce = "must be supplied once and nonempty"
+		query, fields := parseQuery(r.URL.RawQuery, "invalid query string", map[string]queryParameter{
+			"limit":  {nonempty: true, repeated: suppliedOnce},
+			"before": {nonempty: true, repeated: suppliedOnce},
+		})
+		limit := parseLimit(query, fields, 50, "must be an integer")
 		if len(fields) > 0 {
-			h.serviceError(w, &nodes.ValidationError{Fields: fields}, requestID)
-			return true
+			h.serviceError(w, &validation.Error{Fields: fields}, requestID)
+			return
 		}
 		page, e := h.notifications.Deliveries(r.Context(), limit, query.Get("before"))
 		if e != nil {
@@ -49,7 +31,7 @@ func (h *handler) notificationsRoute(w http.ResponseWriter, r *http.Request, req
 		} else {
 			writeJSON(w, http.StatusOK, page)
 		}
-		return true
+		return
 	}
 	collection := p == "/api/v1/notification-channels"
 	id := strings.TrimPrefix(p, "/api/v1/notification-channels/")
@@ -60,7 +42,7 @@ func (h *handler) notificationsRoute(w http.ResponseWriter, r *http.Request, req
 		} else {
 			writeJSON(w, http.StatusOK, result)
 		}
-		return true
+		return
 	}
 	switch r.Method {
 	case http.MethodGet:
@@ -88,7 +70,7 @@ func (h *handler) notificationsRoute(w http.ResponseWriter, r *http.Request, req
 	default:
 		var patch notify.Patch
 		if !decode(w, r, &patch, requestID) {
-			return true
+			return
 		}
 		if collection {
 			id = ""
@@ -104,5 +86,4 @@ func (h *handler) notificationsRoute(w http.ResponseWriter, r *http.Request, req
 			writeJSON(w, status, channel)
 		}
 	}
-	return true
 }

@@ -14,8 +14,8 @@ import (
 	"orbitbeacon/internal/agent/identity"
 )
 
-// Trust fixtures must not live beneath the world-writable system temporary
-// directory: safe ancestors are part of the trust boundary, including in tests.
+// CA 信任测试数据不得放在所有用户均可写的系统临时目录下：
+// 上级目录的安全性也是信任边界的一部分，测试中同样如此。
 func secureCADirectory(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {

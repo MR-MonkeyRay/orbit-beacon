@@ -4,15 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"log/slog"
 	"math"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"orbitbeacon/internal/server/storage"
+	"orbitbeacon/internal/logging"
 )
 
 const (
@@ -20,28 +20,16 @@ const (
 	SampleBufferSize     = 4096
 	FlushInterval        = time.Minute
 	maxPendingBuckets    = 8192
-	cleanupBatchSize     = 1000
+	maxDiskPaths         = 16
+	// 远端存储不可用时，每个节点的首个样本都会等待超时；退避避免写入循环被占满。
+	seriesRetryDelay = 30 * time.Second
 )
-
-// Seek to the next primary-key node prefix instead of visiting every bucket
-// for DISTINCT. Work scales with node count, irrespective of retained history.
-const historyNodesQuery = `WITH RECURSIVE history_nodes(node_id) AS (
- SELECT min(node_id) FROM buckets
- UNION ALL
- SELECT (SELECT min(node_id) FROM buckets WHERE node_id > history_nodes.node_id)
- FROM history_nodes WHERE node_id IS NOT NULL
-) SELECT node_id FROM history_nodes WHERE node_id IS NOT NULL`
-
-const schema = `CREATE TABLE buckets (
- node_id TEXT NOT NULL, metric TEXT NOT NULL, step INTEGER NOT NULL,
- t INTEGER NOT NULL, total REAL NOT NULL, peak REAL NOT NULL, samples INTEGER NOT NULL CHECK(samples > 0),
- PRIMARY KEY(node_id, metric, step, t)
-) WITHOUT ROWID;
-CREATE INDEX buckets_retention ON buckets(step, t);`
 
 type Options struct {
 	Now    func() time.Time
 	Logger *slog.Logger
+	// ObserveFlush 仅在启用指标时设置；条目数为本次尝试写入的各层级聚合行数。
+	ObserveFlush func(time.Duration, int)
 }
 
 type bucketKey struct {
@@ -63,55 +51,59 @@ type retentionResult struct {
 }
 
 type Service struct {
-	db, reader, nodes *sql.DB
-	samples           chan Sample
-	retention         chan retentionRequest
-	stop              chan context.Context
-	done              chan struct{}
-	cancel            context.CancelFunc
-	once              sync.Once
-	err               error // published by closing done
-	now               func() time.Time
-	logger            *slog.Logger
-	pending           map[bucketKey]map[string]aggregate // owned by run
-	dropped           atomic.Uint64
+	store          Store
+	nodes          *sql.DB
+	samples        chan Sample
+	retention      chan retentionRequest
+	stop           chan context.Context
+	done           chan struct{}
+	cancel         context.CancelFunc
+	once           sync.Once
+	err            error // published by closing done
+	now            func() time.Time
+	logger         *slog.Logger
+	pending        map[bucketKey]map[string]aggregate // owned by run
+	dropped        atomic.Uint64
+	observeFlush   func(time.Duration, int)
+	paths          map[string]map[string]struct{} // owned by run; one entry per observed node
+	seriesRejected atomic.Uint64
+	seriesRetryAt  time.Time // owned by run
 }
 
-// OpenDatabase initializes only the trusted metrics schema, without starting a
-// writer or retention worker. Offline restore uses it for its private staging.
-func OpenDatabase(ctx context.Context, path string) (*sql.DB, error) {
-	return storage.OpenWithMigrations(ctx, path, []storage.Migration{{Version: CurrentSchemaVersion, SQL: schema}})
-}
-
-// Open creates metrics.db with its own migration ledger and read-only query
-// pool. The main pool is used only to read node IDs during orphan retention.
+// Open 创建 metrics.db，使用自己的迁移台账和只读查询池。
+// 主库连接池仅用于清理孤立历史记录前读取现有节点 ID。
 func Open(ctx context.Context, dataDir string, nodes *sql.DB, opts Options) (*Service, error) {
-	path := filepath.Join(dataDir, "metrics.db")
-	db, err := OpenDatabase(ctx, path)
+	store, err := openSQLiteStore(ctx, filepath.Join(dataDir, "metrics.db"))
 	if err != nil {
-		return nil, fmt.Errorf("open metric history: %w", err)
+		return nil, err
 	}
-	reader, err := storage.OpenReader(ctx, path)
-	if err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("open metric history reader: %w", err)
-	}
+	return newService(store, nodes, opts), nil
+}
+
+// newService 在存储就绪后启动采样、刷写和清理任务。
+func newService(store Store, nodes *sql.DB, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	if opts.Logger == nil {
-		opts.Logger = slog.Default()
-	}
 	workCtx, cancel := context.WithCancel(context.Background())
-	s := &Service{db: db, reader: reader, nodes: nodes, samples: make(chan Sample, SampleBufferSize), retention: make(chan retentionRequest), stop: make(chan context.Context, 1), done: make(chan struct{}), cancel: cancel, now: opts.Now, logger: opts.Logger, pending: make(map[bucketKey]map[string]aggregate)}
+	s := &Service{store: store, nodes: nodes, samples: make(chan Sample, SampleBufferSize), retention: make(chan retentionRequest), stop: make(chan context.Context, 1), done: make(chan struct{}), cancel: cancel, now: opts.Now, logger: opts.Logger, pending: make(map[bucketKey]map[string]aggregate), paths: make(map[string]map[string]struct{}), observeFlush: opts.ObserveFlush}
 	go s.run(workCtx)
-	return s, nil
+	return s
 }
 
-// Samples is never closed, so even a late producer cannot panic at shutdown.
-// Producers must use a non-blocking send and own their drop counter.
+// Samples 永不关闭，因此即使迟到的生产者也不会在关闭时 panic。
+// 生产者必须使用非阻塞发送，并自己维护丢弃计数。
 func (s *Service) Samples() chan<- Sample { return s.samples }
 func (s *Service) DroppedBuckets() uint64 { return s.dropped.Load() }
+func (s *Service) SeriesRejected() uint64 { return s.seriesRejected.Load() }
+
+// DatabaseStats 仅在抓取指标时读取两个连接池的快照。
+func (s *Service) DatabaseStats() (writer, reader sql.DBStats, ok bool) {
+	if s.store == nil {
+		return writer, reader, false
+	}
+	return s.store.DatabaseStats()
+}
 
 func (s *Service) add(sample Sample) {
 	if sample.NodeID == "" || sample.ReceivedAt.IsZero() || len(sample.Values) == 0 {
@@ -131,6 +123,10 @@ func (s *Service) add(sample Sample) {
 		if !validValue(metric, value) {
 			continue
 		}
+		if path, partitioned := diskSeriesPath(metric); partitioned && !s.admitPath(sample.NodeID, path) {
+			s.seriesRejected.Add(1)
+			continue
+		}
 		a := values[metric]
 		if a.samples == math.MaxInt64 {
 			continue
@@ -142,8 +138,52 @@ func (s *Service) add(sample Sample) {
 	}
 }
 
+// diskSeriesPath splits only the first colon; paths may themselves contain colons.
+func diskSeriesPath(metric string) (string, bool) {
+	base, path, found := strings.Cut(metric, ":")
+	return path, found && (base == "disk_used_percent" || base == "inode_used_percent")
+}
+
+// 只有 run 调用 admitPath。首次从存储读取已有序列，失败时拒绝分区样本，
+// 退避结束后的下一个样本再重试。
+func (s *Service) admitPath(node, path string) bool {
+	paths, loaded := s.paths[node]
+	if !loaded {
+		paths = make(map[string]struct{})
+		if s.store != nil {
+			if s.now().Before(s.seriesRetryAt) {
+				return false
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			series, err := s.store.Series(ctx, node)
+			if err != nil {
+				s.seriesRetryAt = s.now().Add(seriesRetryDelay)
+				return false
+			}
+			for _, metric := range series {
+				if known, ok := diskSeriesPath(metric); ok {
+					paths[known] = struct{}{}
+				}
+			}
+		}
+		if s.paths == nil {
+			s.paths = make(map[string]map[string]struct{})
+		}
+		s.paths[node] = paths
+	}
+	if _, known := paths[path]; known {
+		return true
+	}
+	if len(paths) >= maxDiskPaths {
+		return false
+	}
+	paths[path] = struct{}{}
+	return true
+}
+
 func (s *Service) drain() {
-	// A finite snapshot prevents live producers from starving retention/shutdown.
+	// 只处理当前队列长度，避免持续到来的样本阻碍定期清理或关闭。
 	for remaining := len(s.samples); remaining > 0; remaining-- {
 		select {
 		case sample := <-s.samples:
@@ -168,7 +208,9 @@ func (s *Service) run(ctx context.Context) {
 			err := s.flush(flushCtx, s.now(), false)
 			cancel()
 			if err != nil {
-				s.logger.Warn("metric history flush failed", "error", err)
+				if s.logger != nil {
+					s.logger.LogAttrs(ctx, slog.LevelWarn, "metric_history_flush_failed", logging.ErrorAttrs(err, "flush_failed")...)
+				}
 			}
 		case request := <-s.retention:
 			s.drain()
@@ -185,40 +227,33 @@ func (s *Service) run(ctx context.Context) {
 	}
 }
 
-// flush merges each minute's exact sums/counts into all tiers in one transaction.
-// Additive upserts preserve a partially flushed minute across server restarts.
-// Pending state is released only after commit, so a failed flush can be retried.
+// flush 将每分钟的精确总和与样本数交给存储，由存储提供各聚合层级。
+// 提交成功后才释放待写状态，因此失败时可以重试。
 func (s *Service) flush(ctx context.Context, now time.Time, all bool) error {
+	var started time.Time
+	if s.observeFlush != nil {
+		started = time.Now()
+	}
+	entries := 0
+	var buckets []Bucket
 	keys := make([]bucketKey, 0, len(s.pending))
 	for key := range s.pending {
 		if all || key.t < now.Truncate(time.Minute).Unix() {
 			keys = append(keys, key)
+			for metric, a := range s.pending[key] {
+				buckets = append(buckets, Bucket{Node: key.node, Series: metric, T: key.t, Total: a.total, Peak: a.peak, Samples: a.samples})
+			}
 		}
 	}
 	if len(keys) == 0 {
 		return ctx.Err()
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	if s.observeFlush != nil {
+		defer func() { s.observeFlush(time.Since(started), entries) }()
+	}
+	var err error
+	entries, err = s.store.Write(ctx, buckets)
 	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	statement, err := tx.PrepareContext(ctx, `INSERT INTO buckets(node_id,metric,step,t,total,peak,samples) VALUES(?,?,?,?,?,?,?) ON CONFLICT(node_id,metric,step,t) DO UPDATE SET total=total+excluded.total, peak=max(peak,excluded.peak), samples=samples+excluded.samples`)
-	if err != nil {
-		return err
-	}
-	defer statement.Close()
-	for _, key := range keys {
-		for metric, a := range s.pending[key] {
-			for _, step := range []int64{60, 300, 3600} {
-				t := time.Unix(key.t, 0).Truncate(time.Duration(step) * time.Second).Unix()
-				if _, err := statement.ExecContext(ctx, key.node, metric, step, t, a.total, a.peak, a.samples); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	if err := tx.Commit(); err != nil {
 		return err
 	}
 	for _, key := range keys {
@@ -227,8 +262,8 @@ func (s *Service) flush(ctx context.Context, now time.Time, all bool) error {
 	return nil
 }
 
-// Cleanup is serialized with flushing and purges deleted nodes from all tiers
-// and pending memory. It never takes a writer lock on the main database.
+// Cleanup 与刷写串行化，并从所有层级和待处理内存中清除已删除的节点。
+// 它从不在主数据库上加写锁。
 func (s *Service) Cleanup(ctx context.Context, now time.Time) (int64, error) {
 	result := make(chan retentionResult, 1)
 	select {
@@ -251,26 +286,18 @@ func (s *Service) cleanup(ctx context.Context, now time.Time) (int64, error) {
 	for key := range s.pending {
 		candidates[key.node] = true
 	}
-	rows, err := s.db.QueryContext(ctx, historyNodesQuery)
-	if err != nil {
-		return 0, err
+	for id := range s.paths {
+		candidates[id] = true
 	}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return 0, err
-		}
+	err := s.store.NodeIDs(ctx, func(id string) {
 		candidates[id] = true
 		s.drain()
-	}
-	err = rows.Err()
-	_ = rows.Close()
+	})
 	if err != nil {
 		return 0, err
 	}
-	// Freeze candidates before reading live IDs. Draining may add pending nodes,
-	// but they cannot become orphan candidates after this existence snapshot.
+	// 在读取活跃 ID 之前冻结候选。排空可能添加待处理节点，
+	// 但在这份存在性快照之后，它们不可能成为孤儿候选。
 	if s.nodes != nil {
 		rows, err := s.nodes.QueryContext(ctx, `SELECT id FROM nodes`)
 		if err != nil {
@@ -294,51 +321,31 @@ func (s *Service) cleanup(ctx context.Context, now time.Time) (int64, error) {
 		clear(candidates)
 	}
 	var removed int64
-	// Every Exec is its own short autocommit transaction. The table is WITHOUT
-	// ROWID, so select at most one batch of composite primary keys per delete.
-	deleteBatches := func(query string, args ...any) error {
-		for {
-			result, err := s.db.ExecContext(ctx, query, args...)
-			if err != nil {
-				return err
-			}
-			n, err := result.RowsAffected()
-			if err != nil {
-				return err
-			}
-			removed += n
-			s.drain()
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if n < cleanupBatchSize {
-				return nil
-			}
-		}
-	}
 	for id := range candidates {
-		if err := deleteBatches(`DELETE FROM buckets WHERE (node_id,metric,step,t) IN (SELECT node_id,metric,step,t FROM buckets WHERE node_id=? LIMIT ?)`, id, cleanupBatchSize); err != nil {
+		n, err := s.store.DeleteNode(ctx, id, s.drain)
+		removed += n
+		if err != nil {
 			return removed, err
 		}
 	}
-	for _, tier := range []struct {
-		step int
-		keep time.Duration
-	}{{60, Retention1m}, {300, Retention5m}, {3600, Retention1h}} {
-		if err := deleteBatches(`DELETE FROM buckets WHERE (node_id,metric,step,t) IN (SELECT node_id,metric,step,t FROM buckets WHERE step=? AND t<? LIMIT ?)`, tier.step, now.Add(-tier.keep).Truncate(time.Duration(tier.step)*time.Second).Unix(), cleanupBatchSize); err != nil {
-			return removed, err
-		}
+	n, err := s.store.DeleteExpired(ctx, now, s.drain)
+	removed += n
+	if err != nil {
+		return removed, err
 	}
 	for key := range s.pending {
 		if candidates[key.node] || key.t < now.Add(-Retention1m).Truncate(time.Minute).Unix() {
 			delete(s.pending, key)
 		}
 	}
+	for id := range candidates {
+		delete(s.paths, id)
+	}
 	return removed, s.flush(ctx, now, false)
 }
 
-// Shutdown drains queued samples and flushes even the incomplete minute. The
-// caller supplies the total budget; expiry also interrupts an ongoing flush.
+// Shutdown 排空样本队列，写入包括当前未结束分钟在内的全部数据。
+// 调用方提供总时限；到期时也会中断正在进行的写入。
 func (s *Service) Shutdown(ctx context.Context) error {
 	s.once.Do(func() { s.stop <- ctx })
 	select {
@@ -353,6 +360,11 @@ func (s *Service) Shutdown(ctx context.Context) error {
 func (s *Service) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	return s.CloseContext(ctx)
+}
+
+// CloseContext 在调用方共享的关闭时限内停止写入任务，并关闭历史存储。
+func (s *Service) CloseContext(ctx context.Context) error {
 	err := s.Shutdown(ctx)
-	return errors.Join(err, s.reader.Close(), s.db.Close())
+	return errors.Join(err, s.store.Close())
 }

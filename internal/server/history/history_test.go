@@ -22,8 +22,8 @@ import (
 	"orbitbeacon/internal/server/storage"
 )
 
-// A trigger supplies samples once per delete batch, exercising the same
-// non-blocking admission as ingest without relying on wall-clock scheduling.
+// 触发器在每个删除批次提供一次样本，验证与 ingest 相同的非阻塞准入，
+// 不依赖实时时钟调度。
 var cleanupProducer atomic.Pointer[func()]
 
 func init() {
@@ -59,11 +59,11 @@ func TestLargeCleanupKeepsAcceptingSamples(t *testing.T) {
 			}
 			const batches = 12
 			const rows = batches * 1000
-			_, err = s.db.Exec(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<?) INSERT INTO buckets SELECT ?, 'cpu_percent', 60, ?-n*60, 10, 10, 1 FROM seq`, rows, id, now.Add(-Retention1m).Unix())
+			_, err = sqlitePools(t, s).db.Exec(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<?) INSERT INTO buckets SELECT ?, 'cpu_percent', 60, ?-n*60, 10, 10, 1 FROM seq`, rows, id, now.Add(-Retention1m).Unix())
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.db.Exec(`CREATE TRIGGER cleanup_producer BEFORE DELETE ON buckets WHEN OLD.t % 60000 = 0 BEGIN SELECT history_test_cleanup_produce(); END`); err != nil {
+			if _, err := sqlitePools(t, s).db.Exec(`CREATE TRIGGER cleanup_producer BEFORE DELETE ON buckets WHEN OLD.t % 60000 = 0 BEGIN SELECT history_test_cleanup_produce(); END`); err != nil {
 				t.Fatal(err)
 			}
 			var offered, dropped int
@@ -90,7 +90,7 @@ func TestLargeCleanupKeepsAcceptingSamples(t *testing.T) {
 				t.Fatalf("offered=%d dropped=%d buckets_dropped=%d", offered, dropped, s.DroppedBuckets())
 			}
 			var accepted int
-			if err := s.db.QueryRow(`SELECT samples FROM buckets WHERE node_id=? AND step=60`, live.ID).Scan(&accepted); err != nil || accepted != offered {
+			if err := sqlitePools(t, s).db.QueryRow(`SELECT samples FROM buckets WHERE node_id=? AND step=60`, live.ID).Scan(&accepted); err != nil || accepted != offered {
 				t.Fatalf("accepted=%d offered=%d err=%v", accepted, offered, err)
 			}
 		})
@@ -99,7 +99,7 @@ func TestLargeCleanupKeepsAcceptingSamples(t *testing.T) {
 
 func TestOrphanDiscoveryUsesNodeSeeks(t *testing.T) {
 	s, _ := testService(t, nil)
-	rows, err := s.db.Query(`EXPLAIN QUERY PLAN ` + historyNodesQuery)
+	rows, err := sqlitePools(t, s).db.Query(`EXPLAIN QUERY PLAN ` + historyNodesQuery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestAggregationRejectsOverflowingInputs(t *testing.T) {
 	}
 	stopped(t, s)
 	for _, requestedRange := range []string{"1h", "24h", "30d"} {
-		result, err := s.Query(context.Background(), "node", "load1", requestedRange, now)
+		result, err := s.Query(context.Background(), "node", "load1", requestedRange, now, "")
 		if err != nil || len(result.Points) != 1 || result.Points[0].Avg != 5e5 || result.Points[0].Max != 1e6 {
 			t.Fatalf("range=%s result=%+v err=%v", requestedRange, result, err)
 		}
@@ -144,11 +144,11 @@ func TestQuerySkipsNonFiniteStoredPoints(t *testing.T) {
 	stopped(t, s)
 	now := time.Now().UTC().Truncate(time.Minute)
 	for i, values := range [][2]float64{{math.Inf(1), 1}, {1, math.Inf(1)}, {math.Inf(-1), 1}, {1, math.Inf(-1)}, {10, 10}} {
-		if _, err := s.db.Exec(`INSERT INTO buckets VALUES('node','load1',60,?,?,?,1)`, now.Add(time.Duration(-i)*time.Minute).Unix(), values[0], values[1]); err != nil {
+		if _, err := sqlitePools(t, s).db.Exec(`INSERT INTO buckets VALUES('node','load1',60,?,?,?,1)`, now.Add(time.Duration(-i)*time.Minute).Unix(), values[0], values[1]); err != nil {
 			t.Fatal(err)
 		}
 	}
-	result, err := s.Query(context.Background(), "node", "load1", "1h", now)
+	result, err := s.Query(context.Background(), "node", "load1", "1h", now, "")
 	if err != nil || len(result.Points) != 1 || result.Points[0].Avg != 10 {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
@@ -196,7 +196,7 @@ func TestAggregationWeightedRollupsShutdownAndGaps(t *testing.T) {
 	} {
 		s.samples <- Sample{NodeID: "one", ReceivedAt: v.at, Values: map[string]float64{"cpu_percent": v.value}}
 	}
-	// A second node must never affect the first node's math.
+	// 第二个节点绝不能影响第一个节点的计算。
 	s.samples <- Sample{NodeID: "two", ReceivedAt: now, Values: map[string]float64{"cpu_percent": 99}}
 	stopped(t, s)
 	for _, test := range []struct {
@@ -204,9 +204,9 @@ func TestAggregationWeightedRollupsShutdownAndGaps(t *testing.T) {
 		count              int
 		firstAvg, firstMax float64
 	}{
-		{"1h", 3, 20, 30}, {"6h", 3, 20, 30}, {"24h", 1, 30, 80}, {"7d", 1, 30, 80}, {"30d", 1, 30, 80},
+		{"1h", 3, 20, 30}, {"6h", 3, 20, 30}, {"24h", 1, 30, 80}, {"7d", 1, 30, 80}, {"30d", 1, 30, 80}, {"90d", 1, 30, 80},
 	} {
-		response, err := s.Query(context.Background(), "one", "cpu_percent", test.rangeName, now.Add(4*time.Minute))
+		response, err := s.Query(context.Background(), "one", "cpu_percent", test.rangeName, now.Add(4*time.Minute), "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -218,7 +218,7 @@ func TestAggregationWeightedRollupsShutdownAndGaps(t *testing.T) {
 
 func TestFlushCompletedOnlyAndRestartMergesPartialMinute(t *testing.T) {
 	s, dir := testService(t, nil)
-	// Stop the writer before exercising the internal aggregation functions.
+	// 测试内部聚合函数前先停止后台写入任务。
 	stopped(t, s)
 	now := time.Date(2026, 10, 27, 12, 20, 0, 0, time.UTC)
 	s.add(Sample{"node", now.Add(-time.Minute), map[string]float64{"cpu_percent": 20}})
@@ -239,11 +239,11 @@ func TestFlushCompletedOnlyAndRestartMergesPartialMinute(t *testing.T) {
 	defer restarted.Close()
 	restarted.samples <- Sample{"node", now.Add(10 * time.Second), map[string]float64{"cpu_percent": 80}}
 	stopped(t, restarted)
-	response, err := restarted.Query(context.Background(), "node", "cpu_percent", "1h", now.Add(20*time.Second))
+	response, err := restarted.Query(context.Background(), "node", "cpu_percent", "1h", now.Add(20*time.Second), "")
 	if err != nil || len(response.Points) != 2 || response.Points[1].Avg != 60 || response.Points[1].Max != 80 {
 		t.Fatalf("response=%+v err=%v", response, err)
 	}
-	rollup, err := restarted.Query(context.Background(), "node", "cpu_percent", "30d", now.Add(20*time.Second))
+	rollup, err := restarted.Query(context.Background(), "node", "cpu_percent", "30d", now.Add(20*time.Second), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestFlushCompletedOnlyAndRestartMergesPartialMinute(t *testing.T) {
 	for _, point := range rollup.Points {
 		total += point.Avg
 	}
-	// Within the same hour, all three values are weighted together.
+	// 同一小时内，三个值一起加权。
 	if len(rollup.Points) != 1 || total != float64(140)/3 {
 		t.Fatalf("rollup=%+v", rollup)
 	}
@@ -285,13 +285,15 @@ func TestRetentionAndDeletedNodePurge(t *testing.T) {
 			keep time.Duration
 		}{{60, Retention1m}, {300, Retention5m}, {3600, Retention1h}} {
 			for _, timestamp := range []int64{now.Add(-tier.keep).Unix() - 1, now.Add(-tier.keep).Unix(), now.Unix()} {
-				if _, err := s.db.Exec(`INSERT INTO buckets VALUES(?, 'cpu_percent', ?, ?, 10, 10, 1)`, id, tier.step, timestamp); err != nil {
+				if _, err := sqlitePools(t, s).db.Exec(`INSERT INTO buckets VALUES(?, 'cpu_percent', ?, ?, 10, 10, 1)`, id, tier.step, timestamp); err != nil {
 					t.Fatal(err)
 				}
 			}
 		}
 	}
 	s.add(Sample{deleted.ID, now, map[string]float64{"cpu_percent": 90}})
+	s.paths[live.ID] = map[string]struct{}{"/live": {}}
+	s.paths[deleted.ID] = map[string]struct{}{"/deleted": {}}
 	if err := ns.Delete(context.Background(), deleted.ID, true); err != nil {
 		t.Fatal(err)
 	}
@@ -300,13 +302,16 @@ func TestRetentionAndDeletedNodePurge(t *testing.T) {
 		t.Fatalf("removed=%d err=%v", removed, err)
 	}
 	var count int
-	if err := s.db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id=?`, deleted.ID).Scan(&count); err != nil || count != 0 {
+	if err := sqlitePools(t, s).db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id=?`, deleted.ID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("orphan rows=%d err=%v", count, err)
+	}
+	if len(s.paths) != 1 || len(s.paths[live.ID]) != 1 {
+		t.Fatalf("orphan path inventory survived: %v", s.paths)
 	}
 	if len(s.pending) != 0 {
 		t.Fatal("orphan pending bucket survived")
 	}
-	if err := s.db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id=?`, live.ID).Scan(&count); err != nil || count != 6 {
+	if err := sqlitePools(t, s).db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id=?`, live.ID).Scan(&count); err != nil || count != 6 {
 		t.Fatalf("retained rows=%d err=%v", count, err)
 	}
 }
@@ -339,7 +344,7 @@ func TestIndependentWriterLockAndCleanupDrainsQueue(t *testing.T) {
 	if _, err := s.Cleanup(ctx, now); err != nil {
 		t.Fatalf("main writer blocked history: %v", err)
 	}
-	response, err := s.Query(ctx, live.ID, "cpu_percent", "1h", now)
+	response, err := s.Query(ctx, live.ID, "cpu_percent", "1h", now, "")
 	if err != nil || len(response.Points) != 1 {
 		t.Fatalf("queued sample not flushed: %+v %v", response, err)
 	}
@@ -348,7 +353,7 @@ func TestIndependentWriterLockAndCleanupDrainsQueue(t *testing.T) {
 func TestSchemaTooNewAndPermissions(t *testing.T) {
 	s, dir := testService(t, nil)
 	stopped(t, s)
-	if _, err := s.db.Exec(`INSERT INTO schema_migrations VALUES(?, 'future')`, CurrentSchemaVersion+1); err != nil {
+	if _, err := sqlitePools(t, s).db.Exec(`INSERT INTO schema_migrations VALUES(?, 'future')`, CurrentSchemaVersion+1); err != nil {
 		t.Fatal(err)
 	}
 	newer, err := Open(context.Background(), dir, nil, Options{})
@@ -370,9 +375,12 @@ func TestSchemaTooNewAndPermissions(t *testing.T) {
 }
 
 func TestSelectRangeAndEmpty(t *testing.T) {
-	for name, step := range map[string]int{"1h": 60, "6h": 60, "24h": 300, "7d": 300, "30d": 3600} {
+	for name, want := range map[string]Selection{
+		"1h": {time.Hour, 60}, "6h": {6 * time.Hour, 60}, "24h": {24 * time.Hour, 300},
+		"7d": {7 * 24 * time.Hour, 300}, "30d": {30 * 24 * time.Hour, 3600}, "90d": {90 * 24 * time.Hour, 3600},
+	} {
 		selection, err := SelectRange(name)
-		if err != nil || selection.StepSeconds != step {
+		if err != nil || selection != want {
 			t.Fatalf("%s=%+v %v", name, selection, err)
 		}
 	}
@@ -384,6 +392,16 @@ func TestSelectRangeAndEmpty(t *testing.T) {
 	response, err := Empty("net_rx_bytes_per_second", "1h")
 	if err != nil || response.Points == nil || len(response.Points) != 0 || response.Unit != "bytes_per_second" {
 		t.Fatalf("empty=%+v %v", response, err)
+	}
+	for metric, unit := range map[string]string{
+		"cpu_percent": "percent", "memory_used_percent": "percent", "swap_used_percent": "percent",
+		"load1": "load", "load5": "load", "load15": "load", "disk_used_percent": "percent", "inode_used_percent": "percent",
+		"net_rx_bytes_per_second": "bytes_per_second", "net_tx_bytes_per_second": "bytes_per_second",
+	} {
+		response, err := Empty(metric, "90d")
+		if !ValidMetric(metric) || err != nil || response.Metric != metric || response.Unit != unit || response.Range != "90d" || response.StepSeconds != 3600 || response.Points == nil || len(response.Points) != 0 {
+			t.Errorf("%s: response=%+v err=%v", metric, response, err)
+		}
 	}
 	if _, err := Empty("unknown", "1h"); err == nil {
 		t.Fatal("accepted unknown metric")
@@ -407,7 +425,7 @@ func TestConcurrentSamplesAndShutdown(t *testing.T) {
 	stopped(t, s)
 	stopped(t, s) // idempotent
 	var count int
-	if err := s.db.QueryRow(`SELECT sum(samples) FROM buckets WHERE step=60`).Scan(&count); err != nil || count != 800 {
+	if err := sqlitePools(t, s).db.QueryRow(`SELECT sum(samples) FROM buckets WHERE step=60`).Scan(&count); err != nil || count != 800 {
 		t.Fatalf("count=%d err=%v", count, err)
 	}
 }
@@ -442,8 +460,8 @@ func TestShutdownDeadlineInterruptsBlockedWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.db.SetMaxOpenConns(1)
-	held, err := s.db.Conn(context.Background())
+	sqlitePools(t, s).db.SetMaxOpenConns(1)
+	held, err := sqlitePools(t, s).db.Conn(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -464,7 +482,7 @@ func TestShutdownDeadlineInterruptsBlockedWriter(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("writer survived canceled shutdown")
 	}
-	// Deadline errors are expected; database closure still completes.
+	// 预期出现截止时间错误；数据库关闭仍会完成。
 	_ = s.Close()
 }
 
@@ -502,7 +520,7 @@ func TestNetworkRateAggregationOmitsMissingSamples(t *testing.T) {
 		metric    string
 		avg, peak float64
 	}{{"net_rx_bytes_per_second", 200, 300}, {"net_tx_bytes_per_second", 10, 20}} {
-		result, err := s.Query(context.Background(), "node", test.metric, "1h", now.Add(time.Minute))
+		result, err := s.Query(context.Background(), "node", test.metric, "1h", now.Add(time.Minute), "")
 		if err != nil || len(result.Points) != 1 || result.Points[0].Avg != test.avg || result.Points[0].Max != test.peak {
 			t.Fatalf("%s=%+v err=%v", test.metric, result, err)
 		}
@@ -519,7 +537,7 @@ func TestRetentionPreservesIntersectingBoundaryBuckets(t *testing.T) {
 	}{{60, Retention1m}, {300, Retention5m}, {3600, Retention1h}} {
 		cutoff := now.Add(-tier.keep).Truncate(time.Duration(tier.step) * time.Second)
 		for _, timestamp := range []int64{cutoff.Unix() - int64(tier.step), cutoff.Unix()} {
-			if _, err := s.db.Exec(`INSERT INTO buckets VALUES('node','cpu_percent',?,?,10,10,1)`, tier.step, timestamp); err != nil {
+			if _, err := sqlitePools(t, s).db.Exec(`INSERT INTO buckets VALUES('node','cpu_percent',?,?,10,10,1)`, tier.step, timestamp); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -530,11 +548,11 @@ func TestRetentionPreservesIntersectingBoundaryBuckets(t *testing.T) {
 	}
 	for _, step := range []int{60, 300, 3600} {
 		var count int
-		if err := s.db.QueryRow(`SELECT count(*) FROM buckets WHERE step=?`, step).Scan(&count); err != nil || count != 1 {
+		if err := sqlitePools(t, s).db.QueryRow(`SELECT count(*) FROM buckets WHERE step=?`, step).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("step=%d count=%d err=%v", step, count, err)
 		}
 	}
-	// The same minute boundary is preserved in pending memory before flush.
+	// 刷写之前在待处理内存中保留相同的分钟边界。
 	cutoff := now.Add(-Retention1m).Truncate(time.Minute)
 	s.add(Sample{"pending", cutoff, map[string]float64{"cpu_percent": 10}})
 	s.add(Sample{"expired", cutoff.Add(-time.Minute), map[string]float64{"cpu_percent": 10}})
@@ -542,10 +560,45 @@ func TestRetentionPreservesIntersectingBoundaryBuckets(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := s.db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id='pending'`).Scan(&count); err != nil || count != 3 {
+	if err := sqlitePools(t, s).db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id='pending'`).Scan(&count); err != nil || count != 3 {
 		t.Fatalf("pending count=%d err=%v", count, err)
 	}
-	if err := s.db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id='expired'`).Scan(&count); err != nil || count != 0 {
+	if err := sqlitePools(t, s).db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id='expired'`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("expired count=%d err=%v", count, err)
+	}
+}
+
+func TestLoadHistoryQueriesAcrossNinetyDays(t *testing.T) {
+	s, _ := testService(t, nil)
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	for _, age := range []time.Duration{91 * 24 * time.Hour, 90 * 24 * time.Hour, 60 * 24 * time.Hour, time.Minute} {
+		s.samples <- Sample{NodeID: "node", ReceivedAt: now.Add(-age), Values: map[string]float64{"load1": 1.5, "load5": 2.5, "load15": 3.5}}
+	}
+	stopped(t, s)
+	for metric, want := range map[string]float64{"load1": 1.5, "load5": 2.5, "load15": 3.5} {
+		response, err := s.Query(context.Background(), "node", metric, "90d", now, "")
+		if err != nil || response.Unit != "load" || response.StepSeconds != 3600 || len(response.Points) != 3 {
+			t.Fatalf("%s: response=%+v err=%v", metric, response, err)
+		}
+		for i, age := range []time.Duration{90 * 24 * time.Hour, 60 * 24 * time.Hour, time.Hour} {
+			point := response.Points[i]
+			if !point.T.Equal(now.Add(-age)) || point.Avg != want || point.Max != want {
+				t.Errorf("%s: point=%+v age=%s want=%v", metric, point, age, want)
+			}
+		}
+	}
+}
+
+func TestTemperatureHistoryQueryUsesCelsius(t *testing.T) {
+	s, _ := testService(t, nil)
+	stopped(t, s)
+	now := time.Now().UTC().Truncate(time.Minute)
+	s.add(Sample{NodeID: "node", ReceivedAt: now, Values: map[string]float64{"temperature_celsius": 42.5}})
+	if err := s.flush(context.Background(), now, true); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.Query(context.Background(), "node", "temperature_celsius", "1h", now, "")
+	if err != nil || result.Unit != "celsius" || len(result.Points) != 1 || result.Points[0].Avg != 42.5 {
+		t.Fatalf("%+v %v", result, err)
 	}
 }

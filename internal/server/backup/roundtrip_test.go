@@ -45,7 +45,10 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 	if _, err = db.Exec(`INSERT INTO groups(id,name) VALUES('66666666-6666-4666-8666-666666666666','fixture-group')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(`INSERT INTO nodes(id,name,status,group_id,token_hash,credential_epoch,installation_id,first_enrolled_at,last_seen,system,agent_runtime,billing_day,quota_bytes,run_generation,report_session_id,created_at) VALUES(?,'node','online','66666666-6666-4666-8666-666666666666',?,23,'fixture-installation',?,?,?,?,2,'18446744073709551615','17','33333333-3333-4333-8333-333333333333',?)`, node, bytes.Repeat([]byte{3}, 32), at, at, `{"hostname":"monitoring-canary"}`, runtime, at); err != nil {
+	if _, err = db.Exec(`INSERT INTO nodes(id,name,status,group_id,token_hash,credential_epoch,installation_id,first_enrolled_at,last_seen,system,agent_runtime,billing_day,quota_bytes,billing_mode,run_generation,report_session_id,created_at) VALUES(?,'node','online','66666666-6666-4666-8666-666666666666',?,23,'fixture-installation',?,?,?,?,2,'18446744073709551615','max','17','33333333-3333-4333-8333-333333333333',?)`, node, bytes.Repeat([]byte{3}, 32), at, at, `{"hostname":"monitoring-canary"}`, runtime, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO agent_commands(id,node_id,credential_epoch,kind,state,requested_by,created_at,expires_at) VALUES('77777777-7777-4777-8777-777777777777',?,23,'restart','pending','11111111-1111-4111-8111-111111111111',?,?)`, node, at, timekey.Format(now.Add(5*time.Minute))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = db.Exec(`INSERT INTO audit_events VALUES('44444444-4444-4444-8444-444444444444',NULL,'fixture',NULL,?,?)`, at, `{"marker":"events-canary"}`); err != nil {
@@ -102,6 +105,11 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				var commandTables int
+				if err := reader.QueryRow(`SELECT count(*) FROM sqlite_schema WHERE name='agent_commands'`).Scan(&commandTables); err != nil || commandTables != 0 {
+					reader.Close()
+					t.Fatalf("command replay data in backup: %d %v", commandTables, err)
+				}
 				if err = ValidatePayloadSchema(ctx, reader, c); err != nil {
 					reader.Close()
 					t.Fatal(err)
@@ -121,17 +129,17 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 				}
 				clear(key)
 				if c == Configuration {
-					var gen, session, status, quota, group string
+					var gen, session, status, quota, group, mode string
 					var billing int
 					var credentialEpoch int64
 					var token []byte
-					if err = reader.QueryRow(`SELECT run_generation,report_session_id,status,token_hash,billing_day,quota_bytes,group_id,credential_epoch FROM nodes WHERE id=?`, node).Scan(&gen, &session, &status, &token, &billing, &quota, &group, &credentialEpoch); err != nil {
+					if err = reader.QueryRow(`SELECT run_generation,report_session_id,status,token_hash,billing_day,quota_bytes,group_id,credential_epoch,billing_mode FROM nodes WHERE id=?`, node).Scan(&gen, &session, &status, &token, &billing, &quota, &group, &credentialEpoch, &mode); err != nil {
 						t.Fatal(err)
 					}
 					if gen != "17" || session != "33333333-3333-4333-8333-333333333333" || status != "unknown" || credentialEpoch != 23 || !bytes.Equal(token, bytes.Repeat([]byte{3}, 32)) {
 						t.Fatal("agent authentication fence lost")
 					}
-					if billing != 2 || quota != "18446744073709551615" || group != "66666666-6666-4666-8666-666666666666" {
+					if mode != "max" || billing != 2 || quota != "18446744073709551615" || group != "66666666-6666-4666-8666-666666666666" {
 						t.Fatal("traffic billing or group configuration lost")
 					}
 					var name string

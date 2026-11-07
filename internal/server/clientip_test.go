@@ -83,9 +83,10 @@ func TestLoginRejectionLogsDerivedClientIP(t *testing.T) {
 }
 
 func TestHSTSBelongsToExternalProxy(t *testing.T) {
-	h := &handler{assets: fstest.MapFS{"public.html": {Data: []byte("<!doctype html><title>public</title>")}, "asset.js": {Data: []byte("export {}")}}}
+	assets := fstest.MapFS{"public.html": {Data: []byte("<!doctype html><title>public</title>")}, "asset.js": {Data: []byte("export {}")}}
+	h := &handler{}
 	var err error
-	h.htmlPolicies, err = htmlPolicies(h.assets, "https://beacon.test")
+	h.htmlPolicies, err = htmlPolicies(assets, "https://beacon.test")
 	if err != nil {
 		t.Fatal(err)
 	}

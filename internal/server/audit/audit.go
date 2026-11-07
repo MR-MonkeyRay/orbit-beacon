@@ -7,37 +7,34 @@ import (
 	"encoding/json"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 type actorKey struct{}
 
 type systemActorKey struct{}
 
-// WithActor attributes mutations to the authenticated session user.
+// WithActor 将变更归属于已认证的会话用户。
 func WithActor(ctx context.Context, userID string) context.Context {
 	return context.WithValue(ctx, actorKey{}, userID)
 }
 
-// WithSystemActor attributes mutations made by a non-user principal, such as an
-// agent presenting an enrollment ticket. The event has no actor_id; its details
-// record the principal kind instead.
+// WithSystemActor 将非用户主体（如持注册票据的 Agent）发起的变更记入审计。
+// 事件不带 actor_id，details 中记录主体类型。
 func WithSystemActor(ctx context.Context, kind string) context.Context {
 	return context.WithValue(ctx, systemActorKey{}, kind)
 }
 
-// Details are small, credential-free facts about a change. Values must never
-// contain secrets, tokens or password material.
+// Details 记录变更的少量事实，不得包含密钥、令牌或密码类内容。
 type Details map[string]any
 
-// Insert writes the event inside the mutation's transaction. Internal bootstrap
-// and fixture operations without an actor do not generate events.
+// Insert 在变更事务内写入审计事件。未设置主体的内部初始化和测试数据操作不产生事件。
 func Insert(ctx context.Context, tx *sql.Tx, action, targetID string, now time.Time) error {
 	return InsertDetails(ctx, tx, action, targetID, now, nil)
 }
 
-// InsertDetails is Insert with additional structured details.
+// InsertDetails 同 Insert，附带结构化 details。
 func InsertDetails(ctx context.Context, tx *sql.Tx, action, targetID string, now time.Time, details Details) error {
 	var actor any
 	if actorID, _ := ctx.Value(actorKey{}).(string); actorID != "" {
@@ -57,7 +54,7 @@ func InsertDetails(ctx context.Context, tx *sql.Tx, action, targetID string, now
 			return err
 		}
 	}
-	id, err := identity.UUID(rand.Reader)
+	id, err := uuid.UUID(rand.Reader)
 	if err != nil {
 		return err
 	}
@@ -65,8 +62,7 @@ func InsertDetails(ctx context.Context, tx *sql.Tx, action, targetID string, now
 	return err
 }
 
-// ScopedAlertRuleDeletes attributes rule deletions caused by an inventory scope
-// cascade to the same actor and transaction as the parent deletion.
+// ScopedAlertRuleDeletes 将清单作用域级联删除的规则归属于同一主体和事务。
 func ScopedAlertRuleDeletes(ctx context.Context, tx *sql.Tx, kind, scopeID string, now time.Time) error {
 	rows, err := tx.QueryContext(ctx, "SELECT id FROM alert_rules WHERE scope_kind=? AND scope_id=?", kind, scopeID)
 	if err != nil {

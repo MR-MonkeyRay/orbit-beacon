@@ -22,8 +22,8 @@ func TestTrafficAPIEnvelopeValidationAccessAndMethods(t *testing.T) {
 	if _, err = f.db.Exec(`UPDATE nodes SET billing_day=28, quota_bytes='1000' WHERE id=?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	// The fixture handler runs on the real clock, so anchor rows to today's
-	// cycle; fixed-date cycle math is covered by the traffic package tests.
+	// 测试夹具在真实时钟下运行，因此把行锚定到今天的周期；
+	// 固定日期的周期计算由 traffic 包测试覆盖。
 	now := time.Now().UTC()
 	start, end := traffic.CycleBounds(now, 28)
 	updated := now.Truncate(time.Hour)

@@ -15,10 +15,10 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-// ErrSchemaTooNew reports a database written by a newer OrbitBeacon release.
+// ErrSchemaTooNew 报告由更新版本的 OrbitBeacon 写入的数据库。
 var ErrSchemaTooNew = errors.New("database schema is newer than this binary")
 
-// ErrSchemaIncompatible requires a new data directory rather than an upgrade.
+// ErrSchemaIncompatible 需要新的数据目录，而不是升级。
 var ErrSchemaIncompatible = errors.New("database schema is incompatible; initialize a new data directory")
 
 type Migration struct {
@@ -26,11 +26,11 @@ type Migration struct {
 	SQL     string
 }
 
-// CurrentSchemaVersion is the highest schema version produced by this binary.
-const CurrentSchemaVersion = 21
+// CurrentSchemaVersion 是本二进制使用的主库 schema 基线版本。
+const CurrentSchemaVersion = 1
 
-// Open opens a persistent local database. The driver applies connection-local
-// pragmas to every pooled connection, not just the migration connection.
+// Open 打开持久化本地数据库。驱动对池中每个连接应用连接级 pragma，
+// 而不仅是迁移连接。
 func Open(ctx context.Context, path string) (*sql.DB, error) {
 	db, err := openDatabase(ctx, path)
 	if err != nil {
@@ -43,8 +43,8 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// OpenWithMigrations applies an independent schema using the same secure file
-// checks and SQLite connection settings as the main database.
+// OpenWithMigrations 使用与主数据库相同的安全文件检查和 SQLite 连接设置，
+// 应用独立的 schema。
 func OpenWithMigrations(ctx context.Context, path string, migrations []Migration) (*sql.DB, error) {
 	db, err := openDatabase(ctx, path)
 	if err != nil {
@@ -62,8 +62,8 @@ func openDatabase(ctx context.Context, path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	// SQLite derives WAL and shared-memory permissions from the main database.
-	// Create it privately before the driver can apply its default creation mode.
+	// SQLite 从主数据库派生 WAL 和共享内存的权限。
+	// 在驱动应用其默认创建模式之前，先以私有方式创建它。
 	file, err := securefs.OpenFile(absolute, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 	if errors.Is(err, os.ErrExist) {
 		file, err = securefs.OpenFile(absolute, os.O_RDWR, 0)
@@ -130,10 +130,10 @@ func initializeMainSchema(ctx context.Context, db *sql.DB) error {
 	return tx.Commit()
 }
 
-const mainSchema = foundationSchema + alertsSchema + notificationsSchema + trafficSchema + probesSchema + backupsSchema
+const mainSchema = foundationSchema + alertsSchema + notificationsSchema + trafficSchema + availabilitySchema + probesSchema + backupsSchema + announcementsSchema
 
-// OpenReader opens an existing database through a separate read-only pool.
-// Open must run first so the database exists and its schema is initialized.
+// OpenReader 通过独立的只读池打开已有数据库。
+// 必须先运行 Open，使数据库存在且 schema 已初始化。
 func OpenReader(ctx context.Context, path string) (*sql.DB, error) {
 	absolute, exists, err := validateDatabasePath(path)
 	if err != nil {
@@ -172,7 +172,7 @@ func validateDatabasePath(path string) (string, bool, error) {
 		return "", false, err
 	}
 	exists := false
-	// Inspect every existing component before opening or creating the database.
+	// 在打开或创建数据库之前，检查每个已有组件。
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		componentExists, err := securefs.ValidateFile(absolute + suffix)
 		if err != nil {
@@ -185,13 +185,13 @@ func validateDatabasePath(path string) (string, bool, error) {
 	return absolute, exists, nil
 }
 
-// Migrate atomically applies each unapplied version together with its ledger row.
+// Migrate 原子地应用每个未应用的版本及其台账行。
 func Migrate(ctx context.Context, db *sql.DB, migrations []Migration) error {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
 		return err
 	}
-	// An older binary must not run against a schema written by a newer one: it
-	// would silently ignore columns and invariants it does not know about.
+	// 旧二进制绝不能运行在由新二进制写入的 schema 上：
+	// 它会悄悄忽略自己不知道的列和不变量。
 	known := 0
 	for _, migration := range migrations {
 		known = max(known, migration.Version)
@@ -242,7 +242,14 @@ const foundationSchema = `
 CREATE TABLE users (
  id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
  must_change_password INTEGER NOT NULL DEFAULT 0 CHECK(must_change_password IN (0,1)),
+ totp_ciphertext BLOB, totp_pending_ciphertext BLOB, totp_pending_at TEXT,
+ totp_last_step INTEGER NOT NULL DEFAULT 0,
  created_at TEXT NOT NULL
+);
+CREATE TABLE recovery_codes (
+ user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ code_hash BLOB NOT NULL,
+ PRIMARY KEY(user_id, code_hash)
 );
 CREATE TABLE sessions (
  token_hash BLOB PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -250,20 +257,41 @@ CREATE TABLE sessions (
 );
 CREATE INDEX sessions_user ON sessions(user_id);
 CREATE INDEX sessions_expiry ON sessions(expires_at);
+CREATE TABLE api_tokens (
+ id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash BLOB NOT NULL UNIQUE,
+ created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ created_at TEXT NOT NULL, expires_at TEXT, last_used_at TEXT,
+ rate_limit_per_minute INTEGER CHECK (rate_limit_per_minute IS NULL OR rate_limit_per_minute BETWEEN 1 AND 100000)
+);
+CREATE INDEX api_tokens_owner ON api_tokens(created_by);
 CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
 CREATE TABLE nodes (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
  group_id TEXT REFERENCES groups(id) ON DELETE SET NULL,
- region TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+ region TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', expires_on TEXT,
  token_hash BLOB UNIQUE, installation_id TEXT, first_enrolled_at TEXT, last_seen TEXT,
  credential_epoch INTEGER NOT NULL DEFAULT 0,
  system TEXT NOT NULL DEFAULT '{}', public_settings TEXT NOT NULL DEFAULT '{}',
  agent_runtime TEXT NOT NULL DEFAULT '', billing_day INTEGER NOT NULL DEFAULT 1,
- quota_bytes TEXT NOT NULL DEFAULT '0', created_at TEXT NOT NULL,
+ quota_bytes TEXT NOT NULL DEFAULT '0', billing_mode TEXT NOT NULL DEFAULT 'total' CHECK(billing_mode IN ('total','max','rx','tx')), created_at TEXT NOT NULL,
  run_generation TEXT NOT NULL DEFAULT '0', report_session_id TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX nodes_installation_identity ON nodes(installation_id) WHERE installation_id IS NOT NULL;
 CREATE INDEX nodes_group ON nodes(group_id);
+CREATE TABLE agent_commands (
+ id TEXT PRIMARY KEY, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+ credential_epoch INTEGER NOT NULL,
+ kind TEXT NOT NULL CHECK(kind IN ('upgrade','restart','stop')),
+ target_version TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL CHECK(state IN ('pending','delivered','succeeded','failed','rejected','expired','canceled')),
+ result_code TEXT NOT NULL DEFAULT '' CHECK(result_code IN ('','ok','disabled_locally','unsupported','expired','interrupted','failed','download','checksum','self_check','downgrade','rolled_back')),
+ requested_by TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+ delivered_at TEXT, delivered_generation TEXT NOT NULL DEFAULT '', finished_at TEXT,
+ CHECK ((kind='upgrade' AND length(target_version) BETWEEN 1 AND 64) OR (kind IN ('restart','stop') AND target_version=''))
+);
+CREATE UNIQUE INDEX agent_commands_active ON agent_commands(node_id) WHERE state IN ('pending','delivered');
+CREATE INDEX agent_commands_recent ON agent_commands(node_id,created_at DESC,id DESC);
+CREATE INDEX agent_commands_finished ON agent_commands(finished_at) WHERE state NOT IN ('pending','delivered');
 CREATE TABLE node_tags (node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE, tag TEXT NOT NULL, PRIMARY KEY(node_id,tag));
 CREATE TABLE enrollment_tokens (
  id TEXT PRIMARY KEY, token_hash BLOB NOT NULL UNIQUE, node_id TEXT REFERENCES nodes(id) ON DELETE CASCADE,
@@ -285,11 +313,4 @@ CREATE TABLE audit_events (
  created_at TEXT NOT NULL, details TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX audit_events_created_id ON audit_events(created_at DESC, id DESC);
-CREATE TABLE update_jobs (id TEXT PRIMARY KEY, release_seq INTEGER NOT NULL, created_at TEXT NOT NULL);
--- Node IDs deliberately survive asset deletion so cancellation remains observable.
-CREATE TABLE update_job_nodes (
- job_id TEXT NOT NULL REFERENCES update_jobs(id) ON DELETE CASCADE,
- node_id TEXT NOT NULL, status TEXT NOT NULL, PRIMARY KEY(job_id,node_id)
-);
-CREATE INDEX update_job_nodes_node ON update_job_nodes(node_id);
 `

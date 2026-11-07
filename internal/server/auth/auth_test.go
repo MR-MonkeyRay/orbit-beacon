@@ -111,7 +111,7 @@ func TestBootstrapRefusesToReplaceExistingAdministrator(t *testing.T) {
 	if original.ID == "" || original.Username != "first-admin" {
 		t.Fatalf("bootstrap user = %+v", original)
 	}
-	// Reconstructing the service must not reopen the bootstrap window.
+	// 重建服务绝不能重新打开引导窗口。
 	service = auth.NewService(db, auth.Options{
 		Now:    func() time.Time { return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) },
 		Random: rand.NewChaCha8([32]byte{18}),
@@ -138,10 +138,10 @@ func TestBootstrapRefusesToReplaceExistingAdministrator(t *testing.T) {
 	if ok, err := auth.VerifyPassword(initialPassword, storedHash); err != nil || !ok {
 		t.Fatalf("persisted bootstrap password is not verifiable: ok=%t err=%v", ok, err)
 	}
-	if _, err := service.Login(ctx, "first-admin", initialPassword); err != nil {
+	if _, err := service.Login(ctx, "first-admin", initialPassword, ""); err != nil {
 		t.Fatalf("refused bootstrap changed original credentials: %v", err)
 	}
-	if _, err := service.Login(ctx, "first-admin", "replacement password"); err == nil {
+	if _, err := service.Login(ctx, "first-admin", "replacement password", ""); err == nil {
 		t.Fatal("refused bootstrap installed replacement password")
 	}
 }
@@ -153,11 +153,11 @@ func TestSessionsPersistOnlySHA256AndExpireAfterTwelveHours(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := service.Login(ctx, "admin", initialPassword)
+	first, err := service.Login(ctx, "admin", initialPassword, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := service.Login(ctx, "admin", initialPassword)
+	second, err := service.Login(ctx, "admin", initialPassword, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,11 +219,11 @@ func TestPasswordChangeRevokesAllSessionsButFailedChangeDoesNot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := service.Login(ctx, "admin", initialPassword)
+	first, err := service.Login(ctx, "admin", initialPassword, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := service.Login(ctx, "admin", initialPassword)
+	second, err := service.Login(ctx, "admin", initialPassword, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,10 +241,10 @@ func TestPasswordChangeRevokesAllSessionsButFailedChangeDoesNot(t *testing.T) {
 			t.Errorf("old session survived password change: %v", err)
 		}
 	}
-	if _, err := service.Login(ctx, "admin", initialPassword); err == nil {
+	if _, err := service.Login(ctx, "admin", initialPassword, ""); err == nil {
 		t.Fatal("old password still works")
 	}
-	if _, err := service.Login(ctx, "admin", "new regression password"); err != nil {
+	if _, err := service.Login(ctx, "admin", "new regression password", ""); err != nil {
 		t.Fatalf("new password rejected: %v", err)
 	}
 }
@@ -258,7 +258,7 @@ func TestLoginRefusesFailedSessionEntropy(t *testing.T) {
 	service = auth.NewService(db, auth.Options{
 		Now: func() time.Time { return *now }, Random: bytes.NewReader(nil),
 	})
-	if _, err := service.Login(ctx, "admin", initialPassword); err == nil {
+	if _, err := service.Login(ctx, "admin", initialPassword, ""); err == nil {
 		t.Fatal("login issued a session without random bytes")
 	}
 	var sessions int
@@ -277,11 +277,11 @@ func TestValidCredentialsAreNotLockedOutByInvalidAttempts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 60 {
-		if _, err := service.Login(ctx, "unknown", "invalid password"); !errors.Is(err, auth.ErrUnauthenticated) && !errors.Is(err, auth.ErrRateLimited) {
+		if _, err := service.Login(ctx, "unknown", "invalid password", ""); !errors.Is(err, auth.ErrUnauthenticated) && !errors.Is(err, auth.ErrRateLimited) {
 			t.Fatalf("invalid login error = %v", err)
 		}
 	}
-	if _, err := service.Login(ctx, "admin", initialPassword); err != nil {
+	if _, err := service.Login(ctx, "admin", initialPassword, ""); err != nil {
 		t.Fatalf("invalid attempts locked out valid credentials: %v", err)
 	}
 }
@@ -297,11 +297,11 @@ func TestSuccessfulLoginReclaimsExpiredSessionsAndPreservesActiveSessions(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	active, err := service.Login(ctx, "admin-two", initialPassword)
+	active, err := service.Login(ctx, "admin-two", initialPassword, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Seed a backlog without repeated password hashing or pinning a cleanup batch size.
+	// 在不重复哈希密码、也不固定清理批次大小的情况下预置积压。
 	for i := range 256 {
 		digest := sha256.Sum256([]byte(fmt.Sprintf("expired-session-%d", i)))
 		owner := admin.ID
@@ -316,11 +316,11 @@ func TestSuccessfulLoginReclaimsExpiredSessionsAndPreservesActiveSessions(t *tes
 	if _, err := db.ExecContext(ctx, "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES (?,?,?)", boundary[:], admin.ID, now.UnixNano()); err != nil {
 		t.Fatal(err)
 	}
-	// Repeated successful logins must drain even a backlog larger than one batch.
-	// Moving the clock avoids coupling this assertion to the login rate limit.
+	// 重复的成功登录必须清空积压，即使积压超过一个批次。
+	// 移动时钟可避免该断言与登录限流耦合。
 	previous := 257
 	for range 257 {
-		if _, err := service.Login(ctx, "admin", initialPassword); err != nil {
+		if _, err := service.Login(ctx, "admin", initialPassword, ""); err != nil {
 			t.Fatal(err)
 		}
 		var expired int
@@ -351,7 +351,7 @@ func TestSuccessfulLoginReclaimsExpiredSessionsAndPreservesActiveSessions(t *tes
 func TestSessionExpirationHasLeadingIndex(t *testing.T) {
 	_, db, _ := newAuth(t)
 	var indexed int
-	// Check index semantics, not a migration's chosen index name or SQL text.
+	// 检查索引语义，而不是迁移所选的索引名或 SQL 文本。
 	if err := db.QueryRow(`SELECT count(*) FROM pragma_index_list('sessions') AS indexes
 		JOIN pragma_index_info(indexes.name) AS columns
 		WHERE columns.seqno = 0 AND columns.name = 'expires_at' AND indexes.partial = 0`).Scan(&indexed); err != nil {
@@ -370,7 +370,7 @@ func TestLoginAdmissionRejectsBeforeDatabaseAndDoesNotLockOtherPeers(t *testing.
 	attacker := auth.WithLoginPeer(context.Background(), "192.0.2.1:1000")
 	limited := false
 	for range 100 {
-		_, err := service.Login(attacker, "unknown", "invalid password")
+		_, err := service.Login(attacker, "unknown", "invalid password", "")
 		if errors.Is(err, auth.ErrRateLimited) {
 			limited = true
 			break
@@ -383,17 +383,17 @@ func TestLoginAdmissionRejectsBeforeDatabaseAndDoesNotLockOtherPeers(t *testing.
 		t.Fatal("invalid source never reached computation admission limit")
 	}
 	otherPeer := auth.WithLoginPeer(context.Background(), "192.0.2.2:1000")
-	if _, err := service.Login(otherPeer, "admin", initialPassword); err != nil {
+	if _, err := service.Login(otherPeer, "admin", initialPassword, ""); err != nil {
 		t.Fatalf("attacker exhausted another peer's valid login: %v", err)
 	}
-	if _, err := service.Login(attacker, "admin", initialPassword); err != nil {
+	if _, err := service.Login(attacker, "admin", initialPassword, ""); err != nil {
 		t.Fatalf("one invalid username locked every account at the peer: %v", err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 	samePeerNewPort := auth.WithLoginPeer(context.Background(), "192.0.2.1:9999")
-	if _, err := service.Login(samePeerNewPort, "unknown", "invalid password"); !errors.Is(err, auth.ErrRateLimited) {
+	if _, err := service.Login(samePeerNewPort, "unknown", "invalid password", ""); !errors.Is(err, auth.ErrRateLimited) {
 		t.Fatalf("limited login reached unavailable database or bypassed via port: %v", err)
 	}
 }
@@ -442,7 +442,7 @@ func TestBootstrapRefusesWhenCreatedAdministratorAlreadyExists(t *testing.T) {
 	if got := authRowCount(t, db, "SELECT count(*) FROM users"); got != 1 {
 		t.Fatalf("refused bootstrap changed account count: %d", got)
 	}
-	if session, err := service.Login(ctx, existing.Username, initialPassword); err != nil || session.User.ID != existing.ID {
+	if session, err := service.Login(ctx, existing.Username, initialPassword, ""); err != nil || session.User.ID != existing.ID {
 		t.Fatalf("refused bootstrap changed existing credentials: session=%+v err=%v", session, err)
 	}
 }
@@ -514,7 +514,7 @@ func TestLastAdministratorDeletionPreservesAccountSessionsAndAudit(t *testing.T)
 	}
 	var sessions []auth.Session
 	for range 2 {
-		session, err := service.Login(ctx, user.Username, initialPassword)
+		session, err := service.Login(ctx, user.Username, initialPassword, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -541,7 +541,7 @@ func TestLastAdministratorDeletionPreservesAccountSessionsAndAudit(t *testing.T)
 	if got := authRowCount(t, db, "SELECT count(*) FROM audit_events"); got != audits {
 		t.Errorf("rejected deletion changed audit count: before=%d after=%d", audits, got)
 	}
-	if _, err := service.Login(ctx, user.Username, initialPassword); err != nil {
+	if _, err := service.Login(ctx, user.Username, initialPassword, ""); err != nil {
 		t.Fatalf("rejected deletion changed password: %v", err)
 	}
 }
@@ -559,13 +559,13 @@ func TestAdministratorDeletionRevokesOnlyTargetSessions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			otherSession, err := service.Login(ctx, other.Username, initialPassword)
+			otherSession, err := service.Login(ctx, other.Username, initialPassword, "")
 			if err != nil {
 				t.Fatal(err)
 			}
 			var sessions []auth.Session
 			for range 2 {
-				session, err := service.Login(ctx, target.Username, initialPassword)
+				session, err := service.Login(ctx, target.Username, initialPassword, "")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -604,7 +604,7 @@ func TestAdministratorDeletionRevokesOnlyTargetSessions(t *testing.T) {
 			if got := authRowCount(t, db, "SELECT count(*) FROM audit_events WHERE action='user.delete' AND actor_id=? AND target_id=?", actorID, target.ID); got != 1 {
 				t.Errorf("deletion audit count for actor and target = %d", got)
 			}
-			if _, err := service.Login(ctx, target.Username, initialPassword); !errors.Is(err, auth.ErrUnauthenticated) {
+			if _, err := service.Login(ctx, target.Username, initialPassword, ""); !errors.Is(err, auth.ErrUnauthenticated) {
 				t.Errorf("deleted account credentials accepted: %v", err)
 			}
 		})
@@ -622,13 +622,13 @@ func TestAdministratorRenamePreservesSessionsAndConflictsAreAtomic(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherSession, err := service.Login(ctx, other.Username, initialPassword)
+	otherSession, err := service.Login(ctx, other.Username, initialPassword, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var sessions []auth.Session
 	for range 2 {
-		session, err := service.Login(ctx, user.Username, initialPassword)
+		session, err := service.Login(ctx, user.Username, initialPassword, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -646,10 +646,10 @@ func TestAdministratorRenamePreservesSessionsAndConflictsAreAtomic(t *testing.T)
 			t.Errorf("rename changed session identity, CSRF or expiry: session=%+v err=%v", got, err)
 		}
 	}
-	if _, err := service.Login(ctx, user.Username, initialPassword); !errors.Is(err, auth.ErrUnauthenticated) {
+	if _, err := service.Login(ctx, user.Username, initialPassword, ""); !errors.Is(err, auth.ErrUnauthenticated) {
 		t.Errorf("old username login after rename = %v", err)
 	}
-	newSession, err := service.Login(ctx, name, initialPassword)
+	newSession, err := service.Login(ctx, name, initialPassword, "")
 	if err != nil {
 		t.Fatalf("new username login failed: %v", err)
 	}
@@ -695,7 +695,7 @@ func TestAdministratorMutationsRollbackWhenAuditFails(t *testing.T) {
 			}
 			var sessions []auth.Session
 			for _, username := range []string{other.Username, user.Username, user.Username} {
-				session, err := service.Login(ctx, username, initialPassword)
+				session, err := service.Login(ctx, username, initialPassword, "")
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -1,23 +1,15 @@
+import {availabilityBar} from '../shared/availability.js';
 import {h, icon} from '../shared/dom.js';
+import {statusLabels} from '../shared/status.js';
 import {timestampMillis} from '../shared/freshness.js';
-import {getLocale, t} from '../shared/i18n.js';
+import {getLocale, t, tParts} from '../shared/i18n.js';
+import {formatDuration, formatLoadNumber} from '../shared/format.js';
 
 const reportFormat = new Intl.DateTimeFormat(getLocale(), {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
 const integerFormat = new Intl.NumberFormat(getLocale());
 const percentFormat = new Intl.NumberFormat(getLocale(), {style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1});
-const loadFormat = new Intl.NumberFormat(getLocale(), {useGrouping: false, minimumFractionDigits: 2, maximumFractionDigits: 2});
 
-export const STATUS = {online: t('public.status.online'), offline: t('public.status.offline'), unknown: t('public.status.unknown')};
-
-export function duration(seconds) {
-  if (seconds === null) return '—';
-  const minutes = Math.floor(seconds / 60);
-  const days = Math.floor(minutes / 1440);
-  const hours = Math.floor(minutes % 1440 / 60);
-  if (days) return t('public.duration.daysHours', {days: integerFormat.format(days), hours: integerFormat.format(hours)});
-  if (hours) return t('public.duration.hoursMinutes', {hours: integerFormat.format(hours), minutes: integerFormat.format(minutes % 60)});
-  return t('public.duration.minutes', {minutes: integerFormat.format(minutes % 60)});
-}
+export const STATUS = statusLabels({unknown: 'public.status.unknown'});
 
 function gauge(label) {
   const value = h('span', {class: 'gauge-value num'});
@@ -31,6 +23,7 @@ function gauge(label) {
     value.textContent = display;
     if (missing) {
       track.removeAttribute('aria-valuenow');
+      track.removeAttribute('aria-valuetext');
       return;
     }
     track.setAttribute('aria-valuenow', percent.toFixed(1));
@@ -41,9 +34,10 @@ function gauge(label) {
   return element;
 }
 
-// A card is created once and patched for each validated snapshot. A connection
-// fault only changes freshness styling, never the node's presence or values.
+// 卡片只创建一次，后续根据已校验的快照增量更新。
+// 连接故障只标记数据可能过期，不改变节点的在线状态或数值。
 export function createCard() {
+  const availability = availabilityBar();
   const name = h('h2');
   const badge = h('span', {class: 'status'});
   const region = h('span', null, icon('pin'), h('span'));
@@ -69,19 +63,20 @@ export function createCard() {
   const article = h('article', {class: 'card'},
     h('header', {class: 'card-head'}, name, badge), where,
     h('div', {class: 'gauges'}, cpu, memory),
-    h('dl', {class: 'stats'}, h('div', null, h('dt', null, t('public.metric.load')), load), h('div', null, h('dt', null, t('public.metric.uptime')), uptime)), lastReport);
+    h('dl', {class: 'stats'}, h('div', null, h('dt', null, t('public.metric.load')), load), h('div', null, h('dt', null, t('public.metric.uptime')), uptime)), availability, lastReport);
   const item = h('li', {class: 'node'}, article);
   article.addEventListener('animationend', (event) => {
     if (event.target === article && event.animationName === 'status-changed') article.classList.remove('changed');
   });
   item.update = (node) => {
-    // A presence change on a card already showing data gets one brief ring in the new status colour.
+    // 已显示数据的卡片在线状态变化时，以新状态色短暂闪烁一圈。
     if (current && current.status !== node.status) {
       article.classList.remove('changed');
       void article.offsetWidth;
       article.classList.add('changed');
     }
     current = node;
+    availability.update(node.availability);
     connectionStale = false;
     item.dataset.status = node.status;
     name.textContent = node.name;
@@ -94,11 +89,11 @@ export function createCard() {
     where.hidden = !node.region && !node.provider;
     cpu.set(node.cpu_percent);
     memory.set(node.memory_percent);
-    load.textContent = node.load1 === null ? '—' : loadFormat.format(Number(node.load1.toFixed(2)));
-    uptime.textContent = duration(node.uptime_seconds);
+    load.textContent = node.load1 === null ? '—' : formatLoadNumber(node.load1);
+    uptime.textContent = formatDuration(node.uptime_seconds);
     const received = timestampMillis(node.last_seen);
     lastReport.replaceChildren(...(Number.isFinite(received)
-      ? [t('public.lastReport'), h('time', {datetime: node.last_seen, title: node.last_seen}, reportFormat.format(new Date(received)))] : []));
+      ? tParts('public.lastReport', {time: h('time', {datetime: node.last_seen, title: node.last_seen}, reportFormat.format(new Date(received)))}) : []));
     paintFreshness();
   };
   item.setStale = (stale = true) => { connectionStale = stale; paintFreshness(); };

@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"fmt"
 	"testing"
@@ -30,7 +31,7 @@ func probeResult(target string, checkedAt time.Time, ok bool) v1.ProbeResult {
 
 func probeAccept(t *testing.T, f *coalesceFixture) (v1.ReportResponse, error) {
 	t.Helper()
-	return f.service.accept(context.Background(), f.id, nil, 0, f.report, false)
+	return f.service.accept(context.Background(), f.id, nil, 0, f.report)
 }
 
 func probeTotals(t *testing.T, f *coalesceFixture, target string) (checks, failures int, latest string) {
@@ -59,7 +60,7 @@ func TestProbeCheckedAtDedupeCadenceAndRestart(t *testing.T) {
 		t.Fatalf("fast report persisted probes: rows=%d writes=%d err=%v", rows, f.writes(t), err)
 	}
 
-	// Repeats and out-of-order results do not add checks; a newer check does.
+	// 重复和乱序的结果不增加检查次数；更新的检查才会。
 	for _, checkedAt := range []time.Time{first, first.Add(2 * time.Second), first.Add(time.Second)} {
 		f.now = f.now.Add(time.Second)
 		f.report.Seq++
@@ -83,7 +84,7 @@ func TestProbeCheckedAtDedupeCadenceAndRestart(t *testing.T) {
 		t.Fatalf("checks=%d failures=%d latest=%s", checks, failures, latest)
 	}
 
-	// A fresh service seeds the durable watermark and does not count the repeat.
+	// 新服务从数据库加载去重水位线，避免对重发结果重复计数。
 	f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }, PersistInterval: 30 * time.Second})
 	f.report.Seq++
 	f.report.ProbeResults = []v1.ProbeResult{probeResult(target, first.Add(2*time.Second), true)}
@@ -101,12 +102,15 @@ func TestProbeDrainPersistsPendingAndOwnsCallerPointers(t *testing.T) {
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
 	latency, status := 7.25, 204
+	expiry := f.now.Add(24 * time.Hour)
+	wantExpiry := expiry
 	target := "https://example.test/health"
-	f.report.ProbeResults = []v1.ProbeResult{{Target: target, OK: true, LatencyMS: &latency, StatusCode: &status, CheckedAt: f.now}}
+	f.report.ProbeResults = []v1.ProbeResult{{Target: target, OK: true, LatencyMS: &latency, StatusCode: &status, CheckedAt: f.now, TLSExpiresAt: &expiry}}
 	if _, err := probeAccept(t, f); err != nil {
 		t.Fatal(err)
 	}
 	latency, status = 999, 599
+	expiry = expiry.Add(time.Hour)
 	if err := f.service.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +118,42 @@ func TestProbeDrainPersistsPendingAndOwnsCallerPointers(t *testing.T) {
 	var gotStatus int
 	if err := f.db.QueryRow(`SELECT latency_ms,status_code FROM probe_latest WHERE node_id=? AND target=?`, f.id, target).Scan(&gotLatency, &gotStatus); err != nil || gotLatency != 7.25 || gotStatus != 204 {
 		t.Fatalf("latency=%v status=%d err=%v", gotLatency, gotStatus, err)
+	}
+	var gotExpiry string
+	if err := f.db.QueryRow(`SELECT tls_expires_at FROM probe_latest WHERE node_id=? AND target=?`, f.id, target).Scan(&gotExpiry); err != nil || gotExpiry != timekey.Format(wantExpiry) {
+		t.Fatalf("expiry=%s err=%v", gotExpiry, err)
+	}
+	observed, err := nodes.NewService(f.db, nodes.Options{}).ObservedProbes(t.Context(), f.id, f.now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, p := range observed {
+		if p.Target == target {
+			found = true
+			if p.TLSExpiresAt == nil || !p.TLSExpiresAt.Equal(wantExpiry) {
+				t.Fatalf("observed=%+v", p)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("stored probe not returned")
+	}
+
+	f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }, PersistInterval: 30 * time.Second})
+	f.now = f.now.Add(time.Minute)
+	f.report.Seq++
+	failed := probeResult(target, f.now, false)
+	f.report.ProbeResults = []v1.ProbeResult{failed}
+	if _, err := probeAccept(t, f); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var cleared sql.NullString
+	if err := f.db.QueryRow(`SELECT tls_expires_at FROM probe_latest WHERE node_id=? AND target=?`, f.id, target).Scan(&cleared); err != nil || cleared.Valid {
+		t.Fatalf("handshake failure kept old expiry: %v err=%v", cleared, err)
 	}
 }
 
@@ -280,12 +320,12 @@ func TestProbeOverlappingWritersRebasePartialQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A second service shares the same durable process identity and commits t1.
+	// 第二个服务共享同一持久化进程身份并提交 t1。
 	other := NewService(f.db, Options{Now: func() time.Time { return f.now }, PersistInterval: 30 * time.Second})
 	report := f.report
 	report.Seq++
 	report.ProbeResults = []v1.ProbeResult{probeResult(target, t1, false)}
-	if _, err := other.accept(context.Background(), f.id, nil, 0, report, false); err != nil {
+	if _, err := other.accept(context.Background(), f.id, nil, 0, report); err != nil {
 		t.Fatal(err)
 	}
 	if err := other.Shutdown(context.Background()); err != nil {
@@ -453,5 +493,35 @@ func TestRuntimeTargetRemovalPurgesPendingAtomicallyAndDuplicatesCannotRestore(t
 		if err := f.db.QueryRow("SELECT count(*) FROM "+table+" WHERE node_id=?", f.id).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("%s resurrected target: count=%d err=%v", table, count, err)
 		}
+	}
+}
+
+func TestProbeHourlyMaximumAndSuccessSum(t *testing.T) {
+	f := newProbeFixture(t)
+	const target = "https://example.test/health"
+	start := f.now
+	// Flush each accepted result to exercise both insert and conflict paths.
+	for i, latency := range []float64{7, 22, 11, 0} {
+		f.now = start.Add(time.Duration(i+1) * time.Second)
+		result := probeResult(target, f.now, i != 3)
+		if result.OK {
+			result.LatencyMS = &latency
+		}
+		f.report.Seq++
+		f.report.ProbeResults = []v1.ProbeResult{result}
+		if _, err := probeAccept(t, f); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.service.drainTraffic(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var checks, failures int
+	var sum, maximum float64
+	if err := f.db.QueryRow(`SELECT checks,failures,latency_sum_ms,latency_max_ms FROM probe_hourly WHERE node_id=? AND target=?`, f.id, target).Scan(&checks, &failures, &sum, &maximum); err != nil {
+		t.Fatal(err)
+	}
+	if checks != 4 || failures != 1 || sum != 40 || maximum != 22 {
+		t.Fatalf("checks=%d failures=%d sum=%v max=%v", checks, failures, sum, maximum)
 	}
 }

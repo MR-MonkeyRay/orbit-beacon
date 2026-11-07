@@ -1,24 +1,60 @@
 package server
 
 import (
-	"database/sql"
-	"fmt"
 	"net/http"
 	"time"
 
+	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/nodes"
-	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/server/validation"
 )
 
+func (h *handler) nodeProbeHistory(w http.ResponseWriter, r *http.Request, id, requestID string) {
+	query, fields := parseQuery(r.URL.RawQuery, "must be a valid query string", map[string]queryParameter{
+		"target": {repeated: "must be supplied exactly once"},
+		"range":  {repeated: "must be supplied exactly once"},
+	})
+	target, requestedRange := query.Get("target"), query.Get("range")
+	if err := v1.ValidateProbeTarget(target); err != nil {
+		fields["target"] = "must be a valid probe target"
+	}
+	hours := 24
+	switch requestedRange {
+	case "24h":
+	case "7d":
+		hours = 168
+	default:
+		fields["range"] = "must be one of 24h, 7d"
+	}
+	if len(fields) > 0 {
+		h.serviceError(w, &validation.Error{Fields: fields}, requestID)
+		return
+	}
+	window := h.now().UTC().Truncate(time.Hour).Add(-time.Duration(hours-1) * time.Hour)
+	points, err := h.nodes.ProbeHistory(r.Context(), id, target, window)
+	if err != nil {
+		h.serviceError(w, err, requestID)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Target      string                    `json:"target"`
+		Range       string                    `json:"range"`
+		Unit        string                    `json:"unit"`
+		StepSeconds int                       `json:"step_seconds"`
+		Points      []nodes.ProbeHistoryPoint `json:"points"`
+	}{target, requestedRange, "ms", 3600, points})
+}
+
 type probeView struct {
-	Target     string   `json:"target"`
-	Status     string   `json:"status"`
-	LatencyMS  *float64 `json:"latency_ms"`
-	Error      string   `json:"error"`
-	StatusCode *int     `json:"status_code"`
-	CheckedAt  *string  `json:"checked_at"`
-	Uptime24H  *float64 `json:"uptime_24h"`
-	Checks24H  int64    `json:"checks_24h"`
+	Target       string   `json:"target"`
+	Status       string   `json:"status"`
+	LatencyMS    *float64 `json:"latency_ms"`
+	Error        string   `json:"error"`
+	StatusCode   *int     `json:"status_code"`
+	TLSExpiresAt *string  `json:"tls_expires_at"`
+	CheckedAt    *string  `json:"checked_at"`
+	Uptime24H    *float64 `json:"uptime_24h"`
+	Checks24H    int64    `json:"checks_24h"`
 }
 
 func (h *handler) nodeProbes(w http.ResponseWriter, r *http.Request, id, requestID string) {
@@ -34,68 +70,26 @@ func (h *handler) nodeProbes(w http.ResponseWriter, r *http.Request, id, request
 
 func (h *handler) readProbes(r *http.Request, id string) ([]probeView, error) {
 	window := h.now().UTC().Truncate(time.Hour).Add(-23 * time.Hour)
-	// One read snapshot binds the target list and observations to the same
-	// credential. Rotation cannot turn old targets into a new identity's probes.
-	rows, err := h.nodes.Database().QueryContext(r.Context(), `
-		SELECT nodes.id, selected.value, latest.ok, latest.latency_ms, latest.error,
-		       latest.status_code, latest.checked_at,
-		       coalesce(sum(hourly.checks),0), coalesce(sum(hourly.failures),0)
-		FROM nodes
-		LEFT JOIN json_each(CASE WHEN length(nodes.token_hash)>0 AND nodes.run_generation!='0' AND nodes.report_session_id!='' THEN nullif(nodes.agent_runtime,'') ELSE NULL END, '$.probe_targets') AS selected ON true
-		LEFT JOIN probe_latest AS latest ON latest.node_id=nodes.id AND latest.target=selected.value
-		LEFT JOIN probe_hourly AS hourly ON hourly.node_id=nodes.id AND hourly.target=selected.value AND hourly.hour>=?
-		WHERE nodes.id=? GROUP BY nodes.id,selected.key ORDER BY selected.key`, timekey.Format(window), id)
+	observed, err := h.nodes.ObservedProbes(r.Context(), id, window)
 	if err != nil {
-		return nil, fmt.Errorf("read observed probes: %w", err)
-	}
-	defer rows.Close()
-	probes := []probeView{}
-	found := false
-	for rows.Next() {
-		found = true
-		var nodeID string
-		var target, failure, checked sql.NullString
-		var ok sql.NullBool
-		var latency sql.NullFloat64
-		var status sql.NullInt64
-		var checks, failures int64
-		if err := rows.Scan(&nodeID, &target, &ok, &latency, &failure, &status, &checked, &checks, &failures); err != nil {
-			return nil, err
-		}
-		if !target.Valid {
-			continue
-		}
-		probe := probeView{Target: target.String, Status: "pending", Error: failure.String, Checks24H: checks}
-		if latency.Valid {
-			probe.LatencyMS = &latency.Float64
-		}
-		if status.Valid {
-			value := int(status.Int64)
-			probe.StatusCode = &value
-		}
-		if checked.Valid {
-			probe.Status = "down"
-			if ok.Bool {
-				probe.Status = "up"
-			}
-			stamp, err := timekey.Parse(checked.String)
-			if err != nil {
-				return nil, fmt.Errorf("parse latest probe timestamp: %w", err)
-			}
-			formatted := stamp.Format(time.RFC3339Nano)
-			probe.CheckedAt = &formatted
-		}
-		if checks > 0 {
-			uptime := 100 * float64(checks-failures) / float64(checks)
-			probe.Uptime24H = &uptime
-		}
-		probes = append(probes, probe)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if !found {
-		return nil, nodes.ErrNotFound
+	probes := make([]probeView, 0, len(observed))
+	for _, stored := range observed {
+		probe := probeView{
+			Target: stored.Target, Status: stored.Status, LatencyMS: stored.LatencyMS,
+			Error: stored.Error, StatusCode: stored.StatusCode, Uptime24H: stored.Uptime24H,
+			Checks24H: stored.Checks24H,
+		}
+		if stored.TLSExpiresAt != nil {
+			formatted := stored.TLSExpiresAt.Format(time.RFC3339Nano)
+			probe.TLSExpiresAt = &formatted
+		}
+		if stored.CheckedAt != nil {
+			formatted := stored.CheckedAt.Format(time.RFC3339Nano)
+			probe.CheckedAt = &formatted
+		}
+		probes = append(probes, probe)
 	}
 	return probes, nil
 }

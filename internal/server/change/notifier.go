@@ -2,7 +2,7 @@ package change
 
 import "sync"
 
-// Notifier broadcasts changes by closing the current channel.
+// Notifier 通过关闭当前 channel 来广播变更。
 type Notifier struct {
 	mu      sync.Mutex
 	version uint64

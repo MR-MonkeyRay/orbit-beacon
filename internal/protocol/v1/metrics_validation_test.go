@@ -16,9 +16,9 @@ func completeMetrics(t *testing.T) v1.Metrics {
 	return report.Metrics
 }
 
-// The only base-metric family aliases are cpu -> cpu_percent,
-// load -> load1/load5/load15, memory -> total/available, swap -> total/used,
-// and uptime -> uptime_seconds. Disk/network sources use their exact series key.
+// 基础指标仅支持以下类别别名：cpu -> cpu_percent、load -> load1/load5/load15、
+// memory -> total/available、swap -> total/used、uptime -> uptime_seconds。
+// disk/network 来源使用完整的序列键。
 func TestMetricsRequireExactStatusAndDocumentedFamilySources(t *testing.T) {
 	families := map[string][]string{
 		"cpu":          {"cpu_percent"},

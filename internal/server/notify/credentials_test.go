@@ -56,7 +56,7 @@ func TestWebhookURLCiphertextAndOmittedURL(t *testing.T) {
 	if err != nil || c.Config.URL != target || secret != "new-signing-secret" {
 		t.Fatalf("load failed: %v", err)
 	}
-	// Even delivery objects cannot accidentally serialize their decrypted URL.
+	// 即便是投递对象，也不得意外序列化已解密的 URL。
 	raw, err := json.Marshal(c)
 	if err != nil || bytes.Contains(raw, []byte("path-secret")) {
 		t.Fatal("decrypted URL serialized")
@@ -70,7 +70,7 @@ func TestSecretReplacementAndClearWithWrongKey(t *testing.T) {
 	ctx := context.Background()
 	wrong, _ := secretbox.New(bytes.Repeat([]byte{8}, 32), "orbitbeacon notification channel v1")
 	f.s.box = wrong
-	// Replacing either credential must not open the other credential.
+	// 替换任一凭据时不得打开另一个凭据。
 	if _, err := f.s.Save(ctx, f.channel.ID, Patch{Secret: json.RawMessage(`"replacement"`)}); err != nil {
 		t.Fatal(err)
 	}
@@ -90,8 +90,8 @@ func TestSecretReplacementAndClearWithWrongKey(t *testing.T) {
 	if err != nil || c.SecretSet || !c.Config.URLSet {
 		t.Fatalf("clear failed: %v", err)
 	}
-	// Telegram needs its retained token for validation, but replacement bypasses
-	// decryption of the old token and repairs the channel under the current key.
+	// Telegram 校验需要已保留的令牌，但替换时不解密旧令牌，
+	// 而是用当前密钥修复通道。
 	var p Patch
 	if err := json.Unmarshal([]byte(`{"name":"bot","kind":"telegram","enabled":true,"config":{"chat_id":"-123"},"secret":"123:old"}`), &p); err != nil {
 		t.Fatal(err)
@@ -118,14 +118,12 @@ func TestUnreadableDeliveryBackoffAndKeyRestoration(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.WriteHeader(204) }))
 	defer ts.Close()
 	f.target(t, ts.URL+"/private-path?token=query-secret")
-	f.s.Notify(context.Background(), f.note("restore-key"))
+	f.enqueue(t, f.note("restore-key"))
 	original := f.s.box
 	wrong, _ := secretbox.New(bytes.Repeat([]byte{8}, 32), "orbitbeacon notification channel v1")
 	f.s.box = wrong
 	var logs bytes.Buffer
-	logger := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
-	t.Cleanup(func() { slog.SetDefault(logger) })
+	f.s.logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	for i := range 2 {
 		f.s.process(context.Background())
 		st, attempts, code, next := state(t, f.db)
@@ -138,10 +136,10 @@ func TestUnreadableDeliveryBackoffAndKeyRestoration(t *testing.T) {
 		}
 		f.now = stamp
 	}
-	if strings.Count(logs.String(), "notification credentials unreadable") != 1 || !strings.Contains(logs.String(), f.channel.ID) {
+	if strings.Count(logs.String(), "notification_credentials_unreadable") != 1 || !strings.Contains(logs.String(), f.channel.ID) {
 		t.Fatalf("unbounded/missing log: %s", logs.String())
 	}
-	// Restart with the restored key and persisted pending work.
+	// 用恢复后的密钥和已持久化的待处理任务重启。
 	restored := New(f.db, original, f.s.opts)
 	restored.process(context.Background())
 	if st, attempts, _, _ := state(t, f.db); st != "sent" || attempts != 3 || calls.Load() != 1 {
@@ -154,14 +152,14 @@ func TestUnreadableDeliveryBackoffAndKeyRestoration(t *testing.T) {
 	}
 	f.now = f.now.Add(time.Hour)
 	f.s.warnSecretUnreadable(f.channel.ID)
-	if strings.Count(logs.String(), "notification credentials unreadable") != 2 {
+	if strings.Count(logs.String(), "notification_credentials_unreadable") != 2 {
 		t.Fatal("hourly warning missing")
 	}
 }
 
 func TestUnreadableDeliveryUsesNormalAttemptLimit(t *testing.T) {
 	f := newFixture(t)
-	f.s.Notify(context.Background(), f.note("exhaust-key"))
+	f.enqueue(t, f.note("exhaust-key"))
 	f.s.box, _ = secretbox.New(bytes.Repeat([]byte{8}, 32), "orbitbeacon notification channel v1")
 	for i := range 5 {
 		f.s.process(context.Background())

@@ -13,7 +13,7 @@ func TestSessionCookieUsesConfiguredOrigin(t *testing.T) {
 	f := newHTTP(t, 5)
 	for _, origin := range []string{"http://beacon.example.test:8080", "https://beacon.example.test"} {
 		t.Run(origin, func(t *testing.T) {
-			h, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: origin})
+			h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: origin}))
 			if err != nil {
 				t.Fatal(err)
 			}

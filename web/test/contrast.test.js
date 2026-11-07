@@ -5,13 +5,14 @@ import test from 'node:test';
 const css = readFileSync(new URL('../src/shared/tokens.css', import.meta.url), 'utf8');
 
 function declarations(selector) {
-  const start = css.indexOf(`${selector}{`);
+  const pattern = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replaceAll('\\{', '\\s*\\{\\s*');
+  const start = css.search(new RegExp(`${pattern}\\s*\\{`));
   assert.notEqual(start, -1, `missing ${selector}`);
   return css.slice(start, css.indexOf('}', start));
 }
 
 function token(block, name) {
-  const value = block.match(new RegExp(`--${name}:(#[0-9a-f]{3,6})`, 'i'))?.[1];
+  const value = block.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{3,6})`, 'i'))?.[1];
   assert.ok(value, `missing --${name}`);
   return value;
 }
@@ -44,7 +45,7 @@ test('light focus and normal text colors meet WCAG contrast thresholds', () => {
   const panel = token(light, 'panel');
   assert.ok(contrast(token(light, 'focus'), bg) >= 3);
   assert.ok(contrast(token(light, 'focus'), panel) >= 3);
-  assert.ok(contrast(token(light, 'ink-3'), bg) >= 4.5);
+  assert.ok(contrast(token(light, 'ink-muted'), bg) >= 4.5);
   assert.ok(contrast(token(light, 'ok'), token(light, 'ok-bg')) >= 4.5);
   assert.ok(contrast(token(light, 'bad'), token(light, 'bad-bg')) >= 4.5);
   assert.ok(contrast(token(light, 'off'), token(light, 'off-bg')) >= 4.5);
@@ -60,13 +61,13 @@ test('dark danger button text meets normal-text contrast', () => {
 test('chart series have graphical contrast against both theme surfaces', () => {
   for (const theme of [light, dark]) {
     for (const color of ['orbit', 'ok']) {
-      for (const surface of ['panel', 'panel-2']) assert.ok(contrast(token(theme, color), token(theme, surface)) >= 3);
+      for (const surface of ['panel', 'surface']) assert.ok(contrast(token(theme, color), token(theme, surface)) >= 3);
     }
   }
 });
 
-// Safari 16.4 lacks light-dark(), so the dark palette is written twice: once for
-// the system preference and once for the explicit toggle. Keep them identical.
+// Safari 16.4 不支持 light-dark()，暗色色板写了两遍：一遍用于
+// 系统偏好，一遍用于显式切换。两者须保持一致。
 test('system and explicit dark palettes declare the same tokens', () => {
   const system = declarations('@media (prefers-color-scheme:dark){:root:not([data-theme="light"])');
   const normalize = (block) => block.slice(block.lastIndexOf('{') + 1).split(';').map((item) => item.trim()).filter(Boolean).sort();

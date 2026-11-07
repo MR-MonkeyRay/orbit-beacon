@@ -56,6 +56,22 @@ func newFixture(t *testing.T) *fixture {
 	}
 	return f
 }
+func (f *fixture) enqueue(t *testing.T, n alerts.Notification) {
+	t.Helper()
+	tx, err := f.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err = f.s.Enqueue(context.Background(), tx, n); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	f.s.Wake()
+}
+
 func (f *fixture) note(id string) alerts.Notification {
 	return alerts.Notification{EventID: id, Rule: f.rule, NodeID: "node", NodeName: "server", State: "firing", StartedAt: f.now}
 }
@@ -85,7 +101,7 @@ func TestDurableRetryBackoffAndRestart(t *testing.T) {
 	}))
 	defer ts.Close()
 	f.target(t, ts.URL)
-	f.s.Notify(context.Background(), f.note("event"))
+	f.enqueue(t, f.note("event"))
 	want := []time.Duration{2 * time.Minute, 5 * time.Minute, 15 * time.Minute, time.Hour}
 	for i := range 5 {
 		f.s.process(context.Background())
@@ -106,9 +122,9 @@ func TestDurableRetryBackoffAndRestart(t *testing.T) {
 			t.Fatal(s)
 		}
 	}
-	// Pending work is owned by the database, not an in-memory queue.
+	// 待处理工作由数据库持有，而非内存队列。
 	f.db.Exec("DELETE FROM notification_deliveries")
-	f.s.Notify(context.Background(), f.note("restart"))
+	f.enqueue(t, f.note("restart"))
 	box, _ := secretbox.New(bytes.Repeat([]byte{7}, 32), "orbitbeacon notification channel v1")
 	restarted := New(f.db, box, f.s.opts)
 	status = 200
@@ -134,7 +150,7 @@ func TestRateLimitCoalescingAndRetention(t *testing.T) {
 	f.target(t, ts.URL)
 	for i := range 205 {
 		n := f.note("event-" + strings.Repeat("x", i))
-		f.s.Notify(context.Background(), n)
+		f.enqueue(t, n)
 	}
 	var count, total int
 	f.db.QueryRow("SELECT count(*),sum(coalesced_count) FROM notification_deliveries WHERE state='pending'").Scan(&count, &total)
@@ -147,7 +163,7 @@ func TestRateLimitCoalescingAndRetention(t *testing.T) {
 	if calls.Load() != 20 {
 		t.Fatalf("rate=%d", calls.Load())
 	}
-	// Restart must retain the exhausted rate window.
+	// 重启必须保留已耗尽的速率窗口。
 	restarted := New(f.db, f.s.box, f.s.opts)
 	restarted.process(context.Background())
 	if calls.Load() != 20 {
@@ -168,7 +184,7 @@ func TestRateLimitCoalescingAndRetention(t *testing.T) {
 		t.Fatalf("bounded retention %d %v", removed, e)
 	}
 }
-func TestShutdownCancelsInflightAndRejectsQueue(t *testing.T) {
+func TestShutdownCancelsInflightAndRejectsEnqueue(t *testing.T) {
 	f := newFixture(t)
 	entered := make(chan struct{}, 1)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -178,7 +194,7 @@ func TestShutdownCancelsInflightAndRejectsQueue(t *testing.T) {
 	}))
 	defer ts.Close()
 	f.target(t, ts.URL)
-	f.s.Notify(context.Background(), f.note("shutdown"))
+	f.enqueue(t, f.note("shutdown"))
 	go f.s.Run(context.Background())
 	select {
 	case <-entered:
@@ -194,7 +210,16 @@ func TestShutdownCancelsInflightAndRejectsQueue(t *testing.T) {
 	if time.Since(started) > time.Second {
 		t.Fatal("shutdown budget exceeded")
 	}
-	f.s.Notify(context.Background(), f.note("after-stop"))
+	tx, err := f.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = f.s.Enqueue(context.Background(), tx, f.note("after-stop")); err != ErrUnavailable {
+		t.Fatalf("enqueue after shutdown: %v", err)
+	}
+	if err = tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
 	var n int
 	f.db.QueryRow("SELECT count(*) FROM notification_deliveries").Scan(&n)
 	if n != 1 {
@@ -245,7 +270,7 @@ func TestChannelSecretsAuditAndValidation(t *testing.T) {
 	if c.SecretSet {
 		t.Fatal("clear did not work")
 	}
-	// Audit failures roll back channel writes and prevent test sends.
+	// 审计失败须回滚通道写入，并阻止测试发送。
 	f.db.Exec(`CREATE TRIGGER reject_channel_audit BEFORE INSERT ON audit_events WHEN NEW.action LIKE 'notification_channel.%' BEGIN SELECT RAISE(ABORT,'audit failure'); END`)
 	name := "changed"
 	if _, e = f.s.Save(ctx, c.ID, Patch{Name: &name}); e == nil {
@@ -289,14 +314,14 @@ func TestSynchronousTestTimeoutAndPayload(t *testing.T) {
 func TestFloodCoalescesAlreadyAttemptedRetries(t *testing.T) {
 	f := newFixture(t)
 	for i := range MaxPendingPerChannel {
-		f.s.Notify(context.Background(), f.note("retry-"+strings.Repeat("x", i)))
+		f.enqueue(t, f.note("retry-"+strings.Repeat("x", i)))
 	}
 	_, e := f.db.Exec("UPDATE notification_deliveries SET attempts=1,next_attempt_at=?", timekey.Format(f.now.Add(time.Hour)))
 	if e != nil {
 		t.Fatal(e)
 	}
 	for i := range 20 {
-		f.s.Notify(context.Background(), f.note("new-"+strings.Repeat("x", i)))
+		f.enqueue(t, f.note("new-"+strings.Repeat("x", i)))
 	}
 	var count, total int
 	f.db.QueryRow("SELECT count(*),sum(coalesced_count) FROM notification_deliveries").Scan(&count, &total)
@@ -311,29 +336,27 @@ func TestFloodCoalescesAlreadyAttemptedRetries(t *testing.T) {
 		t.Fatal("summary identity disagrees with payload")
 	}
 }
-func TestShutdownCancelsBlockedEnqueue(t *testing.T) {
+func TestEnqueueUsesCallerTransactionAndCancellation(t *testing.T) {
 	f := newFixture(t)
-	tx, e := f.db.BeginTx(context.Background(), nil)
-	if e != nil {
-		t.Fatal(e)
+	tx, err := f.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	done := make(chan struct{})
-	go func() { defer close(done); f.s.Notify(context.Background(), f.note("blocked")) }()
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	start := time.Now()
-	if e = f.s.Shutdown(ctx); e != nil {
-		t.Fatal(e)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err = f.s.Enqueue(ctx, tx, f.note("canceled")); err != context.Canceled {
+		t.Fatalf("enqueue ignored caller cancellation: %v", err)
 	}
-	if time.Since(start) > 100*time.Millisecond {
-		t.Fatal("shutdown waited on writer")
+	if err = f.s.Enqueue(context.Background(), tx, f.note("rolled-back")); err != nil {
+		t.Fatal(err)
 	}
-	tx.Rollback()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("enqueue did not stop")
+	if err = tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err = f.db.QueryRow("SELECT count(*) FROM notification_deliveries").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("enqueue committed caller transaction: %d %v", count, err)
 	}
 }
 
@@ -375,7 +398,7 @@ func TestWorkerConcurrencyBound(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	f.s.Notify(context.Background(), f.note("parallel"))
+	f.enqueue(t, f.note("parallel"))
 	done := make(chan struct{})
 	go func() { defer close(done); f.s.process(context.Background()) }()
 	for range 4 {
@@ -404,7 +427,7 @@ func TestWorkerConcurrencyBound(t *testing.T) {
 func TestDeliveryHistoryIsSafeAndKeysetPaged(t *testing.T) {
 	f := newFixture(t)
 	for i := range 3 {
-		f.s.Notify(context.Background(), f.note("page-"+strings.Repeat("x", i)))
+		f.enqueue(t, f.note("page-"+strings.Repeat("x", i)))
 	}
 	page, e := f.s.Deliveries(context.Background(), 2, "")
 	if e != nil || len(page.Deliveries) != 2 || !page.HasMore || page.NextCursor == "" {

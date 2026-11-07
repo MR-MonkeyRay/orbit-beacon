@@ -1,27 +1,28 @@
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {h, icon} from '../../shared/dom.js';
-import {api, ensureSession, getNavigationSignal, groupsList, invalidate, onSession, session} from '../api.js';
-import {absoluteWhen, shortID, when} from '../format.js';
+import {copyElementText} from '../../shared/clipboard.js';
+import {api, getNavigationSignal, groupsList, invalidate, onSession, session} from '../api.js';
+import {displayStatus, absoluteWhen, shortID, when} from '../format.js';
 import {connectConsoleLive} from '../live.js';
 import {ignoreNavigationCancellation, refresh} from '../router.js';
-import {callout, iconButton, link, liveStatus, panel, patchStatusBadge, readonlyFacts, statusBadge} from '../ui/components.js';
+import {callout, iconButton, link, liveStatus, pageHead, panel, patchStatusBadge, readonlyFacts, statusBadge} from '../ui/components.js';
 import {toast} from '../ui/feedback.js';
 import {field, input, onSubmit, saveBar, select, tagEditor, textarea, trackDirty, validateBytes} from '../ui/forms.js';
 import {tabSet} from '../ui/tabs.js';
+import {nodeCommandsPanel} from './node-commands.js';
 import {agentSettingsTab} from './node-agent-settings.js';
 import {enrollmentTab} from './enrollments.js';
 import {latestSamplePanel} from './latest-sample.js';
 import {lifecycleActions} from './node-lifecycle.js';
 import {historyPanel} from './node-history.js';
+import {availabilityPanel} from './node-availability.js';
 import {trafficPanel} from './node-traffic.js';
 import {trafficSettingsPanel} from './node-traffic-settings.js';
 import {probesPanel} from './node-probes.js';
-
-export const NODE_PATH = /^\/nodes\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+import {NODE_PATH} from '../routes.js';
 
 export async function nodePage() {
   const signal = getNavigationSignal();
-  await ensureSession();
   const id = location.pathname.match(NODE_PATH)[1];
   const path = `/nodes/${encodeURIComponent(id)}`;
   const [node, runtime, trafficSettings, groups, publicSettings, latest] = await Promise.all([
@@ -37,41 +38,33 @@ export async function nodePage() {
     setTimeout(() => copy.replaceChildren(icon('copy')), 1600);
   };
   const copy = iconButton('copy', t('nodes.copyID'), async () => {
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable');
-      await navigator.clipboard.writeText(node.id);
+    const result = await copyElementText(idText);
+    if (result === 'clipboard') {
       showCopied();
       toast(t('nodes.copiedID'));
-    } catch {
-      const range = document.createRange();
-      range.selectNodeContents(idText);
-      const selection = getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
-      let copied = false;
-      try { copied = document.execCommand('copy'); } catch {}
-      if (copied) {
-        showCopied();
-        toast(t('nodes.copiedIDFallback'));
-      } else toast(t('nodes.copyIDManual'), {error: true});
-    }
+    } else if (result === 'fallback') {
+      showCopied();
+      toast(t('nodes.copiedIDFallback'));
+    } else toast(t('nodes.copyIDManual'), {error: true});
   });
   const back = link('/nodes', icon('left'), t('nodes.allNodes'));
   back.className = 'back';
   let history;
+  let currentLatest = latest;
+  let currentServerTime = latest?.server_time;
+  let sample;
   let traffic;
+  let availability;
   let billingSettings = trafficSettings;
   let probes;
   let observedRuntime = runtime.runtime;
   let detailsView;
   let agent;
-  const title = h('h1', {tabindex: '-1'}, node.name);
-  const badge = statusBadge(node.presence);
+  let commands;
+  const badge = statusBadge(displayStatus(node));
   const connection = liveStatus();
   const actions = lifecycleActions(node);
   const deletedNotice = h('div', {class: 'node-deleted-notice', hidden: true}, callout(t('nodes.deletedNotice')));
-  const sample = latestSamplePanel(node, latest, {signal});
-  sample.detach();
   const userID = session.user?.id;
   const unsubscribe = onSession((current) => {
     if (current.user?.id === userID) return;
@@ -82,29 +75,47 @@ export async function nodePage() {
   signal?.addEventListener('abort', unsubscribe, {once: true});
   if (signal?.aborted) unsubscribe();
   const tabs = tabSet([
-    {id: 'details', label: t('nodes.audit.details'), icon: 'server', build: () => {
-      detailsView = detailsTab(node, groups, sample.element,
-        history ||= historyPanel(id, signal), traffic ||= trafficPanel(id, signal),
-        probes ||= probesPanel(id, signal),
-        trafficSettingsPanel(id, billingSettings, (settings) => {
-          if (node.deleted) return;
-          billingSettings = settings;
-          return traffic.reload();
-        }, signal, () => node.deleted));
-      return {element: detailsView.element, attach: sample.attach, detach: sample.detach};
+    {id: 'monitor', label: t('common.monitoring'), icon: 'monitor', build: () => {
+      if (!sample) {
+        sample = latestSamplePanel(node, currentLatest, {signal});
+        sample.detach();
+        sample.snapshot(currentLatest, currentServerTime);
+        if (node.deleted) sample.close();
+      }
+      return {element: h('div', {class: 'stack'}, sample.element,
+        history ||= historyPanel(id, signal, currentLatest), availability ||= availabilityPanel(id, signal)),
+      attach: sample.attach, detach: sample.detach};
+    }},
+    {id: 'traffic', label: t('nodes.traffic'), icon: 'cloud', build: () => {
+      traffic ||= trafficPanel(id, signal);
+      const billing = trafficSettingsPanel(id, billingSettings, (settings) => {
+        if (node.deleted) return;
+        billingSettings = settings;
+        return traffic.reload();
+      }, signal, () => node.deleted);
+      return h('div', {class: 'stack'}, traffic, billing);
+    }},
+    {id: 'probes', label: t('nodes.probes'), icon: 'check', build: () => probes ||= probesPanel(id, signal)},
+    {id: 'details', label: t('nodes.details'), icon: 'info', build: () => {
+      detailsView = detailsTab(node, groups);
+      return detailsView.element;
     }},
     {id: 'public', label: t('nodes.publicPage'), icon: 'globe', build: () => publicTab(node, publicSettings)},
     {id: 'agent', label: t('nodes.agentSettings'), icon: 'sliders', build: () => {
       agent ||= agentSettingsTab(node, observedRuntime);
       agent.snapshot(node, observedRuntime);
-      return agent;
+      commands ||= nodeCommandsPanel(node, observedRuntime, signal);
+      commands.snapshot(node, observedRuntime);
+      return {element: h('div', {class: 'stack'}, agent, commands.element), attach: commands.attach, detach: commands.detach};
     }},
-    {id: 'enrollment', label: t('nodes.enrollAgent'), icon: 'server', build: () => enrollmentTab(node)}
+    {id: 'enrollment', label: t('nodes.enrollAgent'), icon: 'key', build: () => enrollmentTab(node)}
   ], t('nodes.sections'));
-  const root = h('div', null,
-    h('header', {class: 'page-head'}, h('div', null, back,
-      h('div', {class: 'detail-head'}, title, badge),
-      h('div', {class: 'id-chip'}, idText, copy)), h('div', {class: 'detail-actions'}, connection.element, actions)),
+  const head = pageHead(node.name, null, connection.element, actions);
+  const title = head.querySelector('h1');
+  head.lastElementChild.className = 'detail-actions';
+  head.firstElementChild.replaceChildren(back,
+    h('div', {class: 'detail-head'}, title, badge), h('div', {class: 'id-chip'}, idText, copy));
+  const root = h('div', null, head,
     deletedNotice, tabs);
   const lockDeleted = () => {
     if (!node.deleted) return;
@@ -123,21 +134,23 @@ export async function nodePage() {
     if (node.deleted) { event.preventDefault(); event.stopImmediatePropagation(); }
   }, true);
   root.addEventListener('input', lockDeleted);
-  // Lazy tabs and their independent async readers can add controls after deletion.
+  // 懒加载标签页及其独立的异步读取器可能在删除后仍添加控件。
   const deletionObserver = new MutationObserver(lockDeleted);
   signal?.addEventListener('abort', () => deletionObserver.disconnect(), {once: true});
-  connectConsoleLive({nodeID: id, signal, onState: connection.update, onClock: sample.clock,
+  connectConsoleLive({nodeID: id, signal, onState: connection.update, onClock: (serverTime) => { currentServerTime = serverTime; sample?.clock(serverTime); },
     onSnapshot(data, frame) {
       if (!data.node) {
         node.deleted = true;
         observedRuntime = null;
         agent?.snapshot(node, null);
+        commands?.snapshot(node, null);
         deletionObserver.observe(root, {childList: true, subtree: true});
         deletedNotice.hidden = false;
         patchStatusBadge(badge, 'deleted');
         detailsView?.snapshot(node);
-        sample.snapshot(null);
-        sample.close();
+        currentLatest = null;
+        sample?.snapshot(null);
+        sample?.close();
         lockDeleted();
         return;
       }
@@ -145,17 +158,21 @@ export async function nodePage() {
       Object.assign(node, data.node);
       observedRuntime = data.runtime;
       if (title.textContent !== node.name) title.textContent = node.name;
-      patchStatusBadge(badge, node.presence);
+      patchStatusBadge(badge, displayStatus(node));
       actions.snapshot();
       detailsView?.snapshot(node);
-      sample.snapshot(data.latest, frame.server_time);
+      currentLatest = data.latest;
+      history?.snapshot(currentLatest);
+      currentServerTime = frame.server_time;
+      sample?.snapshot(data.latest, currentServerTime);
       agent?.snapshot(node, observedRuntime);
+      commands?.snapshot(node, observedRuntime);
     }
   });
   return root;
 }
 
-// Wires the shared save/discard behaviour of the editable sections.
+// 接入可编辑区块共享的保存/放弃行为。
 function editableForm(form, controls, save, node) {
   trackDirty(form, controls);
   const syncDirty = form.syncDirty;
@@ -174,20 +191,20 @@ function editableForm(form, controls, save, node) {
   });
 }
 
-function detailsTab(node, groups, sample, history, traffic, probes, billing) {
+function detailsTab(node, groups) {
   const group = groups.find((item) => item.id === node.group_id);
   const summaryValues = readonlyFacts();
-  const summaryBadge = statusBadge(node.presence);
+  const summaryBadge = statusBadge(displayStatus(node));
   const snapshot = (current) => {
     const currentGroup = groups.find((item) => item.id === current.group_id);
-    patchStatusBadge(summaryBadge, current.deleted ? 'deleted' : current.presence);
+    patchStatusBadge(summaryBadge, current.deleted ? 'deleted' : displayStatus(current));
     summaryValues.update([
       [t('nodes.presence'), summaryBadge],
       [t('nodes.lastSeen'), current.last_seen ? absoluteWhen(current.last_seen) : t('nodes.never')],
       [t('nodes.group'), currentGroup ? currentGroup.name : current.group_id ? t('nodes.unknownID', {id: shortID(current.group_id)}) : t('nodes.ungrouped')],
       [t('nodes.region'), current.region], [t('nodes.provider'), current.provider],
       [t('nodes.tags'), current.tags.length ? h('div', {class: 'cell-tags'}, current.tags.map((tag) => h('span', {class: 'tag static'}, tag))) : null],
-      [t('nodes.added'), when(current.created_at)], [t('nodes.notes'), current.notes]
+      [t('nodes.added'), when(current.created_at)], [t('nodes.expiresOn'), current.expires_on], [t('nodes.notes'), current.notes]
     ]);
   };
   snapshot(node);
@@ -203,29 +220,29 @@ function detailsTab(node, groups, sample, history, traffic, probes, billing) {
   const groupID = select(choices, node.group_id || '', {name: 'group_id', id: 'node-group'});
   const tags = tagEditor(node.tags);
   const tagBox = tags.querySelector('[data-tags]');
+  const expiresOn = input({name: 'expires_on', type: 'date', value: node.expires_on || '', id: 'node-expires-on'});
   const notes = textarea({name: 'notes', id: 'node-notes'}, node.notes);
   const controls = saveBar(t('nodes.saveChanges'), 'node-save');
   const form = h('form', {class: 'form form-wide'},
     field(t('nodes.name'), name, {hint: t('nodes.internalNameHint')}),
     h('div', {class: 'form-row'}, field(t('nodes.region'), region), field(t('nodes.provider'), provider)),
-    field(t('nodes.group'), groupID), tags, field(t('nodes.notes'), notes), controls.bar);
+    field(t('nodes.group'), groupID), tags, field(t('nodes.expiresOn'), expiresOn), field(t('nodes.notes'), notes), controls.bar);
   editableForm(form, controls, async () => {
     if (!tagBox.commit()) throw new Error(t('nodes.tagInvalid'));
     const result = await api(`/nodes/${encodeURIComponent(node.id)}`, {method: 'PATCH', body: {
-      name: name.value, notes: notes.value, region: region.value, provider: provider.value, group_id: groupID.value || null, tags: tagBox.getValue()
+      name: name.value, expires_on: expiresOn.value || null, notes: notes.value, region: region.value, provider: provider.value, group_id: groupID.value || null, tags: tagBox.getValue()
     }});
     invalidate('nodes');
     return t('nodes.saved', {name: result.name});
   }, node);
-  return {element: h('div', {class: 'stack'}, h('div', {class: 'split'}, summary, panel(t('nodes.editDetails'), {}, form)), sample, history, traffic, billing, probes), snapshot};
+  return {element: h('div', {class: 'stack'}, h('div', {class: 'split'}, summary, panel(t('nodes.editDetails'), {}, form))), snapshot};
 }
 
 function publicPreview() {
   const name = h('h3');
   const where = h('div', {class: 'where'});
   const badge = h('span', {class: 'badge'});
-  const element = h('div', {class: 'preview'}, h('p', {class: 'preview-label'}, t('nodes.previewIntro')),
-    h('div', {class: 'preview-card'}, h('div', {class: 'top'}, name, badge), where));
+  const element = h('div', {class: 'preview-card'}, h('div', {class: 'top'}, name, badge), where);
   element.paint = ({enabled, name: title, region, provider}) => {
     name.replaceChildren(title || h('span', {class: 'placeholder'}, t('nodes.publicName')));
     where.replaceChildren(...[region && h('span', null, icon('pin'), region), provider && h('span', null, icon('cloud'), provider)].filter(Boolean));
@@ -238,7 +255,7 @@ function publicPreview() {
 
 function publicTab(node, settings) {
   const hidden = node.status === 'pending' || node.status === 'disabled'
-    ? callout(t('nodes.publicUnavailable', {status: t(`nodes.status.${node.status}`)})) : null;
+    ? callout(t('nodes.publicUnavailable', {status: t(`common.status.${node.status}`)})) : null;
   const privacy = callout(t('nodes.privacy'), 'info');
   const preview = publicPreview();
   const previewPanel = panel(t('nodes.preview'), {action: h('a', {class: 'btn btn-sm', href: '/'}, icon('external'), t('nodes.viewPublic'))}, preview);
@@ -252,7 +269,7 @@ function publicTab(node, settings) {
   const checkName = validateBytes(name, 0, 255, t('nodes.publicName'));
   validateBytes(region, 0, 128, t('nodes.publicRegion'));
   validateBytes(provider, 0, 128, t('nodes.publicProvider'));
-  // The server trims text, so the preview and the required check do too.
+  // 与服务端一致，预览和必填检查都先去除文本首尾空白。
   const sync = () => {
     name.required = enabled.checked;
     if (enabled.checked && name.value.trim() === '') name.setCustomValidity(t('nodes.publicNameRequired'));
@@ -265,7 +282,7 @@ function publicTab(node, settings) {
   const controls = saveBar(t('nodes.savePublic'), 'public-save');
   const form = h('form', {class: 'form form-wide'},
     h('label', {class: 'switch'}, enabled, h('span', {class: 'switch-track', 'aria-hidden': 'true'}),
-      h('span', {class: 'switch-text'}, h('strong', null, t('nodes.publish')), h('span', null, t('nodes.publishHint')))),
+      h('span', {class: 'switch-text'}, h('strong', null, t('nodes.publish')))),
     field(t('nodes.publicName'), name, {hint: t('nodes.publicNameHint')}),
     h('div', {class: 'form-row'}, field(t('nodes.publicRegion'), region, {hint: t('nodes.publicLocationHint')}), field(t('nodes.publicProvider'), provider, {hint: t('nodes.publicLocationHint')})),
     controls.bar);

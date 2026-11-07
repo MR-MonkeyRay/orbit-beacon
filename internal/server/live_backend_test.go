@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/server/availability"
 	"orbitbeacon/internal/server/ingest"
 )
 
@@ -380,7 +380,7 @@ func TestPublicLiveShutdownWaitsForQueryExitBeforeIngest(t *testing.T) {
 		t.Fatalf("shutdown returned before query exit: %v", err)
 	default:
 	}
-	_, err := f.h.ingest.Accept(context.Background(), "unused", v1.Report{})
+	err := probeIngestLifecycle(t, f.h.ingest)
 	if !errors.Is(err, ingest.ErrProtocolUnsupported) {
 		t.Fatalf("ingest drained while a public query remained active: %v", err)
 	}
@@ -394,7 +394,7 @@ func TestPublicLiveShutdownWaitsForQueryExitBeforeIngest(t *testing.T) {
 		t.Fatal("shutdown did not finish after query exited")
 	}
 	waitStreamDone(t, done)
-	_, err = f.h.ingest.Accept(context.Background(), "unused", v1.Report{})
+	err = probeIngestLifecycle(t, f.h.ingest)
 	if !errors.Is(err, ingest.ErrServiceClosed) {
 		t.Fatalf("ingest did not drain after streams: %v", err)
 	}
@@ -419,7 +419,7 @@ func TestPublicLiveFailedDrainDoesNotStartIngestShutdown(t *testing.T) {
 	if err := f.h.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("shutdown=%v", err)
 	}
-	_, err := f.h.ingest.Accept(context.Background(), "unused", v1.Report{})
+	err := probeIngestLifecycle(t, f.h.ingest)
 	if !errors.Is(err, ingest.ErrProtocolUnsupported) {
 		t.Fatalf("deadline started ingestion drain before stream exit: %v", err)
 	}
@@ -588,7 +588,7 @@ func TestPublicLiveShutdownWaitsForBlockedProjectionBeforeIngest(t *testing.T) {
 		t.Fatalf("shutdown passed a blocked projection: %v", err)
 	case <-time.After(20 * time.Millisecond):
 	}
-	_, err := f.h.ingest.Accept(context.Background(), "unused", v1.Report{})
+	err := probeIngestLifecycle(t, f.h.ingest)
 	if !errors.Is(err, ingest.ErrProtocolUnsupported) {
 		t.Fatalf("ingest drained while projection remained active: %v", err)
 	}
@@ -602,7 +602,7 @@ func TestPublicLiveShutdownWaitsForBlockedProjectionBeforeIngest(t *testing.T) {
 		t.Fatal("projection exit did not release shutdown")
 	}
 	waitStreamDone(t, done)
-	_, err = f.h.ingest.Accept(context.Background(), "unused", v1.Report{})
+	err = probeIngestLifecycle(t, f.h.ingest)
 	if !errors.Is(err, ingest.ErrServiceClosed) {
 		t.Fatalf("ingest not drained after projection exit: %v", err)
 	}
@@ -922,5 +922,29 @@ func TestPublicLiveWebSocketClearsHTTPHandshakeDeadlineAfterHijack(t *testing.T)
 	case <-cleared:
 	case <-ctx.Done():
 		t.Fatal("HTTP handshake deadline would kill an idle upgraded socket")
+	}
+}
+
+func TestPublicPagesEqualIncludesAvailability(t *testing.T) {
+	first, _ := availability.Project("", time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC))
+	second, _ := availability.Project("", time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC))
+	a := ingest.PublicPage{Nodes: []ingest.PublicNode{{Availability: first}}}
+	b := ingest.PublicPage{Nodes: []ingest.PublicNode{{Availability: second}}}
+	if !publicPagesEqual(a, b) {
+		t.Fatal("equal availability changed snapshot")
+	}
+	b.Nodes[0].Availability.Days[29] = new(99.99)
+	if publicPagesEqual(a, b) {
+		t.Fatal("daily availability change omitted")
+	}
+	b.Nodes[0].Availability.Days[29] = nil
+	b.Nodes[0].Availability.Percent = new(99.99)
+	if publicPagesEqual(a, b) {
+		t.Fatal("summary availability change omitted")
+	}
+	b.Nodes[0].Availability.Percent = nil
+	b.Nodes[0].Availability.StartDay = "2026-10-08"
+	if publicPagesEqual(a, b) {
+		t.Fatal("new UTC day omitted")
 	}
 }

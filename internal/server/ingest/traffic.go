@@ -29,8 +29,8 @@ type trafficBuffer struct {
 	committed          map[trafficKey]trafficCounters
 }
 
-// Validate independently of the protocol package: these values become SQLite
-// integers and keys even when Accept is called directly rather than over HTTP.
+// 独立于 protocol 包做校验：即使直接调用 Accept 而不经过 HTTP，
+// 这些值也会成为 SQLite 整数和键。
 func validateTraffic(entries []v1.Traffic) error {
 	if len(entries) > 24 {
 		return fmt.Errorf("traffic must contain at most 24 entries")
@@ -74,8 +74,8 @@ func (b *trafficBuffer) matchesRun(credential []byte, credentialEpoch int64, gen
 	return subtle.ConstantTimeCompare(b.credential[:], credential) == 1 && b.credentialEpoch == credentialEpoch && b.generation == generation && b.session == session
 }
 
-// The node accept gate serializes buffer changes with persistence. mu also
-// protects inspection and shutdown snapshots; no database I/O holds mu.
+// 节点的接受闸门串行化缓冲区变更与持久化。mu 同时保护检查与关闭快照；
+// 持有 mu 期间不做数据库 I/O。
 func (state *nodeState) bufferTraffic(credential []byte, credentialEpoch int64, report v1.Report, generation uint64, session string, now time.Time) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -83,9 +83,8 @@ func (state *nodeState) bufferTraffic(credential []byte, credentialEpoch int64, 
 	state.traffic.buffer(credential, credentialEpoch, report, generation, session, now)
 }
 
-// Keep accepted counters from the current run until the incoming run's first
-// durable transaction commits. At most two runs are buffered, each with the
-// same fixed capacity; a failed incoming run never replaces the accepted run.
+// 保留当前运行已接受的计数，直到新到来的运行首次持久化事务提交。
+// 最多缓冲两个运行，容量相同；失败的新运行不会替换已接受的运行。
 func (state *nodeState) stageTraffic(credential []byte, credentialEpoch int64, report v1.Report, generation uint64, session string, now time.Time) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -100,7 +99,7 @@ func (state *nodeState) stageTraffic(credential []byte, credentialEpoch int64, r
 	state.stagedTraffic.buffer(credential, credentialEpoch, report, generation, session, now)
 }
 
-// buffer requires the owning nodeState.mu to be held.
+// buffer 要求持有所属 nodeState 的 mu。
 func (b *trafficBuffer) buffer(credential []byte, credentialEpoch int64, report v1.Report, generation uint64, session string, now time.Time) {
 	if !b.matchesRun(credential, credentialEpoch, report.RunGeneration, report.SessionID) {
 		*b = trafficBuffer{credentialEpoch: credentialEpoch, generation: report.RunGeneration, session: report.SessionID, observedGeneration: generation, observedSession: session, pending: make(map[trafficKey]trafficCounters), committed: make(map[trafficKey]trafficCounters)}
@@ -136,7 +135,7 @@ func (b *trafficBuffer) buffer(credential []byte, credentialEpoch int64, report 
 	}
 }
 
-// Acks cover committed counters and entries the server discards as expired.
+// Acks 覆盖已提交的计数以及服务端判定为过期而丢弃的条目。
 func (state *nodeState) trafficAcks(entries []v1.Traffic, now time.Time) []v1.Traffic {
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -145,7 +144,7 @@ func (state *nodeState) trafficAcks(entries []v1.Traffic, now time.Time) []v1.Tr
 		if entry.PeriodStart.After(now.Add(time.Hour)) {
 			continue
 		}
-		// Expired buckets are deliberately acknowledged without storing them.
+		// 过期的桶有意地直接确认而不存储。
 		if entry.PeriodStart.Before(now.Add(-trafficHourlyRetention)) {
 			acks = append(acks, entry)
 			continue
@@ -160,8 +159,8 @@ func (state *nodeState) trafficAcks(entries []v1.Traffic, now time.Time) []v1.Tr
 }
 
 func (state *nodeState) persistTraffic(ctx context.Context, tx *sql.Tx, nodeID string, now time.Time) (map[trafficKey]trafficCounters, error) {
-	// The caller must fence buffers against the authenticated node identity read
-	// inside this transaction. The accept gate keeps them stable during I/O.
+	// 调用方须按本事务内读取的已认证节点身份校验缓冲区，清除旧身份的数据。
+	// acceptGate 保证 I/O 期间缓冲区稳定。
 	state.mu.Lock()
 	pending := copyTrafficPending(state.traffic.pending)
 	var incoming map[trafficKey]trafficCounters
@@ -204,7 +203,7 @@ func persistTrafficPending(ctx context.Context, tx *sql.Tx, nodeID string, pendi
 	return committed, nil
 }
 
-// Called with state.mu held whenever a durable node identity is observed.
+// 每次观测到持久化节点身份时调用，须持有 state.mu。
 func (state *nodeState) fenceTraffic(credential []byte, credentialEpoch int64, generation uint64, session string) {
 	b := &state.traffic
 	if b.pending != nil && !b.matchesObservedIdentity(credential, credentialEpoch, generation, session) {
@@ -246,9 +245,8 @@ func (state *nodeState) commitTraffic(committed map[trafficKey]trafficCounters, 
 	}
 }
 
-// Drain runs after report acceptance has stopped. Recheck the durable identity
-// inside each transaction so deletion, rotation and process replacement fence
-// pending counters exactly as they fence ordinary report persistence.
+// drainTraffic 在停止接受上报后运行。每个事务内重新检查持久化身份，
+// 使删除、轮换和进程替换对待处理计数与普通上报持久化采用相同的隔离规则。
 func (s *Service) drainTraffic(ctx context.Context) error {
 	s.mu.Lock()
 	states := make(map[string]*nodeState, len(s.states))

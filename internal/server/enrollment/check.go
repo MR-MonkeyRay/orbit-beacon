@@ -12,8 +12,8 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-// CheckClaim inspects one SQLite read snapshot. It never consumes a ticket,
-// creates an asset, changes a credential/fence, or refreshes node liveness.
+// CheckClaim 检查一个 SQLite 读取快照。它绝不消费票据、创建资产、
+// 更改凭据/围栏或刷新节点活跃性。
 func (s *Service) CheckClaim(ctx context.Context, token string, req v1.EnrollmentCheckRequest) (v1.EnrollmentCheckResponse, error) {
 	if err := req.Validate(); err != nil {
 		if errors.Is(err, v1.ErrProtocolUnsupported) {

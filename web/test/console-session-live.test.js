@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import * as client from '../src/console/api.js';
 import {errorText} from '../src/shared/errors.js';
-import {flush, TestElement} from './console-dom.js';
+import {copy, flush, TestElement} from './console-dom.js';
 import {frame, liveHarness, response, stream} from './live-harness.js';
 
 const user = {id: '00000000-0000-4000-8000-000000000001', username: 'administrator', must_change_password: false};
 let fixtureProof = '';
 const proof = (extra = {}) => ({user, csrf_token: fixtureProof, expires_at: '2026-10-28T00:10:00Z', ...extra});
 const me = (value = proof(), time = 'Wed, 28 Oct 2026 00:00:00 GMT') => response(value, {headers: {Date: time}});
-const fleet = () => frame('snapshot', {data: {nodes: [{id: user.id, status: 'unknown', presence: 'offline', last_seen: '2026-10-27T23:59:00Z', agent_version: 'test'}]}});
+const fleet = () => frame('snapshot', {data: {nodes: [{id: user.id, status: 'unknown', stopped: false, presence: 'offline', last_seen: '2026-10-27T23:59:00Z', agent_version: 'test'}]}});
 function setup(t, respond) {
   fixtureProof = `session:${t.name}`;
   const env = liveHarness(t, respond);
@@ -301,7 +301,7 @@ test('expiry synchronously clears private drafts and body dialogs without a dirt
     const {modal} = await import('../src/console/ui/dialogs.js');
     client.setSession(value);
     const secret = new TestElement('form'); secret.dataset.dirty = 'true'; secret.append('private draft');
-    const login = new TestElement('h1'); login.append('Sign in');
+    const login = new TestElement('h1'); login.append(copy('shell.signIn'));
     stopRouter = startRouter([{match: (path) => path === '/login', bare: true, page: async () => login}, {match: () => true, page: async () => secret}]);
     await flush();
     await client.revalidateSession();
@@ -445,6 +445,37 @@ test('successful account password change invalidates the shared session and remo
   }
 });
 
+test('account password errors focus the mapped field and clear every secret', async (t) => {
+  let failure = 'invalid_old_password';
+  const env = setup(t, (request) => {
+    if (request.url === '/api/v1/me/password') return response({code: failure, message: 'private backend wording'}, {status: failure === 'rate_limited' ? 429 : 400});
+    return assert.fail(`Unexpected request ${request.url}`);
+  });
+  const originals = new Map(['history', 'requestAnimationFrame', 'matchMedia'].map((key) => [key, globalThis[key]]));
+  globalThis.history = {state: {}, replaceState() {}};
+  globalThis.requestAnimationFrame = () => 0;
+  globalThis.matchMedia = () => ({matches: true, addEventListener() {}});
+  location.pathname = '/settings'; location.hash = '#account';
+  try {
+    client.setSession(proof());
+    const {settingsPage} = await import('../src/console/pages/settings.js');
+    const page = await settingsPage(); env.body.append(page);
+    const form = page.querySelector('form');
+    const controls = form.querySelectorAll('input');
+    for (const code of ['invalid_old_password', 'password_unchanged', 'rate_limited']) {
+      failure = code;
+      controls.forEach((control) => { control.value = 'a sufficiently long password'; });
+      form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+      assert.equal(document.activeElement, controls[code === 'password_unchanged' ? 1 : 0]);
+      assert.equal(controls.every((control) => control.value === ''), true);
+      assert.equal(client.session.user.must_change_password, false);
+    }
+  } finally {
+    env.clean();
+    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+  }
+});
+
 test('notifications resume only after the shared me gate and keep one summary request per restoration', async (t) => {
   let release;
   const env = setup(t, (request) => request.url === '/api/v1/me' ? new Promise((resolve) => { release = resolve; })
@@ -545,8 +576,8 @@ async function actionPage(t, respond, expires_at = '2026-10-28T00:10:00Z', load)
   client.setSession(proof({expires_at}));
   const routerURL = new URL(`../src/console/router.js?action-${encodeURIComponent(t.name)}`, import.meta.url);
   const {startRouter} = await import(routerURL.href);
-  // Load the real action against this fixture's router instance, not a router
-  // retained by an earlier fixture's document. No action behavior is replaced.
+  // 真实操作须使用本测试环境的路由器，而非先前测试文档保留的实例。
+  // 不替换操作本身的任何行为。
   const lifecycleURL = new URL('../src/console/pages/node-lifecycle.js', import.meta.url);
   const lifecycleSource = (await readFile(lifecycleURL, 'utf8')).replace(/from '(\.[^']+)'/g,
     (_match, path) => `from '${path === '../router.js' ? routerURL.href : new URL(path, lifecycleURL).href}'`);
@@ -554,18 +585,18 @@ async function actionPage(t, respond, expires_at = '2026-10-28T00:10:00Z', load)
   const actions = lifecycleActions({id: user.id, name: 'Private node', status: 'online'});
   let loads = 0;
   const stop = startRouter([{match: (path) => path === '/login', bare: true, page: async () => {
-    const heading = new TestElement('h1'); heading.append('Sign in'); return heading;
+    const heading = new TestElement('h1'); heading.append(copy('shell.signIn')); return heading;
   }}, {match: () => true, page: async () => ++loads === 1 || !load ? actions : load(loads)}]);
   await flush();
   return {...env, get loads() { return loads; }, async disable() {
-    actions.querySelectorAll('button').find((control) => control.textContent === 'Disable').click();
+    actions.querySelectorAll('button').find((control) => control.textContent === copy('nodes.disable')).click();
     await flush();
     const dialog = env.body.querySelector('dialog');
-    dialog.querySelectorAll('button').find((control) => control.textContent === 'Disable node').click();
+    dialog.querySelectorAll('button').find((control) => control.textContent === copy('nodes.disableNode')).click();
     dialog.dispatchEvent(new Event('animationend'));
     await flush();
   }, async remove() {
-    actions.querySelectorAll('button').find((control) => control.textContent === 'Delete node').click();
+    actions.querySelectorAll('button').find((control) => control.textContent === copy('nodes.deleteNode')).click();
     await flush();
     const dialog = env.body.querySelector('dialog');
     dialog.querySelector('input').value = 'Private node';
@@ -586,7 +617,7 @@ test('an action cancelled by known expiry cannot recreate an error toast after t
     assert.equal(env.requests[0].url, '/api/v1/nodes/batch');
     await env.advance(2000);
     assert.equal(location.pathname, '/login');
-    assert.equal(document.getElementById('view').textContent, 'Sign in');
+    assert.equal(document.getElementById('view').textContent, copy('shell.signIn'));
     release(response({message: 'Late action failure'}, {status: 500})); await flush();
     assert.equal(document.getElementById('toasts').children.length, 0);
   } finally { env.clean(); }
@@ -600,7 +631,7 @@ test('an action initiating management401 clears private UI without adding a stal
     release(response({message: 'Unauthorized'}, {status: 401})); await flush();
     assert.equal(location.pathname, '/login');
     assert.equal(client.session.user, null);
-    assert.equal(document.getElementById('view').textContent, 'Sign in');
+    assert.equal(document.getElementById('view').textContent, copy('shell.signIn'));
     assert.equal(document.getElementById('toasts').children.length, 0);
   } finally { env.clean(); }
 });
@@ -653,7 +684,7 @@ for (const boundary of ['expiry', 'management401', 'replacement']) {
       else if (boundary === 'management401') await assert.rejects(client.api('/private-probe'), (error) => error.status === 401);
       else client.setSession(proof({user: {...user, id: '00000000-0000-4000-8000-000000000002', username: 'replacement'}, csrf_token: `replacement:${t.name}`}));
       await flush();
-      const expected = boundary === 'replacement' ? 'Replacement account' : 'Sign in';
+      const expected = boundary === 'replacement' ? 'Replacement account' : copy('shell.signIn');
       assert.equal(document.getElementById('view').textContent, expected);
       const old = new TestElement('h1'); old.append('Private node late refresh');
       release(old); await flush();
@@ -673,10 +704,10 @@ test('a successful delete awaiting go cannot toast its private node name after k
     assert.equal(location.pathname, '/nodes');
     assert.equal(env.loads, 2, 'delete succeeded and its router navigation is still loading');
     await env.advance(2000);
-    assert.equal(document.getElementById('view').textContent, 'Sign in');
+    assert.equal(document.getElementById('view').textContent, copy('shell.signIn'));
     const old = new TestElement('h1'); old.append('Private node deleted');
     release(old); await flush();
-    assert.equal(document.getElementById('view').textContent, 'Sign in');
+    assert.equal(document.getElementById('view').textContent, copy('shell.signIn'));
     assert.equal(document.getElementById('toasts').children.length, 0);
   } finally { env.clean(); }
 });
@@ -686,7 +717,7 @@ test('a current successful lifecycle mutation still reports success after its re
   try {
     await env.disable();
     assert.equal(env.loads, 2);
-    assert.equal(document.getElementById('toasts').textContent.includes('Private node disabled.'), true);
+    assert.equal(document.getElementById('toasts').textContent.includes(copy('nodes.disabledDone', {name: 'Private node'})), true);
     assert.equal(client.session.user.id, user.id);
   } finally { env.clean(); }
 });

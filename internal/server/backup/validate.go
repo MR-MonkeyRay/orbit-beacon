@@ -18,9 +18,9 @@ import (
 
 	"github.com/robfig/cron/v3"
 
-	"orbitbeacon/internal/identity"
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/alerts"
+	"orbitbeacon/internal/server/announcements"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/history"
 	"orbitbeacon/internal/server/inbox"
@@ -28,21 +28,26 @@ import (
 	"orbitbeacon/internal/server/notify"
 	"orbitbeacon/internal/server/secretbox"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
-// ValidatePayloadData reads only the registry's named columns. Callers validate
-// the transfer schema first and retain responsibility for final-state FK checks.
-// Neither validation nor the shared domain parsers perform network/filesystem I/O.
+// ValidatePayloadData 只读取 registry 的具名列。调用方须先校验传输库结构，
+// 并自行负责终态外键检查。校验与共享领域解析均不做网络/文件系统 I/O。
 func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key []byte) error {
 	specs := tablesFor(category)
 	if len(specs) == 0 {
 		return invalidPayload("category", "")
 	}
 	users := 0
-	var notificationBox, backupBox *secretbox.Box
+	userIDs := make(map[string]bool)
+	var notificationBox, backupBox, accountBox *secretbox.Box
 	if category == Configuration {
 		var err error
 		notificationBox, err = secretbox.New(key, "orbitbeacon notification channel v1")
+		if err != nil {
+			return invalidPayload("key", "")
+		}
+		accountBox, err = secretbox.New(key, "orbitbeacon account secrets v1")
 		if err != nil {
 			return invalidPayload("key", "")
 		}
@@ -106,12 +111,17 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 					}
 				}
 			}
-			if err = validatePayloadRow(table.Name, row, notificationBox, backupBox); err != nil {
+			if err = validatePayloadRow(table.Name, row, notificationBox, backupBox, accountBox); err != nil {
 				rows.Close()
 				return invalidPayload(table.Name, row.text("id"))
 			}
+			if table.Name == "recovery_codes" && !userIDs[row.text("user_id")] {
+				rows.Close()
+				return invalidPayload(table.Name, "")
+			}
 			if table.Name == "users" {
 				users++
+				userIDs[row.text("id")] = true
 			}
 		}
 		err = errors.Join(rows.Err(), rows.Close())
@@ -129,8 +139,8 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 }
 
 func invalidPayload(table, id string) error {
-	// Only fixed registry names and syntactically valid UUIDs reach diagnostics.
-	if !identity.ValidUUID(id) {
+	// 只有固定的 registry 表名和语法合法的 UUID 会进入诊断信息。
+	if !uuid.ValidUUID(id) {
 		id = ""
 	}
 	if id != "" {
@@ -167,10 +177,16 @@ func (r payloadRow) floatPointer(k string) *float64 {
 }
 func nullableColumn(table, column string) bool {
 	switch table {
+	case "users":
+		return oneOf(column, "totp_ciphertext", "totp_pending_ciphertext", "totp_pending_at")
+	case "announcements":
+		return column == "ends_at"
 	case "nodes":
-		return oneOf(column, "group_id", "token_hash", "installation_id", "first_enrolled_at")
+		return oneOf(column, "expires_on", "group_id", "token_hash", "installation_id", "first_enrolled_at")
+	case "alert_silences":
+		return column == "scope_id"
 	case "alert_rules":
-		return oneOf(column, "scope_id", "comparator", "threshold")
+		return oneOf(column, "scope_id", "target", "comparator", "threshold")
 	case "notification_channels":
 		return oneOf(column, "secret_ciphertext", "url_ciphertext")
 	case "backup_plans":
@@ -178,7 +194,7 @@ func nullableColumn(table, column string) bool {
 	case "node_observations":
 		return column == "last_seen"
 	case "probe_latest":
-		return oneOf(column, "latency_ms", "status_code")
+		return oneOf(column, "latency_ms", "status_code", "tls_expires_at")
 	case "audit_events":
 		return oneOf(column, "actor_id", "target_id")
 	case "alert_events":
@@ -214,16 +230,60 @@ func jsonObject(raw string) bool {
 func validText(s string, max int) bool { return strings.TrimSpace(s) != "" && len(s) <= max }
 func invalidRow() error                { return errors.New("invalid row") }
 
-func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *secretbox.Box) error {
-	if r["id"] != nil && !identity.ValidUUID(r.text("id")) {
+func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, accountBox *secretbox.Box) error {
+	if r["id"] != nil && !uuid.ValidUUID(r.text("id")) {
 		return invalidRow()
 	}
 	switch table {
+	case "announcements":
+		start, err := timekey.Parse(r.text("starts_at"))
+		if err != nil {
+			return err
+		}
+		p := announcements.Public{Level: r.text("level"), Title: r.text("title"), Body: r.text("body"), StartsAt: start}
+		if r["ends_at"] != nil {
+			end, err := timekey.Parse(r.text("ends_at"))
+			if err != nil {
+				return err
+			}
+			p.EndsAt = &end
+		}
+		return announcements.Validate(&p)
 	case "settings":
-		if r.text("key") != "public_page_enabled" || !oneOf(r.text("value"), "true", "false") {
+		switch r.text("key") {
+		case "public_page_enabled":
+			if !oneOf(r.text("value"), "true", "false") {
+				return invalidRow()
+			}
+		case "api_token_rate_limit_per_minute":
+			limit, err := strconv.Atoi(r.text("value"))
+			if err != nil || limit < 1 || limit > 100000 {
+				return invalidRow()
+			}
+		default:
+			return invalidRow()
+		}
+	case "recovery_codes":
+		if !uuid.ValidUUID(r.text("user_id")) || len(r.blob("code_hash")) != 32 {
 			return invalidRow()
 		}
 	case "users":
+		if r.integer("totp_last_step") < 0 || (r["totp_pending_ciphertext"] == nil) != (r["totp_pending_at"] == nil) {
+			return invalidRow()
+		}
+		for _, column := range []string{"totp_ciphertext", "totp_pending_ciphertext"} {
+			if r[column] != nil {
+				if accountBox == nil {
+					return invalidRow()
+				}
+				plain, err := accountBox.Open("totp:"+r.text("id"), r.blob(column))
+				valid := err == nil && len(plain) == 20
+				clear(plain)
+				if !valid {
+					return invalidRow()
+				}
+			}
+		}
 		if username := r.text("username"); len(username) < 1 || len(username) > 128 || !utf8.ValidString(username) {
 			return invalidRow()
 		}
@@ -238,18 +298,28 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 	case "nodes":
 		return validateNode(r)
 	case "node_tags":
-		if !identity.ValidUUID(r.text("node_id")) || !validText(r.text("tag"), 255) {
+		if !uuid.ValidUUID(r.text("node_id")) || !validText(r.text("tag"), 255) {
 			return invalidRow()
 		}
+	case "alert_silences":
+		start, err := timekey.Parse(r.text("starts_at"))
+		if err != nil {
+			return err
+		}
+		end, err := timekey.Parse(r.text("ends_at"))
+		if err != nil {
+			return err
+		}
+		return alerts.ValidateSilenceSyntax(alerts.Silence{Reason: r.text("reason"), ScopeKind: r.text("scope_kind"), ScopeID: r.pointer("scope_id"), StartsAt: start, EndsAt: end})
 	case "alert_rules":
 		if r.integer("enabled") < 0 || r.integer("enabled") > 1 {
 			return invalidRow()
 		}
-		return alerts.ValidateRuleSyntax(alerts.Rule{Name: r.text("name"), Enabled: r.integer("enabled") == 1, ScopeKind: r.text("scope_kind"), ScopeID: r.pointer("scope_id"), Metric: r.text("metric"), Comparator: r.pointer("comparator"), Threshold: r.floatPointer("threshold"), ForSeconds: int(r.integer("for_seconds")), Severity: r.text("severity")})
+		return alerts.ValidateRuleSyntax(alerts.Rule{Name: r.text("name"), Enabled: r.integer("enabled") == 1, ScopeKind: r.text("scope_kind"), ScopeID: r.pointer("scope_id"), Metric: r.text("metric"), Target: r.pointer("target"), Comparator: r.pointer("comparator"), Threshold: r.floatPointer("threshold"), ForSeconds: int(r.integer("for_seconds")), Severity: r.text("severity")})
 	case "notification_channels":
 		return validateChannel(r, notificationBox)
 	case "alert_rule_channels":
-		if !identity.ValidUUID(r.text("rule_id")) || !identity.ValidUUID(r.text("channel_id")) {
+		if !uuid.ValidUUID(r.text("rule_id")) || !uuid.ValidUUID(r.text("channel_id")) {
 			return invalidRow()
 		}
 	case "backup_plans":
@@ -278,6 +348,12 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 		}
 		at, _ := timekey.Parse(r.text("period_start"))
 		return (v1.Traffic{Epoch: r.text("epoch"), PeriodStart: at, RxBytes: v1.DecimalUint64(strconv.FormatInt(r.integer("rx_bytes"), 10)), TxBytes: v1.DecimalUint64(strconv.FormatInt(r.integer("tx_bytes"), 10))}).Validate()
+	case "node_availability_daily":
+		day, err := time.Parse(time.DateOnly, r.text("day"))
+		online, offline := r.integer("online_seconds"), r.integer("offline_seconds")
+		if err != nil || day.Format(time.DateOnly) != r.text("day") || r.text("node_id") == "" || online < 0 || offline < 0 || online > 86400 || offline > 86400 || online+offline > 86400 {
+			return invalidRow()
+		}
 	case "traffic_daily":
 		day, err := time.Parse("2006-01-02", r.text("day"))
 		if err != nil || day.Format("2006-01-02") != r.text("day") || r.text("node_id") == "" || r.integer("rx_bytes") < 0 || r.integer("tx_bytes") < 0 {
@@ -293,10 +369,15 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 			v := int(r.integer("status_code"))
 			code = &v
 		}
-		return (v1.ProbeResult{Target: r.text("target"), OK: r.integer("ok") == 1, LatencyMS: r.floatPointer("latency_ms"), Error: r.text("error"), StatusCode: code, CheckedAt: at}).Validate()
+		var expiry *time.Time
+		if r["tls_expires_at"] != nil {
+			v, _ := timekey.Parse(r.text("tls_expires_at"))
+			expiry = &v
+		}
+		return (v1.ProbeResult{TLSExpiresAt: expiry, Target: r.text("target"), OK: r.integer("ok") == 1, LatencyMS: r.floatPointer("latency_ms"), Error: r.text("error"), StatusCode: code, CheckedAt: at}).Validate()
 	case "probe_hourly":
 		at, err := timekey.Parse(r.text("hour"))
-		if err != nil || timekey.Format(at) != r.text("hour") || !at.Equal(at.Truncate(time.Hour)) || r.text("node_id") == "" || r.integer("checks") < 0 || r.integer("failures") < 0 || r.integer("failures") > r.integer("checks") || !finite(r.number("latency_sum_ms")) || r.number("latency_sum_ms") < 0 {
+		if err != nil || timekey.Format(at) != r.text("hour") || !at.Equal(at.Truncate(time.Hour)) || r.text("node_id") == "" || r.integer("checks") < 0 || r.integer("failures") < 0 || r.integer("failures") > r.integer("checks") || !finite(r.number("latency_sum_ms")) || r.number("latency_sum_ms") < 0 || !finite(r.number("latency_max_ms")) || r.number("latency_max_ms") < 0 || r.number("latency_max_ms") > 60000 || r.number("latency_max_ms") > r.number("latency_sum_ms") {
 			return invalidRow()
 		}
 		return v1.ValidateProbeTarget(r.text("target"))
@@ -313,10 +394,10 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 			return invalidRow()
 		}
 	case "alert_events":
-		if !oneOf(r.text("state"), "firing", "resolved") || (r.text("state") == "firing") != (r["resolved_at"] == nil) || !jsonObject(r.text("rule_snapshot")) || (r["value"] != nil && !finite(r.number("value"))) {
+		if (r.integer("silenced") != 0 && r.integer("silenced") != 1) || !oneOf(r.text("state"), "firing", "resolved") || (r.text("state") == "firing") != (r["resolved_at"] == nil) || !jsonObject(r.text("rule_snapshot")) || (r["value"] != nil && !finite(r.number("value"))) {
 			return invalidRow()
 		}
-		// Resolved legacy events can legitimately have an empty rule snapshot.
+		// 已结束的旧版告警事件允许规则快照为空。
 		if r.text("state") == "firing" {
 			_, err := alerts.ParseRuleSnapshot([]byte(r.text("rule_snapshot")))
 			return err
@@ -334,7 +415,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 			return invalidRow()
 		}
 	case "inbox_reads":
-		if !identity.ValidUUID(r.text("user_id")) || !identity.ValidUUID(r.text("notification_id")) {
+		if !uuid.ValidUUID(r.text("user_id")) || !uuid.ValidUUID(r.text("notification_id")) {
 			return invalidRow()
 		}
 	case "backup_tasks":
@@ -346,7 +427,13 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox *
 }
 
 func validateNode(r payloadRow) error {
-	if !validText(r.text("name"), 255) || !oneOf(r.text("status"), "disabled", "unknown", "pending") || (r["group_id"] != nil && !identity.ValidUUID(r.text("group_id"))) || r.integer("credential_epoch") < 0 {
+	if r["expires_on"] != nil {
+		date, err := time.Parse(time.DateOnly, r.text("expires_on"))
+		if err != nil || date.Format(time.DateOnly) != r.text("expires_on") {
+			return invalidRow()
+		}
+	}
+	if !validText(r.text("name"), 255) || !oneOf(r.text("status"), "disabled", "unknown", "pending") || (r["group_id"] != nil && !uuid.ValidUUID(r.text("group_id"))) || r.integer("credential_epoch") < 0 {
 		return invalidRow()
 	}
 	if err := v1.DecimalUint64(r.text("run_generation")).Validate(); err != nil {
@@ -369,6 +456,11 @@ func validateNode(r payloadRow) error {
 		return err
 	}
 	if r.integer("billing_day") < 1 || r.integer("billing_day") > 28 {
+		return invalidRow()
+	}
+	switch r.text("billing_mode") {
+	case "total", "max", "rx", "tx":
+	default:
 		return invalidRow()
 	}
 	return v1.DecimalUint64(r.text("quota_bytes")).Validate()
@@ -400,11 +492,11 @@ func validateChannel(r payloadRow, box *secretbox.Box) error {
 	}
 	cfg.URL = string(url)
 	cfg.URLSet = false
-	if r.text("kind") != "webhook" && len(url) > 0 {
+	if !notify.UsesURL(r.text("kind")) && len(url) > 0 {
 		return invalidRow()
 	}
-	// Machine-level insecure opt-in is not configuration data. Preserve syntax
-	// accepted with that opt-in; sending still enforces the target's runtime policy.
+	// 机器级的不安全放行选项不属于配置数据。保留在该放行选项下被接受的语法；
+	// 发送时仍会强制执行目标端的运行时策略。
 	return notify.ValidateChannel(notify.Channel{Name: r.text("name"), Kind: r.text("kind"), Config: cfg}, string(secret), true)
 }
 
@@ -454,8 +546,8 @@ func validateCategoriesJSON(raw string) error {
 	return err
 }
 
-// ParseSchedule accepts five-field crontab syntax, interpreting weekday 7 as
-// Sunday without losing the wildcard marker used by the DOM/DOW OR rule.
+// ParseSchedule 接受五字段 crontab 语法，将星期 7 解释为周日，
+// 并保留日期/星期（DOM/DOW）的 OR 规则所需的通配标记。
 func ParseSchedule(raw string) (cron.Schedule, error) {
 	fields := strings.Fields(raw)
 	if len(fields) != 5 || strings.ContainsAny(raw, "?@=") {
@@ -472,7 +564,7 @@ func ParseSchedule(raw string) (cron.Schedule, error) {
 		return nil, invalidRow()
 	}
 	if wildcard {
-		// Derive the parser's wildcard marker instead of depending on its private bit.
+		// 从解析结果推导通配标记，不依赖其私有位。
 		all, _ := parser.Parse("0 0 * * *")
 		explicit, _ := parser.Parse("0 0 * * 0-6")
 		schedule.(*cron.SpecSchedule).Dow |= all.(*cron.SpecSchedule).Dow ^ explicit.(*cron.SpecSchedule).Dow
@@ -524,7 +616,7 @@ func normalizeWeekday(raw string) (string, bool, error) {
 				hi = 7
 			}
 		}
-		// At most eight iterations, even if the supplied stride is very large.
+		// 即使步长很大，最多八次迭代。
 		for n := lo; n <= hi; {
 			selected[n%7] = true
 			if step > hi-n {
@@ -545,8 +637,8 @@ func normalizeWeekday(raw string) (string, bool, error) {
 	return strings.Join(values, ","), wildcard, nil
 }
 
-// PlanDefinition contains only portable configuration. Filesystem ownership and
-// writability checks belong to saving/enabling a plan, never archive validation.
+// PlanDefinition 只含可移植配置。文件系统属主与可写性检查属于保存/启用计划的职责，
+// 不属于归档校验。
 type PlanDefinition struct {
 	Name        string
 	Enabled     bool

@@ -1,6 +1,19 @@
 import {setImmediate as nextTurn} from 'node:timers/promises';
+import en from '../src/shared/locales/en.js';
 
-// Minimal DOM for asynchronous console panels; deliberately no HTML parsing.
+export function copy(key, params = {}) {
+  let value = en[key];
+  if (value === undefined) throw new Error(`Unknown translation key: ${key}`);
+  if (typeof value !== 'string') value = value[new Intl.PluralRules('en').select(Number(params.count))] ?? value.other;
+  return value.replace(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, (_match, name) => {
+    if (!Object.hasOwn(params, name)) throw new Error(`Missing translation parameter ${name} for ${key}`);
+    return String(params[name]);
+  });
+}
+
+export const copyPattern = (key, params) => new RegExp(copy(key, params).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+
+// 异步控制台面板的最小 DOM；刻意不解析 HTML。
 export class TestElement extends EventTarget {
   constructor(tagName = '') {
     super();
@@ -13,6 +26,7 @@ export class TestElement extends EventTarget {
     this.id = '';
     this.className = '';
     this.style = {};
+    this.animations = [];
     this.value = '';
     this.type = tagName === 'input' ? 'text' : '';
     this.name = '';
@@ -23,12 +37,27 @@ export class TestElement extends EventTarget {
     this.classList = {add: (name) => { this.className += ` ${name}`; }, remove: (name) => { this.className = this.className.split(' ').filter((item) => item !== name).join(' '); },
       contains: (name) => this.className.split(' ').includes(name), toggle: (name, value) => value ? this.classList.add(name) : this.classList.remove(name)};
   }
+  animate(keyframes, options) {
+    const animation = {keyframes, options, cancelled: false, cancel() { this.cancelled = true; }};
+    this.animations.push(animation);
+    return animation;
+  }
   append(...children) {
     for (let child of children) {
       if (child instanceof TestElement) { child.remove(); child.parentElement = this; }
       else child = String(child);
       this.children.push(child);
     }
+  }
+  insertBefore(child, reference) {
+    if (child === reference) return child;
+    const index = reference === null ? -1 : this.children.indexOf(reference);
+    if (reference !== null && index < 0) throw new Error('Reference is not a child');
+    child.remove();
+    child.parentElement = this;
+    const target = reference === null ? this.children.length : this.children.indexOf(reference);
+    this.children.splice(target, 0, child);
+    return child;
   }
   prepend(child) { this.append(child); this.children.unshift(this.children.pop()); }
   remove() {
@@ -51,9 +80,12 @@ export class TestElement extends EventTarget {
   querySelectorAll(selector) {
     return elements(this).slice(1).filter((element) => selector.split(',').some((part) => {
       part = part.trim();
+      const role = part.match(/^\[role="(.+)"\]$/);
+      if (role) return element.getAttribute('role') === role[1];
       if (part === '[data-nav]') return element.dataset.nav !== undefined;
       const nav = part.match(/^\[data-nav="(.+)"\]$/);
       if (nav) return element.dataset.nav === nav[1];
+      if (part === 'input:not([data-transient])') return element.tagName === 'input' && element.dataset.transient === undefined;
       if (part === '[data-autofocus]') return element.dataset.autofocus !== undefined;
       if (part === '[data-tags]') return element.dataset.tags !== undefined;
       if (part === '[name]') return element.name !== '';
@@ -78,11 +110,12 @@ export class TestElement extends EventTarget {
   matches(selector) { return selector === ':invalid' && !this.validity.valid; }
   showModal() { this.open = true; }
   close(value) { this.open = false; this.returnValue = value; this.dispatchEvent(new Event('close')); }
+  select() { this.selected = true; }
   focus() { globalThis.document.activeElement = this; }
   click() { this.dispatchEvent(new Event('click')); }
 }
 export const elements = (node) => [node, ...node.children.filter((child) => child instanceof TestElement).flatMap(elements)];
-// Yield past the microtask checkpoint without advancing the mocked timers.
+// 让出到下一轮事件循环，等待微任务执行完毕，但不推进模拟计时器。
 export const flush = () => nextTurn();
 export function installDOM() {
   const originals = new Map();
@@ -95,7 +128,7 @@ export function installDOM() {
     createElement: (tag) => new TestElement(tag), createElementNS: (_ns, tag) => new TestElement(tag),
     getElementById: (id) => elements(body).find((element) => element.id === id) || null,
     querySelector: (selector) => body.querySelector(selector), querySelectorAll: (selector) => body.querySelectorAll(selector), documentElement: new TestElement('html')});
-  const values = {CSS: {escape: (value) => value}, Node: TestElement, document, localStorage: {getItem: () => '24h', setItem() {}},
+  const values = {getComputedStyle: () => ({getPropertyValue: (key) => ({'--motion-normal': '.25s', '--motion-fast': '.15s', '--ease-default': 'ease', '--ease-linear': 'linear'})[key] || ''}), CSS: {escape: (value) => value}, Node: TestElement, document, localStorage: {getItem: () => '24h', setItem() {}},
     location: {pathname: '/alerts', search: '', hash: ''},
     MutationObserver: class {
       constructor(callback) { this.callback = callback; }

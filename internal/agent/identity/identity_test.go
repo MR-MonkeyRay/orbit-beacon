@@ -51,7 +51,7 @@ func TestIdentityCreatedOnceBeforeUseAndRunGenerationPersisted(t *testing.T) {
 	if first.RunGeneration != 1 || first.SessionID == "" || first.InstallationID != initial.InstallationID || first.NodeToken != initial.NodeToken {
 		t.Fatalf("first run=%+v", first)
 	}
-	// Reopening for enrollment, doctor or watch is read-only with respect to generation.
+	// 为 enroll、doctor 或 watch 重新打开身份时，不改变 RunGeneration。
 	reopened, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
 		t.Fatal(err)

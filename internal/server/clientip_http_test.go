@@ -27,12 +27,11 @@ func TestHTMLCSPMatchesServedInlineScripts(t *testing.T) {
 		{"multiple scripts", fstest.MapFS{
 			"200.html":        {Data: []byte("<!doctype html><script>consoleTheme()</script><script type=\"module\">\nconsoleInit()\n</script><script src=\"/external.js\">externalBody()</script>")},
 			"public.html":     {Data: []byte("<!doctype html><script>publicTheme()</script><script>publicTheme()</script>")},
-			"login.html":      {Data: []byte("<!doctype html><script>loginTheme()</script>")},
 			"extra/page.html": {Data: []byte("<!doctype html><script>extraTheme()</script>")},
 		}},
 	} {
 		t.Run(assets.name, func(t *testing.T) {
-			h, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, Assets: assets.fs})
+			h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, Assets: assets.fs}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -113,7 +112,7 @@ func TestEnrollmentAdmissionUsesTrustedClientIP(t *testing.T) {
 		if trust {
 			opts.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("10.0.0.1/32")}
 		}
-		h, err := server.NewHandler(opts)
+		h, err := server.NewHandler(testHandlerOptions(t, opts))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -146,7 +145,7 @@ func TestEnrollmentAdmissionUsesTrustedClientIP(t *testing.T) {
 
 func TestLoginUsesTrustedClientIP(t *testing.T) {
 	f := newHTTP(t, 2)
-	h, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, TrustedProxies: []netip.Prefix{netip.MustParsePrefix("10.0.0.1/32")}})
+	h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, TrustedProxies: []netip.Prefix{netip.MustParsePrefix("10.0.0.1/32")}}))
 	if err != nil {
 		t.Fatal(err)
 	}

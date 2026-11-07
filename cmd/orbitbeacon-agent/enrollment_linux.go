@@ -26,12 +26,12 @@ type enrollmentTicket struct {
 }
 
 func openEnrollmentTicket(path string) (*enrollmentTicket, error) {
-	fail := errors.New("enrollment token must be a regular 0600 file owned by the effective UID in a directory owned by root or the effective UID, without symlinks")
+	fail := errors.New("注册票据必须是权限为 0600、属主为当前有效 UID 的普通文件；上级目录须归 root 或当前有效 UID 所有，路径不能含符号链接")
 	absolute, err := filepath.Abs(path)
 	if err != nil || strings.HasSuffix(path, "/") {
-		return nil, errors.New("invalid enrollment token path")
+		return nil, errors.New("注册票据路径无效")
 	}
-	// Reject traversal before cleaning can hide a symlink component.
+	// 先拒绝 .. 路径分量，避免路径规范化掩盖符号链接。
 	for _, part := range strings.Split(path, "/") {
 		if part == ".." {
 			return nil, fail
@@ -41,7 +41,7 @@ func openEnrollmentTicket(path string) (*enrollmentTicket, error) {
 	flags := unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW | unix.O_NONBLOCK
 	dir, err := openTicketDirectory(filepath.Dir(absolute))
 	if err != nil {
-		return nil, errors.Join(fail, errors.New("cannot open enrollment token directory"), err)
+		return nil, errors.Join(fail, errors.New("无法打开注册票据目录"), err)
 	}
 	var parent unix.Stat_t
 	if err := unix.Fstat(dir, &parent); err != nil {
@@ -56,7 +56,7 @@ func openEnrollmentTicket(path string) (*enrollmentTicket, error) {
 	fd, err := unix.Openat(dir, name, flags, 0)
 	if err != nil {
 		_ = unix.Close(dir)
-		return nil, errors.Join(fail, errors.New("cannot open enrollment token file"), err)
+		return nil, errors.Join(fail, errors.New("无法打开注册票据文件"), err)
 	}
 	file := os.NewFile(uintptr(fd), "enrollment ticket")
 	ticket := &enrollmentTicket{directory: dir, name: name, parentPath: filepath.Dir(absolute), parentInfo: parent, file: file}
@@ -72,24 +72,24 @@ func openEnrollmentTicket(path string) (*enrollmentTicket, error) {
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || info.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 || stat.Uid != uint32(os.Geteuid()) {
 		ticket.close()
-		return nil, errors.Join(fail, fmt.Errorf("enrollment token file has unsafe type, owner or mode (uid=%d mode=%s)", stat.Uid, info.Mode()))
+		return nil, errors.Join(fail, fmt.Errorf("注册票据文件的类型、属主或权限不安全（uid=%d mode=%s）", stat.Uid, info.Mode()))
 	}
 	data, err := io.ReadAll(io.LimitReader(file, 4097))
 	if err != nil || len(data) > 4096 {
 		ticket.close()
-		return nil, errors.New("invalid enrollment token file size")
+		return nil, errors.New("注册票据文件大小无效")
 	}
 	token := strings.TrimSpace(string(data))
 	if token == "" || strings.ContainsAny(token, " \t\r\n") {
 		ticket.close()
-		return nil, errors.New("invalid enrollment token file")
+		return nil, errors.New("注册票据文件无效")
 	}
 	ticket.info, ticket.token = info, token
 	return ticket, nil
 }
 
-// openTicketDirectory keeps the entire walk descriptor-relative so no ancestor
-// can redirect ticket reads or cleanup through a symlink.
+// openTicketDirectory 让整个遍历都基于描述符相对路径，任何祖先目录都无法通过
+// 符号链接重定向票据的读取或清理。
 func openTicketDirectory(absolute string) (int, error) {
 	flags := unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW | unix.O_DIRECTORY
 	dir, err := unix.Open("/", flags, 0)
@@ -130,16 +130,16 @@ func validateTicketDirectoryFD(fd int) error {
 
 func validateTicketDirectory(info *unix.Stat_t) error {
 	if info.Mode&unix.S_IFMT != unix.S_IFDIR {
-		return errors.New("enrollment token path component is not a directory")
+		return errors.New("注册票据路径组件不是目录")
 	}
 	euid := uint32(os.Geteuid())
 	if info.Uid != 0 && info.Uid != euid {
-		return fmt.Errorf("enrollment token directory must be owned by root or the effective UID (uid=%d)", info.Uid)
+		return fmt.Errorf("注册票据目录必须由 root 或有效 UID 所有（uid=%d）", info.Uid)
 	}
 	const writableByGroupOrOther = 0022
 	const sticky = 01000
 	if info.Mode&writableByGroupOrOther != 0 && info.Mode&sticky == 0 {
-		return fmt.Errorf("enrollment token directory is writable by group or others (mode=%#o)", info.Mode&07777)
+		return fmt.Errorf("注册票据目录可被组或其他用户写入（mode=%#o）", info.Mode&07777)
 	}
 	return nil
 }
@@ -150,8 +150,8 @@ func (t *enrollmentTicket) close() {
 }
 
 func (t *enrollmentTicket) remove() error {
-	// Detect a renamed/replaced parent before consuming any directory entry.
-	// The subsequent operation still uses the pinned descriptor, not this path.
+	// 删除目录项前先检测父目录是否被改名或替换。
+	// 后续操作仍使用已固定的描述符，而不是此路径。
 	parent, err := openTicketDirectory(t.parentPath)
 	if err != nil {
 		return err
@@ -160,7 +160,7 @@ func (t *enrollmentTicket) remove() error {
 	err = unix.Fstat(parent, &current)
 	_ = unix.Close(parent)
 	if err != nil || current.Dev != t.parentInfo.Dev || current.Ino != t.parentInfo.Ino || current.Uid != t.parentInfo.Uid {
-		return errors.New("enrollment ticket directory changed")
+		return errors.New("注册票据目录已变化")
 	}
 	var entry, original unix.Stat_t
 	if err := unix.Fstatat(t.directory, t.name, &entry, unix.AT_SYMLINK_NOFOLLOW); err != nil {
@@ -170,11 +170,10 @@ func (t *enrollmentTicket) remove() error {
 		return err
 	}
 	if entry.Dev != original.Dev || entry.Ino != original.Ino || entry.Mode&unix.S_IFMT != unix.S_IFREG {
-		return errors.New("enrollment ticket path changed")
+		return errors.New("注册票据路径已变化")
 	}
-	// Rename into a new private directory before comparing inodes. A separate
-	// stat/unlink pair on the original name would permit replacement between
-	// those operations and could unlink an unrelated file.
+	// 先改名到新的私有目录，再比较 inode。若对原名单独做 stat/unlink，
+	// 两步之间文件可能被替换，还可能误删无关文件。
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return err
@@ -201,13 +200,13 @@ func (t *enrollmentTicket) remove() error {
 		_ = file.Close()
 	}
 	if !matches {
-		// Never overwrite a concurrent replacement, even when restoring a raced
-		// entry. If restoration is impossible, retain it in the private directory.
+		// 即使恢复竞争中产生的目录项，也绝不覆盖并发写入的替换文件。
+		// 无法恢复时，把票据留在私有目录中。
 		if restoreErr := unix.Renameat2(dir, "ticket", t.directory, t.name, unix.RENAME_NOREPLACE); restoreErr == nil {
 			_ = unix.Unlinkat(t.directory, name, unix.AT_REMOVEDIR)
 		}
 		_ = unix.Fsync(t.directory)
-		return errors.New("enrollment ticket path changed")
+		return errors.New("注册票据路径已变化")
 	}
 	if err := unix.Unlinkat(dir, "ticket", 0); err != nil {
 		if restoreErr := unix.Renameat2(dir, "ticket", t.directory, t.name, unix.RENAME_NOREPLACE); restoreErr == nil {

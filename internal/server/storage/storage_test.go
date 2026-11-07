@@ -31,7 +31,7 @@ func TestOpenInitializesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	for _, table := range []string{
-		"users", "sessions", "nodes", "groups", "node_tags", "enrollment_tokens",
+		"users", "sessions", "api_tokens", "nodes", "groups", "node_tags", "enrollment_tokens",
 		"enrollment_claims", "settings", "audit_events", "schema_migrations",
 		"traffic_hourly", "traffic_daily", "probe_latest", "probe_hourly",
 	} {
@@ -55,12 +55,15 @@ func TestOpenInitializesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	var obsolete int
+	for _, name := range []string{"update_jobs", "update_job_nodes", "update_job_nodes_node"} {
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE name=?`, name).Scan(&obsolete); err != nil || obsolete != 0 {
+			t.Fatalf("obsolete schema object %s=%d err=%v", name, obsolete, err)
+		}
+	}
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('sessions') WHERE name='csrf_hash'`).Scan(&obsolete); err != nil || obsolete != 0 {
 		t.Fatalf("obsolete session field=%d err=%v", obsolete, err)
 	}
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE name='api_tokens'`).Scan(&obsolete); err != nil || obsolete != 0 {
-		t.Fatalf("obsolete API tokens=%d err=%v", obsolete, err)
-	}
+
 	for _, field := range []struct{ table, column string }{{"users", "role"}, {"inbox_notifications", "audience"}, {"groups", "desired_config"}, {"nodes", "desired_revision"}, {"nodes", "applied_revision"}, {"nodes", "config_error"}, {"nodes", "report_interval_seconds"}, {"nodes", "disk_interval_seconds"}, {"nodes", "interfaces"}, {"nodes", "disk_paths"}, {"nodes", "probe_targets"}} {
 		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info(?) WHERE name=?`, field.table, field.column).Scan(&obsolete); err != nil || obsolete != 0 {
 			t.Fatalf("obsolete %s.%s=%d err=%v", field.table, field.column, obsolete, err)
@@ -140,8 +143,7 @@ func TestOpenConfiguresDurableSQLiteConnections(t *testing.T) {
 	if journal != "wal" {
 		t.Errorf("journal mode = %q, want wal", journal)
 	}
-	// Hold connections simultaneously so per-connection options cannot be satisfied
-	// only on the connection that happened to apply the migrations.
+	// 同时持有连接，确保按连接设置的选项不能只在恰好执行迁移的那个连接上满足。
 	var connections []*sql.Conn
 	defer func() {
 		for _, conn := range connections {
@@ -291,11 +293,9 @@ func TestOpenRejectsIncompatibleLedgerWithoutChangingData(t *testing.T) {
 	}{
 		{"missing", ""},
 		{"empty", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);"},
-		{"old", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(16,'original');"},
-		{"intermediate", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(17,'original');"},
-		{"previous-current", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(19,'original');"},
-		{"mixed", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'original'),(16,'original');"},
-		{"mixed-current", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'original'),(%d,'original');", storage.CurrentSchemaVersion)},
+		{"old", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(%d,'original');", storage.CurrentSchemaVersion-1)},
+		{"mixed", "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(-1,'original'),(0,'original');"},
+		{"mixed-current", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(%d,'original'),(%d,'original');", storage.CurrentSchemaVersion-1, storage.CurrentSchemaVersion)},
 		{"future", fmt.Sprintf("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(%d,'original');", storage.CurrentSchemaVersion+1)},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
@@ -310,7 +310,7 @@ func TestOpenRejectsIncompatibleLedgerWithoutChangingData(t *testing.T) {
 			if _, err = db.Exec(`CREATE TABLE sentinel(value TEXT NOT NULL); INSERT INTO sentinel VALUES('untouched');` + fixture.ledger); err != nil {
 				t.Fatal(err)
 			}
-			if fixture.name == "old" || fixture.name == "intermediate" {
+			if fixture.name == "old" {
 				if _, err := db.Exec(`CREATE TABLE users(id TEXT PRIMARY KEY,username TEXT,password_hash TEXT,role TEXT,created_at TEXT); INSERT INTO users VALUES('original','original','hash','viewer','original')`); err != nil {
 					t.Fatal(err)
 				}
@@ -349,7 +349,7 @@ func TestOpenRejectsIncompatibleLedgerWithoutChangingData(t *testing.T) {
 			if err = db.QueryRow(`SELECT value FROM sentinel`).Scan(&value); err != nil || value != "untouched" {
 				t.Fatalf("sentinel=%q err=%v", value, err)
 			}
-			if fixture.name == "old" || fixture.name == "intermediate" {
+			if fixture.name == "old" {
 				var role string
 				if err := db.QueryRow(`SELECT role FROM users WHERE id='original'`).Scan(&role); err != nil || role != "viewer" {
 					t.Fatalf("old account changed: role=%q err=%v", role, err)
@@ -381,5 +381,26 @@ func TestOpenInitializesEmptyFile(t *testing.T) {
 	var version int
 	if err := db.QueryRow(`SELECT version FROM schema_migrations`).Scan(&version); err != nil || version != storage.CurrentSchemaVersion {
 		t.Fatalf("version=%d err=%v", version, err)
+	}
+}
+
+func TestAPITokenRateLimitCheckConstraint(t *testing.T) {
+	db, err := storage.Open(context.Background(), filepath.Join(privateDirectory(t), "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec(`INSERT INTO users(id,username,password_hash,created_at) VALUES('owner','owner','unused','now')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []any{nil, 1, 100000, 0, -1, 100001} {
+		_, err = db.Exec(`INSERT INTO api_tokens(id,name,token_hash,created_by,created_at,rate_limit_per_minute) VALUES('token','name',X'01','owner','now',?)`, value)
+		valid := value == nil || value == 1 || value == 100000
+		if (err == nil) != valid {
+			t.Fatalf("value %v: %v", value, err)
+		}
+		if _, err = db.Exec(`DELETE FROM api_tokens`); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

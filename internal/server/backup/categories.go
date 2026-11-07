@@ -1,4 +1,4 @@
-// Package backup implements encrypted, category-scoped data operations.
+// Package backup 实现按类别划分的加密数据操作。
 package backup
 
 import "errors"
@@ -13,8 +13,8 @@ const (
 
 var ErrInvalidCategories = errors.New("invalid backup categories")
 
-// ValidateCategories accepts independent, unique categories and returns archive
-// order. Configuration is never added implicitly to a data-only selection.
+// ValidateCategories 校验互相独立且不重复的类别，并按归档顺序返回。
+// 仅选择数据类别时，不会自动加入 Configuration。
 func ValidateCategories(input []Category) ([]Category, error) {
 	if len(input) < 1 || len(input) > 3 {
 		return nil, ErrInvalidCategories

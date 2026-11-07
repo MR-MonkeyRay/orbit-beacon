@@ -1,4 +1,4 @@
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h, icon} from '../../shared/dom.js';
 import {api, getNavigationSignal, revalidateSession, session, setSession} from '../api.js';
@@ -22,30 +22,48 @@ export async function loginPage() {
   try {
     await revalidateSession();
     return session.user.must_change_password ? '/change-password' : nextPath();
-  } catch { /* not signed in */ }
+  } catch { /* 未登录 */ }
   const errorBox = h('div', {class: 'form-error', role: 'alert', hidden: true});
   const username = input({name: 'username', autocomplete: 'username', required: true, autocapitalize: 'none', dataset: {autofocus: ''}});
   const password = passwordInput({name: 'password', autocomplete: 'current-password', required: true});
-  validateBytes(username, 1, 128, t('shell.username'));
-  validateBytes(password, 8, 1024, t('shell.password'));
+  validateBytes(username, 1, 128, t('account.username'));
+  validateBytes(password, 8, 1024, t('account.password'));
+  const otp = input({name: 'otp', autocomplete: 'one-time-code', autocapitalize: 'none', disabled: true});
+  validateBytes(otp, 1, 64, t('account.otp'));
+  const otpField = field(t('account.otp'), otp);
+  otpField.hidden = true;
+  let factorRequired = false;
+  const clearFactor = () => {
+    factorRequired = false; otp.value = ''; otp.required = false; otp.disabled = true; otpField.hidden = true; otp.showError('');
+  };
+  username.addEventListener('input', clearFactor);
+  password.addEventListener('input', clearFactor);
   const submit = button(t('shell.signIn'), {type: 'submit', variant: 'primary'});
-  const form = h('form', {class: 'form'}, errorBox, field(t('shell.username'), username), field(t('shell.password'), password, {inner: password.wrapper}), submit);
+  const form = h('form', {class: 'form'}, errorBox, field(t('account.username'), username), field(t('account.password'), password, {inner: password.wrapper}), otpField, submit);
   trackFormDirty(form);
-  getNavigationSignal()?.addEventListener('abort', () => { password.value = ''; }, {once: true});
-  window.addEventListener('pagehide', () => { password.value = ''; }, {once: true, signal: getNavigationSignal() || undefined});
+  getNavigationSignal()?.addEventListener('abort', () => { password.value = ''; otp.value = ''; }, {once: true});
+  window.addEventListener('pagehide', () => { password.value = ''; otp.value = ''; }, {once: true, signal: getNavigationSignal() || undefined});
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (submit.classList.contains('busy')) return;
     errorBox.hidden = true;
     busy(submit, true);
+    let keepPassword = false;
+    otp.showError('');
     try {
-      const value = await api('/session', {method: 'POST', body: {username: username.value, password: password.value}, noRedirect: true});
+      const value = await api('/session', {method: 'POST', body: {username: username.value, password: password.value, ...(factorRequired ? {otp: otp.value} : {})}, noRedirect: true});
       password.value = '';
       form.markClean();
       setSession(value);
       void go(session.user.must_change_password ? '/change-password' : nextPath(), {replace: true}).catch(ignoreNavigationCancellation);
     } catch (error) {
       if (!form.isConnected || error.name === 'AbortError') return;
+      if (['totp_required', 'totp_invalid'].includes(error.code)) {
+        factorRequired = true; keepPassword = true;
+        otpField.hidden = false; otp.disabled = false; otp.required = true;
+        if (error.code === 'totp_invalid') otp.showError(t('errors.totp_invalid'));
+        otp.focus(); return;
+      }
       const message = error.status === 401 ? t('shell.invalidCredentials')
         : error.status === 429 ? t('shell.signInRateLimited') : errorText(error);
       errorBox.replaceChildren(icon('alert'), h('span', null, message));
@@ -53,7 +71,7 @@ export async function loginPage() {
       password.classList.remove('touched');
       password.focus();
     } finally {
-      password.value = '';
+      if (!keepPassword) { password.value = ''; clearFactor(); }
       form.syncDirty();
       busy(submit, false);
     }
@@ -61,7 +79,6 @@ export async function loginPage() {
   const changed = new URLSearchParams(location.search).has('password-changed');
   return authLayout({
     title: t('shell.signInTitle'),
-    description: t('shell.signInDescription'),
     content: [changed ? callout(t('shell.passwordChanged'), 'info') : null, form],
     footer: h('a', {href: '/'}, t('shell.viewPublic'))
   });

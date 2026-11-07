@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {flush, TestElement} from './console-dom.js';
+import {reducedMotion} from '../src/shared/dom.js';
+import {copy, flush, TestElement} from './console-dom.js';
 import {frame, liveHarness, response, stream} from './live-harness.js';
 
 const entry = new URL('../src/public/main.js', import.meta.url);
@@ -9,7 +10,9 @@ const source = (await readFile(entry, 'utf8')).replace("import './public.css';",
   .replace(/from '(\.\.?\/[^']+)'/g, (_match, path) => `from '${new URL(path, entry).href}'`);
 let run = 0;
 const payload = (name = 'edge', extra = {}) => ({
+  announcements: [],
   nodes: [{name, region: '', provider: '', status: 'online', last_seen: '2026-10-27T12:34:56Z',
+    availability: {start_day: '2026-09-28', percent: null, days: Array(30).fill(null)},
     cpu_percent: 25, memory_percent: null, load1: null, uptime_seconds: 3600,
     metric_status: {cpu_percent: 'ok', memory_percent: 'unavailable', load1: 'unavailable', uptime_seconds: 'ok'}}],
   generated_at: '2026-10-27T12:34:56Z', has_more: false, next_offset: null, ...extra
@@ -25,7 +28,7 @@ async function setup(t, respond) {
   globalThis.localStorage.getItem = (key) => key === 'orbitbeacon-locale' ? 'en' : null;
   env.document.createElement = (tag) => new PublicElement(tag);
   env.document.createElementNS = (_namespace, tag) => new PublicElement(tag);
-  const ids = ['nodes', 'empty', 'empty-text', 'retry', 'headline', 'summary', 'updated', 'announcement', 'refresh', 'countdown', 'filters', 'pagination', 'previous', 'next', 'page', 'constellation', 'theme', 'top-actions', 'locale-error'];
+  const ids = ['announcements', 'nodes', 'empty', 'empty-text', 'retry', 'headline', 'summary', 'updated', 'announcement', 'refresh', 'countdown', 'filters', 'pagination', 'previous', 'next', 'page', 'constellation', 'theme', 'top-actions', 'locale-error'];
   const elements = Object.fromEntries(ids.map((id) => {
     const element = new PublicElement('div'); element.id = id; env.body.append(element); return [id, element];
   }));
@@ -50,6 +53,21 @@ test('public WS snapshots render values; heartbeats and ordinary snapshots do no
   assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'second');
   assert.equal(ui.elements.announcement.textContent, announced);
   assert.equal(ui.requests.length, 0);
+});
+
+test('public page turn keeps the announcement element until the next page replaces it', async (t) => {
+  const ui = await setup(t);
+  const notice = {level: 'warning', title: 'maintenance', body: 'tonight', starts_at: '2026-10-27T00:00:00Z', ends_at: null};
+  ui.sockets[0].open(); ui.sockets[0].message(snapshot(payload('one', {announcements: [notice], has_more: true, next_offset: 50})));
+  const article = ui.elements.announcements.children[0];
+  ui.elements.next.click();
+  assert.equal(ui.elements.announcements.children[0], article);
+  ui.sockets[1].open(); ui.sockets[1].message(snapshot(payload('two', {announcements: [notice]})));
+  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'two');
+  assert.equal(ui.elements.announcements.children[0], article);
+  ui.elements.previous.click();
+  ui.sockets[2].open(); ui.sockets[2].message(snapshot(payload('one', {has_more: true, next_offset: 50})));
+  assert.equal(ui.elements.announcements.children.length, 0);
 });
 
 test('public fallback is transparent and HTTP countdown uses the server interval without heartbeat announcements', async (t) => {
@@ -82,9 +100,16 @@ test('public broken channel retains values and online presence until the next va
   assert.equal(card.querySelector('.last-report').hidden, false);
   sse.frame(snapshot(payload('', {nodes: []}))); await flush();
   assert.equal(ui.elements.nodes.children.length, 0);
-  assert.notEqual(ui.elements['empty-text'].textContent, '');
+  assert.notEqual(ui.elements.headline.textContent, '');
   assert.equal(ui.elements.retry.hidden, true);
-  assert.equal(ui.elements.empty.hidden, false);
+  // 空集合只由标题说明一次；空态盒子保持隐藏。
+  assert.equal(ui.elements.empty.hidden, true);
+  assert.equal(ui.elements.headline.textContent, copy('public.empty.all'));
+  assert.equal(ui.elements.summary.textContent, '');
+  assert.equal(ui.elements.summary.parentElement, ui.elements.headline.parentElement);
+  sse.frame(snapshot(payload('returned'))); await flush();
+  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'returned');
+  assert.equal(ui.elements.summary.textContent, copy('public.summary.full', {count: 1}));
 });
 
 test('public invalid snapshot cannot clear an accepted collection or change its values', async (t) => {
@@ -140,6 +165,18 @@ test('public filters survive valid patches and keep filtering the current page',
   assert.equal(ui.elements.nodes.children[0].hidden, true);
 });
 
+test('public empty box explains an empty filter but not an empty collection', async (t) => {
+  const ui = await setup(t); ui.sockets[0].open();
+  const data = payload('online'); data.nodes.push({...data.nodes[0], name: 'offline', status: 'offline'});
+  ui.sockets[0].message(snapshot(data));
+  ui.elements.filters.children[2].click();
+  ui.sockets[0].message(snapshot(payload('online')));
+  assert.equal(ui.elements.empty.hidden, false);
+  assert.equal(ui.elements['empty-text'].textContent, copy('public.filter.empty.offline'));
+  ui.sockets[0].message(snapshot(payload('', {nodes: []})));
+  assert.equal(ui.elements.empty.hidden, true);
+});
+
 test('public hide and BFCache preserve stale values and resume with a fresh WS scope', async (t) => {
   const ui = await setup(t); ui.sockets[0].open(); ui.sockets[0].message(snapshot(payload('visible')));
   ui.document.hidden = true; ui.document.dispatchEvent(new Event('visibilitychange'));
@@ -185,4 +222,43 @@ test('public-page disable clears rendered data and timers before replacing the r
   await flush(); await ui.advance(600000);
   assert.deepEqual(redirects, ['/']);
   assert.equal(ui.requests.length, 0);
+});
+
+test('public gauges clear both ARIA values when a metric becomes missing', async (t) => {
+  const ui = await setup(t);
+  const socket = ui.sockets[0]; socket.open();
+  const data = payload();
+  data.nodes[0].cpu_percent = 80;
+  socket.message(snapshot(data));
+  const meter = ui.elements.nodes.querySelector('.track');
+  assert.equal(meter.getAttribute('aria-valuenow'), '80.0');
+  assert.equal(meter.getAttribute('aria-valuetext'), '80.0%');
+  data.nodes[0].cpu_percent = null;
+  data.nodes[0].metric_status.cpu_percent = 'unavailable';
+  socket.message(snapshot(data));
+  assert.equal(meter.getAttribute('aria-valuenow'), null);
+  assert.equal(meter.getAttribute('aria-valuetext'), null);
+});
+
+
+test('reduced-motion HTTP refresh and loading state work without any animation completion events', async (t) => {
+  const descriptor = Object.getOwnPropertyDescriptor(reducedMotion, 'matches');
+  Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => true});
+  t.after(() => Object.defineProperty(reducedMotion, 'matches', descriptor));
+  let release;
+  const ui = await setup(t, (request) => request.url.includes('/stream?') ? response({}, {status: 503})
+    : new Promise((resolve) => { release = () => resolve(response(snapshot(payload(), 10))); }));
+  assert.equal(ui.elements.refresh.getAttribute('aria-busy'), 'true');
+  assert.equal(ui.elements.announcement.textContent, copy('public.loading'));
+  ui.sockets[0].fail(); await flush();
+  release(); await flush();
+  assert.equal(ui.elements.refresh.hasAttribute('aria-busy'), false);
+  assert.equal(ui.elements.nodes.children.length, 1);
+  assert.match(ui.elements.updated.textContent, /10/);
+  await ui.advance(5000);
+  assert.match(ui.elements.updated.textContent, /5/);
+  await ui.advance(5000);
+  assert.equal(ui.requests.length, 3, 'next HTTP poll is independent of CSS animationend');
+  release(); await flush();
+  assert.equal(ui.elements.refresh.hasAttribute('aria-busy'), false);
 });

@@ -8,6 +8,7 @@ import (
 )
 
 type Report struct {
+	CommandResults  []CommandResult `json:"command_results,omitzero"`
 	ProtocolVersion int             `json:"protocol_version"`
 	RunGeneration   uint64          `json:"run_generation"`
 	SessionID       string          `json:"session_id"`
@@ -20,15 +21,15 @@ type Report struct {
 	ProbeResults    []ProbeResult   `json:"probe_results,omitzero"`
 }
 
-// UnmarshalJSON enforces complete runtime observations without making local
-// configuration defaults or partial local JSON part of the report contract.
+// UnmarshalJSON 强制上报包含完整的运行时观测，且不会把本地配置默认值或
+// 部分本地 JSON 纳入上报契约。
 func (r *Report) UnmarshalJSON(data []byte) error {
 	type report Report
 	var decoded report
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-	if decoded.Runtime.Interfaces == nil || decoded.Runtime.DiskPaths == nil || decoded.Runtime.ProbeTargets == nil {
+	if decoded.Runtime.Interfaces == nil || decoded.Runtime.DiskPaths == nil || decoded.Runtime.ProbeTargets == nil || decoded.Runtime.RemoteCommands == nil || decoded.Runtime.DisabledFeatures == nil {
 		return errors.New("report runtime requires non-null selection arrays")
 	}
 	*r = Report(decoded)
@@ -73,6 +74,14 @@ func (r Report) Validate() error {
 		}
 		trafficIdentities[identity] = struct{}{}
 	}
+	if len(r.CommandResults) > 2 {
+		return errors.New("too many command results")
+	}
+	for _, result := range r.CommandResults {
+		if err := result.Validate(); err != nil {
+			return err
+		}
+	}
 	if len(r.ProbeResults) > 5 {
 		return errors.New("too many probe results")
 	}
@@ -100,6 +109,7 @@ func (r Report) Validate() error {
 }
 
 type ReportResponse struct {
+	Command     *Command  `json:"command,omitempty"`
 	NodeID      string    `json:"node_id,omitempty"`
 	AcceptedSeq uint64    `json:"accepted_seq"`
 	ServerTime  time.Time `json:"server_time"`

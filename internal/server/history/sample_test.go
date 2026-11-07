@@ -2,9 +2,10 @@ package history
 
 import (
 	"math"
-	v1 "orbitbeacon/internal/protocol/v1"
 	"testing"
 	"time"
+
+	v1 "orbitbeacon/internal/protocol/v1"
 )
 
 func ptr[T any](value T) *T { return &value }
@@ -25,9 +26,17 @@ func TestSnapshotScalarMathAndOwnership(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	sample := Snapshot("node", now, m)
-	for metric, want := range map[string]float64{"cpu_percent": 25, "memory_used_bytes": 750, "memory_total_bytes": 1000, "memory_used_percent": 75, "swap_used_bytes": 20, "swap_total_bytes": 100, "swap_used_percent": 20, "load1": 1.5, "load5": 2, "load15": 3, "uptime_seconds": 100, "disk_used_bytes": 200, "disk_total_bytes": 400, "disk_used_percent": 50, "net_rx_bytes_per_second": 50, "net_tx_bytes_per_second": 50} {
+	for metric, want := range map[string]float64{"cpu_percent": 25, "memory_used_percent": 75, "swap_used_percent": 20, "load1": 1.5, "load5": 2, "load15": 3, "disk_used_percent": 50, "net_rx_bytes_per_second": 50, "net_tx_bytes_per_second": 50} {
 		if got, exists := sample.Values[metric]; !exists || got != want {
 			t.Errorf("%s=%v exists=%v want=%v", metric, got, exists, want)
+		}
+	}
+	if len(sample.Values) != 11 {
+		t.Fatalf("unexpected snapshot metrics: %v", sample.Values)
+	}
+	for _, metric := range []string{"uptime_seconds", "memory_total_bytes", "memory_used_bytes", "swap_total_bytes", "swap_used_bytes", "disk_total_bytes", "disk_used_bytes"} {
+		if _, exists := sample.Values[metric]; exists {
+			t.Errorf("unused history metric %s recorded", metric)
 		}
 	}
 	*m.CPUPercent = 99
@@ -95,7 +104,8 @@ func TestSnapshotRejectsUnboundedMetrics(t *testing.T) {
 	for _, test := range []struct {
 		metric string
 		limit  float64
-	}{{"cpu_percent", 100}, {"memory_used_percent", 100}, {"swap_used_percent", 100}, {"disk_used_percent", 100}, {"load1", 1e6}, {"load5", 1e6}, {"load15", 1e6}, {"net_rx_bytes_per_second", 1e15}, {"net_tx_bytes_per_second", 1e15}} {
+	}{{"cpu_percent", 100}, {"memory_used_percent", 100}, {"swap_used_percent", 100}, {"disk_used_percent", 100},
+		{"inode_used_percent", 100}, {"load1", 1e6}, {"load5", 1e6}, {"load15", 1e6}, {"net_rx_bytes_per_second", 1e15}, {"net_tx_bytes_per_second", 1e15}} {
 		for _, value := range []float64{0, test.limit} {
 			if !validValue(test.metric, value) {
 				t.Errorf("rejected %s=%v", test.metric, value)
@@ -122,6 +132,121 @@ func TestSnapshotNetworkRejectsInvalidInterfacesBeforeSumming(t *testing.T) {
 		s := Snapshot("node", time.Now(), m)
 		if s.Values["net_rx_bytes_per_second"] != 10 || s.Values["net_tx_bytes_per_second"] != 20 {
 			t.Fatalf("invalid interface poisoned rates: %v", s.Values)
+		}
+	}
+}
+
+func TestSampleSeriesValueBounds(t *testing.T) {
+	for _, tc := range []struct {
+		metric string
+		limit  float64
+	}{
+		{"disk_used_percent", 100},
+		{"inode_used_percent", 100},
+		{"cpu_percent", 100},
+		{"memory_used_percent", 100},
+		{"swap_used_percent", 100},
+		{"load1", 1e6},
+		{"load5", 1e6},
+		{"load15", 1e6},
+		{"net_rx_bytes_per_second", 1e15},
+		{"net_tx_bytes_per_second", 1e15},
+		{"uptime_seconds", 1e12},
+		{"disk_used_bytes", float64(math.MaxUint64)},
+	} {
+		for _, suffix := range []string{"", ":/x", ":/x:y_percent"} {
+			t.Run(tc.metric+suffix, func(t *testing.T) {
+				metric := tc.metric + suffix
+				for _, value := range []float64{0, tc.limit, tc.limit * 1.01, -1, math.NaN(), math.Inf(1), math.Inf(-1)} {
+					want := value >= 0 && value <= tc.limit
+					if got := ValidValue(metric, value); got != want {
+						t.Errorf("ValidValue(%q, %v)=%v, want %v", metric, value, got, want)
+					}
+					s := &Service{pending: make(map[bucketKey]map[string]aggregate)}
+					s.add(Sample{NodeID: "node", ReceivedAt: time.Unix(60, 0), Values: map[string]float64{metric: value}})
+					got, accepted := s.pending[bucketKey{"node", 60}][metric]
+					if accepted != want || (want && (got.total != value || got.peak != value || got.samples != 1)) {
+						t.Errorf("Sample %s=%v: accepted=%v aggregate=%+v, want accepted=%v", metric, value, accepted, got, want)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestSnapshotDiskAndInodeSeriesFreshnessAndAggregation(t *testing.T) {
+	for _, tc := range []struct {
+		status   string
+		age      int64
+		included bool
+	}{
+		{"ok", 0, true}, {"error", 0, false}, {"stale", 0, false}, {"ok", 180001, false},
+	} {
+		t.Run(tc.status+(time.Duration(tc.age)*time.Millisecond).String(), func(t *testing.T) {
+			m := v1.Metrics{
+				Disks: []v1.DiskMetrics{
+					{Path: "/a:one", TotalBytes: ptr(uint64(100)), UsedBytes: ptr(uint64(25)), InodesTotal: ptr(uint64(40)), InodesUsed: ptr(uint64(30))},
+					{Path: "/b", TotalBytes: ptr(uint64(300)), UsedBytes: ptr(uint64(175)), InodesTotal: ptr(uint64(60)), InodesUsed: ptr(uint64(20))},
+					{Path: "/unsupported", TotalBytes: ptr(uint64(100)), UsedBytes: ptr(uint64(50))},
+				},
+				MetricStatus: map[string]string{"disk:/a:one": tc.status, "disk:/b": "ok", "disk:/unsupported": "ok"},
+				Sources:      map[string]v1.SourceMetadata{"disk:/a:one": {SampleID: "a", AgeMS: tc.age, SourceIntervalMS: 60000}, "disk:/b": {SampleID: "b", SourceIntervalMS: 60000}, "disk:/unsupported": {SampleID: "c", SourceIntervalMS: 60000}},
+			}
+			sample := Snapshot("node", time.Now(), m)
+			expected := map[string]float64{"disk_used_percent:/b": 100 * 175.0 / 300, "inode_used_percent:/b": 100 * 20.0 / 60, "disk_used_percent:/unsupported": 50}
+			if tc.included {
+				expected["disk_used_percent:/a:one"], expected["inode_used_percent:/a:one"] = 25, 75
+				expected["disk_used_percent"], expected["inode_used_percent"] = 50, 50
+			} else {
+				expected["disk_used_percent"], expected["inode_used_percent"] = 100*225.0/400, 100*20.0/60
+			}
+			if len(sample.Values) != len(expected) {
+				t.Fatalf("values=%v want=%v", sample.Values, expected)
+			}
+			for metric, want := range expected {
+				if got, ok := sample.Values[metric]; !ok || math.Abs(got-want) > 1e-10 {
+					t.Errorf("%s=%v present=%v want=%v", metric, got, ok, want)
+				}
+			}
+		})
+	}
+}
+
+func TestSnapshotOptionalHostMetrics(t *testing.T) {
+	m := v1.Metrics{DiskIO: &v1.DiskIOMetrics{ReadBytesPerSec: 1024, WriteBytesPerSec: 2048, BusyPercent: 25}, Pressure: &v1.PressureMetrics{CPU: ptr(1.5), Memory: ptr(2.5), IO: ptr(3.5)}, TemperatureCelsius: ptr(48.5)}
+	sample := Snapshot("node", time.Now(), m)
+	want := map[string]float64{"disk_read_bytes_per_second": 1024, "disk_write_bytes_per_second": 2048, "disk_busy_percent": 25, "pressure_cpu_percent": 1.5, "pressure_memory_percent": 2.5, "pressure_io_percent": 3.5, "temperature_celsius": 48.5}
+	if len(sample.Values) != len(want) {
+		t.Fatal(sample.Values)
+	}
+	for key, value := range want {
+		if sample.Values[key] != value {
+			t.Fatal(key, sample.Values)
+		}
+	}
+	*m.TemperatureCelsius = 99
+	*m.Pressure.CPU = 99
+	if sample.Values["temperature_celsius"] != 48.5 || sample.Values["pressure_cpu_percent"] != 1.5 {
+		t.Fatal("snapshot retained pointers")
+	}
+	m = v1.Metrics{Pressure: &v1.PressureMetrics{IO: ptr(0.0)}}
+	sample = Snapshot("node", time.Now(), m)
+	if len(sample.Values) != 1 || sample.Values["pressure_io_percent"] != 0 {
+		t.Fatal(sample.Values)
+	}
+	if len(Snapshot("node", time.Now(), v1.Metrics{}).Values) != 0 {
+		t.Fatal("nil metrics recorded")
+	}
+	if validValue("temperature_celsius", 150.01) || !validValue("temperature_celsius", 150) {
+		t.Fatal("temperature limit")
+	}
+}
+
+func TestOptionalHostMetricHistoryUnits(t *testing.T) {
+	for metric, want := range map[string]string{"disk_read_bytes_per_second": "bytes_per_second", "disk_write_bytes_per_second": "bytes_per_second", "disk_busy_percent": "percent", "pressure_cpu_percent": "percent", "pressure_memory_percent": "percent", "pressure_io_percent": "percent", "temperature_celsius": "celsius"} {
+		response, err := Empty(metric, "1h")
+		if err != nil || response.Unit != want || response.Points == nil {
+			t.Fatalf("%s: %+v %v", metric, response, err)
 		}
 	}
 }

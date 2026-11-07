@@ -1,9 +1,12 @@
 import {t} from './i18n.js';
 
 const errorKeys = new Set([
+  'api_token_limit',
+ 'totp_required', 'totp_invalid', 'totp_already_enabled', 'totp_setup_expired',
+  'command_same_version', 'command_not_allowed', 'command_active', 'node_unavailable',
   'unauthenticated', 'forbidden', 'password_change_required', 'password_unchanged', 'public_page_disabled',
   'invalid_old_password', 'rate_limited', 'validation_failed', 'invalid_json', 'network', 'timeout',
-  'unreadable_response', 'locale_save_failed', 'not_found', 'node_not_found', 'node_disabled',
+  'unreadable_response', 'not_found', 'node_not_found', 'node_disabled',
   'node_capacity_reached', 'username_conflict', 'last_administrator', 'storage_busy', 'not_available',
   'body_too_large', 'internal_error', 'secret_unreadable', 'backup_plan_busy', 'backup_queue_full',
   'notification_channel_capacity_reached', 'alert_rule_capacity_reached', 'enrollment_not_found',
@@ -16,12 +19,30 @@ const errorKeys = new Set([
 
 export function errorText(error) {
   let code = error?.code;
+  if (code === 'announcement_capacity_reached') code = 'validation_failed';
   if (error?.name === 'TimeoutError') code = 'timeout';
   const message = t(errorKeys.has(code) ? `errors.${code}` : 'errors.generic');
   return error?.requestID ? t('errors.withRequest', {message, id: error.requestID}) : message;
 }
 
 const fieldReasons = new Map([
+  ['must be a valid probe target', 'alerts.validation.probeTarget'],
+  ['must be null for this metric', 'alerts.validation.probeTarget'],
+  ['must be >', 'fields.comparator'],
+  ['must be <', 'fields.comparator'],
+  ['must be greater than zero', 'fields.threshold'],
+  ['must be an integer between 1 and 100000', 'fields.apiTokenRate'],
+  ['is only valid for disk_used_percent or inode_used_percent', 'fields.historyDiskMetric'],
+  ['must be an absolute path of at most 1024 bytes without NUL', 'fields.absoluteDiskPath'],
+  ['must be supplied exactly once', 'fields.queryOnce'],
+  ['must be a supported history metric', 'fields.metric'],
+  ['must be 30, 90, 365 or null', 'fields.apiTokenExpiry'],
+  ['invalid message template', 'alerts.validation.template'],
+  ['invalid announcement title', 'announcements.invalidTitle'],
+  ['invalid announcement body', 'announcements.invalidBody'],
+  ['invalid announcement end', 'announcements.invalidEnd'],
+  ['must be after starts_at and now', 'alerts.silences.invalidEnd'],
+  ['must be within 30 days of starts_at', 'alerts.silences.tooLong'],
   ['is required', 'fields.required'], ['must be valid UTF-8', 'fields.utf8'],
   ['must be nonempty when published', 'fields.publishedName'],
   ['must be valid UTF-8 without control characters and at most 255 bytes', 'fields.publicText255'],
@@ -40,18 +61,16 @@ const fieldReasons = new Map([
   ['must be all, group or node', 'fields.scope'], ['must identify an existing scope', 'fields.scope'], ['scope does not exist', 'fields.scope'],
   ['must be an array of at most 20 existing channel IDs', 'fields.channels'],
   ['must contain unique existing channel IDs', 'fields.channels'], ['channel does not exist', 'fields.channels'],
-  ['must be an object', 'fields.object'], ['unexpected fields for webhook', 'fields.object'],
+  ['must be an object', 'fields.object'], ['unexpected fields for webhook', 'fields.object'], ['unexpected fields for URL channel', 'fields.object'],
   ['unexpected or null configuration field', 'fields.object'], ['invalid configuration fields', 'fields.object'],
   ['unknown field', 'fields.object'], ['invalid field type', 'fields.invalidType'],
   ['must be a string; omit to retain or empty to clear', 'fields.invalidType'],
-  ['webhook URL cannot be empty', 'fields.webhook'],
-  ['requires an absolute webhook URL without credentials or fragment', 'fields.webhook'],
-  ['invalid webhook port', 'fields.port'],
-  ['HTTPS required; explicit insecure setting permits literal loopback HTTP only', 'fields.webhookTLS'],
+  ['channel URL cannot be empty', 'alerts.validation.channelURL'], ['invalid channel URL', 'alerts.validation.channelURL'],
+  ['invalid channel secret', 'alerts.validation.channelSecret'],
   ['requires a valid chat_id only', 'fields.chatID'], ['requires a bot token', 'fields.botToken'],
   ['requires SMTP host, port 1..65535, from and 1..20 recipients', 'fields.smtp'], ['invalid recipient address', 'fields.recipient'],
   ['cannot contain NUL', 'fields.nul'], ['SMTP credentials exceed command size limit', 'fields.smtpSize'],
-  ['password required with username', 'fields.smtpPassword'], ['must be webhook, telegram or email', 'fields.channelKind'],
+  ['password required with username', 'fields.smtpPassword'], ['must be webhook, telegram, email, feishu, dingtalk, wecom, bark or ntfy', 'fields.channelKind'],
   ['name, kind, enabled and config required', 'fields.channelRequired'], ['cannot change kind', 'fields.kindImmutable'],
   ['Enter a destination object.', 'fields.object'], ['Destination fields cannot be null.', 'fields.destinationNull'],
   ['Changing provider requires endpoint, region and replacement credentials.', 'fields.providerChange'],
@@ -71,6 +90,7 @@ const byteLimits = new Map([
   ['must be nonempty and at most 255 bytes', 255],
   ['entries must be nonempty and at most 255 bytes', 255],
   ['must contain 1..100 UTF-8 bytes', 100],
+  ['must contain 1..255 UTF-8 bytes', 255],
   ['Enter a name of at most 100 bytes.', 100],
   ['must be at most 4096 bytes', 4096]
 ]);

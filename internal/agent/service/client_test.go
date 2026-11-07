@@ -60,7 +60,7 @@ func TestEnrollmentPersistsIdentityBeforeRequestAndReusesItAfterLostResponse(t *
 		attempt := len(requests)
 		mu.Unlock()
 		if attempt == 1 {
-			// The binding succeeded but the response is lost at the transport layer.
+			// 绑定已成功，但响应在传输层丢失。
 			connection, _, err := w.(http.Hijacker).Hijack()
 			if err != nil {
 				t.Error(err)

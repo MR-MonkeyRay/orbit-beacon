@@ -17,8 +17,8 @@ import (
 	"orbitbeacon/internal/agent/identity"
 )
 
-// Done is observed when the contended lock starts watching cancellation. This
-// handshake avoids sleeps and proves Current is read while the operation waits.
+// 锁竞争期间开始监听取消时，会调用 Done 并发出信号。
+// 这个握手机制避免依赖休眠，并证明等待锁时仍可读取 Current。
 type observedLockContext struct {
 	context.Context
 	waiting chan struct{}

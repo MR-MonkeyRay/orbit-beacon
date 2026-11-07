@@ -50,7 +50,7 @@ func TestListPublicRecordsVisibilityOrderingPaginationAndIdentity(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	records, more, err := service.ListPublicRecords(ctx, 2, 0)
+	records, more, err := service.ListPublicRecords(ctx, 2, 0, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,21 +59,21 @@ func TestListPublicRecordsVisibilityOrderingPaginationAndIdentity(t *testing.T) 
 	}
 	wantFirst := nodes.PublicRecord{
 		ID: first.ID, Settings: nodes.PublicSettings{Enabled: true, Name: "First", Region: "region", Provider: "provider"},
-		LastSeen: base.Add(time.Minute), Credential: firstCredential, CredentialEpoch: 9, Generation: 7, Session: "session-first",
+		LastSeen: base.Add(time.Minute), Credential: firstCredential, CredentialEpoch: 9, Generation: 7, Session: "session-first", AvailabilityJSON: "[]",
 	}
 	if records[0] != wantFirst {
 		t.Errorf("first record = %+v, want %+v", records[0], wantFirst)
 	}
-	records, more, err = service.ListPublicRecords(ctx, 2, 2)
+	records, more, err = service.ListPublicRecords(ctx, 2, 2, time.Now())
 	if err != nil || more || len(records) != 1 || records[0].ID != third.ID {
 		t.Fatalf("second page = %+v, more=%v, err=%v; want third only", records, more, err)
 	}
-	records, more, err = service.ListPublicRecords(ctx, 2, 3)
+	records, more, err = service.ListPublicRecords(ctx, 2, 3, time.Now())
 	if err != nil || more || len(records) != 0 {
 		t.Fatalf("empty page = %+v, more=%v, err=%v", records, more, err)
 	}
 	for _, args := range [][2]int{{0, 0}, {101, 0}, {1, -1}} {
-		if _, _, err := service.ListPublicRecords(ctx, args[0], args[1]); !errors.Is(err, nodes.ErrInvalidInput) {
+		if _, _, err := service.ListPublicRecords(ctx, args[0], args[1], time.Now()); !errors.Is(err, nodes.ErrInvalidInput) {
 			t.Errorf("pagination %v error = %v, want ErrInvalidInput", args, err)
 		}
 	}
@@ -93,11 +93,11 @@ func TestListPublicRecordsUsesConfiguredReaderAndNilFallsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	service.SetPublicReader(closed)
-	if _, _, err := service.ListPublicRecords(context.Background(), 1, 0); err == nil {
+	if _, _, err := service.ListPublicRecords(context.Background(), 1, 0, time.Now()); err == nil {
 		t.Fatal("ListPublicRecords succeeded through a configured closed reader")
 	}
 	service.SetPublicReader(nil)
-	records, more, err := service.ListPublicRecords(context.Background(), 1, 0)
+	records, more, err := service.ListPublicRecords(context.Background(), 1, 0, time.Now())
 	if err != nil || more || len(records) != 1 || records[0].ID != node.ID {
 		t.Fatalf("fallback page = %+v, more=%v, err=%v", records, more, err)
 	}
@@ -198,7 +198,7 @@ func TestListPublicRecordsWithSeparateReadOnlyPool(t *testing.T) {
 	now := time.Date(2026, 4, 5, 6, 7, 8, 0, time.UTC)
 	publishRecord(t, db, node, now, now, "Public", 1, "session")
 	service.SetPublicReader(reader)
-	records, more, err := service.ListPublicRecords(context.Background(), 1, 0)
+	records, more, err := service.ListPublicRecords(context.Background(), 1, 0, time.Now())
 	if err != nil || more || len(records) != 1 || records[0].ID != node.ID {
 		t.Fatalf("reader page = %+v, more=%v, err=%v", records, more, err)
 	}

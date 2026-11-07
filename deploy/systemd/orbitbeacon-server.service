@@ -1,5 +1,5 @@
 [Unit]
-Description=OrbitBeacon control plane
+Description=OrbitBeacon Server
 After=network-online.target
 Wants=network-online.target
 
@@ -27,7 +27,6 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
-# 绑定 1024 以下端口需要授予 CAP_NET_BIND_SERVICE。
 CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native

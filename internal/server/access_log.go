@@ -3,12 +3,13 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
 
-// responseLog records bytes actually written, without inspecting response bodies
-// or credentials. Unwrap preserves ResponseController support.
+// responseLog 记录实际写出的字节数，不检查响应体或凭据。
+// Unwrap 保留对 ResponseController 的支持。
 type responseLog struct {
 	http.ResponseWriter
 	status int
@@ -21,7 +22,7 @@ func (w *responseLog) WriteHeader(status int) {
 	if w.status != 0 {
 		return
 	}
-	// Informational responses do not commit the final response status.
+	// 信息性响应不提交最终的响应状态。
 	if status >= 100 && status < 200 && status != http.StatusSwitchingProtocols {
 		w.ResponseWriter.WriteHeader(status)
 		return
@@ -58,7 +59,10 @@ func (h *handler) observeRequest(w http.ResponseWriter, r *http.Request, next ht
 			}
 		}
 		duration := time.Since(start)
-		route := requestRoute(r.URL.Path)
+		route := r.Pattern
+		if route == "" {
+			route = staticRequestRoute(r.URL.Path)
+		}
 		if h.metrics != nil {
 			h.metrics.observe(r.Method, route, status, duration, r.URL.Path)
 		}
@@ -79,38 +83,16 @@ func (h *handler) observeRequest(w http.ResponseWriter, r *http.Request, next ht
 
 func healthProbe(p string) bool { return p == "/healthz/live" || p == "/healthz/ready" }
 
-// Only known route templates enter logs or labels. Unknown paths, arbitrary
-// filenames, and malformed IDs may contain secrets, so never echo them back.
+// 只有已知路由模板进入日志或标签。未知路径、任意文件名和格式错误的 ID
+// 可能包含机密，因此绝不回显它们。
 func requestRoute(p string) string {
-	if healthProbe(p) {
-		return p
+	if entry := apiRoutes.match(&http.Request{URL: &url.URL{Path: p}}); entry != nil {
+		return entry.label
 	}
-	if len(routeMethods(p)) != 0 {
-		parts := strings.Split(p, "/")
-		if len(parts) >= 5 && parts[1] == "api" && parts[2] == "v1" {
-			switch parts[3] {
-			case "nodes", "users", "groups", "enrollments", "alert-rules", "notification-channels":
-				if parts[4] != "batch" {
-					parts[4] = "{id}"
-				}
-			case "backup-plans":
-				if parts[4] != "preview" {
-					parts[4] = "{id}"
-				}
-			case "notifications":
-				if parts[4] != "summary" && parts[4] != "read-all" {
-					parts[4] = "{id}"
-				}
-			case "alerts":
-				if parts[4] != "summary" {
-					parts[4] = "{id}"
-				}
-			case "tasks":
-				parts[4] = "{id}"
-			}
-		}
-		return strings.Join(parts, "/")
-	}
+	return staticRequestRoute(p)
+}
+
+func staticRequestRoute(p string) string {
 	switch p {
 	case "/", "/login", "/change-password", "/overview", "/nodes", "/alerts", "/settings":
 		return p

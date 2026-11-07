@@ -1,16 +1,16 @@
-import {t} from '../../shared/i18n.js';
+import {t, tParts} from '../i18n.js';
 import {h} from '../../shared/dom.js';
 import {createFreshnessController, sourceDeadline, timestampMillis} from '../../shared/freshness.js';
-import {absoluteWhen, formatDuration, formatLoad, formatPercent} from '../format.js';
+import {absoluteWhen, formatCelsius, formatDuration, formatLoad, formatPercent, formatRate} from '../format.js';
 import {panel, readonlyFacts} from '../ui/components.js';
-import {diskSummary, memorySummary, networkSummary} from './latest-sample-helpers.js';
+import {diskSummary, memorySummary, networkSummary} from '../lib/latest-sample-helpers.js';
 
 const usableStatus = (value) => value === 'ok' || value === 'stale';
 const number = (value) => Number.isFinite(value) && value >= 0;
 const bytes = (value) => Number.isSafeInteger(value) && value >= 0;
 
-// The only mutable portion of this view is readonly sample facts. The clock
-// callback never rebuilds facts or touches a numeric value, input, or tab.
+// 此视图只更新只读的采样信息。时钟回调只更新过期标记，
+// 不重建采样信息，也不改动数值、输入框或标签页。
 export function latestSamplePanel(node, initial, {signal} = {}) {
   const sequence = h('span', {class: 'revision'});
   const body = h('div');
@@ -50,7 +50,7 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
     if (!latest) {
       metricRecords.clear();
       lastReport.replaceChildren();
-      body.replaceChildren(h('p', {class: 'muted'}, t('nodes.sampleEmpty')));
+      body.replaceChildren(h('p', {class: 'text-note'}, t('nodes.sampleEmpty')));
       freshness.refresh();
       return;
     }
@@ -78,24 +78,41 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
     const load = ['load1', 'load5', 'load15'].map((key) => metric([key], 'load', number(metrics[key]), number(metrics[key]) ? formatLoad(metrics[key]) : '—'));
     const disks = Array.isArray(metrics.disks) && metrics.disks.length ? h('div', {class: 'sample-series'}, metrics.disks.map((disk) => metric(
       [`disk:${disk.path}`], `disk:${disk.path}`, bytes(disk.total_bytes) && bytes(disk.used_bytes) && disk.used_bytes <= disk.total_bytes,
-      diskSummary([disk])))) : '—';
+      bytes(disk.inodes_total) && bytes(disk.inodes_used) && disk.inodes_total > 0 && disk.inodes_used <= disk.inodes_total
+        ? t('nodes.diskInodeSummary', {disk: diskSummary([disk]), percent: formatPercent(disk.inodes_used / disk.inodes_total * 100)})
+        : diskSummary([disk])))) : '—';
     const networks = Array.isArray(metrics.networks) && metrics.networks.length ? h('div', {class: 'sample-series'}, metrics.networks.map((network) => metric(
       [`network:${network.name}`], `network:${network.name}`, number(network.rx_bytes_per_sec) && number(network.tx_bytes_per_sec),
       networkSummary([network])))) : '—';
     const sampled = timestampMillis(latest.sampled_at);
     const entries = [
-      ['CPU', metric(['cpu_percent'], 'cpu', number(metrics.cpu_percent) && metrics.cpu_percent <= 100, formatPercent(metrics.cpu_percent))],
+      [t('nodes.cpu'), metric(['cpu_percent'], 'cpu', number(metrics.cpu_percent) && metrics.cpu_percent <= 100, formatPercent(metrics.cpu_percent))],
       [t('nodes.memory'), metric(['memory_total_bytes', 'memory_available_bytes'], 'memory', memoryValid, memorySummary(metrics))],
-      [t('nodes.loadSeries'), h('span', {class: 'sample-load'}, load[0], ' / ', load[1], ' / ', load[2])],
+      [t('nodes.loadSeries'), h('span', {class: 'sample-load'}, tParts('nodes.loadValues', {one: load[0], five: load[1], fifteen: load[2]}))],
       [t('nodes.disk'), disks], [t('nodes.network'), networks],
       [t('nodes.uptime'), metric(['uptime_seconds'], 'uptime', number(metrics.uptime_seconds), formatDuration(metrics.uptime_seconds))],
       [t('nodes.agentVersion'), latest.system?.agent_version || node.agent_version || '—'],
       [t('nodes.sampled'), Number.isFinite(sampled) ? absoluteWhen(latest.sampled_at) : '—'],
     ];
+    const percent = (value) => number(value) && value <= 100;
+    const disk = metrics.disk_io;
+    if (disk && number(disk.read_bytes_per_sec) && number(disk.write_bytes_per_sec) && percent(disk.busy_percent)) {
+      entries.push([t('nodes.diskIO'), t('nodes.diskIOSummary', {read: formatRate(disk.read_bytes_per_sec),
+        write: formatRate(disk.write_bytes_per_sec), busy: formatPercent(disk.busy_percent)})]);
+    }
+    const pressure = ['cpu', 'memory', 'io'].map((key) => metrics.pressure?.[key]);
+    if (pressure.some(percent)) {
+      const [cpu, memory, io] = pressure.map((value) => percent(value) ? formatPercent(value) : '—');
+      entries.push([t('nodes.pressure'), t('nodes.pressureSummary', {cpu, memory, io})]);
+    }
+    const temperature = metrics.temperature_celsius;
+    if (number(temperature)) {
+      entries.push([t('nodes.temperature'), formatCelsius(temperature)]);
+    }
     const received = timestampMillis(latest.received_at);
     metricRecords = nextRecords;
     lastReport.replaceChildren(...(Number.isFinite(received)
-      ? [t('nodes.lastReport'), absoluteWhen(latest.received_at)] : []));
+      ? tParts('nodes.lastReport', {time: absoluteWhen(latest.received_at)}) : []));
     values.update(entries);
     if (!body.contains(values.element)) body.replaceChildren(values.element, lastReport);
     if (!freshness.clock(serverTime)) freshness.refresh();

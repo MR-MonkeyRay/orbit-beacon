@@ -14,12 +14,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/change"
+	"orbitbeacon/internal/server/commands"
 	"orbitbeacon/internal/server/storage"
+	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 type serviceError string
@@ -31,16 +33,17 @@ const (
 	ErrNotFound        serviceError = "node not found"
 	ErrUnauthenticated serviceError = "node authentication required"
 	ErrInvalidInput    serviceError = "invalid node request"
-	// ErrDisabled rejects agent traffic for a disabled node without treating
-	// its still-valid credential as unknown.
+	// ErrDisabled 拒绝已禁用节点的 Agent 流量，但不把它仍有效的凭据当作未知凭据。
 	ErrDisabled serviceError = "node is disabled"
 )
 
 type Node struct {
+	Stopped      bool       `json:"stopped"`
 	ID           string     `json:"id"`
 	Name         string     `json:"name"`
 	Status       string     `json:"status"`
 	Notes        string     `json:"notes"`
+	ExpiresOn    *string    `json:"expires_on"`
 	Region       string     `json:"region"`
 	Provider     string     `json:"provider"`
 	GroupID      *string    `json:"group_id"`
@@ -60,9 +63,10 @@ type MetadataPatch struct {
 	Notes    *string `json:"notes"`
 	Region   *string `json:"region"`
 	Provider *string `json:"provider"`
-	// A nil raw message leaves the group unchanged; JSON null clears it.
-	GroupID json.RawMessage `json:"group_id"`
-	Tags    *[]string       `json:"tags"`
+	// 原始消息为 nil 时不改动分组；JSON null 表示清除。
+	GroupID   json.RawMessage `json:"group_id"`
+	ExpiresOn json.RawMessage `json:"expires_on"`
+	Tags      *[]string       `json:"tags"`
 }
 
 type BatchRequest struct {
@@ -78,19 +82,17 @@ type BatchResult struct {
 }
 
 type TrafficSettings struct {
-	BillingDay int    `json:"billing_day"`
-	QuotaBytes string `json:"quota_bytes"`
+	BillingMode string `json:"billing_mode"`
+	BillingDay  int    `json:"billing_day"`
+	QuotaBytes  string `json:"quota_bytes"`
 }
 
 type TrafficSettingsPatch struct {
+	BillingMode   *string `json:"billing_mode,omitempty"`
 	BillingDay    *int    `json:"billing_day,omitempty"`
 	QuotaBytes    *string `json:"quota_bytes,omitempty"`
 	invalidFields map[string]string
 }
-
-type ValidationError struct{ Fields map[string]string }
-
-func (err *ValidationError) Error() string { return "node settings validation failed" }
 
 type Options struct {
 	MaxNodes int
@@ -123,21 +125,21 @@ func NewService(db *sql.DB, opts Options) *Service {
 	return &Service{db: db, maxNodes: opts.MaxNodes, now: opts.Now, random: opts.Random}
 }
 
-// Database and Capacity keep default HTTP services on the same storage policy.
+// Database 和 Capacity 让默认 HTTP 服务共用同一存储策略。
 func (s *Service) Database() *sql.DB { return s.db }
 
 func (s *Service) Capacity() int { return s.maxNodes }
 
-// InvalidatePublic expires projections after an ordinary committed data change.
-// Additions and text edits stay on the browser's configured update cadence.
+// InvalidatePublic 在普通数据变更提交后使投影过期。
+// 新增和文本编辑仍按浏览器配置的更新节奏刷新。
 func (s *Service) InvalidatePublic() {
 	s.publicMu.Lock()
 	s.publicVersion++
 	s.publicMu.Unlock()
 }
 
-// InvalidatePublicSafety expires data and immediately renews active streams.
-// Publish both versions under one lock so cache and egress cannot disagree.
+// InvalidatePublicSafety 使数据过期并立即刷新活跃流。
+// 两个版本号在同一把锁下发布，缓存和出口不会不一致。
 func (s *Service) InvalidatePublicSafety() {
 	s.publicMu.Lock()
 	s.publicVersion++
@@ -163,14 +165,14 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 		return Node{}, ErrInvalidInput
 	}
 	s.randomMu.Lock()
-	id, err := identity.UUID(s.random)
+	id, err := uuid.UUID(s.random)
 	s.randomMu.Unlock()
 	if err != nil {
 		return Node{}, err
 	}
 	node := Node{ID: id, Name: req.Name, Status: "pending", Presence: "pending", Tags: []string{}, CreatedAt: s.now().UTC()}
-	// BEGIN IMMEDIATE reserves the writer before checking capacity, including
-	// across independent services using the same persistent database.
+	// BEGIN IMMEDIATE 在检查容量前先占住写锁，
+	// 对使用同一持久化数据库的多个独立服务也生效。
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Node{}, err
@@ -197,15 +199,15 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 
 type scanner interface{ Scan(...any) error }
 
-const nodeColumns = `id, name, status, created_at, notes, region, provider, group_id,
-	(SELECT json_group_array(tag) FROM (SELECT tag FROM node_tags WHERE node_id = nodes.id ORDER BY tag)), last_seen, length(token_hash) > 0, system`
+const nodeColumns = `id, name, status, created_at, notes, region, provider, group_id, expires_on,
+	(SELECT json_group_array(tag) FROM (SELECT tag FROM node_tags WHERE node_id = nodes.id ORDER BY tag)), last_seen, length(token_hash) > 0, system, ` + commands.StoppedSQL
 
 func scanNode(row scanner, now time.Time) (Node, error) {
 	var node Node
 	var created, tags, systemJSON string
 	var lastSeen sql.NullString
 	var hasCredential sql.NullBool
-	if err := row.Scan(&node.ID, &node.Name, &node.Status, &created, &node.Notes, &node.Region, &node.Provider, &node.GroupID, &tags, &lastSeen, &hasCredential, &systemJSON); err != nil {
+	if err := row.Scan(&node.ID, &node.Name, &node.Status, &created, &node.Notes, &node.Region, &node.Provider, &node.GroupID, &node.ExpiresOn, &tags, &lastSeen, &hasCredential, &systemJSON, &node.Stopped); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Node{}, ErrNotFound
 		}
@@ -229,8 +231,7 @@ func scanNode(row scanner, now time.Time) (Node, error) {
 		}
 		node.LastSeen = &seen
 	}
-	// HTTP inventory uses durable observations; live reads overlay only a
-	// strictly matching in-memory process identity.
+	// HTTP 清单使用持久化观测结果；实时读取仅叠加严格匹配的内存进程标识。
 	node.Presence = Presence(node.Status, hasCredential.Bool, node.LastSeen, now)
 	var system v1.System
 	if json.Unmarshal([]byte(systemJSON), &system) == nil {
@@ -243,15 +244,7 @@ func (s *Service) Get(ctx context.Context, id string) (Node, error) {
 	return scanNode(s.db.QueryRowContext(ctx, "SELECT "+nodeColumns+" FROM nodes WHERE id = ?", id), s.now())
 }
 
-// List retains the bounded inventory API for existing callers.
-func (s *Service) List(ctx context.Context, limit, offset int) ([]Node, error) {
-	if limit < 1 || limit > 100 || offset < 0 {
-		return nil, ErrInvalidInput
-	}
-	return s.list(ctx, limit, offset)
-}
-
-// ListPage fetches one lookahead row in the same query as the requested page.
+// ListPage 在同一条查询里多取一行，用于判断是否还有下一页。
 func (s *Service) ListPage(ctx context.Context, limit, offset int) ([]Node, bool, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, false, ErrInvalidInput
@@ -285,18 +278,24 @@ func (s *Service) list(ctx context.Context, limit, offset int) ([]Node, error) {
 	return result, rows.Err()
 }
 
-// PatchMetadata changes only supplied metadata and replaces tags only when present.
+// PatchMetadata 只更新提供的元数据，tags 仅在提供时整体替换。
 func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPatch) (Node, error) {
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return Node{}, ErrInvalidInput
 	}
 	fields := make(map[string]string)
 	if patch.Name != nil && (strings.TrimSpace(*patch.Name) == "" || len(*patch.Name) > 255) {
 		fields["name"] = "must be nonempty and at most 255 bytes"
 	}
+	var expiresOn *string
+	if patch.ExpiresOn != nil {
+		if err := json.Unmarshal(patch.ExpiresOn, &expiresOn); err != nil || (expiresOn != nil && !validExpiryDate(*expiresOn)) {
+			fields["expires_on"] = "must be a real date in YYYY-MM-DD format or null"
+		}
+	}
 	var groupID *string
 	if patch.GroupID != nil {
-		if err := json.Unmarshal(patch.GroupID, &groupID); err != nil || (groupID != nil && !identity.ValidUUID(*groupID)) {
+		if err := json.Unmarshal(patch.GroupID, &groupID); err != nil || (groupID != nil && !uuid.ValidUUID(*groupID)) {
 			fields["group_id"] = "must be a group UUID or null"
 		}
 	}
@@ -313,7 +312,7 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 		}
 	}
 	if len(fields) != 0 {
-		return Node{}, &ValidationError{Fields: fields}
+		return Node{}, &validation.Error{Fields: fields}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -326,10 +325,10 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 			return Node{}, err
 		}
 		if !exists {
-			return Node{}, &ValidationError{Fields: map[string]string{"group_id": "group does not exist"}}
+			return Node{}, validation.Invalid("group_id", "group does not exist")
 		}
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE nodes SET name = COALESCE(?, name), notes = COALESCE(?, notes), region = COALESCE(?, region), provider = COALESCE(?, provider), group_id = CASE WHEN ? THEN ? ELSE group_id END WHERE id = ?`, patch.Name, patch.Notes, patch.Region, patch.Provider, patch.GroupID != nil, groupID, id)
+	result, err := tx.ExecContext(ctx, `UPDATE nodes SET name = COALESCE(?, name), notes = COALESCE(?, notes), region = COALESCE(?, region), provider = COALESCE(?, provider), group_id = CASE WHEN ? THEN ? ELSE group_id END, expires_on = CASE WHEN ? THEN ? ELSE expires_on END WHERE id = ?`, patch.Name, patch.Notes, patch.Region, patch.Provider, patch.GroupID != nil, groupID, patch.ExpiresOn != nil, expiresOn, id)
 	if err := affected(result, err); err != nil {
 		return Node{}, err
 	}
@@ -362,10 +361,15 @@ func (s *Service) SetDisabled(ctx context.Context, id string, disabled bool) err
 		return err
 	}
 	defer tx.Rollback()
-	// Enabling cannot invent an enrolled identity: tokenless assets stay pending.
+	// 启用不能凭空造出已注册身份：没有凭据的资产保持 pending。
 	result, err := tx.ExecContext(ctx, `UPDATE nodes SET status = CASE WHEN ? THEN 'disabled' WHEN token_hash IS NULL THEN 'pending' ELSE 'unknown' END WHERE id = ?`, disabled, id)
 	if err := affected(result, err); err != nil {
 		return err
+	}
+	if disabled {
+		if err := commands.CancelActive(ctx, tx, id, s.now()); err != nil {
+			return err
+		}
 	}
 	action := "node.enable"
 	if disabled {
@@ -385,11 +389,10 @@ func (s *Service) SetDisabled(ctx context.Context, id string, disabled bool) err
 	return nil
 }
 
-// RevokeCredential detaches the agent identity but keeps the asset, so a leaked
-// credential can be cut off without losing metadata or public settings. A new
-// single-node enrollment ticket can bind a fresh installation afterwards.
+// RevokeCredential 解除 Agent 身份但保留资产，泄露的凭据可以被切断，
+// 元数据和公开设置不丢失。之后可用新的单节点注册票据绑定新安装。
 func (s *Service) RevokeCredential(ctx context.Context, id string) error {
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return ErrInvalidInput
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -397,10 +400,13 @@ func (s *Service) RevokeCredential(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	// Exhaustion must roll back, not let SQLite promote the identity fence to
-	// REAL. The existing NOT NULL constraint rejects only an actual increment.
+	// 耗尽时必须回滚，不能让 SQLite 把身份围栏提升为 REAL。
+	// 现有 NOT NULL 约束只拒绝实际的自增。
 	result, err := tx.ExecContext(ctx, `UPDATE nodes SET credential_epoch = CASE WHEN length(token_hash)>0 THEN CASE WHEN credential_epoch < 9223372036854775807 THEN credential_epoch + 1 ELSE NULL END ELSE credential_epoch END, token_hash = NULL, installation_id = NULL, run_generation = '0', report_session_id = '', agent_runtime = '', last_seen = NULL, system = '{}', status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'pending' END WHERE id = ?`, id)
 	if err := affected(result, err); err != nil {
+		return err
+	}
+	if err := commands.CancelActive(ctx, tx, id, s.now()); err != nil {
 		return err
 	}
 	for _, table := range []string{"probe_latest", "probe_hourly"} {
@@ -432,8 +438,8 @@ func affected(result sql.Result, err error) error {
 	return nil
 }
 
-// Authentication is the internal credential identity observed by one read.
-// It is not a node DTO and must not be exposed over the API.
+// Authentication 是一次读取得到的内部凭据身份。
+// 它不是节点 DTO，不得通过 API 暴露。
 type Authentication struct {
 	ID              string `json:"-"`
 	CredentialEpoch int64  `json:"-"`
@@ -463,8 +469,7 @@ func (s *Service) AuthenticateToken(ctx context.Context, token string) (Authenti
 	return identity, nil
 }
 
-// Delete revokes identity and cancels pending work in the same transaction as
-// asset deletion. Update results retain the deleted node ID for auditability.
+// Delete 在同一事务中撤销身份、删除资产并记录审计。
 func (s *Service) Delete(ctx context.Context, id string, confirm bool) error {
 	if !confirm {
 		return ErrInvalidInput
@@ -475,9 +480,6 @@ func (s *Service) Delete(ctx context.Context, id string, confirm bool) error {
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, "UPDATE nodes SET token_hash = NULL, installation_id = NULL WHERE id = ?", id); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE update_job_nodes SET status = ? WHERE node_id = ? AND status IN ('queued','downloading','verifying','restarting','awaiting_report')", "cancelled", id); err != nil {
 		return err
 	}
 	if err := audit.ScopedAlertRuleDeletes(ctx, tx, "node", id, s.now()); err != nil {
@@ -509,7 +511,7 @@ func (s *Service) Batch(ctx context.Context, req BatchRequest) ([]BatchResult, e
 	}
 	seen := make(map[string]bool, len(req.NodeIDs))
 	for _, id := range req.NodeIDs {
-		if !identity.ValidUUID(id) || seen[id] {
+		if !uuid.ValidUUID(id) || seen[id] {
 			return nil, ErrInvalidInput
 		}
 		seen[id] = true
@@ -538,7 +540,7 @@ func (s *Service) Batch(ctx context.Context, req BatchRequest) ([]BatchResult, e
 	return results, nil
 }
 
-// GetRuntime returns the current identity's last observed agent settings.
+// GetRuntime 返回当前身份最近一次观测到的 Agent 设置。
 func (s *Service) GetRuntime(ctx context.Context, id string) (*v1.RuntimeSettings, error) {
 	var raw string
 	if err := s.db.QueryRowContext(ctx, "SELECT CASE WHEN length(token_hash)>0 AND run_generation!='0' AND report_session_id!='' THEN agent_runtime ELSE '' END FROM nodes WHERE id=?", id).Scan(&raw); err != nil {
@@ -550,11 +552,8 @@ func (s *Service) GetRuntime(ctx context.Context, id string) (*v1.RuntimeSetting
 	if raw == "" {
 		return nil, nil
 	}
-	var runtime v1.RuntimeSettings
-	if err := json.Unmarshal([]byte(raw), &runtime); err != nil {
-		return nil, err
-	}
-	if err := runtime.Validate(); err != nil {
+	runtime, err := v1.DecodeRuntimeSettings(raw)
+	if err != nil {
 		return nil, err
 	}
 	return &runtime, nil
@@ -564,7 +563,7 @@ func readTrafficSettings(ctx context.Context, q interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id string) (TrafficSettings, error) {
 	var settings TrafficSettings
-	err := q.QueryRowContext(ctx, "SELECT billing_day, quota_bytes FROM nodes WHERE id=?", id).Scan(&settings.BillingDay, &settings.QuotaBytes)
+	err := q.QueryRowContext(ctx, "SELECT billing_day, quota_bytes, billing_mode FROM nodes WHERE id=?", id).Scan(&settings.BillingDay, &settings.QuotaBytes, &settings.BillingMode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TrafficSettings{}, ErrNotFound
 	}
@@ -580,6 +579,9 @@ func (s *Service) PatchTrafficSettings(ctx context.Context, id string, patch Tra
 	for field, reason := range patch.invalidFields {
 		fields[field] = reason
 	}
+	if p := patch.BillingMode; p != nil && *p != "total" && *p != "max" && *p != "rx" && *p != "tx" {
+		fields["billing_mode"] = "must be total, max, rx or tx"
+	}
 	if p := patch.BillingDay; p != nil && (*p < 1 || *p > 28) {
 		fields["billing_day"] = "must be between 1 and 28"
 	}
@@ -589,7 +591,7 @@ func (s *Service) PatchTrafficSettings(ctx context.Context, id string, patch Tra
 		}
 	}
 	if len(fields) != 0 {
-		return TrafficSettings{}, &ValidationError{Fields: fields}
+		return TrafficSettings{}, &validation.Error{Fields: fields}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -601,6 +603,9 @@ func (s *Service) PatchTrafficSettings(ctx context.Context, id string, patch Tra
 		return TrafficSettings{}, err
 	}
 	before := settings
+	if patch.BillingMode != nil {
+		settings.BillingMode = *patch.BillingMode
+	}
 	if patch.BillingDay != nil {
 		settings.BillingDay = *patch.BillingDay
 	}
@@ -610,7 +615,7 @@ func (s *Service) PatchTrafficSettings(ctx context.Context, id string, patch Tra
 	if settings == before {
 		return settings, nil
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE nodes SET billing_day=?, quota_bytes=? WHERE id=?", settings.BillingDay, settings.QuotaBytes, id); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE nodes SET billing_day=?, quota_bytes=?, billing_mode=? WHERE id=?", settings.BillingDay, settings.QuotaBytes, settings.BillingMode, id); err != nil {
 		return TrafficSettings{}, err
 	}
 	if err := audit.Insert(ctx, tx, "node.traffic_settings.patch", id, s.now()); err != nil {
@@ -620,4 +625,9 @@ func (s *Service) PatchTrafficSettings(ctx context.Context, id string, patch Tra
 		return TrafficSettings{}, err
 	}
 	return settings, nil
+}
+
+func validExpiryDate(raw string) bool {
+	date, err := time.Parse(time.DateOnly, raw)
+	return err == nil && date.Format(time.DateOnly) == raw
 }

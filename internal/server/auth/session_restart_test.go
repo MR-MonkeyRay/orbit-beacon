@@ -16,7 +16,7 @@ func TestSessionSurvivesDatabaseRestart(t *testing.T) {
 	if _, err := service.BootstrapAdministrator(ctx, "admin", initialPassword); err != nil {
 		t.Fatal(err)
 	}
-	active, err := service.Login(ctx, "admin", initialPassword)
+	active, err := service.Login(ctx, "admin", initialPassword, "")
 	if err != nil {
 		t.Fatal(err)
 	}

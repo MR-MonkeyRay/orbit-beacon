@@ -39,10 +39,9 @@ type restoreJournal struct {
 	Files   []restoreOriginal `json:"files"`
 }
 
-// fsOps is deliberately limited to this protocol's durability boundaries. Labels
-// are constant protocol stages plus a fixed managed basename, never input paths.
-// Each call is injectable before its OS operation; journal marks durable stages.
-// It is passed by value, so concurrent tests cannot change production behavior.
+// fsOps 刻意限定在本协议的持久化边界内。标签只有固定的协议阶段和固定的托管基名，
+// 绝不含输入路径。每次调用都可在对应的 OS 操作前注入；journal 标记持久化阶段。
+// 按值传递，因此并发测试无法改变生产行为。
 type fsOps struct {
 	copy     func(label, source, destination string) error
 	fileSync func(label string, file *os.File) error
@@ -73,12 +72,7 @@ func osFSOps() fsOps {
 			if err := securefs.ValidateDirectory(path); err != nil {
 				return err
 			}
-			dir, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			syncErr := dir.Sync()
-			return errors.Join(syncErr, dir.Close())
+			return securefs.SyncDirectory(path)
 		},
 		rename: func(_ string, source, destination string) error { return os.Rename(source, destination) },
 		remove: func(_ string, path string) error {
@@ -92,17 +86,17 @@ func osFSOps() fsOps {
 	}
 }
 
-// CommitRestore installs a closed, checkpointed main/metrics/key group. The
-// caller holds dataDir/server.lock throughout this call and any recovery. The
-// returned directory contains untouched raw originals, including SQLite sidecars.
+// CommitRestore 安装一组已关闭、已 checkpoint 的 main/metrics/key 文件。
+// 调用方在整个调用和任何恢复期间都持有 dataDir/server.lock。
+// 返回的目录包含未触碰的原始文件，含 SQLite 附属文件。
 func CommitRestore(ctx context.Context, dataDir, newDir string) (string, error) {
 	return commitRestore(ctx, dataDir, newDir, osFSOps())
 }
 
 func commitRestore(ctx context.Context, dataDir, newDir string, ops fsOps) (rollback string, result error) {
-	// Even cancellation after prepared must finish recovery without that context.
-	// A failed committed publication is resolved by reading the atomic journal,
-	// not by guessing whether rename or fsync took effect.
+	// 即便在 prepared 之后被取消，也必须在没有该 context 的情况下完成恢复。
+	// 已提交但发布失败的情况，通过读取原子 journal 来解决，
+	// 而不是猜测 rename 或 fsync 是否已生效。
 	publicationAttempted := false
 	defer func() {
 		if result == nil {
@@ -323,9 +317,9 @@ func writeRestoreJournal(ctx context.Context, dataDir string, journal restoreJou
 	return ops.dirSync(journal.State+":data-sync", dataDir)
 }
 
-// RecoverRestore converges a prepared transaction to the complete original raw
-// group, or retains a committed group. It must run under the persistent lock,
-// before Prepare or any SQLite open, and never ignores metrics failures.
+// RecoverRestore 将已准备好的事务收敛为完整的原始文件组，
+// 或保留已提交的组。它必须在持久锁下、Prepare 或任何 SQLite 打开之前运行，
+// 且绝不忽略 metrics 的失败。
 func RecoverRestore(dataDir string) error { return recoverRestore(dataDir, osFSOps()) }
 
 func recoverRestore(dataDir string, ops fsOps) (result error) {
@@ -359,8 +353,8 @@ func recoverRestore(dataDir string, ops fsOps) (result error) {
 	if err := securefs.ValidateDirectory(oldDir); err != nil {
 		return err
 	}
-	// Check the ENTIRE rollback group before touching even one live file. Missing
-	// originals never authorize partial repair, journal deletion, or startup.
+	// 在触碰任何一个活动文件之前，先检查完整的回滚组。
+	// 原始文件缺失绝不授权部分修复、journal 删除或启动。
 	for _, original := range journal.Files {
 		path := filepath.Join(oldDir, original.Name)
 		if !original.Exists {
@@ -392,8 +386,8 @@ func recoverRestore(dataDir string, ops fsOps) (result error) {
 			}
 			continue
 		}
-		// Keep originals immutable across repeated interrupted recoveries. A fresh
-		// data-directory temporary is copied, synced, closed, then renamed.
+		// 在反复中断的恢复过程中保持原始文件不可变。新建一个数据目录临时文件，
+		// 复制、同步、关闭后再重命名。
 		id, err := uuid.NewRandom()
 		if err != nil {
 			return err
@@ -457,8 +451,7 @@ func readRestoreJournal(path string) (restoreJournal, error) {
 	if err := decoder.Decode(&journal); err != nil {
 		return journal, err
 	}
-	id, err := uuid.Parse(journal.ID)
-	if err != nil || id == uuid.Nil || id.String() != journal.ID || journal.Version != 1 || (journal.State != "prepared" && journal.State != "committed") {
+	if !canonicalUUID(journal.ID) || journal.Version != 1 || (journal.State != "prepared" && journal.State != "committed") {
 		return journal, errors.New("invalid restore journal header")
 	}
 	var originals []json.RawMessage
@@ -480,8 +473,7 @@ func readRestoreJournal(path string) (restoreJournal, error) {
 				return journal, errors.New("invalid absent restore file")
 			}
 		} else {
-			digest, err := hex.DecodeString(original.SHA256)
-			if err != nil || len(digest) != sha256.Size || hex.EncodeToString(digest) != original.SHA256 {
+			if !validSHA256(original.SHA256) {
 				return journal, errors.New("invalid restore journal digest")
 			}
 		}

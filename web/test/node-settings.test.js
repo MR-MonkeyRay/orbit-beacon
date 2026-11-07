@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {invalidate, setNavigationSignal, setSession} from '../src/console/api.js';
-import {elements, flush, installDOM, TestElement} from './console-dom.js';
+import {copy, elements, flush, installDOM, TestElement} from './console-dom.js';
 
 const id = '00000000-0000-4000-8000-000000000001';
 const path = `/api/v1/nodes/${id}`;
 const toastHost = new TestElement('div');
 toastHost.id = 'toasts';
-const runtime = {report_interval_seconds: 10, disk_interval_seconds: 60, interfaces: [], disk_paths: [], probe_targets: []};
+const runtime = {report_interval_seconds: 10, disk_interval_seconds: 60, interfaces: [], disk_paths: [], probe_targets: [], remote_commands: ['upgrade', 'restart', 'stop'], disabled_features: []};
 const control = (root, name) => elements(root).find((element) => element.name === name);
 const formFor = (root, name) => root.querySelectorAll('form').find((form) => control(form, name));
 const factValues = (root) => Object.fromEntries(root.querySelectorAll('dt').map((label) => [label.textContent, label.parentElement.querySelector('dd').textContent]));
@@ -15,12 +15,12 @@ const edit = (form, name, value) => {
   const input = control(form, name);
   input.value = value;
   input.dispatchEvent(new Event('input'));
-  // The small console harness does not simulate DOM event propagation.
+  // 小型控制台测试工具不模拟 DOM 事件传播。
   form.dispatchEvent(new Event('input'));
   return input;
 };
 
-async function setup({hash = '#details', observed = runtime, presence = 'online', lastSeen = '2026-10-28T10:00:00Z', patchStatus = 200, latest = null} = {}) {
+async function setup({hash = '#details', observed = runtime, presence = 'online', lastSeen = '2026-10-28T10:00:00Z', patchStatus = 200, latest = null, expiresOn = null} = {}) {
   const dom = installDOM();
   const originals = new Map(['fetch', 'window', 'WebSocket', 'matchMedia', 'requestAnimationFrame', 'history', 'performance', 'setTimeout', 'clearTimeout'].map((key) => [key, globalThis[key]]));
   const originalNow = Date.now;
@@ -61,19 +61,20 @@ async function setup({hash = '#details', observed = runtime, presence = 'online'
   const userSession = {csrf_token: 'csrf', user: {id, username: 'administrator', must_change_password: false}, expires_at: '2026-10-29T10:00:00Z'};
   setSession(userSession);
   const requests = [];
-  const node = {id, name: 'Internal name', status: 'unknown', presence, agent_version: 'test-agent',
-    last_seen: lastSeen, group_id: null, region: '', provider: '', notes: 'Saved notes', tags: [], created_at: '2026-10-27T10:00:00Z'};
+  const node = {id, name: 'Internal name', status: 'unknown', stopped: false, presence, agent_version: 'test-agent',
+    expires_on: expiresOn, last_seen: lastSeen, group_id: null, region: '', provider: '', notes: 'Saved notes', tags: [], created_at: '2026-10-27T10:00:00Z'};
   const traffic = {billing_day: 1, quota_bytes: '0', cycle: {}, daily: [], updated_at: null};
   globalThis.fetch = async (url, options) => {
     requests.push({url, options});
     let data;
     let status = 200;
     if (url === '/api/v1/me') data = userSession;
-    else if (url === path) data = node;
+    else if (url === path) data = options.method === 'PATCH' ? Object.assign(node, JSON.parse(options.body)) : node;
+    else if (url === `${path}/commands`) data = {commands: []};
     else if (url === `${path}/runtime`) data = {runtime: observed};
     else if (url === `${path}/traffic-settings`) {
       status = options.method === 'PATCH' ? patchStatus : 200;
-      data = status === 200 ? options.method === 'PATCH' ? {billing_day: 2, quota_bytes: '1000000000'} : {billing_day: 1, quota_bytes: '0'}
+      data = status === 200 ? options.method === 'PATCH' ? {billing_day: 2, quota_bytes: '1000000000', billing_mode: 'total'} : {billing_day: 1, quota_bytes: '0'}
         : {message: 'Billing update rejected'};
     } else if (url === '/api/v1/groups') data = {groups: []};
     else if (url === `${path}/public-settings`) data = {enabled: true, name: 'Saved public name', region: '', provider: ''};
@@ -116,14 +117,17 @@ test('node tabs show reported local settings through #agent without the removed 
   const env = await setup({hash: '#agent'});
   try {
     const tabs = elements(env.root).filter((element) => element.getAttribute('role') === 'tab');
-    assert.equal(tabs.length, 4);
-    assert.deepEqual(tabs.map((tab) => tab.id), ['tab-details', 'tab-public', 'tab-agent', 'tab-enrollment']);
+    assert.equal(tabs.length, 7);
+    assert.deepEqual(tabs.map((tab) => tab.id), ['tab-monitor', 'tab-traffic', 'tab-probes', 'tab-details', 'tab-public', 'tab-agent', 'tab-enrollment']);
+    assert.deepEqual(tabs.map((tab) => tab.querySelector('use').getAttribute('href')), ['#i-monitor', '#i-cloud', '#i-check', '#i-info', '#i-globe', '#i-sliders', '#i-key']);
     assert.equal(env.root.querySelector('#tab-agent').getAttribute('aria-selected'), 'true');
     assert.equal(env.root.querySelector('#tab-config'), null);
     const values = factValues(env.root);
-    assert.deepEqual(Object.fromEntries(Object.entries(values).slice(0, 6)), {
-      'Report interval': '10 seconds', 'Disk interval': '60 seconds', 'Network interfaces': 'Default route',
-      'Disk paths': 'Agent default', 'Service probes': 'None configured', 'Agent version': 'test-agent'
+    assert.deepEqual(Object.fromEntries(Object.entries(values).slice(0, 8)), {
+      [copy('nodes.reportInterval')]: copy('nodes.seconds', {count: 10}), [copy('nodes.diskInterval')]: copy('nodes.seconds', {count: 60}), [copy('nodes.interfaces')]: copy('nodes.defaultRoute'),
+      [copy('nodes.diskPaths')]: copy('nodes.agentDefault'), [copy('nodes.probes')]: copy('nodes.noneConfigured'),
+      [copy('nodes.remoteCommands')]: ['upgrade', 'restart', 'stop'].map((name) => copy(`nodes.command.${name}`)).join(' · '),
+      [copy('nodes.disabledFeatures')]: copy('nodes.none'), [copy('nodes.agentVersion')]: 'test-agent'
     });
     assert.equal(env.root.querySelector('time').getAttribute('datetime'), env.node.last_seen);
     assert.equal(env.root.querySelectorAll('input,select,textarea').length, 0);
@@ -142,7 +146,7 @@ test('agent settings distinguishes no report and offline last observations', asy
         assert.equal(env.root.querySelectorAll('dl,input,select,textarea').length, 0);
       } else if (options.lastSeen === null) {
         assert.equal(env.root.querySelectorAll('time').length, 0);
-        assert.equal(factValues(env.root)['Report interval'], '10 seconds');
+        assert.equal(factValues(env.root)[copy('nodes.reportInterval')], copy('nodes.seconds', {count: 10}));
       } else {
         assert.equal(env.root.querySelector('time').getAttribute('datetime'), env.node.last_seen);
       }
@@ -152,16 +156,18 @@ test('agent settings distinguishes no report and offline last observations', asy
 
 test('agent settings displays reported selections as inert text without editable controls', async () => {
   const observed = {report_interval_seconds: 5, disk_interval_seconds: 120, interfaces: ['eth0', 'wg0'],
-    disk_paths: ['/', '/var/lib'], probe_targets: ['https://example.test/<img>']};
+    disk_paths: ['/', '/var/lib'], probe_targets: ['https://example.test/<img>'], remote_commands: ['restart'], disabled_features: ['disk', 'traffic']};
   const env = await setup({hash: '#agent', observed});
   try {
     const values = factValues(env.root);
-    assert.equal(values['Report interval'], '5 seconds');
-    assert.equal(values['Disk interval'], '120 seconds');
-    assert.equal(values['Network interfaces'], 'eth0\nwg0');
-    assert.equal(values['Disk paths'], '/\n/var/lib');
-    assert.equal(values['Service probes'], observed.probe_targets[0]);
-    const settings = env.root.querySelector('#panel-agent');
+    assert.equal(values[copy('nodes.reportInterval')], copy('nodes.seconds', {count: 5}));
+    assert.equal(values[copy('nodes.diskInterval')], copy('nodes.seconds', {count: 120}));
+    assert.equal(values[copy('nodes.interfaces')], 'eth0\nwg0');
+    assert.equal(values[copy('nodes.diskPaths')], '/\n/var/lib');
+    assert.equal(values[copy('nodes.probes')], observed.probe_targets[0]);
+    assert.equal(values[copy('nodes.remoteCommands')], copy('nodes.command.restart'));
+    assert.equal(values[copy('nodes.disabledFeatures')], `${copy('nodes.feature.disk')} · ${copy('nodes.feature.traffic')}`);
+    const settings = env.root.querySelector('#panel-agent').querySelector('section');
     assert.equal(settings.querySelectorAll('input,select,textarea,button,a,img').length, 0);
   } finally { env.cleanup(); }
 });
@@ -169,56 +175,51 @@ test('agent settings displays reported selections as inert text without editable
 test('removed #config hash does not alias the local agent settings tab', async () => {
   const env = await setup({hash: '#config'});
   try {
-    assert.equal(env.root.querySelector('#tab-details').getAttribute('aria-selected'), 'true');
+    assert.equal(env.root.querySelector('#tab-monitor').getAttribute('aria-selected'), 'true');
     assert.equal(env.root.querySelector('#tab-config'), null);
   } finally { env.cleanup(); }
 });
 
-test('billing saves exact decimal units, stays clean after submit, and preserves Notes, focus and tab', async () => {
-  const env = await setup();
+test('billing saves exact decimal units, stays clean after submit, and preserves focus and traffic tab', async () => {
+  const env = await setup({hash: '#traffic'});
   try {
     const billing = formFor(env.root, 'billing_day');
-    assert.ok(billing, 'Details has a separate traffic billing form');
+    assert.ok(billing, 'Traffic has a separate billing form');
     const headings = env.root.querySelectorAll('h2').map((heading) => heading.textContent);
-    assert.equal(headings[headings.indexOf('Traffic') + 1], 'Traffic billing');
+    assert.equal(headings[headings.indexOf(copy('nodes.traffic')) + 1], copy('nodes.trafficBilling'));
     assert.deepEqual(control(billing, 'quota_unit').options.map((option) => option.value), ['bytes', 'KB', 'MB', 'GB', 'TB']);
     assert.equal(control(billing, 'billing_day').getAttribute('min'), '1');
     assert.equal(control(billing, 'billing_day').getAttribute('max'), '28');
-    const details = formFor(env.root, 'notes');
-    const notes = edit(details, 'notes', 'Unsaved notes');
     edit(billing, 'billing_day', '2');
     edit(billing, 'quota_value', '01');
     const unit = edit(billing, 'quota_unit', 'GB');
     unit.dispatchEvent(new Event('change'));
-    notes.focus();
+    const quota = control(billing, 'quota_value'); quota.focus();
     const trafficBefore = env.requests.filter((request) => request.url === `${path}/traffic?days=30`).length;
     const requestsBefore = env.requests.length;
     billing.dispatchEvent(new Event('submit', {cancelable: true}));
     await flush();
     const patch = env.requests.find((request) => request.url === `${path}/traffic-settings` && request.options.method === 'PATCH');
-    assert.deepEqual(JSON.parse(patch.options.body), {billing_day: 2, quota_bytes: '1000000000'});
+    assert.deepEqual(JSON.parse(patch.options.body), {billing_day: 2, quota_bytes: '1000000000', billing_mode: 'total'});
     assert.equal(billing.dataset.dirty, 'false');
     assert.equal(billing.querySelector('#billing-save').disabled, true);
-    assert.equal(details.dataset.dirty, 'true');
-    assert.equal(notes.value, 'Unsaved notes');
-    assert.equal(env.document.activeElement, notes);
-    assert.equal(env.root.querySelector('#tab-details').getAttribute('aria-selected'), 'true');
-    assert.equal(location.hash, '#details');
+    assert.equal(env.document.activeElement, quota);
+    assert.equal(env.root.querySelector('#tab-traffic').getAttribute('aria-selected'), 'true');
+    assert.equal(location.hash, '#traffic');
     assert.equal(env.requests.filter((request) => request.url === `${path}/traffic?days=30`).length, trafficBefore + 1);
     assert.deepEqual(env.requests.slice(requestsBefore).map((request) => request.url), [`${path}/traffic-settings`, `${path}/traffic?days=30`]);
     edit(billing, 'quota_value', '2000000000');
     assert.equal(billing.dataset.dirty, 'true');
-    billing.querySelectorAll('button').find((button) => button.textContent === 'Discard changes').click();
+    billing.querySelectorAll('button').find((button) => button.textContent === copy('controls.discard')).click();
     assert.equal(billing.dataset.dirty, 'false');
-    assert.equal(details.dataset.dirty, 'true');
   } finally { env.cleanup(); }
 });
 
 test('rejected billing saves preserve the draft and do not refresh traffic', async () => {
-  const env = await setup({patchStatus: 400});
+  const env = await setup({hash: '#traffic', patchStatus: 400});
   try {
     const billing = formFor(env.root, 'billing_day');
-    assert.ok(billing, 'Details has a separate traffic billing form');
+    assert.ok(billing, 'Traffic has a separate billing form');
     edit(billing, 'billing_day', '2');
     const before = env.requests.filter((request) => request.url === `${path}/traffic?days=30`).length;
     billing.dispatchEvent(new Event('submit', {cancelable: true}));
@@ -232,7 +233,7 @@ test('rejected billing saves preserve the draft and do not refresh traffic', asy
 });
 
 test('billing revisits use the saved response and honor tab-change discard', async () => {
-  const env = await setup();
+  const env = await setup({hash: '#traffic'});
   try {
     let billing = formFor(env.root, 'billing_day');
     edit(billing, 'billing_day', '2');
@@ -243,11 +244,11 @@ test('billing revisits use the saved response and honor tab-change discard', asy
     await flush();
     const dialog = env.body.querySelector('dialog');
     assert.ok(dialog, 'leaving a dirty billing form asks before discarding');
-    dialog.querySelectorAll('button').find((button) => button.textContent === 'Discard changes').click();
+    dialog.querySelectorAll('button').find((button) => button.textContent === copy('controls.discard')).click();
     dialog.dispatchEvent(new Event('animationend'));
     await flush();
     assert.equal(env.root.querySelector('#tab-agent').getAttribute('aria-selected'), 'true');
-    env.root.querySelector('#tab-details').click();
+    env.root.querySelector('#tab-traffic').click();
     await flush();
     billing = formFor(env.root, 'billing_day');
     assert.equal(control(billing, 'billing_day').value, '2');
@@ -256,17 +257,16 @@ test('billing revisits use the saved response and honor tab-change discard', asy
   } finally { env.cleanup(); }
 });
 
-test('latest deadline patches leave dirty Notes, focus, current tab, and numeric nodes intact', async () => {
+test('latest deadline patches preserve numeric nodes on monitor and session boundaries clear samples', async () => {
   const received = '2026-10-28T10:00:00Z';
   const latest = {received_at: received, sampled_at: received, server_time: received, seq: 1,
     metrics: {cpu_percent: 25, uptime_seconds: 3600, metric_status: {cpu_percent: 'ok', uptime_seconds: 'ok'},
       sources: {cpu: {age_ms: 0, source_interval_ms: 10000}, uptime: {age_ms: 0, source_interval_ms: 10000}}}};
-  const env = await setup({latest});
+  const env = await setup({hash: '', latest});
   try {
-    const details = formFor(env.root, 'notes');
-    const notes = edit(details, 'notes', 'Do not replace this draft');
-    notes.focus();
-    const cpu = env.root.querySelectorAll('dt').find((label) => label.textContent === 'CPU').parentElement.querySelector('.sample-value');
+    assert.equal(env.root.querySelector('#tab-monitor').getAttribute('aria-selected'), 'true');
+    assert.equal(formFor(env.root, 'notes'), undefined);
+    const cpu = env.root.querySelectorAll('dt').find((label) => label.textContent === copy('nodes.cpu')).parentElement.querySelector('.sample-value');
     const before = env.requests.length;
     env.advance(45000);
     assert.equal(cpu.classList.contains('metric-stale'), false);
@@ -274,14 +274,36 @@ test('latest deadline patches leave dirty Notes, focus, current tab, and numeric
     assert.equal(cpu.classList.contains('metric-stale'), true);
     assert.equal(cpu.textContent, '25%');
     assert.equal(env.requests.length, before);
-    assert.equal(formFor(env.root, 'notes'), details);
-    assert.equal(control(details, 'notes'), notes);
-    assert.equal(notes.value, 'Do not replace this draft');
-    assert.equal(details.dataset.dirty, 'true');
-    assert.equal(env.document.activeElement, notes);
-    assert.equal(env.root.querySelector('#tab-details').getAttribute('aria-selected'), 'true');
+    assert.equal(env.root.querySelector('.sample-value'), cpu);
     setSession({csrf_token: '', user: null, expires_at: ''});
     assert.equal(env.root.querySelectorAll('.sample-value').length, 0);
     assert.equal(env.deadlines.size, 0);
+  } finally { env.cleanup(); }
+});
+
+test('expiry date appears before notes and clears with explicit null', async () => {
+  const env = await setup({expiresOn: '2028-02-29'});
+  try {
+    const details = formFor(env.root, 'notes');
+    const expiry = control(details, 'expires_on');
+    assert.equal(expiry.type, 'date');
+    assert.equal(expiry.value, '2028-02-29');
+    assert.equal(factValues(env.root)[copy('nodes.expiresOn')], '2028-02-29');
+    const inputs = elements(details).filter((element) => element.name);
+    assert.ok(inputs.indexOf(expiry) < inputs.indexOf(control(details, 'notes')));
+    edit(details, 'expires_on', '');
+    details.dispatchEvent(new Event('submit', {cancelable: true}));
+    await flush();
+    const patch = env.requests.find((request) => request.url === path && request.options.method === 'PATCH');
+    assert.equal(JSON.parse(patch.options.body).expires_on, null);
+    assert.equal(env.node.expires_on, null);
+  } finally { env.cleanup(); }
+});
+
+test('unset expiry uses the existing not-set label', async () => {
+  const env = await setup();
+  try {
+    assert.equal(control(formFor(env.root, 'notes'), 'expires_on').value, '');
+    assert.equal(factValues(env.root)[copy('nodes.expiresOn')], copy('controls.notSet'));
   } finally { env.cleanup(); }
 });

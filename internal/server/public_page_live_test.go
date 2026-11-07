@@ -71,6 +71,7 @@ func TestPublicPageDisableTerminatesIdleSSEAndWebSocket(t *testing.T) {
 	for _, transport := range []string{"sse", "ws"} {
 		t.Run(transport, func(t *testing.T) {
 			f := newStreamFixture(t, true)
+			f.h.streamInterval, f.h.streamHeartbeat = time.Hour, time.Hour
 			if transport == "sse" {
 				w := newStreamRecorder()
 				cancel, done := startPublicStream(t, f.h, w)
@@ -93,6 +94,22 @@ func TestPublicPageDisableTerminatesIdleSSEAndWebSocket(t *testing.T) {
 			defer c.CloseNow()
 			if _, _, err := c.Read(ctx); err != nil {
 				t.Fatal(err)
+			}
+			// 收到一帧不代表服务器已离开其活跃写入。
+			for _, stream := range f.h.streams.snapshot(false) {
+				for {
+					stream.mu.Lock()
+					writing := stream.writing
+					stream.mu.Unlock()
+					if !writing {
+						break
+					}
+					select {
+					case <-ctx.Done():
+						t.Fatal("websocket writer did not become idle")
+					case <-time.After(time.Millisecond):
+					}
+				}
 			}
 			disablePublicPageForTest(f.h)
 			_, body, err := c.Read(ctx)

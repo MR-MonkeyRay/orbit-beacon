@@ -1,10 +1,11 @@
 import {byteLength, h, icon} from '../../shared/dom.js';
-import {t} from '../../shared/i18n.js';
+import {t} from '../i18n.js';
 import {errorText, fieldErrorText} from '../../shared/errors.js';
 import {busy, button, iconButton, uid} from './components.js';
+import {listbox} from './listbox.js';
 import {toastError} from './feedback.js';
 
-// API limits are UTF-8 byte counts, which the browser's maxlength cannot express.
+// API 限制是 UTF-8 字节数，浏览器的 maxlength 无法表达。
 export function validateBytes(control, min, max, label) {
   const check = () => {
     const size = byteLength(control.value);
@@ -19,7 +20,7 @@ export function validateBytes(control, min, max, label) {
   return check;
 }
 
-export const input = (props) => h('input', {class: 'input', type: 'text', ...props});
+export const input = (props = {}) => h('input', {class: ['checkbox', 'radio'].includes(props.type) ? '' : 'input', type: 'text', ...props});
 
 export function textarea(props, value) {
   const element = h('textarea', {class: 'input', rows: 4, ...props});
@@ -33,9 +34,81 @@ export function select(choices, value, props = {}) {
   return element;
 }
 
-// Only customError is supplied by the application. Native browser messages may
-// use a different language from the selected interface locale.
-export function validationText(control) {
+// 原生 select 保留提交值和约束校验，文本输入只负责搜索和显示名称。
+export function combobox(choices, value, props = {}) {
+  const control = select([], '', props);
+  control.hidden = true;
+  const entry = input({autocomplete: 'off', dataset: {transient: ''}});
+  let searchable = true;
+  control.entry = entry;
+  Object.defineProperty(control, 'visibleControl', {get: () => searchable ? entry : control});
+  const property = (name, changed) => {
+    let owner = control;
+    while (owner && !Object.getOwnPropertyDescriptor(owner, name)?.get) owner = Object.getPrototypeOf(owner);
+    const descriptor = owner && Object.getOwnPropertyDescriptor(owner, name);
+    let fallback = control[name];
+    Object.defineProperty(control, name, {configurable: true,
+      get() { return descriptor ? descriptor.get.call(control) : fallback; },
+      set(next) {
+        if (descriptor) descriptor.set.call(control, next); else fallback = next;
+        changed(next);
+      }
+    });
+  };
+  let items = [];
+  const syncValue = (next) => {
+    const id = String(next);
+    let choice = items.find(([value]) => String(value) === id);
+    if (!choice && id) {
+      choice = [id, t('nodes.unknownID', {id: id.slice(0, 8)})];
+      items.push(choice);
+      control.append(h('option', {value: id}, choice[1]));
+      // 原生 select 在未知选项插入前会把 value 置空。
+      control.value = id;
+      list.setChoices(items);
+      return;
+    }
+    entry.value = id ? choice?.[1] || '' : '';
+  };
+  const list = listbox(entry, {emptyText: t('nodes.noMatching'), onChoose: ([id]) => {
+    control.value = id;
+    control.dispatchEvent(new Event('change', {bubbles: true}));
+  }});
+  property('value', syncValue);
+  property('disabled', (disabled) => { entry.disabled = Boolean(disabled); if (disabled) list.close(); });
+  property('required', (required) => entry.setAttribute('aria-required', String(Boolean(required))));
+  control.disabled = Boolean(props.disabled);
+  control.required = Boolean(props.required);
+  control.setChoices = (next) => {
+    list.close();
+    items = next.map(([id, label]) => [String(id), label]);
+    entry.placeholder = items.find(([id]) => !id)?.[1] || '';
+    control.replaceChildren(...items.map(([id, label]) => h('option', {value: id}, label)));
+    list.setChoices(items);
+    control.value = '';
+  };
+  // 全选后输入即替换当前名称，否则搜索词会接在名称后面。
+  entry.addEventListener('focus', () => entry.select());
+  entry.addEventListener('click', () => { if (list.element.hidden) { entry.select(); list.open(); } });
+  entry.addEventListener('blur', () => syncValue(control.value));
+  control.addEventListener('change', () => syncValue(control.value));
+  const nativeFocus = control.focus.bind(control);
+  control.focus = (options) => searchable ? entry.focus(options) : nativeFocus(options);
+  control.setSearchable = (enabled) => {
+    searchable = enabled;
+    control.hidden = enabled;
+    entry.hidden = !enabled;
+    list.close();
+  };
+  control.wrapper = h('div', {class: 'choice-control'}, control, entry, list.element);
+  control.setChoices(choices);
+  control.value = value;
+  return control;
+}
+
+// 应用只提供 customError。浏览器原生消息
+// 可能与所选界面语言不同。
+function validationText(control) {
   const validity = control.validity;
   if (validity.valid) return '';
   if (validity.customError) return control.validationMessage;
@@ -51,35 +124,44 @@ export function validationText(control) {
   return t('controls.validation.invalid');
 }
 
-// Labelled control with hint and inline error. Validation messages appear after
-// the first submit attempt or once the user leaves a non-empty field.
-// options.inner replaces the control in the layout (e.g. a password wrapper).
+// 带标签、提示和内联错误的控件。校验消息在
+// 首次提交后，或用户离开非空字段时出现。
+// options.inner 在布局中替换控件本身（如密码包装器）。
 export function field(label, control, options = {}) {
-  if (!control.id) control.id = uid('field');
-  const hintID = options.hint ? `${control.id}-hint` : null;
-  const error = h('span', {class: 'field-error', id: `${control.id}-error`, hidden: true});
-  control.setAttribute('aria-describedby', [hintID, error.id].filter(Boolean).join(' '));
+  const visible = control.entry || control;
+  if (!visible.id) visible.id = uid('field');
+  if (!control.id) control.id = control.entry ? `${visible.id}-value` : visible.id;
+  const hintID = options.hint ? `${visible.id}-hint` : null;
+  const labelID = `${visible.id}-label`;
+  if (control.entry) control.wrapper.querySelector('[role="listbox"]').setAttribute('aria-labelledby', labelID);
+  const error = h('span', {class: 'field-error', id: `${visible.id}-error`, hidden: true});
+  for (const target of new Set([control, visible])) target.setAttribute('aria-describedby', [hintID, error.id].filter(Boolean).join(' '));
   control.showError = (message) => {
     error.textContent = message;
     error.hidden = !message;
-    if (message) control.setAttribute('aria-invalid', 'true');
-    else control.removeAttribute('aria-invalid');
+    for (const target of new Set([control, visible])) {
+      if (message) target.setAttribute('aria-invalid', 'true');
+      else target.removeAttribute('aria-invalid');
+    }
   };
   control.addEventListener('invalid', (event) => {
     event.preventDefault();
-    control.classList.add('touched');
+    visible.classList.add('touched');
     control.showError(validationText(control));
     const active = document.activeElement;
     if (!(active && active.form === control.form && active.matches(':invalid'))) control.focus();
   });
-  control.addEventListener('input', () => {
-    if (control.classList.contains('touched') || control.hasAttribute('aria-invalid')) control.showError(validationText(control));
+  control.addEventListener('change', () => { if (control.entry) control.showError(validationText(control)); });
+  visible.addEventListener('input', () => {
+    if (visible.classList.contains('touched') || visible.hasAttribute('aria-invalid')) control.showError(validationText(control));
   });
-  control.addEventListener('blur', () => { if (control.value !== '') control.classList.add('touched'); });
+  visible.addEventListener('blur', () => { if (control.value !== '') visible.classList.add('touched'); });
+  const check = ['checkbox', 'radio'].includes(control.type) && !options.inner;
   return h('div', {class: 'field'},
-    h('label', {for: control.id, class: 'field-label'}, label),
-    options.inner || control,
-    options.hint ? h('span', {class: 'hint', id: hintID}, options.hint) : null,
+    check ? h('label', {class: 'check-row', for: control.id}, control, h('strong', null, label))
+      : h('label', {for: visible.id, class: 'field-label', id: labelID}, label),
+    check ? null : options.inner || (control.entry ? control.wrapper : control),
+    options.hint ? h('span', {class: 'text-note', id: hintID}, options.hint) : null,
     error);
 }
 
@@ -101,8 +183,8 @@ export function passwordInput(props) {
 }
 
 
-// Applies validation_failed field messages to controls with matching
-// data-field or name attributes. Returns whether any control matched.
+// 将 validation_failed 字段消息应用到
+// data-field 或 name 匹配的控件。返回是否有控件匹配。
 function applyFieldErrors(form, error) {
   if (!error.fields) return false;
   let first = null;
@@ -117,8 +199,8 @@ function applyFieldErrors(form, error) {
   return Boolean(first);
 }
 
-// Runs action on submit with a busy button. Errors go to errorBox when given
-// (dialogs sit above the toast layer), otherwise to a toast.
+// 提交时运行 action 并使按钮进入忙碌状态。有 errorBox 时
+// 错误显示在其中（对话框位于 toast 层之上），否则显示为 toast。
 export function onSubmit(form, submitButton, action, errorBox) {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -144,7 +226,7 @@ export function onSubmit(form, submitButton, action, errorBox) {
   });
 }
 
-// Forms without save bars (including password forms) share the same baseline.
+// 没有保存栏的表单（包括密码表单）共享同一基线。
 export function trackFormDirty(form) {
   const snapshot = () => JSON.stringify([...form.querySelectorAll('[name],[data-tags]')]
     .map((element) => element.dataset.tags !== undefined ? element.getValue() : element.multiple ? [...element.selectedOptions].map((option) => option.value)
@@ -162,7 +244,7 @@ export function trackFormDirty(form) {
   return state;
 }
 
-// Save bars reuse the baseline and add only their own button/note state.
+// 保存栏复用基线，只添加自己的按钮/备注状态。
 export function trackDirty(form, controls) {
   const state = trackFormDirty(form);
   form.syncDirty = () => {
@@ -182,8 +264,8 @@ export function saveBar(label, id) {
   return {save, discard, note, bar: h('div', {class: 'form-actions'}, save, discard, note)};
 }
 
-// Chip editor for node tags: Enter or comma adds, Backspace on empty removes the
-// last tag, pasted lists are split and trimmed. Tags are 1–255 bytes and unique.
+// 节点标签编辑器：Enter 或逗号添加，输入为空时 Backspace 删除最后一个标签。
+// 粘贴的列表会拆分并去除首尾空白；标签须为 1–255 字节且不重复。
 export function tagEditor(values) {
   let tags = [...values];
   const entryID = uid('tag-entry');
@@ -234,6 +316,6 @@ export function tagEditor(values) {
   }
   render();
   return h('div', {class: 'field'}, h('label', {for: entry.id, class: 'field-label', id: labelID}, t('controls.tags.label')), box,
-    h('span', {class: 'hint', id: hintID}, t('controls.tags.hint')), error);
+    h('span', {class: 'text-note', id: hintID}, t('controls.tags.hint')), error);
 }
 

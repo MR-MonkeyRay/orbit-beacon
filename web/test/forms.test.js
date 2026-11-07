@@ -13,7 +13,7 @@ test('billing success records its normalized baseline while Notes and Public nam
   const requests = [];
   globalThis.fetch = async (path, options) => {
     requests.push({path, options});
-    return new Response(JSON.stringify({billing_day: 2, quota_bytes: '1000'}));
+    return new Response(JSON.stringify({billing_day: 2, quota_bytes: '1000', billing_mode: 'total'}));
   };
   try {
     const {h} = await import('../src/shared/dom.js');
@@ -50,7 +50,7 @@ test('billing success records its normalized baseline while Notes and Public nam
     await flush();
     assert.equal(requests.length, 1);
     assert.equal(requests[0].path, '/api/v1/nodes/node-1/traffic-settings');
-    assert.deepEqual(JSON.parse(requests[0].options.body), {billing_day: 2, quota_bytes: '1000'});
+    assert.deepEqual(JSON.parse(requests[0].options.body), {billing_day: 2, quota_bytes: '1000', billing_mode: 'total'});
     assert.equal(trafficRefreshes, 1);
     assert.equal(billing.dataset.dirty, 'false');
     assert.equal(billing.querySelector('#billing-save').disabled, true);
@@ -106,4 +106,47 @@ test('a detached submitted form cannot publish late private errors into the next
     assert.ok(errorBox.textContent.length > 0);
     assert.equal(errorBox.textContent.includes(error.message), false);
   } finally { globalThis.setTimeout = originalTimeout; dom.restore(); }
+});
+
+test('input keeps text styling off native checkbox and radio controls', async () => {
+  const dom = installDOM();
+  try {
+    const {input} = await import('../src/console/ui/forms.js');
+    for (const type of ['checkbox', 'radio']) {
+      const control = input({type, name: type, checked: true});
+      assert.equal(control.classList.contains('input'), false);
+      assert.equal(control.type, type);
+      assert.equal(control.checked, true);
+      assert.equal(control.disabled, false);
+      assert.equal(input({type, class: 'selection'}).className, 'selection');
+    }
+    assert.equal(input().className, 'input');
+    assert.equal(input({type: 'email'}).className, 'input');
+    assert.equal(input({class: 'input mono'}).className, 'input mono');
+  } finally { dom.restore(); }
+});
+
+test('checkbox fields put the native control before its text in one clickable label and keep validation', async () => {
+  const dom = installDOM();
+  try {
+    const {copy} = await import('./console-dom.js');
+    const {field, input} = await import('../src/console/ui/forms.js');
+    const control = input({type: 'checkbox', name: 'enabled'});
+    const wrapper = field(copy('alerts.state.enabled'), control, {hint: copy('data.plan.enabledHint')});
+    dom.body.append(wrapper);
+    const label = wrapper.querySelector('label');
+    assert.equal(label.className, 'check-row');
+    assert.equal(label.children[0], control);
+    assert.ok(label.textContent.includes(copy('alerts.state.enabled')));
+    const hint = wrapper.querySelector('.text-note');
+    assert.equal(hint.textContent, copy('data.plan.enabledHint'));
+    assert.ok(control.getAttribute('aria-describedby').split(' ').includes(hint.id));
+    control.showError(copy('controls.validation.required'));
+    assert.equal(wrapper.querySelector('.field-error').hidden, false);
+    assert.equal(control.getAttribute('aria-invalid'), 'true');
+    control.dispatchEvent(new Event('invalid', {cancelable: true}));
+    assert.equal(document.activeElement, control);
+    control.showError('');
+    assert.equal(wrapper.querySelector('.field-error').hidden, true);
+  } finally { dom.restore(); }
 });

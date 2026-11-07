@@ -92,7 +92,7 @@ func TestHTTPInvalidStatusIsGenericFailure(t *testing.T) {
 		}, nil
 	})
 	result := checker.Check(context.Background(), "http://example.test/")
-	if result.OK || result.Error != "error" || result.LatencyMS != nil || result.StatusCode != nil {
+	if result.OK || result.Error != "error" || result.LatencyMS != nil || result.StatusCode != nil || result.TLSExpiresAt != nil {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
@@ -105,7 +105,7 @@ func TestHTTPGenericTLSHandshakeFailure(t *testing.T) {
 		return nil, err
 	})
 	result := checker.Check(context.Background(), "https://example.test/")
-	if result.OK || result.Error != "tls" || result.LatencyMS != nil || result.StatusCode != nil {
+	if result.OK || result.Error != "tls" || result.LatencyMS != nil || result.StatusCode != nil || result.TLSExpiresAt != nil {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
@@ -117,7 +117,7 @@ func TestHTTPHandshakeTimeoutTakesPrecedence(t *testing.T) {
 		return nil, context.DeadlineExceeded
 	})
 	result := checker.Check(context.Background(), "https://example.test/")
-	if result.OK || result.Error != "timeout" || result.LatencyMS != nil || result.StatusCode != nil {
+	if result.OK || result.Error != "timeout" || result.LatencyMS != nil || result.StatusCode != nil || result.TLSExpiresAt != nil {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }

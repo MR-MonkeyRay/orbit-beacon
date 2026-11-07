@@ -34,7 +34,7 @@ func TestSchedulerDeadlineStillReportsCompleteConfiguredMetrics(t *testing.T) {
 		scheduler := service.NewScheduler(service.SchedulerOptions{
 			Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return config },
 			Collect: func(ctx context.Context) (v1.Metrics, error) {
-				// Exhaust the scheduler's real collection deadline before collection can finish.
+				// 先等待调度器的实际采集超时，再让采集器返回完整快照。
 				<-ctx.Done()
 				return collector.Collect(ctx)
 			},

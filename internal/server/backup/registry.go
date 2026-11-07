@@ -41,14 +41,29 @@ func table(name, source, where, definition, primary string) tableSpec {
 	return spec
 }
 
+// intentionallyExcluded records ephemeral tables that must never be restored.
+var intentionallyExcluded = map[string]map[string]string{
+	"main": {
+		"api_tokens":               "API 令牌不恢复",
+		"sessions":                 "登录会话不恢复",
+		"enrollment_tokens":        "注册授权不恢复",
+		"enrollment_claims":        "临时注册回执不恢复",
+		"notification_rate_limits": "运行时限流不恢复",
+		"agent_commands":           "指令及回执不备份，恢复绝不能重放指令",
+	},
+}
+
 var categoryTables = map[Category][]tableSpec{
 	Configuration: {
-		table("users", "main", "", "id TEXT,username TEXT,password_hash TEXT,created_at TEXT,must_change_password INTEGER", "id"),
-		table("settings", "main", "key = 'public_page_enabled'", "key TEXT,value TEXT", "key"),
+		table("users", "main", "", "id TEXT,username TEXT,password_hash TEXT,created_at TEXT,must_change_password INTEGER,totp_ciphertext BLOB,totp_pending_ciphertext BLOB,totp_pending_at TEXT,totp_last_step INTEGER", "id"),
+		table("recovery_codes", "main", "", "user_id TEXT,code_hash BLOB", "user_id,code_hash"),
+		table("settings", "main", "key IN ('public_page_enabled','api_token_rate_limit_per_minute')", "key TEXT,value TEXT", "key"),
 		table("groups", "main", "", "id TEXT,name TEXT", "id"),
-		table("nodes", "main", "", "id TEXT,name TEXT,status TEXT,group_id TEXT,region TEXT,provider TEXT,notes TEXT,created_at TEXT,public_settings TEXT,billing_day INTEGER,quota_bytes TEXT,token_hash BLOB,credential_epoch INTEGER,installation_id TEXT,first_enrolled_at TEXT,run_generation TEXT,report_session_id TEXT", "id"),
+		table("nodes", "main", "", "id TEXT,name TEXT,status TEXT,group_id TEXT,region TEXT,provider TEXT,notes TEXT,expires_on TEXT,created_at TEXT,public_settings TEXT,billing_day INTEGER,quota_bytes TEXT,billing_mode TEXT,token_hash BLOB,credential_epoch INTEGER,installation_id TEXT,first_enrolled_at TEXT,run_generation TEXT,report_session_id TEXT", "id"),
 		table("node_tags", "main", "", "node_id TEXT,tag TEXT", "node_id,tag"),
-		table("alert_rules", "main", "", "id TEXT,name TEXT,enabled INTEGER,scope_kind TEXT,scope_id TEXT,metric TEXT,comparator TEXT,threshold REAL,for_seconds INTEGER,severity TEXT,created_at TEXT,updated_at TEXT", "id"),
+		table("announcements", "main", "", "id TEXT,level TEXT,title TEXT,body TEXT,starts_at TEXT,ends_at TEXT,created_at TEXT,updated_at TEXT", "id"),
+		table("alert_silences", "main", "", "id TEXT,reason TEXT,scope_kind TEXT,scope_id TEXT,starts_at TEXT,ends_at TEXT,created_at TEXT", "id"),
+		table("alert_rules", "main", "", "id TEXT,name TEXT,enabled INTEGER,scope_kind TEXT,scope_id TEXT,metric TEXT,target TEXT,comparator TEXT,threshold REAL,for_seconds INTEGER,severity TEXT,created_at TEXT,updated_at TEXT", "id"),
 		table("notification_channels", "main", "", "id TEXT,name TEXT,kind TEXT,enabled INTEGER,config_json TEXT,secret_ciphertext BLOB,url_ciphertext BLOB,created_at TEXT,updated_at TEXT", "id"),
 		table("alert_rule_channels", "main", "", "rule_id TEXT,channel_id TEXT", "rule_id,channel_id"),
 		table("backup_plans", "main", "", "id TEXT,name TEXT,enabled INTEGER,kind TEXT,categories_json TEXT,cron TEXT,destination_json TEXT,credentials_ciphertext BLOB,retain_count INTEGER,created_at TEXT,updated_at TEXT", "id"),
@@ -56,14 +71,15 @@ var categoryTables = map[Category][]tableSpec{
 	Monitoring: {
 		table("node_observations", "main", "", "node_id TEXT,last_seen TEXT,system TEXT,agent_runtime TEXT", "node_id"),
 		table("traffic_hourly", "main", "", "node_id TEXT,epoch TEXT,period_start TEXT,rx_bytes INTEGER,tx_bytes INTEGER,updated_at TEXT", "node_id,epoch,period_start"),
+		table("node_availability_daily", "main", "", "node_id TEXT,day TEXT,online_seconds INTEGER,offline_seconds INTEGER", "node_id,day"),
 		table("traffic_daily", "main", "", "node_id TEXT,day TEXT,rx_bytes INTEGER,tx_bytes INTEGER", "node_id,day"),
-		table("probe_latest", "main", "", "node_id TEXT,target TEXT,ok INTEGER,latency_ms REAL,error TEXT,status_code INTEGER,checked_at TEXT", "node_id,target"),
-		table("probe_hourly", "main", "", "node_id TEXT,target TEXT,hour TEXT,checks INTEGER,failures INTEGER,latency_sum_ms REAL", "node_id,target,hour"),
+		table("probe_latest", "main", "", "node_id TEXT,target TEXT,ok INTEGER,latency_ms REAL,error TEXT,status_code INTEGER,checked_at TEXT,tls_expires_at TEXT", "node_id,target"),
+		table("probe_hourly", "main", "", "node_id TEXT,target TEXT,hour TEXT,checks INTEGER,failures INTEGER,latency_sum_ms REAL,latency_max_ms REAL", "node_id,target,hour"),
 		table("buckets", "metrics", "", "node_id TEXT,metric TEXT,step INTEGER,t INTEGER,total REAL,peak REAL,samples INTEGER", "node_id,metric,step,t"),
 	},
 	Events: {
 		table("audit_events", "main", "", "id TEXT,actor_id TEXT,action TEXT,target_id TEXT,created_at TEXT,details TEXT", "id"),
-		table("alert_events", "main", "", "id TEXT,rule_id TEXT,node_id TEXT,state TEXT,value REAL,started_at TEXT,resolved_at TEXT,last_notified_at TEXT,rule_name TEXT,node_name TEXT,rule_snapshot TEXT", "id"),
+		table("alert_events", "main", "", "id TEXT,rule_id TEXT,node_id TEXT,state TEXT,value REAL,started_at TEXT,resolved_at TEXT,last_notified_at TEXT,rule_name TEXT,node_name TEXT,rule_snapshot TEXT,silenced INTEGER", "id"),
 		table("notification_deliveries", "main", "state IN ('sent','failed')", "id TEXT,channel_id TEXT,event_id TEXT,state TEXT,attempts INTEGER,next_attempt_at TEXT,last_error_code TEXT,lease_until TEXT,payload_json TEXT,coalesced_count INTEGER,created_at TEXT,updated_at TEXT", "id"),
 		table("inbox_notifications", "main", "", "id TEXT,kind TEXT,source_id TEXT,transition TEXT,severity TEXT,created_at TEXT,details_json TEXT", "id"),
 		table("inbox_reads", "main", "", "user_id TEXT,notification_id TEXT,read_at TEXT", "user_id,notification_id"),
@@ -80,8 +96,8 @@ func columnNames(spec tableSpec) string {
 	return strings.Join(names, ",")
 }
 
-// The transfer format has one fixed DDL per table. Reject archive-controlled
-// expressions before integrity_check can evaluate CHECK constraints.
+// 传输格式中每张表只有一种固定 DDL。在 integrity_check 能够求值
+// CHECK 约束之前，先拒绝归档可控的表达式。
 func payloadTableDDL(spec tableSpec) string {
 	columns := make([]string, 0, len(spec.Columns)+1)
 	var keys []string
@@ -147,8 +163,8 @@ func openPayload(ctx context.Context, path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// ValidatePayloadSchema inspects only SQLite's metadata before any row query.
-// Archive SQL never supplies identifiers or DDL for the final database.
+// ValidatePayloadSchema 在任何行查询之前只检查 SQLite 的元数据。
+// 归档 SQL 绝不为最终数据库提供标识符或 DDL。
 func ValidatePayloadSchema(ctx context.Context, db *sql.DB, category Category) error {
 	specs := tablesFor(category)
 	if len(specs) == 0 {

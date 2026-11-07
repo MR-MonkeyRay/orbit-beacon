@@ -16,15 +16,17 @@ import (
 
 	"modernc.org/sqlite"
 
-	"orbitbeacon/internal/identity"
+	"orbitbeacon/internal/server/announcements"
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
-// OnlineWindow is the shared management and public recent-report window.
+// OnlineWindow 是管理端和公开端共用的近期上报窗口。
 const OnlineWindow = 180 * time.Second
 
-// PublicSettings contains only text explicitly selected for anonymous publication.
+// PublicSettings 仅包含明确选择用于匿名公开的文本。
 type PublicSettings struct {
 	Enabled  bool   `json:"enabled"`
 	Name     string `json:"name"`
@@ -39,8 +41,8 @@ type PublicSettingsPatch struct {
 	Provider *string `json:"provider"`
 }
 
-// Preserve raw text validity: encoding/json otherwise silently replaces invalid
-// UTF-8 with U+FFFD before the service can validate the administrator's input.
+// 保留原始文本的有效性：否则 encoding/json 会在服务校验管理员输入之前，
+// 悄悄把非法 UTF-8 替换为 U+FFFD。
 func (p *PublicSettingsPatch) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		Enabled  *bool           `json:"enabled"`
@@ -62,7 +64,7 @@ func (p *PublicSettingsPatch) UnmarshalJSON(data []byte) error {
 		{"name", wire.Name, &p.Name}, {"region", wire.Region, &p.Region}, {"provider", wire.Provider, &p.Provider},
 	} {
 		if !utf8.Valid(field.raw) {
-			return &ValidationError{Fields: map[string]string{field.name: "must be valid UTF-8"}}
+			return validation.Invalid(field.name, "must be valid UTF-8")
 		}
 		if len(field.raw) != 0 {
 			if err := json.Unmarshal(field.raw, field.dst); err != nil {
@@ -73,7 +75,7 @@ func (p *PublicSettingsPatch) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Validate checks publication fields without changing stored settings.
+// Validate 校验公开字段，不改动已存储的设置。
 func (p PublicSettings) Validate() error {
 	fields := make(map[string]string)
 	for _, field := range []struct {
@@ -88,7 +90,7 @@ func (p PublicSettings) Validate() error {
 		fields["name"] = "must be nonempty when published"
 	}
 	if len(fields) > 0 {
-		return &ValidationError{Fields: fields}
+		return &validation.Error{Fields: fields}
 	}
 	return nil
 }
@@ -114,7 +116,7 @@ func (s *Service) GetPublicSettings(ctx context.Context, id string) (PublicSetti
 }
 
 func (s *Service) PatchPublicSettings(ctx context.Context, id string, patch PublicSettingsPatch) (PublicSettings, error) {
-	if !identity.ValidUUID(id) {
+	if !uuid.ValidUUID(id) {
 		return PublicSettings{}, ErrInvalidInput
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -142,7 +144,7 @@ func (s *Service) PatchPublicSettings(ctx context.Context, id string, patch Publ
 		src *string
 	}{{&p.Name, patch.Name}, {&p.Region, patch.Region}, {&p.Provider, patch.Provider}} {
 		if field.src != nil {
-			// Validate before trimming so whitespace control characters cannot disappear.
+			// 先校验再修剪，这样空白中的控制字符不会消失。
 			if !utf8.ValidString(*field.src) || strings.ContainsFunc(*field.src, unicode.IsControl) {
 				*field.dst = *field.src
 			} else {
@@ -176,7 +178,7 @@ func (s *Service) PatchPublicSettings(ctx context.Context, id string, patch Publ
 }
 
 func init() {
-	// Validate inside SQLite before LIMIT/OFFSET with identical Unicode rules.
+	// 在 SQLite 内部用相同的 Unicode 规则校验，确保 LIMIT/OFFSET 之前数据合法。
 	sqlite.MustRegisterDeterministicScalarFunction("orbitbeacon_public_valid", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 		raw, ok := args[0].(string)
 		if ok {
@@ -199,18 +201,19 @@ func visibleSettings(raw string) (PublicSettings, bool) {
 	return p, err == nil && p.Enabled && p.Validate() == nil
 }
 
-// PublicVisibilityVersion changes after a committed mutation of public data.
+// PublicVisibilityVersion 在公开数据变更提交后递增。
 func (s *Service) PublicVisibilityVersion() uint64 {
 	s.publicMu.RLock()
 	defer s.publicMu.RUnlock()
 	return s.publicVersion
 }
 
-// SetPublicReader selects the isolated pool used only by anonymous page queries.
-// A nil reader restores the main pool used by existing constructors.
+// SetPublicReader 选择仅供匿名页面查询使用的隔离连接池。
+// 传 nil 恢复为现有构造函数使用的主连接池。
 func (s *Service) SetPublicReader(db *sql.DB) { s.publicReader.Store(db) }
 
-func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int) ([]PublicRecord, bool, error) {
+// ListPublicRecords 用一条查询返回一页记录及其最近 30 个 UTC 日的可用性计数。
+func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int, now time.Time) ([]PublicRecord, bool, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, false, ErrInvalidInput
 	}
@@ -218,14 +221,24 @@ func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int) ([]P
 	if db == nil {
 		db = s.db
 	}
-	rows, err := db.QueryContext(ctx, "SELECT id,public_settings,last_seen,token_hash,credential_epoch,run_generation,report_session_id FROM nodes WHERE "+publicVisibility+" ORDER BY created_at,id LIMIT ? OFFSET ?", limit+1, offset)
+	now = now.UTC()
+	rows, err := db.QueryContext(ctx, `WITH page AS (
+ SELECT created_at,id,public_settings,last_seen,token_hash,credential_epoch,run_generation,report_session_id
+ FROM nodes WHERE `+publicVisibility+` ORDER BY created_at,id LIMIT ? OFFSET ?
+), daily AS (
+ SELECT a.node_id,json_group_array(json_object('day',a.day,'online_seconds',a.online_seconds,'offline_seconds',a.offline_seconds)) AS counts
+ FROM node_availability_daily a JOIN page p ON p.id=a.node_id WHERE a.day>=? AND a.day<=? GROUP BY a.node_id
+)
+SELECT p.id,p.public_settings,p.last_seen,p.token_hash,p.credential_epoch,p.run_generation,p.report_session_id,COALESCE(d.counts,'[]')
+FROM page p LEFT JOIN daily d ON d.node_id=p.id ORDER BY p.created_at,p.id`,
+		limit+1, offset, now.AddDate(0, 0, -29).Format(time.DateOnly), now.Format(time.DateOnly))
 	if err != nil {
 		return nil, false, err
 	}
 	defer rows.Close()
 	records := make([]PublicRecord, 0, limit)
 	for rows.Next() {
-		// The extra row only establishes has_more, as in ListPublicIDs.
+		// 多取的一行仅用于判断 has_more。
 		if len(records) == limit {
 			return records, true, nil
 		}
@@ -238,31 +251,20 @@ func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int) ([]P
 	return records, false, rows.Err()
 }
 
-func (s *Service) ListPublicIDs(ctx context.Context, limit, offset int) ([]string, bool, error) {
-	records, more, err := s.ListPublicRecords(ctx, limit, offset)
-	if err != nil {
-		return nil, false, err
-	}
-	ids := make([]string, 0, len(records))
-	for _, record := range records {
-		ids = append(ids, record.ID)
-	}
-	return ids, more, nil
-}
-
-// PublicRecord is an internal identity fence, never an HTTP representation.
+// PublicRecord 是内部身份围栏，绝不作为 HTTP 响应。
 type PublicRecord struct {
-	ID              string         `json:"-"`
-	Settings        PublicSettings `json:"-"`
-	LastSeen        time.Time      `json:"-"`
-	Credential      [32]byte       `json:"-"`
-	CredentialEpoch int64          `json:"-"`
-	Generation      uint64         `json:"-"`
-	Session         string         `json:"-"`
+	ID               string         `json:"-"`
+	AvailabilityJSON string         `json:"-"`
+	Settings         PublicSettings `json:"-"`
+	LastSeen         time.Time      `json:"-"`
+	Credential       [32]byte       `json:"-"`
+	CredentialEpoch  int64          `json:"-"`
+	Generation       uint64         `json:"-"`
+	Session          string         `json:"-"`
 }
 
-// LatestSeen includes reports coalesced in memory after the durable last_seen.
-// The caller must first match the record's credential and process identity.
+// LatestSeen 包含持久化 last_seen 之后在内存中合并的上报。
+// 调用方必须先匹配该记录的凭据和进程身份。
 func (p PublicRecord) LatestSeen(receivedAt time.Time) time.Time {
 	if receivedAt.After(p.LastSeen) {
 		return receivedAt
@@ -270,16 +272,12 @@ func (p PublicRecord) LatestSeen(receivedAt time.Time) time.Time {
 	return p.LastSeen
 }
 
-func ReadPublicRecord(ctx context.Context, db *sql.DB, id string) (PublicRecord, error) {
-	return scanPublicRecord(db.QueryRowContext(ctx, "SELECT id,public_settings,last_seen,token_hash,credential_epoch,run_generation,report_session_id FROM nodes WHERE id = ? AND "+publicVisibility, id))
-}
-
 func scanPublicRecord(row interface{ Scan(...any) error }) (PublicRecord, error) {
 	var p PublicRecord
 	var raw, generation string
 	var seen sql.NullString
 	var credential []byte
-	err := row.Scan(&p.ID, &raw, &seen, &credential, &p.CredentialEpoch, &generation, &p.Session)
+	err := row.Scan(&p.ID, &raw, &seen, &credential, &p.CredentialEpoch, &generation, &p.Session, &p.AvailabilityJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}
@@ -306,4 +304,12 @@ func scanPublicRecord(row interface{ Scan(...any) error }) (PublicRecord, error)
 		}
 	}
 	return p, nil
+}
+
+func (s *Service) ListPublicAnnouncements(ctx context.Context, now time.Time) ([]announcements.Public, error) {
+	db := s.publicReader.Load()
+	if db == nil {
+		db = s.db
+	}
+	return announcements.ListPublic(ctx, db, now)
 }

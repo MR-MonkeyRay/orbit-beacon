@@ -16,8 +16,8 @@ const (
 	maxConcurrent   = 5
 )
 
-// Options permits short intervals and synthetic checks in tests. Selection is
-// applied explicitly at initialization and configuration reload boundaries.
+// Options 允许测试缩短间隔并替换探测函数。
+// 探测目标只在初始化和配置重载时显式设置。
 type Options struct {
 	Check    func(context.Context, string) v1.ProbeResult
 	Interval time.Duration
@@ -25,14 +25,15 @@ type Options struct {
 }
 
 type targetState struct {
-	next    time.Time
-	running bool
-	cancel  context.CancelFunc
-	result  *v1.ProbeResult
+	expected int
+	next     time.Time
+	running  bool
+	cancel   context.CancelFunc
+	result   *v1.ProbeResult
 }
 
-// Runner keeps one latest result per target. Its reporting methods never wait
-// for network work; all checks share a five-worker concurrency limit.
+// Runner 为每个目标保留最新结果，读取结果不等待网络操作；
+// 所有探测共享最多五个并发任务的限制。
 type Runner struct {
 	options Options
 	mu      sync.Mutex
@@ -52,9 +53,17 @@ func NewRunner(options Options) *Runner {
 	return &Runner{options: options, targets: make(map[string]*targetState), wake: make(chan struct{}, 1)}
 }
 
-// SetTargets immediately removes stale results and cancels removed checks.
-// Adding a target wakes the runner without waiting for its next interval.
+// SetTargets 立即清除已移除目标的结果，并取消其探测。
+// 新增目标会立即唤醒调度器，无需等待下一个间隔。
 func (r *Runner) SetTargets(targets []string) error {
+	return r.SetConfig(targets, nil)
+}
+
+// SetConfig 原子替换本地目标及期望状态，取消并丢弃旧配置的检查。
+func (r *Runner) SetConfig(targets []string, expected map[string]int) error {
+	if err := v1.ValidateProbeExpectedStatus(targets, expected); err != nil {
+		return err
+	}
 	if len(targets) > maxConcurrent {
 		return errors.New("too many probe targets")
 	}
@@ -71,7 +80,7 @@ func (r *Runner) SetTargets(targets []string) error {
 	r.mu.Lock()
 	changed := false
 	for target, state := range r.targets {
-		if !desired[target] {
+		if !desired[target] || state.expected != expected[target] {
 			if state.cancel != nil {
 				state.cancel()
 			}
@@ -81,7 +90,7 @@ func (r *Runner) SetTargets(targets []string) error {
 	}
 	for target := range desired {
 		if r.targets[target] == nil {
-			r.targets[target] = &targetState{}
+			r.targets[target] = &targetState{expected: expected[target]}
 			changed = true
 		}
 	}
@@ -92,8 +101,8 @@ func (r *Runner) SetTargets(targets []string) error {
 	return nil
 }
 
-// Results returns independent copies in the report's target order, omitting
-// unfinished or removed checks. Reading an old snapshot never changes selection.
+// Results 按上报的目标顺序返回独立副本，忽略未完成或已删除的检查。
+// 读取旧快照不会改变当前探测目标。
 func (r *Runner) Results(targets []string) []v1.ProbeResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -111,6 +120,10 @@ func (r *Runner) Results(targets []string) []v1.ProbeResult {
 		if result.StatusCode != nil {
 			value := *result.StatusCode
 			result.StatusCode = &value
+		}
+		if result.TLSExpiresAt != nil {
+			value := *result.TLSExpiresAt
+			result.TLSExpiresAt = &value
 		}
 		results = append(results, result)
 	}
@@ -131,11 +144,13 @@ func (r *Runner) Run(ctx context.Context) error {
 	defer r.running.Store(false)
 	ctx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
-	check := r.options.Check
-	if check == nil {
+	check := func(ctx context.Context, target string, expected int) v1.ProbeResult {
+		return r.options.Check(ctx, target)
+	}
+	if r.options.Check == nil {
 		checker := NewChecker(r.options.Timeout)
 		defer checker.Close()
-		check = checker.Check
+		check = checker.CheckExpectedStatus
 	}
 	defer func() { cancel(); workers.Wait() }()
 	timer := time.NewTimer(0)
@@ -159,7 +174,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			workers.Add(1)
 			go func(target string, state *targetState) {
 				defer workers.Done()
-				result := check(checkCtx, target)
+				result := check(checkCtx, target, state.expected)
 				stop()
 				r.mu.Lock()
 				r.active--

@@ -11,12 +11,12 @@ import (
 func TestHandlerValidatesAndAdvertisesEffectiveWebInterval(t *testing.T) {
 	f := newHTTP(t, 2)
 	for _, seconds := range []int{-1, 1, 61} {
-		if _, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, WebUpdateIntervalSeconds: seconds}); err == nil {
+		if _, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, WebUpdateIntervalSeconds: seconds})); err == nil {
 			t.Fatalf("accepted invalid web interval %d", seconds)
 		}
 	}
 	for _, seconds := range []int{0, 2, 10, 30, 60} {
-		h, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, WebUpdateIntervalSeconds: seconds})
+		h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, WebUpdateIntervalSeconds: seconds}))
 		if err != nil {
 			t.Fatal(err)
 		}

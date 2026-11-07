@@ -1,7 +1,7 @@
 package storage
 
-// backupsSchema adds only data-operations state. Plan and actor references are
-// snapshots, deliberately not cascading foreign keys into operational history.
+// backupsSchema 仅添加数据操作状态。计划和执行者引用是快照，
+// 有意不把级联外键引入操作历史。
 const backupsSchema = `
 CREATE TABLE backup_plans (
  id TEXT PRIMARY KEY, name TEXT NOT NULL,

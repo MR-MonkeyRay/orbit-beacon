@@ -12,9 +12,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// openInstallPolicy walks from the filesystem root using pinned directory
-// descriptors. No component is followed through a symlink or reopened by name
-// after validation. Shared ancestors may be owned by root or expectedOwner.
+// openInstallPolicy 从文件系统根开始，用固定的目录描述符逐级遍历。
+// 全程不跟随符号链接，校验后也不按名称重新打开路径分量。
+// 上级目录的属主可以是 root 或 expectedOwner。
 func openInstallPolicy(path string, expectedOwner int) (*os.File, error) {
 	if !filepath.IsAbs(path) {
 		cwd, err := os.Getwd()
@@ -25,12 +25,12 @@ func openInstallPolicy(path string, expectedOwner int) (*os.File, error) {
 	}
 	components := strings.Split(path, "/")
 	if components[len(components)-1] == "" {
-		return nil, errors.New("policy path must name a regular file")
+		return nil, errors.New("策略路径必须指向普通文件")
 	}
-	// Do not clean the path: cleaning could hide a symlink before a '..'.
+	// 不做路径规范化，避免掩盖 .. 前面的符号链接。
 	for _, component := range components {
 		if component == ".." {
-			return nil, errors.New("policy path must not contain parent traversal")
+			return nil, errors.New("策略路径不能包含父级回溯")
 		}
 	}
 	flags := unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW | unix.O_NONBLOCK
@@ -48,11 +48,11 @@ func openInstallPolicy(path string, expectedOwner int) (*os.File, error) {
 		}
 		next, err := unix.Openat(directory, component, flags|unix.O_DIRECTORY, 0)
 		if err != nil {
-			return nil, fmt.Errorf("open ancestor %q: %w", component, err)
+			return nil, fmt.Errorf("打开祖先目录 %q 失败: %w", component, err)
 		}
 		if err := validatePolicyDirectory(next, expectedOwner); err != nil {
 			_ = unix.Close(next)
-			return nil, fmt.Errorf("ancestor %q: %w", component, err)
+			return nil, fmt.Errorf("祖先目录 %q: %w", component, err)
 		}
 		_ = unix.Close(directory)
 		directory = next
@@ -68,11 +68,11 @@ func openInstallPolicy(path string, expectedOwner int) (*os.File, error) {
 	}
 	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0022 != 0 || uint64(stat.Uid) != uint64(expectedOwner) {
 		_ = unix.Close(fd)
-		return nil, errors.New("policy must be a regular file owned by the expected administrator and not writable by group or others")
+		return nil, errors.New("策略必须是归指定管理员所有的普通文件，且组和其他用户均不可写")
 	}
 	if stat.Size < 0 || stat.Size > maxInstallPolicySize {
 		_ = unix.Close(fd)
-		return nil, errors.New("policy exceeds the 64 KiB size limit")
+		return nil, errors.New("策略超过 64 KiB 大小限制")
 	}
 	return os.NewFile(uintptr(fd), path), nil
 }
@@ -83,7 +83,7 @@ func validatePolicyDirectory(fd, expectedOwner int) error {
 		return err
 	}
 	if stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Mode&0022 != 0 || (stat.Uid != 0 && uint64(stat.Uid) != uint64(expectedOwner)) {
-		return errors.New("policy ancestors must be directories owned by root or the expected administrator and not writable by group or others")
+		return errors.New("策略的上级目录必须归 root 或指定管理员所有，且组和其他用户均不可写")
 	}
 	return nil
 }

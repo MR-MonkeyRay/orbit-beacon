@@ -31,7 +31,7 @@ func TestRuntimeOwnershipHTTPAndTrafficSettings(t *testing.T) {
 	path := base + "/traffic-settings"
 	before := request(t, f.handler, http.MethodGet, path, "", admin, "", "")
 	assertHTTPStatus(t, before, http.StatusOK)
-	for _, body := range []string{`{"billing_day":null}`, `{"quota_bytes":null}`, `{"billing_day":0}`, `{"quota_bytes":"01"}`, `{"quota_bytes":2}`, `{"report_interval_seconds":5}`} {
+	for _, body := range []string{`{"billing_mode":null}`, `{"billing_mode":"invalid"}`, `{"billing_mode":1}`, `{"billing_day":null}`, `{"quota_bytes":null}`, `{"billing_day":0}`, `{"quota_bytes":"01"}`, `{"quota_bytes":2}`, `{"report_interval_seconds":5}`} {
 		response := request(t, f.handler, http.MethodPatch, path, body, admin, csrf, publicURL)
 		assertHTTPStatus(t, response, http.StatusBadRequest)
 		after := request(t, f.handler, http.MethodGet, path, "", admin, "", "")
@@ -40,10 +40,10 @@ func TestRuntimeOwnershipHTTPAndTrafficSettings(t *testing.T) {
 		}
 	}
 	for range 2 {
-		changed := request(t, f.handler, http.MethodPatch, path, `{"billing_day":2,"quota_bytes":"1000000000"}`, admin, csrf, publicURL)
+		changed := request(t, f.handler, http.MethodPatch, path, `{"billing_mode":"max","billing_day":2,"quota_bytes":"1000000000"}`, admin, csrf, publicURL)
 		assertHTTPStatus(t, changed, http.StatusOK)
 		var values map[string]any
-		if err := json.Unmarshal(changed.Body.Bytes(), &values); err != nil || len(values) != 2 || values["billing_day"] != float64(2) || values["quota_bytes"] != "1000000000" {
+		if err := json.Unmarshal(changed.Body.Bytes(), &values); err != nil || len(values) != 3 || values["billing_mode"] != "max" || values["billing_day"] != float64(2) || values["quota_bytes"] != "1000000000" {
 			t.Fatalf("traffic settings=%v err=%v", values, err)
 		}
 	}
@@ -67,7 +67,7 @@ func TestObservedRuntimeCannotRollbackOnDuplicateAndRevokeClearsIdentity(t *test
 	f := newAgentHTTP(t, 2)
 	id, token, _ := enrollHTTP(t, f, "runtime-owner", 1)
 	withRuntime := func(seq uint64, targets string) string {
-		return strings.Replace(reportBody(1, seq, "runtime-session", 25), `"runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]}`, `"runtime":{"report_interval_seconds":5,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":`+targets+`}`, 1)
+		return strings.Replace(reportBody(1, seq, "runtime-session", 25), `"runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]}`, `"runtime":{"report_interval_seconds":5,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":`+targets+`,"remote_commands":["upgrade","restart","stop"],"disabled_features":[]}`, 1)
 	}
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, withRuntime(1, `["tcp://old.test:443"]`)), 1)
 	checked := "2026-10-26T12:00:00.000000000Z"
@@ -271,8 +271,8 @@ func TestCredentialEpochExhaustionRollsBackIdentityMutation(t *testing.T) {
 			}
 			request := v1.EnrollmentRequest{ProtocolVersion: 1, InstallationID: "installation-epoch-limit", NodeToken: token, System: v1.System{Hostname: "new-enrollment", OS: "linux", Arch: "amd64"}}
 			if mutation != "bind" {
-				// Exhaustion does not turn an idempotent same-active-credential
-				// enrollment into a mutation or invalidate the active identity.
+				// epoch 耗尽时，以同一有效凭据进行的幂等注册仍不修改身份，
+				// 也不使当前身份失效。
 				ticket, err := f.enrollments.CreateSingle(ctx, id)
 				if err != nil {
 					t.Fatal(err)

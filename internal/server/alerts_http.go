@@ -2,15 +2,46 @@ package server
 
 import (
 	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
 
 	"orbitbeacon/internal/server/alerts"
-	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/validation"
 )
 
-func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID string) bool {
+func (h *handler) readAlert(w http.ResponseWriter, r *http.Request, requestID string) (alerts.Event, bool) {
+	if r.URL.RawQuery != "" {
+		h.serviceError(w, &validation.Error{Fields: map[string]string{"query": "unknown parameter"}}, requestID)
+		return alerts.Event{}, false
+	}
+	event, err := h.alerts.Event(r.Context(), strings.TrimPrefix(r.URL.Path, "/api/v1/alerts/"))
+	if err != nil {
+		h.serviceError(w, err, requestID)
+		return alerts.Event{}, false
+	}
+	return event, true
+}
+
+func (h *handler) readAlertPage(w http.ResponseWriter, r *http.Request, requestID string) (alerts.EventPage, bool) {
+	const suppliedOnce = "must be supplied once and nonempty"
+	query, fields := parseQuery(r.URL.RawQuery, "invalid query string", map[string]queryParameter{
+		"state":  {nonempty: true, repeated: suppliedOnce},
+		"limit":  {nonempty: true, repeated: suppliedOnce},
+		"before": {nonempty: true, repeated: suppliedOnce},
+	})
+	limit := parseLimit(query, fields, 50, "must be an integer")
+	if len(fields) > 0 {
+		h.serviceError(w, &validation.Error{Fields: fields}, requestID)
+		return alerts.EventPage{}, false
+	}
+	page, err := h.alerts.Events(r.Context(), query.Get("state"), limit, query.Get("before"))
+	if err != nil {
+		h.serviceError(w, err, requestID)
+		return alerts.EventPage{}, false
+	}
+	return page, true
+}
+
+func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID string) {
 	p := r.URL.Path
 	if p == "/api/v1/alerts/summary" {
 		summary, err := h.alerts.Summary(r.Context())
@@ -19,55 +50,19 @@ func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID 
 		} else {
 			writeJSON(w, http.StatusOK, summary)
 		}
-		return true
+		return
 	}
 	if strings.HasPrefix(p, "/api/v1/alerts/") {
-		if r.URL.RawQuery != "" {
-			h.serviceError(w, &nodes.ValidationError{Fields: map[string]string{"query": "unknown parameter"}}, requestID)
-			return true
-		}
-		event, err := h.alerts.Event(r.Context(), strings.TrimPrefix(p, "/api/v1/alerts/"))
-		if err != nil {
-			h.serviceError(w, err, requestID)
-		} else {
+		if event, ok := h.readAlert(w, r, requestID); ok {
 			writeJSON(w, http.StatusOK, event)
 		}
-		return true
+		return
 	}
 	if p == "/api/v1/alerts" {
-		query, err := url.ParseQuery(r.URL.RawQuery)
-		fields := map[string]string{}
-		if err != nil {
-			fields["query"] = "invalid query string"
+		if page, ok := h.readAlertPage(w, r, requestID); ok {
+			writeJSON(w, http.StatusOK, page)
 		}
-		for key, values := range query {
-			if key != "state" && key != "limit" && key != "before" {
-				fields[key] = "unknown parameter"
-			} else if len(values) != 1 || values[0] == "" {
-				fields[key] = "must be supplied once and nonempty"
-			}
-		}
-		limit := 50
-		if query.Has("limit") {
-			limit, err = strconv.Atoi(query.Get("limit"))
-			if err != nil {
-				fields["limit"] = "must be an integer"
-			}
-		}
-		if len(fields) > 0 {
-			h.serviceError(w, &nodes.ValidationError{Fields: fields}, requestID)
-			return true
-		}
-		page, err := h.alerts.Events(r.Context(), query.Get("state"), limit, query.Get("before"))
-		if err != nil {
-			h.serviceError(w, err, requestID)
-			return true
-		}
-		writeJSON(w, http.StatusOK, page)
-		return true
-	}
-	if p != "/api/v1/alert-rules" && !strings.HasPrefix(p, "/api/v1/alert-rules/") {
-		return false
+		return
 	}
 	collection := p == "/api/v1/alert-rules"
 	id := ""
@@ -90,7 +85,7 @@ func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID 
 				writeJSON(w, http.StatusOK, rule)
 			}
 		}
-		return true
+		return
 	}
 	if r.Method == http.MethodDelete {
 		if err := h.alerts.Delete(r.Context(), id); err != nil {
@@ -98,21 +93,50 @@ func (h *handler) alertsRoute(w http.ResponseWriter, r *http.Request, requestID 
 		} else {
 			w.WriteHeader(http.StatusNoContent)
 		}
-		return true
+		return
 	}
 	var patch alerts.Patch
 	if !decode(w, r, &patch, requestID) {
-		return true
+		return
 	}
 	rule, err := h.alerts.Save(r.Context(), id, patch)
 	if err != nil {
 		h.serviceError(w, err, requestID)
-		return true
+		return
 	}
 	status := http.StatusOK
 	if collection {
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, rule)
-	return true
+}
+
+func (h *handler) silencesRoute(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method == http.MethodGet {
+		entries, err := h.alerts.Silences(r.Context())
+		if err != nil {
+			h.serviceError(w, err, requestID)
+		} else {
+			writeJSON(w, http.StatusOK, map[string]any{"silences": entries})
+		}
+		return
+	}
+	if r.Method == http.MethodDelete {
+		if err := h.alerts.DeleteSilence(r.Context(), strings.TrimPrefix(r.URL.Path, "/api/v1/alert-silences/")); err != nil {
+			h.serviceError(w, err, requestID)
+		} else {
+			w.WriteHeader(http.StatusNoContent)
+		}
+		return
+	}
+	var req alerts.SilenceRequest
+	if !decode(w, r, &req, requestID) {
+		return
+	}
+	entry, err := h.alerts.CreateSilence(r.Context(), req)
+	if err != nil {
+		h.serviceError(w, err, requestID)
+		return
+	}
+	writeJSON(w, http.StatusCreated, entry)
 }

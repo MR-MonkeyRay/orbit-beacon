@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,8 +24,8 @@ const MaxTrafficEntries = 24
 
 var ErrProtocolUnsupported = errors.New("protocol unsupported")
 
-// DecimalUint64 keeps cumulative byte counters exact across JSON consumers.
-// Its wire representation is always a canonical, quoted unsigned decimal.
+// DecimalUint64 保证累计字节计数在各 JSON 消费方之间保持精确。
+// JSON 中始终编码为带引号、无多余前导零的无符号十进制字符串。
 type DecimalUint64 string
 
 func (n DecimalUint64) Validate() error {
@@ -114,8 +115,8 @@ func (s System) Validate() error {
 	return nil
 }
 
-// EnrollmentCheckVersion is independent from the enrollment/report wire version:
-// v2 distinguishes an active credential from an unbound initial identity.
+// EnrollmentCheckVersion 独立于注册/上报的协议版本：
+// v2 区分活跃凭据与未绑定的初始身份。
 const EnrollmentCheckVersion = 2
 
 type EnrollmentCheckRequest struct {
@@ -157,8 +158,8 @@ type EnrollmentResponse struct {
 	ServerTime time.Time `json:"server_time"`
 }
 
-// RecoveryRequest confirms the installation bound to a node credential without
-// creating a report, advancing runtime ownership, or refreshing node liveness.
+// RecoveryRequest 只确认节点凭据绑定的安装，不创建上报、
+// 不推进运行时所有权、不刷新节点存活。
 type RecoveryRequest struct {
 	InstallationID string `json:"installation_id"`
 }
@@ -191,17 +192,29 @@ func (s SourceMetadata) Fresh() bool {
 	if s.Validate() != nil {
 		return false
 	}
+	return s.FreshAfter(0)
+}
+
+// FreshAfter 将接收后经过的时间计入数据龄期，避免计算溢出。
+// 调用方须先自行完成来源与指标校验。
+func (s SourceMetadata) FreshAfter(elapsedMS int64) bool {
+	if s.AgeMS < 0 || s.SourceIntervalMS <= 0 {
+		return false
+	}
 	if s.SourceIntervalMS > math.MaxInt64/3 {
 		return true
 	}
-	return s.AgeMS <= max(3*s.SourceIntervalMS, 45000)
+	limit := max(3*s.SourceIntervalMS, int64(45000))
+	return s.AgeMS <= limit && elapsedMS <= limit-s.AgeMS
 }
 
 type DiskMetrics struct {
-	Path       string    `json:"path"`
-	TotalBytes *uint64   `json:"total_bytes"`
-	UsedBytes  *uint64   `json:"used_bytes"`
-	SampledAt  time.Time `json:"sampled_at"`
+	Path        string    `json:"path"`
+	TotalBytes  *uint64   `json:"total_bytes"`
+	UsedBytes   *uint64   `json:"used_bytes"`
+	InodesTotal *uint64   `json:"inodes_total"`
+	InodesUsed  *uint64   `json:"inodes_used"`
+	SampledAt   time.Time `json:"sampled_at"`
 }
 
 type NetworkMetrics struct {
@@ -210,7 +223,22 @@ type NetworkMetrics struct {
 	TxBytesPerSec *float64 `json:"tx_bytes_per_sec"`
 }
 
+type DiskIOMetrics struct {
+	ReadBytesPerSec  float64 `json:"read_bytes_per_sec"`
+	WriteBytesPerSec float64 `json:"write_bytes_per_sec"`
+	BusyPercent      float64 `json:"busy_percent"`
+}
+
+type PressureMetrics struct {
+	CPU    *float64 `json:"cpu"`
+	Memory *float64 `json:"memory"`
+	IO     *float64 `json:"io"`
+}
+
 type Metrics struct {
+	DiskIO               *DiskIOMetrics            `json:"disk_io"`
+	Pressure             *PressureMetrics          `json:"pressure"`
+	TemperatureCelsius   *float64                  `json:"temperature_celsius"`
 	CPUPercent           *float64                  `json:"cpu_percent"`
 	Load1                *float64                  `json:"load1"`
 	Load5                *float64                  `json:"load5"`
@@ -236,6 +264,23 @@ func validStatus(status string) bool {
 }
 
 func (m Metrics) Validate() error {
+	bounded := func(value float64, limit float64) bool {
+		return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= limit
+	}
+	if m.DiskIO != nil && (!bounded(m.DiskIO.ReadBytesPerSec, 1e15) || !bounded(m.DiskIO.WriteBytesPerSec, 1e15) || !bounded(m.DiskIO.BusyPercent, 100)) {
+		return errors.New("invalid disk IO metrics")
+	}
+	if m.Pressure != nil {
+		for _, value := range []*float64{m.Pressure.CPU, m.Pressure.Memory, m.Pressure.IO} {
+			if value != nil && !bounded(*value, 100) {
+				return errors.New("invalid pressure metrics")
+			}
+		}
+	}
+	if m.TemperatureCelsius != nil && (!bounded(*m.TemperatureCelsius, 150) || *m.TemperatureCelsius == 0) {
+		return errors.New("invalid temperature")
+	}
+
 	if len(m.MetricStatus) != len(metricStatusFields)+len(m.Disks)+len(m.Networks) || len(m.Sources) != len(sourceFamilies)+len(m.Disks)+len(m.Networks) {
 		return errors.New("metric statuses and sources must match the reported fields and series exactly")
 	}
@@ -315,6 +360,12 @@ func (m Metrics) Validate() error {
 		if err := checkMissing(DiskMetricKey(disk.Path), disk.TotalBytes == nil || disk.UsedBytes == nil); err != nil {
 			return err
 		}
+		if (disk.InodesTotal == nil) != (disk.InodesUsed == nil) {
+			return errors.New("disk inode total and used must both be present or null")
+		}
+		if disk.InodesTotal != nil && *disk.InodesUsed > *disk.InodesTotal {
+			return errors.New("used disk inodes exceed total")
+		}
 		if disk.TotalBytes != nil && disk.UsedBytes != nil && *disk.UsedBytes > *disk.TotalBytes {
 			return errors.New("used disk bytes exceed total")
 		}
@@ -376,12 +427,13 @@ func (t Traffic) Validate() error {
 }
 
 type ProbeResult struct {
-	Target     string    `json:"target"`
-	OK         bool      `json:"ok"`
-	LatencyMS  *float64  `json:"latency_ms"`
-	Error      string    `json:"error"`
-	StatusCode *int      `json:"status_code"`
-	CheckedAt  time.Time `json:"checked_at"`
+	TLSExpiresAt *time.Time `json:"tls_expires_at"`
+	Target       string     `json:"target"`
+	OK           bool       `json:"ok"`
+	LatencyMS    *float64   `json:"latency_ms"`
+	Error        string     `json:"error"`
+	StatusCode   *int       `json:"status_code"`
+	CheckedAt    time.Time  `json:"checked_at"`
 }
 
 func (p ProbeResult) Validate() error {
@@ -416,13 +468,23 @@ func (p ProbeResult) Validate() error {
 			return errors.New("probe result status code must be between 100 and 599")
 		}
 	}
-	if p.CheckedAt.IsZero() {
+	if p.TLSExpiresAt != nil && (!strings.HasPrefix(p.Target, "https://") || !storableProbeTime(*p.TLSExpiresAt)) {
+		return errors.New("TLS expiry requires an HTTPS target and a storable time")
+	}
+	if !storableProbeTime(p.CheckedAt) {
 		return errors.New("probe result checked time is required")
 	}
 	return nil
 }
 
-// ValidateProbeTarget validates one service probe target in its wire format.
+// storableProbeTime 要求换算到 UTC 后仍是四位年份：timekey 的定宽格式写入后无法读回
+// 其他年份，单个 Agent 就能让探测查询和备份校验失败。
+func storableProbeTime(value time.Time) bool {
+	year := value.UTC().Year()
+	return !value.IsZero() && year >= 1 && year <= 9999
+}
+
+// ValidateProbeTarget 按传输协议格式校验单个服务探测目标。
 func ValidateProbeTarget(target string) error {
 	if target == "" {
 		return errors.New("entries must be nonempty")
@@ -465,8 +527,8 @@ func ValidateProbeTarget(target string) error {
 		if strings.HasPrefix(parsed.Host, "[") && net.ParseIP(parsed.Hostname()) == nil {
 			return errors.New("HTTP targets must use a valid bracketed IPv6 address")
 		}
-		// Validate the host as written: URL parsers decode or rewrite hosts
-		// (percent escapes, IPv4 shorthand, IDNA) differently across Go and browsers.
+		// 按输入原样校验主机，避免 Go 与浏览器对百分号转义、IPv4 缩写和 IDNA
+		// 的解析差异。
 		if !validProbeHost(rawURLHost(target)) {
 			return errors.New("HTTP targets need a valid DNS name, IPv4 address, or bracketed IPv6 address")
 		}
@@ -479,16 +541,23 @@ func ValidateProbeTarget(target string) error {
 		return nil
 	}
 
+	if host, ok := strings.CutPrefix(target, "dns://"); ok {
+		if !validProbeHost(host) {
+			return errors.New("DNS targets must use dns://host with a valid host")
+		}
+		return nil
+	}
+
 	if host, ok := strings.CutPrefix(target, "icmp://"); ok {
 		if host == "" || !validProbeHost(host) {
 			return errors.New("ICMP targets must use icmp://host with a valid host")
 		}
 		return nil
 	}
-	return errors.New("targets must use tcp://, http://, https://, or icmp://")
+	return errors.New("targets must use tcp://, http://, https://, dns://, or icmp://")
 }
 
-// rawURLHost returns the authority's host exactly as written, without port.
+// rawURLHost 原样返回 authority 中不带端口的主机。
 func rawURLHost(target string) string {
 	rest := target[strings.Index(target, "//")+2:]
 	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
@@ -534,7 +603,7 @@ func validProbeHost(host string) bool {
 		return false
 	}
 	labels := strings.Split(name, ".")
-	// A numeric final label makes browsers parse the host as IPv4 (e.g. 0x7f.1).
+	// 末尾标签是数字会让浏览器把主机解析成 IPv4（如 0x7f.1）。
 	if last := strings.ToLower(labels[len(labels)-1]); onlyDigitsAndDots(last) || strings.HasPrefix(last, "0x") && strings.Trim(last[2:], "0123456789abcdef") == "" {
 		return false
 	}
@@ -596,4 +665,14 @@ func validDiskPath(path string) bool {
 
 func validInterfaceName(name string) bool {
 	return strings.TrimSpace(name) != "" && len(name) <= 255 && !strings.ContainsAny(name, "\x00\r\n")
+}
+
+// ValidateProbeExpectedStatus 校验仅供 Agent 本地使用的 HTTP 期望状态。
+func ValidateProbeExpectedStatus(targets []string, expected map[string]int) error {
+	for target, status := range expected {
+		if !slices.Contains(targets, target) || (!strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://")) || status < 100 || status > 599 {
+			return errors.New("probe_expected_status requires a configured HTTP target and an integer status between 100 and 599")
+		}
+	}
+	return nil
 }

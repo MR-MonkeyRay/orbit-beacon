@@ -11,7 +11,7 @@ test('quiet offline Agent observations retain unambiguous reception time after t
   try {
     const view = agentSettingsTab({presence: 'offline', last_seen: received, agent_version: 'test'}, {
       report_interval_seconds: 10, disk_interval_seconds: 60,
-      interfaces: [], disk_paths: [], probe_targets: []
+      interfaces: [], disk_paths: [], probe_targets: [], remote_commands: ['upgrade', 'restart', 'stop'], disabled_features: []
     });
     dom.body.append(view);
     Date.now = () => Date.parse(received) + 86400000;

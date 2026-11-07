@@ -56,6 +56,7 @@ func TestProbeSchemaCreatesTablesConstraintsAndRetentionIndex(t *testing.T) {
 		`INSERT INTO probe_latest(node_id,target,ok,error,status_code,checked_at) VALUES('node','tcp://host:80',0,'http_status',99,'now')`,
 		`INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms) VALUES('node','tcp://host:80','now',1,2,0)`,
 		`INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms) VALUES('node','tcp://host:80','now',1,0,-1)`,
+		`INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms,latency_max_ms) VALUES('node','tcp://host:80','now',1,0,1,-1)`,
 	} {
 		if _, err := db.Exec(statement); err == nil {
 			t.Fatalf("probe schema accepted invalid row: %s", statement)

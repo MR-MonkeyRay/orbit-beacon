@@ -5,17 +5,23 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"orbitbeacon/internal/server/alerts"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/history"
 	"orbitbeacon/internal/server/inbox"
+	"orbitbeacon/internal/server/notify"
 	"orbitbeacon/internal/server/secretbox"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
@@ -59,9 +65,11 @@ func restoreFixture(t *testing.T, marker string) string {
 	}
 	reportInterval, diskInterval, billingDay, quota := 5, 120, 2, "18446744073709551615"
 	credentialEpoch := int64(23)
+	billingMode := "max"
 	if marker == "target" {
 		reportInterval, diskInterval, billingDay, quota = 10, 60, 3, "1024"
 		credentialEpoch = 41
+		billingMode = "rx"
 	}
 	runtime := fmt.Sprintf(`{"report_interval_seconds":%d,"disk_interval_seconds":%d,"interfaces":[],"disk_paths":["/srv/%s"],"probe_targets":[]}`, reportInterval, diskInterval, marker)
 	statements := []struct {
@@ -69,7 +77,7 @@ func restoreFixture(t *testing.T, marker string) string {
 		a []any
 	}{
 		{`INSERT INTO users(id,username,password_hash,created_at,must_change_password) VALUES(?,?,?,?,0)`, []any{restoreUser, marker, hash, at}},
-		{`INSERT INTO nodes(id,name,status,token_hash,credential_epoch,installation_id,first_enrolled_at,last_seen,system,agent_runtime,billing_day,quota_bytes,run_generation,report_session_id,created_at) VALUES(?,?,'online',?,?,'restore-installation',?,?,?,?,?,?,'17','55555555-5555-4555-8555-555555555555',?)`, []any{restoreNode, marker, bytes.Repeat([]byte{3}, 32), credentialEpoch, at, at, fmt.Sprintf(`{"hostname":%q}`, marker), runtime, billingDay, quota, at}},
+		{`INSERT INTO nodes(id,name,status,token_hash,credential_epoch,installation_id,first_enrolled_at,last_seen,system,agent_runtime,billing_day,quota_bytes,billing_mode,run_generation,report_session_id,created_at) VALUES(?,?,'online',?,?,'restore-installation',?,?,?,?,?,?,?,'17','55555555-5555-4555-8555-555555555555',?)`, []any{restoreNode, marker, bytes.Repeat([]byte{3}, 32), credentialEpoch, at, at, fmt.Sprintf(`{"hostname":%q}`, marker), runtime, billingDay, quota, billingMode, at}},
 		{`INSERT INTO audit_events(id,actor_id,action,target_id,created_at,details) VALUES('66666666-6666-4666-8666-666666666666',NULL,'fixture',NULL,?,?)`, []any{at, fmt.Sprintf(`{"marker":%q}`, marker)}},
 		{`INSERT INTO backup_plans(id,name,enabled,kind,categories_json,cron,destination_json,retain_count,next_run_at,created_at,updated_at) VALUES(?, 'plan',1,'local','["configuration"]','0 3 * * *','{"path":"/does/not/exist/on/new/machine"}',7,?,?,?)`, []any{restorePlan, at, at, at}},
 		{`INSERT INTO notification_channels(id,name,kind,enabled,config_json,url_ciphertext,created_at,updated_at) VALUES('99999999-9999-4999-8999-999999999999','Hook','webhook',1,'{}',?,?,?)`, []any{urlCipher, at, at}},
@@ -229,10 +237,10 @@ func TestRestoreSevenCategoryCombinations(t *testing.T) {
 			} else if enabled != 1 || !next.Valid || sessions != 1 || tickets != 1 {
 				t.Fatal("retained configuration changed")
 			}
-			var generation, session, runtime, quota string
+			var generation, session, runtime, quota, mode string
 			var billingDay int
 			var credentialEpoch int64
-			if err = db.QueryRow(`SELECT run_generation,report_session_id,agent_runtime,billing_day,quota_bytes,credential_epoch FROM nodes WHERE id=?`, restoreNode).Scan(&generation, &session, &runtime, &billingDay, &quota, &credentialEpoch); err != nil {
+			if err = db.QueryRow(`SELECT run_generation,report_session_id,agent_runtime,billing_day,quota_bytes,credential_epoch,billing_mode FROM nodes WHERE id=?`, restoreNode).Scan(&generation, &session, &runtime, &billingDay, &quota, &credentialEpoch, &mode); err != nil {
 				t.Fatal(err)
 			}
 			if generation != "17" || session != "55555555-5555-4555-8555-555555555555" {
@@ -245,18 +253,18 @@ func TestRestoreSevenCategoryCombinations(t *testing.T) {
 			if credentialEpoch != wantCredentialEpoch {
 				t.Fatalf("credential identity epoch=%d want %d", credentialEpoch, wantCredentialEpoch)
 			}
-			wantRuntime := `{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":["/srv/target"],"probe_targets":[]}`
+			wantRuntime := `{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":["/srv/target"],"probe_targets":[],"remote_commands":[],"disabled_features":[]}`
 			if mask&2 != 0 {
-				wantRuntime = `{"report_interval_seconds":5,"disk_interval_seconds":120,"interfaces":[],"disk_paths":["/srv/source"],"probe_targets":[]}`
+				wantRuntime = `{"report_interval_seconds":5,"disk_interval_seconds":120,"interfaces":[],"disk_paths":["/srv/source"],"probe_targets":[],"remote_commands":[],"disabled_features":[]}`
 			}
 			if runtime != wantRuntime {
 				t.Fatalf("observed runtime=%s want %s", runtime, wantRuntime)
 			}
-			wantBilling, wantQuota := 3, "1024"
+			wantBilling, wantQuota, wantMode := 3, "1024", "rx"
 			if mask&1 != 0 {
-				wantBilling, wantQuota = 2, "18446744073709551615"
+				wantBilling, wantQuota, wantMode = 2, "18446744073709551615", "max"
 			}
-			if billingDay != wantBilling || quota != wantQuota {
+			if mode != wantMode || billingDay != wantBilling || quota != wantQuota {
 				t.Fatalf("billing=%d/%s want %d/%s", billingDay, quota, wantBilling, wantQuota)
 			}
 		})
@@ -264,8 +272,8 @@ func TestRestoreSevenCategoryCombinations(t *testing.T) {
 }
 
 func TestRestoreNormalizesObservedRuntime(t *testing.T) {
-	const unnormalized = `{"probe_targets":null,"disk_paths":null,"interfaces":null,"disk_interval_seconds":60,"report_interval_seconds":10}`
-	const canonical = `{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]}`
+	const unnormalized = `{"disabled_features":null,"remote_commands":null,"probe_targets":null,"disk_paths":null,"interfaces":null,"disk_interval_seconds":60,"report_interval_seconds":10}`
+	const canonical = `{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":[],"disabled_features":[]}`
 	for _, tc := range []struct {
 		name               string
 		categories         []Category
@@ -322,11 +330,11 @@ func TestRestorePreservesAdministratorLoginsAndIndividualInboxReads(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstSession, err := accounts.Login(ctx, "admin-one", "restore-fixture-password")
+	firstSession, err := accounts.Login(ctx, "admin-one", "restore-fixture-password", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondSession, err := accounts.Login(ctx, second.Username, "second administrator password")
+	secondSession, err := accounts.Login(ctx, second.Username, "second administrator password", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +367,7 @@ func TestRestorePreservesAdministratorLoginsAndIndividualInboxReads(t *testing.T
 		{"admin-one", "restore-fixture-password", restoreUser, task, alert},
 		{second.Username, "second administrator password", second.ID, alert, task},
 	} {
-		session, err := restoredAccounts.Login(ctx, account.username, account.password)
+		session, err := restoredAccounts.Login(ctx, account.username, account.password, "")
 		if err != nil || session.User.ID != account.id {
 			t.Fatalf("restored administrator %s login=%+v err=%v", account.username, session.User, err)
 		}
@@ -394,7 +402,7 @@ func TestRestorePreservesPasswordChangeRestrictionsWithoutSessions(t *testing.T)
 	}
 	accounts := auth.NewService(db, auth.Options{})
 	for _, username := range []string{"normal-admin", "restricted-admin"} {
-		if _, err = accounts.Login(ctx, username, "restore-fixture-password"); err != nil {
+		if _, err = accounts.Login(ctx, username, "restore-fixture-password", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -427,7 +435,7 @@ func TestRestorePreservesPasswordChangeRestrictionsWithoutSessions(t *testing.T)
 	defer writable.Close()
 	restoredAccounts := auth.NewService(writable, auth.Options{})
 	for username, wantRestricted := range map[string]bool{"normal-admin": false, "restricted-admin": true} {
-		session, err := restoredAccounts.Login(ctx, username, "restore-fixture-password")
+		session, err := restoredAccounts.Login(ctx, username, "restore-fixture-password", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -715,5 +723,133 @@ func TestRestoreImportedEventsNeverOwnSecretsOrArtifacts(t *testing.T) {
 	var first string
 	if err = restored.QueryRow(`SELECT id FROM inbox_notifications ORDER BY sequence LIMIT 1`).Scan(&first); err != nil || first != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" {
 		t.Fatal("sequence not rebuilt in created_at/id order")
+	}
+}
+
+func TestRestoreHistoricalAlertsNeverReenqueueDeliveries(t *testing.T) {
+	ctx := context.Background()
+	source := restoreFixture(t, "source")
+	db, err := storage.Open(ctx, filepath.Join(source, "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var calls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+	key, err := datadir.LoadKey(filepath.Join(source, "secrets.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	box, err := secretbox.New(key, "orbitbeacon notification channel v1")
+	clear(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notifications := notify.New(db, box, notify.Options{AllowPrivateNetworks: true, AllowInsecureWebhooks: true})
+	config, err := json.Marshal(notify.Config{URL: ts.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const channel = "99999999-9999-4999-8999-999999999999"
+	if _, err = notifications.Save(ctx, channel, notify.Patch{Config: config}); err != nil {
+		t.Fatal(err)
+	}
+	var patch alerts.Patch
+	if err = json.Unmarshal([]byte(`{"name":"historical","enabled":true,"scope_kind":"all","metric":"cpu_percent","comparator":">","threshold":80,"for_seconds":0,"severity":"warning","channel_ids":["`+channel+`"]}`), &patch); err != nil {
+		t.Fatal(err)
+	}
+	rule, err := alerts.NewService(db, nil).Save(ctx, "", patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawRule, err := json.Marshal(rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC()
+	stamp := timekey.Format(at)
+	for i, state := range []string{"pending", "sent", "failed"} {
+		id := fmt.Sprintf("aaaaaaaa-aaaa-4aaa-8aaa-%012d", i+1)
+		eventState := "resolved"
+		var resolved any = stamp
+		if state == "pending" {
+			eventState, resolved = "firing", nil
+		}
+		if _, err = db.Exec(`INSERT INTO alert_events(id,rule_id,node_id,state,started_at,resolved_at,rule_name,node_name,rule_snapshot) VALUES(?,?,?,?,?,?,'historical','source',?)`, id, rule.ID, restoreNode, eventState, stamp, resolved, string(rawRule)); err != nil {
+			t.Fatal(err)
+		}
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := alerts.Notification{EventID: id, Rule: rule, NodeID: restoreNode, NodeName: "source", State: eventState, StartedAt: at}
+		if resolved != nil {
+			n.ResolvedAt = &at
+		}
+		if err = notifications.Enqueue(ctx, tx, n); err != nil {
+			tx.Rollback()
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec("UPDATE notification_deliveries SET state=? WHERE event_id=?", state, id); err != nil {
+			tx.Rollback()
+			t.Fatal(err)
+		}
+		if err = tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	target := restoreFixture(t, "target")
+	archive, password := restoreArchive(t, source, []Category{Configuration, Monitoring, Events})
+	if _, err = Restore(ctx, target, archive, password, true); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := storage.Open(ctx, filepath.Join(target, "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	key, err = datadir.LoadKey(filepath.Join(target, "secrets.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	box, err = secretbox.New(key, "orbitbeacon notification channel v1")
+	clear(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := notify.New(restored, box, notify.Options{AllowPrivateNetworks: true, AllowInsecureWebhooks: true})
+	// 历史 firing 事件仍在；没有新观测不构成恢复，也不得补发历史 firing。
+	evaluator := alerts.NewEvaluator(alerts.NewService(restored, nil), nil, alerts.EvaluatorOptions{Notifier: worker})
+	if err = evaluator.Evaluate(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	for query, want := range map[string]int{
+		"SELECT count(*) FROM alert_events":                                  3,
+		"SELECT count(*) FROM notification_deliveries":                       2,
+		"SELECT count(*) FROM notification_deliveries WHERE state='pending'": 0,
+		"SELECT count(*) FROM notification_deliveries WHERE state='sent'":    1,
+		"SELECT count(*) FROM notification_deliveries WHERE state='failed'":  1,
+	} {
+		if err = restored.QueryRow(query).Scan(&count); err != nil || count != want {
+			t.Fatalf("%s: %d want %d: %v", query, count, want, err)
+		}
+	}
+	go worker.Run(ctx)
+	time.Sleep(600 * time.Millisecond)
+	shutdownCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err = worker.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("restored history sent %d notifications", calls.Load())
 	}
 }

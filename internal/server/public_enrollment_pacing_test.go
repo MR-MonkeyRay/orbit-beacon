@@ -28,7 +28,7 @@ func TestPublicStreamSQLiteFirstEnrollmentIsPacedAddition(t *testing.T) {
 		t.Fatal(err)
 	}
 	base, started := f.now, time.Now()
-	f.handler, err = server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return base.Add(time.Since(started)) }, WebUpdateIntervalSeconds: 2})
+	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return base.Add(time.Since(started)) }, WebUpdateIntervalSeconds: 2}))
 	if err != nil {
 		t.Fatal(err)
 	}

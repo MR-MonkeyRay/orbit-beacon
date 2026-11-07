@@ -9,7 +9,7 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-// UserPatch updates only public user metadata; passwords have a separate flow.
+// UserPatch 仅更新非敏感的用户元数据；密码通过独立流程修改。
 type UserPatch struct {
 	Username *string `json:"username"`
 }
@@ -17,7 +17,7 @@ type UserPatch struct {
 func scanUser(row interface{ Scan(...any) error }) (User, error) {
 	var user User
 	var created string
-	if err := row.Scan(&user.ID, &user.Username, &created, &user.MustChangePassword); err != nil {
+	if err := row.Scan(&user.ID, &user.Username, &created, &user.MustChangePassword, &user.TOTPEnabled); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return User{}, ErrNotFound
 		}
@@ -32,7 +32,7 @@ func scanUser(row interface{ Scan(...any) error }) (User, error) {
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id, username, created_at, must_change_password FROM users ORDER BY username, id")
+	rows, err := s.db.QueryContext(ctx, "SELECT id, username, created_at, must_change_password, totp_ciphertext IS NOT NULL FROM users ORDER BY username, id")
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 }
 
 func (s *Service) GetUser(ctx context.Context, id string) (User, error) {
-	return scanUser(s.db.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password FROM users WHERE id = ?", id))
+	return scanUser(s.db.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password, totp_ciphertext IS NOT NULL FROM users WHERE id = ?", id))
 }
 
 func (s *Service) PatchUser(ctx context.Context, id string, patch UserPatch) (User, error) {
@@ -64,7 +64,7 @@ func (s *Service) PatchUser(ctx context.Context, id string, patch UserPatch) (Us
 		return User{}, err
 	}
 	defer tx.Rollback()
-	user, err := scanUser(tx.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password FROM users WHERE id = ?", id))
+	user, err := scanUser(tx.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password, totp_ciphertext IS NOT NULL FROM users WHERE id = ?", id))
 	if err != nil {
 		return User{}, err
 	}
@@ -94,7 +94,7 @@ func (s *Service) DeleteUser(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = scanUser(tx.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password FROM users WHERE id = ?", id))
+	_, err = scanUser(tx.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password, totp_ciphertext IS NOT NULL FROM users WHERE id = ?", id))
 	if err != nil {
 		return err
 	}
@@ -102,6 +102,9 @@ func (s *Service) DeleteUser(ctx context.Context, id string) error {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ?", id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM api_tokens WHERE created_by = ?", id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM users WHERE id = ?", id); err != nil {
@@ -113,8 +116,7 @@ func (s *Service) DeleteUser(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
-// The immediate write transaction keeps concurrent deletions from
-// independently deciding that they can remove the final administrators.
+// 立即写事务可防止并发删除各自独立地决定删除最后一名管理员。
 func preserveAdministrator(ctx context.Context, tx *sql.Tx) error {
 	var count int
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM users").Scan(&count); err != nil {

@@ -8,7 +8,7 @@ import {
   trafficQuota
 } from '../src/console/pages/node-traffic.js';
 import {setNavigationSignal} from '../src/console/api.js';
-import {elements, flush, installDOM} from './console-dom.js';
+import {copy, copyPattern, elements, flush, installDOM} from './console-dom.js';
 
 const emptyTraffic = () => ({
   billing_day: 1,
@@ -18,7 +18,8 @@ const emptyTraffic = () => ({
     end: '2026-11-01T00:00:00Z',
     rx_bytes: '0',
     tx_bytes: '0',
-    total_bytes: '0'
+    total_bytes: '0',
+    used_bytes: '0'
   },
   daily: [],
   updated_at: null
@@ -63,7 +64,7 @@ test('traffic days fill a 30-day UTC window across year and leap-day boundaries'
     {day: '2027-01-02', rx_bytes: '5', tx_bytes: '6'},
     {day: '2027-01-03', rx_bytes: '99', tx_bytes: '99'}
   ], new Date('2027-01-02T23:59:59-08:00'));
-  // The supplied instant is Jan 3 in UTC, and the window follows UTC dates.
+  // 给定的时间是 UTC 的 1 月 3 日，窗口按 UTC 日期计算。
   assert.equal(year.length, 30);
   assert.equal(year[0].day, '2026-12-05');
   assert.equal(year.at(-1).day, '2027-01-03');
@@ -83,8 +84,8 @@ test('cycle labels use inclusive UTC dates and handle invalid cycles', () => {
     'Oct 1, 2026 – Oct 31, 2026 (UTC)');
   assert.equal(cycleDateLabel({start: '2028-02-01T00:00:00Z', end: '2028-03-01T00:00:00Z'}),
     'Feb 1, 2028 – Feb 29, 2028 (UTC)');
-  assert.equal(cycleDateLabel({start: 'bad', end: '2026-11-01T00:00:00Z'}), 'Cycle dates unavailable');
-  assert.equal(cycleDateLabel(null), 'Cycle dates unavailable');
+  assert.equal(cycleDateLabel({start: 'bad', end: '2026-11-01T00:00:00Z'}), copy('nodes.cycleUnavailable'));
+  assert.equal(cycleDateLabel(null), copy('nodes.cycleUnavailable'));
 });
 
 test('quota percentage and states use exact bigint comparisons without non-finite results', () => {
@@ -111,8 +112,8 @@ test('traffic panel renders the upgrade empty state only when traffic has never 
     assert.equal(env.requests[0].path, '/api/v1/nodes/node%2Fid/traffic?days=30');
     env.respond(env.requests[0], emptyTraffic());
     await flush();
-    assert.match(env.root.textContent, /no traffic has been recorded yet/i);
-    assert.match(env.root.textContent, /agent is upgraded to a version that reports traffic/i);
+    assert.match(env.root.textContent, copyPattern('nodes.trafficEmpty'));
+    assert.match(env.root.textContent, copyPattern('nodes.trafficEmpty'));
   } finally { env.cleanup(); }
 });
 
@@ -121,12 +122,12 @@ test('traffic panel renders reported zero traffic as an accessible 30-day chart'
   try {
     env.respond(env.requests[0], {...emptyTraffic(), updated_at: '2026-10-27T12:00:00Z'});
     await flush();
-    assert.doesNotMatch(env.root.textContent, /no traffic has been recorded yet/i);
+    assert.doesNotMatch(env.root.textContent, copyPattern('nodes.trafficEmpty'));
     const svg = elements(env.root).find((element) => element.tagName === 'svg' && element.getAttribute('role') === 'group');
     assert.ok(svg, 'daily chart exposes an SVG group');
-    assert.match(svg.getAttribute('aria-label'), /traffic/i);
+    assert.match(svg.getAttribute('aria-label'), copyPattern('nodes.dailyTrafficAria'));
     const inspectable = elements(env.root).filter((element) => element.getAttribute('tabindex') === '0'
-      && /received|receive|sent|send/i.test(element.getAttribute('aria-label') || ''));
+      && new RegExp(`${copyPattern('nodes.received').source}|${copyPattern('nodes.sent').source}`, 'i').test(element.getAttribute('aria-label') || ''));
     assert.equal(inspectable.length, 30);
     assert.ok(inspectable.every((element) => /UTC/.test(element.getAttribute('aria-label'))));
   } finally { env.cleanup(); }
@@ -138,18 +139,18 @@ test('traffic panel renders quota semantics and populated daily values', async (
     env.respond(env.requests[0], {
       ...emptyTraffic(),
       quota_bytes: '1000',
-      cycle: {...emptyTraffic().cycle, rx_bytes: '700', tx_bytes: '100', total_bytes: '800'},
+      cycle: {...emptyTraffic().cycle, rx_bytes: '700', tx_bytes: '100', total_bytes: '800', used_bytes: '800'},
       daily: [{day: new Date().toISOString().slice(0, 10), rx_bytes: '700', tx_bytes: '100'}],
       updated_at: '2026-10-27T12:00:00Z'
     });
     await flush();
     const meter = elements(env.root).find((element) => element.tagName === 'meter');
     assert.ok(meter);
-    assert.match(meter.getAttribute('aria-label'), /800 B used of 1000 B \(80%\)/);
+    assert.match(meter.getAttribute('aria-label'), copyPattern('nodes.trafficQuotaDescription', {used: '800 B', quota: '1000 B', percent: '80%'}));
     assert.ok(elements(env.root).some((element) => element.classList.contains('traffic-quota') && element.classList.contains('warning')));
     assert.doesNotMatch(env.root.textContent, /NaN|Infinity/);
     const today = elements(env.root).find((element) => element.getAttribute('role') === 'img'
-      && /Received 700 B, Sent 100 B, Total 800 B/.test(element.getAttribute('aria-label') || ''));
+      && copyPattern('nodes.dailyTrafficDescription', {date: new Intl.DateTimeFormat('en', {timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric'}).format(new Date()), rx: '700 B', tx: '100 B', total: '800 B'}).test(element.getAttribute('aria-label') || ''));
     assert.ok(today);
   } finally { env.cleanup(); }
 });
@@ -160,7 +161,7 @@ test('traffic panel treats a zero quota as unlimited', async () => {
     env.respond(env.requests[0], {
       ...emptyTraffic(),
       quota_bytes: '0',
-      cycle: {...emptyTraffic().cycle, rx_bytes: '700', tx_bytes: '100', total_bytes: '800'},
+      cycle: {...emptyTraffic().cycle, rx_bytes: '700', tx_bytes: '100', total_bytes: '800', used_bytes: '800'},
       updated_at: '2026-10-27T12:00:00Z'
     });
     await flush();
@@ -180,8 +181,8 @@ test('traffic panel shows an inline error and retry starts a fresh request', asy
     assert.equal(env.requests.length, 2);
     env.respond(env.requests[1], emptyTraffic());
     await flush();
-    assert.match(env.root.textContent, /no traffic has been recorded yet/i);
-    assert.doesNotMatch(env.root.textContent, /Could not load traffic/);
+    assert.match(env.root.textContent, copyPattern('nodes.trafficEmpty'));
+    assert.doesNotMatch(env.root.textContent, copyPattern('nodes.trafficLoadError', {error: ''}));
   } finally { env.cleanup(); }
 });
 
@@ -194,7 +195,7 @@ test('traffic requests use navigation cancellation and aborted responses cannot 
     assert.equal(request.options.signal.aborted, true);
     env.respond(request, {...emptyTraffic(), updated_at: '2026-10-27T12:00:00Z'});
     await flush();
-    assert.doesNotMatch(env.root.textContent, /Could not load traffic|Daily traffic|Received|Sent/);
+    assert.doesNotMatch(env.root.textContent, new RegExp([copyPattern('nodes.trafficLoadError', {error: ''}), copyPattern('nodes.dailyTraffic'), copyPattern('nodes.received'), copyPattern('nodes.sent')].map((pattern) => pattern.source).join('|')));
   } finally { env.cleanup(); }
 });
 
@@ -205,12 +206,23 @@ test('billing-triggered traffic reload cannot be overwritten by an older pending
     const reload = env.root.reload();
     assert.equal(env.requests.length, 2);
     env.respond(env.requests[1], {...emptyTraffic(), quota_bytes: '1000',
-      cycle: {...emptyTraffic().cycle, total_bytes: '800'}, updated_at: '2026-10-28T12:00:00Z'});
+      cycle: {...emptyTraffic().cycle, total_bytes: '800', used_bytes: '800'}, updated_at: '2026-10-28T12:00:00Z'});
     await reload;
     assert.match(env.root.textContent, /800 B \/ 1000 B/);
     env.respond(older, emptyTraffic());
     await flush();
     assert.match(env.root.textContent, /800 B \/ 1000 B/);
-    assert.doesNotMatch(env.root.textContent, /No traffic has been recorded yet/);
+    assert.doesNotMatch(env.root.textContent, copyPattern('nodes.trafficEmpty'));
   } finally { env.cleanup(); }
+});
+
+test('traffic quota meter renders billed usage instead of the sum', async () => {
+  const env = setupPanel();
+  try {
+    env.respond(env.requests[0], {...emptyTraffic(), billing_mode: 'max', quota_bytes: '1000',
+      cycle: {...emptyTraffic().cycle, rx_bytes: '700', tx_bytes: '300', total_bytes: '1000', used_bytes: '700'}});
+    await flush();
+    const meter = elements(env.root).find((element) => element.tagName === 'meter');
+    assert.match(meter.getAttribute('aria-label'), copyPattern('nodes.trafficQuotaDescription', {used: '700 B', quota: '1000 B', percent: '70%'}));
+  } finally {env.cleanup();}
 });

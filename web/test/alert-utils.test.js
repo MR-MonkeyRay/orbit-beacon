@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildChannelPayload, durationSeconds, formatMetricValue, formatRuleDuration, metricUnit, scopeLabel, validateChannel, validateRule, validHost} from '../src/console/pages/alert-utils.js';
+import {copy} from './console-dom.js';
+import {buildChannelPayload, durationSeconds, formatMetricValue, formatRuleDuration, metricUnit, scopeLabel, validateChannel, validateRule, validHost, errorCodeMessage} from '../src/console/lib/alert-utils.js';
 
 const id = '00000000-0000-4000-8000-000000000001';
 const valid = () => ({name: 'High CPU', enabled: true, scope_kind: 'all', scope_id: null, metric: 'cpu_percent', comparator: '>', threshold: 80, for_seconds: 60, severity: 'warning', channel_ids: []});
@@ -8,6 +9,8 @@ test('rule validation covers bounds, offline semantics, UUIDs and UTF-8 names', 
   assert.deepEqual(validateRule(valid()), {});
   for (const threshold of [-1, 101, NaN, Infinity, null, '80']) assert.ok(validateRule({...valid(), threshold}).threshold);
   for (const threshold of [0, 100]) assert.deepEqual(validateRule({...valid(), threshold}), {});
+  for (const threshold of [0.1, 150, 1000]) assert.deepEqual(validateRule({...valid(), metric: 'traffic_quota_percent', threshold}), {});
+  for (const threshold of [0, -1, 1001]) assert.ok(validateRule({...valid(), metric: 'traffic_quota_percent', threshold}).threshold);
   assert.deepEqual(validateRule({...valid(), metric: 'load1', threshold: 1000000}), {});
   assert.ok(validateRule({...valid(), metric: 'load1', threshold: 1000001}).threshold);
   assert.deepEqual(validateRule({...valid(), metric: 'probes_down', threshold: 5}), {});
@@ -31,8 +34,10 @@ test('rule validation covers bounds, offline semantics, UUIDs and UTF-8 names', 
 test('metric values preserve precision, durations preserve components and scope labels preserve user content', () => {
   assert.equal(metricUnit('cpu_percent'), '%');
   assert.equal(formatMetricValue('memory_used_percent', 80.25), '80.3%');
+  assert.match(formatMetricValue('memory_used_percent', 1000), /1,000%/);
   assert.equal(parseFloat(formatMetricValue('load1', 1.125)), 1.13);
   assert.match(formatMetricValue('load1', .001), /^< 0\.01\b/);
+  assert.match(formatMetricValue('load1', 1000), /1,000\.00/);
   assert.equal(parseFloat(formatMetricValue('probes_down', 1)), 1);
   assert.equal(parseFloat(formatMetricValue('probes_down', 2)), 2);
   assert.equal(parseFloat(formatMetricValue('', 12)), 12);
@@ -46,6 +51,12 @@ test('metric values preserve precision, durations preserve components and scope 
   assert.ok(scopeLabel({scope_kind: 'group', scope_id: id}, [{id, name: 'Production'}]).includes('Production'));
   assert.ok(scopeLabel({scope_kind: 'node', scope_id: id}, [], [{id, name: 'Edge'}]).includes('Edge'));
   assert.ok(scopeLabel({scope_kind: 'group', scope_id: id}).includes(id));
+});
+
+test('alert metric values retain grouping and duration components distinct from sample formats', () => {
+  assert.equal(formatMetricValue('cpu_percent', 1234.5), '1,234.5%');
+  assert.equal(formatMetricValue('load1', 1234.5), copy('alerts.value.load', {value: '1,234.50'}));
+  assert.equal(formatRuleDuration(3665), copy('alerts.duration.minutesSeconds', {minutes: 61, seconds: 5}));
 });
 test('channel PATCH omits untouched secrets and full webhook URL, including redacted response fields', () => {
   const values = {name: 'Hook', enabled: true, kind: 'webhook', url: '', secret: '', url_redacted: 'https://example.com/…', secret_set: true};
@@ -77,4 +88,69 @@ test('channel payloads and validation support all kinds without manufacturing cr
 test('mail host validation mirrors the server rules', () => {
   for (const host of ['smtp.example.com', 'smtp.example.com.', 'mail-1.example', '192.0.2.10', '2001:db8::1']) assert.equal(validHost(host), true, host);
   for (const host of ['', 'smtp_server.example.com', '-bad.example', 'bad-.example', 'a..b', 'fe80::1%eth0', 'smtp host', 'x'.repeat(64) + '.example']) assert.equal(validHost(host), false, host);
+});
+
+test('channel templates validate UTF-8 bytes, closed placeholders and controls', () => {
+  const telegram = {name: 'Bot', kind: 'telegram', secret: '123:token', config: {chat_id: '-123'}};
+  const withTemplate = (template) => ({...telegram, config: {...telegram.config, template}});
+  for (const template of ['', '{state} {rule} {node} {metric} {severity} {value} {started_at} {resolved_at} {event_id}', '{A} {foo1} {} {', 'one\ntwo', '界'.repeat(333) + 'a', '🙂']) {
+    assert.deepEqual(validateChannel(withTemplate(template)), {}, template);
+  }
+  for (const template of ['{unknown}', '{node} {unknown_token}', '界'.repeat(333) + 'ab', 'a'.repeat(1001), 'one\ttwo', 'one\rtwo', '\0', '\x7f', '\u0085', '\ud800', '\udc00', null, 123]) {
+    assert.equal(validateChannel(withTemplate(template))['config.template'], copy('alerts.validation.template'));
+  }
+  const email = {name: 'Mail', kind: 'email', config: {host: 'smtp.example.com', port: 587, from: 'a@example.com', to: ['b@example.com'], template: '{node}'}};
+  assert.deepEqual(validateChannel(email), {});
+  assert.equal(validateChannel({...email, config: {...email.config, template: '{unknown}'}})['config.template'], copy('alerts.validation.template'));
+  const webhook = {name: 'Hook', kind: 'webhook', config: {url: 'https://example.com'}};
+  for (const template of ['', '{node}']) assert.equal(validateChannel({...webhook, config: {...webhook.config, template}})['config.template'], copy('alerts.validation.template'));
+});
+
+test('channel payloads normalize templates and omit them for hidden webhook fields', () => {
+  const values = {name: 'Bot', kind: 'telegram', chat_id: '-123', template: ' \r\n{node}\r\n{rule} \r\n'};
+  assert.equal(buildChannelPayload(values).config.template, '{node}\n{rule}');
+  assert.equal(buildChannelPayload({...values, template: ' \t\r\n '}).config.template, '');
+  assert.equal(buildChannelPayload({...values, kind: 'email'}).config.template, '{node}\n{rule}');
+  assert.ok(!Object.hasOwn(buildChannelPayload({...values, kind: 'webhook', url: 'https://example.com'}).config, 'template'));
+});
+
+test('URL channels reject common mistakes before the server does', async () => {
+  assert.equal(errorCodeMessage('channel_rejected'), copy('alerts.error.channelRejected'));
+  const targets = {
+    feishu: 'https://open.feishu.cn/open-apis/bot/v2/hook/token',
+    dingtalk: 'https://oapi.dingtalk.com/robot/send?access_token=token',
+    wecom: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=token',
+    bark: 'https://bark.example', ntfy: 'https://ntfy.example/topic/sub_topic'
+  };
+  for (const [kind, url] of Object.entries(targets)) {
+    const body = {name: 'Channel', kind, config: {url, template: '{node}'}, ...(kind === 'bark' ? {secret: 'device_key-123'} : {})};
+    assert.deepEqual(validateChannel(body), {}, kind);
+    const invalid = [url.replace('https:', 'http:'), url.replace('https://', 'https://user:pass@'), url + '#fragment', url + '#', url + (url.includes('?') ? '&' : '?') + 'extra=1'];
+    for (const target of invalid) assert.equal(validateChannel({...body, config: {url: target}})['config.url'], copy('alerts.validation.channelURL'), kind);
+    const payload = buildChannelPayload({name: 'Channel', kind, enabled: true, url, secret: body.secret || '', template: ' {node}\r\n{rule} '});
+    assert.deepEqual(payload.config, {url, template: '{node}\n{rule}'});
+    assert.deepEqual(buildChannelPayload({name: 'Channel', kind, enabled: true, template: '{rule}'}, {editing: true}).config, {template: '{rule}'});
+    assert.deepEqual(validateChannel({name: 'Channel', config: {template: '{rule}'}}, {kind, existing: {secret_set: kind === 'bark', config: {url_set: true}}}), {});
+    const bad = new URL(url); bad.pathname = '/wrong/path!';
+    assert.equal(validateChannel({...body, config: {url: bad.href}})['config.url'], copy('alerts.validation.channelURL'));
+    if (['feishu', 'dingtalk', 'wecom'].includes(kind)) {
+      assert.equal(validateChannel({...body, config: {url: url.replace(new URL(url).hostname, 'example.com')}})['config.url'], copy('alerts.validation.channelURL'));
+      assert.equal(validateChannel({...body, config: {url: url.replace('token', '')}})['config.url'], copy('alerts.validation.channelURL'));
+      assert.equal(validateChannel({...body, config: {url: url.replace(new URL(url).hostname, new URL(url).hostname + ':8443')}})['config.url'], copy('alerts.validation.channelURL'));
+    }
+    if (['bark', 'ntfy'].includes(kind)) {
+      assert.deepEqual(validateChannel({...body, config: {url: 'http://127.0.0.1:8080' + (kind === 'ntfy' ? '/topic' : '')}}), {});
+    }
+  }
+  assert.deepEqual(validateChannel({name: 'Lark', kind: 'feishu', config: {url: targets.feishu.replace('open.feishu.cn', 'open.larksuite.com')}}), {});
+  assert.equal(validateChannel({name: 'WeCom', kind: 'wecom', config: {url: targets.wecom}, secret: 'unexpected'}).secret, copy('alerts.validation.channelSecret'));
+  for (const secret of ['', 'a/b', '设备密钥', 'a'.repeat(129)]) assert.equal(validateChannel({name: 'Bark', kind: 'bark', config: {url: targets.bark}, secret}).secret, copy('alerts.validation.channelSecret'));
+  assert.deepEqual(validateChannel({name: 'Bark', kind: 'bark', config: {url: targets.bark}, secret: 'a'.repeat(128)}), {});
+  for (const path of ['', '/', '/a/', '/a//b', '/a.b']) assert.equal(validateChannel({name: 'ntfy', kind: 'ntfy', config: {url: 'https://ntfy.example' + path}})['config.url'], copy('alerts.validation.channelURL'));
+  assert.ok(!Object.hasOwn(buildChannelPayload({name: 'WeCom', kind: 'wecom', url: targets.wecom, secret: 'stale'}, {replaceSecret: true}), 'secret'));
+  const {fieldErrorText} = await import('../src/shared/errors.js');
+  assert.equal(fieldErrorText('invalid channel URL'), copy('alerts.validation.channelURL'));
+  assert.equal(fieldErrorText('channel URL cannot be empty'), copy('alerts.validation.channelURL'));
+  assert.equal(fieldErrorText('invalid channel secret'), copy('alerts.validation.channelSecret'));
+  assert.equal(fieldErrorText('must be webhook, telegram, email, feishu, dingtalk, wecom, bark or ntfy'), copy('fields.channelKind'));
 });

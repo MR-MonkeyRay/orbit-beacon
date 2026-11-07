@@ -52,7 +52,7 @@ export function liveHarness(t, respond = () => { throw new Error('offline'); }) 
     for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
     dom.restore();
   });
-  return {...dom, window, timers, sockets, requests, order, advance, shiftWall: (milliseconds) => { wallOffset += milliseconds; }};
+  return {...dom, window, intervals: dom.timers, timers, sockets, requests, order, advance, shiftWall: (milliseconds) => { wallOffset += milliseconds; }};
 }
 
 export const frame = (type = 'snapshot', extra = {}) => ({type, server_time: '2026-10-28T00:00:00Z', update_interval_seconds: 10,

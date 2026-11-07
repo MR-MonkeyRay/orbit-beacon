@@ -7,17 +7,18 @@ import (
 	"fmt"
 )
 
-// Raw fields preserve explicit null while keeping the typed service API. Decode
-// with the same unknown-field policy as the HTTP boundary; do not bypass it by
-// delegating to the default permissive json.Unmarshal for the outer object.
+// 原始字段在保留类型化服务 API 的同时保存显式 null。
+// 使用与 HTTP 边界相同的未知字段策略解码；不要把外层对象交给默认宽松的
+// json.Unmarshal 来绕过该策略。
 func (p *TrafficSettingsPatch) UnmarshalJSON(data []byte) error {
 	data = bytes.TrimSpace(data)
 	if len(data) == 0 || data[0] != '{' {
 		return errors.New("traffic settings patch must be an object")
 	}
 	var wire struct {
-		BillingDay json.RawMessage `json:"billing_day"`
-		QuotaBytes json.RawMessage `json:"quota_bytes"`
+		BillingMode json.RawMessage `json:"billing_mode"`
+		BillingDay  json.RawMessage `json:"billing_day"`
+		QuotaBytes  json.RawMessage `json:"quota_bytes"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -31,6 +32,7 @@ func (p *TrafficSettingsPatch) UnmarshalJSON(data []byte) error {
 		dst  any
 	}{
 		{"billing_day", wire.BillingDay, &p.BillingDay},
+		{"billing_mode", wire.BillingMode, &p.BillingMode},
 		{"quota_bytes", wire.QuotaBytes, &p.QuotaBytes},
 	} {
 		if len(field.raw) == 0 {

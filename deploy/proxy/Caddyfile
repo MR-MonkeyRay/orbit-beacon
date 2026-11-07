@@ -1,4 +1,4 @@
-# request_body 需要 Caddy 2.10.0 或更新版本。
+# request_body 需要 Caddy 2.10.0 或更高版本。
 beacon.example.com {
 	request_body {
 		max_size 1048576

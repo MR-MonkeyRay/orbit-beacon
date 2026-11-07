@@ -18,19 +18,19 @@ import (
 
 func networkCounters(ctx context.Context) ([]gnet.IOCountersStat, error) {
 	if root := os.Getenv("HOST_PROC"); runtime.GOOS == "linux" && root != "" {
-		// Match the PID 1 namespace used by defaultInterface on host proc mounts.
+		// 在宿主 proc 挂载下，与 defaultInterface 使用的 PID 1 网络命名空间保持一致。
 		return gnet.IOCountersByFileWithContext(ctx, true, filepath.Join(root, "1", "net", "dev"))
 	}
 	return gnet.IOCountersWithContext(ctx, true)
 }
 
-// NetworkCounter is an interface's cumulative kernel byte counters.
+// NetworkCounter 是网卡的累计内核字节计数。
 type NetworkCounter struct {
 	RxBytes uint64
 	TxBytes uint64
 }
 
-// NetworkObservation describes one real counter observation, including warm-up.
+// NetworkObservation 描述一次真实的计数器观测，包括预热阶段。
 type NetworkObservation struct {
 	Network v1.NetworkMetrics
 	Source  v1.SourceMetadata
@@ -48,9 +48,9 @@ var differentialEpoch = strconv.FormatInt(time.Now().UnixNano(), 36)
 
 const maxNetworkBaselines = 8
 
-// NetworkDifferencer computes nonblocking, per-interface rates. Its zero value
-// is ready to use. Fixed slots match the protocol's maximum of eight network
-// series and avoid map allocation/churn when interface selections change.
+// NetworkDifferencer 非阻塞地计算各网卡速率，零值即可用。
+// 固定槽位与协议最多八个网络序列的限制一致，
+// 避免切换网卡时反复分配 map。
 type NetworkDifferencer struct {
 	previous [maxNetworkBaselines]networkBaseline
 	count    int
@@ -69,8 +69,8 @@ func (d *NetworkDifferencer) forget(name string) {
 	}
 }
 
-// Observe uses elapsed monotonic time, never wall time. Counter resets and
-// nonpositive windows establish a new baseline without inventing a rate.
+// Observe 使用单调时钟计算时间间隔，不使用系统时钟。
+// 计数器重置或时间间隔非正时，只更新基线，不计算速率。
 func (d *NetworkDifferencer) Observe(name string, counter NetworkCounter, at time.Duration) NetworkObservation {
 	interval := d.interval
 	if interval <= 0 {

@@ -6,8 +6,8 @@ import (
 	"errors"
 )
 
-// ValidateSQLite checks both physical integrity and enabled foreign-key
-// relationships; it never migrates or checkpoints the supplied database.
+// ValidateSQLite 同时检查物理完整性与已启用的外键关系；
+// 绝不对传入的数据库做迁移或 checkpoint。
 func ValidateSQLite(ctx context.Context, db *sql.DB) error {
 	rows, err := db.QueryContext(ctx, "PRAGMA integrity_check")
 	if err != nil {

@@ -88,7 +88,7 @@ func TestManagementUsesOnlyCookieSessions(t *testing.T) {
 	second, secondCSRF := login(t, f, "admin-two")
 	serve := func(method, path, body string, cookie *http.Cookie, csrf string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, publicURL+path, strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer obt_legacy-management-credential")
+		req.Header.Set("Authorization", "Basic cHJveHk6Y3JlZGVudGlhbA==")
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Origin", publicURL)
 		if cookie != nil {
@@ -109,26 +109,6 @@ func TestManagementUsesOnlyCookieSessions(t *testing.T) {
 	assertHTTPStatus(t, response, http.StatusCreated)
 	id := objectID(t, decodeObject(t, response))
 	collectionContains(t, request(t, f.handler, http.MethodGet, "/api/v1/groups", "", second, "", ""), "groups", id)
-}
-
-func TestRemovedManagementTokenEndpointsReturnNotFound(t *testing.T) {
-	f := newHTTP(t, 5)
-	admin, csrf := login(t, f, "admin")
-	for _, tt := range []struct {
-		method string
-		path   string
-		body   string
-	}{
-		{http.MethodGet, "/api/v1/api-tokens", ""},
-		{http.MethodPost, "/api/v1/api-tokens", `{"name":"removed credential"}`},
-		{http.MethodDelete, "/api/v1/api-tokens/00000000-0000-4000-8000-000000000001", ""},
-		{http.MethodHead, "/api/v1/api-tokens", ""},
-	} {
-		t.Run(tt.method, func(t *testing.T) {
-			response := request(t, f.handler, tt.method, tt.path, tt.body, admin, csrf, publicURL)
-			assertHTTPStatus(t, response, http.StatusNotFound)
-		})
-	}
 }
 
 func TestGroupHTTPCRUDPersistsAndRemainsReadableToBothAdministrators(t *testing.T) {
@@ -265,7 +245,7 @@ func TestNodeMetadataPatchPersistsGroupAndTagsWithoutExposingCredentials(t *test
 	if err := f.db.QueryRow("SELECT count(*) FROM node_tags WHERE node_id = ? AND tag IN ('production','database')", node.ID).Scan(&tags); err != nil || tags != 2 {
 		t.Errorf("node tags not persisted: count=%d err=%v", tags, err)
 	}
-	// Invalid references must not partially apply otherwise-valid metadata or tags.
+	// 无效引用绝不能部分应用其他有效的元数据或标签。
 	response = request(t, f.handler, http.MethodPatch, path, `{"notes":"must roll back","group_id":"00000000-0000-4000-8000-000000000999","tags":["wrong"]}`, admin, csrf, publicURL)
 	if response.Code != http.StatusBadRequest && response.Code != http.StatusNotFound {
 		t.Errorf("unknown group returned %d", response.Code)
@@ -453,8 +433,8 @@ func TestAdministratorHTTPContract(t *testing.T) {
 	id := objectID(t, object)
 	assertUser := func(object map[string]any) {
 		t.Helper()
-		if len(object) != 4 || object["id"] == nil || object["username"] == nil || object["created_at"] == nil {
-			t.Errorf("user DTO must contain id, username, created_at and must_change_password: %+v", object)
+		if len(object) != 5 || object["id"] == nil || object["username"] == nil || object["created_at"] == nil || object["totp_enabled"] == nil {
+			t.Errorf("user DTO must contain id, username, created_at, must_change_password and totp_enabled: %+v", object)
 		}
 		if _, ok := object["must_change_password"].(bool); !ok {
 			t.Errorf("user DTO must contain a boolean password-change requirement: %+v", object)

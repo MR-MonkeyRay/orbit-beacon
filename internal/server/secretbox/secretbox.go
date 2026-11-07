@@ -1,4 +1,4 @@
-// Package secretbox encrypts purpose-separated credentials with caller-bound AEAD.
+// Package secretbox 使用绑定调用方的 AEAD 加密按用途隔离的凭据。
 package secretbox
 
 import (
@@ -14,8 +14,7 @@ var ErrCiphertext = errors.New("invalid secret ciphertext")
 
 type Box struct{ aead cipher.AEAD }
 
-// New derives an encryption key scoped to purpose. Existing ciphertext requires
-// the same purpose and AAD that were used when it was sealed.
+// New 派生按用途隔离的加密密钥。解密已有密文须使用封装时相同的 purpose 和 AAD。
 func New(master []byte, purpose string) (*Box, error) {
 	if len(master) != 32 {
 		return nil, errors.New("secret key must contain 32 bytes")
@@ -36,7 +35,7 @@ func New(master []byte, purpose string) (*Box, error) {
 	return &Box{aead: aead}, nil
 }
 
-// Format: version byte (1), random 12-byte nonce, ciphertext and GCM tag.
+// 格式：版本字节（1）、随机 12 字节 nonce、密文与 GCM 标签。
 func (b *Box) Seal(aad string, plaintext []byte) ([]byte, error) {
 	nonce := make([]byte, b.aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {

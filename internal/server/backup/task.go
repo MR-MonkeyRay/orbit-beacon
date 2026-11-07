@@ -10,7 +10,7 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-// Task is the credential-free task projection. Private fields are never JSON encoded.
+// Task 是不含凭据的任务投影。私有字段绝不参与 JSON 编码。
 type Task struct {
 	ID                         string          `json:"id"`
 	Kind                       string          `json:"kind"`

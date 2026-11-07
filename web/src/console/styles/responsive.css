@@ -1,38 +1,375 @@
-/* View transitions: keep the shell still, move only the page and the active pill. */
-::view-transition-old(root),::view-transition-new(root){animation:none}
-::view-transition-old(main-view){animation:vt-out .14s ease-in both}
-::view-transition-new(main-view){animation:vt-in .32s var(--ease) both}
-::view-transition-group(nav-pill){animation-duration:.32s;animation-timing-function:var(--ease)}
-@keyframes vt-out{to{opacity:0}}
-@keyframes vt-in{from{opacity:0;transform:translateY(8px)}}
-.enter{animation:vt-in .32s var(--ease)}
-/* Responsive: desktop and iPad widths only. */
-@media (max-width:1100px){.split{grid-template-columns:minmax(0,1fr)}.split>.split-aside{position:static}}
-/* Icon rail: each label becomes a tooltip that shows on hover or keyboard focus.
-   The label stays a real element (not generated content), so it remains the
-   control's single accessible name. */
-@media (max-width:1199px){
-  .shell{grid-template-columns:72px minmax(0,1fr)}
-  .sidebar{padding:16px 10px;overflow:visible}
-  .sidebar .brand{justify-content:center;padding:4px 0 18px}
-  .nav a,.nav-public,.nav .notification-entry{justify-content:center;gap:0;padding:0}
-  .nav .notification-entry{flex-wrap:nowrap;padding-block:0}
-  .nav-public{padding-top:14px}
-  .sidebar .nav-label{position:absolute;left:calc(100% + 12px);top:50%;z-index:var(--z-toast);padding:5px 10px;border-radius:var(--r-sm);background:var(--ink);color:var(--bg);font-size:var(--fs-sm);font-weight:600;line-height:1.4;white-space:nowrap;box-shadow:var(--shadow);opacity:0;transform:translate(-4px,-50%);pointer-events:none;transition:opacity .15s,transform .15s var(--ease)}
-  .sidebar .brand,.account-actions .btn{position:relative}
-  .nav-public .nav-label{top:calc(50% + 7px)}
-  .sidebar :focus-visible>.nav-label{opacity:1;transform:translate(0,-50%)}
-  @media (hover:hover){.sidebar :hover>.nav-label{opacity:1;transform:translate(0,-50%)}}
-  .notification-entry .notification-count{position:absolute;top:3px;right:4px;min-width:18px;margin:0;padding:0 5px;font-size:var(--fs-2xs);line-height:16px}
-  .notification-entry .notification-freshness{display:none}
-  .account{justify-items:center;padding:12px 0 4px}
-  .account .who-text{display:none}
-  .account-locale{width:100%;max-width:100%}
-  .account-locale select{padding-inline:3px;font-size:var(--fs-2xs)}
-  .account-actions{flex-direction:column;align-items:center}
-  .account-actions .btn{flex:none;width:var(--control-h);min-height:var(--control-h);padding:0}
+/* 视图过渡：外壳保持不动，只移动页面和激活的 pill。 */
+::view-transition-old(root),::view-transition-new(root) {
+  animation: none;
 }
-@media (max-width:1023px){
-  .main{padding:26px 24px 56px}
-  .hide-compact{display:none}
+
+::view-transition-old(main-view) {
+  animation: vt-out var(--motion-fast) var(--ease-in) both;
+}
+
+::view-transition-new(main-view) {
+  animation: vt-in var(--motion-slow) var(--ease) both;
+}
+
+::view-transition-group(nav-pill) {
+  animation-duration: var(--motion-slow);
+  animation-timing-function: var(--ease);
+}
+
+@keyframes vt-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes vt-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.enter {
+  animation: vt-in var(--motion-slow) var(--ease);
+}
+
+/* 响应式内容布局。 */
+@media (max-width:1100px) {
+  .split {
+    grid-template-columns: minmax(0,1fr);
+  }
+
+  .split>.split-aside {
+    position: static;
+  }
+}
+
+/* 图标栏：每个标签变为工具提示，悬停或键盘聚焦时显示。
+   标签保持为真实元素（非生成内容），确保它仍是控件唯一的可访问名称。 */
+@media (min-width:768px) and (max-width:1199px) {
+  .shell {
+    grid-template-columns: 72px minmax(0,1fr);
+  }
+
+  .sidebar {
+    padding: var(--sp-content) 10px;
+    overflow: visible;
+  }
+
+  .sidebar .brand {
+    justify-content: center;
+    padding: var(--sp-tight) 0 18px;
+  }
+
+  .nav a,.nav-public,.nav .notification-entry,.nav .command-entry {
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+  }
+
+  .nav .notification-entry,.nav .command-entry {
+    flex-wrap: nowrap;
+    padding-block: 0;
+  }
+
+  .nav-public {
+    padding-top: 14px;
+  }
+
+  .sidebar .nav-label {
+    position: absolute;
+    left: calc(100% + 12px);
+    top: 50%;
+    z-index: var(--z-toast);
+    padding: var(--sp-tight) 10px;
+    border-radius: var(--r-sm);
+    background: var(--ink);
+    color: var(--bg);
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semibold);
+    line-height: var(--lh-compact);
+    white-space: nowrap;
+    box-shadow: var(--shadow);
+    opacity: 0;
+    transform: translate(-4px,-50%);
+    pointer-events: none;
+    transition: opacity var(--motion-fast),transform var(--motion-fast) var(--ease);
+  }
+
+  .sidebar .brand,.account-actions .btn {
+    position: relative;
+  }
+
+  .nav-public .nav-label {
+    top: calc(50% + 7px);
+  }
+
+  .sidebar :focus-visible>.nav-label {
+    opacity: 1;
+    transform: translate(0,-50%);
+  }
+
+  @media (hover:hover) {
+    .sidebar :hover>.nav-label {
+      opacity: 1;
+      transform: translate(0,-50%);
+    }
+  }
+
+  .notification-entry .notification-count {
+    position: absolute;
+    top: 3px;
+    right: 4px;
+    min-width: 18px;
+    margin: 0;
+    padding: 0 var(--sp-tight);
+    font-size: var(--fs-micro);
+    line-height: var(--line-height-badge);
+  }
+
+  .notification-entry .notification-freshness {
+    display: none;
+  }
+
+  .account {
+    justify-items: center;
+    padding: var(--sp-control) 0 var(--sp-tight);
+  }
+
+  .account .who-text {
+    display: none;
+  }
+
+  .account-locale {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .account-locale select {
+    padding-inline: var(--sp-tight);
+    font-size: var(--fs-micro);
+  }
+
+  .account-actions {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .account-actions .btn {
+    flex: none;
+    width: var(--control-h);
+    min-height: var(--control-h);
+    padding: 0;
+  }
+}
+
+@media (max-width:1023px) {
+  .main {
+    padding: 26px var(--sp-group) 56px;
+  }
+
+  .hide-compact {
+    display: none;
+  }
+}
+
+/* 手机：同一份导航作为抽屉，宽屏规则保持原样。 */
+@media (max-width:767px) {
+  .shell {
+    grid-template-columns: minmax(0,1fr);
+    min-height: calc(100dvh - 64px - env(safe-area-inset-top));
+  }
+
+  .mobile-bar:not([hidden]) {
+    position: sticky;
+    top: 0;
+    z-index: calc(var(--z-nav) + 1);
+    display: flex;
+    align-items: center;
+    gap: var(--sp-inline);
+    min-height: calc(64px + env(safe-area-inset-top));
+    padding: calc(var(--sp-inline) + env(safe-area-inset-top)) max(var(--sp-content),env(safe-area-inset-right)) var(--sp-inline) max(var(--sp-content),env(safe-area-inset-left));
+    background: var(--rail);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .mobile-bar .brand {
+    min-width: 0;
+    padding: 0;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(320px,calc(100% - 48px));
+    height: 100dvh;
+    padding: calc(64px + env(safe-area-inset-top) + var(--sp-content)) var(--sp-content) max(var(--sp-content),env(safe-area-inset-bottom)) max(var(--sp-content),env(safe-area-inset-left));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    transform: translateX(-100%);
+    transition: transform var(--motion-normal) var(--ease);
+  }
+
+  .nav-pill {
+    view-transition-name: none;
+  }
+
+  .drawer-open .sidebar {
+    transform: translateX(0);
+  }
+
+  .drawer-backdrop:not([hidden]) {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: calc(var(--z-nav) - 1);
+    background: var(--backdrop);
+  }
+
+  html.drawer-open,html.drawer-open body {
+    overflow-y: hidden;
+  }
+
+  .route-login .mobile-bar,.route-login .drawer-backdrop {
+    display: none;
+  }
+
+  .sidebar .brand {
+    display: none;
+  }
+
+  .main {
+    padding: var(--sp-group) max(var(--sp-content),env(safe-area-inset-right)) calc(var(--sp-section) + env(safe-area-inset-bottom)) max(var(--sp-content),env(safe-area-inset-left));
+    overflow-wrap: anywhere;
+  }
+
+  .main>*,.panel,.panel-body,.panel-body>*,.facts>*,.check-row>strong,.table-wrap,.tabs,.tabpanel,.stack,.form,.form-row>*,.grid-2>*,.split>* {
+    min-width: 0;
+  }
+
+  .page-head>*,.head-actions,.detail-actions,.panel-head>*,.toolbar>*,.notification-toolbar>*,.dialog-head h2 {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .page-head,.head-actions,.detail-actions {
+    align-items: flex-start;
+    justify-content: flex-start;
+  }
+
+  .page-head>div,.head-actions,.detail-actions {
+    width: 100%;
+  }
+
+  .panel-head,.data-plan-head,.preview-card .top,.pager {
+    flex-wrap: wrap;
+  }
+
+  .panel-head,.panel-body,.dialog-head,.dialog-body,.dialog-foot {
+    padding-inline: var(--sp-content);
+  }
+
+  .toolbar .search,.toolbar select.input {
+    flex-basis: 100%;
+    width: 100%;
+    max-width: none;
+  }
+
+  .table-wrap,.tabs,.traffic-plot {
+    max-width: 100%;
+    overscroll-behavior-x: contain;
+  }
+
+  .tabs button {
+    flex: none;
+  }
+
+  .grid-2,.history-grid,.split,.form-row,.facts,.data-plan-facts,.traffic-cycle .facts,.ev-details dl {
+    grid-template-columns: minmax(0,1fr);
+  }
+
+  .form.form-compact {
+    display: grid;
+  }
+
+  .btn,button,.segmented button,.table th button,select.input,.input,.nav a,.nav-public,.check-row,.switch,.choice-option,.back,.legend a,.ev-details summary {
+    min-height: 44px;
+  }
+
+  .btn {
+    max-width: 100%;
+    white-space: normal;
+    line-height: var(--lh-text);
+  }
+
+  .icon-button,.icon-button.sm,.with-action .icon-button,.tag button {
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+  }
+
+  .with-action .input {
+    min-height: 52px;
+    padding-right: 52px;
+  }
+
+  input,select,textarea,.input,.account-locale select {
+    min-width: 0;
+    max-width: 100%;
+    font-size: max(16px,var(--fs-base));
+  }
+
+  .check-row,.switch,.choice-option,.back,.legend a,.ev-details summary {
+    align-content: center;
+  }
+
+  .selection-cell {
+    width: 44px;
+    padding: 0!important;
+  }
+
+  .selection-hit {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .id-chip {
+    max-width: 100%;
+    border-radius: var(--r-md);
+  }
+
+  .id-chip .mono {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  dialog {
+    max-width: calc(100vw - 32px);
+    max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    overflow: auto;
+    overflow-wrap: anywhere;
+    overscroll-behavior: contain;
+    scroll-padding-block: var(--sp-content);
+  }
+
+  .dialog-foot {
+    position: sticky;
+    bottom: 0;
+    z-index: var(--z-raised);
+    flex-wrap: wrap;
+    background: var(--panel);
+  }
+
+  .dialog-foot .btn {
+    flex: 1 1 auto;
+  }
+
+  .choice-list {
+    max-height: min(280px,40dvh);
+  }
+
+  .notification-inbox,.notification-inbox>*,.notification-detail,.notification-detail-content,.notification-toolbar,.choice-list,.choice-option {
+    min-width: 0;
+    max-width: 100%;
+  }
 }

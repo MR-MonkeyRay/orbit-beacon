@@ -75,7 +75,7 @@ func TestChangePasswordCASConflictPreservesConcurrentPasswordAndSession(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := service.Login(ctx, "admin", initialPassword)
+	session, err := service.Login(ctx, "admin", initialPassword, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,8 @@ func assertWriterAvailableDuringEntropy(t *testing.T, db *sql.DB, random *blocki
 			close(random.release)
 			t.Fatalf("independent write failed while password hashing was blocked: %v", err)
 		}
-	case <-time.After(time.Second):
+	// 大于 busy_timeout：真占写锁时会失败，磁盘繁忙时不会误报。
+	case <-time.After(15 * time.Second):
 		close(random.release)
 		t.Fatal("password hashing held the SQLite writer lock")
 	}
@@ -193,7 +194,7 @@ func TestLoginRehashesInBoundsNonDefaultArgon2Parameters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	session, err := service.Login(ctx, "admin", initialPassword)
+	session, err := service.Login(ctx, "admin", initialPassword, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +224,7 @@ func TestWrongPasswordDoesNotRehashNonDefaultArgon2Parameters(t *testing.T) {
 	if _, err := db.ExecContext(ctx, "UPDATE users SET password_hash = ? WHERE id = ?", legacy, user.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Login(ctx, "admin", "wrong password for test"); !errors.Is(err, auth.ErrUnauthenticated) {
+	if _, err := service.Login(ctx, "admin", "wrong password for test", ""); !errors.Is(err, auth.ErrUnauthenticated) {
 		t.Fatalf("wrong-password login error = %v", err)
 	}
 	var stored string
@@ -243,23 +244,23 @@ func TestLoginUsernameFailureBudgetChargesOnlyFailuresAndResetsOnSuccess(t *test
 			t.Fatal(err)
 		}
 		trusted := auth.WithLoginPeer(ctx, "192.0.2.200:1234")
-		if _, err := service.Login(trusted, "admin", initialPassword); err != nil {
+		if _, err := service.Login(trusted, "admin", initialPassword, ""); err != nil {
 			t.Fatal(err)
 		}
 		for i := 1; i <= 20; i++ {
 			attacker := auth.WithLoginPeer(ctx, fmt.Sprintf("198.51.100.%d:1234", i))
-			if _, err := service.Login(attacker, "admin", "wrong password for test"); !errors.Is(err, auth.ErrUnauthenticated) {
+			if _, err := service.Login(attacker, "admin", "wrong password for test", ""); !errors.Is(err, auth.ErrUnauthenticated) {
 				t.Fatalf("failed verification %d error = %v, want ErrUnauthenticated", i, err)
 			}
 		}
 		newSource := auth.WithLoginPeer(ctx, "203.0.113.1:1234")
-		if _, err := service.Login(newSource, "admin", "wrong password for test"); !errors.Is(err, auth.ErrRateLimited) {
+		if _, err := service.Login(newSource, "admin", "wrong password for test", ""); !errors.Is(err, auth.ErrRateLimited) {
 			t.Fatalf("21st failed verification error = %v, want ErrRateLimited", err)
 		}
-		if _, err := service.Login(trusted, "admin", initialPassword); err != nil {
+		if _, err := service.Login(trusted, "admin", initialPassword, ""); err != nil {
 			t.Fatalf("trusted source was locked out by the exhausted username budget: %v", err)
 		}
-		if _, err := service.Login(newSource, "admin", "wrong password for test"); !errors.Is(err, auth.ErrUnauthenticated) {
+		if _, err := service.Login(newSource, "admin", "wrong password for test", ""); !errors.Is(err, auth.ErrUnauthenticated) {
 			t.Fatalf("successful login did not reset username failure budget: %v", err)
 		}
 	})
@@ -268,12 +269,12 @@ func TestLoginUsernameFailureBudgetChargesOnlyFailuresAndResetsOnSuccess(t *test
 		service, _, _ := newAuth(t)
 		for i := 1; i <= 20; i++ {
 			ctx := auth.WithLoginPeer(context.Background(), fmt.Sprintf("198.18.0.%d:1234", i))
-			if _, err := service.Login(ctx, "missing-user", "wrong password for test"); !errors.Is(err, auth.ErrUnauthenticated) {
+			if _, err := service.Login(ctx, "missing-user", "wrong password for test", ""); !errors.Is(err, auth.ErrUnauthenticated) {
 				t.Fatalf("unknown-user verification %d error = %v, want ErrUnauthenticated", i, err)
 			}
 		}
 		ctx := auth.WithLoginPeer(context.Background(), "198.18.1.1:1234")
-		if _, err := service.Login(ctx, "missing-user", "wrong password for test"); !errors.Is(err, auth.ErrRateLimited) {
+		if _, err := service.Login(ctx, "missing-user", "wrong password for test", ""); !errors.Is(err, auth.ErrRateLimited) {
 			t.Fatalf("21st unknown-user verification error = %v, want ErrRateLimited", err)
 		}
 	})
@@ -299,7 +300,7 @@ func TestLoginRehashCASConflictCreatesNoSession(t *testing.T) {
 
 	result := make(chan error, 1)
 	go func() {
-		_, err := service.Login(ctx, "admin", initialPassword)
+		_, err := service.Login(ctx, "admin", initialPassword, "")
 		result <- err
 	}()
 	<-random.entered
@@ -351,7 +352,7 @@ func TestVerifyPasswordRejectsOutOfBoundsAndMalformedParameters(t *testing.T) {
 
 func encodedPassword(password string, memory, iterations uint32, parallelism uint8) string {
 	salt := []byte("0123456789abcdef")
-	// Avoid invoking Argon2 with deliberately unsafe test parameters.
+	// 避免用故意不安全的测试参数调用 Argon2。
 	digest := make([]byte, 32)
 	if memory >= 19456 && memory <= 262144 && iterations >= 1 && iterations <= 10 && parallelism >= 1 && parallelism <= 4 {
 		digest = argon2.IDKey([]byte(password), salt, iterations, memory, parallelism, 32)
@@ -366,15 +367,15 @@ func TestLegitimateLoginWorksAfterAdmissionBudgetRefills(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 10 {
-		if _, err := service.Login(ctx, "admin", initialPassword); err != nil {
+		if _, err := service.Login(ctx, "admin", initialPassword, ""); err != nil {
 			t.Fatalf("legitimate login failed: %v", err)
 		}
 	}
-	if _, err := service.Login(ctx, "admin", initialPassword); !errors.Is(err, auth.ErrRateLimited) {
+	if _, err := service.Login(ctx, "admin", initialPassword, ""); !errors.Is(err, auth.ErrRateLimited) {
 		t.Fatalf("exhausted pair budget admitted login: %v", err)
 	}
 	*now = now.Add(30 * time.Second)
-	session, err := service.Login(ctx, "admin", initialPassword)
+	session, err := service.Login(ctx, "admin", initialPassword, "")
 	if err != nil {
 		t.Fatalf("legitimate login failed after refill: %v", err)
 	}

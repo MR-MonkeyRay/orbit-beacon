@@ -40,8 +40,8 @@ type Store struct {
 	parentDirectories []string
 }
 
-// Open coordinates inspection and first creation with atomic identity updates.
-// Inspection never begins a run.
+// Open 通过锁协调身份检查、首次创建和原子更新。
+// 仅检查身份不会开始新的运行会话。
 func Open(ctx context.Context, path string, options Options) (*Store, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -147,8 +147,8 @@ func (s *Store) Current() Identity {
 	return s.current
 }
 
-// Reload refreshes the in-memory identity under the same cross-process lock used
-// for durable updates. It never creates or changes credentials.
+// Reload 在持久更新所用的同一跨进程锁下刷新内存中的身份。
+// 它不创建也不修改凭据。
 func (s *Store) Reload(ctx context.Context) (Identity, error) {
 	unlock, err := filelock.Acquire(ctx, s.path+".lock")
 	if err != nil {
@@ -171,7 +171,7 @@ func (s *Store) Reload(ctx context.Context) (Identity, error) {
 	return current.Identity, nil
 }
 
-// BeginRun publishes the next generation only after the replacement is durable.
+// BeginRun 仅在替换文件已持久化后才发布新的 RunGeneration。
 func (s *Store) BeginRun(ctx context.Context) (Identity, error) {
 	unlock, err := filelock.Acquire(ctx, s.path+".lock")
 	if err != nil {
@@ -203,7 +203,7 @@ func (s *Store) BeginRun(ctx context.Context) (Identity, error) {
 	return current.Identity, nil
 }
 
-// ConfirmEnrollment promotes only the exact durable credential acknowledged by the server.
+// ConfirmEnrollment 只将与服务器确认值完全一致的持久化凭据提升为当前凭据。
 func (s *Store) ConfirmEnrollment(ctx context.Context, token, nodeID string) error {
 	unlock, err := filelock.Acquire(ctx, s.path+".lock")
 	if err != nil {
@@ -359,7 +359,7 @@ func (s *Store) persist(value diskIdentity, create bool) error {
 		return err
 	}
 	if create {
-		// Link is an atomic no-replace publication, unlike Rename on POSIX.
+		// 与 POSIX 上的 Rename 不同，Link 是原子的且不覆盖已存在项。
 		if err := os.Link(name, s.path); err != nil {
 			return err
 		}

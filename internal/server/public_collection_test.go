@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/nodes"
@@ -44,6 +45,9 @@ func TestPublicCollectionExcludesInactiveNodesAndRawSeries(t *testing.T) {
 	if _, err := f.nodes.PatchPublicSettings(ctx, pending.ID, nodes.PublicSettingsPatch{Enabled: &enabled, Name: &name}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.db.Exec("UPDATE nodes SET expires_on='2028-02-29' WHERE id=?", visible); err != nil {
+		t.Fatal(err)
+	}
 	var report v1.Report
 	if err := json.Unmarshal([]byte(reportBody(1, 1, "private-report-session", 20)), &report); err != nil {
 		t.Fatal(err)
@@ -58,27 +62,27 @@ func TestPublicCollectionExcludesInactiveNodesAndRawSeries(t *testing.T) {
 		report.Metrics.MetricStatus[key] = "ok"
 		report.Metrics.Sources[key] = v1.SourceMetadata{SampleID: "private-source-2001:db8::99", SourceIntervalMS: 10000, MeasurementWindowMS: &window}
 	}
-	if _, err := f.ingest.AcceptToken(ctx, token, report); err != nil {
+	if _, err := acceptReport(ctx, f.ingest, token, report); err != nil {
 		t.Fatal(err)
 	}
 	result, raw := publicList(t, f, "/api/public/v1/nodes", nil)
 	if len(result.Nodes) != 1 || string(result.Nodes[0]["name"]) != `"Explicit public"` {
 		t.Fatalf("inactive nodes exposed: %s", raw)
 	}
-	for _, secret := range []string{path, iface, "private-source-2001:db8::99", "private-report-session", visible, token} {
+	for _, secret := range []string{"expires_on", "2028-02-29", path, iface, "private-source-2001:db8::99", "private-report-session", visible, token} {
 		if strings.Contains(string(raw), secret) {
 			t.Fatalf("private raw series/identity leaked %q", secret)
 		}
 	}
-	ids, _, err := f.nodes.ListPublicIDs(ctx, 50, 0)
-	if err != nil || len(ids) != 1 {
-		t.Fatalf("candidates: %v %v", ids, err)
+	records, _, err := f.nodes.ListPublicRecords(ctx, 50, 0, time.Now())
+	if err != nil || len(records) != 1 {
+		t.Fatalf("candidates: %v %v", records, err)
 	}
 	enabled = false
 	if _, err := f.nodes.PatchPublicSettings(ctx, visible, nodes.PublicSettingsPatch{Enabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.ingest.PublicNode(ctx, ids[0], f.now); !errors.Is(err, nodes.ErrNotFound) {
+	if _, err := publicNode(ctx, f.nodes, f.ingest, records[0].ID, f.now); !errors.Is(err, nodes.ErrNotFound) {
 		t.Fatalf("withdrawn candidate retained projection: %v", err)
 	}
 }

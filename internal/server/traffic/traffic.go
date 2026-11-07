@@ -1,5 +1,4 @@
-// Package traffic reads retained traffic counters and rolls expired hourly
-// counters into daily totals.
+// Package traffic 读取保留的流量计数，并把过期的小时计数汇总为按天合计。
 package traffic
 
 import (
@@ -8,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 
 	"orbitbeacon/internal/timekey"
@@ -29,14 +29,16 @@ type Service struct{ db *sql.DB }
 func NewService(db *sql.DB) *Service { return &Service{db: db} }
 
 type Summary struct {
-	BillingDay *int       `json:"billing_day"`
-	QuotaBytes *string    `json:"quota_bytes"`
-	Cycle      Cycle      `json:"cycle"`
-	Daily      []Daily    `json:"daily"`
-	UpdatedAt  *time.Time `json:"updated_at"`
+	BillingMode string     `json:"billing_mode"`
+	BillingDay  *int       `json:"billing_day"`
+	QuotaBytes  *string    `json:"quota_bytes"`
+	Cycle       Cycle      `json:"cycle"`
+	Daily       []Daily    `json:"daily"`
+	UpdatedAt   *time.Time `json:"updated_at"`
 }
 
 type Cycle struct {
+	UsedBytes  string    `json:"used_bytes"`
 	Start      time.Time `json:"start"`
 	End        time.Time `json:"end"`
 	RxBytes    string    `json:"rx_bytes"`
@@ -67,8 +69,8 @@ func saturatingAdd(left, right int64) int64 {
 	return left + right
 }
 
-// CycleBounds returns the current UTC billing cycle. Invalid or absent billing
-// days use the server default of the first day of the month.
+// CycleBounds 返回当前 UTC 计费周期。无效或缺失的计费日使用服务器默认值，
+// 即每月第一天。
 func CycleBounds(now time.Time, billingDay int) (time.Time, time.Time) {
 	now = now.UTC()
 	if billingDay < 1 || billingDay > 28 {
@@ -81,8 +83,8 @@ func CycleBounds(now time.Time, billingDay int) (time.Time, time.Time) {
 	return start, start.AddDate(0, 1, 0)
 }
 
-// Read merges hourly and rolled-up daily counters. It sums in Go with
-// saturation so SQLite's signed 64-bit aggregate limit cannot fail reads.
+// Read 合并小时计数和汇总后的按天计数。它在 Go 中带饱和地求和，
+// 这样 SQLite 有符号 64 位聚合的限制不会导致读取失败。
 func (s *Service) Read(ctx context.Context, nodeID string, days int, now time.Time) (Summary, error) {
 	if s == nil || s.db == nil || nodeID == "" || days < 1 || days > 400 {
 		return Summary{}, ErrInvalidInput
@@ -90,7 +92,8 @@ func (s *Service) Read(ctx context.Context, nodeID string, days int, now time.Ti
 	now = now.UTC()
 	var billing sql.NullInt64
 	var quota sql.NullString
-	if err := s.db.QueryRowContext(ctx, `SELECT billing_day,quota_bytes FROM nodes WHERE id=?`, nodeID).Scan(&billing, &quota); err != nil {
+	var mode string
+	if err := s.db.QueryRowContext(ctx, `SELECT billing_day,quota_bytes,billing_mode FROM nodes WHERE id=?`, nodeID).Scan(&billing, &quota, &mode); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Summary{}, ErrNotFound
 		}
@@ -105,7 +108,7 @@ func (s *Service) Read(ctx context.Context, nodeID string, days int, now time.Ti
 		billingOutput = &value
 	}
 	var quotaOutput *string
-	// A stored quota of 0 means unlimited, which the API reports as null.
+	// 存储的配额为 0 表示不限量，API 将其报告为 null。
 	if quota.Valid && quota.String != "" && quota.String != "0" {
 		value := quota.String
 		quotaOutput = &value
@@ -132,9 +135,9 @@ func (s *Service) Read(ctx context.Context, nodeID string, days int, now time.Ti
 		}
 		value.add(rx, tx)
 	}
-	// UNION ALL runs under one SQLite read snapshot. A concurrent retention
-	// transaction therefore cannot make a row disappear between separate daily
-	// and hourly queries or make the same counters visible in both forms.
+	// UNION ALL 在同一个 SQLite 读取快照下运行。因此并发的保留事务
+	// 不会让某行在独立的按天和按小时查询之间消失，
+	// 也不会让同一计数同时以两种形式可见。
 	rows, err := s.db.QueryContext(ctx, `
 WITH counters(day,rx_bytes,tx_bytes) AS (
  SELECT day,rx_bytes,tx_bytes FROM traffic_daily WHERE node_id=? AND day>=? AND day<?
@@ -175,7 +178,7 @@ FROM latest LEFT JOIN counters ON true ORDER BY counters.day`, nodeID, queryStar
 		updatedAt = &stamp
 	}
 
-	result := Summary{BillingDay: billingOutput, QuotaBytes: quotaOutput, Daily: make([]Daily, 0), UpdatedAt: updatedAt}
+	result := Summary{BillingMode: mode, BillingDay: billingOutput, QuotaBytes: quotaOutput, Daily: make([]Daily, 0), UpdatedAt: updatedAt}
 	result.Cycle.Start, result.Cycle.End = cycleStart, cycleEnd
 	var cycleRx, cycleTx int64
 	cycleStartDay, cycleEndDay := cycleStart.Format(dayLayout), cycleEnd.Format(dayLayout)
@@ -197,6 +200,104 @@ FROM latest LEFT JOIN counters ON true ORDER BY counters.day`, nodeID, queryStar
 	result.Cycle.RxBytes = fmt.Sprint(cycleRx)
 	result.Cycle.TxBytes = fmt.Sprint(cycleTx)
 	result.Cycle.TotalBytes = fmt.Sprint(cycleTotal)
+	result.Cycle.UsedBytes = fmt.Sprint(usedBytes(mode, cycleRx, cycleTx))
+	return result, nil
+}
+
+// usedBytes 按周期收发总量计算计费流量，保持 int64 饱和语义。
+func usedBytes(mode string, rx, tx int64) int64 {
+	switch mode {
+	case "max":
+		return max(rx, tx)
+	case "rx":
+		return rx
+	case "tx":
+		return tx
+	default:
+		return saturatingAdd(rx, tx)
+	}
+}
+
+// Quota 一次读取所有有配额节点及两级计数；账期在 Go 中逐节点计算。
+func (s *Service) Quota(ctx context.Context, now time.Time) (map[string]float64, error) {
+	if s == nil || s.db == nil {
+		return nil, ErrInvalidInput
+	}
+	start, end := CycleBounds(now, 1)
+	for day := 2; day <= 28; day++ {
+		a, b := CycleBounds(now, day)
+		if a.Before(start) {
+			start = a
+		}
+		if b.After(end) {
+			end = b
+		}
+	}
+	// 节点设置和 UNION ALL 共用读取快照，保留事务不会造成漏计或重复。
+	// 先在 SQLite 内按天聚合，读取器只处理节点数 × 天数行。结果只用于百分比，
+	// total() 的浮点值足够，且不会像 sum() 那样在整数溢出时使整批读取失败。
+	rows, err := s.db.QueryContext(ctx, `
+WITH eligible AS (SELECT id,billing_day,billing_mode,quota_bytes FROM nodes WHERE quota_bytes NOT IN ('0','')),
+ counters(node_id,day,rx_bytes,tx_bytes) AS (
+ SELECT n.id,t.day,t.rx_bytes,t.tx_bytes FROM eligible n JOIN traffic_daily t ON t.node_id=n.id WHERE t.day>=? AND t.day<?
+ UNION ALL
+ SELECT n.id,substr(t.period_start,1,10),t.rx_bytes,t.tx_bytes FROM eligible n JOIN traffic_hourly t ON t.node_id=n.id WHERE t.period_start>=? AND t.period_start<?
+), daily AS (SELECT node_id,day,total(rx_bytes) AS rx,total(tx_bytes) AS tx FROM counters GROUP BY node_id,day)
+SELECT n.id,n.billing_day,n.billing_mode,n.quota_bytes,d.day,d.rx,d.tx
+FROM eligible n LEFT JOIN daily d ON d.node_id=n.id`, start.Format(dayLayout), end.Format(dayLayout), timekey.Format(start), timekey.Format(end))
+	if err != nil {
+		return nil, fmt.Errorf("read traffic quotas: %w", err)
+	}
+	defer rows.Close()
+	type usage struct {
+		rx, tx     float64
+		mode       string
+		quota      float64
+		start, end string
+	}
+	byNode := map[string]*usage{}
+	for rows.Next() {
+		var id, mode, quota string
+		var billing int
+		var day sql.NullString
+		var rx, tx sql.NullFloat64
+		if err := rows.Scan(&id, &billing, &mode, &quota, &day, &rx, &tx); err != nil {
+			return nil, fmt.Errorf("scan traffic quotas: %w", err)
+		}
+		u := byNode[id]
+		if u == nil {
+			q, err := strconv.ParseUint(quota, 10, 64)
+			if err != nil || q == 0 {
+				return nil, fmt.Errorf("invalid traffic quota for node %s", id)
+			}
+			a, b := CycleBounds(now, billing)
+			u = &usage{mode: mode, quota: float64(q), start: a.Format(dayLayout), end: b.Format(dayLayout)}
+			byNode[id] = u
+		}
+		if day.Valid && day.String >= u.start && day.String < u.end {
+			u.rx += rx.Float64
+			u.tx += tx.Float64
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read traffic quotas: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close traffic quotas: %w", err)
+	}
+	result := make(map[string]float64, len(byNode))
+	for id, u := range byNode {
+		used := u.rx + u.tx
+		switch u.mode {
+		case "max":
+			used = max(u.rx, u.tx)
+		case "rx":
+			used = u.rx
+		case "tx":
+			used = u.tx
+		}
+		result[id] = 100 * min(used, math.MaxInt64) / u.quota
+	}
 	return result, nil
 }
 
@@ -213,9 +314,9 @@ type dailyKey struct {
 	day    string
 }
 
-// Cleanup rolls at most limit expired hourly rows into daily counters and uses
-// any remaining batch capacity to delete expired daily rows. Each rollup and
-// its source deletion commit in one transaction, so retries cannot double count.
+// Cleanup 最多把 limit 行过期的小时计数汇总为按天计数，
+// 并用剩余的批次容量删除过期的按天行。每次汇总及其源行删除都在一个事务中提交，
+// 因此重试不会重复计数。
 func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64, error) {
 	if s == nil || s.db == nil || limit <= 0 {
 		return 0, ErrInvalidInput

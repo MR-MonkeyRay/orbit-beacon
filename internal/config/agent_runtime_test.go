@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -90,6 +91,76 @@ func TestAgentProtectedFieldsRejectCompositeValuesWithoutPanic(t *testing.T) {
 		for _, value := range []any{[]string{"unexpected"}, map[string]any{"unexpected": true}} {
 			if _, err := config.LoadAgent(config.LoadOptions{File: configFile(t, map[string]any{key: value}), LookupEnv: lookup(nil)}, &policy); err == nil {
 				t.Fatalf("accepted protected composite %s=%v", key, value)
+			}
+		}
+	}
+}
+
+func TestAgentCapabilitiesNormalizeOnceForInstallMode(t *testing.T) {
+	for _, mode := range []string{"native", "docker", "foreground"} {
+		t.Run(mode, func(t *testing.T) {
+			policy := config.InstallPolicy{ServerURL: "https://beacon.example.test", StateDir: t.TempDir(), InstallMode: mode, UpdateBaseURL: "https://releases.example.test/download"}
+			opts := config.LoadOptions{LookupEnv: lookup(nil), File: configFile(t, map[string]any{
+				"remote_commands": []string{"stop", "restart", "upgrade"}, "disabled_features": []string{"probes", "network", "disk"}, "probe_targets": []string{"tcp://example.test:80"},
+			})}
+			got, err := config.LoadAgent(opts, &policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := map[string][]string{"native": {"upgrade", "restart", "stop"}, "docker": {"restart"}, "foreground": {"stop"}}[mode]
+			if !reflect.DeepEqual(got.RemoteCommands, want) || !reflect.DeepEqual(got.DisabledFeatures, []string{"disk", "network", "traffic", "probes", "disk_io"}) || got.ProbeTargets == nil || len(got.ProbeTargets) != 0 {
+				t.Fatalf("normalized=%+v", got)
+			}
+			opts.File = configFile(t, map[string]any{"remote_commands": want, "disabled_features": []string{"disk", "network", "traffic", "probes", "disk_io"}})
+			reordered, err := config.LoadAgent(opts, &policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.RuntimeSettings.Equal(reordered.RuntimeSettings) {
+				t.Fatal("reordering changed effective runtime")
+			}
+			opts.File = configFile(t, map[string]any{"remote_commands": []string{}, "disabled_features": []string{}})
+			empty, err := config.LoadAgent(opts, &policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if empty.RemoteCommands == nil || len(empty.RemoteCommands) != 0 || empty.DisabledFeatures == nil || len(empty.DisabledFeatures) != 0 {
+				t.Fatalf("empty fell back: %+v", empty)
+			}
+			opts.File = ""
+			defaults, err := config.LoadAgent(opts, &policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(defaults.RemoteCommands, want) {
+				t.Fatalf("defaults=%v", defaults.RemoteCommands)
+			}
+		})
+	}
+}
+
+func TestAgentCapabilityEnumsRejectEveryInvalidSource(t *testing.T) {
+	policy := config.InstallPolicy{ServerURL: "https://beacon.example.test", StateDir: t.TempDir(), InstallMode: "docker"}
+	for _, field := range []string{"remote_commands", "disabled_features"} {
+		entry := "restart"
+		if field == "disabled_features" {
+			entry = "disk"
+		}
+		for _, raw := range []string{`null`, `["unknown"]`, `["` + entry + `","` + entry + `"]`, `[1]`} {
+			for _, source := range []string{"file", "env"} {
+				opts := config.LoadOptions{LookupEnv: lookup(nil)}
+				if source == "file" {
+					var value any
+					if err := json.Unmarshal([]byte(raw), &value); err != nil {
+						t.Fatal(err)
+					}
+					opts.File = configFile(t, map[string]any{field: value})
+				} else {
+					opts.LookupEnv = lookup(map[string]string{"ORBITBEACON_" + strings.ToUpper(field): raw})
+				}
+				if _, err := config.LoadAgent(opts, &policy); err == nil {
+					t.Fatalf("accepted %s %s=%s", source, field, raw)
+				}
 			}
 		}
 	}

@@ -1,4 +1,6 @@
 import './public.css';
+import {announcementRenderer} from './announcements.js';
+import {translateHTML} from '../shared/translate-html.js';
 import {h} from '../shared/dom.js';
 import {themeButton} from '../shared/theme.js';
 import {createCard, skeletonCards, STATUS} from './cards.js';
@@ -9,18 +11,12 @@ import {getLocale, t} from '../shared/i18n.js';
 import {localeSelect} from '../shared/locale-select.js';
 import {errorText} from '../shared/errors.js';
 
-document.documentElement.lang = getLocale();
-for (const [attribute, target] of [['data-i18n', null], ['data-i18n-aria-label', 'aria-label'], ['data-i18n-content', 'content']]) {
-  for (const element of document.querySelectorAll(`[${attribute}]`)) {
-    const text = t(element.getAttribute(attribute));
-    if (target) element.setAttribute(target, text);
-    else element.textContent = text;
-  }
-}
+translateHTML();
 
 const PAGE = 50;
 const $ = (id) => document.getElementById(id);
 const list = $('nodes');
+const renderAnnouncements = announcementRenderer($('announcements'));
 const empty = $('empty');
 const emptyText = $('empty-text');
 const retry = $('retry');
@@ -61,7 +57,7 @@ $('top-actions').prepend(localeSelect({onError(error) {
   localeError.hidden = false;
 }}));
 
-// ------------------------------------------------------------------ filters
+// ------------------------------------------------------------------ 筛选
 
 const filterButtons = new Map(['', 'online', 'offline', 'unknown'].map((status) => {
   const button = h('button', {type: 'button', 'aria-pressed': String(status === ''), onclick: () => { filter = status; applyFilter(); }},
@@ -90,9 +86,10 @@ function applyFilter() {
   } else if (current.length) empty.hidden = true;
 }
 
-// ------------------------------------------------------------------ rendering
+// ------------------------------------------------------------------ 渲染
 
 function render(result) {
+  renderAnnouncements(result.announcements);
   const nodes = result.nodes;
   const nextKeys = nodes.map((node) => `${node.name}\u0000${node.region}\u0000${node.provider}`).join('\u0001');
   if (nextKeys !== keys || cards.length !== nodes.length) {
@@ -115,7 +112,7 @@ function render(result) {
   const partial = offset > 0 || result.has_more;
   if (nodes.length === 0) {
     headline.textContent = t(partial ? 'public.empty.page' : 'public.empty.all');
-    summary.textContent = t('public.empty.explanation');
+    summary.textContent = '';
   } else {
     headline.textContent = online === nodes.length ? t('public.headline.allOnline', {count: nodes.length}) : t('public.headline.online', {online, count: nodes.length});
     const summaryKey = `public.summary.${partial ? 'page' : 'full'}${offline && unknown ? 'Both' : offline ? 'Offline' : unknown ? 'Unknown' : ''}`;
@@ -127,8 +124,9 @@ function render(result) {
   nextOffset = result.next_offset;
   next.disabled = nextOffset === null;
   pagination.hidden = offset === 0 && nextOffset === null;
-  empty.hidden = nodes.length !== 0;
-  emptyText.textContent = t(partial ? 'public.empty.page' : 'public.empty.all');
+  // 空集合已由标题说明；此区域仅用于
+  // 筛选结果为空和加载失败。
+  empty.hidden = true;
   retry.hidden = true;
   applyFilter();
 }
@@ -159,7 +157,7 @@ function restartCountdown(running, milliseconds = 0) {
   countdown.classList.add('running');
 }
 
-// ------------------------------------------------------------------ updates
+// ------------------------------------------------------------------ 更新
 
 function begin() {
   refresh.classList.add('loading');
@@ -216,7 +214,7 @@ function paintConnection(state) {
   } else {
     countdown.dataset.state = 'connecting';
   }
-  // Transport changes, heartbeats and HTTP countdown ticks are not announcements.
+  // 传输变化、心跳和 HTTP 倒计时不属于需要播报的事件。
   if (announcedState !== state.state) {
     announcedState = state.state;
     announcement.textContent = state.state === 'live' ? t('public.announce.updated')
@@ -246,6 +244,7 @@ function start() {
       connection?.close();
       clearTimeout(displayTimer);
       restartCountdown(false);
+      renderAnnouncements([]);
       clearData();
       finish();
       location.replace('/');

@@ -27,7 +27,7 @@ func openPrivateLock(path string) (*os.File, error) {
 	if err != nil {
 		return nil, fail
 	}
-	// Pin each directory so a replaced ancestor cannot redirect the lock open.
+	// 逐级固定目录，防止被替换的上级目录重定向锁文件的打开。
 	for _, part := range strings.Split(filepath.Dir(absolute), "/") {
 		if part == "" {
 			continue

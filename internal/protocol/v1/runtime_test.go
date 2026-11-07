@@ -15,7 +15,7 @@ func TestReportRequiresValidRuntime(t *testing.T) {
 	if err := json.Unmarshal([]byte(reportJSON), &report); err != nil {
 		t.Fatal(err)
 	}
-	for _, runtime := range []string{"", `null`, `{"report_interval_seconds":1,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]}`} {
+	for _, runtime := range []string{"", `null`, `{"report_interval_seconds":1,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]}`} {
 		t.Run(runtime, func(t *testing.T) {
 			if runtime == "" {
 				delete(report, "runtime")
@@ -32,7 +32,7 @@ func TestReportRequiresValidRuntime(t *testing.T) {
 }
 
 func TestReportRuntimeRequiresEveryNonNullField(t *testing.T) {
-	for _, field := range []string{"report_interval_seconds", "disk_interval_seconds", "interfaces", "disk_paths", "probe_targets"} {
+	for _, field := range []string{"report_interval_seconds", "disk_interval_seconds", "interfaces", "disk_paths", "probe_targets", "remote_commands", "disabled_features"} {
 		for _, missing := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/missing=%t", field, missing), func(t *testing.T) {
 				var report map[string]json.RawMessage
@@ -90,6 +90,29 @@ func TestMaximumAdmittedRuntimeReportFitsWireLimit(t *testing.T) {
 	if err := runtime.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	for i, length := range []int{1024, 1024, 1024, 884, 54} {
+		prefix := fmt.Sprintf("https://probe%d.example/", i)
+		target := prefix + strings.Repeat("a", length-len(prefix))
+		runtime.ProbeTargets = append(runtime.ProbeTargets, target)
+		latency, code := 0.00010000000000000002, 599
+		expiry := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.FixedZone("widest", 23*3600+59*60))
+		report.ProbeResults = append(report.ProbeResults, v1.ProbeResult{Target: target, OK: true, LatencyMS: &latency, StatusCode: &code, CheckedAt: report.SampledAt, TLSExpiresAt: &expiry})
+	}
+	if err := runtime.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	over := runtime
+	over.ProbeTargets = append([]string{}, runtime.ProbeTargets...)
+	over.ProbeTargets[4] += "a"
+	if err := over.Validate(); err == nil {
+		t.Fatal("saturated selection accepted an extra byte")
+	}
+	runtime.DisabledFeatures = v1.DisabledFeatureOrder()
+	widestRate, widestPercent, widestTemperature := 999999999999999.9, 99.99, 149.99
+	report.Metrics.DiskIO = &v1.DiskIOMetrics{ReadBytesPerSec: widestRate, WriteBytesPerSec: widestRate, BusyPercent: widestPercent}
+	report.Metrics.Pressure = &v1.PressureMetrics{CPU: &widestPercent, Memory: &widestPercent, IO: &widestPercent}
+	report.Metrics.TemperatureCelsius = &widestTemperature
+
 	report.Runtime = runtime
 	report.Metrics.Disks, report.Metrics.Networks = nil, nil
 	delete(report.Metrics.MetricStatus, "disk:/")
@@ -98,7 +121,7 @@ func TestMaximumAdmittedRuntimeReportFitsWireLimit(t *testing.T) {
 	delete(report.Metrics.Sources, "network:eth0")
 	total, used, rate, window := uint64(8192), uint64(4096), 1.0, int64(10000)
 	for _, path := range runtime.DiskPaths {
-		report.Metrics.Disks = append(report.Metrics.Disks, v1.DiskMetrics{Path: path, TotalBytes: &total, UsedBytes: &used, SampledAt: report.SampledAt})
+		report.Metrics.Disks = append(report.Metrics.Disks, v1.DiskMetrics{Path: path, TotalBytes: &total, UsedBytes: &used, InodesTotal: &total, InodesUsed: &used, SampledAt: report.SampledAt})
 		key := v1.DiskMetricKey(path)
 		report.Metrics.MetricStatus[key] = "ok"
 		report.Metrics.Sources[key] = v1.SourceMetadata{SampleID: strings.Repeat("d", 255), SourceIntervalMS: 60000}
@@ -120,7 +143,104 @@ func TestMaximumAdmittedRuntimeReportFitsWireLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Logf("admitted report: %d bytes; headroom: %d bytes", len(encoded), v1.MaxMessageBytes-len(encoded))
 	if len(encoded) > v1.MaxMessageBytes {
 		t.Fatalf("admitted runtime generated %d-byte report", len(encoded))
+	}
+}
+
+func TestDecodeRuntimeSettingsPreservesSelectionShape(t *testing.T) {
+	for _, selection := range []string{"[]", "null"} {
+		raw := fmt.Sprintf(`{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":%s,"disk_paths":%s,"probe_targets":%s}`, selection, selection, selection)
+		runtime, err := v1.DecodeRuntimeSettings(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantNil := selection == "null"
+		if (runtime.Interfaces == nil) != wantNil || (runtime.DiskPaths == nil) != wantNil || (runtime.ProbeTargets == nil) != wantNil {
+			t.Fatalf("selection=%s runtime=%+v", selection, runtime)
+		}
+	}
+	for _, raw := range []string{"", "null", "{", `{"report_interval_seconds":1,"disk_interval_seconds":60}`} {
+		if _, err := v1.DecodeRuntimeSettings(raw); err == nil {
+			t.Fatalf("accepted invalid runtime %q", raw)
+		}
+	}
+}
+
+func TestRuntimeCapabilityEnumsAndCommandPermission(t *testing.T) {
+	defaults := v1.DefaultRuntimeSettings()
+	for _, name := range v1.RemoteCommandOrder() {
+		if !defaults.AllowsCommand(name) {
+			t.Fatalf("default disallows %s", name)
+		}
+	}
+	if defaults.AllowsCommand("shell") {
+		t.Fatal("unknown command allowed")
+	}
+	for _, field := range []string{"remote_commands", "disabled_features"} {
+		for _, values := range [][]string{{"unknown"}, {"restart", "restart"}, {"disk", "disk"}} {
+			settings := v1.DefaultRuntimeSettings()
+			if field == "remote_commands" {
+				settings.RemoteCommands = values
+			} else {
+				settings.DisabledFeatures = values
+			}
+			if settings.Validate() == nil {
+				t.Fatalf("accepted %s=%v", field, values)
+			}
+		}
+	}
+	empty := defaults
+	empty.RemoteCommands = []string{}
+	if empty.AllowsCommand("restart") || empty.Equal(defaults) {
+		t.Fatal("empty permission fell back to defaults")
+	}
+	for _, mutate := range []func(*v1.RuntimeSettings){
+		func(c *v1.RuntimeSettings) { c.ReportIntervalSeconds++ },
+		func(c *v1.RuntimeSettings) { c.DiskIntervalSeconds++ },
+		func(c *v1.RuntimeSettings) { c.Interfaces = []string{"eth0"} },
+		func(c *v1.RuntimeSettings) { c.DiskPaths = []string{"/"} },
+		func(c *v1.RuntimeSettings) { c.ProbeTargets = []string{"tcp://example.test:80"} },
+		func(c *v1.RuntimeSettings) { c.RemoteCommands = []string{} },
+		func(c *v1.RuntimeSettings) { c.DisabledFeatures = []string{v1.FeatureDisk} },
+	} {
+		other := v1.DefaultRuntimeSettings()
+		mutate(&other)
+		if defaults.Equal(other) {
+			t.Fatal("Equal missed changed field")
+		}
+	}
+	var report v1.Report
+	if err := json.Unmarshal([]byte(reportJSON), &report); err != nil {
+		t.Fatal(err)
+	}
+	report.Runtime.RemoteCommands, report.Runtime.DisabledFeatures = []string{}, []string{}
+	body, _ := json.Marshal(report)
+	if err := json.Unmarshal(body, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Runtime.RemoteCommands == nil || report.Runtime.DisabledFeatures == nil || len(report.Runtime.RemoteCommands) != 0 {
+		t.Fatal("empty arrays not preserved")
+	}
+}
+
+func TestReportResponseContainsOnlyAcknowledgements(t *testing.T) {
+	body, err := json.Marshal(v1.ReportResponse{Command: &v1.Command{ID: "00000000-0000-4000-8000-000000000001", Kind: "restart", ExpiresAt: time.Now()}, NodeID: "node", AcceptedSeq: 1, ServerTime: time.Now(), TrafficAcks: []v1.Traffic{{RxBytes: "0", TxBytes: "0"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{"node_id": true, "accepted_seq": true, "server_time": true, "traffic_acks": true, "command": true}
+	for name := range fields {
+		if !allowed[name] {
+			t.Fatalf("response contains setting %s", name)
+		}
+	}
+	if len(fields) != len(allowed) {
+		t.Fatalf("response fields: %s", body)
 	}
 }

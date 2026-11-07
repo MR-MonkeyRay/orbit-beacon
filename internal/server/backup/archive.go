@@ -31,8 +31,8 @@ const (
 	passwordAlphabet       = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 )
 
-// Error exposes a stable safe code while retaining the cause for local classification.
-// Error strings never include archive-controlled paths or encryption diagnostics.
+// Error 对外暴露稳定的安全错误码，同时保留 cause 供本地分类。
+// 错误字符串绝不包含归档可控的路径或加密诊断信息。
 type Error struct {
 	Code string
 	Err  error
@@ -74,7 +74,7 @@ type ArchiveInfo struct {
 	SHA256 string
 }
 
-// GeneratePassword samples each character independently without modulo bias.
+// GeneratePassword 独立采样每个字符，不产生取模偏差。
 func GeneratePassword(random io.Reader) (string, error) {
 	if random == nil {
 		return "", &Error{Code: "internal_error"}
@@ -138,8 +138,8 @@ func (w contextWriter) Write(p []byte) (int, error) {
 	return w.writer.Write(p)
 }
 
-// WriteArchive streams tar -> gzip -> age, never writing a plaintext compressed file.
-// The caller supplies an existing private output directory and immutable payload files.
+// WriteArchive 以 tar -> gzip -> age 流式写出，绝不落盘明文压缩文件。
+// 调用方须提供已存在的私有输出目录和不可变的载荷文件。
 func WriteArchive(ctx context.Context, output string, manifest Manifest, files []ArchiveInput, password string) (info ArchiveInfo, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return info, err
@@ -274,11 +274,7 @@ func WriteArchive(ctx context.Context, output string, manifest Manifest, files [
 	if err = file.Close(); err != nil {
 		return info, err
 	}
-	directory, err := os.Open(filepath.Dir(output))
-	if err != nil {
-		return info, err
-	}
-	if err = errors.Join(directory.Sync(), directory.Close()); err != nil {
+	if err = securefs.SyncDirectory(filepath.Dir(output)); err != nil {
 		return info, err
 	}
 	finished, err := securefs.OpenFile(output, os.O_RDONLY, 0)
@@ -295,12 +291,16 @@ func WriteArchive(ctx context.Context, output string, manifest Manifest, files [
 	return info, nil
 }
 
+func canonicalUUID(value string) bool {
+	id, err := uuid.Parse(value)
+	return err == nil && id != uuid.Nil && id.String() == value
+}
+
 func validateManifest(m Manifest) error {
 	if m.Format != "orbitbeacon-backup" || m.Version != 1 || m.SchemaVersion != storage.CurrentSchemaVersion || m.HistorySchemaVersion != 1 {
 		return invalidArchive(nil)
 	}
-	id, err := uuid.Parse(m.ArchiveID)
-	if err != nil || id == uuid.Nil || id.String() != m.ArchiveID {
+	if !canonicalUUID(m.ArchiveID) {
 		return invalidArchive(nil)
 	}
 	if m.CreatedAt.IsZero() || m.Snapshots.MainAt.IsZero() || m.ServerVersion == "" {
@@ -331,7 +331,8 @@ func validateManifest(m Manifest) error {
 		if f.Path != names[i] || f.Bytes < 0 || len(f.SHA256) != 64 || strings.ToLower(f.SHA256) != f.SHA256 {
 			return invalidArchive(nil)
 		}
-		if _, err := hex.DecodeString(f.SHA256); err != nil {
+		if !validSHA256(f.SHA256) {
+			_, err := hex.DecodeString(f.SHA256)
 			return invalidArchive(err)
 		}
 		if f.Bytes > maxArchiveBytes-total {
@@ -345,7 +346,7 @@ func validateManifest(m Manifest) error {
 	return nil
 }
 
-// checkJSONValue rejects duplicate object keys at every nesting level.
+// checkJSONValue 在所有嵌套层级上拒绝重复的对象键。
 func checkJSONValue(d *json.Decoder) error {
 	token, err := d.Token()
 	if err != nil {
@@ -448,8 +449,8 @@ func decodeManifest(data []byte) (Manifest, error) {
 	return m, validateManifest(m)
 }
 
-// readArchiveHeader deliberately reads exactly one tar record. archive/tar's usual
-// iterator accepts missing end blocks and hides padding, which is too permissive here.
+// readArchiveHeader 刻意只读取恰好一条 tar 记录。archive/tar 的常规迭代器
+// 会接受缺失的结束块并掩盖填充，在这里过于宽松。
 func readArchiveHeader(reader io.Reader) (*tar.Header, error) {
 	var block [512]byte
 	if _, err := io.ReadFull(reader, block[:]); err != nil {
@@ -489,8 +490,8 @@ func readArchivePadding(reader io.Reader, size int64) error {
 	return readZeroBytes(reader, (512-size%512)%512)
 }
 
-// ReadArchive authenticates the entire ciphertext and gzip member before returning.
-// It only validates archive framing; SQLite schema and domain validation are separate.
+// ReadArchive 在返回前对全部密文和 gzip 成员完成认证。
+// 它只校验归档格式；SQLite schema 与业务数据另行校验。
 func ReadArchive(ctx context.Context, input, password, stage string) (manifest Manifest, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return manifest, err
@@ -598,7 +599,7 @@ func ReadArchive(ctx context.Context, input, password, stage string) (manifest M
 			return Manifest{}, err
 		}
 	}
-	// Two mandatory zero records, followed only by bounded zero record padding.
+	// 必须有两条全零的结束记录，其后只允许有限的全零记录填充。
 	if err = readZeroBytes(reader, 1024); err != nil {
 		return Manifest{}, err
 	}
@@ -618,8 +619,8 @@ func ReadArchive(ctx context.Context, input, password, stage string) (manifest M
 	if err = compressed.Close(); err != nil {
 		return Manifest{}, invalidArchive(err)
 	}
-	// Multistream(false) preserves any second gzip member in buffered. Requiring
-	// EOF also forces age to authenticate its final chunk (including empty tails).
+	// Multistream(false) 会把第二个 gzip 成员保留在 buffered 中。要求读到
+	// EOF 同时也迫使 age 认证其最后一个块（包括空尾部）。
 	if _, err = buffered.ReadByte(); err != io.EOF {
 		return Manifest{}, invalidArchive(err)
 	}

@@ -3,8 +3,9 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
+	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,23 +19,34 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
-// Runtime wires the durable identity, local settings, collector and client.
-// Enrollment tokens are never part of runtime state.
+// Runtime 串联持久身份、本地配置、采集器与客户端。
+// 注册票据绝不属于运行时状态。
 type Runtime struct {
-	identity    *identity.Store
-	settings    v1.RuntimeSettings
-	collector   *collect.Collector
-	client      *Client
-	system      v1.System
-	installMode string
+	logger         *slog.Logger
+	identity       *identity.Store
+	settings       v1.RuntimeSettings
+	expectedStatus map[string]int
+	configRevision uint64
+	collector      *collect.Collector
+	client         *Client
+	system         v1.System
+	installMode    string
+	commandPath    string
+	upgrade        *upgrader
 }
 
-func OpenRuntime(ctx context.Context, cfg config.Agent) (*Runtime, error) {
+func OpenRuntime(ctx context.Context, cfg config.Agent, logger *slog.Logger) (*Runtime, error) {
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
 	state, err := identity.Open(ctx, filepath.Join(cfg.StateDir, "identity.json"), identity.Options{})
 	if err != nil {
 		return nil, err
 	}
 	if err := cfg.RuntimeSettings.Validate(); err != nil {
+		return nil, err
+	}
+	if err := v1.ValidateProbeExpectedStatus(cfg.ProbeTargets, cfg.ProbeExpectedStatus); err != nil {
 		return nil, err
 	}
 	initial := cloneRuntimeSettings(cfg.RuntimeSettings, v1.RuntimeSettings{})
@@ -52,20 +64,26 @@ func OpenRuntime(ctx context.Context, cfg config.Agent) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{identity: state, settings: initial, collector: collector, client: client, system: system, installMode: cfg.InstallMode}, nil
+	upgrade, err := newUpgrader(cfg.InstallPolicy, system.AgentVersion)
+	if err != nil {
+		client.Close()
+		return nil, err
+	}
+	return &Runtime{upgrade: upgrade, logger: logger, identity: state, settings: initial, expectedStatus: maps.Clone(cfg.ProbeExpectedStatus), collector: collector, client: client, system: system, installMode: cfg.InstallMode, commandPath: filepath.Join(cfg.StateDir, "commands.json")}, nil
 }
 
-func (r *Runtime) Close() { r.client.Close() }
+func (r *Runtime) Close() {
+	r.client.Close()
+	if r.upgrade != nil {
+		r.upgrade.client.CloseIdleConnections()
+	}
+}
 
 func (r *Runtime) Enroll(ctx context.Context, token string) (v1.EnrollmentResponse, error) {
 	return r.client.Enroll(ctx, token)
 }
 
-func sameRuntimeSettings(a, b v1.RuntimeSettings) bool {
-	return a.ReportIntervalSeconds == b.ReportIntervalSeconds && a.DiskIntervalSeconds == b.DiskIntervalSeconds && slices.Equal(a.Interfaces, b.Interfaces) && slices.Equal(a.DiskPaths, b.DiskPaths) && slices.Equal(a.ProbeTargets, b.ProbeTargets)
-}
-
-// Arrays belong to an immutable settings snapshot and are copied only on change.
+// 切片属于不可变的配置快照，只在变化时复制。
 func cloneRuntimeSettings(next, current v1.RuntimeSettings) v1.RuntimeSettings {
 	if slices.Equal(next.Interfaces, current.Interfaces) && current.Interfaces != nil {
 		next.Interfaces = current.Interfaces
@@ -82,79 +100,95 @@ func cloneRuntimeSettings(next, current v1.RuntimeSettings) v1.RuntimeSettings {
 	} else {
 		next.ProbeTargets = append([]string{}, next.ProbeTargets...)
 	}
+	if slices.Equal(next.RemoteCommands, current.RemoteCommands) && current.RemoteCommands != nil {
+		next.RemoteCommands = current.RemoteCommands
+	} else {
+		next.RemoteCommands = append([]string{}, next.RemoteCommands...)
+	}
+	if slices.Equal(next.DisabledFeatures, current.DisabledFeatures) && current.DisabledFeatures != nil {
+		next.DisabledFeatures = current.DisabledFeatures
+	} else {
+		next.DisabledFeatures = append([]string{}, next.DisabledFeatures...)
+	}
 	return next
 }
 
-func (r *Runtime) Run(ctx context.Context, reload <-chan struct{}, loadSettings func() (v1.RuntimeSettings, error)) error {
+func (r *Runtime) Run(ctx context.Context, reload <-chan struct{}, loadSettings func() (config.Agent, error)) error {
+	if r.installMode == "native" {
+		if executable, err := os.Executable(); err == nil {
+			cleanupUpgradeTemps(executable)
+		}
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	probes := probe.NewRunner(probe.Options{})
-	if err := probes.SetTargets(r.settings.ProbeTargets); err != nil {
+	if err := probes.SetConfig(r.settings.ProbeTargets, r.expectedStatus); err != nil {
 		cancel()
 		return err
 	}
 	done := make(chan struct{})
 	go func() { defer close(done); _ = probes.Run(ctx) }()
 	defer func() { cancel(); <-done }()
-	scheduler := NewScheduler(SchedulerOptions{Probes: probes, Traffic: r.collector.Traffic(), Identity: r.identity,
+	scheduler := NewScheduler(SchedulerOptions{Commands: openCommandStore(r.commandPath, r.logger, r.system.AgentVersion), Upgrade: r.upgrade, Logger: r.logger, Probes: probes, Traffic: r.collector.Traffic(), Identity: r.identity,
 		RuntimeSettings: func() v1.RuntimeSettings { return r.settings }, Reload: reload,
-		ReloadConfig: func(ctx context.Context) error { return r.reloadSettings(ctx, probes, loadSettings) },
-		Collect:      r.collector.Collect, Report: r.client.Report, System: &r.system, CredentialsChanged: func(invalid bool) {
-			if invalid {
-				fmt.Fprintln(os.Stderr, "orbitbeacon-agent: credentials_invalid; rechecking in 60 seconds")
-			} else {
-				fmt.Fprintln(os.Stderr, "orbitbeacon-agent: credentials recovered")
-			}
-		}, Log: func(message string) {
-			fmt.Fprintln(os.Stderr, "orbitbeacon-agent:", message)
-		}})
+		ConfigRevision: func() uint64 { return r.configRevision },
+		ReloadConfig:   func(ctx context.Context) error { return r.reloadSettings(ctx, probes, loadSettings) },
+		Collect:        r.collector.Collect, Report: r.client.Report, System: &r.system})
 	return scheduler.Run(ctx)
 }
 
-func (r *Runtime) reloadSettings(ctx context.Context, probes *probe.Runner, loadSettings func() (v1.RuntimeSettings, error)) error {
+func (r *Runtime) reloadSettings(ctx context.Context, probes *probe.Runner, loadSettings func() (config.Agent, error)) error {
 	if loadSettings == nil {
 		return errors.New("configuration loader unavailable")
 	}
-	next, err := loadSettings()
+	cfg, err := loadSettings()
+	next := cfg.RuntimeSettings
 	if err != nil {
 		return err
 	}
 	if err := next.Validate(); err != nil {
 		return err
 	}
+	if err := v1.ValidateProbeExpectedStatus(next.ProbeTargets, cfg.ProbeExpectedStatus); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if sameRuntimeSettings(next, r.settings) {
+	if next.Equal(r.settings) && maps.Equal(cfg.ProbeExpectedStatus, r.expectedStatus) {
 		return nil
 	}
 	next = cloneRuntimeSettings(next, r.settings)
-	// Full validation precedes either mutation. Both setters accept every
-	// validated RuntimeSettings and cannot fail during application.
+	// 修改任何组件前先完成完整校验。两个设置方法均接受所有已通过校验的
+	// RuntimeSettings，应用过程中不会失败。
 	if err := r.collector.SetConfig(next); err != nil {
 		return err
 	}
-	if err := probes.SetTargets(next.ProbeTargets); err != nil {
+	if err := probes.SetConfig(next.ProbeTargets, cfg.ProbeExpectedStatus); err != nil {
 		return err
 	}
 	r.settings = next
+	r.expectedStatus = maps.Clone(cfg.ProbeExpectedStatus)
+	r.configRevision++
 	return nil
 }
 
 type Diagnostics struct {
-	Configuration  string            `json:"configuration"`
-	Identity       string            `json:"identity"`
-	Connectivity   string            `json:"connectivity"`
-	Authentication string            `json:"authentication"`
-	Collection     string            `json:"collection"`
-	InstallMode    string            `json:"install_mode"`
-	MetricStatus   map[string]string `json:"metric_status"`
+	Configuration    string            `json:"configuration"`
+	Identity         string            `json:"identity"`
+	Connectivity     string            `json:"connectivity"`
+	Authentication   string            `json:"authentication"`
+	Collection       string            `json:"collection"`
+	InstallMode      string            `json:"install_mode"`
+	RemoteCommands   []string          `json:"remote_commands"`
+	DisabledFeatures []string          `json:"disabled_features"`
+	MetricStatus     map[string]string `json:"metric_status"`
 }
 
-// Doctor never sends an enrollment/report or advances the durable generation.
-// A method-only request exercises DNS, endpoint connectivity and HTTPS trust
-// when configured, without checking node authentication or accepting a sample.
+// Doctor 不发送注册或指标上报请求，也不推进持久化的 RunGeneration。
+// 通过 HEAD 请求检查 DNS 和端点连通性；使用 HTTPS 时还检查证书信任，
+// 但不验证节点凭据，也不提交采样数据。
 func (r *Runtime) Doctor(ctx context.Context) (Diagnostics, error) {
-	result := Diagnostics{Configuration: "valid", Identity: "valid", Connectivity: "error", Authentication: "not_checked", Collection: "error", InstallMode: r.installMode}
+	result := Diagnostics{Configuration: "valid", Identity: "valid", Connectivity: "error", Authentication: "not_checked", Collection: "error", InstallMode: r.installMode, RemoteCommands: r.settings.RemoteCommands, DisabledFeatures: r.settings.DisabledFeatures}
 	request, err := http.NewRequestWithContext(ctx, http.MethodHead, r.client.baseURL+"/api/agent/v1/report", nil)
 	if err != nil {
 		return result, errors.New("cannot construct diagnostic request")

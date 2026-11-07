@@ -1,7 +1,7 @@
 const MAX_ERROR_BYTES = 64 * 1024;
 
-// Error bodies are untrusted and may never finish. The transport owns the
-// deadline; cancellation must also interrupt a pending body read.
+// 错误响应体不可信，也可能一直无法读完。传输层负责超时控制，
+// 取消操作也必须中断尚未完成的响应体读取。
 export async function responseErrorCode(response, signal) {
   if (response.status !== 403 || !response.body) return '';
   const reader = response.body.getReader();

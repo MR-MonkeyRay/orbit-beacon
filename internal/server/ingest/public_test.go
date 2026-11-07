@@ -156,3 +156,50 @@ func TestPublicMemoryNeedsBothCurrentValuesAndStatuses(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicNodeHasNoExpiryField(t *testing.T) {
+	typ := reflect.TypeOf(PublicNode{})
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if field.Name == "ExpiresOn" || field.Tag.Get("json") == "expires_on" {
+			t.Fatal("private expiry in public projection")
+		}
+	}
+	raw, err := json.Marshal(PublicNode{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var obj map[string]any
+	if err = json.Unmarshal(raw, &obj); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := obj["expires_on"]; ok {
+		t.Fatal("expiry serialized publicly")
+	}
+}
+
+func TestPublicProjectionOmitsOptionalHostMetrics(t *testing.T) {
+	now := time.Now()
+	value := 42.0
+	metrics := v1.Metrics{DiskIO: &v1.DiskIOMetrics{ReadBytesPerSec: 1024, WriteBytesPerSec: 2048, BusyPercent: 25}, Pressure: &v1.PressureMetrics{CPU: &value, Memory: &value, IO: &value}, TemperatureCelsius: &value}
+	snapshot := snapshotPublic(metrics, now)
+	out := PublicNode{}
+	snapshot.project(&out, now)
+	body, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{"availability": true, "name": true, "region": true, "provider": true, "status": true, "last_seen": true, "cpu_percent": true, "memory_percent": true, "load1": true, "uptime_seconds": true, "metric_status": true}
+	for field := range fields {
+		if !allowed[field] {
+			t.Fatal("unexpected public field", field)
+		}
+	}
+	if len(fields) != len(allowed) {
+		t.Fatal(fields)
+	}
+}

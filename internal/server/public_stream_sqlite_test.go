@@ -44,6 +44,9 @@ func sqliteStreamFrame(t *testing.T, frames <-chan string) (string, string, publ
 			Code string            `json:"code"`
 			Data publicListFixture `json:"data"`
 		}
+		if strings.Contains(data, "expires_on") || strings.Contains(data, "2028-02-29") {
+			t.Fatal("expiry leaked into public stream")
+		}
 		if err := json.Unmarshal([]byte(data), &frame); err != nil {
 			t.Fatal(err)
 		}
@@ -57,9 +60,12 @@ func sqliteStreamFrame(t *testing.T, frames <-chan string) (string, string, publ
 func TestPublicStreamSQLiteAcceptedReportAndUnpublish(t *testing.T) {
 	f := newAgentHTTP(t, 2)
 	id, token := publishCacheNode(t, f)
+	if _, err := f.db.Exec("UPDATE nodes SET expires_on='2028-02-29' WHERE id=?", id); err != nil {
+		t.Fatal(err)
+	}
 	base, started := f.now, time.Now()
 	var err error
-	f.handler, err = server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return base.Add(time.Since(started)) }, WebUpdateIntervalSeconds: 2})
+	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return base.Add(time.Since(started)) }, WebUpdateIntervalSeconds: 2}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,8 +91,7 @@ func TestPublicStreamSQLiteAcceptedReportAndUnpublish(t *testing.T) {
 	if kind, _, page := sqliteStreamFrame(t, w.frames); kind != "snapshot" || len(page.Nodes) != 1 || string(page.Nodes[0]["cpu_percent"]) != "25" {
 		t.Fatalf("accepted report nodes: %+v", page)
 	}
-	// Withdrawal is a safety exception: close immediately, without waiting
-	// for the ordinary report interval or emitting another page.
+	// 撤回是安全例外：立即关闭，不等待普通的报告间隔，也不再发出另一页。
 	enabled := false
 	if _, err := f.nodes.PatchPublicSettings(context.Background(), id, nodes.PublicSettingsPatch{Enabled: &enabled}); err != nil {
 		t.Fatal(err)
@@ -103,7 +108,7 @@ func TestPublicStreamReprojectsSourceAndPresenceExpiryWithoutNewReports(t *testi
 	base := f.now
 	var elapsedMS atomic.Int64
 	var err error
-	f.handler, err = server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return base.Add(time.Duration(elapsedMS.Load()) * time.Millisecond) }, WebUpdateIntervalSeconds: 2})
+	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return base.Add(time.Duration(elapsedMS.Load()) * time.Millisecond) }, WebUpdateIntervalSeconds: 2}))
 	if err != nil {
 		t.Fatal(err)
 	}

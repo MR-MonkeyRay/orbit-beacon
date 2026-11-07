@@ -12,8 +12,8 @@ import (
 
 const maxTicketAliases = 64
 
-// Enrollment retains the exact candidate and CAS parent of a ticket operation.
-// It is separate from Identity so snapshots do not expose or copy the journal.
+// Enrollment 保留票据操作的原始候选凭据，以及用于 CAS 比较的前一凭据。
+// 它与 Identity 分开，防止身份快照暴露或复制操作记录。
 type Enrollment struct {
 	NodeToken         string `json:"node_token"`
 	PreviousNodeToken string `json:"previous_node_token,omitempty"`
@@ -24,7 +24,7 @@ type diskIdentity struct {
 	EnrollmentAttempts map[string]Enrollment `json:"enrollment_attempts,omitempty"`
 }
 
-// LookupEnrollment reads an existing operation without allocating a candidate.
+// LookupEnrollment 读取已有操作，不生成候选凭据。
 func (s *Store) LookupEnrollment(ctx context.Context, ticket [32]byte) (Identity, Enrollment, bool, error) {
 	unlock, err := filelock.Acquire(ctx, s.path+".lock")
 	if err != nil {
@@ -48,14 +48,14 @@ func (s *Store) LookupEnrollment(ctx context.Context, ticket [32]byte) (Identity
 	return current.Identity, operation, exists, nil
 }
 
-// StageEnrollment durably binds a ticket to its candidate before any claim.
-// Rotation may be requested before a response has supplied the node binding.
+// StageEnrollment 在向服务器申请注册前，先持久保存票据与候选凭据的关联。
+// 即使尚未收到响应中的节点绑定信息，也可申请轮换凭据。
 func (s *Store) StageEnrollment(ctx context.Context, ticket [32]byte, rotate bool) (Identity, Enrollment, error) {
 	return s.prepareEnrollment(ctx, ticket, rotate, "")
 }
 
-// RememberEnrollment repairs a missing association only for a credential still
-// present in durable identity, after a read-only server receipt confirmation.
+// RememberEnrollment 仅在只读查询确认服务器回执后，修复票据与凭据的关联；
+// 该凭据必须仍保存在持久化的身份中。
 func (s *Store) RememberEnrollment(ctx context.Context, ticket [32]byte, accepted string) (Identity, Enrollment, error) {
 	if accepted == "" {
 		return Identity{}, Enrollment{}, errors.New("confirmed enrollment credential is missing")

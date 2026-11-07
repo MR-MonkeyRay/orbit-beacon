@@ -8,9 +8,9 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
-// latestSampleView excludes credentials and process identity from private reads.
-// Its timestamps and original metric metadata describe the accepted sample, not
-// the response clock or the node's current presence.
+// latestSampleView 从私有读取中排除凭据和进程身份。
+// 它的时间戳和原始指标元数据描述已接受的样本，
+// 而不是响应时间或节点当前的在线状态。
 type latestSampleView struct {
 	ReceivedAt time.Time          `json:"received_at"`
 	SampledAt  time.Time          `json:"sampled_at"`

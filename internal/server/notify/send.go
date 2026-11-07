@@ -13,10 +13,10 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"orbitbeacon/internal/server/egress"
 )
@@ -27,10 +27,11 @@ type Payload struct {
 	EventID string `json:"event_id"`
 	State   string `json:"state"`
 	Rule    struct {
-		ID       string `json:"id"`
-		Name     string `json:"name"`
-		Metric   string `json:"metric"`
-		Severity string `json:"severity"`
+		ID       string  `json:"id"`
+		Name     string  `json:"name"`
+		Metric   string  `json:"metric"`
+		Target   *string `json:"target,omitempty"`
+		Severity string  `json:"severity"`
 	} `json:"rule"`
 	Node struct {
 		ID   string `json:"id"`
@@ -42,8 +43,8 @@ type Payload struct {
 	SummaryCount int        `json:"summary_count,omitempty"`
 }
 
-// ParsePayload is the common persisted delivery decoder. Historical entity
-// references are snapshots, not live dependencies or a source of new sends.
+// ParsePayload 是持久化投递的公共解码器。其中的历史实体引用
+// 只是快照，不是活跃依赖，也不会触发新的发送。
 func ParsePayload(raw []byte) (Payload, error) {
 	var p Payload
 	if !strings.HasPrefix(strings.TrimSpace(string(raw)), "{") {
@@ -67,7 +68,7 @@ type sender struct {
 	client                *http.Client
 	dialer                *egress.Dialer
 	tlsConfig             *tls.Config
-	// Deliberately unexported: only same-package tests may override Telegram/TLS.
+	// 刻意不导出：仅同包测试可覆盖 Telegram/TLS。
 	telegramBase string
 	now          func() time.Time
 }
@@ -76,7 +77,7 @@ func newSender(opts Options) *sender {
 	d := &net.Dialer{Timeout: SendTimeout}
 	safe := &egress.Dialer{Resolver: net.DefaultResolver, AllowPrivate: opts.AllowPrivateNetworks, DenyLocal: false, Dial: d.DialContext}
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	// Avoid idle-connection diagnostics in net/http logging unsolicited remote bytes.
+	// 避免 net/http 的空闲连接诊断把远端主动发来的字节写入日志。
 	transport := &http.Transport{DisableKeepAlives: true, Proxy: nil, DialContext: safe.DialContext, TLSClientConfig: tlsCfg, TLSHandshakeTimeout: SendTimeout, ResponseHeaderTimeout: SendTimeout, MaxIdleConns: 8, MaxIdleConnsPerHost: 2, IdleConnTimeout: 30 * time.Second}
 	return &sender{allowInsecureWebhooks: opts.AllowInsecureWebhooks, client: &http.Client{Timeout: SendTimeout, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, dialer: safe, tlsConfig: tlsCfg, telegramBase: "https://api.telegram.org", now: opts.Now}
 }
@@ -86,64 +87,22 @@ func (s *sender) Send(ctx context.Context, c Channel, secret string, p Payload) 
 	if c.Kind == "email" {
 		return s.email(ctx, c, secret, p)
 	}
-	raw, e := json.Marshal(p)
-	if e != nil {
-		return failure("invalid_payload", false)
+	req, e := s.buildRequest(ctx, c, secret, p)
+	if e != "" {
+		return failure(e, false)
 	}
-	target := c.Config.URL
-	if c.Kind == "webhook" {
-		u, err := url.Parse(target)
-		if err != nil {
-			return failure("invalid_destination", false)
-		}
-		// Recheck current policy when sending persisted channels after config changes.
-		if u.Scheme != "https" {
-			ip := net.ParseIP(u.Hostname())
-			if u.Scheme != "http" || !s.allowInsecureWebhooks || ip == nil || !ip.IsLoopback() {
-				return failure("insecure_webhook_denied", false)
-			}
-		}
-	}
-	if c.Kind == "telegram" {
-		target = s.telegramBase + "/bot" + secret + "/sendMessage"
-		raw, _ = json.Marshal(struct {
-			ChatID string `json:"chat_id"`
-			Text   string `json:"text"`
-		}{c.Config.ChatID, message(p)})
-	}
-	req, e := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(raw))
-	if e != nil {
-		return failure("invalid_destination", false)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.Kind == "webhook" {
-		req.Header.Set("X-OrbitBeacon-Timestamp", strconv.FormatInt(s.now().Unix(), 10))
-		if secret != "" {
-			mac := hmac.New(sha256.New, []byte(secret))
-			mac.Write(raw)
-			req.Header.Set("X-OrbitBeacon-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
-		}
-	}
-	response, e := s.client.Do(req)
-	if e != nil {
-		return networkFailure(e)
+	response, err := s.client.Do(req)
+	if err != nil {
+		return networkFailure(err)
 	}
 	defer response.Body.Close()
-	// Bodies may contain credentials and are never returned, stored or logged.
+	// 响应体可能包含凭据，绝不返回、存储或记录。
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, 4096))
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		if readErr != nil {
 			return networkFailure(readErr)
 		}
-		if c.Kind == "telegram" {
-			var result struct {
-				OK bool `json:"ok"`
-			}
-			if json.Unmarshal(body, &result) != nil || !result.OK {
-				return failure("telegram_rejected", false)
-			}
-		}
-		return Result{OK: true}
+		return channelResponse(c.Kind, body)
 	}
 	if response.StatusCode >= 300 && response.StatusCode < 400 {
 		return failure("redirect_denied", false)
@@ -162,6 +121,50 @@ func (s *sender) Send(ctx context.Context, c Channel, secret string, p Payload) 
 	}
 	return result
 }
+func (s *sender) buildRequest(ctx context.Context, c Channel, secret string, p Payload) (*http.Request, string) {
+	if _, ok := imChannels[c.Kind]; ok {
+		return s.imRequest(ctx, c, secret, p)
+	}
+	var raw []byte
+	target := c.Config.URL
+	switch c.Kind {
+	case "webhook":
+		// 配置变更后发送已持久化通道时，重新检查当前策略。
+		if _, code := destinationURL(c.Kind, target, s.allowInsecureWebhooks); code != "" {
+			return nil, code
+		}
+		var err error
+		raw, err = json.Marshal(p)
+		if err != nil {
+			return nil, "invalid_payload"
+		}
+	case "telegram":
+		target = s.telegramBase + "/bot" + secret + "/sendMessage"
+		raw, _ = json.Marshal(struct {
+			ChatID string `json:"chat_id"`
+			Text   string `json:"text"`
+		}{c.Config.ChatID, renderMessage(p, c.Config.Template, 4096)})
+	default:
+		return nil, "invalid_destination"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(raw))
+	if err != nil {
+		return nil, "invalid_destination"
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.Kind == "webhook" {
+		timestamp := strconv.FormatInt(s.now().Unix(), 10)
+		req.Header.Set("X-OrbitBeacon-Timestamp", timestamp)
+		if secret != "" {
+			mac := hmac.New(sha256.New, []byte(secret))
+			mac.Write([]byte(timestamp + "."))
+			mac.Write(raw)
+			req.Header.Set("X-OrbitBeacon-Signature", "v1="+hex.EncodeToString(mac.Sum(nil)))
+		}
+	}
+	return req, ""
+}
+
 func parseRetryAfter(raw string, now time.Time) time.Duration {
 	if n, e := strconv.ParseInt(raw, 10, 64); e == nil {
 		if n <= 0 {
@@ -186,13 +189,46 @@ func networkFailure(e error) Result {
 	}
 	return failure("network_error", true)
 }
-func message(p Payload) string {
-	if p.SummaryCount > 1 {
-		return fmt.Sprintf("OrbitBeacon: %d alert notifications coalesced. Latest: %s: %s on %s (%s, %s)", p.SummaryCount, p.State, p.Rule.Name, p.Node.Name, p.Rule.Metric, p.Rule.Severity)
+func renderMessage(p Payload, template string, maxBytes int) string {
+	value, resolved, target := "", "", ""
+	if p.Rule.Target != nil {
+		target = *p.Rule.Target
 	}
-	value := ""
 	if p.Value != nil {
-		value = fmt.Sprintf(" value=%g", *p.Value)
+		value = fmt.Sprintf("%g", *p.Value)
 	}
-	return fmt.Sprintf("OrbitBeacon %s: %s on %s (%s, %s)%s\nEvent: %s\nStarted: %s", p.State, p.Rule.Name, p.Node.Name, p.Rule.Metric, p.Rule.Severity, value, p.EventID, p.StartedAt.UTC().Format(time.RFC3339))
+	if p.ResolvedAt != nil {
+		resolved = p.ResolvedAt.UTC().Format(time.RFC3339)
+	}
+	started := p.StartedAt.UTC().Format(time.RFC3339)
+	var text string
+	if template != "" {
+		text = strings.NewReplacer(
+			"{state}", p.State, "{rule}", p.Rule.Name, "{node}", p.Node.Name,
+			"{target}", target, "{metric}", p.Rule.Metric, "{severity}", p.Rule.Severity, "{value}", value,
+			"{started_at}", started, "{resolved_at}", resolved, "{event_id}", p.EventID,
+		).Replace(template)
+		if p.SummaryCount > 1 {
+			text = fmt.Sprintf("OrbitBeacon: %d alert notifications coalesced.\n%s", p.SummaryCount, text)
+		}
+	} else if p.SummaryCount > 1 {
+		text = fmt.Sprintf("OrbitBeacon: %d alert notifications coalesced. Latest: %s: %s on %s (%s, %s)", p.SummaryCount, p.State, p.Rule.Name, p.Node.Name, p.Rule.Metric, p.Rule.Severity)
+	} else {
+		if p.Value != nil {
+			value = " value=" + value
+		}
+		text = fmt.Sprintf("OrbitBeacon %s: %s on %s (%s, %s)%s\nEvent: %s\nStarted: %s", p.State, p.Rule.Name, p.Node.Name, p.Rule.Metric, p.Rule.Severity, value, p.EventID, started)
+	}
+	if template == "" && p.Rule.Target != nil {
+		text += "\nTarget: " + target
+	}
+	if maxBytes > 0 && len(text) > maxBytes {
+		const suffix = "…"
+		end := maxBytes - len(suffix)
+		for end > 0 && !utf8.RuneStart(text[end]) {
+			end--
+		}
+		return text[:end] + suffix
+	}
+	return text
 }

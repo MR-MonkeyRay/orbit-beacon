@@ -20,14 +20,13 @@ function retryAfter(response) {
   return Number.isFinite(date) ? Math.max(0, date - (Number.isFinite(serverDate) ? serverDate : Date.now())) : 0;
 }
 
-// One read-only channel per consumer. Transport and retryAt are internal UI hints,
-// not user-facing transport choices. retryAt is an epoch-ms HTTP countdown target.
+// 每个消费者一个只读通道。transport 和 retryAt 是内部 UI 提示，
+// 不是面向用户的传输选项。retryAt 是 HTTP 倒计时的目标时间戳（Unix 毫秒）。
 export function connectLive({urls, signal, credentials = 'same-origin', validateSnapshot, onSnapshot, onState = () => {}, onClock = () => {}, onUnauthorized, onPublicPageDisabled}) {
   let generation = 0;
   let channel;
   let closed = false;
   let pageHidden = false;
-  let hasSnapshot = false;
   let intervalSeconds = DEFAULT_INTERVAL_SECONDS;
   let previousState;
   let httpNotBefore = 0;
@@ -71,14 +70,14 @@ export function connectLive({urls, signal, credentials = 'same-origin', validate
     if (!current(active)) return;
     state('stale', active.transport);
     close();
-    // Known authentication failure is terminal even if the hook cannot reach /me.
-    try { Promise.resolve(onUnauthorized?.('unauthenticated')).catch(() => {}); } catch { /* terminal */ }
+    // 已知的鉴权失败是终态，即使钩子无法访问 /me。
+    try { Promise.resolve(onUnauthorized?.('unauthenticated')).catch(() => {}); } catch { /* 终态 */ }
   };
   const publicPageDisabled = (active) => {
     if (!current(active)) return;
     close();
-    // Close/invalidate before application code can navigate or throw.
-    try { Promise.resolve(onPublicPageDisabled?.()).catch(() => {}); } catch { /* terminal */ }
+    // 在应用代码导航或抛出异常前，先关闭通道并使待处理回调失效。
+    try { Promise.resolve(onPublicPageDisabled?.()).catch(() => {}); } catch { /* 终态 */ }
   };
   const fail = async (active) => {
     if (!current(active)) return;
@@ -93,7 +92,7 @@ export function connectLive({urls, signal, credentials = 'same-origin', validate
         if (token !== generation || !available()) return;
         if (allowed === false) { close(); return; }
       } catch {
-        // An unknown network failure may fall back; a known 401 returns false.
+        // 未知网络故障可以回退；已知的 401 返回 false。
         if (token !== generation || !available()) return;
       }
     }
@@ -119,7 +118,7 @@ export function connectLive({urls, signal, credentials = 'same-origin', validate
   const message = (active, frame) => {
     if (!current(active)) return false;
     if (!frame || typeof frame !== 'object' || Array.isArray(frame) || typeof frame.type !== 'string') throw new Error('Invalid live frame');
-    // Unknown future messages are ignored and never renew liveness.
+    // 未知的未来消息被忽略，绝不刷新活跃状态。
     if (!knownTypes.has(frame.type)) {
       if (active.transport === 'http') throw new Error('Expected HTTP snapshot');
       return true;
@@ -142,7 +141,6 @@ export function connectLive({urls, signal, credentials = 'same-origin', validate
     if (frame.type === 'close') { control(active, frame.code); return false; }
     if (frame.type === 'snapshot') {
       active.received = true;
-      hasSnapshot = true;
       clear(active.first);
       if (active.transport !== 'http') watchdog(active);
       onSnapshot(frame.data, frame);
@@ -242,7 +240,7 @@ export function connectLive({urls, signal, credentials = 'same-origin', validate
       } catch {
         if (valid()) state('stale', 'http');
       } finally {
-        // A timed-out request may resolve after a newer request has started.
+        // 超时的请求可能在新请求发出后才返回。
         if (valid()) finish(delay);
       }
     })();
@@ -251,7 +249,7 @@ export function connectLive({urls, signal, credentials = 'same-origin', validate
     stop();
     if (!available()) return;
     const active = channel = {generation, transport, controller: new AbortController(), opened: false, received: false};
-    state(hasSnapshot || previousState?.state === 'stale' ? 'stale' : 'connecting', transport, null, true);
+    state('connecting', transport, null, true);
     if (!current(active)) return;
     if (transport !== 'ws') later(() => { if (current(active)) start('ws'); }, PREFER_WS_MS);
     if (transport === 'http') poll(active);

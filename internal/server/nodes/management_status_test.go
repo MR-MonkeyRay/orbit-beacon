@@ -59,7 +59,7 @@ func TestManagementPresenceAndAgentVersion(t *testing.T) {
 			if got.AgentVersion != "v1.2.3+test" {
 				t.Fatalf("agent_version=%q", got.AgentVersion)
 			}
-			list, err := service.List(ctx, 100, 0)
+			list, _, err := service.ListPage(ctx, 100, 0)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -1,8 +1,8 @@
 import {h, icon} from './dom.js';
 import {t} from './i18n.js';
 
-// The HTML shells apply a stored theme before first paint; this module only
-// changes it. "system" means no override, following prefers-color-scheme.
+// HTML 外壳在首次绘制前应用已存储的主题；此模块只负责切换。
+// "system" 表示不覆盖，跟随 prefers-color-scheme。
 const KEY = 'orbitbeacon-theme';
 const ORDER = ['system', 'light', 'dark'];
 const ICON = {system: 'monitor', light: 'sun', dark: 'moon'};
@@ -20,7 +20,7 @@ export function setTheme(theme) {
   try {
     if (theme === 'system') localStorage.removeItem(KEY);
     else localStorage.setItem(KEY, theme);
-  } catch { /* storage can be unavailable; the choice still applies to this page */ }
+  } catch { /* 存储可能不可用；选择仍应用于当前页面 */ }
   listeners.forEach((paint) => paint());
 }
 

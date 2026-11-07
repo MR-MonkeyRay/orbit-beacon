@@ -40,7 +40,7 @@ func TestEnrollmentListUsesOrderingIndexAndForeignKeyIndexesExist(t *testing.T) 
 	if !usedOrdering {
 		t.Fatal("enrollment list did not use enrollment_tokens_expiry_id")
 	}
-	for _, name := range []string{"enrollment_tokens_node", "enrollment_tokens_group", "enrollment_claims_node", "nodes_group", "update_job_nodes_node"} {
+	for _, name := range []string{"enrollment_tokens_node", "enrollment_tokens_group", "enrollment_claims_node", "nodes_group"} {
 		var count int
 		if err := db.QueryRowContext(context.Background(), "SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?", name).Scan(&count); err != nil {
 			t.Fatal(err)

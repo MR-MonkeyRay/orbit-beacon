@@ -3,19 +3,21 @@ package alerts
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"orbitbeacon/internal/identity"
+	"orbitbeacon/internal/logging"
+	"orbitbeacon/internal/server/commands"
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 type Notification struct {
@@ -29,24 +31,26 @@ type Notification struct {
 	ResolvedAt *time.Time
 }
 
-// Notifier runs on a separate bounded worker after commit. Implementations must
-// honor context cancellation. Delivery/retries are intentionally left to part 2.
+// Notifier 在调用方事务内持久化投递，失败时由调用方回滚告警变化。
+// Wake 仅在提交后调用，必须非阻塞；即使唤醒丢失，投递也由持久化轮询兜底。
 type Notifier interface {
-	Notify(context.Context, Notification)
+	Enqueue(context.Context, *sql.Tx, Notification) error
+	Wake()
 }
 type NoopNotifier struct{}
 
-func (NoopNotifier) Notify(context.Context, Notification) {}
+func (NoopNotifier) Enqueue(context.Context, *sql.Tx, Notification) error { return nil }
+func (NoopNotifier) Wake()                                                {}
 
 type LatestReader interface {
 	Latest(context.Context, string) (ingest.LatestReport, error)
 }
 type EvaluatorOptions struct {
-	Interval  time.Duration
-	Now       func() time.Time
-	Notifier  Notifier
-	QueueSize int
-	Logger    *slog.Logger
+	Quota    func(context.Context, time.Time) (map[string]float64, error)
+	Interval time.Duration
+	Now      func() time.Time
+	Notifier Notifier
+	Logger   *slog.Logger
 }
 type pair struct{ rule, node string }
 type pending struct {
@@ -69,19 +73,19 @@ type evaluationNode struct {
 	session            string
 	id, name, status   string
 	group              *string
+	expiresOn          *string
 	enrolled, lastSeen *time.Time
 	credential         bool
+	stopped            bool
 }
 
 type Evaluator struct {
 	service     *Service
 	latest      LatestReader
 	opts        EvaluatorOptions
-	mu          sync.Mutex // Evaluate is serialized, including explicit test/manual ticks.
+	mu          sync.Mutex // Evaluate 串行执行，包括显式的测试/手动 tick。
 	pending     map[pair]pending
 	resolutions map[pair]pendingResolution
-	queue       chan Notification
-	dropped     atomic.Uint64
 }
 
 func NewEvaluator(service *Service, latest LatestReader, opts EvaluatorOptions) *Evaluator {
@@ -94,38 +98,17 @@ func NewEvaluator(service *Service, latest LatestReader, opts EvaluatorOptions) 
 	if opts.Notifier == nil {
 		opts.Notifier = NoopNotifier{}
 	}
-	if opts.QueueSize <= 0 {
-		opts.QueueSize = 256
-	}
-	if opts.Logger == nil {
-		opts.Logger = slog.Default()
-	}
-	return &Evaluator{service: service, latest: latest, opts: opts, pending: make(map[pair]pending), resolutions: make(map[pair]pendingResolution), queue: make(chan Notification, opts.QueueSize)}
+	return &Evaluator{service: service, latest: latest, opts: opts, pending: make(map[pair]pending), resolutions: make(map[pair]pendingResolution)}
 }
-func (e *Evaluator) NotificationsDropped() uint64 { return e.dropped.Load() }
 
-// Run owns the evaluation and notification workers and returns after both stop.
-// The caller cancels ctx and waits for Run before closing the database.
+// Run 持有评估循环；外发由通知服务的持久化 worker 处理。
+// 调用方须先取消 ctx 并等待 Run 结束，再关闭数据库。
 func (e *Evaluator) Run(ctx context.Context) {
-	workerDone := make(chan struct{})
-	go func() {
-		defer close(workerDone)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case n := <-e.queue:
-				if ctx.Err() != nil {
-					return
-				}
-				e.opts.Notifier.Notify(ctx, n)
-			}
-		}
-	}()
-	defer func() { <-workerDone }()
 	tick := func() {
 		if err := e.Evaluate(ctx, e.opts.Now()); err != nil && ctx.Err() == nil {
-			e.opts.Logger.Warn("alert evaluation failed", "error", err)
+			if e.opts.Logger != nil {
+				e.opts.Logger.LogAttrs(ctx, slog.LevelWarn, "alert_evaluation_failed", logging.ErrorAttrs(err, "evaluation_failed")...)
+			}
 		}
 	}
 	tick()
@@ -140,18 +123,10 @@ func (e *Evaluator) Run(ctx context.Context) {
 		}
 	}
 }
-func (e *Evaluator) enqueue(n Notification) {
-	select {
-	case e.queue <- n:
-	default:
-		e.dropped.Add(1)
-		e.opts.Logger.Warn("alert notification queue full")
-	}
-}
 func definition(r Rule) string {
-	// Names/severity and timestamps do not restart pending timers. Condition and
-	// scope changes start a new episode and resolve any previous firing episode.
-	// Routing changes must not reset pending timers or open episodes.
+	// 名称、严重级别和时间戳变更不重置待触发计时。条件或范围变更
+	// （包括探测目标）会开始新一轮告警，并结束此前仍在触发中的事件。
+	// 通知路由变更不得重置待触发计时或未结束的事件。
 	r.ChannelIDs = nil
 	r.ID = ""
 	r.Name = ""
@@ -162,7 +137,7 @@ func definition(r Rule) string {
 	return string(raw)
 }
 func (e *Evaluator) readNodes(ctx context.Context) ([]evaluationNode, error) {
-	rows, err := e.service.db.QueryContext(ctx, "SELECT id,name,status,group_id,first_enrolled_at,last_seen,token_hash IS NOT NULL,token_hash,credential_epoch,run_generation,report_session_id FROM nodes")
+	rows, err := e.service.db.QueryContext(ctx, "SELECT id,name,status,group_id,expires_on,first_enrolled_at,last_seen,token_hash IS NOT NULL,token_hash,credential_epoch,run_generation,report_session_id, "+commands.StoppedSQL+" FROM nodes")
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +146,7 @@ func (e *Evaluator) readNodes(ctx context.Context) ([]evaluationNode, error) {
 	for rows.Next() {
 		var n evaluationNode
 		var enrolled, last *string
-		if err := rows.Scan(&n.id, &n.name, &n.status, &n.group, &enrolled, &last, &n.credential, &n.identity, &n.credentialEpoch, &n.generation, &n.session); err != nil {
+		if err := rows.Scan(&n.id, &n.name, &n.status, &n.group, &n.expiresOn, &enrolled, &last, &n.credential, &n.identity, &n.credentialEpoch, &n.generation, &n.session, &n.stopped); err != nil {
 			return nil, err
 		}
 		for _, p := range []struct {
@@ -201,7 +176,7 @@ func (e *Evaluator) readOpen(ctx context.Context) (map[pair]openEvent, error) {
 		var o openEvent
 		var start, raw string
 		var resolved, notified *string
-		if err := rows.Scan(&o.ID, &o.RuleID, &o.NodeID, &o.RuleName, &o.NodeName, &o.State, &o.Value, &start, &resolved, &notified, &raw); err != nil {
+		if err := rows.Scan(&o.ID, &o.RuleID, &o.NodeID, &o.RuleName, &o.NodeName, &o.State, &o.Value, &start, &resolved, &notified, &o.Silenced, &o.Target, &raw); err != nil {
 			return nil, err
 		}
 		o.StartedAt, err = timekey.Parse(start)
@@ -216,6 +191,12 @@ func (e *Evaluator) readOpen(ctx context.Context) (map[pair]openEvent, error) {
 	return result, rows.Err()
 }
 func pendingDefinition(r Rule, n evaluationNode, latest ingest.LatestReport) string {
+	if r.Metric == "node_expiry_days" {
+		return definition(r) + "|" + hex.EncodeToString(n.identity) + "|" + strconv.FormatInt(n.credentialEpoch, 10) + "|" + timekey.Format(*n.enrolled)
+	}
+	if r.Metric == "traffic_quota_percent" {
+		latest.SessionID = ""
+	}
 	return definition(r) + "|" + hex.EncodeToString(n.identity) + "|" + strconv.FormatInt(n.credentialEpoch, 10) + "|" + timekey.Format(*n.enrolled) + "|" + n.generation + "|" + n.session + "|" + latest.SessionID
 }
 
@@ -234,9 +215,8 @@ func matches(r Rule, n evaluationNode) bool {
 	return false
 }
 
-// Evaluate performs one deterministic tick. Pending state and resolution intents
-// are bounded by current rule/node pairs; open state is reloaded so restart never
-// duplicates episodes.
+// Evaluate 执行一次确定性的评估。待触发状态和待重试的恢复操作数量受当前规则/节点对数限制；
+// 每次重新加载未结束的事件，避免重启后重复创建事件。
 func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -261,8 +241,8 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 	for _, n := range inventory {
 		nodeMap[n.id] = n
 	}
-	// Prune from the current inventory before any write can fail. Observations
-	// below update each pair directly so unrelated failures cannot undo resets.
+	// 在任何写入可能失败之前，先按当前清单修剪。后续的观测会直接更新各个规则/节点对，
+	// 因此不相关的失败不会撤销已重置的状态。
 	for key := range e.pending {
 		r, exists := ruleMap[key.rule]
 		n, present := nodeMap[key.node]
@@ -271,15 +251,31 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 		}
 	}
 	var evaluationErr error
-	// Each resolution intent belongs to one open event. Retry it before evaluating
-	// current conditions so a re-breach cannot erase an observed recovery.
+	var quotas map[string]float64
+	var quotaErr error
+	for _, r := range rules {
+		if r.Enabled && r.Metric == "traffic_quota_percent" {
+			if e.opts.Quota == nil {
+				quotaErr = errors.New("traffic quota reader unavailable")
+			} else {
+				quotas, quotaErr = e.opts.Quota(ctx, now)
+			}
+			evaluationErr = errors.Join(evaluationErr, quotaErr)
+			break
+		}
+	}
+	// 每个待重试的恢复操作都对应一个未结束的事件。先重试再评估当前条件，
+	// 避免再次越限抹掉已观测到的恢复。
 	for key, intent := range e.resolutions {
 		if o, exists := open[key]; !exists || o.ID != intent.eventID {
 			delete(e.resolutions, key)
 		}
 	}
-	// This also handles deletions while the process was stopped.
+	// 这也能处理进程停机期间被删除的情况。
 	for key, o := range open {
+		if o.rule.Metric == "traffic_quota_percent" && quotaErr != nil {
+			continue
+		}
 		r, exists := ruleMap[key.rule]
 		n, present := nodeMap[key.node]
 		_, retry := e.resolutions[key]
@@ -287,8 +283,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 			delete(e.pending, key)
 			if err := e.resolve(ctx, o, nil, now); err != nil {
 				if !exists || !present {
-					// Orphans are retried from open events without retaining intents
-					// for removed rule/node pairs.
+					// 已移除的规则/节点对不保留恢复意图，后续直接从未结束的事件重试。
 					delete(e.resolutions, key)
 				}
 				evaluationErr = errors.Join(evaluationErr, err)
@@ -307,21 +302,26 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 		}
 		if latestErr != nil && !errors.Is(latestErr, nodes.ErrNotFound) {
 			evaluationErr = errors.Join(evaluationErr, latestErr)
-			for _, r := range rules {
-				delete(e.pending, pair{r.ID, n.id})
-			}
-			continue
 		}
 		for _, r := range rules {
 			if !matches(r, n) {
 				continue
 			}
 			key := pair{r.ID, n.id}
+			if r.Metric == "traffic_quota_percent" {
+				if quotaErr != nil {
+					delete(e.pending, key)
+					continue
+				}
+			} else if r.Metric != "node_expiry_days" && latestErr != nil && !errors.Is(latestErr, nodes.ErrNotFound) {
+				delete(e.pending, key)
+				continue
+			}
 			o, firing := open[key]
 			if firing {
 				delete(e.pending, key)
 				if _, retry := e.resolutions[key]; retry {
-					// Resolution failed above; retry this episode next tick.
+					// 上方恢复操作失败，下一次评估继续重试此事件。
 					continue
 				}
 			}
@@ -340,15 +340,53 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 				since = seen
 				trueCondition = !seen.After(now) && now.Sub(seen) >= time.Duration(r.ForSeconds)*time.Second
 			} else {
-				if latestErr == nil {
-					value = metricValue(latest, r.Metric, now)
+				if r.Metric == "node_expiry_days" {
+					value = expiryDays(n.expiresOn, now)
+					if value == nil {
+						delete(e.pending, key)
+						if firing {
+							if err := e.resolve(ctx, o, nil, now); err != nil {
+								evaluationErr = errors.Join(evaluationErr, err)
+							}
+						}
+						continue
+					}
+				} else if r.Metric == "traffic_quota_percent" {
+					v, hasQuota := quotas[n.id]
+					disabled := latestErr == nil && metricDisabled(r, latest.Runtime)
+					if !hasQuota || (disabled && latestFresh(latest, now)) {
+						delete(e.pending, key)
+						if firing {
+							if err := e.resolve(ctx, o, nil, now); err != nil {
+								evaluationErr = errors.Join(evaluationErr, err)
+							}
+						}
+						continue
+					}
+					// 关闭配置可阻止新告警；恢复事件须有新鲜报告作证。
+					if disabled {
+						delete(e.pending, key)
+						continue
+					}
+					value = &v
+				} else if latestErr == nil {
+					value = metricValue(latest, r, now)
 				}
-				// Missing/stale data breaks pending continuity, but cannot establish recovery.
+				// 数据缺失或过期会打断持续越限计时，但不能据此判定告警已恢复。
 				if value == nil {
 					delete(e.pending, key)
+					// 本地关闭后不会再有数据，不恢复的话事件会一直处于触发状态。
+					if firing && latestErr == nil && latestFresh(latest, now) && metricDisabled(r, latest.Runtime) {
+						if err := e.resolve(ctx, o, nil, now); err != nil {
+							evaluationErr = errors.Join(evaluationErr, err)
+						}
+					}
 					continue
 				}
 				trueCondition = condition(r, *value, firing)
+			}
+			if r.Metric == "offline" && n.stopped {
+				trueCondition = false
 			}
 			if !trueCondition {
 				delete(e.pending, key)
@@ -373,21 +411,28 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 					continue
 				}
 			}
-			// Preserve elapsed condition time if a concurrent metadata edit or
-			// identity change makes the transaction skip this snapshot. The next
-			// tick compares definitions/identity before reusing this entry.
+			// 若并发修改元数据或身份导致事务跳过此快照，保留条件已持续的时间。
+			// 下一次评估会先比较规则定义和身份，再决定是否复用该计时状态。
 			if r.Metric != "offline" {
 				e.pending[key] = pending{since: since, definition: pendingDefinition(r, n, latest)}
 			}
-			if err := e.fire(ctx, r, n, value, since); err != nil {
+			if err := e.fire(ctx, r, n, value, since, now); err != nil {
 				evaluationErr = errors.Join(evaluationErr, err)
 			}
 		}
 	}
+	// 恢复先完成：静默期间已恢复的事件绝不补发触发消息。
+	releasable, err := e.releasableSilences(ctx, open, now)
+	evaluationErr = errors.Join(evaluationErr, err)
+	for _, o := range releasable {
+		if err := e.releaseSilence(ctx, o, now); err != nil {
+			evaluationErr = errors.Join(evaluationErr, err)
+		}
+	}
 	return evaluationErr
 }
-func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *float64, since time.Time) error {
-	id, err := identity.UUID(rand.Reader)
+func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *float64, since, now time.Time) error {
+	id, err := uuid.UUID(rand.Reader)
 	if err != nil {
 		return err
 	}
@@ -400,14 +445,16 @@ func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *f
 		return err
 	}
 	defer tx.Rollback()
-	// Revalidate rule version, inventory and scope under the writer lock. A rule
-	// edit/deletion or node disable committed before this transaction cannot fire.
-	result, err := tx.ExecContext(ctx, `INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,rule_name,node_name,rule_snapshot)
- SELECT ?,r.id,n.id,'firing',?,?,r.name,n.name,? FROM alert_rules r,nodes n
- WHERE r.id=? AND r.updated_at=? AND r.enabled=1 AND n.id=? AND n.status!='disabled'
- AND n.token_hash=? AND n.credential_epoch=? AND n.run_generation=? AND n.report_session_id=? AND n.first_enrolled_at=?
- AND (r.scope_kind='all' OR (r.scope_kind='node' AND r.scope_id=n.id) OR (r.scope_kind='group' AND r.scope_id=n.group_id))
- AND NOT EXISTS(SELECT 1 FROM alert_events WHERE rule_id=r.id AND node_id=n.id AND state='firing')`, id, value, timekey.Format(since), string(raw), r.ID, timekey.Format(r.UpdatedAt), n.id, n.identity, n.credentialEpoch, n.generation, n.session, timekey.Format(*n.enrolled))
+	// 在写锁之下重新验证规则版本、清单和范围。在本事务之前已提交的规则编辑/删除
+	// 或节点停用均不会触发。
+	result, err := tx.ExecContext(ctx, `INSERT INTO alert_events(id,rule_id,node_id,state,value,started_at,rule_name,node_name,rule_snapshot,silenced)
+ SELECT ?,r.id,nodes.id,'firing',?,?,r.name,nodes.name,?,EXISTS(`+activeSilenceSQL+`) FROM alert_rules r,nodes
+ WHERE r.id=? AND r.updated_at=? AND r.enabled=1 AND nodes.id=? AND nodes.status!='disabled'
+ AND nodes.token_hash=? AND nodes.credential_epoch=? AND (r.metric='node_expiry_days' OR (nodes.run_generation=? AND nodes.report_session_id=?)) AND nodes.first_enrolled_at=?
+ AND (r.metric!='node_expiry_days' OR nodes.expires_on IS ?)
+ AND (r.scope_kind='all' OR (r.scope_kind='node' AND r.scope_id=nodes.id) OR (r.scope_kind='group' AND r.scope_id=nodes.group_id))
+ AND (r.metric!='offline' OR NOT `+commands.StoppedSQL+`)
+ AND NOT EXISTS(SELECT 1 FROM alert_events WHERE rule_id=r.id AND node_id=nodes.id AND state='firing')`, id, value, timekey.Format(since), string(raw), timekey.Format(now), timekey.Format(now), r.ID, timekey.Format(r.UpdatedAt), n.id, n.identity, n.credentialEpoch, n.generation, n.session, timekey.Format(*n.enrolled), n.expiresOn)
 	if err != nil {
 		return err
 	}
@@ -415,16 +462,26 @@ func (e *Evaluator) fire(ctx context.Context, r Rule, n evaluationNode, value *f
 	if err != nil {
 		return err
 	}
+	var silenced bool
 	if count > 0 {
-		if err := insertInbox(ctx, tx, Notification{EventID: id, Rule: r, NodeID: n.id, NodeName: n.name, State: "firing", Value: value, StartedAt: since}, e.opts.Now()); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT silenced FROM alert_events WHERE id=?", id).Scan(&silenced); err != nil {
+			return err
+		}
+	}
+	if count > 0 && !silenced {
+		notification := Notification{EventID: id, Rule: r, NodeID: n.id, NodeName: n.name, State: "firing", Value: value, StartedAt: since}
+		if err := insertInbox(ctx, tx, notification, e.opts.Now()); err != nil {
+			return err
+		}
+		if err := e.opts.Notifier.Enqueue(ctx, tx, notification); err != nil {
 			return err
 		}
 	}
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-	if count > 0 {
-		e.enqueue(Notification{EventID: id, Rule: r, NodeID: n.id, NodeName: n.name, State: "firing", Value: value, StartedAt: since})
+	if count > 0 && !silenced {
+		e.opts.Notifier.Wake()
 	}
 	return nil
 }
@@ -435,23 +492,25 @@ func (e *Evaluator) resolve(ctx context.Context, o openEvent, value *float64, no
 		intent = pendingResolution{eventID: o.ID, observedAt: now, value: value}
 		e.resolutions[key] = intent
 	}
-	// Keep the first observed recovery even if a later tick breaches again.
+	// 即使后续某个 tick 再次越限，也保留最初观测到的恢复。
 	now, value = intent.observedAt, intent.value
 	tx, err := e.service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, "UPDATE alert_events SET state='resolved',resolved_at=?,value=? WHERE id=? AND state='firing'", timekey.Format(now), value, o.ID)
-	if err != nil {
+	var silenced bool
+	err = tx.QueryRowContext(ctx, "UPDATE alert_events SET state='resolved',resolved_at=?,value=? WHERE id=? AND state='firing' RETURNING silenced", timekey.Format(now), value, o.ID).Scan(&silenced)
+	changed := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if count > 0 {
-		if err := insertInbox(ctx, tx, Notification{EventID: o.ID, Rule: o.rule, NodeID: o.NodeID, NodeName: o.NodeName, State: "resolved", Value: value, StartedAt: o.StartedAt, ResolvedAt: &now}, e.opts.Now()); err != nil {
+	if changed && !silenced {
+		notification := Notification{EventID: o.ID, Rule: o.rule, NodeID: o.NodeID, NodeName: o.NodeName, State: "resolved", Value: value, StartedAt: o.StartedAt, ResolvedAt: &now}
+		if err := insertInbox(ctx, tx, notification, e.opts.Now()); err != nil {
+			return err
+		}
+		if err := e.opts.Notifier.Enqueue(ctx, tx, notification); err != nil {
 			return err
 		}
 	}
@@ -459,8 +518,21 @@ func (e *Evaluator) resolve(ctx context.Context, o openEvent, value *float64, no
 		return err
 	}
 	delete(e.resolutions, key)
-	if count > 0 {
-		e.enqueue(Notification{EventID: o.ID, Rule: o.rule, NodeID: o.NodeID, NodeName: o.NodeName, State: "resolved", Value: value, StartedAt: o.StartedAt, ResolvedAt: &now})
+	if changed && !silenced {
+		e.opts.Notifier.Wake()
 	}
 	return nil
+}
+
+// expiryDays 把到期日当天（UTC）算在内。没有日期时返回 nil，绝不当作 0。
+func expiryDays(raw *string, now time.Time) *float64 {
+	if raw == nil {
+		return nil
+	}
+	date, err := time.Parse(time.DateOnly, *raw)
+	if err != nil || date.Format(time.DateOnly) != *raw {
+		return nil
+	}
+	days := max(0, date.AddDate(0, 0, 1).Sub(now).Hours()/24)
+	return &days
 }

@@ -1,4 +1,4 @@
-// Package inbox stores shared immutable notifications and per-user read state.
+// Package inbox 存储共享的不可变通知及每用户的已读状态。
 package inbox
 
 import (
@@ -9,9 +9,9 @@ import (
 	"errors"
 	"time"
 
-	"orbitbeacon/internal/identity"
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/timekey"
+	"orbitbeacon/internal/uuid"
 )
 
 var (
@@ -62,8 +62,8 @@ type Service struct{ db *sql.DB }
 
 func New(db *sql.DB) *Service { return &Service{db: db} }
 
-// Insert participates in its source transaction. Re-evaluating a source
-// transition is idempotent; other constraint violations still abort the caller.
+// Insert 在来源操作的事务内插入通知。同一来源的状态转换重复处理时保持幂等；
+// 其他约束冲突仍会中止调用方的事务。
 func Insert(ctx context.Context, tx *sql.Tx, event Event) error {
 	if (event.Kind != "task" && event.Kind != "alert") || event.SourceID == "" || event.Transition == "" || event.CreatedAt.IsZero() {
 		return ErrInvalidInput
@@ -76,12 +76,12 @@ func Insert(ctx context.Context, tx *sql.Tx, event Event) error {
 	}
 	if event.ID == "" {
 		var err error
-		event.ID, err = identity.UUID(rand.Reader)
+		event.ID, err = uuid.UUID(rand.Reader)
 		if err != nil {
 			return err
 		}
 	}
-	if !identity.ValidUUID(event.ID) {
+	if !uuid.ValidUUID(event.ID) {
 		return ErrInvalidInput
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO inbox_notifications(id,kind,source_id,transition,severity,created_at,details_json) VALUES(?,?,?,?,?,?,?) ON CONFLICT(kind,source_id,transition) DO NOTHING`, event.ID, event.Kind, event.SourceID, event.Transition, event.Severity, timekey.Format(event.CreatedAt), string(event.Details))
@@ -253,7 +253,7 @@ func (s *Service) MarkAllRead(ctx context.Context, who Identity, through string,
 	return tx.Commit()
 }
 
-// Cleanup deletes a bounded batch; callers own the shared retention deadline.
+// Cleanup 删除有界批次；保留期限由调用方控制。
 func (s *Service) Cleanup(ctx context.Context, before time.Time, limit int) (int64, error) {
 	if limit < 1 || limit > 500 {
 		return 0, ErrInvalidInput

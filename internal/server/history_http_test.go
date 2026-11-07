@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -24,7 +25,7 @@ func TestHistoryAPIValidationSecondAdministratorAndDisabledHistory(t *testing.T)
 	route := "/api/v1/nodes/" + node.ID + "/history"
 	valid := "?metric=cpu_percent&range=1h"
 	apiError(t, request(t, f.handler, http.MethodGet, route+valid, "", nil, "", ""), 401, "unauthenticated")
-	for _, query := range []string{"", "?metric=cpu_percent", "?range=1h", "?metric=unknown&range=1h", "?metric=cpu_percent&range=48h", "?metric=cpu_percent&range=1H", "?metric=cpu_percent&metric=load1&range=1h", "?metric=cpu_percent&range=1h&range=6h", "?metric=cpu_percent&range=1h&extra=x", "?metric=cpu_percent&range=%zz"} {
+	for _, query := range []string{"", "?metric=cpu_percent", "?range=1h", "?metric=unknown&range=1h", "?metric=cpu_percent&range=48h", "?metric=cpu_percent&range=1H", "?metric=cpu_percent&metric=load1&range=1h", "?metric=cpu_percent&range=1h&range=6h", "?metric=cpu_percent&range=1h&extra=x", "?metric=cpu_percent&range=%zz", "?metric=load1&range=1h&disk=/", "?metric=disk_used_percent&range=1h&disk=relative", "?metric=inode_used_percent&range=1h&disk=/&disk=/data", "?metric=disk_used_percent&range=1h&disk="} {
 		t.Run(query, func(t *testing.T) {
 			apiError(t, request(t, f.handler, http.MethodGet, route+query, "", second, "", ""), 400, "validation_failed")
 		})
@@ -34,6 +35,17 @@ func TestHistoryAPIValidationSecondAdministratorAndDisabledHistory(t *testing.T)
 	assertHTTPStatus(t, response, 200)
 	if !strings.Contains(response.Body.String(), `"points":[]`) {
 		t.Fatalf("response=%s", response.Body)
+	}
+	for _, metric := range []string{"load5", "load15"} {
+		response := request(t, f.handler, http.MethodGet, route+"?metric="+metric+"&range=90d", "", second, "", "")
+		assertHTTPStatus(t, response, 200)
+		var result history.Response
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Metric != metric || result.Range != "90d" || result.Unit != "load" || result.StepSeconds != 3600 || result.Points == nil || len(result.Points) != 0 {
+			t.Fatalf("response=%s", response.Body)
+		}
 	}
 	assertHTTPStatus(t, request(t, f.handler, http.MethodPost, route+valid, "", second, "", ""), 405)
 }
@@ -52,8 +64,8 @@ func TestHistoryHTTPIngestFlushTiersAndDeleteVisibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer hs.Close()
-	// NewHandler wires its default ingest service to the history sink.
-	h, err := server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, History: hs, PublicURL: publicURL, Now: func() time.Time { return f.now }})
+	// 将测试环境的 ingest 服务连接到历史样本接收端。
+	h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, History: hs, PublicURL: publicURL, Now: func() time.Time { return f.now }}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,10 +76,11 @@ func TestHistoryHTTPIngestFlushTiersAndDeleteVisibility(t *testing.T) {
 	if err := h.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	hs.Samples() <- history.Sample{NodeID: id, ReceivedAt: f.now, Values: map[string]float64{"disk_used_percent:/data:one": 25, "inode_used_percent:/data:one": 75, "disk_used_percent:/other": 50}}
 	if err := hs.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	// Querying remains available after writer shutdown, before database close.
+	// 写入任务停止后、数据库关闭前，仍可查询。
 	for _, test := range []struct {
 		metric, rangeName string
 		step              int
@@ -75,8 +88,8 @@ func TestHistoryHTTPIngestFlushTiersAndDeleteVisibility(t *testing.T) {
 		avg               float64
 	}{
 		{"cpu_percent", "1h", 60, "percent", 25}, {"cpu_percent", "6h", 60, "percent", 25},
-		{"cpu_percent", "24h", 300, "percent", 25}, {"cpu_percent", "7d", 300, "percent", 25}, {"cpu_percent", "30d", 3600, "percent", 25},
-		{"memory_used_percent", "1h", 60, "percent", 50}, {"load1", "1h", 60, "load", 0.5},
+		{"cpu_percent", "24h", 300, "percent", 25}, {"cpu_percent", "7d", 300, "percent", 25}, {"cpu_percent", "30d", 3600, "percent", 25}, {"cpu_percent", "90d", 3600, "percent", 25},
+		{"memory_used_percent", "1h", 60, "percent", 50}, {"load1", "1h", 60, "load", 0.5}, {"load5", "1h", 60, "load", 0.5}, {"load15", "90d", 3600, "load", 0.5},
 	} {
 		response := request(t, h, http.MethodGet, "/api/v1/nodes/"+id+"/history?metric="+test.metric+"&range="+test.rangeName, "", cookie, "", "")
 		assertHTTPStatus(t, response, 200)
@@ -93,6 +106,23 @@ func TestHistoryHTTPIngestFlushTiersAndDeleteVisibility(t *testing.T) {
 		}
 		if len(object) != 5 {
 			t.Fatalf("unexpected API fields: %s", response.Body)
+		}
+	}
+	for _, tc := range []struct {
+		metric, disk string
+		points       int
+		avg          float64
+	}{
+		{"disk_used_percent", "/data:one", 1, 25}, {"inode_used_percent", "/data:one", 1, 75}, {"disk_used_percent", "/missing", 0, 0},
+	} {
+		response := request(t, h, http.MethodGet, "/api/v1/nodes/"+id+"/history?metric="+tc.metric+"&range=1h&disk="+url.QueryEscape(tc.disk), "", cookie, "", "")
+		assertHTTPStatus(t, response, 200)
+		var result history.Response
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Metric != tc.metric || len(result.Points) != tc.points || (tc.points > 0 && result.Points[0].Avg != tc.avg) {
+			t.Fatalf("response=%s", response.Body)
 		}
 	}
 	if err := f.nodes.Delete(context.Background(), id, true); err != nil {

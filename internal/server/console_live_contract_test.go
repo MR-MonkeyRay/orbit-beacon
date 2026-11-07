@@ -43,8 +43,11 @@ func TestConsoleLiveSnapshotSessionAndInventoryContract(t *testing.T) {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
-		if !reflect.DeepEqual(keys, []string{"agent_version", "id", "last_seen", "presence", "status"}) {
+		if !reflect.DeepEqual(keys, []string{"agent_version", "cpu_percent", "id", "last_seen", "memory_used_percent", "presence", "status", "stopped"}) {
 			t.Fatalf("noncompact fleet record: %v", keys)
+		}
+		if string(node["cpu_percent"]) != "null" || string(node["memory_used_percent"]) != "null" {
+			t.Fatalf("unreported node gained metrics: %s", node)
 		}
 		var id, state string
 		if err := json.Unmarshal(node["id"], &id); err != nil {

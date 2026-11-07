@@ -3,7 +3,7 @@ package storage
 const notificationsSchema = `
 CREATE TABLE notification_channels (
  id TEXT PRIMARY KEY, name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 100),
- kind TEXT NOT NULL CHECK(kind IN ('webhook','telegram','email')),
+ kind TEXT NOT NULL CHECK(kind IN ('webhook','telegram','email','feishu','dingtalk','wecom','bark','ntfy')),
  enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), config_json TEXT NOT NULL,
  secret_ciphertext BLOB, url_ciphertext BLOB, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );

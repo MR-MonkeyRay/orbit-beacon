@@ -50,9 +50,9 @@ func newAgentHTTP(t *testing.T, capacity int) *agentFixture {
 	clock := func() time.Time { return f.now }
 	f.nodes = nodes.NewService(db, nodes.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{21})})
 	f.enrollments = enrollment.NewService(db, enrollment.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{22})})
-	f.ingest = ingest.NewService(db, ingest.Options{Now: clock})
+	f.ingest = ingest.NewService(db, ingest.Options{Now: clock, DisablePersistOffset: true})
 	f.auth = auth.NewService(db, auth.Options{Now: clock})
-	f.handler, err = server.NewHandler(server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: clock, WebUpdateIntervalSeconds: 2})
+	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: clock, WebUpdateIntervalSeconds: 2}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func enrollHTTP(t *testing.T, f *agentFixture, name string, secret byte) (string
 }
 
 func reportBody(generation, seq uint64, session string, cpu int) string {
-	return fmt.Sprintf(`{"protocol_version":1,"run_generation":%d,"session_id":%q,"seq":%d,"sampled_at":"2026-10-26T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]},"metrics":{"cpu_percent":%d,"load1":0.5,"load5":0.5,"load15":0.5,"memory_total_bytes":8192,"memory_available_bytes":4096,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":100,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-%d","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000}}},"traffic":[]}`, generation, session, seq, cpu, seq)
+	return fmt.Sprintf(`{"protocol_version":1,"run_generation":%d,"session_id":%q,"seq":%d,"sampled_at":"2026-10-26T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]},"metrics":{"cpu_percent":%d,"load1":0.5,"load5":0.5,"load15":0.5,"memory_total_bytes":8192,"memory_available_bytes":4096,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":100,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-%d","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000}}},"traffic":[]}`, generation, session, seq, cpu, seq)
 }
 
 func accepted(t *testing.T, r *httptest.ResponseRecorder, seq uint64) v1.ReportResponse {
@@ -308,12 +308,12 @@ func TestReportGenerationSessionAndSequenceOrdering(t *testing.T) {
 	if err != nil || latest.RunGeneration != 6 || latest.SessionID != "replacement" || latest.Seq != 1 {
 		t.Fatalf("replacement not authoritative: %+v %v", latest, err)
 	}
-	// A new server service loses only transient seq deduplication, not the process fence.
+	// 重建服务只丢失内存中的 seq 去重状态，不丢失持久化的进程隔离边界。
 	restarted := ingest.NewService(f.db, ingest.Options{Now: func() time.Time { return f.now }})
-	if _, err := restarted.Accept(context.Background(), id, mustReport(t, reportBody(5, 1000, "current", 99))); err == nil {
+	if _, err := acceptReport(context.Background(), restarted, token, mustReport(t, reportBody(5, 1000, "current", 99))); err == nil {
 		t.Fatal("generation fence lost on server restart")
 	}
-	if _, err := restarted.Accept(context.Background(), id, mustReport(t, reportBody(6, 2, "other-session", 99))); err == nil {
+	if _, err := acceptReport(context.Background(), restarted, token, mustReport(t, reportBody(6, 2, "other-session", 99))); err == nil {
 		t.Fatal("session fence lost on server restart")
 	}
 }

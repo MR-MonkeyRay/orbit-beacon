@@ -3,13 +3,15 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"orbitbeacon/internal/agent/identity"
+	oblogging "orbitbeacon/internal/logging"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -18,27 +20,32 @@ type TrafficReporter interface {
 	Acknowledge([]v1.Traffic)
 }
 
-// ProbeReporter returns cached checks without waiting for network work.
+// ProbeReporter 返回缓存的检查结果，不等待网络操作。
 type ProbeReporter interface {
 	Results([]string) []v1.ProbeResult
 }
 
 type SchedulerOptions struct {
-	Probes   ProbeReporter
-	Traffic  TrafficReporter
-	Identity *identity.Store
-	// RuntimeSettings returns an immutable snapshot; only ReloadConfig may
-	// publish a replacement, synchronously on this collection loop.
+	Commands *commandStore
+	Upgrade  *upgrader
+	// UpgradeConfirmTimeout defaults to upgradeConfirmTimeout.
+	UpgradeConfirmTimeout time.Duration
+	Logger                *slog.Logger
+	Probes                ProbeReporter
+	Traffic               TrafficReporter
+	Identity              *identity.Store
+	// RuntimeSettings 返回不可变快照；只有 ReloadConfig 可在采集循环中
+	// 同步发布新的配置快照。
 	RuntimeSettings func() v1.RuntimeSettings
 	Reload          <-chan struct{}
-	// ReloadConfig validates completely before changing any active component.
-	ReloadConfig       func(context.Context) error
-	Collect            func(context.Context) (v1.Metrics, error)
-	Report             func(context.Context, v1.Report) (v1.ReportResponse, error)
-	RandomFloat        func() float64
-	System             *v1.System
-	CredentialsChanged func(bool)
-	Log                func(string)
+	// ConfigRevision 包含不会出现在上报中的本地配置变化。
+	ConfigRevision func() uint64
+	// ReloadConfig 在修改任何运行中的组件前完成完整校验。
+	ReloadConfig func(context.Context) error
+	Collect      func(context.Context) (v1.Metrics, error)
+	Report       func(context.Context, v1.Report) (v1.ReportResponse, error)
+	RandomFloat  func() float64
+	System       *v1.System
 }
 
 type Scheduler struct {
@@ -47,25 +54,26 @@ type Scheduler struct {
 	credentialsInvalid atomic.Bool
 	mu                 sync.Mutex
 	latest             v1.Report
+	commandSettings    v1.RuntimeSettings
+	collectNow         chan struct{}
+	stopping           atomic.Bool
 }
 
-func NewScheduler(options SchedulerOptions) *Scheduler { return &Scheduler{options: options} }
-
-func (s *Scheduler) CredentialsInvalid() bool { return s.credentialsInvalid.Load() }
-
-func (s *Scheduler) setCredentialsInvalid(invalid bool) {
-	if s.credentialsInvalid.Swap(invalid) != invalid && s.options.CredentialsChanged != nil {
-		s.options.CredentialsChanged(invalid)
+func NewScheduler(options SchedulerOptions) *Scheduler {
+	if options.Logger == nil {
+		options.Logger = slog.New(slog.DiscardHandler)
 	}
+	return &Scheduler{options: options, collectNow: make(chan struct{}, 1)}
 }
 
-// Run owns exactly one collection loop and one reporting worker. No offline
-// queue is retained: the notification channel signals a single latest snapshot.
+// Run 只运行一个采集循环和一个上报任务。不保留离线队列，
+// 通过通知唤醒上报任务，使其读取最新快照。
 func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 	if !s.running.CompareAndSwap(false, true) {
 		return errors.New("scheduler already running")
 	}
 	defer s.running.Store(false)
+	s.stopping.Store(false)
 	if s.options.Identity == nil || s.options.RuntimeSettings == nil || s.options.Collect == nil || s.options.Report == nil {
 		return errors.New("scheduler dependencies are required")
 	}
@@ -76,6 +84,7 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 	if err != nil {
 		return err
 	}
+	s.commandSettings = s.options.RuntimeSettings()
 	ctx, cancel := context.WithCancel(ctx)
 	notify := make(chan struct{}, 1)
 	done := make(chan struct{})
@@ -100,27 +109,39 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-s.collectNow:
+			timer.Reset(0)
 		case _, ok := <-reload:
 			if !ok {
 				reload = nil
 				continue
 			}
+			if s.stopping.Load() {
+				continue
+			}
 			before := s.options.RuntimeSettings()
-			if s.options.ReloadConfig == nil || s.options.ReloadConfig(ctx) != nil {
-				if s.options.Log != nil {
-					s.options.Log("configuration reload rejected")
+			var revision uint64
+			if s.options.ConfigRevision != nil {
+				revision = s.options.ConfigRevision()
+			}
+			reloadErr := errors.New("configuration loader unavailable")
+			if s.options.ReloadConfig != nil {
+				s.mu.Lock()
+				reloadErr = s.options.ReloadConfig(ctx)
+				if reloadErr == nil {
+					s.commandSettings = s.options.RuntimeSettings()
 				}
+				s.mu.Unlock()
+			}
+			if reloadErr != nil {
+				s.options.Logger.LogAttrs(ctx, slog.LevelWarn, "configuration_reload_rejected", oblogging.ErrorAttrs(reloadErr, "configuration_reload_rejected")...)
 				continue
 			}
-			if sameRuntimeSettings(before, s.options.RuntimeSettings()) {
-				if s.options.Log != nil {
-					s.options.Log("configuration unchanged")
-				}
+			if before.Equal(s.options.RuntimeSettings()) && (s.options.ConfigRevision == nil || revision == s.options.ConfigRevision()) {
+				s.options.Logger.InfoContext(ctx, "configuration_unchanged")
 				continue
 			}
-			if s.options.Log != nil {
-				s.options.Log("configuration reloaded")
-			}
+			s.options.Logger.InfoContext(ctx, "configuration_reloaded")
 			timer.Reset(0)
 		case <-timer.C:
 			started := time.Now()
@@ -150,12 +171,61 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 			case notify <- struct{}{}:
 			default:
 			}
-			timer.Reset(max(0, time.Until(started.Add(time.Duration(settings.ReportIntervalSeconds)*time.Second))))
+			if !s.stopping.Load() {
+				timer.Reset(max(0, time.Until(started.Add(time.Duration(settings.ReportIntervalSeconds)*time.Second))))
+			}
 		}
 	}
 }
 
 func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) error {
+	parent := ctx
+	upgradeCtx, cancelUpgrade := context.WithCancel(ctx)
+	var upgradeDone chan upgradeOutcome
+	defer func() {
+		cancelUpgrade()
+		if upgradeDone != nil {
+			<-upgradeDone
+		}
+	}()
+	firstReport := true
+	// A build that runs but cannot report never crashes, so it must exit by itself
+	// for the rollback script to count the attempt.
+	var unconfirmed <-chan time.Time
+	if s.options.Commands != nil && s.options.Commands.upgradeUnconfirmed() {
+		timeout := s.options.UpgradeConfirmTimeout
+		if timeout <= 0 {
+			timeout = upgradeConfirmTimeout
+		}
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		unconfirmed = timer.C
+	}
+	exitUnconfirmed := func() error {
+		s.options.Logger.Warn("upgrade_unconfirmed")
+		return &ExitError{Code: 75}
+	}
+	completeUpgrade := func(result upgradeOutcome) error {
+		upgradeDone = nil
+		if result.status == "succeeded" {
+			return &ExitError{Code: 75}
+		}
+		if result.err != nil {
+			s.options.Logger.LogAttrs(parent, slog.LevelWarn, "upgrade_failed", append(oblogging.ErrorAttrs(result.err, "upgrade_failed"), slog.String("code", result.code))...)
+		}
+		s.options.Commands.finishUpgrade(result)
+		return nil
+	}
+	stopping := false
+	var stopID string
+	var stopSampleSeq uint64
+	var stopReport *v1.Report
+	canceled := func() error {
+		if stopping && parent.Err() == nil {
+			return &ExitError{Code: 0}
+		}
+		return nil
+	}
 	backoff := NewBackoff(s.options.RandomFloat)
 	var sent uint64
 	var consecutiveFailures uint64
@@ -163,12 +233,18 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return canceled()
+		case <-unconfirmed:
+			return exitUnconfirmed()
+		case result := <-upgradeDone:
+			if err := completeUpgrade(result); err != nil {
+				return err
+			}
+			continue
 		case <-notify:
 		}
 		for {
-			// Collapse all collection notifications received during the last request
-			// or backoff into the latest immutable snapshot.
+			// 合并上次请求或退避期间积累的采集通知，只上报最新的不可变快照。
 			select {
 			case <-notify:
 			default:
@@ -176,56 +252,148 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 			s.mu.Lock()
 			report := s.latest
 			s.mu.Unlock()
-			if report.Seq <= sent {
+			if stopping && report.Seq > stopSampleSeq {
+				if stopReport == nil {
+					snapshot := report
+					stopReport = &snapshot
+				}
+				// An in-flight collection can publish after stop starts. Retrying
+				// one snapshot keeps a lost response from advancing last_seen.
+				report = *stopReport
+			}
+			if report.Seq <= sent && !(stopping && s.options.Commands != nil && len(s.options.Commands.state.Pending) > 0) {
 				break
 			}
-			if s.options.Traffic != nil {
+			if s.options.Traffic != nil && !report.Runtime.FeatureDisabled(v1.FeatureTraffic) {
 				report.Traffic = s.options.Traffic.Entries()
 			}
-			if s.options.Probes != nil {
+			if s.options.Probes != nil && !report.Runtime.FeatureDisabled(v1.FeatureProbes) {
 				report.ProbeResults = s.options.Probes.Results(report.Runtime.ProbeTargets)
 			}
+			if s.options.Commands != nil {
+				report.CommandResults = s.options.Commands.results()
+			}
+			requested := time.Now()
 			response, err := s.options.Report(ctx, report)
 			if ctx.Err() != nil {
-				return nil
+				return canceled()
 			}
 			if err == nil {
+				if firstReport && (s.options.Commands == nil || s.options.Commands.confirmUpgrade()) {
+					firstReport = false
+					unconfirmed = nil
+				}
+				if upgradeDone != nil {
+					select {
+					case result := <-upgradeDone:
+						if err := completeUpgrade(result); err != nil {
+							return err
+						}
+					default:
+					}
+				}
+				if s.options.Commands != nil {
+					s.options.Commands.acknowledge(report.CommandResults)
+					if stopping {
+						for _, result := range report.CommandResults {
+							if result.ID == stopID {
+								return &ExitError{Code: 0}
+							}
+						}
+					}
+					if !stopping && response.Command != nil && !(response.Command.Kind == v1.RemoteCommandUpgrade && upgradeDone != nil) {
+						s.mu.Lock()
+						// 服务器时间生成于响应之前，计入请求耗时才不会执行已过期的指令。
+						serverTime := response.ServerTime
+						if !serverTime.IsZero() {
+							serverTime = serverTime.Add(time.Since(requested))
+						}
+						upgradeDeadline := time.Now().Add(min(upgradeDownloadTimeout, response.Command.ExpiresAt.Sub(serverTime)-upgradeReserve))
+						action := s.options.Commands.handle(*response.Command, serverTime, s.commandSettings)
+						s.mu.Unlock()
+						if action == v1.RemoteCommandUpgrade {
+							if s.options.Upgrade == nil {
+								s.options.Commands.finishUpgrade(upgradeOutcome{id: strings.ToLower(response.Command.ID), status: "rejected", code: "unsupported"})
+							} else {
+								command := *response.Command
+								done := make(chan upgradeOutcome, 1)
+								upgradeDone = done
+								go func() {
+									downloadCtx, cancel := context.WithDeadline(upgradeCtx, upgradeDeadline)
+									defer cancel()
+									done <- s.options.Upgrade.run(downloadCtx, command)
+								}()
+							}
+						}
+						if action == v1.RemoteCommandRestart {
+							return &ExitError{Code: 75}
+						}
+						if action == v1.RemoteCommandStop {
+							stopping = true
+							stopID = strings.ToLower(response.Command.ID)
+							stopSampleSeq = report.Seq
+							s.stopping.Store(true)
+							stopCtx, stopCancel := context.WithTimeout(parent, 15*time.Second)
+							defer stopCancel()
+							ctx = stopCtx
+							select {
+							case s.collectNow <- struct{}{}:
+							default:
+							}
+						}
+					}
+				}
 				if s.options.Traffic != nil {
 					s.options.Traffic.Acknowledge(response.TrafficAcks)
 				}
 				sent = report.Seq
 				backoff.Reset()
-				s.setCredentialsInvalid(false)
-				if consecutiveFailures > 0 && s.options.Log != nil {
-					s.options.Log(fmt.Sprintf("report recovered after %d consecutive failures", consecutiveFailures))
+				credentialsRecovered := s.credentialsInvalid.Swap(false)
+				if consecutiveFailures > 0 {
+					event := "report_delivery_recovered"
+					if credentialsRecovered {
+						event = "credentials_recovered"
+					}
+					s.options.Logger.InfoContext(ctx, event, "consecutive_failures", consecutiveFailures)
 				}
 				consecutiveFailures = 0
 				lastFailureLog = time.Time{}
+				if stopping && report.Seq > stopSampleSeq && len(s.options.Commands.state.Pending) > 0 {
+					continue
+				}
 				break
 			}
 			status, retryAfter := 0, ""
 			var failure *HTTPError
 			if errors.As(err, &failure) {
 				status, retryAfter = failure.StatusCode, failure.RetryAfter
-				if status == http.StatusConflict && failure.Code == "identity_conflict" {
+				if status == http.StatusConflict && failure.Code == "identity_conflict" && !stopping {
 					return err
 				}
 			}
-			if status == 401 {
-				s.setCredentialsInvalid(true)
+			credentialsBecameInvalid := false
+			if status == http.StatusUnauthorized {
+				credentialsBecameInvalid = !s.credentialsInvalid.Swap(true)
 			}
 			now := time.Now()
 			delay := backoff.Next(status, retryAfter, now)
 			consecutiveFailures++
-			if s.options.Log != nil && (consecutiveFailures == 1 || now.Sub(lastFailureLog) >= 5*time.Minute) {
-				state := fmt.Sprintf("error=%s", reportFailureKind(err))
+			if consecutiveFailures == 1 || credentialsBecameInvalid || now.Sub(lastFailureLog) >= 5*time.Minute {
+				errorCode := reportFailureKind(err)
 				if status != 0 {
-					state = fmt.Sprintf("status=%d", status)
+					errorCode = "http_error"
 				}
-				if consecutiveFailures == 1 {
-					s.options.Log(fmt.Sprintf("report failed: %s; retrying in %s", state, delay))
+				attrs := oblogging.ErrorAttrs(err, errorCode)
+				if status != 0 {
+					attrs = append(attrs, slog.Int("status", status))
+				}
+				attrs = append(attrs, slog.Uint64("consecutive_failures", consecutiveFailures), slog.Int64("retry_after_ms", delay.Milliseconds()))
+				if credentialsBecameInvalid {
+					s.options.Logger.LogAttrs(ctx, slog.LevelWarn, "credentials_invalid", attrs...)
+				} else if consecutiveFailures == 1 {
+					s.options.Logger.LogAttrs(ctx, slog.LevelWarn, "report_delivery_failed", attrs...)
 				} else {
-					s.options.Log(fmt.Sprintf("report still failing: consecutive_failures=%d; %s; retrying in %s", consecutiveFailures, state, delay))
+					s.options.Logger.LogAttrs(ctx, slog.LevelWarn, "report_delivery_still_failing", attrs...)
 				}
 				lastFailureLog = now
 			}
@@ -233,7 +401,15 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				return nil
+				return canceled()
+			case <-unconfirmed:
+				timer.Stop()
+				return exitUnconfirmed()
+			case result := <-upgradeDone:
+				timer.Stop()
+				if err := completeUpgrade(result); err != nil {
+					return err
+				}
 			case <-timer.C:
 			}
 		}

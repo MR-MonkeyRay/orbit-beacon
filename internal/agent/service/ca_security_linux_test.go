@@ -30,8 +30,8 @@ func TestCABundleRejectsFIFOWithoutWaitingForWriter(t *testing.T) {
 			t.Fatal("FIFO was accepted as a CA bundle")
 		}
 	case <-time.After(500 * time.Millisecond):
-		// Release a broken blocking opener so the regression never strands a
-		// goroutine or waits indefinitely for an attacker-controlled writer.
+		// 实现有误而阻塞时，解除打开 FIFO 的阻塞，避免测试遗留 goroutine，
+		// 或无限等待攻击者控制的写入方。
 		rescue, err := os.OpenFile(path, os.O_RDWR|unix.O_NONBLOCK, 0)
 		if err != nil {
 			t.Fatalf("CA opener blocked on FIFO; unable to release it: %v", err)

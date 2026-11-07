@@ -13,8 +13,8 @@ import (
 	"orbitbeacon/internal/server/ingest"
 )
 
-// Decode as a consumer: all transports must carry the same typed snapshot,
-// rather than a transport-specific envelope or a fabricated empty failure.
+// 按消费方的数据类型解码：所有传输方式必须携带相同的快照，
+// 不能使用各自的外层结构，也不能用空快照伪装失败。
 func decodeTransportSnapshot(t *testing.T, body []byte) ingest.PublicPage {
 	t.Helper()
 	var frame struct {

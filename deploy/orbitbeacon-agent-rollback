@@ -1,0 +1,23 @@
+#!/bin/sh
+# 以 Agent 用户运行；绝不执行 bin 中的文件。
+# 唯一参数用于测试根目录，systemd 不传参数。
+root=${1:-/opt/orbit-beacon}
+marker=$root/state/upgrade-pending
+[ -f "$marker" ] || exit 0
+# 第四次启动仍未确认时回滚；异常内容按超限处理。
+case $(cat "$marker" 2>/dev/null) in
+    0) count=1 ;;
+    1) count=2 ;;
+    2) count=3 ;;
+    *) count=4 ;;
+esac
+tmp=$(mktemp "$root/state/.upgrade-pending.XXXXXXXX") || exit 0
+if ! printf '%s' "$count" > "$tmp" || ! mv -f "$tmp" "$marker"; then
+    rm -f "$tmp"
+    exit 0
+fi
+[ "$count" = 4 ] && [ -f "$root/bin/orbitbeacon-agent.prev" ] || exit 0
+if mv -f "$root/bin/orbitbeacon-agent.prev" "$root/bin/orbitbeacon-agent"; then
+    mv -f "$marker" "$root/state/upgrade-rolled-back" || :
+fi
+exit 0

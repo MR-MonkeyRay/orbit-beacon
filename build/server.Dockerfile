@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9 AS build
 
 ARG VERSION=development
 ARG COMMIT=unknown
@@ -20,7 +20,7 @@ ARG VERSION=development
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 LABEL org.opencontainers.image.title="OrbitBeacon" \
-    org.opencontainers.image.description="Self-hosted multi-node monitoring server with an embedded web UI" \
+    org.opencontainers.image.description="自托管多节点监控服务器，内置 Web 界面" \
     org.opencontainers.image.source="https://github.com/mr-monkeyray/orbit-beacon" \
     org.opencontainers.image.licenses="GPL-3.0-only" \
     org.opencontainers.image.version="${VERSION}" \

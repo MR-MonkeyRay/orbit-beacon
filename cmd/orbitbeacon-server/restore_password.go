@@ -15,9 +15,9 @@ func readRestorePassword(path string) (string, error) {
 	var password []byte
 	if path == "" {
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
-			return "", errors.New("restore_password_required: use --password-file for non-interactive restore")
+			return "", errors.New("restore_password_required: 非交互恢复须使用 --password-file")
 		}
-		fmtPrompt := []byte("Archive password: ")
+		fmtPrompt := []byte("归档密码: ")
 		if _, err := os.Stderr.Write(fmtPrompt); err != nil {
 			return "", err
 		}
