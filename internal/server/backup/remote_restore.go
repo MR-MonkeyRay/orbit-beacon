@@ -2,7 +2,9 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -23,8 +25,13 @@ type restoreEndpoint struct {
 	MainDatabase    string `json:"main_database"`
 	HistoryDatabase string `json:"history_database"`
 }
+
+const restoreMetadataName = "storage-metadata.json"
+
 type restoreRemote struct {
 	Target          restoreEndpoint   `json:"target"`
+	Standby         *restoreEndpoint  `json:"standby,omitempty"`
+	Metadata        restoreOriginal   `json:"metadata"`
 	MainInstance    string            `json:"main_instance"`
 	HistoryInstance string            `json:"history_instance"`
 	RollbackID      string            `json:"rollback_id"`
@@ -39,6 +46,22 @@ func restoreEndpointFor(cfg config.Server) restoreEndpoint {
 	return restoreEndpoint{Driver: e.Driver, Network: e.Network, Address: e.Address, MainDatabase: e.MainDatabase, HistoryDatabase: e.HistoryDatabase}
 }
 
+func restoreStandbyFor(cfg config.Server) *restoreEndpoint {
+	if cfg.Database.Standby == nil {
+		return nil
+	}
+	standby := cfg
+	standby.Database.Primary = *cfg.Database.Standby
+	endpoint := restoreEndpointFor(standby)
+	return &endpoint
+}
+
+func restoreTargetMatches(cfg config.Server, remote *restoreRemote) bool {
+	standby := restoreStandbyFor(cfg)
+	return restoreEndpointFor(cfg) == remote.Target &&
+		((standby == nil && remote.Standby == nil) || (standby != nil && remote.Standby != nil && *standby == *remote.Standby))
+}
+
 func validateRestoreRemote(remote *restoreRemote) error {
 	if remote == nil || !canonicalUUID(remote.RollbackID) || len(remote.NewFiles) != len(restoreInstallFiles) {
 		return errors.New("invalid remote restore journal")
@@ -48,6 +71,12 @@ func validateRestoreRemote(remote *restoreRemote) error {
 	}
 	if remote.Target.Driver != "mysql" && remote.Target.Driver != "sqlite" {
 		return errors.New("invalid restore driver")
+	}
+	if remote.Standby != nil && (remote.Standby.Driver != "mysql" && remote.Standby.Driver != "sqlite" || !canonicalUUID(remote.MainInstance) || !canonicalUUID(remote.HistoryInstance)) {
+		return errors.New("invalid restore standby identity")
+	}
+	if remote.Metadata.Name != restoreMetadataName || !remote.Metadata.Exists || remote.Metadata.Size < 1 || remote.Metadata.Size > 1024*1024 || !validSHA256(remote.Metadata.SHA256) {
+		return errors.New("invalid restore metadata image")
 	}
 	for i, file := range remote.NewFiles {
 		if file.Name != restoreInstallFiles[i] || !file.Exists || file.Size < 0 || !validSHA256(file.SHA256) {
@@ -133,6 +162,16 @@ func commitRemoteRestore(ctx context.Context, cfg config.Server, domains *storag
 	if err != nil {
 		return "", err
 	}
+	metadata, err := domains.CaptureRestoreMetadata(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(metadata) == 0 {
+		metadata = json.RawMessage("null")
+	}
+	if !json.Valid(metadata) || len(metadata) > 1024*1024 {
+		return "", errors.New("invalid restore metadata")
+	}
 	work := filepath.Join(cfg.DataDir, ".restore-"+id.String())
 	oldDir, installDir := filepath.Join(work, "old"), filepath.Join(work, "new")
 	for _, dir := range []string{work, oldDir, installDir} {
@@ -143,7 +182,7 @@ func commitRemoteRestore(ctx context.Context, cfg config.Server, domains *storag
 			return "", err
 		}
 	}
-	journal := restoreJournal{Version: 2, ID: id.String(), State: "prepared", Remote: &restoreRemote{Target: restoreEndpointFor(cfg), MainInstance: mainInstance, HistoryInstance: historyInstance, RollbackID: rollbackID.String()}}
+	journal := restoreJournal{Version: 2, ID: id.String(), State: "prepared", Remote: &restoreRemote{Target: restoreEndpointFor(cfg), Standby: restoreStandbyFor(cfg), MainInstance: mainInstance, HistoryInstance: historyInstance, RollbackID: rollbackID.String()}}
 	for i, database := range []*storage.Database{domains.Main, domains.History} {
 		name := restoreInstallFiles[i]
 		snapshot, err := restoreDomainSnapshot(ctx, database, filepath.Join(oldDir, name))
@@ -171,6 +210,24 @@ func commitRemoteRestore(ctx context.Context, cfg config.Server, domains *storag
 		if err = copyJournalFile(ops, "old:secrets.key", keyPath, filepath.Join(oldDir, "secrets.key")); err != nil {
 			return "", err
 		}
+	}
+	metadataPath := filepath.Join(oldDir, restoreMetadataName)
+	metadataFile, err := securefs.OpenFile(metadataPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return "", err
+	}
+	n, writeErr := metadataFile.Write(metadata)
+	if writeErr == nil && n != len(metadata) {
+		writeErr = io.ErrShortWrite
+	}
+	err = errors.Join(writeErr, ops.fileSync("old:storage-metadata:file-sync", metadataFile), metadataFile.Close())
+	if err != nil {
+		return "", err
+	}
+	journal.Remote.Metadata = restoreOriginal{Name: restoreMetadataName, Exists: true}
+	journal.Remote.Metadata.Size, journal.Remote.Metadata.SHA256, err = restoreFileDigest(metadataPath)
+	if err != nil {
+		return "", err
 	}
 	for _, name := range restoreInstallFiles {
 		original := restoreOriginal{Name: name, Exists: name != "secrets.key" || keyExists}
@@ -213,6 +270,12 @@ func commitRemoteRestore(ctx context.Context, cfg config.Server, domains *storag
 	if err = ops.journal("committed:durable"); err != nil {
 		return "", err
 	}
+	if err = domains.FinishRestore(ctx, journal.ID, metadata, false); err != nil {
+		return "", err
+	}
+	if err = ops.journal("finish:storage:durable"); err != nil {
+		return "", err
+	}
 	if err = finishRemoteRestore(cfg.DataDir, journal, "finish", ops); err != nil {
 		return "", err
 	}
@@ -228,15 +291,33 @@ func recoverRemoteRestore(ctx context.Context, cfg config.Server, journal restor
 	if journal.Remote == nil {
 		return errors.New("missing restore target")
 	}
-	if restoreEndpointFor(cfg) != journal.Remote.Target {
+	if !restoreTargetMatches(cfg, journal.Remote) {
 		return errors.New("restore target configuration changed")
 	}
-	domains, err := storage.OpenDatabases(ctx, cfg.Database, cfg.DataDir)
+	domains, err := storage.OpenOfflineDatabases(ctx, cfg.Database, cfg.DataDir)
 	if err != nil {
 		return err
 	}
 	defer domains.Close()
-	if err = applyRemoteRestore(ctx, cfg, domains, journal, journal.State == "committed", ops); err != nil {
+	metadata, err := readRestoreMetadata(cfg.DataDir, journal)
+	if err != nil {
+		return err
+	}
+	if journal.State == "committed" {
+		// committed 已证明各域和 key 完整安装；重复发布不重放逻辑行。
+		if err = verifyRemoteTarget(ctx, cfg, domains, journal.Remote); err != nil {
+			return err
+		}
+		if err = verifyRestoreGroup(filepath.Join(cfg.DataDir, ".restore-"+journal.ID, "new"), journal.Remote.NewFiles); err != nil {
+			return err
+		}
+	} else if err = applyRemoteRestore(ctx, cfg, domains, journal, false, ops); err != nil {
+		return err
+	}
+	if err = domains.FinishRestore(ctx, journal.ID, metadata, journal.State != "committed"); err != nil {
+		return err
+	}
+	if err = ops.journal("finish:storage:durable"); err != nil {
 		return err
 	}
 	return finishRemoteRestore(cfg.DataDir, journal, "recover-remote", ops)
@@ -271,6 +352,25 @@ func verifyRestoreGroup(dir string, files []restoreOriginal) error {
 	return nil
 }
 
+func readRestoreMetadata(dataDir string, journal restoreJournal) (json.RawMessage, error) {
+	dir := filepath.Join(dataDir, ".restore-"+journal.ID, "old")
+	if err := verifyRestoreGroup(dir, []restoreOriginal{journal.Remote.Metadata}); err != nil {
+		return nil, err
+	}
+	file, err := securefs.OpenFile(filepath.Join(dir, restoreMetadataName), os.O_RDONLY, 0)
+	if err != nil {
+		return nil, err
+	}
+	body, readErr := io.ReadAll(io.LimitReader(file, 1024*1024+1))
+	if err = errors.Join(readErr, file.Close()); err != nil {
+		return nil, err
+	}
+	if len(body) > 1024*1024 || !json.Valid(body) {
+		return nil, errors.New("invalid restore metadata")
+	}
+	return json.RawMessage(body), nil
+}
+
 func finishRemoteRestore(dataDir string, journal restoreJournal, label string, ops fsOps) error {
 	if err := finishRestoreJournal(dataDir, label, ops); err != nil {
 		return err
@@ -282,9 +382,8 @@ func finishRemoteRestore(dataDir string, journal restoreJournal, label string, o
 	return securefs.SyncDirectory(work)
 }
 
-func applyRemoteRestore(ctx context.Context, cfg config.Server, domains *storage.Databases, journal restoreJournal, install bool, ops fsOps) error {
-	remote := journal.Remote
-	if restoreEndpointFor(cfg) != remote.Target {
+func verifyRemoteTarget(ctx context.Context, cfg config.Server, domains *storage.Databases, remote *restoreRemote) error {
+	if !restoreTargetMatches(cfg, remote) {
 		return errors.New("restore target configuration changed")
 	}
 	mainID, err := domains.Main.InstanceID(ctx)
@@ -298,31 +397,48 @@ func applyRemoteRestore(ctx context.Context, cfg config.Server, domains *storage
 	if mainID != remote.MainInstance || historyID != remote.HistoryInstance {
 		return errors.New("restore target instance changed")
 	}
+	return nil
+}
+
+func applyRemoteRestore(ctx context.Context, cfg config.Server, domains *storage.Databases, journal restoreJournal, install bool, ops fsOps) error {
+	remote := journal.Remote
+	if err := verifyRemoteTarget(ctx, cfg, domains, remote); err != nil {
+		return err
+	}
 	group, operation, files := "old", remote.RollbackID, journal.Files
 	if install {
 		group, operation, files = "new", journal.ID, remote.NewFiles
 	}
 	dir := filepath.Join(cfg.DataDir, ".restore-"+journal.ID, group)
 	// 在改动任一域前检查整个镜像组；回滚再次中断也保留不可变原件。
-	if err = verifyRestoreGroup(dir, files); err != nil {
+	if err := verifyRestoreGroup(dir, files); err != nil {
+		return err
+	}
+	if _, err := readRestoreMetadata(cfg.DataDir, journal); err != nil {
+		return err
+	}
+	if err := domains.BeginRestore(ctx, journal.ID, []storage.Domain{storage.MainDomain, storage.HistoryDomain}); err != nil {
+		return err
+	}
+	if err := ops.journal("restore:pending:durable"); err != nil {
 		return err
 	}
 	for i, database := range []*storage.Database{domains.Main, domains.History} {
-		if err = storage.ReplaceDomain(ctx, database, filepath.Join(dir, restoreInstallFiles[i]), operation); err != nil {
+		if err := storage.ReplaceDomain(ctx, database, filepath.Join(dir, restoreInstallFiles[i]), operation); err != nil {
 			return err
 		}
 		label := "install:"
 		if !install {
 			label = "rollback:"
 		}
-		if err = ops.journal(label + []string{"main", "history"}[i] + ":committed"); err != nil {
+		if err := ops.journal(label + []string{"main", "history"}[i] + ":committed"); err != nil {
 			return err
 		}
 	}
 	key := files[2]
 	destination := filepath.Join(cfg.DataDir, "secrets.key")
 	if !key.Exists {
-		if err = ops.remove("key:remove", destination); err != nil {
+		if err := ops.remove("key:remove", destination); err != nil {
 			return err
 		}
 	} else {
@@ -342,7 +458,7 @@ func applyRemoteRestore(ctx context.Context, cfg config.Server, domains *storage
 			return err
 		}
 	}
-	if err = ops.dirSync("key:dir-sync", cfg.DataDir); err != nil {
+	if err := ops.dirSync("key:dir-sync", cfg.DataDir); err != nil {
 		return err
 	}
 	if install {

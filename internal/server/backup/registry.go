@@ -53,8 +53,20 @@ var intentionallyExcluded = map[string]map[string]string{
 		"inbox_sequence":           "恢复时根据通知重新分配序号",
 		"node_deletions":           "跨域删除内部状态不归档",
 		"storage_write_guard":      "端点事务收据不归档",
+		"replica_identity":         "主备成员身份仅保存在私有回滚材料",
+		"replica_state":            "主备捕获状态不归档",
+		"replica_epochs":           "主备世代不归档",
+		"replica_transactions":     "主备事务日志不归档",
+		"replica_changes":          "主备行日志不归档",
 	},
-	"metrics": {"storage_write_guard": "端点事务收据不归档"},
+	"metrics": {
+		"storage_write_guard":  "端点事务收据不归档",
+		"replica_identity":     "主备成员身份仅保存在私有回滚材料",
+		"replica_state":        "主备捕获状态不归档",
+		"replica_epochs":       "主备世代不归档",
+		"replica_transactions": "主备事务日志不归档",
+		"replica_changes":      "主备行日志不归档",
+	},
 }
 
 var categoryTables = map[Category][]tableSpec{

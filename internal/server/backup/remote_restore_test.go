@@ -23,7 +23,7 @@ func TestRemoteRestoreJournalRoundTripAndNormalizedTarget(t *testing.T) {
 		files[i] = restoreOriginal{Name: name, Exists: true, Size: 32, SHA256: strings.Repeat("a", 64)}
 	}
 	journal := restoreJournal{Version: 2, ID: "11111111-1111-4111-8111-111111111111", State: "prepared", Files: files,
-		Remote: &restoreRemote{Target: restoreEndpointFor(restoreConfig(dir)), RollbackID: "22222222-2222-4222-8222-222222222222", NewFiles: files}}
+		Remote: &restoreRemote{Target: restoreEndpointFor(restoreConfig(dir)), Metadata: restoreOriginal{Name: restoreMetadataName, Exists: true, Size: 4, SHA256: strings.Repeat("b", 64)}, RollbackID: "22222222-2222-4222-8222-222222222222", NewFiles: files}}
 	if err := writeRestoreJournal(context.Background(), dir, journal, osFSOps()); err != nil {
 		t.Fatal(err)
 	}
@@ -48,12 +48,12 @@ func TestRemoteRestoreJournalRoundTripAndNormalizedTarget(t *testing.T) {
 }
 
 func TestRemoteRestorePreparedAndCommittedDecisions(t *testing.T) {
-	for _, boundary := range []string{"prepared:durable", "install:main:committed", "install:history:committed", "install:key:durable", "committed:durable"} {
+	for _, boundary := range []string{"prepared:durable", "restore:pending:durable", "install:main:committed", "install:history:committed", "install:key:durable", "committed:durable", "finish:storage:durable"} {
 		t.Run(boundary, func(t *testing.T) {
 			dir := restoreFixture(t, "old")
 			next := restoreFixture(t, "new")
 			cfg := restoreConfig(dir)
-			domains, err := storage.OpenDatabases(t.Context(), cfg.Database, dir)
+			domains, err := storage.OpenOfflineDatabases(t.Context(), cfg.Database, dir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -79,7 +79,7 @@ func TestRemoteRestorePreparedAndCommittedDecisions(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := "old"
-			if boundary == "committed:durable" {
+			if boundary == "committed:durable" || boundary == "finish:storage:durable" {
 				want = "new"
 			}
 			if name != want {
@@ -93,7 +93,7 @@ func TestRemoteRestorePreparedAndCommittedDecisions(t *testing.T) {
 }
 
 func TestRemoteRestoreCrashesKeepWholeDomains(t *testing.T) {
-	for _, boundary := range []string{"prepared:durable", "install:main:committed", "install:history:committed", "install:key:durable", "committed:durable"} {
+	for _, boundary := range []string{"prepared:durable", "restore:pending:durable", "install:main:committed", "install:history:committed", "install:key:durable", "committed:durable", "finish:storage:durable"} {
 		t.Run(boundary, func(t *testing.T) {
 			dir := restoreFixture(t, "target")
 			next := restoreFixture(t, "source")
@@ -112,7 +112,7 @@ func TestRemoteRestoreCrashesKeepWholeDomains(t *testing.T) {
 				t.Fatal(err)
 			}
 			runRemoteCrash(t, configPath, next, boundary, "commit")
-			if boundary != "committed:durable" {
+			if boundary != "committed:durable" && boundary != "finish:storage:durable" {
 				runRemoteCrash(t, configPath, next, "rollback:history:committed", "recover")
 			}
 			if err = RecoverRestore(context.Background(), cfg); err != nil {
@@ -126,7 +126,7 @@ func TestRemoteRestoreCrashesKeepWholeDomains(t *testing.T) {
 			restored.Close()
 			want, total := "target", float64(22)
 			expectedKey := originalKey
-			if boundary == "committed:durable" {
+			if boundary == "committed:durable" || boundary == "finish:storage:durable" {
 				want, total = "source", 11
 				expectedKey, err = datadir.LoadKey(filepath.Join(next, "secrets.key"))
 				if err != nil {
@@ -228,5 +228,22 @@ func TestRemoteRestoreRejectsChangedTargetIdentity(t *testing.T) {
 	var name string
 	if err = main.QueryRow(`SELECT name FROM nodes WHERE id=?`, restoreNode).Scan(&name); err != nil || name != "source" {
 		t.Fatalf("identity mismatch changed data: name=%q err=%v", name, err)
+	}
+}
+
+func TestRestoreTargetBindingIncludesStandby(t *testing.T) {
+	cfg := restoreConfig(t.TempDir())
+	cfg.Database.Standby = &config.DatabaseEndpoint{Driver: "sqlite"}
+	remote := &restoreRemote{Target: restoreEndpointFor(cfg), Standby: restoreStandbyFor(cfg)}
+	if !restoreTargetMatches(cfg, remote) {
+		t.Fatal("same endpoints rejected")
+	}
+	cfg.Database.Standby = nil
+	if restoreTargetMatches(cfg, remote) {
+		t.Fatal("removed standby accepted during recovery")
+	}
+	cfg.Database.Standby = &config.DatabaseEndpoint{Driver: "mysql", Address: "changed.example:3306"}
+	if restoreTargetMatches(cfg, remote) {
+		t.Fatal("changed standby accepted during recovery")
 	}
 }

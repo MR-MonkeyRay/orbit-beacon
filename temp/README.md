@@ -1,47 +1,40 @@
 # 远程开发数据库
 
-开发实例统一使用以下远端服务，不再启动本地 MySQL / Redis。旧 `orbitbeacon-ha-dev`、`orbitbeacon-temp` 及本目录的旧数据、证书和配置已清理。
+默认使用 TLS，不在本地部署 MySQL / Redis。
 
-| 服务 | 地址 | 账户 / index |
+| 服务 | TLS（当前开发） | 明文（旧端点） |
 | --- | --- | --- |
-| MySQL | `10.147.18.93:13306` | 应用账户 `orbitbeacon_dev`；管理员仅用于建库和隔离测试 |
-| Redis | `10.147.18.93:16379` | DB `2`；本项目 key 前缀 `orbitbeacon:dev:` |
+| MySQL | `10.147.18.93:13307` | `10.147.18.93:13306` |
+| Redis | `10.147.18.93:16380` | `10.147.18.93:16379` |
 
-## MySQL 库名
+CA 为 `temp/server.crt`，私有配置使用其副本 `~/.orbitbeacon-remote-development/server.crt`；`server_name` 为 `10.147.18.93`。严格校验证书，不跳过校验、不自动降级。证书有效至 2029-02-09，更新证书时同步私有副本。
 
-以下四库已创建，应用账户仅有这些库内的 `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER` 权限。
+## database / index
 
-| 用途 | database |
+| 用途 | MySQL database |
 | --- | --- |
-| 主库：业务数据 | `orbitbeacon_dev_main` |
-| 主库：指标历史 | `orbitbeacon_dev_history` |
-| 备库：业务数据 | `orbitbeacon_dev_standby_main` |
-| 备库：指标历史 | `orbitbeacon_dev_standby_history` |
+| 主库：业务 | `orbitbeacon_dev_main` |
+| 主库：历史 | `orbitbeacon_dev_history` |
+| 备库：业务 | `orbitbeacon_dev_standby_main` |
+| 备库：历史 | `orbitbeacon_dev_standby_history` |
 
-主备位于同一远端实例，只隔离数据，不提供跨主机容灾。当前实例报告版本 `26.10.0`；按实际 InnoDB、事务及持久化能力校验，不固定版本号。TCP 默认不启用 TLS，仅用于受控开发网络；显式配置 `tls` 时严格验证证书，不自动降级。
+应用账户为 `orbitbeacon_dev`，权限限于四库。主备在同一实例，不提供跨主机容灾。TLS MySQL 是独立实例：原开发数据已完整迁入同名库；旧实例保留回退，但不与新实例同步，勿交替写入。
 
-## 配置与凭据
+Redis 使用 **DB `2`**、key 前缀 **`orbitbeacon:dev:`**。TLS 认证、临时 key 写入/读取/删除已验证。应用目前没有 Redis 依赖；禁止 `FLUSHDB` / `FLUSHALL` 或清理其他项目前缀。
 
-私有目录为 `~/.orbitbeacon-remote-development/`，目录 `0700`、文件 `0600`，不提交密码或带密码的连接 URI。
+## 私有配置与启动
 
-- `server-mysql.json`：开发服务器配置；数据目录为同目录下 `server-data`，保留其中的 `secrets.key`。
-- `mysql-development.json`：库名、应用账户及密码文件路径。
-- `server-ha-mysql.json`、`server-ha-sqlite.json`：后续主备开发配置；复用相同数据目录，不可并行启动。
-- `console-credentials.json`：开发控制台地址、账户和已修改的密码，勿提交。
-- `mysql-admin.json`、`mysql-admin.password`：隔离测试建库所用管理员配置和凭据。
-- `mysql-app.password`：应用账户凭据。
-- `redis.json`、`redis.password`：Redis 的地址、DB、key 前缀和凭据。
+配置位于 `~/.orbitbeacon-remote-development/`（目录 `0700`、文件 `0600`），密码只由文件引用，不提交带密码的 URI。
 
-当前实际开发监听地址为 `http://127.0.0.1:18091`，已避开被占用的 `18090`。
+- `server-ha-mysql.json`：当前 TLS 主备配置；运行目录 `server-data-tls`，保留其中的 `secrets.key`、`storage-control.db`，不要混用旧目录 `server-data`。
+- `mysql-development.json` / `mysql-app.password`：TLS 应用连接、四库名称与应用凭据。
+- `mysql-admin.json`（同 `mysql-admin-tls.json`）/ `mysql-admin.password`：TLS 隔离测试管理员；真实 COMMIT 回包黑洞与未知 ACK 恢复也已通过 TLS 验证。
+- `redis.json` / `redis.password`：TLS 连接、DB `2` 和前缀。
+- `console-credentials.json`：控制台账户；`*-plain.json` 保留迁移前配置，仅用于明确回退。
 
 ```sh
-go run ./cmd/orbitbeacon-server serve --config "$HOME/.orbitbeacon-remote-development/server-mysql.json"
-
-ORBITBEACON_TEST_MYSQL=1 \
-ORBITBEACON_TEST_MYSQL_CONFIG="$HOME/.orbitbeacon-remote-development/mysql-admin.json" \
-go test -count=1 -timeout=20m ./internal/server/storage ./internal/server/history ./internal/server/backup
+go run ./cmd/orbitbeacon-server serve --config "$HOME/.orbitbeacon-remote-development/server-ha-mysql.json"
 ```
 
-MySQL 集成测试每次创建四个 `orbitbeacon_test_<32位UUID>_{pm,ph,sm,sh}` 库及一个仅限这四库的临时应用账户。管理员只负责准备和清理，业务连接不用管理员权限；结束只删除本次创建的库和账户，不清空上述开发库、不修改共享实例全局参数。CI 的远程检查仅在主分支 push 且配置管理员 secrets 后执行；缺少连接材料时明确报告未执行。
+控制台：`http://127.0.0.1:18091`。MySQL 集成测试设置 `ORBITBEACON_TEST_MYSQL=1`、`ORBITBEACON_TEST_MYSQL_CONFIG="$HOME/.orbitbeacon-remote-development/mysql-admin.json"`；夹具只创建并清理本次 `orbitbeacon_test_<UUID>_{pm,ph,sm,sh}` 四库和临时账户，不清空开发库。
 
-Redis DB `2` 已通过认证和临时 key 读写；测试 key 已删除。当前应用没有 Redis 依赖，此 index 和前缀留作后续明确需要的开发用途。禁止 `FLUSHDB` / `FLUSHALL` 或清理其他项目前缀。

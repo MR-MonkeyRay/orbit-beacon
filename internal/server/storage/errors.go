@@ -78,6 +78,9 @@ func safeFailure(err error) error {
 	if err == nil {
 		return nil
 	}
+	if code, ok := MySQLCode(err); ok && code == 60001 {
+		return ErrTransactionTooLarge
+	}
 	var startup *mysqlStartupError
 	if errors.As(err, &startup) && startup != nil {
 		return startup
@@ -85,7 +88,7 @@ func safeFailure(err error) error {
 	if _, ok := err.(safeError); ok {
 		return err
 	}
-	if errors.Is(err, ErrSchemaIncompatible) || errors.Is(err, ErrSchemaTooNew) || errors.Is(err, ErrDeployment) || errors.Is(err, ErrCommitUnknown) || errors.Is(err, ErrUnavailable) {
+	if errors.Is(err, ErrSchemaIncompatible) || errors.Is(err, ErrSchemaTooNew) || errors.Is(err, ErrDeployment) || errors.Is(err, ErrCommitUnknown) || errors.Is(err, ErrUnavailable) || errors.Is(err, ErrTransactionTooLarge) || errors.Is(err, ErrIdentityMismatch) || errors.Is(err, ErrReplicaDiverged) || errors.Is(err, ErrRestorePending) {
 		return err
 	}
 	return safeError{err}

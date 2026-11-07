@@ -95,7 +95,7 @@ func (s *sqliteStore) Write(ctx context.Context, buckets []Bucket) (rows int, er
 			}
 			next = end
 		}
-		return rows, s.commitHistory(ctx, tx, lease, buckets)
+		return rows, s.commitHistory(tx, buckets)
 	}
 	statement, err := tx.PrepareContext(ctx, `INSERT INTO buckets(node_id,metric,step,t,total,peak,samples) VALUES(?,?,?,?,?,?,?) ON CONFLICT(node_id,metric,step,t) DO UPDATE SET total=total+excluded.total, peak=max(peak,excluded.peak), samples=samples+excluded.samples`)
 	if err != nil {
@@ -110,28 +110,16 @@ func (s *sqliteStore) Write(ctx context.Context, buckets []Bucket) (rows int, er
 			}
 		}
 	}
-	return rows, s.commitHistory(ctx, tx, lease, buckets)
+	return rows, s.commitHistory(tx, buckets)
 }
 
-// 未知提交保留原 UUID；先释放租约再核对 guard，不能重放累加语句。
-func (s *sqliteStore) commitHistory(ctx context.Context, tx *storage.Tx, lease *storage.Lease, buckets []Bucket) error {
+// 未知提交仅保留原 UUID；Write 返回时释放语句、事务和租约，下次只核对原批次。
+func (s *sqliteStore) commitHistory(tx *storage.Tx, buckets []Bucket) error {
 	err := tx.Commit()
-	if !errors.Is(err, storage.ErrCommitUnknown) {
-		return err
+	if errors.Is(err, storage.ErrCommitUnknown) {
+		s.unresolved, s.inflight = tx, slices.Clone(buckets)
 	}
-	lease.Close()
-	s.unresolved, s.inflight = tx, slices.Clone(buckets)
-	resolveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer cancel()
-	committed, resolveErr := tx.ResolveCommit(resolveCtx)
-	if resolveErr != nil {
-		return errors.Join(storage.ErrCommitUnknown, resolveErr)
-	}
-	s.unresolved, s.inflight = nil, nil
-	if committed {
-		return nil
-	}
-	return errors.New("history transaction rolled back")
+	return err
 }
 
 const mysqlHistoryInsert = "INSERT INTO buckets(node_id,metric,step,t,total,peak,samples) VALUES "

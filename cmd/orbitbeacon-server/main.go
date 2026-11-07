@@ -39,11 +39,11 @@ func run(args []string) error {
 
 func runWithLogger(args []string, logger *slog.Logger) error {
 	if len(args) == 0 {
-		return errors.New("缺少子命令：应为 serve、restore、reset-totp、version 或 health")
+		return errors.New("缺少子命令：应为 serve、restore、reset-totp、storage、version 或 health")
 	}
 	switch args[0] {
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "用法: orbitbeacon-server {serve|restore|reset-totp|version|health} --help")
+		fmt.Fprintln(os.Stdout, "用法: orbitbeacon-server {serve|restore|reset-totp|storage|version|health} --help")
 		return nil
 	case "serve":
 		return runServe(args[1:], logger)
@@ -51,12 +51,14 @@ func runWithLogger(args []string, logger *slog.Logger) error {
 		return runResetTOTP(args[1:])
 	case "restore":
 		return runRestore(args[1:])
+	case "storage":
+		return runStorage(args[1:])
 	case "version":
 		return runVersion(args[1:])
 	case "health":
 		return runHealth(args[1:])
 	default:
-		return fmt.Errorf("未知子命令 %q；应为 serve、restore、reset-totp、version 或 health", args[0])
+		return fmt.Errorf("未知子命令 %q；应为 serve、restore、reset-totp、storage、version 或 health", args[0])
 	}
 }
 
@@ -195,11 +197,8 @@ func runResetTOTP(args []string) error {
 			return err
 		}
 	}
-	if cfg.Database.Standby != nil {
-		return storage.ErrUnsupportedTopology
-	}
 	ctx := audit.WithSystemActor(context.Background(), "reset-totp")
-	database, err := storage.OpenDomain(ctx, cfg.Database.Primary, storage.MainDomain, cfg.DataDir)
+	database, err := storage.OpenActiveDomain(ctx, cfg.Database, storage.MainDomain, cfg.DataDir)
 	if err != nil {
 		return err
 	}

@@ -31,7 +31,10 @@ const (
 
 var ErrUnavailable = errors.New("storage_unavailable")
 
-type Databases struct{ Main, History *Database }
+type Databases struct {
+	Main, History *Database
+	replication   *replication
+}
 
 type generation struct {
 	id             uint64
@@ -44,14 +47,18 @@ type generation struct {
 }
 
 type Database struct {
-	mu          sync.Mutex
-	domain      Domain
-	current     *generation
-	admitting   bool
-	closed      bool
-	writeGate   chan struct{}
-	pending     *commitReceipt
-	writeFailed bool
+	mu             sync.Mutex
+	domain         Domain
+	current        *generation
+	admitting      bool
+	closed         bool
+	writeGate      chan struct{}
+	pending        *commitReceipt
+	writeFailed    bool
+	replica        *replicaDomain
+	applyPool      *sql.DB
+	ownedControl   *sql.DB
+	restoreAllowed bool
 }
 
 type leaseKey struct{}
@@ -100,6 +107,9 @@ func (db *Database) Acquire(ctx context.Context, pool Pool) (*Lease, error) {
 	defer db.mu.Unlock()
 	if db.closed {
 		return nil, ErrUnavailable
+	}
+	if pool == Writer && db.restoreAllowed && ctx.Value(restoreContextKey{}) != db {
+		return nil, ErrRestorePending
 	}
 	gen := db.current
 	bindings, _ := ctx.Value(leaseKey{}).(*leaseBinding)
@@ -228,7 +238,7 @@ func (db *Database) Stats() (writer, reader sql.DBStats, ok bool) {
 func (db *Database) Ready() bool {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	return !db.closed && db.admitting && !db.writeFailed && db.pending == nil && db.current != nil && db.current.ctx.Err() == nil
+	return !db.closed && !db.restoreAllowed && db.admitting && !db.writeFailed && db.pending == nil && db.current != nil && db.current.ctx.Err() == nil
 }
 func (db *Database) drain(ctx context.Context) error {
 	db.mu.Lock()
@@ -274,7 +284,15 @@ func (db *Database) Close() error {
 	db.closed = true
 	gen := db.current
 	db.mu.Unlock()
-	return errors.Join(gen.reader.Close(), gen.writer.Close())
+	var applyErr error
+	if db.applyPool != nil {
+		applyErr = db.applyPool.Close()
+	}
+	var controlErr error
+	if db.ownedControl != nil {
+		controlErr = db.ownedControl.Close()
+	}
+	return errors.Join(gen.reader.Close(), gen.writer.Close(), applyErr, controlErr)
 }
 
 func (l *Lease) QueryContext(ctx context.Context, query string, args ...any) (*Rows, error) {
@@ -303,6 +321,11 @@ func (l *Lease) begin(ctx context.Context, write bool) (*Tx, error) {
 	if write && l.pool != Writer {
 		return nil, ErrUnavailable
 	}
+	if write {
+		if pending, allowed := l.db.restoreAccess(ctx); pending && !allowed {
+			return nil, ErrRestorePending
+		}
+	}
 	release, err := l.retain()
 	if err != nil {
 		return nil, err
@@ -315,19 +338,30 @@ func (l *Lease) begin(ctx context.Context, write bool) (*Tx, error) {
 		options.Isolation = sql.LevelRepeatableRead
 	}
 	if write {
-		select {
-		case l.db.writeGate <- struct{}{}:
-		case <-ctx.Done():
-			finish()
-			return nil, ctx.Err()
+		if probe, _ := ctx.Value(replicaProbeKey{}).(bool); probe {
+			select {
+			case l.db.writeGate <- struct{}{}:
+			default:
+				finish()
+				return nil, errReplicaProbeBusy
+			}
+		} else {
+			select {
+			case l.db.writeGate <- struct{}{}:
+			case <-ctx.Done():
+				finish()
+				return nil, ctx.Err()
+			}
 		}
 		finish = func() { <-l.db.writeGate; cancel(); release() }
 		pool, options = l.gen.writer, nil
-		if l.Dialect() == MySQL {
+		if l.Dialect() == MySQL || l.db.replica != nil {
 			if err := l.db.resolvePending(ctx); err != nil {
 				finish()
 				return nil, err
 			}
+		}
+		if l.Dialect() == MySQL {
 			options = &sql.TxOptions{Isolation: sql.LevelReadCommitted}
 		}
 	}
@@ -354,20 +388,30 @@ func (l *Lease) begin(ctx context.Context, write bool) (*Tx, error) {
 		}
 		receipt = &commitReceipt{id: uuid.NewString()}
 	}
-	return &Tx{tx: tx, lease: l, ctx: ctx, receipt: receipt, finish: func() {
+	result := &Tx{tx: tx, lease: l, ctx: ctx, receipt: receipt, finish: func() {
 		// sql.Tx 已标记完成时，自动回滚仍可能占用连接；先等待 driver 退出。
 		_ = conn.Close()
 		finish()
-	}}, nil
+	}}
+	if write && l.db.replica != nil {
+		if err = result.beginCapture(); err != nil {
+			_ = result.Rollback()
+			return nil, err
+		}
+	}
+	return result, nil
 }
 
 type Tx struct {
-	tx      *sql.Tx
-	lease   *Lease
-	ctx     context.Context
-	mu      sync.Mutex
-	finish  func()
-	receipt *commitReceipt
+	tx           *sql.Tx
+	lease        *Lease
+	ctx          context.Context
+	mu           sync.Mutex
+	finish       func()
+	receipt      *commitReceipt
+	capture      *replicaTransaction
+	captureError error
+	captureMu    sync.Mutex
 }
 
 func (tx *Tx) Commit() error {
@@ -386,7 +430,10 @@ func (tx *Tx) Commit() error {
 	if err != nil {
 		_ = tx.tx.Rollback()
 	} else {
-		if tx.receipt != nil {
+		if tx.capture != nil {
+			err = tx.finishCapture()
+		}
+		if tx.receipt != nil && err == nil {
 			_, err = tx.tx.ExecContext(tx.ctx, "UPDATE storage_write_guard SET last_tx_uuid=? WHERE id=1", tx.receipt.id)
 		}
 		if err != nil {
@@ -438,10 +485,13 @@ func (tx *Tx) Rollback() error {
 	return err
 }
 func (tx *Tx) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	if err := tx.rejectPoisoned(); err != nil {
+		return nil, err
+	}
 	ctx, cancel := tx.lease.merge(ctx)
 	defer cancel()
 	result, err := tx.tx.ExecContext(ctx, query, args...)
-	return result, tx.lease.failure(err)
+	return result, tx.captureFailure(err)
 }
 func (tx *Tx) QueryContext(ctx context.Context, query string, args ...any) (*Rows, error) {
 	release, err := tx.lease.retain()
@@ -453,10 +503,11 @@ func (tx *Tx) QueryContext(ctx context.Context, query string, args ...any) (*Row
 	if err != nil {
 		cancel()
 		release()
-		return nil, tx.lease.failure(err)
+		return nil, tx.captureFailure(err)
 	}
 	r := newRows(rows, func() { cancel(); release() })
 	r.lease = tx.lease
+	r.tx = tx
 	return r, nil
 }
 func (tx *Tx) QueryRowContext(ctx context.Context, query string, args ...any) *Row {
@@ -475,7 +526,7 @@ func (tx *Tx) PrepareContext(ctx context.Context, query string) (*Stmt, error) {
 		release()
 		return nil, tx.lease.failure(err)
 	}
-	return &Stmt{stmt: stmt, lease: tx.lease, release: release}, nil
+	return &Stmt{stmt: stmt, lease: tx.lease, release: release, tx: tx}, nil
 }
 
 type Rows struct {
@@ -483,6 +534,7 @@ type Rows struct {
 	once    sync.Once
 	release func()
 	lease   *Lease
+	tx      *Tx
 }
 
 func newRows(rows *sql.Rows, release func()) *Rows { return &Rows{rows: rows, release: release} }
@@ -502,6 +554,9 @@ func (r *Rows) NextResultSet() bool {
 	return next
 }
 func (r *Rows) failure(err error) error {
+	if r.tx != nil {
+		return r.tx.captureFailure(err)
+	}
 	if r.lease != nil {
 		return r.lease.failure(err)
 	}
@@ -546,6 +601,7 @@ type Stmt struct {
 	lease   *Lease
 	once    sync.Once
 	release func()
+	tx      *Tx
 }
 
 func (s *Stmt) Close() error {
@@ -554,9 +610,17 @@ func (s *Stmt) Close() error {
 	return s.lease.failure(err)
 }
 func (s *Stmt) ExecContext(ctx context.Context, args ...any) (sql.Result, error) {
+	if s.tx != nil {
+		if err := s.tx.rejectPoisoned(); err != nil {
+			return nil, err
+		}
+	}
 	ctx, cancel := s.lease.merge(ctx)
 	defer cancel()
 	result, err := s.stmt.ExecContext(ctx, args...)
+	if s.tx != nil {
+		return result, s.tx.captureFailure(err)
+	}
 	return result, s.lease.failure(err)
 }
 func (s *Stmt) QueryContext(ctx context.Context, args ...any) (*Rows, error) {
@@ -569,10 +633,14 @@ func (s *Stmt) QueryContext(ctx context.Context, args ...any) (*Rows, error) {
 	if err != nil {
 		cancel()
 		release()
+		if s.tx != nil {
+			return nil, s.tx.captureFailure(err)
+		}
 		return nil, s.lease.failure(err)
 	}
 	r := newRows(rows, func() { cancel(); release() })
 	r.lease = s.lease
+	r.tx = s.tx
 	return r, nil
 }
 func (s *Stmt) QueryRowContext(ctx context.Context, args ...any) *Row {

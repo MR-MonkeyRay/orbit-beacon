@@ -238,6 +238,13 @@ func ReplaceDomain(ctx context.Context, target *Database, sourcePath, operationI
 	if operationID == "" || len(operationID) > 64 {
 		return errors.New("storage_restore_operation_invalid")
 	}
+	if target.replica != nil {
+		pending, _ := target.restoreAccess(ctx)
+		if !pending {
+			return ErrRestorePending
+		}
+		ctx = context.WithValue(ctx, restoreContextKey{}, target)
+	}
 	source, err := OpenReader(ctx, sourcePath)
 	if err != nil {
 		return err
@@ -277,6 +284,9 @@ func ReplaceDomain(ctx context.Context, target *Database, sourcePath, operationI
 		return err
 	}
 	if err = copyTables(ctx, sqliteRows{read}, tx, target.domain); err != nil {
+		return err
+	}
+	if err = resetRestoreEpoch(ctx, tx); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE storage_write_guard SET restore_operation=? WHERE id=1", operationID); err != nil {

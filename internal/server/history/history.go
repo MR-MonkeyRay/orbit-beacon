@@ -1,30 +1,42 @@
 package history
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
 	"log/slog"
 	"math"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"orbitbeacon/internal/logging"
 	"orbitbeacon/internal/server/storage"
 )
 
 const (
-	CurrentSchemaVersion = storage.HistorySchemaVersion
-	SampleBufferSize     = 4096
-	FlushInterval        = time.Minute
-	maxPendingBuckets    = 8192
-	maxDiskPaths         = 16
+	CurrentSchemaVersion  = storage.HistorySchemaVersion
+	SampleBufferSize      = 4096
+	FlushInterval         = time.Minute
+	maxPendingBuckets     = 8192
+	maxDiskPaths          = 16
+	maxFlushKeys          = 128
+	maxFlushBuckets       = 512
+	maxHistoryRowBytes    = 5 << 10
+	maxHistoryTxBytes     = 64 << 20
+	maxHistoryMetricBytes = 1043
+	maxHistoryNodeBytes   = 64
+	historyTxHeaderBytes  = 1024
 	// 远端存储不可用时，每个节点的首个样本都会等待超时；退避避免写入循环被占满。
 	seriesRetryDelay = 30 * time.Second
 )
+
+var errHistoryBatchInvalid = errors.New("history_batch_invalid")
 
 type Options struct {
 	Now    func() time.Time
@@ -232,7 +244,7 @@ func (s *Service) run(ctx context.Context) {
 			request.result <- retentionResult{removed, err}
 		case shutdownCtx := <-s.stop:
 			s.drain()
-			s.err = s.flush(shutdownCtx, s.now(), true)
+			s.err = s.flushShutdown(shutdownCtx)
 			return
 		case <-ctx.Done():
 			s.err = ctx.Err()
@@ -241,51 +253,152 @@ func (s *Service) run(ctx context.Context) {
 	}
 }
 
-// flush 将每分钟的精确总和与样本数交给存储，由存储提供各聚合层级。
-// 提交成功后才释放待写状态，因此失败时可以重试。
+// 关闭时只继续核对未知提交的原批次；等待期间不持有 SQL 资源，也不延长调用方时限。
+func (s *Service) flushShutdown(ctx context.Context) error {
+	var rejected error
+	var retry *time.Timer
+	for {
+		err := s.flush(ctx, s.now(), true)
+		if errors.Is(err, errHistoryBatchInvalid) {
+			rejected = errHistoryBatchInvalid
+		}
+		if !errors.Is(err, storage.ErrCommitUnknown) || len(s.inflight) == 0 {
+			return errors.Join(rejected, err)
+		}
+		if ctx.Err() != nil {
+			return errors.Join(rejected, err, ctx.Err())
+		}
+		if retry == nil {
+			retry = time.NewTimer(100 * time.Millisecond)
+			defer retry.Stop()
+		} else {
+			retry.Reset(100 * time.Millisecond)
+		}
+		select {
+		case <-retry.C:
+		case <-ctx.Done():
+			return errors.Join(rejected, err, ctx.Err())
+		}
+		if ctx.Err() != nil {
+			return errors.Join(rejected, err, ctx.Err())
+		}
+	}
+}
+
+// flush 按分钟、节点、指标顺序逐批排空；一个节点分钟的三档聚合始终在同一事务。
 func (s *Service) flush(ctx context.Context, now time.Time, all bool) error {
 	if len(s.inflight) > 0 {
-		if _, err := s.store.Write(ctx, s.inflight); err != nil {
+		if err := s.writeInflight(ctx); err != nil {
 			return err
 		}
-		s.inflight = nil
+		s.drain()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 	}
-	var started time.Time
-	if s.observeFlush != nil {
-		started = time.Now()
-	}
-	entries := 0
-	var buckets []Bucket
 	keys := make([]bucketKey, 0, len(s.pending))
 	for key := range s.pending {
 		if all || key.t < now.Truncate(time.Minute).Unix() {
 			keys = append(keys, key)
-			for metric, a := range s.pending[key] {
+		}
+	}
+	slices.SortFunc(keys, func(a, b bucketKey) int {
+		if order := cmp.Compare(a.t, b.t); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.node, b.node)
+	})
+	var rejected error
+	for next := 0; next < len(keys); {
+		buckets := make([]Bucket, 0, maxFlushBuckets)
+		batchKeys := 0
+		for next < len(keys) && batchKeys < maxFlushKeys {
+			key := keys[next]
+			values := s.pending[key]
+			if !validHistoryGroup(key, values) {
+				delete(s.pending, key)
+				s.dropped.Add(1)
+				rejected = errHistoryBatchInvalid
+				next++
+				continue
+			}
+			if len(buckets)+len(values) > maxFlushBuckets {
+				break
+			}
+			start := len(buckets)
+			for metric, a := range values {
 				buckets = append(buckets, Bucket{Node: key.node, Series: metric, T: key.t, Total: a.total, Peak: a.peak, Samples: a.samples})
 			}
+			slices.SortFunc(buckets[start:], func(a, b Bucket) int { return cmp.Compare(a.Series, b.Series) })
+			delete(s.pending, key)
+			batchKeys++
+			next++
 		}
-	}
-	if len(keys) == 0 {
-		return ctx.Err()
-	}
-	if s.observeFlush != nil {
-		defer func() { s.observeFlush(time.Since(started), entries) }()
-	}
-	var err error
-	entries, err = s.store.Write(ctx, buckets)
-	if err != nil {
-		if errors.Is(err, storage.ErrCommitUnknown) {
-			s.inflight = buckets
-			for _, key := range keys {
-				delete(s.pending, key)
+		if len(buckets) > 0 {
+			// 每个桶最多产生三条 5 KiB 行日志，另为事务头保留空间。
+			if historyTxHeaderBytes+3*len(buckets)*maxHistoryRowBytes > maxHistoryTxBytes {
+				s.restorePending(buckets)
+				return errors.Join(rejected, errHistoryBatchInvalid)
 			}
+			s.inflight = buckets
+			if err := s.writeInflight(ctx); err != nil {
+				if !errors.Is(err, storage.ErrCommitUnknown) {
+					s.restorePending(s.inflight)
+					s.inflight = nil
+				}
+				return errors.Join(rejected, err)
+			}
+			s.drain()
 		}
-		return err
+		if err := ctx.Err(); err != nil {
+			return errors.Join(rejected, err)
+		}
 	}
-	for _, key := range keys {
-		delete(s.pending, key)
+	return errors.Join(rejected, ctx.Err())
+}
+
+// 文本在主键和 after image 中各出现一次，十六进制编码共占四倍字节。
+// 512 字节覆盖两份数组、类型标签和全部 int64/double 的最坏十进制长度。
+func validHistoryGroup(key bucketKey, values map[string]aggregate) bool {
+	if len(values) > maxFlushBuckets || len(key.node) > maxHistoryNodeBytes || !utf8.ValidString(key.node) {
+		return false
 	}
-	return nil
+	for metric, a := range values {
+		if len(metric) > maxHistoryMetricBytes || !utf8.ValidString(metric) || 512+4*(len(key.node)+len(metric)) > maxHistoryRowBytes || a.samples <= 0 || math.IsNaN(a.total) || math.IsInf(a.total, 0) || math.IsNaN(a.peak) || math.IsInf(a.peak, 0) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Service) restorePending(buckets []Bucket) {
+	for _, bucket := range buckets {
+		key := bucketKey{bucket.Node, bucket.T}
+		if s.pending[key] == nil {
+			s.pending[key] = make(map[string]aggregate)
+		}
+		a := s.pending[key][bucket.Series]
+		a.total += bucket.Total
+		a.peak = max(a.peak, bucket.Peak)
+		a.samples += bucket.Samples
+		s.pending[key][bucket.Series] = a
+	}
+}
+
+// Store 对未解析提交保留原事务收据；只允许携带完全相同的不可变批次重入。
+func (s *Service) writeInflight(ctx context.Context) error {
+	var started time.Time
+	if s.observeFlush != nil {
+		started = time.Now()
+	}
+	rows, err := s.store.Write(ctx, s.inflight)
+	if s.observeFlush != nil {
+		s.observeFlush(time.Since(started), rows)
+	}
+	if err == nil {
+		s.inflight = nil
+	}
+	return err
 }
 
 // Cleanup 与刷写串行化，并从所有层级和待处理内存中清除已删除的节点。
@@ -309,10 +422,9 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time) (int64, error) {
 
 func (s *Service) cleanup(ctx context.Context, now time.Time) (int64, error) {
 	if len(s.inflight) > 0 {
-		if _, err := s.store.Write(ctx, s.inflight); err != nil {
+		if err := s.writeInflight(ctx); err != nil {
 			return 0, err
 		}
-		s.inflight = nil
 	}
 	var mainLease *storage.Lease
 	if s.nodes != nil {

@@ -180,6 +180,28 @@ services:
 
 远程开发地址、database 名与 Redis DB 索引见 [远程开发环境](../temp/README.md)。凭据只保存在私有文件中，不写入文档或命令行。
 
+### 异步备库
+
+仅 MySQL primary 可配置 `database.standby`：MySQL 备用端点使用相同字段并预建独立的业务、历史 database；也可使用 `{"driver":"sqlite"}`，保存在本地固定文件。当前配置的 primary 承担读写，业务和历史各自复制完整事务；不向副本分流读取。两端不能实际指向同一 server UUID + database，跨域重叠同样拒绝。
+
+- 首次备用目标必须真正为空；非空且未登记为本集群成员时拒绝自动接管。只允许重建已登记的非活动成员，不清空陌生数据库。
+- `data_dir/storage-control.db` 及 sidecar 和 `secrets.key` 必须一起保留。配置绑定后不能直接删除 standby、换 endpoint/schema 或互换角色。
+- 行日志单事务上限 64 MiB；超过上限原事务回滚并返回 `409 storage_transaction_too_large`，应缩小操作规模，不自动拆分原事务。每域最多保留 24 小时、256 MiB，落后副本需要的日志被淘汰前会失去资格，随后重新同步。
+- 目标主键、唯一键或外键冲突会回滚整笔复制事务、撤销副本资格并停止重试，不以覆盖写掩盖分叉。不要从外部修改应用行或手工补齐复制协议表。
+- 已登记成员缺少复制协议表、定义损坏或当前 epoch / 水位不一致时拒绝打开，不自动补表。检查并恢复完整存储状态，不要把损坏成员当空库重新初始化。
+- `reset-totp` 只打开控制记录选定的业务 active 域；已登记且无待决恢复时仍捕获该次用户修改与审计，不要求历史库健康。控制记录缺失时拒绝猜测权威，离线恢复入口不因此启用捕获。
+- 初次同步与恢复不复制实例身份；整库恢复建立新 epoch，并撤销旧副本资格。用户分类归档不包含复制日志或控制文件，不能拿归档充当已登记副本。
+
+需要改回单库时，先查看集群 ID，再停服清退；只有当前主库健康、仍为权威且无待决操作才允许完成：
+
+```sh
+orbitbeacon-server storage status --config /etc/orbitbeacon/server.json
+# 停止 Server；精确填写 status 输出的集群 UUID。
+orbitbeacon-server storage disable --config /etc/orbitbeacon/server.json --confirm '<cluster-id>'
+```
+
+status 只读取本地记录，`observed_at` 不代表远端此刻健康。disable 保留两端业务数据；完成后再移除 standby 配置。
+
 ## 通知网络
 
 - 默认拒绝通知访问内网、回环及元数据目标；拨号时检查最终 IP，HTTP 不使用代理或重定向。

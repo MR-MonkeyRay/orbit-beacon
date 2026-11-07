@@ -27,7 +27,7 @@ type Fixture struct {
 	runtime         string
 	cfg             config.DatabaseConfig
 	dbs             *storage.Databases
-	raw             map[storage.Domain]*sql.DB
+	raw             map[string]*sql.DB
 	admin           *sql.DB
 	created         []string
 	applicationUser string
@@ -91,7 +91,7 @@ func Start(t testing.TB) *Fixture {
 	if err != nil {
 		t.Fatal("mysql_fixture_connector_invalid")
 	}
-	f := &Fixture{runtime: t.TempDir(), cfg: fixtureDatabases(endpoint), raw: map[storage.Domain]*sql.DB{}, admin: sql.OpenDB(connector)}
+	f := &Fixture{runtime: t.TempDir(), cfg: fixtureDatabases(endpoint), raw: map[string]*sql.DB{}, admin: sql.OpenDB(connector)}
 	t.Cleanup(func() {
 		if f.dbs != nil {
 			_ = f.dbs.Close()
@@ -217,11 +217,21 @@ func fixtureMySQLConfig(endpoint config.DatabaseEndpoint, database string) (*mys
 
 func (f *Fixture) Raw(t testing.TB, domain storage.Domain) *sql.DB {
 	t.Helper()
-	if db := f.raw[domain]; db != nil {
+	_ = f.Open(t, domain)
+	return f.RawEndpoint(t, "primary", domain)
+}
+
+// RawEndpoint 不初始化 schema，可观察尚未 ready 的备库而不抢先接管其空库。
+func (f *Fixture) RawEndpoint(t testing.TB, role string, domain storage.Domain) *sql.DB {
+	t.Helper()
+	if role != "primary" && role != "standby" || domain != storage.MainDomain && domain != storage.HistoryDomain {
+		t.Fatal("mysql_fixture_endpoint_invalid")
+	}
+	key := role + "/" + string(domain)
+	if db := f.raw[key]; db != nil {
 		return db
 	}
-	_ = f.Open(t, domain)
-	endpoint := f.cfg.Primary
+	endpoint := f.Endpoint(role)
 	name := endpoint.MainDatabase
 	if domain == storage.HistoryDomain {
 		name = endpoint.HistoryDatabase
@@ -235,7 +245,7 @@ func (f *Fixture) Raw(t testing.TB, domain storage.Domain) *sql.DB {
 		t.Fatal("mysql_fixture_connector_invalid")
 	}
 	db := sql.OpenDB(connector)
-	f.raw[domain] = db
+	f.raw[key] = db
 	return db
 }
 

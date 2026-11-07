@@ -47,9 +47,13 @@ func Restore(ctx context.Context, cfg config.Server, input, password string, rep
 	}
 	needsReplace := !empty
 	var domains *storage.Databases
-	remote := cfg.Database.Primary.Driver == "mysql"
+	controlExists, err := securefs.ValidateFile(filepath.Join(dir, "storage-control.db"))
+	if err != nil {
+		return result, err
+	}
+	remote := cfg.Database.Primary.Driver == "mysql" || cfg.Database.Standby != nil || controlExists
 	if remote {
-		domains, err = storage.OpenDatabases(ctx, cfg.Database, dir)
+		domains, err = storage.OpenOfflineDatabases(ctx, cfg.Database, dir)
 		if err != nil {
 			return result, err
 		}

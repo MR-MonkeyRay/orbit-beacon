@@ -141,3 +141,62 @@ func TestMySQLHistoryStore(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMySQLHistoryResolvedReceiptRetriesOnlyRolledBackBatch(t *testing.T) {
+	fixture := storagetest.Start(t)
+	database := fixture.Open(t, storage.HistoryDomain)
+	store := &sqliteStore{db: database}
+	for _, committed := range []bool{false, true} {
+		node := "rolledback"
+		if committed {
+			node = "committed"
+		}
+		buckets := []Bucket{{Node: node, Series: "cpu_percent", T: 3600, Total: 20, Peak: 20, Samples: 1}}
+		lease, err := database.Acquire(t.Context(), storage.Writer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx, err := lease.BeginWrite(lease.Context())
+		if err != nil {
+			lease.Close()
+			t.Fatal(err)
+		}
+		query, args, _, err := mysqlHistoryBatch(buckets, 0)
+		if err == nil {
+			_, err = tx.ExecContext(lease.Context(), query, args...)
+		}
+		if err != nil {
+			tx.Rollback()
+			lease.Close()
+			t.Fatal(err)
+		}
+		if committed {
+			err = tx.Commit()
+		} else {
+			err = tx.Rollback()
+		}
+		lease.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// 模拟协调器已解析原 UUID、Service 尚未消费结果的边界。
+		store.unresolved, store.inflight = tx, append([]Bucket(nil), buckets...)
+		if _, err := store.Write(t.Context(), buckets); err != nil {
+			t.Fatal(err)
+		}
+		if store.unresolved != nil || len(store.inflight) != 0 {
+			t.Fatal("已解析收据未释放")
+		}
+		buckets[0].Total, buckets[0].Peak = 30, 30
+		if _, err := store.Write(t.Context(), buckets); err != nil {
+			t.Fatal(err)
+		}
+		for _, step := range []int{60, 300, 3600} {
+			var total float64
+			var samples int64
+			if err := fixture.Raw(t, storage.HistoryDomain).QueryRow("SELECT total,samples FROM buckets WHERE node_id=? AND step=?", node, step).Scan(&total, &samples); err != nil || total != 50 || samples != 2 {
+				t.Fatalf("step=%d total=%v samples=%d err=%v", step, total, samples, err)
+			}
+		}
+	}
+}

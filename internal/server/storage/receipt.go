@@ -73,13 +73,21 @@ func (db *Database) resolvePending(ctx context.Context) error {
 		return ErrCommitUnknown
 	}
 	defer conn.Close()
-	barrier, err := conn.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	options := &sql.TxOptions{}
+	if gen.dialect == MySQL {
+		options.Isolation = sql.LevelReadCommitted
+	}
+	barrier, err := conn.BeginTx(ctx, options)
 	if err != nil {
 		return ErrCommitUnknown
 	}
 	defer barrier.Rollback()
 	var id string
-	if err = barrier.QueryRowContext(ctx, "SELECT last_tx_uuid FROM storage_write_guard WHERE id=1 FOR UPDATE").Scan(&id); err != nil {
+	query := "SELECT last_tx_uuid FROM storage_write_guard WHERE id=1"
+	if gen.dialect == MySQL {
+		query += " FOR UPDATE"
+	}
+	if err = barrier.QueryRowContext(ctx, query).Scan(&id); err != nil {
 		return ErrCommitUnknown
 	}
 	// 只读屏障无需提交：持锁查询已证明前一事务完成。
@@ -104,6 +112,11 @@ func (db *Database) InstanceID(ctx context.Context) (string, error) {
 		return "", err
 	}
 	defer l.Close()
+	if db.replica != nil {
+		var id string
+		err = l.QueryRowContext(ctx, "SELECT instance_uuid FROM replica_identity WHERE id=1").Scan(&id)
+		return id, safeFailure(err)
+	}
 	if l.Dialect() != MySQL {
 		return "", nil
 	}

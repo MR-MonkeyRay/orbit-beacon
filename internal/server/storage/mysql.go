@@ -25,19 +25,7 @@ var ErrUnsupportedTopology = errors.New("storage_replication_not_available")
 
 // OpenDatabases 在任一 MySQL 域失败时关闭全部连接；SQLite 保留可用 main。
 func OpenDatabases(ctx context.Context, cfg config.DatabaseConfig, dataDir string) (*Databases, error) {
-	if cfg.Standby != nil {
-		return nil, ErrUnsupportedTopology
-	}
-	main, err := OpenDomain(ctx, cfg.Primary, MainDomain, dataDir)
-	if err != nil {
-		return nil, err
-	}
-	history, err := OpenDomain(ctx, cfg.Primary, HistoryDomain, dataDir)
-	if err != nil && cfg.Primary.Driver == "mysql" {
-		_ = main.Close()
-		return nil, err
-	}
-	return &Databases{Main: main, History: history}, err
+	return openConfigured(ctx, cfg, dataDir, false, "")
 }
 
 // OpenDomain 只打开明确选定的逻辑域，不要求另一个域可用，也不猜测 HA 权威。
@@ -61,6 +49,9 @@ func (dbs *Databases) Close() error {
 	if dbs == nil {
 		return nil
 	}
+	if err := dbs.StopReplication(); err != nil {
+		return err
+	}
 	var a, b error
 	if dbs.Main != nil {
 		a = dbs.Main.Close()
@@ -68,7 +59,16 @@ func (dbs *Databases) Close() error {
 	if dbs.History != nil {
 		b = dbs.History.Close()
 	}
-	return errors.Join(a, b)
+	var replicaErr error
+	if dbs.replication != nil {
+		for _, d := range dbs.replication.domains {
+			if d.target != nil {
+				replicaErr = errors.Join(replicaErr, d.target.Close())
+			}
+		}
+		replicaErr = errors.Join(replicaErr, dbs.replication.control.Close())
+	}
+	return errors.Join(a, b, replicaErr)
 }
 func (db *Database) Domain() Domain { return db.domain }
 func (db *Database) Dialect() (Dialect, bool) {

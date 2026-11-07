@@ -270,7 +270,7 @@ func TestMySQLBackupRestore(t *testing.T) {
 		}
 		assertState(t, cfg, "old")
 	})
-	for _, boundary := range []string{"prepared:durable", "install:main:committed", "install:history:committed", "install:key:durable", "committed:durable"} {
+	for _, boundary := range []string{"prepared:durable", "restore:pending:durable", "install:main:committed", "install:history:committed", "install:key:durable", "committed:durable", "finish:storage:durable"} {
 		t.Run(boundary, func(t *testing.T) {
 			cfg := reset(t)
 			configPath := filepath.Join(t.TempDir(), "server.json")
@@ -282,14 +282,14 @@ func TestMySQLBackupRestore(t *testing.T) {
 				t.Fatal(err)
 			}
 			runRemoteCrash(t, configPath, installSource, boundary, "commit")
-			if boundary != "committed:durable" {
+			if boundary != "committed:durable" && boundary != "finish:storage:durable" {
 				runRemoteCrash(t, configPath, installSource, "rollback:main:committed", "recover")
 			}
 			if err = RecoverRestore(ctx, cfg); err != nil {
 				t.Fatal(err)
 			}
 			want := "old"
-			if boundary == "committed:durable" {
+			if boundary == "committed:durable" || boundary == "finish:storage:durable" {
 				want = "new"
 			}
 			assertState(t, cfg, want)
@@ -394,7 +394,7 @@ func TestRemoteRestoreCrashHelper(t *testing.T) {
 			t.Fatal(err)
 		}
 	} else {
-		domains, err := storage.OpenDatabases(context.Background(), cfg.Database, cfg.DataDir)
+		domains, err := storage.OpenOfflineDatabases(context.Background(), cfg.Database, cfg.DataDir)
 		if err != nil {
 			t.Fatal(err)
 		}

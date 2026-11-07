@@ -42,6 +42,7 @@ export default {
   'errors.storage_busy': '存储繁忙，请稍后重试。',
   'errors.storage_unavailable': '存储暂不可用，请稍后重试。',
   'errors.storage_commit_unknown': '保存结果未知，请先核对当前状态，不要直接重复提交。',
+  'errors.storage_transaction_too_large': '本次修改超过事务大小上限，请减少数据量后再提交。',
   'errors.not_available': '此服务暂不可用。',
   'errors.body_too_large': '请求内容过大。',
   'errors.internal_error': '无法完成此操作。',

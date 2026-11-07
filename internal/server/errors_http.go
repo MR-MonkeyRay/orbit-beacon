@@ -61,6 +61,7 @@ var errorMappings = []errorMapping{
 	{serviceErrors | agentErrors | backupErrors | decodeErrors, isFieldValidation, http.StatusBadRequest, "validation_failed", "", false},
 	{decodeErrors, isBodyTooLarge, http.StatusRequestEntityTooLarge, "body_too_large", "Request body exceeds 64 KiB", false},
 	{serviceErrors | agentErrors | backupErrors, matches(storage.ErrCommitUnknown), http.StatusServiceUnavailable, "storage_commit_unknown", "Commit outcome is unknown; check the result before submitting again", false},
+	{serviceErrors | agentErrors | backupErrors, matches(storage.ErrTransactionTooLarge), http.StatusConflict, "storage_transaction_too_large", "Transaction exceeds the storage replication limit", false},
 	{serviceErrors | agentErrors | backupErrors, matches(storage.ErrUnavailable), http.StatusServiceUnavailable, "storage_unavailable", "Storage is temporarily unavailable", true},
 	{serviceErrors | agentErrors | backupErrors, storage.IsBusy, http.StatusServiceUnavailable, "storage_busy", "Storage is busy; retry later", true},
 	{serviceErrors | agentErrors, matches(auth.ErrUnauthenticated, nodes.ErrUnauthenticated), http.StatusUnauthorized, "unauthenticated", "Credentials or session are invalid or expired", false},

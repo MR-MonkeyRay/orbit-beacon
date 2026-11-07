@@ -15,7 +15,8 @@ type Bucket struct {
 }
 
 type Store interface {
-	// Write 持久化各桶，失败时也返回计划写入的存储行数。
+	// Write 在同一源事务持久化三档聚合；失败时也返回计划写入的存储行数。
+	// ErrCommitUnknown 后仅允许原批次重入，先解析原事务，确定回滚后才重做。
 	Write(ctx context.Context, buckets []Bucket) (rows int, err error)
 	// Query 返回闭区间内按时间升序排列的点。
 	Query(ctx context.Context, node, series string, stepSeconds int, start, end int64) ([]Point, error)

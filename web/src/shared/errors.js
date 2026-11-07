@@ -8,7 +8,7 @@ const errorKeys = new Set([
   'invalid_old_password', 'rate_limited', 'validation_failed', 'invalid_json', 'network', 'timeout',
   'unreadable_response', 'not_found', 'node_not_found', 'node_disabled',
   'node_capacity_reached', 'username_conflict', 'last_administrator', 'storage_busy', 'not_available',
-  'storage_unavailable', 'storage_commit_unknown',
+  'storage_unavailable', 'storage_commit_unknown', 'storage_transaction_too_large',
   'body_too_large', 'internal_error', 'secret_unreadable', 'backup_plan_busy', 'backup_queue_full',
   'notification_channel_capacity_reached', 'alert_rule_capacity_reached', 'enrollment_not_found',
   'enrollment_conflict', 'identity_conflict', 'artifact_not_ready', 'artifact_expired', 'password_expired',

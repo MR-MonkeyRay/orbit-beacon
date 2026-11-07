@@ -56,6 +56,7 @@ type App struct {
 	version                   string
 	lock                      io.Closer
 	db                        io.Closer
+	replication               *storage.Databases
 	history                   historyService
 	ingest                    interface{ Shutdown(context.Context) error }
 	notifications             notificationService
@@ -97,6 +98,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 		logger.LogAttrs(ctx, slog.LevelWarn, "history_disabled", logging.ErrorAttrs(openErr, "history_open_failed")...)
 	}
 	a.db = databases
+	a.replication = databases
 	db := databases.Main
 	if err := prepareDatabaseKey(ctx, cfg.DataDir, db); err != nil {
 		return nil, err
@@ -197,6 +199,13 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 func (a *App) Run(ctx context.Context) error {
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
+	if a.replication != nil {
+		if err := a.replication.StartReplication(runCtx); err != nil {
+			stop()
+			a.shutdown(&sync.WaitGroup{})
+			return err
+		}
+	}
 	// 后台任务随 runCtx 结束，须在数据库关闭前完成。
 	var background sync.WaitGroup
 	for _, run := range a.background {
@@ -233,8 +242,8 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 // shutdown 在 Run 的上下文结束时执行（收到信号或 HTTP 服务出错后）。
-// HTTP 与实时流共用 10 秒；后续每个组件各有 5 秒关闭时限，
-// 总时长不超过 deploy/ 中配置的 30 秒停机宽限期。
+// HTTP 与实时流共用 10 秒，后续组件各有独立关闭时限；
+// 复制必须实际结束后才能关闭历史库和连接池。
 func (a *App) shutdown(background *sync.WaitGroup) {
 	// 先上报 not-ready，让负载均衡器停止转发新流量。
 	a.handler.MarkNotReady()
@@ -246,6 +255,9 @@ func (a *App) shutdown(background *sync.WaitGroup) {
 		a.withDeadline(a.notifications.Shutdown, "notification_shutdown_timeout", "shutdown_timeout")
 	}
 	background.Wait()
+	if err := a.stopReplication(); err != nil {
+		a.logger.LogAttrs(context.Background(), slog.LevelError, "replication_stop_failed", logging.ErrorAttrs(err, "close_failed")...)
+	}
 	if a.history != nil {
 		a.withDeadline(a.history.CloseContext, "history_shutdown_failed", "history_flush_failed")
 		a.history = nil
@@ -302,6 +314,7 @@ func (a *App) close(ctx context.Context) error {
 		_ = a.listener.Close()
 		a.listener = nil
 	}
+	failures = append(failures, a.stopReplication())
 	if a.history != nil {
 		failures = append(failures, a.history.CloseContext(ctx))
 		a.history = nil
@@ -315,6 +328,15 @@ func (a *App) close(ctx context.Context) error {
 		a.lock = nil
 	}
 	return errors.Join(failures...)
+}
+
+func (a *App) stopReplication() error {
+	if a.replication == nil {
+		return nil
+	}
+	databases := a.replication
+	a.replication = nil
+	return databases.StopReplication()
 }
 
 func newHTTPServer(address string, handler http.Handler, logger *slog.Logger) *http.Server {

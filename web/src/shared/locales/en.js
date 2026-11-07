@@ -42,6 +42,7 @@ export default {
   'errors.storage_busy': 'Storage is busy. Try again later.',
   'errors.storage_unavailable': 'Storage is temporarily unavailable. Try again later.',
   'errors.storage_commit_unknown': 'The save result is unknown. Check the current state before submitting again.',
+  'errors.storage_transaction_too_large': 'This change exceeds the transaction limit. Reduce its size before submitting again.',
   'errors.not_available': 'This service is unavailable.',
   'errors.body_too_large': 'The request is too large.',
   'errors.internal_error': 'The operation could not be completed.',
