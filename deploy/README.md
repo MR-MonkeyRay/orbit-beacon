@@ -212,6 +212,29 @@ services:
 - 失联超过 24 小时、时钟或身份无法证明、旧操作不能排空时转人工；重连和重启不会清除人工锁。不要靠删控制文件、交换角色或删 standby 配置强行恢复。
 - 切换期间公开数据返回 `503`，不复用旧公开快照；静态管理页与 liveness 仍可用，认证和普通管理操作仍依赖当前业务库。历史域故障不使健康业务域退出 ready。
 
+### 人工恢复
+
+业务库仍能认证时，管理员会话可通过 `/api/v1/storage` 查看状态、预览并排队恢复；API 令牌不能调用恢复接口。操作返回 `202` 后由协调器执行，关闭客户端不取消工作。通过操作 ID 查询终态，不凭卡片消失判断成功。接口字段见 [OpenAPI](../api/openapi.yaml)。
+
+无法安全认证时，在 Server 主机以运行用户操作：`status` 可在运行中读取本地观测；`preview`、`run` 必须先停服，均使用同一配置和 `data_dir`。
+
+```sh
+orbitbeacon-server storage status --config /etc/orbitbeacon/server.json
+# 停止 Server；下例仅重建当前非活动的 standby，实际方向以预览为准。
+orbitbeacon-server storage preview --config /etc/orbitbeacon/server.json --domain main --action rebuild --target standby
+# 将下列占位符替换为刚才输出的操作 UUID 与精确确认值。
+orbitbeacon-server storage run --config /etc/orbitbeacon/server.json --operation '<operation-id>' --confirm '<domain/target/instance_uuid>'
+```
+
+- `rebuild` 清空已登记的非活动目标，从当前活动源重建；保留源数据，永不重建活动成员或清空陌生库。
+- `resume` 只批准当前故障的一次恢复；目标分叉数据可能被丢弃，失败不会授权下一次故障。
+- `promote` 仅在当前域不能服务、候选完整且身份正确时可用；可能丢失已提交数据，`run` 还须显式指定 `--accept-data-loss`。
+- 预览有效 5 分钟，绑定用户、实例、epoch 和修订；确认失效需重新预览，不复用旧确认。Web 与本机 CLI 的操作身份不同，预览和执行使用同一入口。
+- 接受后同 ID 重交只返回原操作，终态保留 30 天、最多 1000 条。CLI 默认纯文本，显式 `--json` 才输出 JSON；中断 CLI 只停止等待，记录保留，下次运行 Server 或相同 `run` 后继续协调。
+- `storage_commit_unknown`、网络中断或超时表示结果不明：先按原 ID 查询，不自动重发。业务库不可用时仍可用 `status` 读取本地记录，但 `observed_at` 不证明远端当前健康。
+
+故障通知订阅独立于普通告警规则，默认开启站内通知、无外部频道。`PATCH /api/v1/storage/notifications` 选择现有启用频道；控制文件仅保存用途隔离的加密发送快照。主业务库不可用时可用已验证快照外发，站内通知待业务库恢复后幂等补投。频道修改、删除或订阅变更先暂停快照，再校准；`snapshot_ready=false` 时外发暂停，修复表单仍可用。健康业务库的偏好读取失败时，状态接口保留控制记录中的偏好供修复，不将它当作已校准的新配置。未知提交不恢复旧频道。故障 Webhook 使用固定的 `kind=storage` 元数据及原 HMAC 签名，不改变告警格式。
+
 ### 清退备库
 
 需要改回单库时，先查看集群 ID，再停服清退；只有当前主库健康、仍为权威且无待决操作才允许完成：

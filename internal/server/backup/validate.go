@@ -458,7 +458,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 		_, err := notify.ParsePayload([]byte(r.text("payload_json")))
 		return err
 	case "inbox_notifications":
-		if !oneOf(r.text("kind"), "task", "alert") || r.text("source_id") == "" || r.text("transition") == "" || inbox.ValidateDetails(r.text("kind"), json.RawMessage(r.text("details_json"))) != nil {
+		if !oneOf(r.text("kind"), "task", "alert", "storage") || r.text("source_id") == "" || r.text("transition") == "" || inbox.ValidateDetails(r.text("kind"), json.RawMessage(r.text("details_json"))) != nil {
 			return invalidRow()
 		}
 	case "inbox_reads":

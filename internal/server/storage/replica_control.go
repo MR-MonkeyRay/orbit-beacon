@@ -28,6 +28,12 @@ type memberRecord struct {
 	Intent                                           *switchIntent
 	LossNanos                                        *int64
 	Rebuild                                          *rebuildOperation
+	Incident, ResumeIncident                         string
+	PrimaryReachable, StandbyReachable               bool
+	ReplicationStatus                                string
+	LastSyncedAt                                     *time.Time
+	LastAcknowledged                                 *replicaPosition
+	LastBarrier                                      *freezePoint
 }
 type controlRecord struct {
 	Cluster, Binding, Pending, Finished string
@@ -37,6 +43,8 @@ type controlRecord struct {
 	RestoreDomains                      []Domain
 	Bootstrapped                        bool
 	BootstrapPending                    bool
+	Operations                          map[string]*recoveryOperationRecord
+	Outage                              outageControl
 }
 type replication struct {
 	mu      sync.Mutex
@@ -124,12 +132,65 @@ func openControl(ctx context.Context, dataDir string, create bool) (*replication
 	return r, nil
 }
 func (r *replication) persistLocked(ctx context.Context) error {
-	raw, err := json.Marshal(r.record)
+	tx, err := r.control.BeginTx(ctx, nil)
+	if err != nil {
+		return safeFailure(err)
+	}
+	defer tx.Rollback()
+	var previous controlRecord
+	var raw []byte
+	err = tx.QueryRowContext(ctx, "SELECT record FROM storage_control WHERE id=1").Scan(&raw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return safeFailure(err)
+	}
+	if len(raw) > 0 {
+		if err = json.Unmarshal(raw, &previous); err != nil {
+			return ErrIdentityMismatch
+		}
+	}
+	beforeOutage := copyOutage(r.record.Outage)
+	beforeOperations := cloneRecoveryOperations(r.record.Operations)
+	beforeOperationPointers := make(map[string]*recoveryOperationRecord, len(r.record.Operations))
+	for id, op := range r.record.Operations {
+		beforeOperationPointers[id] = op
+	}
+	beforeRevision := r.record.Revision
+	beforeMembers := map[Domain]memberRecord{}
+	for domain, m := range r.record.Domains {
+		beforeMembers[domain] = *m
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			r.record.Outage = beforeOutage
+			clear(r.record.Operations)
+			for id, op := range beforeOperationPointers {
+				*op = *beforeOperations[id]
+				r.record.Operations[id] = op
+			}
+			r.record.Revision = beforeRevision
+			for domain, m := range beforeMembers {
+				*r.record.Domains[domain] = m
+			}
+		}
+	}()
+	now, err := r.now()
 	if err != nil {
 		return err
 	}
-	_, err = r.control.ExecContext(ctx, "INSERT INTO storage_control(id,record) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record", string(raw))
-	return safeFailure(err)
+	r.stageOutagesLocked(previous, now.Wall)
+	raw, err = json.Marshal(r.record)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO storage_control(id,record) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record", string(raw)); err != nil {
+		return safeFailure(err)
+	}
+	if err = tx.Commit(); err != nil {
+		return safeFailure(err)
+	}
+	committed = true
+	return nil
 }
 func (r *replication) revoke(ctx context.Context, domain Domain, state string) error {
 	r.mu.Lock()
@@ -500,6 +561,17 @@ func (dbs *Databases) BeginRestore(ctx context.Context, operationID string, doma
 		return ErrRestorePending
 	}
 	if r.record.Pending == "" {
+		instant, clockErr := r.now()
+		if clockErr != nil {
+			r.mu.Unlock()
+			return clockErr
+		}
+		for _, domain := range domains {
+			if recoveryPending(&r.record, domain, instant.Wall) != nil {
+				r.mu.Unlock()
+				return ErrRecoveryBusy
+			}
+		}
 		for _, domain := range domains {
 			m := r.record.Domains[domain]
 			if m == nil {

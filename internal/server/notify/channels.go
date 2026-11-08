@@ -80,6 +80,8 @@ type Options struct {
 	AllowPrivateNetworks  bool
 	Now                   func() time.Time
 	Logger                *slog.Logger
+	Storage               *storage.Databases
+	StorageBox            *secretbox.Box
 }
 type Service struct {
 	db             *storage.Database
@@ -95,6 +97,8 @@ type Service struct {
 	stop           context.CancelFunc
 	secretWarnings map[string]time.Time
 	logger         *slog.Logger
+	storageRunning bool
+	storageDone    chan struct{}
 }
 
 func New(db *storage.Database, box *secretbox.Box, opts Options) *Service {
@@ -402,6 +406,17 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 	if tx.Dialect() == storage.MySQL {
 		query = `INSERT INTO notification_channels(` + channelColumns + `) VALUES(?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name),enabled=VALUES(enabled),config_json=VALUES(config_json),secret_ciphertext=VALUES(secret_ciphertext),url_ciphertext=VALUES(url_ciphertext),updated_at=VALUES(updated_at)`
 	}
+	token, e := s.pauseStorageSnapshot(ctx, lease)
+	if e != nil {
+		return c, e
+	}
+	defer func() { s.finishStorageMutation(ctx, lease, tx, token, e) }()
+	if token.Revision != 0 {
+		if _, e = s.seedStorageRates(ctx, tx); e != nil {
+			token.Revision = 0
+			return c, e
+		}
+	}
 	_, e = tx.ExecContext(ctx, query, c.ID, c.Name, c.Kind, c.Enabled, string(raw), cipher, urlCipher, timekey.Format(c.CreatedAt), timekey.Format(c.UpdatedAt))
 	if e != nil {
 		return c, e
@@ -413,7 +428,8 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 	if e = audit.Insert(ctx, tx, action, c.ID, c.UpdatedAt); e != nil {
 		return c, e
 	}
-	return c, tx.Commit()
+	e = tx.Commit()
+	return c, e
 }
 func (s *Service) Delete(ctx context.Context, id string) error {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
@@ -427,6 +443,17 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return e
 	}
 	defer tx.Rollback()
+	token, e := s.pauseStorageSnapshot(ctx, lease)
+	if e != nil {
+		return e
+	}
+	defer func() { s.finishStorageMutation(ctx, lease, tx, token, e) }()
+	if token.Revision != 0 {
+		if _, e = s.seedStorageRates(ctx, tx); e != nil {
+			token.Revision = 0
+			return e
+		}
+	}
 	r, e := tx.ExecContext(ctx, "DELETE FROM notification_channels WHERE id=?", id)
 	if e != nil {
 		return e
@@ -438,10 +465,14 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if n == 0 {
 		return ErrNotFound
 	}
+	if e = s.removeStorageSubscription(ctx, tx, id); e != nil {
+		return e
+	}
 	if e = audit.Insert(ctx, tx, "notification_channel.delete", id, s.opts.Now()); e != nil {
 		return e
 	}
-	return tx.Commit()
+	e = tx.Commit()
+	return e
 }
 func (s *Service) openSecret(id string, encrypted []byte) ([]byte, error) {
 	if s.box == nil {

@@ -66,7 +66,7 @@ func New(db *storage.Database) *Service { return &Service{db: db} }
 // Insert 在来源操作的事务内插入通知。同一来源的状态转换重复处理时保持幂等；
 // 其他约束冲突仍会中止调用方的事务。
 func Insert(ctx context.Context, tx *storage.Tx, event Event) error {
-	if (event.Kind != "task" && event.Kind != "alert") || event.SourceID == "" || event.Transition == "" || event.CreatedAt.IsZero() {
+	if (event.Kind != "task" && event.Kind != "alert" && event.Kind != "storage") || event.SourceID == "" || event.Transition == "" || event.CreatedAt.IsZero() {
 		return ErrInvalidInput
 	}
 	if len(event.Details) == 0 {

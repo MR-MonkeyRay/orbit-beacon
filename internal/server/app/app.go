@@ -147,10 +147,20 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 		return nil, err
 	}
 	backupBox, err := secretbox.New(key, "orbitbeacon backup secrets v1")
-	clear(key)
 	if err != nil {
+		clear(key)
 		return nil, err
 	}
+	notificationOptions := notify.Options{Logger: logger, AllowInsecureWebhooks: cfg.AllowInsecureWebhooks, AllowPrivateNetworks: cfg.NotificationAllowPrivateNetworks}
+	if cfg.Database.Standby != nil {
+		notificationOptions.StorageBox, err = secretbox.New(key, "orbitbeacon storage notifications v1")
+		if err != nil {
+			clear(key)
+			return nil, err
+		}
+		notificationOptions.Storage = databases
+	}
+	clear(key)
 	backupOptions := backup.Options{DataDir: cfg.DataDir, SecretBox: backupBox, ServerVersion: version, Uploader: backup.NewObjectUploader()}
 	if metricHistory != nil {
 		backupOptions.History = metricHistory.Database()
@@ -159,7 +169,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 	if err != nil {
 		return nil, err
 	}
-	notifications := notify.New(db, box, notify.Options{Logger: logger, AllowInsecureWebhooks: cfg.AllowInsecureWebhooks, AllowPrivateNetworks: cfg.NotificationAllowPrivateNetworks})
+	notifications := notify.New(db, box, notificationOptions)
 	alertService := alerts.NewService(db, nil)
 	trafficService := traffic.NewService(db)
 	availabilityService := availability.NewService(db, nil, logger)
@@ -172,7 +182,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 			nodeService.InvalidatePublic()
 		}
 	})
-	handler, err := server.NewHandler(server.Options{RecoverUnavailableMain: cfg.Database.Standby != nil, Management: authService.Management(), Enrollments: enrollments, Traffic: trafficService, Availability: availabilityService, Inbox: inbox.New(db), Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, WebUpdateIntervalSeconds: cfg.WebUpdateIntervalSeconds, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: version, SaturationMetrics: saturation})
+	handler, err := server.NewHandler(server.Options{Storage: databases, RecoverUnavailableMain: cfg.Database.Standby != nil, Management: authService.Management(), Enrollments: enrollments, Traffic: trafficService, Availability: availabilityService, Inbox: inbox.New(db), Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, WebUpdateIntervalSeconds: cfg.WebUpdateIntervalSeconds, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: version, SaturationMetrics: saturation})
 	if err != nil {
 		return nil, err
 	}
@@ -186,6 +196,9 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 				if err := databases.CompleteBootstrap(lease.Context()); err != nil {
 					return err
 				}
+			}
+			if err := notifications.SyncStorageSnapshot(lease.Context()); err != nil {
+				return err
 			}
 			return handler.PublishDatabaseGeneration(ctx, lease)
 		},
@@ -214,6 +227,9 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 	a.handler, a.httpServer = handler, httpServer
 	a.ingest, a.notifications = ingestService, notifications
 	a.background = []func(context.Context){availabilityService.Run, backups.Run, notifications.Run, evaluator.Run, handler.RunRetention}
+	if cfg.Database.Standby != nil {
+		a.background = append(a.background, notifications.RunStorage)
+	}
 	return a, nil
 }
 

@@ -33,6 +33,7 @@ import (
 const sessionCookie = "orbitbeacon_session"
 
 type Options struct {
+	Storage                  *storage.Databases
 	Backups                  *backup.Service
 	Inbox                    *inbox.Service
 	Notifications            *notify.Service
@@ -58,6 +59,7 @@ type Options struct {
 }
 
 type handler struct {
+	storage                  *storage.Databases
 	announcements            *announcements.Service
 	commands                 *commands.Service
 	backups                  *backup.Service
@@ -148,6 +150,13 @@ func NewHandler(opts Options) (*handler, error) {
 	}
 	h := &handler{notifications: opts.Notifications, alerts: opts.Alerts, history: opts.History, staticAssets: staticAssets, accessLog: opts.AccessLog, metrics: newHTTPMetrics(opts.BuildVersion), trustedProxies: append([]netip.Prefix(nil), opts.TrustedProxies...), htmlPolicies: policies, auth: opts.Auth, nodes: opts.Nodes, management: opts.Management, enrollments: opts.Enrollments, ingest: opts.Ingest, traffic: opts.Traffic, availability: opts.Availability, origin: origin, logger: opts.Logger, now: opts.Now, ready: true}
 	h.backups, h.inbox = opts.Backups, opts.Inbox
+	h.storage = opts.Storage
+	if h.storage == nil {
+		h.storage = &storage.Databases{Main: opts.Nodes.Database()}
+		if opts.History != nil {
+			h.storage.History = opts.History.Database()
+		}
+	}
 	h.announcements = newAnnouncementService(opts.Nodes, opts.Now)
 	h.commands = commands.New(opts.Nodes.Database(), opts.Now)
 	h.saturation = opts.SaturationMetrics

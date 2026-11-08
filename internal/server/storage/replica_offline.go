@@ -60,6 +60,17 @@ func DisableReplication(ctx context.Context, cfg config.DatabaseConfig, dataDir,
 			return ErrUnavailable
 		}
 	}
+	instant, clockErr := r.now()
+	if clockErr != nil {
+		r.mu.Unlock()
+		return clockErr
+	}
+	for domain := range r.record.Domains {
+		if recoveryPending(&r.record, domain, instant.Wall) != nil {
+			r.mu.Unlock()
+			return ErrRecoveryBusy
+		}
+	}
 	r.mu.Unlock()
 	// 所有网络前提先核实；control 事务不跨网络或写 gate 等待。
 	for _, domain := range []Domain{MainDomain, HistoryDomain} {

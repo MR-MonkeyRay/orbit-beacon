@@ -18,7 +18,7 @@ var errMySQLReadOnly = errors.New("storage_mysql_read_only")
 // IsBusy 识别数值锁错误与已知回滚后等待有限日志回收的暂时忙状态。
 // 数据损坏、I/O 失败和约束冲突不据此重试，也不按错误文本判定。
 func IsBusy(err error) bool {
-	if errors.Is(err, errReplicaJournalPressure) {
+	if errors.Is(err, errReplicaJournalPressure) || errors.Is(err, ErrRecoveryBusy) {
 		return true
 	}
 	if code, ok := MySQLCode(err); ok {

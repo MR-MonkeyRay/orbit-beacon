@@ -240,6 +240,25 @@ func (s *Service) reserveRate(ctx context.Context, tx *storage.Tx, id string) (b
 		return false, time.Time{}, e
 	}
 	window, parseErr := timekey.Parse(start)
+	if s.opts.Storage != nil {
+		if e == nil && parseErr != nil {
+			status, err := s.opts.Storage.RecoveryStatus(ctx)
+			if err != nil {
+				return false, time.Time{}, err
+			}
+			if status.Enabled {
+				return false, time.Time{}, ErrUnavailable
+			}
+		} else if e == nil {
+			if _, err := s.opts.Storage.SeedNotificationRate(ctx, id, window, count, now); err != nil {
+				return false, time.Time{}, err
+			}
+		}
+		allowed, next, configured, err := s.opts.Storage.ReserveNotificationRate(ctx, id, now)
+		if configured || err != nil {
+			return allowed, next, err
+		}
+	}
 	if parseErr != nil || !now.Before(window.Add(time.Minute)) {
 		window = now
 		count = 0
@@ -399,19 +418,26 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	s.stop()
 	s.mu.Lock()
 	cancel := s.cancel
+	storageDone := s.storageDone
 	if cancel != nil {
 		cancel()
 	}
 	s.mu.Unlock()
-	if cancel == nil {
-		return nil
+	if cancel != nil {
+		select {
+		case <-s.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
-	select {
-	case <-s.done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	if storageDone != nil {
+		select {
+		case <-storageDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
+	return nil
 }
 func (s *Service) Test(ctx context.Context, id string) (Result, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)

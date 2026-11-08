@@ -135,6 +135,11 @@ func (d *replicaDomain) freeze(ctx context.Context, reason string) error {
 	}
 	old := *m
 	m.Freeze = &f
+	if m.Active == "primary" {
+		m.PrimaryReachable = false
+	} else {
+		m.StandbyReachable = false
+	}
 	if m.FailureSince.IsZero() {
 		m.FailureSince = f.Wall
 	}
@@ -446,7 +451,7 @@ func (d *replicaDomain) checkManual(ctx context.Context) error {
 }
 
 func (d *replicaDomain) promotionCheckpoint(ctx context.Context, m memberRecord) (promotionProof, error) {
-	if d.target == nil || !m.Ready || m.Manual || m.Freeze == nil {
+	if d.target == nil || !m.Ready || m.manualBlocked() || m.Freeze == nil {
 		return promotionProof{}, ErrUnavailable
 	}
 	f := m.Freeze
@@ -594,7 +599,7 @@ func (d *replicaDomain) switchTo(ctx context.Context, role string, p replicaPosi
 		if err := d.checkManual(ctx); err != nil {
 			return err
 		}
-		if d.member().Manual {
+		if d.member().manualBlocked() {
 			return ErrUnavailable
 		}
 		if err := d.drainForSwitch(ctx); err != nil {
@@ -603,7 +608,7 @@ func (d *replicaDomain) switchTo(ctx context.Context, role string, p replicaPosi
 		if err := d.checkManual(ctx); err != nil {
 			return err
 		}
-		if d.member().Manual {
+		if d.member().manualBlocked() {
 			return ErrUnavailable
 		}
 		_, source, _ := d.endpoint(m.Active)
@@ -689,6 +694,11 @@ func (d *replicaDomain) finishSwitch(ctx context.Context) error {
 		next.Pointer = true
 		if err := d.update(ctx, func(m *memberRecord) {
 			m.Active = next.Target
+			if next.Target == "primary" {
+				m.PrimaryReachable = true
+			} else {
+				m.StandbyReachable = true
+			}
 			m.Epoch = next.Epoch
 			m.Generation = next.Generation
 			m.Ready = false
@@ -775,7 +785,7 @@ func (db *Database) resolveSelectedReceipt(ctx context.Context, p replicaPositio
 }
 
 // coordinatorStep 由每域唯一 worker 串行调用；域之间不等待彼此的网络或排空。
-func (d *replicaDomain) coordinatorStep(ctx context.Context) error {
+func (d *replicaDomain) coordinatorAutomatic(ctx context.Context) error {
 	if d.control == nil {
 		return d.step(ctx)
 	}
@@ -853,7 +863,7 @@ func (d *replicaDomain) coordinatorStep(ctx context.Context) error {
 		registered = m.PrimaryRegistered
 	}
 	// 先恢复已登记完整副本的真实ACK；manual只禁止恢复，不禁止只读校验。
-	if (!m.Manual || (m.Ready && registered)) && (d.target == nil || d.target.current == nil) {
+	if (!m.manualBlocked() || (m.Ready && registered)) && (d.target == nil || d.target.current == nil) {
 		target, err := d.openMember(ctx, opposite(m.Active))
 		targetErr = err
 		if err == nil {
@@ -867,7 +877,7 @@ func (d *replicaDomain) coordinatorStep(ctx context.Context) error {
 	if err := d.prune(ctx, time.Now()); err != nil {
 		return errors.Join(targetErr, err)
 	}
-	if m.Manual {
+	if m.manualBlocked() {
 		return nil
 	}
 	if targetErr != nil {
@@ -896,7 +906,7 @@ func (d *replicaDomain) coordinatorStep(ctx context.Context) error {
 
 func (d *replicaDomain) tryPromotion(ctx context.Context) error {
 	m := d.member()
-	if m.Manual || m.Freeze == nil {
+	if m.manualBlocked() || m.Freeze == nil {
 		return nil
 	}
 	now, err := d.control.now()
@@ -1073,7 +1083,7 @@ func (d *replicaDomain) alignEpoch(ctx context.Context) error {
 
 func (d *replicaDomain) tryFailback(ctx context.Context) error {
 	m := d.member()
-	if m.Manual || !m.Ready {
+	if m.manualBlocked() || !m.Ready {
 		return nil
 	}
 	probe, cancel := context.WithTimeout(ctx, 2*time.Second)

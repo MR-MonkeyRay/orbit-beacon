@@ -66,6 +66,9 @@ func (d *replicaDomain) seed(parent context.Context) error {
 	if err = d.update(ctx, func(m *memberRecord) { m.Rebuild = op }); err != nil {
 		return err
 	}
+	if err = d.operationProgress(ctx, "clearing", 0); err != nil {
+		return err
+	}
 	if err = validateReplicaSchema(ctx, d.target); err != nil {
 		return err
 	}
@@ -174,6 +177,10 @@ func (d *replicaDomain) seed(parent context.Context) error {
 	if err = d.update(ctx, func(m *memberRecord) { m.Rebuild = &copying }); err != nil {
 		return err
 	}
+	if err = d.operationProgress(ctx, "copying", 0); err != nil {
+		return err
+	}
+	var rowsCopied int64
 	for _, table := range tables {
 		cols := columns(table)
 		rows, err := source.QueryContext(ctx, "SELECT "+columnNames(cols)+" FROM `"+table.Name+"`")
@@ -198,6 +205,10 @@ func (d *replicaDomain) seed(parent context.Context) error {
 				_, err := tx.ExecContext(ctx, q+strings.Join(groups, ","), args...)
 				return err
 			})
+			if err == nil {
+				rowsCopied += int64(len(batch))
+				err = d.operationProgress(ctx, "copying", rowsCopied)
+			}
 			batch = nil
 			size = prefix
 			return err
@@ -289,6 +300,9 @@ func (d *replicaDomain) seed(parent context.Context) error {
 	catching := *op
 	catching.Phase = "catching_up"
 	if err = d.update(ctx, func(m *memberRecord) { m.Rebuild = &catching }); err != nil {
+		return err
+	}
+	if err = d.operationProgress(ctx, "catching_up", rowsCopied); err != nil {
 		return err
 	}
 	if err = d.catchUp(ctx); err != nil {

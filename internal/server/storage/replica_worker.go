@@ -29,6 +29,8 @@ type replicaDomain struct {
 	cancelSeed        context.CancelFunc
 	revoke            func(context.Context) error
 	applied           atomic.Int64
+	head              atomic.Int64
+	lastSynced        atomic.Int64
 	seedBlocked       atomic.Bool
 	stabilityObserved bool
 }
@@ -283,6 +285,7 @@ func (d *replicaDomain) catchUp(ctx context.Context) error {
 			return err
 		}
 		source, err := position(ctx, d.source.current.reader)
+		d.head.Store(source.Seq)
 		if err != nil {
 			return err
 		}
@@ -291,7 +294,7 @@ func (d *replicaDomain) catchUp(ctx context.Context) error {
 		}
 		d.applied.Store(target.Seq)
 		if target == source {
-			return nil
+			return d.acknowledgeRecovery(ctx, target)
 		}
 		batch, err := readReplicaTransaction(ctx, d.source, target.Seq)
 		if err != nil {
@@ -304,6 +307,7 @@ func (d *replicaDomain) catchUp(ctx context.Context) error {
 			return err
 		}
 		d.applied.Store(batch.Seq)
+		d.lastSynced.Store(time.Now().UTC().UnixNano())
 	}
 }
 func (d *replicaDomain) prune(ctx context.Context, now time.Time) error {
