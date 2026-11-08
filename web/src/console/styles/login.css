@@ -20,7 +20,7 @@
   position: relative;
   display: grid;
   place-items: center;
-  min-height: 100vh;
+  min-height: 100dvh;
   padding: var(--sp-section) 18px;
   overflow: hidden;
   isolation: isolate;

@@ -734,7 +734,7 @@ p.empty {
 /* 对话框 */
 dialog {
   width: min(520px,calc(100vw - 32px));
-  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   padding: 0;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
