@@ -44,7 +44,7 @@ export default {
   'settings.emptyGroup': '此分组没有节点。',
   'settings.deleteGroup': '删除分组',
   'settings.noGroups': '暂无分组',
-  'settings.batchEnrollment': '批量注册票据',
+  'settings.batchEnrollment': '签发批量票据',
   'settings.olderEvents': '加载更早的事件',
   'settings.noAudit': '暂无审计事件',
   'settings.savedName': '已保存 {name}。',

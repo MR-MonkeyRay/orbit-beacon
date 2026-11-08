@@ -149,7 +149,7 @@ export default {
   'data.plan.noTask': 'No task yet',
   'data.plan.edit': 'Edit',
   'data.plan.delete': 'Delete',
-  'data.plan.lastDetails': 'Last task details',
+  'data.plan.viewLast': 'View last task',
   'data.plan.deleteTitle': 'Delete {name}?',
   'data.plan.deleteMessage': 'Backups and history are kept. Plans with queued or running tasks cannot be deleted.',
   'data.plan.deleteConfirm': 'Delete plan',

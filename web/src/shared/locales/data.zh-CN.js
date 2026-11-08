@@ -149,7 +149,7 @@ export default {
   'data.plan.noTask': '暂无任务',
   'data.plan.edit': '编辑',
   'data.plan.delete': '删除',
-  'data.plan.lastDetails': '最近任务详情',
+  'data.plan.viewLast': '查看最近任务',
   'data.plan.deleteTitle': '删除“{name}”？',
   'data.plan.deleteMessage': '不会删除已保存的备份或任务历史。有任务排队或运行时无法删除。',
   'data.plan.deleteConfirm': '删除计划',

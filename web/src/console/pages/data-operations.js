@@ -33,7 +33,7 @@ function taskTable(tasks, openTask) {
         task.destination.actor_name ? h('small', {class: 'muted'}, t('data.task.startedBy', {name: task.destination.actor_name})) : null),
       cell(t('data.categories'), categoryNames(task.categories)),
       cell(t('data.task.state'), taskStatus(task), task.warning_code ? h('small', {class: 'muted'}, t('data.task.warningDetails')) : null),
-      cell(t('data.task.details'), button(t('data.task.details'), {onClick: () => openTask(task.id)})))))});
+      cell(t('data.task.details'), button(t('data.task.view'), {onClick: () => openTask(task.id)})))))});
 }
 
 function planCard(plan, {openTask, editPlan, deletePlan}) {
@@ -53,7 +53,7 @@ function planCard(plan, {openTask, editPlan, deletePlan}) {
     h('div', {class: 'data-actions'},
       button(t('data.plan.edit'), {onClick: () => editPlan(plan)}),
       button(t('data.plan.delete'), {variant: 'danger', onClick: () => deletePlan(plan)}),
-      last ? button(t('data.plan.lastDetails'), {onClick: () => openTask(last.id)}) : null));
+      last ? button(t('data.plan.viewLast'), {onClick: () => openTask(last.id)}) : null));
 }
 
 // tabSet 负责挂载。卸载的标签页没有请求和摘要订阅。

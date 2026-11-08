@@ -44,7 +44,7 @@ export default {
   'settings.emptyGroup': 'This group has no nodes.',
   'settings.deleteGroup': 'Delete group',
   'settings.noGroups': 'No groups yet',
-  'settings.batchEnrollment': 'Batch enrollment ticket',
+  'settings.batchEnrollment': 'Issue batch ticket',
   'settings.olderEvents': 'Load older events',
   'settings.noAudit': 'No audit events',
   'settings.savedName': 'Saved {name}.',
