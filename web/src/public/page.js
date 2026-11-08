@@ -68,6 +68,9 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
     filtersBar.append(button);
     return [status, button];
   }));
+  // 右缘渐隐只在筛选条真的可滚动时启用，否则最后一个按钮会被无谓遮暗。
+  const syncFade = () => filtersBar.classList.toggle('fade', filtersBar.scrollWidth > filtersBar.clientWidth);
+  if (typeof ResizeObserver === 'function') new ResizeObserver(syncFade).observe(filtersBar);
 
   function applyFilter() {
     for (const [status, button] of filterButtons) {
@@ -82,6 +85,7 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
       if (!card.hidden) shown += 1;
     });
     filtersBar.hidden = current.length === 0;
+    syncFade();
     if (current.length && !shown) {
       empty.hidden = false;
       emptyText.textContent = t(`public.filter.empty.${filter}`);

@@ -739,6 +739,10 @@ footer {
     margin: 0 calc(-1 * var(--gutter)) var(--sp-content);
     padding: var(--sp-tight) var(--gutter);
     scroll-padding-inline: var(--gutter);
+  }
+
+  /* 只在内容可滚动时由 page.js 加上 .fade，避免无谓遮暗最后一个按钮。 */
+  .filters.fade {
     mask-image: linear-gradient(90deg,#000 calc(100% - 24px),transparent);
   }
 
