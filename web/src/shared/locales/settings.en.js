@@ -3,6 +3,8 @@ export default {
   'announcements.add': 'Add announcement',
   'announcements.edit': 'Edit announcement',
   'announcements.delete': 'Delete announcement',
+  'announcements.deleteNamed': 'Delete announcement “{name}”?',
+  'announcements.new': 'New announcement',
   'announcements.heading': 'Title',
   'announcements.body': 'Content',
   'announcements.level': 'Level',

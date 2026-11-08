@@ -3,6 +3,8 @@ export default {
   'announcements.add': '添加公告',
   'announcements.edit': '编辑公告',
   'announcements.delete': '删除公告',
+  'announcements.deleteNamed': '删除公告「{name}」？',
+  'announcements.new': '新建公告',
   'announcements.heading': '标题',
   'announcements.body': '内容',
   'announcements.level': '级别',
