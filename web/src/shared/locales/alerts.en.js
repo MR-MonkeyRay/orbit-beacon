@@ -28,7 +28,7 @@ export default {
   'alerts.tab.active': 'Active',
   'alerts.tab.history': 'History',
   'alerts.tab.rules': 'Rules',
-  'alerts.tab.channels': 'Channels',
+  'alerts.tab.channels': 'Notification channels',
   'alerts.unknown': 'Unknown',
   'alerts.unknownTime': 'Unknown time',
   'alerts.deletedRule': 'Deleted rule',
