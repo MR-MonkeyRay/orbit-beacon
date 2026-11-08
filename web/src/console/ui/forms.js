@@ -155,7 +155,14 @@ export function field(label, control, options = {}) {
   visible.addEventListener('input', () => {
     if (visible.classList.contains('touched') || visible.hasAttribute('aria-invalid')) control.showError(validationText(control));
   });
-  visible.addEventListener('blur', () => { if (control.value !== '') visible.classList.add('touched'); });
+  visible.addEventListener('blur', () => {
+    if (control.value !== '') {
+      visible.classList.add('touched');
+      // touched 触发 .touched:invalid 的红框，但 aria-invalid 只在 showError 时设置；
+      // blur 后同步一次，让读屏与视觉一致。
+      control.showError(validationText(control));
+    }
+  });
   const check = ['checkbox', 'radio'].includes(control.type) && !options.inner;
   // aria-required 已表达必填；星号只做视觉提示，对读屏隐藏。
   // 星号放在 label 旁边而不是内部：运行期 required 会切换（通道类型、

@@ -151,6 +151,28 @@ test('checkbox fields put the native control before its text in one clickable la
   } finally { dom.restore(); }
 });
 
+test('blur on a touched invalid field syncs aria-invalid with the red border', async () => {
+  const dom = installDOM();
+  try {
+    const {copy} = await import('./console-dom.js');
+    const {field, input} = await import('../src/console/ui/forms.js');
+    const control = input({name: 'name', required: true});
+    const wrapper = field('Name', control);
+    dom.body.append(wrapper);
+    control.value = 'too short';
+    control.setCustomValidity('boom');
+    control.dispatchEvent(new Event('blur'));
+    assert.equal(control.classList.contains('touched'), true);
+    assert.equal(control.getAttribute('aria-invalid'), 'true');
+    assert.equal(wrapper.querySelector('.field-error').hidden, false);
+    // 值恢复合法后再离开焦点，aria-invalid 必须撤掉。
+    control.setCustomValidity('');
+    control.dispatchEvent(new Event('blur'));
+    assert.equal(control.getAttribute('aria-invalid'), null);
+    assert.equal(wrapper.querySelector('.field-error').hidden, true);
+  } finally { dom.restore(); }
+});
+
 test('required marker follows runtime required toggles and survives label rewrites', async () => {
   const dom = installDOM();
   try {
