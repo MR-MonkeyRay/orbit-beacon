@@ -722,6 +722,28 @@ test('a current successful lifecycle mutation still reports success after its re
   } finally { env.clean(); }
 });
 
+test('login credentials are exempt from unsaved-change tracking', async (t) => {
+  const env = setup(t, () => response({message: 'Unauthorized', code: 'unauthenticated'}, {status: 401}));
+  const originals = new Map(['matchMedia', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
+  globalThis.matchMedia = () => ({matches: true, addEventListener() {}});
+  globalThis.requestAnimationFrame = () => 0;
+  location.pathname = '/login';
+  const sidebar = new TestElement('div'); sidebar.id = 'sidebar';
+  const mark = new TestElement('span'); mark.className = 'mark'; mark.cloneNode = () => new TestElement('span');
+  sidebar.append(mark); env.body.append(sidebar);
+  try {
+    const {loginPage} = await import('../src/console/pages/login.js');
+    const page = await loginPage(); env.body.append(page);
+    const form = page.querySelector('form');
+    form.querySelectorAll('input').forEach((control) => { control.value = 'typed-credentials'; });
+    form.dispatchEvent(new Event('input'));
+    assert.equal(form.dataset.dirty, undefined, 'credential input must not register as unsaved work');
+  } finally {
+    env.clean();
+    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+  }
+});
+
 test('login credential rejection still renders its inline error after private-session toast filtering', async (t) => {
   const env = setup(t, () => response({message: 'Unauthorized', code: 'unauthenticated'}, {status: 401}));
   const originals = new Map(['matchMedia', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
