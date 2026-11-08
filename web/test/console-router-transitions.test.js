@@ -241,6 +241,31 @@ test('locale confirmation includes dialog drafts and uses one prompt for a dirty
 });
 
 
+test('dialog drafts block go and popstate with the same discard confirmation as locale changes', async (t) => {
+  const env = await routing(t, {hidden: true});
+  const {modal} = await import('../src/console/ui/dialogs.js');
+  const input = new TestElement('input');
+  const dialog = modal('Private form', () => input);
+  input.value = 'unsaved secret';
+  try {
+    const pending = env.go('/draft-guard');
+    await flush();
+    const confirmations = env.body.querySelectorAll('dialog');
+    assert.equal(confirmations.length, 2, 'navigation adds one discard confirmation beside the draft dialog');
+    confirmations.at(-1).close('cancel');
+    await assert.rejects(pending, (error) => error.name === 'AbortError');
+    assert.equal(input.value, 'unsaved secret');
+    assert.equal(document.getElementById('view').textContent, '/initial');
+    location.pathname = '/back';
+    env.window.dispatchEvent(Object.assign(new Event('popstate'), {state: {scroll: 0}}));
+    await flush();
+    env.body.querySelectorAll('dialog').at(-1).close('cancel');
+    await flush();
+    assert.equal(location.pathname, '/initial', 'cancelled back navigation restores the previous URL');
+    dialog.close('done');
+  } finally { env.clean(); }
+});
+
 test('reduced motion navigates without view transitions and restores scroll instantly', async (t) => {
   const env = await routing(t);
   try {

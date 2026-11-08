@@ -30,11 +30,13 @@ export function ignoreNavigationCancellation(error) {
 }
 
 const hasUnsavedChanges = () => Boolean(view.querySelector('form[data-dirty="true"]'));
+// SPA 导航与后退必须与语言切换、卸载路径一致地保护打开的对话框输入。
+const hasUnsavedWork = () => hasUnsavedChanges() || hasUnsavedDialogChanges();
 
 const localeChangeBusy = () => Boolean(document.querySelector('[data-busy="true"],button.busy'));
 export async function confirmLocaleChange() {
   if (localeChangeBusy()) return false;
-  if ((hasUnsavedChanges() || hasUnsavedDialogChanges()) && !(await confirmDiscard())) return false;
+  if (hasUnsavedWork() && !(await confirmDiscard())) return false;
   return !localeChangeBusy();
 }
 
@@ -52,7 +54,7 @@ function skipTransition(hidden = false) {
 
 export async function go(target, options = {}) {
   const attempt = ++intent;
-  if (!options.force && hasUnsavedChanges() && !(await confirmDiscard())) throw new NavigationCancelled();
+  if (!options.force && hasUnsavedWork() && !(await confirmDiscard())) throw new NavigationCancelled();
   if (attempt !== intent) throw new NavigationCancelled();
   const destination = new URL(target, location.href);
   if (destination.pathname === '/' || destination.pathname === '/public.html') {
@@ -203,7 +205,7 @@ export function startRouter(table) {
     const attempt = ++intent;
     const previousURL = currentURL;
     const scroll = window.scrollY;
-    if (hasUnsavedChanges() && !(await confirmDiscard())) {
+    if (hasUnsavedWork() && !(await confirmDiscard())) {
       if (attempt !== intent) return;
       history.pushState({scroll}, '', previousURL);
       window.scrollTo({top: scroll, behavior: 'instant'});
@@ -225,7 +227,7 @@ export function startRouter(table) {
   listen(window, 'pageshow', revalidate);
   listen(window, 'beforeunload', (event) => {
     if (confirmedUnload) { confirmedUnload = false; return; }
-    if (hasUnsavedChanges() || hasUnsavedDialogChanges()) event.preventDefault();
+    if (hasUnsavedWork()) event.preventDefault();
   });
   void render().catch(ignoreNavigationCancellation);
   return () => {
