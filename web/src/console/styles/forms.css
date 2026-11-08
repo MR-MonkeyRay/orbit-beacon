@@ -86,10 +86,23 @@
   order: 1;
 }
 
+.field-label-row {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
 .field-label,.field>span:first-child {
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
   color: var(--ink);
+}
+
+.field-required {
+  color: var(--bad);
+  font-size: var(--fs-sm);
+  line-height: 1;
 }
 
 .field-error {

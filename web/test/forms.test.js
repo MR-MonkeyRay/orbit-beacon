@@ -150,3 +150,24 @@ test('checkbox fields put the native control before its text in one clickable la
     assert.equal(wrapper.querySelector('.field-error').hidden, true);
   } finally { dom.restore(); }
 });
+
+test('required marker follows runtime required toggles and survives label rewrites', async () => {
+  const dom = installDOM();
+  try {
+    const {copy} = await import('./console-dom.js');
+    const {field, input} = await import('../src/console/ui/forms.js');
+    const control = input({name: 'secret'});
+    const wrapper = field(copy('alerts.channels.signingSecret'), control);
+    dom.body.append(wrapper);
+    const marker = wrapper.querySelector('.field-required');
+    assert.equal(marker.hidden, true);
+    control.required = true;
+    assert.equal(marker.hidden, false);
+    // 标签整体重写不应擦掉 marker（它在 label 之外）。
+    wrapper.querySelector('label').textContent = 'Bot token';
+    assert.ok(wrapper.querySelector('.field-required'));
+    assert.equal(wrapper.querySelector('label').textContent, 'Bot token');
+    control.required = false;
+    assert.equal(marker.hidden, true);
+  } finally { dom.restore(); }
+});
