@@ -145,7 +145,7 @@ export function channelsPanel({channels, signal, saved}) {
       h('td', null, t(channel.enabled ? 'alerts.state.enabled' : 'alerts.state.disabled')),
       h('td', {class: 'actions'}, test, iconButton('edit', t('alerts.editNamed', {name: channel.name}), () => edit(channel)), iconButton('trash', t('alerts.deleteAction', {name: channel.name}), () => remove(channel))));
   };
-  return panel(t('alerts.tab.channels'), {action: button(t('alerts.channels.add'), {small: true, variant: 'primary', onClick: () => edit(null)})},
+  return panel(null, {action: button(t('alerts.channels.add'), {small: true, variant: 'primary', onClick: () => edit(null)})},
     channels.length ? dataTable({caption: t('alerts.channels.title'),
       columns: ['name', 'kind', 'destinationSecret', 'state', 'actions'].map((key) => t(`alerts.column.${key}`)),
       body: h('tbody', null, channels.map(row))}) : h('p', {class: 'text-note'}, t('alerts.channels.empty')));

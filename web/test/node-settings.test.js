@@ -185,8 +185,10 @@ test('billing saves exact decimal units, stays clean after submit, and preserves
   try {
     const billing = formFor(env.root, 'billing_day');
     assert.ok(billing, 'Traffic has a separate billing form');
+    // 流量面板标题与标签页同名已省略；计费面板保留自己的标题。
     const headings = env.root.querySelectorAll('h2').map((heading) => heading.textContent);
-    assert.equal(headings[headings.indexOf(copy('nodes.traffic')) + 1], copy('nodes.trafficBilling'));
+    assert.ok(headings.includes(copy('nodes.trafficBilling')));
+    assert.ok(!headings.includes(copy('nodes.traffic')));
     assert.deepEqual(control(billing, 'quota_unit').options.map((option) => option.value), ['bytes', 'KB', 'MB', 'GB', 'TB']);
     assert.equal(control(billing, 'billing_day').getAttribute('min'), '1');
     assert.equal(control(billing, 'billing_day').getAttribute('max'), '28');

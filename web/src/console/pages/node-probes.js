@@ -112,7 +112,8 @@ export function probesPanel(id, signal) {
     }
   }
   const content = h('div', {class: 'probes-body'});
-  const root = panel(t('nodes.probes'), {}, h('div', {class: 'stack'}, content, historyControls, historyStatus, charts));
+  // 标签页按钮已命名该面板，不重复标题。
+  const root = panel(null, {}, h('div', {class: 'stack'}, content, historyControls, historyStatus, charts));
   async function load() {
     if (lifecycle?.disposed || signal?.aborted) return;
     controller?.abort();

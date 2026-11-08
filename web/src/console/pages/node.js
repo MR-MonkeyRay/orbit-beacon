@@ -291,5 +291,6 @@ function publicTab(node, settings) {
     await api(`/nodes/${encodeURIComponent(node.id)}/public-settings`, {method: 'PATCH', body: {enabled: enabled.checked, name: name.value, region: region.value, provider: provider.value}});
     return enabled.checked ? t('nodes.publicSaved') : t('nodes.publicHidden');
   }, node);
-  return h('div', {class: 'split'}, panel(t('nodes.publicPage'), {}, h('div', {class: 'stack'}, hidden, privacy, form)), previewPanel);
+  // 左侧面板标题与“公开页”标签页同名，省略；预览面板保留自己的标题。
+  return h('div', {class: 'split'}, panel(null, {}, h('div', {class: 'stack'}, hidden, privacy, form)), previewPanel);
 }

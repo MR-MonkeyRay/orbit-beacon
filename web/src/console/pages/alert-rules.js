@@ -114,7 +114,7 @@ export function rulesPanel({rules, groups, nodes, channels, signal, saved}) {
       toast(t('alerts.rules.deleted'));
     } catch (error) { if (!signal?.aborted) toastError(error); }
   };
-  return panel(t('alerts.tab.rules'), {action: button(t('alerts.rules.add'), {small: true, variant: 'primary', onClick: () => edit(null)})},
+  return panel(null, {action: button(t('alerts.rules.add'), {small: true, variant: 'primary', onClick: () => edit(null)})},
     rules.length ? dataTable({caption: t('alerts.rules.caption'),
       columns: ['name', 'condition', 'scope', 'severity', 'state', 'channels', 'actions'].map((key) => t(`alerts.column.${key}`)),
       body: h('tbody', null, rules.map((rule) => h('tr', null,
