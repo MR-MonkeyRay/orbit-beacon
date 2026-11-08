@@ -39,6 +39,10 @@
 <div id="empty" class="empty" hidden><p id="empty-text"></p><button id="retry" class="retry" type="button" data-i18n="common.retry" hidden>Retry</button></div>
 <ul id="nodes" class="nodes" data-i18n-aria-label="public.nodesLabel" aria-label="Public nodes"></ul>
 <nav class="pagination" id="pagination" data-i18n-aria-label="public.paginationLabel" aria-label="Node pages" hidden><button id="previous" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-left"/></svg><span data-i18n="public.previous">Previous</span></button><span id="page">Page 1</span><button id="next" type="button" disabled><span data-i18n="public.next">Next</span><svg class="icon" aria-hidden="true"><use href="#i-right"/></svg></button></nav>
+<!-- 脚本 3 秒仍未启动时由 CSS 显示；启动后立即移除（page.js）。 -->
+<div id="script-error" class="script-error">
+<p class="empty">页面脚本未能加载，请检查网络后 <a href="">刷新重试</a>。 / The page script failed to load. Check your connection and <a href="">refresh</a>.</p>
+</div>
 <noscript><p class="empty">请启用 JavaScript 以获取公开节点信息。 / Enable JavaScript to view public node information.</p></noscript>
 </div>
 </main>

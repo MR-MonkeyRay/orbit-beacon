@@ -820,8 +820,18 @@ footer {
 .public-announcement .announcement-level { color: var(--ink-subtle); }
 .public-announcement .announcement-body { white-space: pre-line; }
 
-/* 静止在基础状态，避免无限动画被全局规则压缩成一次闪烁。
-   加载仍由 aria-busy、骨架屏和现有连接状态文字表达。 */
+/* 脚本 3 秒未启动时显示回退提示：没有 JS 可切换类名，只能用 CSS 延时动画。
+   reduced-motion 只压缩时长不压缩延迟（tokens.css），3s 延时仍然生效。
+   page.js 启动后立即移除该节点，提示随之失效。 */
+.script-error {
+  display: none;
+  animation: script-error-reveal 1ms 3s both;
+}
+
+@keyframes script-error-reveal {
+  to { display: block; }
+}
+
 @media (prefers-reduced-motion:reduce) {
   .countdown[data-state="live"] .dot,.countdown.running .arc,
   .refresh.loading .icon,.orbits .ring,.orbits .sat,.orbits .halo,

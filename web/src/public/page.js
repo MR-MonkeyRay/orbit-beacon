@@ -10,6 +10,8 @@ import {statusLabels} from '../shared/status.js';
 
 export function mountPublicPage({createCard, skeletonCards, createConstellation, announcementRenderer}) {
   const STATUS = statusLabels({unknown: 'public.status.unknown'});
+  // 脚本已成功启动，移除脚本加载失败的回退提示。
+  document.getElementById('script-error')?.remove();
   translateHTML();
 
   const PAGE = 50;
