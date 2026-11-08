@@ -42,7 +42,7 @@ function planCard(plan, {openTask, editPlan, deletePlan}) {
   return h('article', {class: 'data-plan'},
     h('div', {class: 'data-plan-head'}, h('div', null, h('h3', null, plan.name),
       h('span', {class: 'muted'}, plan.kind === 'local' ? t('data.plan.localDirectory') : t(backupProviders.find(([id]) => id === plan.destination.provider)?.[1] || 'data.provider.unknown'))),
-    h('span', {class: `data-state ${plan.enabled ? 'data-state-succeeded' : 'data-state-unknown'}`}, t(plan.enabled ? 'data.plan.enabled' : 'data.plan.disabled'))),
+    h('span', {class: `data-state ${plan.enabled ? 'data-state-enabled' : 'data-state-disabled'}`}, t(plan.enabled ? 'data.plan.enabled' : 'data.plan.disabled'))),
     h('p', {class: 'data-location'}, planLocation(plan)),
     h('dl', {class: 'data-plan-facts'},
       h('div', null, h('dt', null, t('data.plan.cron')), h('dd', null, h('code', null, plan.cron))),

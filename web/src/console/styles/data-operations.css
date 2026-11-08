@@ -140,6 +140,15 @@
   color: var(--orbit);
 }
 
+/* 计划开关状态不复用任务状态色，避免“已停用”被读成“未知”。 */
+.data-state-enabled {
+  color: var(--ok);
+}
+
+.data-state-disabled {
+  color: var(--idle);
+}
+
 .data-task-table {
   table-layout: fixed;
   min-width: 620px;
