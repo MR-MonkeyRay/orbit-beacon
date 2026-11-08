@@ -177,6 +177,16 @@
   fill: var(--beacon);
 }
 
+/* 连接中：刷新周期未知，弧固定显示约四分之一，仅点用品牌色并呼吸。 */
+.countdown[data-state="connecting"] .arc {
+  stroke-dashoffset: 75;
+}
+
+.countdown[data-state="connecting"] .dot {
+  fill: var(--beacon);
+  animation: live-pulse 1.6s var(--ease-in-out) infinite;
+}
+
 .countdown[data-state="live"] .arc {
   stroke-dashoffset: 0;
 }
