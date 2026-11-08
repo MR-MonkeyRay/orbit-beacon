@@ -29,11 +29,12 @@ export function busy(element, on) {
   if (form) form.dataset.busy = String(on);
 }
 
-// 标题与所在标签页同名时传 null；有操作按钮时仍保留头部。
+// 标题与所在标签页同名时传 null；有操作按钮时仍保留头部，
+// 无标题时头部改为 panel-head-end 让操作按钮靠右。
 export function panel(title, options = {}, ...body) {
   const titleID = title ? uid('panel') : null;
   return h('section', {class: 'panel', 'aria-labelledby': titleID},
-    title || options.action ? h('div', {class: 'panel-head'}, title ? h('h2', {id: titleID}, title) : null, options.action) : null,
+    title || options.action ? h('div', {class: title ? 'panel-head' : 'panel-head panel-head-end'}, title ? h('h2', {id: titleID}, title) : null, options.action) : null,
     h('div', {class: 'panel-body'}, body));
 }
 

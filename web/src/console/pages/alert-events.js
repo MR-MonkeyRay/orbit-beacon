@@ -80,7 +80,8 @@ export function eventsPanel(state, signal) {
   const more = button(t('common.loadMore'), {onClick: () => load(), small: true});
   more.hidden = true;
   const reload = button(t('common.refresh'), {small: true, icon: 'refresh', onClick: () => load(true)});
-  const root = panel(t(active ? 'alerts.events.activeTitle' : 'alerts.tab.history'), {action: reload}, status, table, more);
+  // “当前告警”面板保留标题，“历史记录”面板与标签页同名则省略。
+  const root = panel(active ? t('alerts.events.activeTitle') : null, {action: reload}, status, table, more);
   // 标签页可以在不导航的情况下卸载，其等待中的请求同样要取消。
   panelLifecycle({root, signal, load, poll: false, resume: false,
     cancel: () => { stopped = true; request?.abort(); }});

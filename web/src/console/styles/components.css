@@ -104,6 +104,10 @@
   padding: 18px 22px 0;
 }
 
+.panel-head-end {
+  justify-content: flex-end;
+}
+
 .panel-head h2 {
   font-size: var(--fs-lg);
   font-weight: var(--fw-heading);

@@ -58,7 +58,7 @@ export function silenceList(silences, context) {
       await saved();
     } catch (error) { if (!signal?.aborted) toastError(error); }
   };
-  return panel(t('alerts.silences.title'), {action: button(t('alerts.silences.add'), {small: true, variant: 'primary', onClick: () => silenceEditor(context)})},
+  return panel(null, {action: button(t('alerts.silences.add'), {small: true, variant: 'primary', onClick: () => silenceEditor(context)})},
     silences.length ? dataTable({caption: t('alerts.silences.title'),
       columns: [t('alerts.silences.reason'), t('alerts.column.scope'), t('alerts.silences.starts'), t('alerts.silences.ends'), t('alerts.column.state'), t('alerts.column.actions')],
       body: h('tbody', null, silences.map((silence) => h('tr', null,

@@ -112,7 +112,8 @@ function publicPageTab() {
       control.disabled = !active() || !session.csrf;
     }
   });
-  const element = panel(t('settings.publicPage'), {},
+  // 面板标题与“公开页”标签页同名，省略。
+  const element = panel(null, {},
     h('label', {class: 'switch'}, control, h('span', {class: 'switch-track', 'aria-hidden': 'true'}),
       h('span', {class: 'switch-text'}, h('strong', null, t('settings.publicEnable')))),
     errorBox, note, retry);
@@ -230,8 +231,9 @@ function administratorsTab(users) {
  })}) : null, iconButton('edit', t('settings.renameAdministratorLabel', {name: item.username}), () => editUser(item)), remove));
   });
 
-  return h('section', {class: 'panel', 'aria-labelledby': 'administrators-title'},
-    h('div', {class: 'panel-head'}, h('h2', {id: 'administrators-title'}, t('settings.administrators')), button(t('settings.addAdministrator'), {icon: 'plus', variant: 'primary', small: true, onClick: createUser})),
+  // 标题与“管理员”标签页同名，省略；操作按钮靠右。
+  return h('section', {class: 'panel'},
+    h('div', {class: 'panel-head panel-head-end'}, button(t('settings.addAdministrator'), {icon: 'plus', variant: 'primary', small: true, onClick: createUser})),
     h('div', {class: 'table-wrap'}, h('table', {class: 'table administrators-table'},
       h('thead', null, h('tr', null, h('th', {scope: 'col'}, t('account.username')), h('th', {scope: 'col', class: 'hide-compact'}, t('settings.created')),
         h('th', {scope: 'col'}, t('account.totp')), h('th', {scope: 'col'}, h('span', {class: 'sr'}, t('settings.actions'))))),
@@ -282,8 +284,8 @@ function groupsTab(groups, nodes) {
     } catch (error) { toastError(error); }
   };
   const addButton = button(t('settings.addGroup'), {icon: 'plus', variant: 'primary', small: !!groups.length, onClick: () => groupForm()});
-  if (!groups.length) return panel(t('settings.groups'), {}, emptyState(t('settings.noGroups'), null, addButton));
-  return panel(t('settings.groups'), {action: addButton},
+  if (!groups.length) return panel(null, {}, emptyState(t('settings.noGroups'), null, addButton));
+  return panel(null, {action: addButton},
     h('ul', {class: 'rows'}, groups.map((item) => {
       const size = nodes.filter((node) => node.group_id === item.id).length;
       const enrollment = button(t('settings.batchEnrollment'), {small: true});
@@ -315,6 +317,6 @@ function auditTab(page, names) {
     finally { busy(more, false); }
   }});
   more.hidden = !page.has_more;
-  return panel(t('settings.audit'), {},
+  return panel(null, {},
     events.length ? [list, more] : emptyState(t('settings.noAudit')));
 }

@@ -88,7 +88,7 @@ export function enrollmentTab(node) {
     catch (failure) { toastError(failure); }
     finally { busy(issue, false); issue.disabled = Boolean(node.deleted); }
   }});
-  const content = panel(t('nodes.enrollAgent'), {action: issue}, h('div', {class: 'stack'},
+  const content = panel(null, {action: issue}, h('div', {class: 'stack'},
     h('p', {class: 'text-note'}, t('nodes.enrollment.issueIntro')),
     node.status === 'disabled' ? callout(t('nodes.enrollment.disabled')) : null,
     retry, error, list));
