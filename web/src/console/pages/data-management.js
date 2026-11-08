@@ -2,7 +2,7 @@ import {h} from '../../shared/dom.js';
 import {errorText} from '../../shared/errors.js';
 import {api, getNavigationSignal} from '../api.js';
 import {getLocale, t} from '../i18n.js';
-import {formatBytes} from '../format.js';
+import {absoluteWhen, formatBytes} from '../format.js';
 import {busy, button, callout, facts, pageHead, panel} from '../ui/components.js';
 import {modal} from '../ui/dialogs.js';
 import {field, input, select} from '../ui/forms.js';
@@ -91,7 +91,7 @@ export function dataManagementPage() {
         h('span', {class: 'data-management-count'}, t('data.management.counts', {total: number(item.rows), eligible: number(item.eligible_rows)})));
     }));
     for (const id of selected) if (!checkboxes.has(id)) selected.delete(id);
-    cutoff.replaceChildren(t('data.management.before'), ' ', h('code', null, snapshot.before));
+    cutoff.replaceChildren(t('data.management.before'), ' ', absoluteWhen(snapshot.before));
   }
 
   async function load() {
