@@ -102,11 +102,11 @@ test('public broken channel retains values and online presence until the next va
   assert.equal(card.querySelector('.last-report').hidden, false);
   sse.frame(snapshot(payload('', {nodes: []}))); await flush();
   assert.equal(ui.elements.nodes.children.length, 0);
-  assert.notEqual(ui.elements.headline.textContent, '');
+  assert.equal(ui.elements.headline.textContent, copy('public.heading'));
   assert.equal(ui.elements.retry.hidden, true);
-  // 空集合只由标题说明一次；空态盒子保持隐藏。
+  // 空集合只由摘要行说明一次；空态盒子保持隐藏。
   assert.equal(ui.elements.empty.hidden, true);
-  assert.equal(ui.elements.headline.textContent, copy('public.empty.all'));
+  assert.equal(ui.elements.summary.textContent, copy('public.empty.all'));
   sse.frame(snapshot(payload('returned'))); await flush();
   assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'returned');
 });

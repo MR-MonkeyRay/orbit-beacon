@@ -22,6 +22,8 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
   const emptyText = $('empty-text');
   const retry = $('retry');
   const headline = $('headline');
+  // 标题固定为名词，数量与空态文案只写摘要行。
+  headline.textContent = t('public.heading');
   const summary = $('summary');
   const updated = $('updated');
   const updateTime = h('span', {class: 'update-time'}, updated.textContent);
@@ -107,15 +109,14 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
     current = nodes;
     constellation.update(nodes);
 
+    // 标题保持名词不变，数量/在线状态与空态说明都放摘要行。
     const online = nodes.filter((node) => node.status === 'online').length;
     const partial = offset > 0 || result.has_more;
     if (nodes.length === 0) {
-      headline.textContent = t(partial ? 'public.empty.page' : 'public.empty.all');
-      summary.textContent = '';
+      summary.textContent = t(partial ? 'public.empty.page' : 'public.empty.all');
     } else {
-      headline.textContent = online === nodes.length ? t('public.headline.allOnline', {count: nodes.length}) : t('public.headline.online', {online, count: nodes.length});
-      // 完整集合的数量和状态已有标题与筛选计数，摘要只说明分页范围。
-      summary.textContent = partial ? t('public.summary.page', {count: nodes.length}) : '';
+      const status = online === nodes.length ? t('public.summary.allOnline', {count: nodes.length}) : t('public.summary.online', {online, count: nodes.length});
+      summary.textContent = partial ? `${status} · ${t('public.summary.page', {count: nodes.length})}` : status;
     }
     lastGenerated = new Date(result.generated_at);
     updateText(t('public.updatedAt', {time: timeFormat.format(lastGenerated)}), t('public.autoUpdate'));
@@ -203,7 +204,6 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
         updateText(t('public.updatedAt', {time: timeFormat.format(lastGenerated)}), t('public.stale'));
       } else {
         list.replaceChildren();
-        headline.textContent = t('public.unavailable');
         summary.textContent = t('public.loadFailed');
         empty.hidden = false;
         emptyText.textContent = t('public.loadFailed');
