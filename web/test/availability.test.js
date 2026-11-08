@@ -26,6 +26,12 @@ test('availability boundaries, accessible titles, stable bars and CSP', () => {
     assert.equal(bar.querySelectorAll('.availability-day')[0], bars[0]);
     assert.ok(bar.getAttribute('aria-label').endsWith(copy('public.availabilityNoData')));
     assert.ok(bars[0].getAttribute('title').endsWith(copy('public.availabilityDuration', {offline: copy('public.duration.minutes', {minutes: 1}), unknown: copy('public.duration.minutes', {minutes: 2})})));
+    // 触屏没有 hover：点按某天把当天明细显示在说明行。
+    const detail = bar.querySelector('.availability-detail');
+    assert.equal(detail.hidden, true);
+    bars[0].click();
+    assert.equal(detail.hidden, false);
+    assert.equal(detail.textContent, bars[0].getAttribute('title'));
   } finally { dom.restore(); }
 });
 test('strict public availability validation invalidates the complete response', () => {
