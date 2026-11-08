@@ -15,11 +15,18 @@
 | 节点凭据 | Node credential |
 | 上报 | Report |
 | 告警规则 / 告警事件 | Alert rule / Alert event |
+| 告警静默 | Alert silence |
 | 通知通道 | Notification channel |
 | 站内通知 | Notifications |
+| 公告 | Announcement |
 | 在线 / 离线 / 未知 / 已过期 | Online / Offline / Unknown / Stale |
+| 待注册 / 未上报 / 禁用 | Pending / Never seen / Disabled |
+| 可用率 | Availability |
+| 两步验证 / 恢复码 | Two-step verification / Recovery code |
+| 只读 API 令牌 | Read-only API token |
 | 导出 / 备份 / 恢复 | Export / Backup / Restore |
 | 流量计费 | Traffic billing |
+| 数据管理 | Data management |
 
 状态页指匿名页面，其 H1 使用“节点状态 / Node status”。
 

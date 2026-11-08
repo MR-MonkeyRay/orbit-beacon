@@ -38,6 +38,8 @@ npm test
 | `build.config.json` | 首页主题和静态资源 CDN 地址 |
 | `test/`、`build.mjs` | 回归工具与双入口构建 |
 
+状态页公告面板位于 `src/console/pages/settings-announcements.js`，公开渲染由所选主题的公告渲染器提供；显示窗口和数量规则见[公告](../docs/architecture.md#公告)。
+
 ## 构建与缓存
 
 编辑 [`build.config.json`](build.config.json)，然后执行 `npm run build`：
@@ -60,6 +62,7 @@ CDN 上传 `internal/server/webui/dist/_app/assets/`，保持目录层级，并�
 ## 开发约定
 
 - 复用现有组件与原生 modal，保留 Escape、Tab、焦点恢复及草稿保护；动画遵守 `prefers-reduced-motion`。字号、控件及断点使用 `shared/tokens.css`。
+- 控制台在 `max-width:767px` 使用顶部栏与抽屉导航，宽表格横向滚动；公开页覆盖所有设备。响应式规则见 `console/styles/responsive.css`。
 - 可见文案、校验、日期与数字使用应用语言，不依赖浏览器原生校验文本。语言选择按浏览器偏好，其他语言回退英文；同源 `orbitbeacon-locale` 保存“跟随系统 / 中文 / English”，不写入账户。
 - 切换语言确认草稿后整页重载并保留 URL；取消、保存失败或操作进行中不切换。其他标签页修改偏好不自动重载当前页。主题使用 `orbitbeacon-theme`。
 - 页面复用 `shared/live.js`，私有订阅通过 `console/live.js`；实时回退、状态和会话边界见[实时传输](../docs/architecture.md#实时传输)、[安全](../docs/architecture.md#安全)，不在页面各自实现。

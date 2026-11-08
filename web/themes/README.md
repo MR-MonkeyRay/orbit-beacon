@@ -58,6 +58,7 @@ HTML 中保留以下占位符，各一次：
 - `src/public/page.js`：`mountPublicPage(...)` 管理公开 API、校验、传输回退、分页、筛选、连接状态和可见性生命周期；只导入固定的公共源码，不依赖所选主题。
 - `src/public/validate.js`：公开快照校验，保持在呈现组件之前。
 - `themes/default/`：原有 HTML、CSS、节点卡片、星轨图与公告呈现。
+- `themes/default/announcements.js`：公告渲染；输入已按窗口过滤，按 critical、warning、info 及开始时间排序，最多 5 条纯文本。
 - `themes/example/`：独立 HTML/CSS/入口，复用默认卡片、星轨图与公告组件；复制后仍可使用这些固定的相对导入。
 - `src/shared/`：DOM、实时通道、明暗与语言控件、格式化和公开词条；不要导入 `src/console/`、私有 API 客户端或控制台设置代码。
 

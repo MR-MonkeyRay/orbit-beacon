@@ -105,7 +105,7 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent doctor \
 
 ## 本地运行参数与 reload
 
-五项参数在 `run`、`enroll`、`doctor` 中一致，合并顺序见[配置参考](../deploy/README.md#配置参考)。安装策略固定信任根、身份与目录；每个来源独立检查，后续覆盖不能隐藏冲突。
+以下参数在 `run`、`enroll`、`doctor` 中一致，合并顺序见[配置参考](../deploy/README.md#配置参考)。安装策略固定信任根、身份与目录；每个来源独立检查，后续覆盖不能隐藏冲突。
 
 | 参数 | 默认值 | 范围 / 选择 |
 | --- | --- | --- |
