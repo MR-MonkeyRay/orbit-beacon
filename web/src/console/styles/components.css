@@ -849,11 +849,8 @@ dialog.closing::backdrop {
 
 .toast .icon {
   margin-top: 1px;
-  color: var(--ok);
-}
-
-.toast.error .icon {
-  color: var(--bad);
+  /* 反色底上语义色对比不足，图标沿用正文色保证可见。 */
+  color: currentColor;
 }
 
 .toast p {
