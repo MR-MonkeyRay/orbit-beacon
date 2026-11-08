@@ -8,6 +8,7 @@ export default {
   'alerts.silences.title': '静默',
   'alerts.silences.add': '添加静默',
   'alerts.silences.delete': '删除静默',
+  'alerts.silences.deleteTitle': '删除静默「{reason}」？',
   'alerts.silences.reason': '原因',
   'alerts.silences.starts': '开始时间',
   'alerts.silences.ends': '结束时间',

@@ -8,6 +8,7 @@ export default {
   'alerts.silences.title': 'Silences',
   'alerts.silences.add': 'Add silence',
   'alerts.silences.delete': 'Delete silence',
+  'alerts.silences.deleteTitle': 'Delete silence “{reason}”?',
   'alerts.silences.reason': 'Reason',
   'alerts.silences.starts': 'Starts',
   'alerts.silences.ends': 'Ends',

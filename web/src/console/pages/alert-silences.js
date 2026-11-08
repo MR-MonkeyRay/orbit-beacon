@@ -51,7 +51,7 @@ export function silenceList(silences, context) {
   const {groups, nodes, signal, saved} = context;
   const remove = async (silence) => {
     if (!session.user || !session.csrf || signal?.aborted) return;
-    if (!(await confirmDialog({title: t('alerts.silences.delete'), confirm: t('alerts.silences.delete'), danger: true}))) return;
+    if (!(await confirmDialog({title: t('alerts.silences.deleteTitle', {reason: silence.reason}), confirm: t('alerts.silences.delete'), danger: true}))) return;
     if (!session.user || !session.csrf || signal?.aborted) return;
     try {
       await api(`/alert-silences/${encodeURIComponent(silence.id)}`, {method: 'DELETE', signal});
