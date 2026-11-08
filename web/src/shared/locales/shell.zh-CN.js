@@ -13,7 +13,7 @@ export default {
   'shell.signInTitle': '控制台登录',
   'shell.passwordChanged': '密码已修改，所有会话已退出。请用新密码登录。',
   'shell.viewPublic': '查看状态页',
-  'shell.invalidCredentials': '用户名或密码不正确。忘记密码请联系管理员重置。',
+  'shell.invalidCredentials': '用户名或密码不正确。请检查后重试；如无法登录，需要另一名管理员删除并重建该账户。',
   'shell.signInRateLimited': '登录尝试过于频繁，请稍后重试。',
   'shell.unreadUnavailable': '未读数量不可用',
   'shell.notifications': '站内通知',

@@ -13,7 +13,7 @@ export default {
   'shell.signInTitle': 'Console sign-in',
   'shell.passwordChanged': 'Password changed; all sessions signed out. Sign in with your new password.',
   'shell.viewPublic': 'View the status page',
-  'shell.invalidCredentials': 'Username or password is incorrect. If you forgot your password, ask an administrator to reset it.',
+  'shell.invalidCredentials': 'Username or password is incorrect. Check both and try again; if you are locked out, another administrator must delete and recreate the account.',
   'shell.signInRateLimited': 'Too many sign-in attempts. Wait a moment and try again.',
   'shell.unreadUnavailable': 'unread count unavailable',
   'shell.notifications': 'Notifications',
