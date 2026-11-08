@@ -55,6 +55,7 @@ import './node-commands.test.js';
 import './availability.test.js';
 import './node-expiry.test.js';
 import './alert-silences.test.js';
+import './alerts-page.test.js';
 import './announcements.test.js';
 
 import './totp.test.js';

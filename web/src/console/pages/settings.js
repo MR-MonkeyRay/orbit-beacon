@@ -5,7 +5,8 @@ import {h, icon} from '../../shared/dom.js';
 import {allNodes, api, getNavigationSignal, groupsList, invalidate, invalidateSession, nameLookup, session, updateUser, usersList} from '../api.js';
 import {when} from '../format.js';
 import {ignoreNavigationCancellation, refresh} from '../router.js';
-import {busy, button, emptyState, facts, iconButton, link, pageHead, panel, skeleton} from '../ui/components.js';
+import {busy, button, emptyState, facts, iconButton, link, pageHead, panel} from '../ui/components.js';
+import {lazyTab} from '../ui/lazy-tab.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, onSubmit, passwordInput, validateBytes} from '../ui/forms.js';
@@ -44,42 +45,6 @@ export async function settingsPage() {
   return h('div', null,
     pageHead(t('shell.settings')),
     tabSet(settingsTabs.map((tab) => ({...tab, label: t(tab.label), build: builds[tab.id]})), t('settings.settingsSections')));
-}
-
-function lazyTab(load, render) {
-  const navigation = getNavigationSignal();
-  let result;
-  let hasResult = false;
-  let pending;
-  let requestEpoch = 0;
-  return () => {
-    const element = h('div');
-    const start = () => {
-      if (navigation?.aborted) return;
-      element.replaceChildren(skeleton());
-      if (!pending) { pending = load(); requestEpoch += 1; }
-      const request = pending;
-      const epoch = requestEpoch;
-      request.then((value) => {
-        if (navigation?.aborted || epoch !== requestEpoch) return;
-        if (!hasResult) {
-          result = value;
-          hasResult = true;
-          pending = null;
-        }
-        element.replaceChildren(render(value));
-      }, (error) => {
-        if (navigation?.aborted || epoch !== requestEpoch) return;
-        pending = null;
-        element.replaceChildren(h('div', {class: 'form-error', role: 'alert'},
-          h('p', null, errorText(error)),
-          button(t('common.retry'), {onClick: start})));
-      });
-    };
-    if (hasResult) element.replaceChildren(render(result));
-    else start();
-    return element;
-  };
 }
 
 function publicPageTab() {
