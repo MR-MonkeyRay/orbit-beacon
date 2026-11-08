@@ -48,8 +48,9 @@ export function lifecycleActions(node) {
       const result = results.find((item) => item.node_id === node.id);
       if (result?.status !== 'succeeded') throw Object.assign(new Error('Node action failed'), {code: result?.error_code});
     }, async () => { await refresh(); toast(t(disabling ? 'nodes.disabledDone' : 'nodes.enabledDone', {name: node.name})); }),
-    action(t('nodes.revokeCredential'), {variant: 'danger', className: 'btn-quiet'}, () => confirmDialog({
-      title: t('nodes.revokeTitle', {name: node.name}), confirm: t('nodes.revokeConfirm'), danger: true,
+    // 吊销会清除上报身份与观测，与删除同级使用键入确认。
+    action(t('nodes.revokeCredential'), {variant: 'danger', className: 'btn-quiet'}, () => typedConfirmation({
+      title: t('nodes.revokeTitle', {name: node.name}), expected: node.name, confirm: t('nodes.revokeConfirm'),
       message: t('nodes.revokeIntro')
     }), () => api(`${path}/credential`, {method: 'DELETE'}), async () => { await refresh(); toast(t('nodes.revokeDone')); }),
     action(t('nodes.deleteNode'), {variant: 'danger', className: 'btn-quiet'}, () => typedConfirmation({
