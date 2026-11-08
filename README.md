@@ -9,13 +9,10 @@
 | 节点指标、历史、探测与可用率 | 节点 / Nodes；节点详情 → 监控 / Monitoring、服务探测 / Service probes |
 | 流量计费与配额告警 | 节点详情 → 流量 / Traffic；告警 / Alerts（配额规则） |
 | Agent 注册、运行设置与远程升级 | 节点详情 → 注册 Agent / Enroll Agent、Agent 设置 / Agent settings；设置 → 分组 / Groups |
-| 状态页、公告与公开字段 | 设置 → 状态页 / Status page；节点详情 → 状态页展示 / Status page listing |
-| 公开首页主题 | 构建时选择 `web/themes/<name>` |
-| 告警规则、静默、事件与通知通道 | 告警 / Alerts |
+| 状态页、公告、公开字段与主题 | 设置 → 状态页 / Status page；节点详情 → 状态页展示 / Status page listing；构建时选择 `web/themes/<name>` |
+| 告警、静默与通知 | 告警 / Alerts；站内通知 / Notifications |
 | 管理员、两步验证与只读 API 令牌 | 设置 → 管理员 / Administrators、账户 / Account |
-| 加密导出、备份计划与恢复 | 设置 → 数据操作 / Data operations |
-| 数据统计、历史清理与 SQLite 空间整理 | 数据管理 / Data management |
-| 告警与备份结果 | 站内通知 / Notifications |
+| 加密导出、备份计划、恢复与数据清理 | 设置 → 数据操作 / Data operations；数据管理 / Data management |
 
 ## 重要限制
 
@@ -94,7 +91,7 @@ go vet ./...
 go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 ```
 
-[CI](.github/workflows/ci.yml) 检查 Go、Web、漏洞及安装脚本；`main` push 全部通过后调用[发布流程](.github/workflows/release.yml)。Release 标题直接使用 [`VERSION`](VERSION)（如 `0.1.0`），Git 标签仍为 `v0.1.0`。直接上传 `orbitbeacon-<server|agent|mcp>-linux-<amd64|arm64>` 六个独立二进制及统一的 `SHA256SUMS`，文件名不重复版本号、不再打压缩包；镜像仍支持两种架构。手动下载后先核对校验和，再用 `chmod +x` 赋予执行权限。重跑同版本发布会在二进制上传成功后移除该版本原有的分架构压缩包。使用前确认目标版本已发布。
+[CI](.github/workflows/ci.yml) 检查 Go、Web、漏洞和安装脚本；`main` 全部通过后调用[发布流程](.github/workflows/release.yml)。Release 标题用 [`VERSION`](VERSION)（如 `0.1.0`），Git 标签为 `v0.1.0`。发布上传六个独立二进制（server/agent/mcp × amd64/arm64）和统一 `SHA256SUMS`；文件名不带版本号，也不打压缩包，镜像仍支持两种架构。手动下载后先核对校验和，再 `chmod +x`。
 
 ## 许可证
 

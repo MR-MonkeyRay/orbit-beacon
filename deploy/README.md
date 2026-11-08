@@ -1,18 +1,10 @@
 # 服务器部署
 
-以下命令从仓库根目录执行。Agent 安装见 [Agent 指南](../docs/agent.md)，日志格式见[日志约定](../docs/conventions.md#日志)。
-
-| Agent 路径 | 属主与权限 |
-| --- | --- |
-| `/opt/orbit-beacon/` | root:orbitbeacon-agent，`0750` |
-| `/opt/orbit-beacon/bin/` | orbitbeacon-agent:orbitbeacon-agent，`0750`；内含 `orbitbeacon-agent` |
-| `/opt/orbit-beacon/etc/` | root:orbitbeacon-agent，目录 `0750`、文件 `0640`；agent.json、install-policy.json、ca.pem |
-| `/opt/orbit-beacon/state/` | orbitbeacon-agent:orbitbeacon-agent，`0700`；identity、enrollment.token、run.lock 等 |
+以下命令从仓库根目录执行。Agent 安装、路径与权限见 [Agent 指南](../docs/agent.md#安装与启动)，日志格式见[日志约定](../docs/conventions.md#日志)。
 
 ## 数据目录
 
-- 使用支持文件锁、可写的本地文件系统；每个数据目录只运行一个服务器。
-- 数据目录归运行用户所有，权限 `0700`；数据库、SQLite sidecar 与 `secrets.key` 为同用户所有的 `0600` 普通文件。
+- 数据目录要在本地文件系统上，可写并支持文件锁，每个目录只跑一个服务器。目录归运行用户所有、`0700`；数据库、SQLite sidecar 和 `secrets.key` 是同用户的 `0600` 普通文件。
 - 路径不得经过符号链接；祖先目录须归 root 或运行用户所有；组或其他用户可写时须有 sticky 保护。不要直接使用权限不符的仓库目录。
 - 遇到 `data_dir_in_use` 先查占用进程；不要删除 `server.lock`、SQLite sidecar 或恢复 journal 强行启动。
 
@@ -49,16 +41,14 @@
 
 `public_url` 与 Origin：
 
-- 使用真实 IP、域名或不同端口时须显式设置，与浏览器规范化后的协议、主机和端口精确匹配；DNS 名转小写，IPv6 规范化，HTTP 80 / HTTPS 443 省略。
-- 只接受绝对 HTTP / HTTPS URL，不含凭据、查询或片段；路径不参与 Origin 比较。页面与 API 同源，不支持子路径部署。
-- 不从请求 Host 或转发头推断可信源，`X-Forwarded-Proto` 不参与此判断。
+- 使用真实 IP、域名或不同端口时须显式设置，并与浏览器规范化后的协议、主机、端口精确匹配；DNS 名转小写，IPv6 规范化，HTTP 80 / HTTPS 443 省略。只接受绝对 HTTP/HTTPS URL，不含凭据、查询或片段；路径不参与 Origin 比较，页面和 API 同源，不支持子路径部署。
+- 不从请求 Host 或转发头推断可信源，`X-Forwarded-Proto` 不参与这个判断。
 - Agent 与 `health --url` 只接受根 URL；HTTP 不能搭配 `--ca-file`。
 
 `trusted_proxies` 与客户端地址：
 
-- 仅直连来源可信时解析 `X-Forwarded-For`，从右向左跳过可信代理，取首个不可信地址；缺失、畸形或全可信时回退直连 IP。
-- JSON 使用数组；环境变量和 CLI 使用逗号分隔列表；禁止 `/0`。
-- 同机原生代理可用 `["127.0.0.1", "::1"]`。容器填写服务器实际看到的代理源 IP 或最小 CIDR，避免信任整个共享网络；入口代理须覆盖或正确追加真实客户端地址。
+- 只有直连来源可信时才解析 `X-Forwarded-For`：从右往左跳过可信代理，取第一个不可信地址；缺失、畸形或全可信时回退直连 IP。JSON 用数组，环境变量和 CLI 用逗号分隔；禁止 `/0`。
+- 同机原生代理可用 `["127.0.0.1", "::1"]`。容器填写服务器实际看到的代理源 IP 或最小 CIDR，避免信任整个共享网络；入口代理要覆盖或正确追加真实客户端地址。
 
 会话 Cookie 为 `orbitbeacon_session`：host-only（无 Domain）、`HttpOnly`、`SameSite=Lax`、`Path=/`；仅 HTTPS `public_url` 启用 `Secure`，不受代理到服务器的协议或转发头影响。
 
@@ -111,11 +101,8 @@ docker compose -f deploy/docker/compose.yaml ps
 docker compose -f deploy/docker/compose.yaml logs --tail=100 orbitbeacon
 ```
 
-- 容器监听 `0.0.0.0:8080`，仅发布至宿主机 `127.0.0.1:8080`；直接远程 HTTP 需显式调整端口发布并限制访问。
-- 数据卷固定名 `orbitbeacon-data`；不要执行 `down -v` 或删除卷。运行身份为 `65532:65532`，bind mount 须匹配此身份及[目录权限](#数据目录)。
-- [`docker/server.json`](docker/server.json) 构建时复制入镜像；编辑仓库副本不影响现有容器。额外配置须在 Compose `environment` 中传入，或只读挂载完整配置到 `/etc/orbitbeacon/server.json`。
-- 宿主机变量只有被 Compose 引用或显式传入才进入容器；环境或镜像变更后用 `up -d` 重建。指标采集另配可达网络或端口。
-- 本地镜像构建见 [`build/server.Dockerfile`](../build/server.Dockerfile)。
+- 容器监听 `0.0.0.0:8080`，只发布到宿主机 `127.0.0.1:8080`；直接远程 HTTP 要改端口发布并限制访问。数据卷固定叫 `orbitbeacon-data`，不要 `down -v` 或删卷。运行身份是 `65532:65532`，bind mount 要匹配这个身份和[目录权限](#数据目录)。
+- 镜像构建时把 [`docker/server.json`](docker/server.json) 复制进去；改仓库副本不影响现有容器。额外配置在 Compose `environment` 传入，或只读挂载完整配置到 `/etc/orbitbeacon/server.json`。宿主机变量只有被 Compose 引用或显式传入才进容器；环境或镜像变了用 `up -d` 重建。指标采集另配可达网络或端口。本地构建见 [`build/server.Dockerfile`](../build/server.Dockerfile)。
 
 ## HTTPS 与反向代理
 
@@ -142,11 +129,12 @@ sudo systemctl reload nginx
 
 最简单的部署仍是同域名边缘代理：HTML、API 和实时连接回源，只缓存带正确 `v` 参数的 `/_app/assets/*`。独立静态域名或对象存储则在构建时配置 HTTPS `assetBase`（可带发布目录前缀）；构建设置与命令见 [前端构建说明](../web/README.md)。这只改变脚本、样式、图片和字体地址，不改变页面、认证、API、WS 或 SSE 的原站地址，也不支持把整个应用部署到子路径。
 
-- 缓存键必须包含完整路径和 `v` 参数；仅成功的版本化 `/_app/assets/*` 可使用一年 `immutable` 缓存。无 `v` 时须重新验证（`no-cache`）；版本错误或格式错误返回 `404 no-store`，不得忽略参数后把新版内容发给旧 URL。反向代理回源可直接使用服务器的校验；独立对象源须在边缘按构建清单校验版本，不能仅把查询参数加入缓存键而不核对内容。
-- HTML（含公开首页与控制台）、API、WS、SSE、重定向及错误响应都不得在边缘缓存；尊重源站 `no-store`，不要配置整站“缓存所有内容”规则。`asset-manifest.json` 是内嵌启动校验输入，不是公开接口，也不要上传为公共对象。
-- 独立静态源须为成功资源（含 `HEAD` / `304`）提供 `Access-Control-Allow-Origin: *` 与 `Cross-Origin-Resource-Policy: cross-origin`，不启用凭据，不把这些响应头加到 HTML/API。保持正确 JS/CSS/字体 MIME 和 `X-Content-Type-Options: nosniff`；压缩响应保留 `Vary: Accept-Encoding` 及对应表示的 ETag，不重复压缩或混用压缩前后的长度。
-- 业务代理继续保留原始 `Host`、可信转发头及 WS Upgrade；SSE 禁用缓冲，保留 `X-Accel-Buffering: no` 和长连接超时。不要把 API 或认证域名加入静态 CDN 的 CORS 白名单。
-- **先上传本次构建的静态产物，再部署同次构建的服务器二进制**；二进制内嵌的 HTML、清单和资源必须一致。稳定文件名会在版本间复用：对象存储应使用独立的发布目录，例如 `assetBase: "https://cdn.example.com/releases/2026-11-07"`，并保留旧目录供已打开的页面和回滚使用。没有发布前缀时，必须安排资源与服务器的原子切换、保留旧版本的可寻址副本或执行完整缓存清理；只覆盖同名对象后继续接受旧 `v` 会让旧 URL 返回新版字节，不能作为安全升级方案。
+- 缓存键要包含完整路径和 `v`。只有成功的版本化 `/_app/assets/*` 可以用一年 `immutable`；没有 `v` 就 `no-cache`。版本错误或格式错误返回 `404 no-store`，不能忽略参数把新版发给旧 URL。回源代理可以直接用服务器校验；独立对象源要在边缘按构建清单校验，不能只把查询参数加进缓存键。
+- HTML（公开页、控制台）、API、WS、SSE、重定向和错误响应都不能在边缘缓存；尊重源站 `no-store`，不要整站“缓存所有内容”。`asset-manifest.json` 是内嵌启动校验输入，不是公开接口，也不要上传为公共对象。
+- 独立静态源要给成功资源（含 `HEAD` / `304`）加 `Access-Control-Allow-Origin: *` 和 `Cross-Origin-Resource-Policy: cross-origin`，不启用凭据，也不要给 HTML/API 加这些头。保持 JS/CSS/字体 MIME 和 `X-Content-Type-Options: nosniff`；压缩响应保留 `Vary: Accept-Encoding` 和对应 ETag，不重复压缩。
+- 业务代理保留原始 `Host`、可信转发头和 WS Upgrade；SSE 禁用缓冲，保留 `X-Accel-Buffering: no` 和长连接超时。不要把 API 或认证域名加进静态 CDN 的 CORS 白名单。
+- **先上传本次构建的静态产物，再部署同次构建的二进制**；内嵌的 HTML、清单和资源必须一致。稳定文件名会跨版本复用，对象存储应使用独立发布目录（如 `assetBase: "https://cdn.example.com/releases/2026-11-07"`），并保留旧目录给已打开的页面和回滚。
+- 没有发布前缀时，必须做到资源与服务器原子切换、保留旧版本可寻址副本或完整清缓存；只覆盖同名对象还继续接受旧 `v`，会让旧 URL 返回新字节，不能用于升级。
 
 ## 日常检查
 
@@ -162,7 +150,7 @@ curl --fail http://localhost:8080/healthz/ready
 
 ## 数据库
 
-省略 `database` 或使用 `{}` 保持本地 SQLite。MySQL 使用两个预建 database，业务和历史分别存储；`data_dir` 仍须持久化目录锁、加密 key、归档工作文件及恢复决定。当前开发基准为 MySQL 26.10.0，启动按事务、持久化及触发器所需能力检查，不按版本字符串设门槛。
+省略 `database` 或使用 `{}` 保持本地 SQLite。MySQL 使用两个预建 database，业务和历史分别存储；`data_dir` 仍须持久化目录锁、加密 key、归档工作文件及恢复决定。启动按事务、持久化及触发器所需能力检查，不按版本字符串设门槛。
 
 ```json
 {
@@ -180,15 +168,15 @@ curl --fail http://localhost:8080/healthz/ready
 }
 ```
 
-- `ORBITBEACON_DATABASE` 整体替换 JSON 对象，不与文件中的 endpoint 或 failover 字段深合并。不提供携带数据库密码的 flag；`password_file` 必须归运行用户所有、`0600`、非空且不超过 64 KiB，只移除一个末尾 LF。
-- TCP 省略 `tls` 使用明文，仅限本机或受控网络；数据库凭据与业务数据不受传输加密保护。显式 `tls: {}` 启用 TLS 1.2+，校验系统根 CA 与 address 主机名；可用 `ca_file` 和 `server_name` 指定私有 CA 与验证名称。配置 TLS 后，证书、主机名或握手失败均拒绝连接，不跳过校验，也不回退明文。本机 Unix socket 使用 `network: "unix"` 与绝对 socket 路径，不带 `tls`。
-- 私有 CA 示例：在 endpoint 中加入 `"tls": {"server_name": "db.example", "ca_file": "/etc/orbitbeacon/mysql-ca.pem"}`，并将 CA 文件只读挂载到相同路径。
-- `network` 默认 `tcp`；database 名只接受 ASCII 字母/下划线开头、随后字母数字下划线，最长 64 字节，两个名称不得相同。默认名称如上。SQLite endpoint 不接受 MySQL 字段或自定义路径。
-- 应用账户只需两个 database 内的 `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER`；不需 SUPER 或全局 CREATE DATABASE。仅此 Server 写入应用 schema，不运行第二个使用不同 data_dir 的 Server，也不要由 DBA 直接修改业务行。
-- MySQL 必须可写并使用支持事务的 InnoDB，`innodb_flush_log_at_trx_commit=1`；启用 binlog 时 DBA 须设 `sync_binlog=1` 与 `log_bin_trust_function_creators=1`。Server 校验部署条件，不擅自更改全局变量。所有连接固定 5 秒连接、读、写超时。
-- COMMIT 结果未知返回 `503 storage_commit_unknown`，先查询当前状态，不直接重发写请求。主库故障不返回旧缓存伪造成功；历史库不能读取时，包含 Monitoring 的归档失败。
-- 保留并备份与数据库匹配的 `data_dir/secrets.key`。已完成初始化的 HA 集群缺 key 一律拒绝启动，不生成替代；只有控制记录仍允许首次初始化，且确认业务库没有加密数据时，才可首次生成。其他部署已有 TOTP、通知或备份加密数据而 key 缺失时也拒绝；恢复原 key 或使用完整、可验证的配置归档恢复。
-- systemd 沿用 `/etc/orbitbeacon/server.json`，secret 放在 `ProtectHome` 之外的 `/etc/orbitbeacon` 或 `/run`。Docker 的配置、secret 和 CA 另作只读挂载，secret 属主为 `65532:65532` 且 `0600`；不因容器读不到而放宽权限。默认 Compose 不添加 MySQL 服务。
+- `ORBITBEACON_DATABASE` 整体替换 JSON 对象，不与文件中的 endpoint 或 failover 深合并。数据库密码只能放在 `password_file`：归运行用户所有、`0600`、非空、不超过 64 KiB，只去掉一个末尾 LF。
+- TCP 省略 `tls` 就是明文，只适合本机或受控网络。显式 `tls: {}` 启用 TLS 1.2+，默认校验系统根和 address 主机名；可用 `ca_file`、`server_name` 指定私有 CA 和验证名称。握手、证书或主机名失败就拒绝连接，不回退明文。Unix socket 用 `network: "unix"` 和绝对路径，不带 `tls`。
+- 私有 CA 示例：在 endpoint 中加入 `"tls": {"server_name": "db.example", "ca_file": "/etc/orbitbeacon/mysql-ca.pem"}`，并把 CA 文件只读挂载到同一路径。
+- `network` 默认 `tcp`。database 名以 ASCII 字母或下划线开头，后续只能是字母、数字、下划线，最长 64 字节，两个名称不能相同。SQLite endpoint 不接受 MySQL 字段或自定义路径。
+- 应用账户只需两个 database 内的 `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER`，不需要 SUPER 或全局 `CREATE DATABASE`。只允许这个 Server 写应用 schema；不要跑第二个使用不同 `data_dir` 的 Server，也不要让 DBA 直接改业务行。
+- MySQL 必须可写，使用事务型 InnoDB，并设置 `innodb_flush_log_at_trx_commit=1`；启用 binlog 时还要 `sync_binlog=1` 和 `log_bin_trust_function_creators=1`。Server 只校验条件，不改全局变量。所有连接固定 5 秒连接、读、写超时。
+- COMMIT 结果未知会返回 `503 storage_commit_unknown`；先查当前状态，不要直接重发。主库故障不会拿旧缓存假装成功；历史库读不了时，包含 Monitoring 的归档会失败。
+- 保留并备份与数据库匹配的 `data_dir/secrets.key`。HA 集群完成初始化后缺 key 一律拒绝启动，不生成替代；只有控制记录还允许首次初始化，且确认业务库没有加密数据时，才可首次生成。其他部署如果已有 TOTP、通知或备份加密数据，key 缺失也会拒绝；恢复原 key 或用完整可验证的配置归档恢复。
+- systemd 沿用 `/etc/orbitbeacon/server.json`，secret 放在 `ProtectHome` 之外的 `/etc/orbitbeacon` 或 `/run`。Docker 的配置、secret 和 CA 只读挂载，secret 属主 `65532:65532`、`0600`；不要因为容器读不到就放宽权限。默认 Compose 不添加 MySQL 服务。
 
 Docker 可用 override 文件补充现有服务：
 
@@ -207,13 +195,11 @@ services:
 
 仅 MySQL primary 可配置 `database.standby`：MySQL 备用端点使用相同字段并预建独立的业务、历史 database；也可使用 `{"driver":"sqlite"}`，保存在本地固定文件。正常读写 primary，故障后按控制记录选择 active；业务、历史可分别切换到不同角色，不向非活动副本分流读取。两端不能实际指向同一 server UUID + database，跨域重叠同样拒绝。
 
-- 首次备用目标必须真正为空；非空且未登记为本集群成员时拒绝自动接管。只允许重建已登记的非活动成员，不清空陌生数据库。
-- `data_dir/storage-control.db` 及 sidecar 和 `secrets.key` 必须一起保留。配置绑定后不能直接删除 standby、换 endpoint/schema 或互换角色。
-- 行日志单事务上限 64 MiB；超过上限原事务回滚并返回 `409 storage_transaction_too_large`，应缩小操作规模，不自动拆分原事务。每域最多保留 24 小时、256 MiB，落后副本需要的日志被淘汰前会失去资格，随后重新同步。
-- 目标主键、唯一键或外键冲突会回滚整笔复制事务、撤销副本资格并停止重试，不以覆盖写掩盖分叉。不要从外部修改应用行或手工补齐复制协议表。
-- 已登记成员缺少复制协议表、定义损坏或当前 epoch / 水位不一致时拒绝打开，不自动补表。检查并恢复完整存储状态，不要把损坏成员当空库重新初始化。
-- `reset-totp` 只打开控制记录选定的业务 active 域，不要求历史库健康；仅历史故障或健康业务域的人工锁不妨碍修改。业务域存在冻结点、未完成切换或恢复时拒绝写入；控制记录缺失时也不猜测权威。安全打开的 HA 修改与审计仍进入复制日志，离线归档恢复则停用捕获。
-- 初次同步与恢复不复制实例身份；整库恢复建立新 epoch，并撤销旧副本资格。用户分类归档不包含复制日志或控制文件，不能拿归档充当已登记副本。
+- 备用目标必须真正为空；非空且未登记为本集群成员时拒绝自动接管。只允许重建已登记的非活动成员，不碰陌生数据库。`data_dir/storage-control.db` 及 sidecar 和 `secrets.key` 一起保留；绑定后不能直接删 standby、换 endpoint/schema 或互换角色。
+- 行日志单事务上限 64 MiB；超过就回滚并返回 `409 storage_transaction_too_large`，要缩小操作，不自动拆分。每域保留 24 小时、256 MiB；落后副本需要的日志被淘汰前会失去资格，随后重新同步。目标主键、唯一键或外键冲突会回滚整笔事务、撤销副本资格并停止重试，不用覆盖写掩盖分叉。不要从外部改应用行或手工补协议表。
+- 已登记成员缺少协议表、定义损坏或 epoch/水位不一致时拒绝打开，不自动补表。恢复完整存储状态，不要把损坏成员当空库重新初始化。
+- `reset-totp` 只打开控制记录选定的业务 active 域，不要求历史库健康；历史故障或健康业务域的人工锁不妨碍修改。业务域有冻结点、未完成切换或恢复时拒绝写入；控制记录缺失也不猜权威。HA 修改和审计进入复制日志，离线归档恢复则停用捕获。
+- 初次同步和恢复不复制实例身份；整库恢复建立新 epoch，并撤销旧副本资格。用户分类归档不含复制日志或控制文件，不能当已登记副本用。
 
 ### 自动故障切换
 
@@ -229,7 +215,7 @@ services:
 ```
 
 - 首次确认连接、只读或持久写失败即关闭该域准入、取消并排空旧世代；等待 30 秒期间不继续向旧库收写。普通请求取消、约束失败或繁忙的写 gate 不触发提升。
-- 仅完整、身份与结构正确的备库，且能用同次系统启动的屏障证明冻结前丢失不超过 10 秒，或确认它包含本进程所有可能提交的事务，才自动提升。后者可证明零缺口；进程重启后不能沿用该内存证明。冻结点未落盘就退出时，以重启后关闭准入的时刻保守计时，不猜测旧冻结点；跨系统启动且原主不可读时转人工。缺少有效证明或目标仍在重建时保持关闭；`max_loss_window: "0s"` 不表示无条件切换。
+- 只有完整、身份和结构正确的备库，能证明冻结前丢失不超过 10 秒，或确认包含本进程所有可能提交的事务，才自动提升。进程重启后不能沿用这个内存证明；冻结点没落盘就退出时，从重启后关闭准入的时刻保守计时，不猜旧冻结点；跨系统启动且原主不可读时转人工。缺少证明或目标仍在重建时保持关闭；`max_loss_window: "0s"` 不是无条件切换。
 - 这是已成功提交数据也可能回退的窗口，包含账户凭据、任务和通知状态。通知可能重复；存储结果不明的备份不会盲目再次上传。普通内存样本仍有既有进程崩溃风险，不是持久队列。
 - 旧主恢复先解析原在途事务；祖先前缀完整时增量追平，分叉或日志已截断时仅重建已登记的非活动目标，舍弃其独有分支。连续可写至少 60 秒、最后停止当前写入并追到完全同一水位后才回切；进程停服时间不计入连续稳定期。
 - 失联超过 24 小时、时钟或身份无法证明、旧操作不能排空时转人工；重连和重启不会清除人工锁。不要靠删控制文件、交换角色或删 standby 配置强行恢复。
@@ -237,9 +223,9 @@ services:
 
 ### 人工恢复
 
-业务库仍能认证时，管理员会话可通过 `/api/v1/storage` 查看状态、预览并排队恢复；API 令牌不能调用恢复接口。操作返回 `202` 后由协调器执行，关闭客户端不取消工作。通过操作 ID 查询终态，不凭卡片消失判断成功。接口字段见 [OpenAPI](../api/openapi.yaml)。
+业务库还能认证时，管理员会话可通过 `/api/v1/storage` 查看状态、预览并排队恢复；API 令牌不能调用。返回 `202` 后由协调器执行，关闭客户端不会取消。用操作 ID 查询终态，不要凭卡片消失判断成功。接口字段见 [OpenAPI](../api/openapi.yaml)。
 
-无法安全认证时，在 Server 主机以运行用户操作：`status` 可在运行中读取本地观测；`preview`、`run` 必须先停服，均使用同一配置和 `data_dir`。
+无法安全认证时，在 Server 主机以运行用户操作。`status` 可在运行中读本地观测；`preview`、`run` 必须先停服，并使用同一配置和 `data_dir`。
 
 ```sh
 orbitbeacon-server storage status --config /etc/orbitbeacon/server.json
@@ -256,7 +242,7 @@ orbitbeacon-server storage run --config /etc/orbitbeacon/server.json --operation
 - 接受后同 ID 重交只返回原操作，终态保留 30 天、最多 1000 条。CLI 默认纯文本，显式 `--json` 才输出 JSON；中断 CLI 只停止等待，记录保留，下次运行 Server 或相同 `run` 后继续协调。
 - `storage_commit_unknown`、网络中断或超时表示结果不明：先按原 ID 查询，不自动重发。业务库不可用时仍可用 `status` 读取本地记录，但 `observed_at` 不证明远端当前健康。
 
-故障通知订阅独立于普通告警规则，默认开启站内通知、无外部频道。`PATCH /api/v1/storage/notifications` 选择现有启用频道；控制文件仅保存用途隔离的加密发送快照。主业务库不可用时可用已验证快照外发，站内通知待业务库恢复后幂等补投。频道修改、删除或订阅变更先暂停快照，再校准；`snapshot_ready=false` 时外发暂停，修复表单仍可用。健康业务库的偏好读取失败时，状态接口保留控制记录中的偏好供修复，不将它当作已校准的新配置。未知提交不恢复旧频道。故障 Webhook 使用固定的 `kind=storage` 元数据及原 HMAC 签名，不改变告警格式。
+故障通知订阅独立于普通告警，默认只发站内通知，无外部频道。`PATCH /api/v1/storage/notifications` 选择现有启用频道；控制文件只保存用途隔离的加密发送快照。主业务库不可用时可用已验证快照外发，站内通知等业务库恢复后幂等补投。修改频道或订阅时先暂停快照再校准；`snapshot_ready=false` 时停止外发，但修复表单仍可用。业务库偏好读取失败时，状态接口保留控制记录里的偏好供修复，不把它当成已校准的新配置；未知提交不恢复旧频道。故障 Webhook 仍用固定的 `kind=storage` 元数据和原 HMAC 签名，告警格式不变。
 
 ### 清退备库
 
@@ -308,25 +294,22 @@ return hmac.Equal(got, mac.Sum(nil))
 | 监控 / Monitoring | 已落库节点观测、流量、探测与指标历史 |
 | 事件 / Events | 审计、告警、已结束投递、站内通知及已结束任务历史；不含历史备份密码 |
 
-- 至少选择一类，默认仅配置。不归档登录会话、注册票据、待执行任务、待发送通知、旧下载产物，以及机器部署配置、TLS 证书、可执行文件；这些部署文件另存。
-- 配置 settings 仅包含全站状态页开关、API 令牌全局限额及存储故障通知订阅；各项校验结构和值，不接受任意键。配置恢复整体替换这些设置；仅监控 / 事件恢复保留当前值。缺失状态页开关时默认开启。
-- 每包为 `.tar.gz.age`，独立 16 位随机大小写字母/数字密码；在详情主动显示、复制或下载恢复信息。密码不随远程包上传，没有主密码托管。
-- 另存每包密码；原机丢失或密码记录过期且未另存时无法恢复。下载与密码有效期见[存储与保留](../docs/architecture.md#存储与保留)，快照边界见[备份](../docs/architecture.md#备份)。
+- 至少选一类，默认只选配置。登录会话、注册票据、待执行任务、待发送通知、旧下载产物、部署配置、TLS 证书和可执行文件都不归档，部署文件另存。配置 settings 只含全站状态页开关、API 令牌全局限额和存储故障通知订阅；恢复配置会整体替换这些设置，仅监控/事件恢复保留当前值；缺状态页开关时默认开启。
+- 每包是 `.tar.gz.age`，带独立 16 位随机字母数字密码，在详情显示、复制或下载。密码不上传，也没有主密码托管；务必另存，原机丢失且没记录就无法恢复。下载和密码有效期见[存储与保留](../docs/architecture.md#存储与保留)，快照边界见[备份](../docs/architecture.md#备份)。
 
 ### 计划
 
-- 每计划一个本地或对象存储目标，可建多个计划；新建默认停用，任务活动期间不能编辑、停用或删除。
-- Cron 为五段，默认 `0 3 * * *`；不接受秒字段、`@daily`、时区前缀或命令。按服务器进程 `time.Local` 执行，页面显示服务器时区；更改系统/容器时区后重启，容器不自动继承宿主时区。
-- 错过多个周期只补一次，同计划已有任务时不堆积。没有连接测试、任务取消或重试按钮；失败后重新导出或等下一周期。
-- 结果未知时核对对象位置、大小与哈希，先确认是否已写入。
+- 每个计划一个本地或对象存储目标，可建多个计划；新建默认停用，任务活动期间不能编辑、停用或删除。
+- Cron 五段，默认 `0 3 * * *`，不接受秒字段、`@daily`、时区前缀或命令；按服务器 `time.Local` 执行，页面显示服务器时区，改系统/容器时区后要重启。错过多个周期只补一次，同计划已有任务时不堆积；没有连接测试、取消或重试按钮，失败后重新导出或等下一周期。
+- 结果未知时核对对象位置、大小和哈希，先确认是否已经写入。
 
 ### 备份目标
 
 本地目标：
 
-- 预建绝对路径，归运行用户所有、`0700`、可写且无符号链接；服务器不自动改权限。每计划写入 `orbitbeacon-<plan_id>/`，默认保留最近 7 份，可设 1–1000；仅成功后清理该计划旧包。
-- 删除计划不删除已有包；清理失败单独警告。systemd 在数据目录外备份时，精确增加 `ReadWritePaths=`；Compose 用数据卷或另挂可写目录，不依赖只读根目录或小容量 tmpfs，staging 使用 data-dir。
-- 计划包仅显示本地路径或准确 Object key，不提供网页下载副本或拼造 URL。
+- 预建绝对路径，归运行用户所有、`0700`、可写、无符号链接；服务器不改权限。每计划写入 `orbitbeacon-<plan_id>/`，默认保留最近 7 份，可设 1–1000，只在成功后清理旧包。
+- 删除计划不删已有包；清理失败单独警告。systemd 在数据目录外备份时，精确增加 `ReadWritePaths=`；Compose 用数据卷或另挂可写目录，不依赖只读根目录或小 tmpfs，staging 用 data-dir。
+- 计划包只显示本地路径或准确 Object key，不提供网页下载副本或拼造 URL。
 
 对象存储使用显式静态凭据，不读取主机默认凭据链；只上传，保留期由云端生命周期管理。
 
@@ -361,9 +344,7 @@ sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore --config /etc/orbi
 
 ## 升级
 
-原生 Agent 可通过控制台按版本远程升级，操作与回滚见[远程升级](../docs/agent.md#远程升级)。安装器的 `--update-base-url URL` 固定 HTTPS 发布源，写入 root 所有的策略；未配置时不开放 upgrade。下载、切换与回滚均以 Agent 用户运行，root 所有的 `libexec/orbitbeacon-agent-rollback` 由无 `+` 前缀的 `ExecStartPre=-` 调用；`etc/` 不可由 Agent 写入。管理员绝不能运行 `sudo orbitbeacon-agent`。
-
-`SHA256SUMS` 与二进制同源，只防传输损坏，不能防发布源入侵；没有签名验证。不接受此信任边界的节点应从本地 `remote_commands` 移除 `upgrade`。
+原生 Agent 可在控制台按版本远程升级。发布源、回滚和信任边界见[远程升级](../docs/agent.md#远程升级)；安装器默认用 GitHub Releases，重装不传 `--update-base-url` 时保留已有地址，传 URL 可换 HTTPS 镜像；只有策略值为空才关闭升级。
 
 当前主库、历史库及归档要求 schema baseline **2**。旧 baseline 1 数据库和归档明确拒绝，不提供自动迁移或清空。使用新数据目录与空的专用 MySQL schema；升级前保留旧数据库、key、归档密码和原二进制。结构调整直接更新可信原生建表 SQL。
 

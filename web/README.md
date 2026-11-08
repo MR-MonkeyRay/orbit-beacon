@@ -1,6 +1,6 @@
 # Web 开发
 
-原生 JavaScript / CSS 与 esbuild，无前端运行时依赖或外部字体；默认资源同源，也支持自托管静态 CDN。术语和文案见[约定](../docs/conventions.md)，功能入口见[主文档](../README.md#功能)。
+前端用原生 JavaScript/CSS 和 esbuild，没有运行时依赖或外部字体；默认资源同源，也支持自托管静态 CDN。术语和文案见[约定](../docs/conventions.md)，功能入口见[主文档](../README.md#功能)。
 
 ## 开发流程
 

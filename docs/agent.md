@@ -1,4 +1,4 @@
-# Linux Agent 注册
+# Linux Agent 安装与运维
 
 流程：**创建节点并签发注册票据 → 安装并注册 → 确认上报**。术语见[约定](conventions.md)，服务器部署与网络信任见[部署指南](../deploy/README.md#https-与反向代理)。
 
@@ -6,7 +6,7 @@
 
 - 服务器已启动，Agent 可访问其源站；管理员已完成初始化改密。
 - 安装脚本支持 Linux amd64 / arm64，需 root 安装、非 root 运行；支持 `useradd` 或 BusyBox 的 `adduser` / `addgroup`，并需 `runuser` 或 `su`。
-- 下载需 `curl`、`tar`、`sha256sum`，另需常用 POSIX 工具、`awk`、`install`。离线提供二进制时不执行下载和解包。
+- 下载需 `curl`、`sha256sum`、`awk`，另需常用 POSIX 工具和 `install`；独立二进制不需要 `tar`。离线提供二进制时不下载。
 - 不要复制服务器私钥、跳过证书校验，或把管理员 Cookie 传到 Agent 主机。
 
 ## 注册票据
@@ -61,7 +61,7 @@ unset TOKEN
 | `/opt/orbit-beacon/state/` | orbitbeacon-agent:orbitbeacon-agent，`0700`；identity、enrollment.token、run.lock 等身份和状态不应共享 |
 | `/etc/systemd/system/orbitbeacon-agent.service` | 非 root systemd 服务 |
 
-不要用 sudo 运行 orbitbeacon-agent。
+不要以 root 运行 `orbitbeacon-agent`；需要切换用户时用 `sudo -u orbitbeacon-agent`。
 
 脚本以 Agent 账号注册，成功后启动服务；没有运行中的 systemd 时打印前台启动命令。失败保留 state 中的 `enrollment.token`，不启用服务。修复 URL、CA、网络或票据问题后重试：
 
@@ -72,11 +72,7 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent enroll \
   --token-file /opt/orbit-beacon/state/enrollment.token
 ```
 
-重试成功后，以原来的 `--server`、版本和 CA 参数重跑安装脚本，并加 `< /dev/null`，让脚本补装并启动服务，不再提供注册票据。
-
-需要更换票据时，以策略指定的非 root Agent 用户运行下方[手动前台安装](#手动前台安装)中的隐藏读取注册命令。不要把新票据填进命令或 `printf` 字面量。
-
-成功后删除 state 中的注册票据文件，但源文件和管理机副本须自行清理。若提示清理失败，先核对注册结果，不能假定认领已回滚。
+重试成功后，用原来的 `--server`、版本和 CA 参数重跑安装脚本，并加 `< /dev/null`，让脚本补装并启动服务，不再提供注册票据。要换票据，用下方[手动前台安装](#手动前台安装)里的隐藏读取命令；不要把新票据写进命令或 `printf` 字面量。成功后删除 state 里的票据文件，源文件和管理机副本自行清理；如果提示清理失败，先核对注册结果，不能假定认领已回滚。
 
 ## 运行检查
 
@@ -126,15 +122,15 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent doctor \
 
 ## 远程升级
 
-控制台节点的「升级」或分组的「升级全部」只指定版本号；分组需输入组名，已运行目标版本、已关闭或本地不允许的节点跳过。当前版本必须也是正式三段版本，目标必须严格更新；开发版、相同版本和降级返回 `rejected/downgrade`。
+控制台的节点“升级”或分组“升级全部”只指定版本号。分组会要求输入组名；已运行目标版本、已关闭或本地不允许的节点跳过。当前版本也必须是正式三段版本，目标必须严格更新；开发版、相同版本和降级返回 `rejected/downgrade`。
 
-安装器将 `update_base_url` 写入 root 所有的安装策略，默认 `https://github.com/mr-monkeyray/orbit-beacon/releases/download`，可用 `--update-base-url URL` 指定 HTTPS 镜像，重装时保留已有地址；空值关闭升级能力。该值不能通过 `agent.json`、reload 或服务器修改，也不随报告上传。docker/foreground 不支持远程升级。
+安装器把 `update_base_url` 写进 root 所有的安装策略，默认 `https://github.com/mr-monkeyray/orbit-beacon/releases/download`；可用 `--update-base-url URL` 指定 HTTPS 镜像，重装保留已有地址，空值关闭升级能力。这个值不能通过 `agent.json`、reload 或服务器修改，也不随报告上传。docker/foreground 不支持远程升级。
 
-下载和自检在后台执行，期间继续上报；仅支持 Linux amd64/arm64。下载使用系统证书及策略中的 `ca_file`，仅允许 HTTPS（包括最多五次重定向）。二进制上限 64 MiB，清单上限 64 KiB。候选版本经 SHA256 校验和 `version --json` 自检后，保留 `bin/orbitbeacon-agent.prev`，写入 `state/upgrade-pending`，再原子替换并以 75 退出。下载最多十分钟，并为重启与首次上报预留 90 秒；不足 90 秒拒绝执行。
+下载和自检在后台执行，期间继续上报；只支持 Linux amd64/arm64。下载使用系统证书及策略中的 `ca_file`，只允许 HTTPS（最多五次重定向）。二进制上限 64 MiB，清单上限 64 KiB。候选版本通过 SHA256 和 `version --json` 自检后，保留 `bin/orbitbeacon-agent.prev`，写入 `state/upgrade-pending`，再原子替换并以 75 退出。下载最多十分钟，并预留 7 分钟给重启、启动确认和结果上报；指令剩余不足 7 分钟就拒绝执行。
 
-新版本首次被服务器接受的上报才算升级成功，并删除待确认标记。新版本崩溃，或运行 2 分钟仍未上报成功而自行退出，都计一次启动；第四次启动时，root 所有的回滚脚本以 Agent 用户运行并恢复 `.prev`，结果为 `rolled_back`。升级期间服务器长时间不可用同样会触发回滚。`.prev` 在成功升级后保留供人工恢复；意外中断返回 `interrupted`。回滚脚本绝不执行 `bin/` 中的文件，`etc/` 始终归 root 所有且 Agent 只读。
+新版本第一次被服务器接受的上报才算升级成功，然后删除待确认标记。新版本崩溃，或运行 2 分钟仍没上报成功而自行退出，都算一次启动；第四次启动时，root 所有的回滚脚本以 Agent 用户运行，恢复 `.prev`，结果为 `rolled_back`。升级期间服务器长时间不可用也会触发回滚。`.prev` 在成功升级后保留，供人工恢复；意外中断返回 `interrupted`。回滚脚本绝不执行 `bin/` 里的文件；`etc/` 始终归 root，Agent 只读。
 
-`SHA256SUMS` 与二进制来自同一发布源，只防传输损坏，不能防发布源被入侵；没有签名验证。不接受此信任边界的节点应从本地 `remote_commands` 移除 `upgrade`。管理员绝不能运行 `sudo orbitbeacon-agent`；手工恢复也须先停止服务，再以 Agent 用户检查二进制。
+发布源信任边界和安装相同：`SHA256SUMS` 只防传输损坏，不防源被入侵。不接受时从本地 `remote_commands` 移除 `upgrade`。手工恢复先停服务，再以 Agent 用户检查二进制。
 
 ## 升级与卸载
 
@@ -191,7 +187,7 @@ sudo chmod 0640 /opt/orbit-beacon/etc/agent.json
 
 CA 使用限制见[配置参考](../deploy/README.md#配置参考)。私有 CA 由 root 安装为 `/opt/orbit-beacon/etc/ca.pem`（root:Agent 组、`0640`），并填写 policy 的 `ca_file`。policy、CA 及祖先目录须 root 所有且不可被组/其他用户写入，无符号链接；不要放在家目录或 `/tmp`。state 按[安装路径](#安装与启动)的要求归运行用户所有。
 
-通过安全通道接收注册票据。以下命令隐藏读取票据并保存为当前用户所有的 `0600` 普通文件；路径无符号链接，祖先仅 root 或运行用户所有且不可被组/其他用户写入（安全 sticky 临时目录例外）。以普通用户一次性执行整个括号块，等待隐藏读取后再粘贴票据并回车，不要逐行执行或启用追踪。子 shell 在退出或收到 HUP、INT、TERM 时恢复回显，票据不进入命令参数、shell 历史或导出的环境变量；写文件使用 shell 内建 `printf`：
+用安全通道接收注册票据。下面的命令会隐藏读取票据，保存为当前用户所有的 `0600` 普通文件；路径不能有符号链接，祖先目录只归 root 或运行用户，且不可被组/其他用户写入（安全 sticky 临时目录例外）。以普通用户一次性执行整个括号块，等提示后再粘贴票据；不要逐行执行或开 `set -x`。子 shell 退出或收到 HUP/INT/TERM 会恢复回显，票据不进入命令参数、shell 历史或导出的环境变量；写文件用 shell 内建 `printf`：
 
 ```sh
 (
@@ -252,10 +248,16 @@ HTTP 探测不使用 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`，不能依赖�
 
 字段与错误码见[接口契约（OpenAPI）](../api/openapi.yaml)。
 
-远程指令仅有 `upgrade`、`restart`、`stop`，最终由本机 `remote_commands` 许可决定；服务器不能修改 Agent 设置。`upgrade` 只接收严格的 `MAJOR.MINOR.PATCH` 目标版本（无前导零），有效期 20 分钟，下发时剩余不足 7 分钟按过期拒绝；restart/stop 有效期 5 分钟。
-`restart` 在持久化执行标记后以退出码 **75** 结束，由 systemd 的 `Restart=on-failure` 拉起；同一 ID 不会再次重启。
-`stop` 持久化成功结果并立即采集、上报，确认成功或最多等待 15 秒后以 **0** 退出；恢复须人工 `systemctl start orbitbeacon-agent`，已启用服务在主机重启后也会恢复。正常 SIGTERM 行为不变。
-指令状态保存在 `state/commands.json`（0600）；损坏或写入失败时继续监控但停止执行指令，需人工检查修复，不能随意删除以免丢失去重记录。
-每次上报最多发送最旧的两条待确认结果；已处理 ID 最多保留 32 条，只淘汰已过期且结果已确认的记录。容量满时新指令返回 `rejected/failed`。
+## 远程指令
 
-Linux 上这三组指标不可用时为 null，不影响上报。磁盘 IO 只汇总 `/sys/block/<name>/device` 存在的物理整盘；PSI 使用 some avg60；温度取 (0, 150] °C 内最高值，每分钟后台刷新，缓存超过三分钟即丢弃。设置仅由本地手工编辑并 reload。
+远程指令只有 `upgrade`、`restart`、`stop`，都受本机 `remote_commands` 限制；服务器不能修改 Agent 设置。
+
+- `upgrade`：只接受严格 `MAJOR.MINOR.PATCH`（无前导零），有效期 20 分钟；下发时剩余不足 7 分钟按过期拒绝。
+- `restart`：持久化执行标记后以 75 退出，由 systemd `Restart=on-failure` 拉起；同一 ID 不会再次重启。有效期 5 分钟。
+- `stop`：持久化成功结果并立即采集、上报，确认成功或最多等 15 秒，再以 0 退出；恢复要人工 `systemctl start orbitbeacon-agent`。已启用服务在主机重启后也会恢复，正常 SIGTERM 行为不变。有效期 5 分钟。
+- 指令状态在 `state/commands.json`（0600）；文件损坏或写入失败时继续监控，但停止执行指令，需人工修复，不能随意删除，否则丢失去重记录。
+- 每次上报最多带最旧的两条待确认结果；已处理 ID 最多留 32 条，只淘汰已过期且结果已确认的记录。容量满时新指令返回 `rejected/failed`。
+
+## 额外指标
+
+磁盘 IO、PSI 和温度这三组指标不可用时为 null，不影响上报。磁盘 IO 只汇总 `/sys/block/<name>/device` 存在的物理整盘；PSI 使用 some avg60；温度取 (0, 150] °C 内最高值，每分钟后台刷新，缓存超过三分钟即丢弃。设置仅由本地手工编辑并 reload。
