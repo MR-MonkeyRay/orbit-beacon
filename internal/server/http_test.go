@@ -352,7 +352,7 @@ func TestAPIFailuresHaveStructuredErrorsAndNeverSPAFallback(t *testing.T) {
 func TestStaticFallbackIsLimitedToDeclaredUIRoutes(t *testing.T) {
 	f := newHTTP(t, 2)
 	cookie, _ := login(t, f, "admin")
-	for _, path := range []string{"/login", "/change-password", "/overview", "/nodes", "/nodes/00000000-0000-4000-8000-000000000123", "/alerts", "/settings"} {
+	for _, path := range []string{"/login", "/change-password", "/overview", "/nodes", "/nodes/00000000-0000-4000-8000-000000000123", "/alerts", "/settings", "/data"} {
 		t.Run(path, func(t *testing.T) {
 			response := request(t, f.handler, http.MethodGet, path, "", cookie, "", "")
 			if response.Code != http.StatusOK || !strings.HasPrefix(response.Header().Get("Content-Type"), "text/html") {

@@ -7,6 +7,7 @@ export const consoleRoutes = [
   {path: '/nodes', page: 'nodes', label: 'shell.nodes', icon: 'server', nav: '/nodes'},
   {path: '/nodes/{id}', page: 'node', nav: '/nodes'},
   {path: '/settings', page: 'settings', label: 'shell.settings', icon: 'sliders', nav: '/settings'},
+  {path: '/data', page: 'dataManagement', label: 'shell.dataManagement', icon: 'cloud', nav: '/data'},
   {path: '/alerts', page: 'alerts', label: 'shell.alerts', icon: 'bell', nav: '/alerts'}
 ];
 

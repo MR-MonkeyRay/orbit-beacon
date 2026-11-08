@@ -10,6 +10,7 @@ export default {
   'shell.goToNodes': '前往节点',
   'shell.tryAgain': '重试',
   'shell.settings': '设置',
+  'shell.dataManagement': '数据管理',
   'shell.signIn': '登录',
   'shell.signInTitle': '控制台登录',
   'shell.passwordChanged': '密码已修改，所有会话均已退出。请使用新密码登录。',

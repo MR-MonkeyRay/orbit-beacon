@@ -11,10 +11,16 @@ import {nodePage} from './pages/node.js';
 import {nodesPage} from './pages/nodes.js';
 import {overviewPage} from './pages/overview.js';
 import {settingsPage} from './pages/settings.js';
+import {dataManagementPage} from './pages/data-management.js';
 
 translateHTML();
 
-const pages = {login: loginPage, changePassword: changePasswordPage, overview: overviewPage, nodes: nodesPage, node: nodePage, settings: settingsPage, alerts: alertsPage};
+const pages = {login: loginPage, changePassword: changePasswordPage, overview: overviewPage, nodes: nodesPage, node: nodePage, settings: settingsPage, alerts: alertsPage,
+  dataManagement: () => {
+    const page = dataManagementPage();
+    page.attach();
+    return page.element;
+  }};
 const routes = consoleRoutes.map((route) => ({...route, match: (path) => matchesConsoleRoute(route, path), page: pages[route.page]}));
 
 initShell();

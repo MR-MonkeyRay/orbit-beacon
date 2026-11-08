@@ -10,6 +10,7 @@ export default {
   'shell.goToNodes': 'Go to nodes',
   'shell.tryAgain': 'Try again',
   'shell.settings': 'Settings',
+  'shell.dataManagement': 'Data management',
   'shell.signIn': 'Sign in',
   'shell.signInTitle': 'Console sign-in',
   'shell.passwordChanged': 'Password changed. Every session was signed out; sign in with your new password.',

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: OrbitBeacon 服务端与 Agent API
-  version: 0.4.0
+  version: 0.5.0
   description: |
     定义管理、Agent 与匿名 API 的字段、认证和错误码；各端点说明各自的访问要求。
     info.version 是接口契约版本，独立于程序发布版本，仅随契约变更更新；说明文字修订不升版。
@@ -20,6 +20,131 @@ servers:
 security:
   - session: []
 paths:
+  /api/v1/data-management:
+    get:
+      operationId: getDataManagement
+      description: 管理员会话专用。统计当前活动业务及历史数据库，不包含备库、本地控制库、SQLite WAL 或备份文件。MySQL 分配空间是引擎估计值；不返回数据库地址或凭据。
+      parameters:
+        - name: keep_days
+          in: query
+          schema: {type: integer, enum: [7, 30, 90, 180, 365], default: 30}
+      responses:
+        '200':
+          description: 当前统计；缺少历史数据库时省略该域及其类别。before 是本次预览的 UTC 清理边界。
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [databases, categories, before]
+                properties:
+                  before: {type: string, format: date-time}
+                  databases:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [domain, driver, size_bytes, reusable_bytes, compact_supported]
+                      properties:
+                        domain: {type: string, enum: [main, history]}
+                        driver: {type: string, enum: [sqlite, mysql]}
+                        size_bytes: {type: integer, minimum: 0, description: SQLite page_count × page_size；MySQL DATA_LENGTH + INDEX_LENGTH 估计值。}
+                        reusable_bytes: {type: [integer, 'null'], minimum: 0, description: SQLite 空闲页大小；MySQL 为 null，不保证等于操作系统可回收空间。}
+                        compact_supported: {type: boolean}
+                  categories:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, domain, rows, eligible_rows]
+                      properties:
+                        id: {type: string, enum: [metric_history, probe_history, availability_history, resolved_alerts, notification_history, delivery_history, audit_events]}
+                        domain: {type: string, enum: [main, history]}
+                        rows: {type: integer, minimum: 0}
+                        eligible_rows: {type: integer, minimum: 0}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/data-management/cleanup:
+    post:
+      operationId: cleanupManagedData
+      description: |
+        管理员会话、Origin 与 CSRF 校验。只删除所选类别中早于 before 的记录；客户端传入预览的 before，服务端验证不晚于当前 keep_days 边界。
+        指标按桶时间、探测按小时、可用率按完整 UTC 日、告警按恢复时间、站内通知及审计按创建时间、终态投递按更新时间判断。
+        保留触发中告警、pending 投递、账户、节点、设置、会话、流量及备份。站内通知同时级联删除已读关系，不重置通知序号。
+        每类别最多删除 5000 行，分短事务提交；has_more=true 时需刷新后由管理员再次确认。类别间及批次间不承诺原子性，失败可能已有部分提交，必须刷新核实，禁止自动重发未知提交。
+        逻辑删除不承诺立即缩小数据库文件；SQLite 整理为独立操作，MySQL 不执行 OPTIMIZE 或 TRUNCATE。
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [categories, keep_days, before, confirmation]
+              properties:
+                categories:
+                  type: array
+                  minItems: 1
+                  maxItems: 7
+                  uniqueItems: true
+                  items: {type: string, enum: [metric_history, probe_history, availability_history, resolved_alerts, notification_history, delivery_history, audit_events]}
+                keep_days: {type: integer, enum: [7, 30, 90, 180, 365]}
+                before: {type: string, format: date-time}
+                confirmation: {type: string, const: CLEAN}
+      responses:
+        '200':
+          description: 已完成的各类别清理结果；按请求顺序返回。
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [results, before]
+                properties:
+                  before: {type: string, format: date-time}
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, deleted_rows, has_more]
+                      properties:
+                        id: {type: string}
+                        deleted_rows: {type: integer, minimum: 0, maximum: 5000}
+                        has_more: {type: boolean}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/data-management/compact:
+    post:
+      operationId: compactManagedDatabase
+      description: 管理员会话、Origin 与 CSRF 校验。只整理当前活动 SQLite 域；写 gate 内执行 VACUUM 与 WAL checkpoint，不改变逻辑行。可能暂时阻塞写入并需要额外磁盘空间。MySQL 拒绝，不能整理备库。失败或响应中断后先刷新核实，禁止自动重发。
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [domain, confirmation]
+              properties:
+                domain: {type: string, enum: [main, history]}
+                confirmation: {type: string, const: COMPACT}
+      responses:
+        '200':
+          description: 整理成功；重新读取统计获取最新空间。
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [domain]
+                properties:
+                  domain: {type: string, enum: [main, history]}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/api-tokens:
     get:
       operationId: listAPITokens

@@ -33,6 +33,7 @@ import './latest-sample-freshness.test.js';
 import './pagination.test.js';
 import './pager.test.js';
 import './data-operations.test.js';
+import './data-management.test.js';
 import './settings-pagination.test.js';
 import './chart.test.js';
 import './alert-utils.test.js';

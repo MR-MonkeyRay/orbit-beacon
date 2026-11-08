@@ -259,3 +259,45 @@
   outline: 2px solid var(--focus);
   outline-offset: 3px;
 }
+
+.data-management-category {
+  flex-wrap: wrap;
+  padding: var(--sp-control);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  min-height: 64px;
+}
+
+.data-management-category-name {
+  flex: 1;
+  min-width: 120px;
+}
+
+.data-management-category-name small {
+  display: block;
+  font-size: var(--fs-xs);
+}
+
+.data-management-count {
+  font-size: var(--fs-sm);
+  color: var(--ink-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.data-management-toolbar .field {
+  max-width: 300px;
+}
+
+.data-management code,.data-management-dialog code,.data-management .facts dd {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 767px) {
+  .data-management .btn {
+    min-height: 44px;
+  }
+
+  .data-management-count {
+    flex-basis: 100%;
+  }
+}

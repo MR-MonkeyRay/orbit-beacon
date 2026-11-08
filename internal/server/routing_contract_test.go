@@ -295,7 +295,7 @@ func TestRoutingContractStaticAndHealthMethods(t *testing.T) {
 
 func TestRoutingContractConsolePaths(t *testing.T) {
 	h := routingContractHandler(t)
-	console := []string{"/login", "/change-password", "/overview", "/nodes", "/alerts", "/settings", "/nodes/" + routingContractID, "/nodes/" + strings.ToUpper(routingContractID)}
+	console := []string{"/login", "/change-password", "/overview", "/nodes", "/alerts", "/settings", "/data", "/nodes/" + routingContractID, "/nodes/" + strings.ToUpper(routingContractID)}
 	missing := []string{"/users", "/groups", "/tasks", "/notifications", "/backups", "/console", "/overview/extra", "/nodes/batch", "/nodes/not-a-uuid", "/nodes/00000000-0000-0000-0000-000000000000", "/nodes/" + routingContractID + "/runtime", "/nodes/" + routingContractID + "%2Fruntime", "/nodes//" + routingContractID, "//nodes", "/nodes/../settings"}
 	for _, path := range console {
 		missing = append(missing, path+"/")

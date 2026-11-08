@@ -13,6 +13,7 @@
 | 告警规则、事件与通知通道 | 告警 / Alerts |
 | 管理员与个人密码 | 设置 → 管理员、账户 / Settings → Administrators, Account |
 | 加密导出与备份计划 | 设置 → 数据操作 / Settings → Data operations |
+| 数据统计、历史清理与 SQLite 空间整理 | 数据管理 / Data management |
 | 告警与备份结果 | 站内通知 / Notifications |
 
 ## 重要限制
