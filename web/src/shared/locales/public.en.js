@@ -45,6 +45,7 @@ export default {
   'public.duration.hoursMinutes': '{hours}h {minutes}m',
   'public.duration.minutes': '{minutes}m',
   'public.metric.noData': 'No valid data yet',
+  'public.metric.staleNote': 'value may be outdated',
   'public.metric.cpu': 'CPU',
   'public.metric.memory': 'Memory',
   'public.metric.load': '1-minute load',

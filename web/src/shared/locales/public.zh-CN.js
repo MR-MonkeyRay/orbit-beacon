@@ -45,6 +45,7 @@ export default {
   'public.duration.hoursMinutes': '{hours}小时 {minutes}分钟',
   'public.duration.minutes': '{minutes}分钟',
   'public.metric.noData': '暂无有效数据',
+  'public.metric.staleNote': '数值可能已过期',
   'public.metric.cpu': 'CPU',
   'public.metric.memory': '内存',
   'public.metric.load': '1分钟负载',

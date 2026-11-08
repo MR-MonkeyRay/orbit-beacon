@@ -15,20 +15,29 @@ function gauge(label) {
   const fill = h('span', {class: 'fill'});
   const track = h('span', {class: 'track', role: 'meter', 'aria-label': label, 'aria-valuemin': '0', 'aria-valuemax': '100'}, fill);
   const element = h('div', {class: 'gauge'}, h('div', {class: 'gauge-line'}, h('span', null, label), value), track, h('span', {class: 'na'}, t('public.metric.noData')));
+  let baseText = '';
+  let stale = false;
+  const publish = () => { track.setAttribute('aria-valuetext', stale ? `${baseText}（${t('public.metric.staleNote')}）` : baseText); };
   element.set = (percent) => {
     const missing = percent === null;
     element.classList.toggle('missing', missing);
     const display = missing ? '—' : percentFormat.format(Number(percent.toFixed(1)) / 100);
     value.textContent = display;
     if (missing) {
+      baseText = '';
       track.removeAttribute('aria-valuenow');
       track.removeAttribute('aria-valuetext');
       return;
     }
     track.setAttribute('aria-valuenow', percent.toFixed(1));
-    track.setAttribute('aria-valuetext', display);
+    baseText = display;
+    publish();
     element.dataset.level = percent >= 90 ? 'critical' : percent >= 75 ? 'high' : 'normal';
     fill.style.setProperty('--v', String(percent / 100));
+  };
+  element.setStale = (next) => {
+    stale = next;
+    if (baseText) publish();
   };
   return element;
 }
@@ -52,9 +61,15 @@ export function createCard() {
   const paintFreshness = () => {
     if (!current) return;
     const states = current.metric_status;
-    for (const [key, element] of [['cpu_percent', cpu], ['memory_percent', memory], ['load1', load], ['uptime_seconds', uptime]]) {
+    for (const [key, element] of [['cpu_percent', cpu], ['memory_percent', memory]]) {
       const stale = current[key] !== null && (states[key] === 'stale' || connectionStale);
       element.classList.toggle('metric-stale', stale);
+      element.setStale(stale);
+    }
+    for (const [key, element] of [['load1', load], ['uptime_seconds', uptime]]) {
+      const stale = current[key] !== null && (states[key] === 'stale' || connectionStale);
+      element.classList.toggle('metric-stale', stale);
+      if (stale) element.title = t('public.metric.staleNote'); else element.removeAttribute('title');
     }
     const hasTime = Number.isFinite(timestampMillis(current.last_seen));
     lastReport.hidden = !hasTime || !(connectionStale || current.status === 'offline' || Object.values(states).includes('stale'));
