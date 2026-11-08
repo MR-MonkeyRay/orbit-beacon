@@ -175,12 +175,14 @@ select.input {
 
 .dirty-note {
   font-size: var(--fs-sm);
-  color: var(--beacon-text);
+  color: var(--ink-subtle);
+  visibility: hidden;
   opacity: 0;
-  transition: opacity var(--motion-fast);
+  transition: opacity var(--motion-fast), visibility var(--motion-fast);
 }
 
 .dirty-note.on {
+  visibility: visible;
   opacity: 1;
 }
 
