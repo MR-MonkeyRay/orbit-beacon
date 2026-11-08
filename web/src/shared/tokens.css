@@ -114,6 +114,9 @@
   }
 }
 
+/* 暗色调色板故意写了两份且必须保持同步：媒体查询响应系统偏好，
+   [data-theme="dark"] 响应显式覆盖；CSS 选择器无法跨媒体查询合并，
+   light-dark() 又超出浏览器目标（Chrome 111 / Safari 16.4）。 */
 @media (prefers-color-scheme:dark) {
   :root:not([data-theme="light"]) {
     --bg:#0e1526;
