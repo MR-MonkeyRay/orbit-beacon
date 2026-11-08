@@ -57,7 +57,7 @@ export function dataManagementPage() {
       checkbox.disabled = !available;
     }
     for (const control of compactButtons) control.disabled = !available;
-    preview.textContent = t('data.management.selection', {count: number(selected.size), rows: number(count)});
+    preview.textContent = t('data.management.selection', {count: selected.size, rows: number(count)});
   }
 
   function render() {
@@ -176,7 +176,7 @@ export function dataManagementPage() {
           const result = await api(`/data-management/${kind}`, {method: 'POST', body, signal});
           if (signal.aborted) return;
           const rows = kind === 'cleanup' ? result.results.map((item) => h('li', null,
-            t('data.management.deleted', {category: label(item.id), count: number(item.deleted_rows)}),
+            t('data.management.deleted', {category: label(item.id), count: item.deleted_rows}),
             item.has_more ? h('p', {class: 'text-note'}, t('data.management.more')) : null)) : [];
           const message = t(kind === 'cleanup' ? 'data.management.cleaned' : 'data.management.compacted');
           content.replaceChildren(h('div', {class: 'dialog-body stack', role: 'status'}, h('p', null, message),
