@@ -47,20 +47,18 @@ export function passwordChangeForm({disabled = false, ids = {}, hint, errorBox, 
       invalidateSession('password');
     } catch (error) {
       if (errorBox && error.name === 'AbortError') return;
-      const current = errorBox
-        ? error.code === 'invalid_old_password' || error.code === 'rate_limited'
-        : (error.status === 400 && error.code === 'invalid_old_password') || (error.status === 429 && error.code === 'rate_limited');
-      const unchanged = errorBox ? error.code === 'password_unchanged' : error.status === 400 && error.code === 'password_unchanged';
+      const current = error.code === 'invalid_old_password' || error.code === 'rate_limited';
+      const unchanged = error.code === 'password_unchanged';
       if (current || unchanged) {
         const control = current ? oldPassword : newPassword;
         control.showError(errorText(error));
         control.focus();
-        if (!errorBox) return;
+        // 字段级错误已在控件下方展示，不再向 errorBox 或 toast 重复同一句。
+        return;
       }
-      if (errorBox) error.fields = undefined;
       throw error;
     } finally {
-      clear();
+      // 失败后保留用户刚输入的值（暴露窗口与输入时相同）；成功、导航离开和退出登录时清空。
       form.syncDirty();
       if (secondary) secondary.disabled = false;
     }

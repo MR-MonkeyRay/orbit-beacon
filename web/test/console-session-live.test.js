@@ -189,7 +189,7 @@ test('router fences private DOM and redirects restricted sessions before loading
   }
 });
 
-test('required password page focuses field errors, preserves CSRF, and clears secrets before sign-out', async (t) => {
+test('required password page focuses field errors, keeps drafts on failure, and clears secrets on success and sign-out', async (t) => {
   let failure = 'invalid_old_password';
   const env = setup(t, (request) => {
     assert.equal(request.url, '/api/v1/me/password');
@@ -211,9 +211,12 @@ test('required password page focuses field errors, preserves CSRF, and clears se
       failure = code; fill();
       form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
       assert.equal(document.activeElement, controls[code === 'invalid_old_password' ? 0 : 1]);
-      assert.equal(form.querySelector('.form-error').hidden, false);
+      // 映射错误只出现在控件下方，不再重复写入表单顶部；后端原文不外泄。
+      assert.equal(form.querySelector('.form-error').hidden, true);
+      assert.ok(form.querySelectorAll('.field-error').find((element) => !element.hidden && element.textContent === copy(`errors.${code}`)));
       assert.equal(form.textContent.includes('untranslated backend detail'), false);
-      assert.equal(controls.every((control) => control.value === ''), true);
+      // 失败后保留刚输入的值，用户不必全部重输。
+      assert.equal(controls.every((control) => control.value !== ''), true);
       assert.equal(client.session.user.must_change_password, true);
     }
     unsubscribe = client.onSession((_session, detail) => {
@@ -445,7 +448,7 @@ test('successful account password change invalidates the shared session and remo
   }
 });
 
-test('account password errors focus the mapped field and clear every secret', async (t) => {
+test('account password errors focus the mapped field and keep typed drafts', async (t) => {
   let failure = 'invalid_old_password';
   const env = setup(t, (request) => {
     if (request.url === '/api/v1/me/password') return response({code: failure, message: 'private backend wording'}, {status: failure === 'rate_limited' ? 429 : 400});
@@ -467,7 +470,9 @@ test('account password errors focus the mapped field and clear every secret', as
       controls.forEach((control) => { control.value = 'a sufficiently long password'; });
       form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
       assert.equal(document.activeElement, controls[code === 'password_unchanged' ? 1 : 0]);
-      assert.equal(controls.every((control) => control.value === ''), true);
+      assert.ok(form.querySelectorAll('.field-error').find((element) => !element.hidden && element.textContent === copy(`errors.${code}`)));
+      // 失败后保留刚输入的值；成功路径才清空并退出登录。
+      assert.equal(controls.every((control) => control.value === 'a sufficiently long password'), true);
       assert.equal(client.session.user.must_change_password, false);
     }
   } finally {
