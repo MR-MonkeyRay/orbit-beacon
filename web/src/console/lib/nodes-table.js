@@ -53,7 +53,7 @@ export function createNodeRow({node, query, selected, deleted, groupNames, rowRe
     h('td', {class: 'hide-compact'}, (() => {
       const extra = node.tags.slice(3);
       return h('div', {class: 'cell-tags'}, node.tags.slice(0, 3).map((tag) => h('span', {class: 'tag static'}, tag)),
-        extra.length ? h('span', {class: 'muted', title: extra.join(', '), 'aria-label': `${t('nodes.tagsMore', {count: extra.length})}: ${extra.join(', ')}`}, `+${extra.length}`) : null);
+        extra.length ? h('span', {class: 'muted', title: formatList(extra), 'aria-label': `${t('nodes.tagsMore', {count: extra.length})}: ${formatList(extra)}`}, `+${extra.length}`) : null);
     })()),
     h('td', {class: 'hide-compact muted'}, when(node.created_at)));
   tween.set(cpu, node.cpu_percent, metricText);
