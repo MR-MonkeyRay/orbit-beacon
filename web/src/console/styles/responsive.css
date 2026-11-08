@@ -154,11 +154,16 @@
   }
 
   /* 72px 栏内文字只剩几个像素，直接隐藏文字，
-     以下拉箭头作为控件外观；完整语言名仍在 aria-label 和 title。 */
+     以下拉箭头作为控件外观；完整语言名在 aria-label 和 title。 */
   .account-locale select {
     padding: 0;
     color: transparent;
     background-position: 50% 50%;
+  }
+
+  /* 收起时隐藏文字，但展开后的选项要可读。 */
+  .account-locale select option {
+    color: var(--ink);
   }
 
   .account-actions {
