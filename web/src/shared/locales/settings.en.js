@@ -19,7 +19,7 @@ export default {
   'settings.settingsSections': 'Settings sections',
   'settings.publicLoading': 'Loading status page settings…',
   'settings.publicDisableTitle': 'Disable status page?',
-  'settings.publicDisableMessage': 'Anonymous visitors will need to sign in. Enable the status page to restore anonymous access.',
+  'settings.publicDisableMessage': 'Anonymous visitors will need to sign in.',
   'settings.publicDisable': 'Disable status page',
   'settings.publicEnabled': 'Status page enabled.',
   'settings.publicDisabled': 'Status page disabled.',
@@ -28,11 +28,10 @@ export default {
   'settings.save': 'Save',
   'settings.deleteOwn': 'Delete your account',
   'settings.deleteAdministrator': 'Delete administrator',
-  'settings.deleteOwnMessage': 'You are deleting your own account. Every session ends and you will be signed out.',
+  'settings.deleteOwnMessage': 'Permanently deletes your account and ends all your sessions.',
   'settings.deleteMyAccount': 'Delete my account',
   'settings.addAdministrator': 'Add administrator',
   'settings.initialPassword': 'Initial password',
-  'settings.initialPasswordHint': '8–1024 UTF-8 bytes.',
   'settings.requirePasswordChange': 'Require password change on first sign-in',
   'settings.you': '(you)',
   'settings.created': 'Created',
@@ -52,7 +51,7 @@ export default {
   'settings.deletedName': 'Deleted {name}.',
   'settings.addedName': 'Added {name}.',
   'settings.renamedName': 'Renamed to {name}.',
-  'settings.deleteAdministratorMessage': 'Delete "{name}"? Their sessions will end immediately. This cannot be undone.',
+  'settings.deleteAdministratorMessage': 'Permanently deletes "{name}" and ends their sessions immediately.',
   'settings.deleteAdministratorLabel': 'Delete administrator "{name}"',
   'settings.renameAdministratorLabel': 'Rename administrator "{name}"',
   'settings.batchEnrollmentFor': 'Batch enrollment ticket for {name}',
@@ -60,5 +59,5 @@ export default {
   'settings.deleteName': 'Delete {name}',
   'settings.deleteNameQuestion': 'Delete {name}?',
   'settings.nodeCount': {one: '{count} node', other: '{count} nodes'},
-  'settings.ungroupNodes': {one: 'Its {count} node becomes ungrouped. The node itself is kept.', other: 'Its {count} nodes become ungrouped. The nodes themselves are kept.'}
+  'settings.ungroupNodes': {one: 'Keeps its {count} node, ungrouped.', other: 'Keeps its {count} nodes, ungrouped.'}
 };

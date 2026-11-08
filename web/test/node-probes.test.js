@@ -47,7 +47,7 @@ test('probe uptime includes check count and never treats absent checks as 0% upt
   for (const value of [null, undefined, '99', -1, 101, NaN, Infinity]) assert.equal(formatProbeUptime(value, 2), copy('nodes.probe.checks', {percent: copy('common.unavailable'), count: 2}));
 });
 
-test('probe pending rows explain the first-check requirement and render targets as text', async () => {
+test('probe pending rows retain state, absent-check values and text-only targets', async () => {
   const env = setup();
   try {
     assert.equal(env.requests.length, 1);
@@ -58,7 +58,6 @@ test('probe pending rows explain the first-check requirement and render targets 
     assert.match(env.root.textContent, copyPattern('common.status.pending'));
     assert.match(env.root.textContent, copyPattern('nodes.probe.notChecked'));
     assert.match(env.root.textContent, copyPattern('nodes.probe.checks', {percent: copy('common.unavailable'), count: 0}));
-    assert.match(env.root.textContent, copyPattern('nodes.probe.pendingHint'));
     assert.equal(env.root.querySelector('.probe-target').textContent, target);
     assert.equal(env.root.querySelectorAll('a').length, 0);
     assert.equal(env.root.querySelectorAll('img').length, 0);
@@ -84,7 +83,6 @@ test('probe up and down rows retain server order, badges, latency, error, timest
     assert.equal(rows[1].querySelector('.badge').classList.contains('offline'), true);
     assert.match(rows[1].textContent, new RegExp(`${copyPattern('nodes.probe.down').source}.*${copyPattern('nodes.probe.http').source}.*${copyPattern('nodes.probe.checks', {percent: '0%', count: 1}).source}`));
     assert.match(rows[1].textContent, /503/);
-    assert.doesNotMatch(env.root.textContent, copyPattern('nodes.probe.pendingHint'));
     assert.equal(env.root.querySelector('.probes-body').getAttribute('aria-busy'), 'false');
   } finally { env.cleanup(); }
 });

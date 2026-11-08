@@ -312,7 +312,7 @@ export function tagEditor(values) {
   function render() {
     box.replaceChildren(...tags.map((tag) => h('span', {class: 'tag'}, h('span', {title: tag}, tag),
       h('button', {type: 'button', 'aria-label': t('controls.tags.remove', {tag}), onclick: () => { tags = tags.filter((item) => item !== tag); changed(); entry.focus(); }}, icon('x')))), entry);
-    entry.placeholder = t(tags.length ? 'controls.tags.add' : 'controls.tags.placeholder');
+    entry.placeholder = t('controls.tags.add');
   }
   render();
   return h('div', {class: 'field'}, h('label', {for: entry.id, class: 'field-label', id: labelID}, t('controls.tags.label')), box,

@@ -136,6 +136,16 @@ sudo systemctl reload nginx
 - 保持 WS 升级、SSE 无缓冲及长连接超时；nginx 示例已配置，不要覆盖 `X-Accel-Buffering: no`。连接额度见[实时传输](../docs/architecture.md#实时传输)，错误代理配置可能让访客共用额度。
 - nginx 示例有登录限流，Caddy 须另配边缘限流。
 
+## CDN
+
+最简单的部署仍是同域名边缘代理：HTML、API 和实时连接回源，只缓存带正确 `v` 参数的 `/_app/assets/*`。独立静态域名或对象存储则在构建时配置 HTTPS `assetBase`（可带发布目录前缀）；构建设置与命令见 [前端构建说明](../web/README.md)。这只改变脚本、样式、图片和字体地址，不改变页面、认证、API、WS 或 SSE 的原站地址，也不支持把整个应用部署到子路径。
+
+- 缓存键必须包含完整路径和 `v` 参数；仅成功的版本化 `/_app/assets/*` 可使用一年 `immutable` 缓存。无 `v` 时须重新验证（`no-cache`）；版本错误或格式错误返回 `404 no-store`，不得忽略参数后把新版内容发给旧 URL。反向代理回源可直接使用服务器的校验；独立对象源须在边缘按构建清单校验版本，不能仅把查询参数加入缓存键而不核对内容。
+- HTML（含公开首页与控制台）、API、WS、SSE、重定向及错误响应都不得在边缘缓存；尊重源站 `no-store`，不要配置整站“缓存所有内容”规则。`asset-manifest.json` 是内嵌启动校验输入，不是公开接口，也不要上传为公共对象。
+- 独立静态源须为成功资源（含 `HEAD` / `304`）提供 `Access-Control-Allow-Origin: *` 与 `Cross-Origin-Resource-Policy: cross-origin`，不启用凭据，不把这些响应头加到 HTML/API。保持正确 JS/CSS/字体 MIME 和 `X-Content-Type-Options: nosniff`；压缩响应保留 `Vary: Accept-Encoding` 及对应表示的 ETag，不重复压缩或混用压缩前后的长度。
+- 业务代理继续保留原始 `Host`、可信转发头及 WS Upgrade；SSE 禁用缓冲，保留 `X-Accel-Buffering: no` 和长连接超时。不要把 API 或认证域名加入静态 CDN 的 CORS 白名单。
+- **先上传本次构建的静态产物，再部署同次构建的服务器二进制**；二进制内嵌的 HTML、清单和资源必须一致。稳定文件名会在版本间复用：对象存储应使用独立的发布目录，例如 `assetBase: "https://cdn.example.com/releases/2026-11-07"`，并保留旧目录供已打开的页面和回滚使用。没有发布前缀时，必须安排资源与服务器的原子切换、保留旧版本的可寻址副本或执行完整缓存清理；只覆盖同名对象后继续接受旧 `v` 会让旧 URL 返回新版字节，不能作为安全升级方案。
+
 ## 日常检查
 
 ```sh

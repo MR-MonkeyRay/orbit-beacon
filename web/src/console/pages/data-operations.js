@@ -82,7 +82,7 @@ export function dataOperationsTab() {
   const exportError = h('div', {class: 'form-error', role: 'alert', hidden: true});
   const exportStatus = h('p', {class: 'text-note', role: 'status', hidden: true});
   const exportForm = h('form', {class: 'form form-wide'}, exportError, exportCategories.element,
-    h('div', {class: 'form-actions'}, start), exportStatus);
+    h('div', {class: 'form-actions'}, start, h('span', {class: 'text-note'}, t('data.export.hint'))), exportStatus);
   onSubmit(exportForm, start, async () => {
     const signal = controller?.signal;
     if (!signal || signal.aborted) return;
@@ -95,11 +95,9 @@ export function dataOperationsTab() {
     taskPager.cursors = [null];
     await loadTasks();
   }, exportError);
-  const element = h('div', {class: 'data-operations'},
-    panel(t('data.export.title'), {},
-      callout(t('data.export.warning')),
-      h('p', {class: 'text-note'}, t('data.export.hint')),
-      exportForm),
+  const element = h('div', {class: 'data-operations stack'},
+    callout(t('data.export.warning')),
+    panel(t('data.export.title'), {}, exportForm),
     panel(t('data.plans.title'), {action: h('div', {class: 'data-actions'}, planRefresh, addPlan)},
       timezone, planNote, planRows,
       h('div', {class: 'data-pagination'}, planPrevious, planNext)),
@@ -109,7 +107,7 @@ export function dataOperationsTab() {
   const taskView = {pager: taskPager, path: '/tasks', rows: taskRows, note: taskNote, previous: taskPrevious, next: taskNext, refresh: taskRefresh,
     values: (page) => page.tasks,
     render: (page) => page.tasks.length ? taskTable(page.tasks, openTask) : h('p', {class: 'empty'}, t('data.tasks.empty')),
-    success: () => { taskNote.textContent = t('data.tasks.current'); },
+    success: () => { taskNote.textContent = ''; },
     failure: (stale, error) => t(stale ? 'data.tasks.refreshFailedStale' : 'data.tasks.refreshFailed', {error: errorText(error)})};
   const planView = {pager: planPager, path: '/backup-plans', rows: planRows, note: planNote, previous: planPrevious, next: planNext, refresh: planRefresh,
     values: (page) => page.plans,

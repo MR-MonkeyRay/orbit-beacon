@@ -74,6 +74,7 @@ build/orbitbeacon-server health --url http://localhost:8080
 - [只读 MCP 客户端](docs/mcp.md)
 - [数据流、状态、保留与安全边界](docs/architecture.md)
 - [Web 开发](web/README.md)
+- [公开首页主题开发](web/themes/README.md)
 - [术语、日志与文案约定](docs/conventions.md)
 - [接口契约（OpenAPI）](api/openapi.yaml)
 

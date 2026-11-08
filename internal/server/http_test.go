@@ -62,9 +62,9 @@ func newHTTP(t *testing.T, capacity int) fixture {
 	handler, err := server.NewHandler(testHandlerOptions(t, server.Options{
 		Auth: authService, Nodes: nodeService, PublicURL: publicURL,
 		Assets: fstest.MapFS{
-			"200.html":               &fstest.MapFile{Data: []byte("<!doctype html><main>regression SPA shell</main>")},
-			"public.html":            &fstest.MapFile{Data: []byte("<!doctype html><main>regression public shell</main>")},
-			"_app/immutable/main.js": &fstest.MapFile{Data: []byte("export const fixture = true;")},
+			"200.html":            &fstest.MapFile{Data: []byte("<!doctype html><main>regression SPA shell</main>")},
+			"public.html":         &fstest.MapFile{Data: []byte("<!doctype html><main>regression public shell</main>")},
+			"_app/assets/main.js": &fstest.MapFile{Data: []byte("export const fixture = true;")},
 		},
 	}))
 	if err != nil {
@@ -365,7 +365,7 @@ func TestStaticFallbackIsLimitedToDeclaredUIRoutes(t *testing.T) {
 	}
 	for _, path := range []string{
 		"/not-a-page", "/overview/unexpected", "/nodes/00000000-0000-4000-8000-000000000123/extra",
-		"/_app/immutable/missing.js", "/favicon-missing.svg", "/api/v1/missing", "/api/agent/v1/missing",
+		"/_app/assets/missing.js", "/favicon-missing.svg", "/api/v1/missing", "/api/agent/v1/missing",
 		"/status",
 	} {
 		t.Run(path, func(t *testing.T) {
@@ -378,11 +378,11 @@ func TestStaticFallbackIsLimitedToDeclaredUIRoutes(t *testing.T) {
 			}
 		})
 	}
-	response := request(t, f.handler, http.MethodGet, "/_app/immutable/main.js", "", nil, "", "")
+	response := request(t, f.handler, http.MethodGet, "/_app/assets/main.js", "", nil, "", "")
 	if response.Code != http.StatusOK || response.Body.String() != "export const fixture = true;" {
 		t.Errorf("real static asset not delivered: %d %s", response.Code, response.Body)
 	}
-	response = request(t, f.handler, http.MethodHead, "/_app/immutable/main.js", "", nil, "", "")
+	response = request(t, f.handler, http.MethodHead, "/_app/assets/main.js", "", nil, "", "")
 	if response.Code != http.StatusOK || response.Body.Len() != 0 {
 		t.Errorf("HEAD asset response = %d with %d body bytes", response.Code, response.Body.Len())
 	}

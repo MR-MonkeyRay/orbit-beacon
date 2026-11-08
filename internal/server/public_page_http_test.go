@@ -72,10 +72,13 @@ func TestPublicPageRootMatrixAndConditionalRequests(t *testing.T) {
 		w := httptest.NewRecorder()
 		f.handler.ServeHTTP(w, r)
 		assertHTTPStatus(t, w, 302)
+		if w.Header().Get("Access-Control-Allow-Origin") != "" || w.Header().Get("Cross-Origin-Resource-Policy") != "" {
+			t.Fatal("disabled public redirect received static CORS headers")
+		}
 	}
 	assertHTTPStatus(t, request(t, f.handler, http.MethodPost, "/", "", nil, "", ""), 405)
 	assertHTTPStatus(t, request(t, f.handler, http.MethodGet, "/unknown-public-path", "", nil, "", ""), 404)
-	assertHTTPStatus(t, request(t, f.handler, http.MethodGet, "/_app/immutable/main.js", "", nil, "", ""), 200)
+	assertHTTPStatus(t, request(t, f.handler, http.MethodGet, "/_app/assets/main.js", "", nil, "", ""), 200)
 }
 
 func TestPublicPageHTTPValidationAuthorizationAndRollback(t *testing.T) {

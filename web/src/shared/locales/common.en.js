@@ -7,6 +7,7 @@ export default {
   'common.status.stopped': 'Stopped',
 
   'common.refresh': 'Refresh',
+  'common.state': 'Status',
   'common.retry': 'Retry',
   'common.status.online': 'Online',
   'common.status.offline': 'Offline',

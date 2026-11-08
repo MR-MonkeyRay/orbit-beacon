@@ -36,10 +36,10 @@ export function panel(title, options = {}, ...body) {
     h('div', {class: 'panel-body'}, body));
 }
 
-export function pageHead(title, subtitle, ...actions) {
+export function pageHead(title, ...actions) {
   actions = actions.filter(Boolean);
   return h('header', {class: 'page-head'},
-    h('div', null, h('h1', {tabindex: '-1'}, title), subtitle ? h('p', null, subtitle) : null),
+    h('div', null, h('h1', {tabindex: '-1'}, title)),
     actions.length ? h('div', {class: 'head-actions'}, actions) : null);
 }
 

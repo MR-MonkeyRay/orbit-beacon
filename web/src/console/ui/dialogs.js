@@ -101,12 +101,12 @@ export function confirmDialog({title, message, confirm, danger = false}) {
 }
 
 export const confirmDiscard = () => confirmDialog({
-  title: t('controls.discard.title'), message: t('controls.discard.message'), confirm: t('controls.discard'), danger: true
+  title: t('controls.discard.title'), confirm: t('controls.discard'), danger: true
 });
 
 // 对话框中的表单。build(form) 添加字段；提交时执行 action(form)，
 // 成功后关闭对话框，错误则显示在对话框内。
-export function formDialog({title, intro, submit, build, action}) {
+export function formDialog({title, submit, build, action}) {
   return modal(title, (close) => {
     const form = h('form', {class: 'form'});
     const errorBox = h('div', {class: 'form-error', role: 'alert', hidden: true});
@@ -123,6 +123,6 @@ export function formDialog({title, intro, submit, build, action}) {
     }, errorBox);
     const first = form.querySelector('input,select,textarea');
     if (first) first.dataset.autofocus = '';
-    return h('div', {class: 'dialog-body'}, intro ? h('p', {class: 'text-note'}, intro) : null, form);
+    return h('div', {class: 'dialog-body'}, form);
   });
 }

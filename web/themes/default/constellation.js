@@ -1,5 +1,5 @@
-import {svg} from '../shared/dom.js';
-import {orbitSVG} from '../shared/orbit.js';
+import {svg} from '../../src/shared/dom.js';
+import {orbitSVG} from '../../src/shared/orbit.js';
 
 // 将集群绘制为围绕信标的卫星。圆环位于倾斜平面
 // （压扁的分组）上；每个圆环用 CSS 旋转，每颗卫星反向旋转，

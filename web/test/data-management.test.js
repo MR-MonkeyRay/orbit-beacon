@@ -16,7 +16,7 @@ const find = (root, predicate) => elements(root).find(predicate);
 const action = (root, key) => find(root, (element) => element.tagName === 'button' && element.textContent === copy(key));
 const checkbox = (root, id) => find(root, (element) => element.type === 'checkbox' && element.value === id);
 
-function setup() {
+function setup(data = snapshot) {
   const dom = installDOM();
   const originalFetch = globalThis.fetch;
   const navigation = getNavigationSignal();
@@ -34,7 +34,7 @@ function setup() {
     requests.push({url, method, signal: options.signal, body: options.body && JSON.parse(options.body)});
     if (method === 'POST' && postError) throw new TypeError('network down');
     if (method === 'GET' && delayed) await new Promise((resolve) => { resolveGet = resolve; });
-    const value = method === 'GET' ? {...snapshot(), ...(malformed ? {databases: {}} : {})} : {before, results: [{id: 'audit_events', deleted_rows: 1100, has_more: true}]};
+    const value = method === 'GET' ? {...data(), ...(malformed ? {databases: {}} : {})} : {before, results: [{id: 'audit_events', deleted_rows: 1100, has_more: true}]};
     return new Response(JSON.stringify(fail && method === 'GET' ? {code: 'internal_error'} : value), {status: fail && method === 'GET' ? 500 : 200, headers: {'Content-Type': 'application/json'}});
   };
   return {dom, requests, controller, fail: () => { fail = true; }, unknown: () => { postError = true; },

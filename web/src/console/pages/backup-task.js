@@ -34,7 +34,6 @@ export function taskDetails(task, {signal} = {}) {
     if (task.download_available) element.append(h('a', {class: 'btn btn-primary', href: `/api/v1/tasks/${encodeURIComponent(task.id)}/download`}, t('data.task.download')));
     else element.append(h('p', {class: 'text-note'}, t('data.task.downloadUnavailable')));
   }
-  if (task.kind !== 'backup_export') element.append(h('p', {class: 'text-note'}, t('data.task.scheduledDestination')));
   const password = backupPassword(task, {signal});
   element.append(password.element);
   return {element, dispose: password.dispose};

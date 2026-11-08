@@ -137,11 +137,7 @@ func NewHandler(opts Options) (*handler, error) {
 	if _, err := fs.Stat(opts.Assets, "public.html"); err != nil {
 		return nil, fmt.Errorf("public UI shell: %w", err)
 	}
-	policies, err := htmlPolicies(opts.Assets, origin)
-	if err != nil {
-		return nil, fmt.Errorf("UI policies: %w", err)
-	}
-	staticAssets, err := prepareStaticAssets(opts.Assets)
+	staticAssets, policies, err := prepareUIAssets(opts.Assets, origin)
 	if err != nil {
 		return nil, fmt.Errorf("UI assets: %w", err)
 	}

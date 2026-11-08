@@ -9,7 +9,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  # 主分支运行可能已开始发布，不中断。
+  # Main-branch runs may already be publishing; do not interrupt them.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
@@ -23,27 +23,27 @@ jobs:
     outputs:
       version: ${{ steps.project-version.outputs.version }}
     steps:
-      - name: 检出源码
+      - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: 读取项目版本
+      - name: Read project version
         id: project-version
         run: |
           set -eu
           version="$(< VERSION)"
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo 'VERSION 必须包含一个类似 SemVer 的版本号，如 0.1.0' >&2
+            echo 'VERSION must contain a SemVer-like version, such as 0.1.0' >&2
             exit 1
           fi
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
-      - name: 配置 Go
+      - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: 检查格式
+      - name: Check formatting
         run: |
           if ! unformatted="$(gofmt -l cmd internal)"; then
             exit 1
@@ -53,16 +53,16 @@ jobs:
             exit 1
           fi
 
-      - name: 校验模块内容
+      - name: Verify modules
         run: go mod verify
 
-      - name: 不使用缓存运行测试并报告覆盖率
+      - name: Run uncached tests with coverage
         run: |
           go test -count=1 -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out
 
-      # 仅受信任主分支可读取远程管理员凭据；未配置基础设施时明确记录未执行。
-      - name: 运行远程独立 schema MySQL 集成测试
+      # Only trusted main-branch runs can read remote admin credentials; report unconfigured infrastructure explicitly.
+      - name: Run isolated-schema remote MySQL integration tests
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           ORBITBEACON_TEST_MYSQL_ADMIN_CONFIG: ${{ secrets.ORBITBEACON_TEST_MYSQL_ADMIN_CONFIG }}
@@ -70,11 +70,11 @@ jobs:
         run: |
           set -eu
           if [ -z "$ORBITBEACON_TEST_MYSQL_ADMIN_CONFIG" ] && [ -z "$ORBITBEACON_TEST_MYSQL_ADMIN_PASSWORD" ]; then
-            echo '远程 MySQL 集成未执行：未配置管理员配置与密码 secrets。' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Remote MySQL integration was not run: admin configuration and password secrets are not configured.' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           if [ -z "$ORBITBEACON_TEST_MYSQL_ADMIN_CONFIG" ] || [ -z "$ORBITBEACON_TEST_MYSQL_ADMIN_PASSWORD" ]; then
-            echo '远程 MySQL 集成必须同时配置管理员配置与密码 secrets。' >&2
+            echo 'Remote MySQL integration requires both admin configuration and password secrets.' >&2
             exit 1
           fi
           umask 077
@@ -88,22 +88,22 @@ jobs:
           export ORBITBEACON_TEST_MYSQL_CONFIG="$private_dir/admin.json"
           go test -p 1 -count=1 -timeout=20m ./internal/server ./internal/server/storage ./internal/server/history ./internal/server/auth ./internal/server/nodes ./internal/server/enrollment ./internal/server/ingest ./internal/server/backup ./internal/server/notify ./internal/server/inbox ./internal/server/alerts ./internal/server/management ./internal/server/app ./cmd/orbitbeacon-server
 
-      - name: 运行竞态测试
+      - name: Run race tests
         env:
           CGO_ENABLED: '1'
         run: go test -race -count=1 ./...
 
-      - name: 运行 vet
+      - name: Run go vet
         run: go vet ./...
 
-      - name: 运行跨平台 vet
+      - name: Run cross-platform go vet
         env:
           CGO_ENABLED: '0'
         run: |
           GOOS=darwin go vet ./...
           GOOS=windows go vet ./...
 
-      - name: 运行 Staticcheck
+      - name: Run Staticcheck
         run: |
           GOBIN="$RUNNER_TEMP/bin" go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
           "$RUNNER_TEMP/bin/staticcheck" ./...
@@ -116,24 +116,24 @@ jobs:
       run:
         working-directory: web
     steps:
-      - name: 检出源码
+      - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: 配置 Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: web/.nvmrc
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: 安装依赖
+      - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      # Go 构建直接嵌入已提交的产物，无需 Node.js。
-      - name: 校验内嵌 Web 界面与源码一致
+      # Go builds embed committed assets without requiring Node.js.
+      - name: Verify embedded web assets match source
         run: npm run check
 
-      - name: 运行 Web 测试
+      - name: Run web tests
         run: npm test
 
   security:
@@ -141,16 +141,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: 检出源码
+      - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: 配置 Go
+      - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: 运行 Go 漏洞扫描
+      - name: Run Go vulnerability scan
         run: |
           GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
           "$RUNNER_TEMP/bin/govulncheck" ./...
@@ -160,13 +160,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: 检出源码
+      - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: 检查 shell 脚本
+      - name: Lint shell scripts
         run: shellcheck deploy/install-agent.sh deploy/install-agent.test.sh
 
-      - name: 运行安装器回归测试
+      - name: Run installer regression tests
         run: sh deploy/install-agent.test.sh
 
   release:

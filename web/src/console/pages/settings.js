@@ -42,7 +42,7 @@ export async function settingsPage() {
     'public-page': publicPageTab
   };
   return h('div', null,
-    pageHead(t('shell.settings'), null),
+    pageHead(t('shell.settings')),
     tabSet(settingsTabs.map((tab) => ({...tab, label: t(tab.label), build: builds[tab.id]})), t('settings.settingsSections')));
 }
 
@@ -234,7 +234,7 @@ function administratorsTab(users) {
         validateBytes(username, 1, 128, t('account.username'));
         validateBytes(password, 8, 1024, t('account.password'));
         form.append(field(t('account.username'), username),
-          field(t('settings.initialPassword'), password, {inner: password.wrapper, hint: t('settings.initialPasswordHint')}),
+          field(t('settings.initialPassword'), password, {inner: password.wrapper, hint: t('account.passwordBytes')}),
           h('label', {class: 'check-row'}, mustChangePassword, h('span', null, t('settings.requirePasswordChange'))));
       },
       action: async () => {

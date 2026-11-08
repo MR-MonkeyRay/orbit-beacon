@@ -27,6 +27,7 @@ export function dataManagementPage() {
   const checkboxes = new Map();
   const compactButtons = [];
   const usage = h('div', {class: 'grid-2'});
+  const storageNotes = h('div', {class: 'data-management-storage-notes stack'});
   const choices = h('div', {class: 'data-category-choices'});
   const status = h('p', {class: 'text-note', role: 'status'}, t('controls.loading'));
   const preview = h('p', {class: 'data-management-selection', role: 'status'});
@@ -36,14 +37,13 @@ export function dataManagementPage() {
   const refresh = button(t('data.management.refresh'), {icon: 'refresh', onClick: () => load()});
   const clean = button(t('data.management.clean'), {variant: 'danger', disabled: true, onClick: () => openCleanup()});
   const element = h('div', {class: 'data-operations data-management'},
-    pageHead(t('data.management.title'), t('data.management.subtitle'), refresh),
+    pageHead(t('data.management.title'), refresh),
     status,
-    panel(t('data.management.usage'), {}, usage, h('p', {class: 'text-note'}, t('data.management.scope'))),
+    panel(t('data.management.usage'), {}, usage, h('p', {class: 'text-note'}, t('data.management.scope')), storageNotes),
     panel(t('data.management.cleanup'), {},
       h('div', {class: 'data-management-toolbar'}, field(t('data.management.keep'), days)),
       cutoff, choices, preview,
-      callout(t('data.management.protected'), 'info'),
-      h('p', {class: 'text-note'}, t('data.management.logical')),
+      h('p', {class: 'text-note'}, t('data.management.protected')),
       h('div', {class: 'data-actions'}, clean), outcome));
 
   function updateControls() {
@@ -73,9 +73,10 @@ export function dataManagementPage() {
         h('div', {class: 'data-plan-head'}, h('h3', null, domainLabel(database.domain)), h('span', {class: 'badge'}, database.driver === 'sqlite' ? 'SQLite' : 'MySQL')),
         facts([[t('data.management.allocated'), formatBytes(database.size_bytes)],
           [t('data.management.reusable'), database.reusable_bytes === null ? t('data.management.notReported') : formatBytes(database.reusable_bytes)]]),
-        h('p', {class: 'text-note'}, t(database.driver === 'mysql' ? 'data.management.mysqlNote' : 'data.management.sqliteNote')),
         compact ? h('div', {class: 'data-actions'}, compact) : null);
     }));
+    storageNotes.replaceChildren(...[...new Set(snapshot.databases.map((database) => database.driver))]
+      .map((driver) => h('p', {class: 'text-note'}, t(driver === 'mysql' ? 'data.management.mysqlNote' : 'data.management.sqliteNote'))));
     checkboxes.clear();
     choices.replaceChildren(...snapshot.categories.filter((item) => categories.includes(item.id)).map((item) => {
       const checkbox = input({type: 'checkbox', name: 'categories', value: item.id, checked: selected.has(item.id)});
@@ -112,7 +113,7 @@ export function dataManagementPage() {
       snapshot = value;
       render();
       fresh = true;
-      status.textContent = t('data.management.current');
+      status.textContent = '';
       status.classList.remove('data-stale');
     } catch (error) {
       if (signal.aborted || current !== epoch) return;

@@ -7,6 +7,7 @@ export default {
   'common.status.stopped': '已关闭',
 
   'common.refresh': '刷新',
+  'common.state': '状态',
   'common.retry': '重试',
   'common.status.online': '在线',
   'common.status.offline': '离线',

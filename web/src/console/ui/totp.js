@@ -59,7 +59,7 @@ export function totpPanel() {
     if (!alive()) return;
     updateUser({totp_enabled: status.enabled});
     body.replaceChildren(facts([
-      [t('account.totp'), t(status.enabled ? 'account.totpEnabled' : 'account.totpDisabled')],
+      [t('common.state'), t(status.enabled ? 'account.totpEnabled' : 'account.totpDisabled')],
       [t('account.recoveryCodes'), String(status.recovery_codes_remaining)]
     ]));
     const change = (disable) => {

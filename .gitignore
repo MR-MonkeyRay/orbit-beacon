@@ -1,6 +1,8 @@
 .omx/
 # Root build output; internal/server/webui/dist remains tracked.
 /dist/
+/internal/server/webui/dist.previous/
+/internal/server/webui/dist.next-*/
 /build/*
 !/build/server.Dockerfile
 /bin/

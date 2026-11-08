@@ -1,15 +1,14 @@
-import {availabilityBar} from '../shared/availability.js';
-import {h, icon} from '../shared/dom.js';
-import {statusLabels} from '../shared/status.js';
-import {timestampMillis} from '../shared/freshness.js';
-import {getLocale, t, tParts} from '../shared/i18n.js';
-import {formatDuration, formatLoadNumber} from '../shared/format.js';
+import {availabilityBar} from '../../src/shared/availability.js';
+import {h, icon} from '../../src/shared/dom.js';
+import {statusLabels} from '../../src/shared/status.js';
+import {timestampMillis} from '../../src/shared/freshness.js';
+import {getLocale, t, tParts} from '../../src/shared/i18n.js';
+import {formatDuration, formatLoadNumber} from '../../src/shared/format.js';
 
 const reportFormat = new Intl.DateTimeFormat(getLocale(), {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
-const integerFormat = new Intl.NumberFormat(getLocale());
 const percentFormat = new Intl.NumberFormat(getLocale(), {style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1});
 
-export const STATUS = statusLabels({unknown: 'public.status.unknown'});
+const STATUS = statusLabels({unknown: 'public.status.unknown'});
 
 function gauge(label) {
   const value = h('span', {class: 'gauge-value num'});

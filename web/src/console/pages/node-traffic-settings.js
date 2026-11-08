@@ -39,7 +39,7 @@ export function trafficSettingsPanel(id, settings, onSaved, signal, isDeleted = 
   const form = h('form', {class: 'form form-wide'},
     field(t('nodes.trafficQuota'), quota, {inner: h('div', {class: 'form-row'}, quota, h('div', null, quotaUnit)),
       hint: t('nodes.quotaHint')}),
-    h('div', {class: 'form-row'}, field(t('nodes.billingDay'), billing, {hint: t('nodes.billingDayHint')}), field(t('nodes.billingMode'), mode)), controls.bar);
+    h('div', {class: 'form-row'}, field(t('nodes.billingDay'), billing), field(t('nodes.billingMode'), mode)), controls.bar);
   const restore = () => {
     billing.value = String(saved.billing_day);
     mode.value = saved.billing_mode || 'total';

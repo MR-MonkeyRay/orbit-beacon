@@ -48,9 +48,7 @@ function probeContent(probes) {
           [t('nodes.probe.checked'), probe.checked_at ? when(probe.checked_at) : t('nodes.probe.notChecked')],
           [t('nodes.probe.uptime'), formatProbeUptime(probe.uptime_24h, probe.checks_24h)]
         ]));
-    })),
-    probes.every((probe) => probe.status === 'pending') ? h('p', {class: 'text-note'},
-      t('nodes.probe.pendingHint')) : null);
+    })));
 }
 
 // 切换详情标签页时保留面板，卸载时暂停轮询；

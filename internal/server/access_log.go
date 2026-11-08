@@ -100,8 +100,8 @@ func staticRequestRoute(p string) string {
 	if strings.HasPrefix(p, "/nodes/") {
 		return "/nodes/{id}"
 	}
-	if strings.HasPrefix(p, "/_app/immutable/") {
-		return "/_app/immutable/{asset}"
+	if strings.HasPrefix(p, "/_app/assets/") {
+		return "/_app/assets/{asset}"
 	}
 	return "unmatched"
 }

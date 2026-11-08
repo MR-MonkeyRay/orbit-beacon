@@ -47,7 +47,6 @@ export default {
   'account.accountCreated': 'Account created',
   'account.sessionExpires': 'Session expires',
   'account.changePassword': 'Change password',
-  'account.passwordSignOutHint': 'Changing your password signs out every session, including this one.',
-  'account.changePasswordTitle': 'Password change',
-  'account.changePasswordDescription': 'All sessions will be signed out.'
+  'account.passwordSignOutHint': 'All sessions will be signed out.',
+  'account.changePasswordTitle': 'Change password'
 };

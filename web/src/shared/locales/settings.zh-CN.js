@@ -19,7 +19,7 @@ export default {
   'settings.settingsSections': '设置分类',
   'settings.publicLoading': '正在加载状态页设置…',
   'settings.publicDisableTitle': '关闭状态页？',
-  'settings.publicDisableMessage': '匿名访客将需要登录，重新开启状态页可恢复匿名访问。',
+  'settings.publicDisableMessage': '匿名访客将需要登录。',
   'settings.publicDisable': '关闭状态页',
   'settings.publicEnabled': '状态页已开启。',
   'settings.publicDisabled': '状态页已关闭。',
@@ -28,11 +28,10 @@ export default {
   'settings.save': '保存',
   'settings.deleteOwn': '删除你的账户',
   'settings.deleteAdministrator': '删除管理员',
-  'settings.deleteOwnMessage': '你正在删除自己的账户。所有会话将结束，你将退出登录。',
+  'settings.deleteOwnMessage': '将永久删除你的账户并结束你的所有会话。',
   'settings.deleteMyAccount': '删除我的账户',
   'settings.addAdministrator': '添加管理员',
   'settings.initialPassword': '初始密码',
-  'settings.initialPasswordHint': '8–1024 个 UTF-8 字节。',
   'settings.requirePasswordChange': '首次登录时必须修改密码',
   'settings.you': '（你）',
   'settings.created': '创建时间',
@@ -52,7 +51,7 @@ export default {
   'settings.deletedName': '已删除 {name}。',
   'settings.addedName': '已添加 {name}。',
   'settings.renamedName': '已重命名为 {name}。',
-  'settings.deleteAdministratorMessage': '删除“{name}”？其会话将立即结束。此操作无法撤销。',
+  'settings.deleteAdministratorMessage': '将永久删除“{name}”并立即结束其会话。',
   'settings.deleteAdministratorLabel': '删除管理员“{name}”',
   'settings.renameAdministratorLabel': '重命名管理员“{name}”',
   'settings.batchEnrollmentFor': '{name} 的批量注册票据',
@@ -60,5 +59,5 @@ export default {
   'settings.deleteName': '删除 {name}',
   'settings.deleteNameQuestion': '删除 {name}？',
   'settings.nodeCount': {other: '{count} 个节点'},
-  'settings.ungroupNodes': {other: '其中的 {count} 个节点将设为未分组，节点本身会保留。'}
+  'settings.ungroupNodes': {other: '保留其中的 {count} 个节点，设为未分组。'}
 };

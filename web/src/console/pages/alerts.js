@@ -27,6 +27,6 @@ export async function alertsPage() {
     'channels': () => h('div', null, channelsPanel(context), deliveriesPanel(channels, signal))
   };
   return h('div', null,
-    pageHead(t('alerts.title'), null),
+    pageHead(t('alerts.title')),
     tabSet(alertTabs.map((tab) => ({...tab, label: t(tab.label), build: builds[tab.id]})), t('alerts.sections')));
 }

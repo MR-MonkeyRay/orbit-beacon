@@ -15,7 +15,7 @@ export function createNodeDialog() {
     build: (form) => {
       name = input({name: 'name', required: true, autocomplete: 'off', placeholder: t('nodes.nameExample')});
       validateBytes(name, 1, 255, t('nodes.name'));
-      form.append(field(t('nodes.name'), name, {hint: t('nodes.nameHint')}));
+      form.append(field(t('nodes.name'), name));
     },
     action: async () => {
       const node = await api('/nodes', {method: 'POST', body: {name: name.value}});

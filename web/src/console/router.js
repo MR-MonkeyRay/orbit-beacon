@@ -3,7 +3,7 @@ import {errorText} from '../shared/errors.js';
 import {h, reducedMotion} from '../shared/dom.js';
 import {ensureSession, onSession, pauseSessionVerification, session, setNavigationSignal, verifySession} from './api.js';
 import {setActiveNav} from './shell.js';
-import {button, emptyState, linkButton, pageHead, resetIDs, skeleton} from './ui/components.js';
+import {button, linkButton, pageHead, panel, resetIDs, skeleton} from './ui/components.js';
 import {closeDialogs, confirmDiscard, dialogActionStale, hasUnsavedDialogChanges} from './ui/dialogs.js';
 import {progress} from './ui/feedback.js';
 
@@ -162,10 +162,8 @@ function swap(content, route, mode, token) {
 function errorPage(error) {
   const notFound = error.status === 404;
   return h('div', null, pageHead(notFound ? t('shell.notFound') : t('shell.pageLoadFailed')),
-    h('div', {class: 'panel'}, emptyState(
-      notFound ? t('shell.resourceMissing') : t('shell.serverUnreachable'),
-      notFound ? t('shell.resourceMissingHint') : errorText(error),
-      notFound ? linkButton('/nodes', t('shell.goToNodes')) : button(t('shell.tryAgain'), {icon: 'refresh', variant: 'primary', onClick: () => { void render().catch(ignoreNavigationCancellation); }}))));
+    panel(null, {}, h('p', null, notFound ? t('shell.resourceMissingHint') : errorText(error)),
+      notFound ? linkButton('/nodes', t('shell.goToNodes')) : button(t('shell.tryAgain'), {icon: 'refresh', variant: 'primary', onClick: () => { void render().catch(ignoreNavigationCancellation); }})));
 }
 
 export function startRouter(table) {

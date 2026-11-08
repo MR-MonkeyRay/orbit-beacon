@@ -1,5 +1,5 @@
-@import "../shared/tokens.css";
-@import "../shared/availability.css";
+@import "../../src/shared/tokens.css";
+@import "../../src/shared/availability.css";
 
 /* 横屏刘海屏手机将内容保持在安全区域内。 */
 .page {

@@ -18,7 +18,7 @@ export async function nodesPage() {
   const [nodes, groups] = await Promise.all([allNodes(), groupsList()]);
   const tween = createNumberTween({signal});
   const connection = liveStatus();
-  const head = pageHead(t('nodes.listTitle'), null, connection.element, addNodeButton());
+  const head = pageHead(t('nodes.listTitle'), connection.element, addNodeButton());
 
   const filter = readNodeFilter();
   const groupNames = new Map(groups.map((group) => [group.id, group.name]));

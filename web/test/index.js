@@ -1,5 +1,6 @@
 // Node 将显式的 test/ 入口解析到此文件。保持套件导入为静态，
 // 使内置运行器在执行前注册所有测试。
+import './build.test.js';
 import './i18n.test.js';
 import './copy-templates.test.js';
 import './navigation-icons.test.js';

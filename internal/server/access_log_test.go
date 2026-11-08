@@ -21,7 +21,7 @@ func TestAccessLogRedactsPrivateDataAndCorrelatesResponse(t *testing.T) {
 	for _, path := range []string{
 		"/api/v1/nodes/00000000-0000-4000-8000-000000000001/runtime?token=private-query",
 		"/api/agent/v1/enroll/private-enrollment-token?other=private-query",
-		"/_app/immutable/private-filename?secret=private-query",
+		"/_app/assets/private-filename?secret=private-query",
 	} {
 		logs.Reset()
 		request := httptest.NewRequest(http.MethodGet, "https://beacon.test"+path, nil)

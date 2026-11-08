@@ -26,7 +26,7 @@ test('announcement validator enforces exact projection and retains previous vali
 test('public announcements render plain text, preserve unchanged DOM and hide empty content', async () => {
   const dom = installDOM();
   try {
-    const {announcementRenderer} = await import('../src/public/announcements.js');
+    const {announcementRenderer} = await import('../themes/default/announcements.js');
     const container = document.createElement('section'); dom.body.append(container);
     const render = announcementRenderer(container);
     render([entry]); const article = container.children[0]; const title = article.querySelector('h2');

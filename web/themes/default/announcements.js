@@ -1,5 +1,5 @@
-import {h} from '../shared/dom.js';
-import {t} from '../shared/i18n.js';
+import {h} from '../../src/shared/dom.js';
+import {t} from '../../src/shared/i18n.js';
 
 export function announcementRenderer(container) {
   let previous = [];

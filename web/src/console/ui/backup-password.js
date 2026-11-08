@@ -99,8 +99,8 @@ export function backupPassword(task, {signal} = {}) {
   signal?.addEventListener('abort', dispose, {once: true});
   element.addEventListener('pointerdown', touch);
   element.addEventListener('keydown', touch);
-  element.append(h('h3', null, t('data.password.heading')), warning);
-  if (task.password_available) element.append(h('div', {class: 'head-actions'}, controls), value, status);
+  element.append(h('h3', null, t('data.password.heading')));
+  if (task.password_available) element.append(warning, h('div', {class: 'head-actions'}, controls), value, status);
   else element.append(h('p', {class: 'text-note'}, t(task.restored ? 'data.password.restored' : 'data.password.absent')));
   if (signal?.aborted) dispose();
   return {element, dispose};

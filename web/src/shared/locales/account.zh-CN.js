@@ -47,7 +47,6 @@ export default {
   'account.accountCreated': '账户创建时间',
   'account.sessionExpires': '会话到期时间',
   'account.changePassword': '修改密码',
-  'account.passwordSignOutHint': '修改密码会退出所有会话，包括当前会话。',
-  'account.changePasswordTitle': '密码修改',
-  'account.changePasswordDescription': '所有会话将退出登录。'
+  'account.passwordSignOutHint': '所有会话将退出登录。',
+  'account.changePasswordTitle': '修改密码'
 };
