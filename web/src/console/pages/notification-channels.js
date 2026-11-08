@@ -166,7 +166,9 @@ export function deliveriesPanel(channels, signal) {
         body: h('tbody', null, deliveries.map((delivery) => h('tr', null,
           h('td', null, t(['pending', 'sent', 'failed'].includes(delivery.state) ? `alerts.deliveryState.${delivery.state}` : 'alerts.unknown'), delivery.coalesced_count > 1 ? h('div', {class: 'text-note'}, t('alerts.deliveries.coalesced', {count: delivery.coalesced_count})) : null),
           h('td', null, channels.find((channel) => channel.id === delivery.channel_id)?.name || delivery.channel_id),
-          h('td', null, String(delivery.attempts)), h('td', {title: delivery.last_error_code ? errorCodeMessage(delivery.last_error_code) : ''}, delivery.last_error_code || t('common.none')),
+          h('td', null, String(delivery.attempts)),
+          // 单元格展示"发生了什么+怎么处理"，机器码保留在 title 供诊断。
+          h('td', {title: delivery.last_error_code || ''}, delivery.last_error_code ? errorCodeMessage(delivery.last_error_code) : t('common.none')),
           h('td', null, eventTime(delivery.updated_at)))))}) : h('p', {class: 'text-note'}, t('alerts.deliveries.empty')));
       status.textContent = '';
     } catch (error) { if (!signal?.aborted && error.name !== 'AbortError') status.textContent = t('alerts.deliveries.loadFailed', {error: errorText(error)}); }
