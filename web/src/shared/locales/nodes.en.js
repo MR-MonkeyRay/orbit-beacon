@@ -62,7 +62,7 @@ export default {
   'nodes.enrollment.usesValue': '{used} / {total}',
   'nodes.audit.agent': 'Agent',
   'nodes.cpu': 'CPU',
-  'nodes.deletePhrase': 'delete {count} nodes',
+  'nodes.deletePhrase': {one: 'delete {count} node', other: 'delete {count} nodes'},
   'nodes.never': 'Never',
   'nodes.none': 'None',
   'nodes.all': 'All',
