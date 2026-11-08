@@ -515,6 +515,17 @@
   opacity: 1;
 }
 
+/* 未排序时也要暴露可排序线索：hover/键盘焦点显示淡箭头。 */
+@media (hover:hover) {
+  .table th button:hover .icon {
+    opacity: .45;
+  }
+}
+
+.table th button:focus-visible .icon {
+  opacity: .45;
+}
+
 .table th[aria-sort="descending"] .icon {
   transform: rotate(180deg);
 }
