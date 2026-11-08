@@ -108,6 +108,7 @@ export default {
   'nodes.group': 'Group',
   'nodes.location': 'Location',
   'nodes.tags': 'Tags',
+  'nodes.tagsMore': {one: '{count} more tag', other: '{count} more tags'},
   'nodes.added': 'Added',
   'nodes.previous': 'Previous',
   'nodes.next': 'Next',

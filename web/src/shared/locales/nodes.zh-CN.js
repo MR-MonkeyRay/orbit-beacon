@@ -108,6 +108,7 @@ export default {
   'nodes.group': '分组',
   'nodes.location': '位置',
   'nodes.tags': '标签',
+  'nodes.tagsMore': '还有 {count} 个',
   'nodes.added': '添加时间',
   'nodes.previous': '上一页',
   'nodes.next': '下一页',
