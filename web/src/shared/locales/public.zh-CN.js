@@ -38,7 +38,7 @@ export default {
   'public.reconnecting': '正在重连…',
   'public.stale': '数据可能已过期',
   'public.unavailable': '暂时无法获取节点信息',
-  'public.loadFailed': '加载失败。',
+  'public.loadFailed': '加载失败。请刷新重试；若持续失败，服务可能不可用。',
   'public.announce.updated': '节点数据已更新。',
   'public.announce.stale': '连接中断，当前显示最后一次数据。',
   'public.duration.daysHours': '{days}天 {hours}小时',

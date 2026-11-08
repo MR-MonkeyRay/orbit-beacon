@@ -38,7 +38,7 @@ export default {
   'public.reconnecting': 'Reconnecting…',
   'public.stale': 'Data may be out of date',
   'public.unavailable': 'Node information is temporarily unavailable',
-  'public.loadFailed': 'Could not load nodes.',
+  'public.loadFailed': 'Could not load nodes. Try refreshing; if it keeps failing, the server may be down.',
   'public.announce.updated': 'Node data updated.',
   'public.announce.stale': 'Connection lost. Showing the last received data.',
   'public.duration.daysHours': '{days}d {hours}h',
