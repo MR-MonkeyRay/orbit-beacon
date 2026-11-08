@@ -1,5 +1,5 @@
 export default {
-  'notifications.firing': '告警中',
+  'notifications.firing': '触发中',
   'notifications.resolved': '已恢复',
   'notifications.manualExport': '手动导出',
   'notifications.deletedPlan': '已删除的计划',
