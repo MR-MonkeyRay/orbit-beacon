@@ -97,7 +97,7 @@ export default {
   'nodes.activeAlerts': 'Active alerts',
   'nodes.viewAlerts': 'View alerts',
   'nodes.listTitle': 'Nodes',
-  'nodes.searchPlaceholder': 'Search name, region, provider or tag',
+  'nodes.searchPlaceholder': 'Search name, region, provider, group, tag or notes',
   'nodes.search': 'Search nodes',
   'nodes.allGroups': 'All groups',
   'nodes.filterGroup': 'Filter by group',

@@ -97,7 +97,7 @@ export default {
   'nodes.activeAlerts': '当前告警',
   'nodes.viewAlerts': '查看告警',
   'nodes.listTitle': '节点',
-  'nodes.searchPlaceholder': '搜索名称、地区、提供商或标签',
+  'nodes.searchPlaceholder': '搜索名称、地区、提供商、分组、标签或备注',
   'nodes.search': '搜索节点',
   'nodes.allGroups': '全部分组',
   'nodes.filterGroup': '按分组筛选',
