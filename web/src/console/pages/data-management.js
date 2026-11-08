@@ -2,7 +2,7 @@ import {h} from '../../shared/dom.js';
 import {errorText} from '../../shared/errors.js';
 import {api, getNavigationSignal} from '../api.js';
 import {getLocale, t} from '../i18n.js';
-import {absoluteWhen, formatBytes} from '../format.js';
+import {formatBytes} from '../format.js';
 import {busy, button, callout, facts, pageHead, panel} from '../ui/components.js';
 import {modal} from '../ui/dialogs.js';
 import {field, input, select} from '../ui/forms.js';
@@ -13,6 +13,8 @@ const periods = [7, 30, 90, 180, 365];
 const label = (id) => t(`data.management.category.${id}`);
 const domainLabel = (domain) => t(`data.management.domain.${domain}`);
 const number = (value) => new Intl.NumberFormat(getLocale()).format(value);
+// 文案承诺展示 UTC，时间必须按 UTC 格式化（node-traffic 同样先例）。
+const cutoffFormat = new Intl.DateTimeFormat(getLocale(), {dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC'});
 
 export function dataManagementPage() {
   const navigation = getNavigationSignal();
@@ -57,7 +59,8 @@ export function dataManagementPage() {
       checkbox.disabled = !available;
     }
     for (const control of compactButtons) control.disabled = !available;
-    preview.textContent = t('data.management.selection', {count: selected.size, rows: number(count)});
+    // count 传原始数值用于复数选择，rows 复用格式化数值展示。
+    preview.textContent = `${t('data.management.selectionCategories', {count: selected.size, rows: count})} · ${t('data.management.selectionRows', {count, rows: number(count)})}`;
   }
 
   function render() {
@@ -91,7 +94,10 @@ export function dataManagementPage() {
         h('span', {class: 'data-management-count'}, t('data.management.counts', {total: number(item.rows), eligible: number(item.eligible_rows)})));
     }));
     for (const id of selected) if (!checkboxes.has(id)) selected.delete(id);
-    cutoff.replaceChildren(t('data.management.before'), ' ', absoluteWhen(snapshot.before));
+    const cutoffDate = new Date(snapshot.before);
+    cutoff.replaceChildren(t('data.management.before'), ' ', Number.isFinite(cutoffDate.getTime())
+      ? h('time', {datetime: snapshot.before, title: `UTC ${snapshot.before}`}, cutoffFormat.format(cutoffDate))
+      : h('code', null, snapshot.before));
   }
 
   async function load() {
@@ -176,7 +182,7 @@ export function dataManagementPage() {
           const result = await api(`/data-management/${kind}`, {method: 'POST', body, signal});
           if (signal.aborted) return;
           const rows = kind === 'cleanup' ? result.results.map((item) => h('li', null,
-            t('data.management.deleted', {category: label(item.id), count: item.deleted_rows}),
+            t('data.management.deleted', {category: label(item.id), count: item.deleted_rows, rows: number(item.deleted_rows)}),
             item.has_more ? h('p', {class: 'text-note'}, t('data.management.more')) : null)) : [];
           const message = t(kind === 'cleanup' ? 'data.management.cleaned' : 'data.management.compacted');
           content.replaceChildren(h('div', {class: 'dialog-body stack', role: 'status'}, h('p', null, message),
