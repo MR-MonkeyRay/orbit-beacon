@@ -64,6 +64,7 @@ test('public page turn keeps the announcement element until the next page replac
   const article = ui.elements.announcements.children[0];
   ui.elements.next.click();
   assert.equal(ui.elements.announcements.children[0], article);
+  assert.ok(document.title.startsWith(copy('public.page', {page: 2})));
   ui.sockets[1].open(); ui.sockets[1].message(snapshot(payload('two', {announcements: [notice]})));
   assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'two');
   assert.equal(ui.elements.announcements.children[0], article);

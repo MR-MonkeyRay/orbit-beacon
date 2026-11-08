@@ -165,7 +165,10 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
     list.setAttribute('aria-busy', 'true');
     if (!cards.length) list.replaceChildren(...skeletonCards(6));
     previous.disabled = offset === 0;
-    page.textContent = t('public.page', {page: Math.floor(offset / PAGE) + 1});
+    const pageNumber = Math.floor(offset / PAGE) + 1;
+    page.textContent = t('public.page', {page: pageNumber});
+    // 翻页后浏览器标签也标明当前页，避免多个标签无法区分。
+    document.title = pageNumber > 1 ? `${t('public.page', {page: pageNumber})} · ${t('public.title')}` : t('public.title');
   }
 
   function finish() {
