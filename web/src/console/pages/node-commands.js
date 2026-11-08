@@ -31,8 +31,16 @@ export function nodeCommandsPanel(node, runtime, signal = getNavigationSignal())
   const patch = () => {
     controls.forEach((control, index) => {
       const kind = kinds[index];
-      control.disabled = !active() || !loaded || running || node.deleted || node.status === 'disabled' || node.stopped
-        || !runtime?.remote_commands.includes(kind) || records.some(activeCommand);
+      const unavailable = !active() || !loaded || node.deleted || node.status === 'disabled' || node.stopped;
+      // runtime 未加载时能力未知，同样禁用。
+      const unsupported = !runtime || !runtime.remote_commands.includes(kind);
+      const pending = records.some(activeCommand);
+      control.disabled = unavailable || unsupported || running || pending;
+      // 禁用按钮要说明原因，用户才能自行排除。
+      control.title = unavailable ? t('nodes.command.disabled.nodeUnavailable')
+        : unsupported ? t('nodes.command.disabled.unsupported')
+        : running ? t('nodes.command.disabled.running')
+        : pending ? t('nodes.command.disabled.activeCommand') : '';
     });
     lifecycle?.syncPolling();
   };
