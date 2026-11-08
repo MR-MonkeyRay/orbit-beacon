@@ -721,10 +721,10 @@ footer {
     padding: 20px 0 var(--sp-group);
   }
 
+  /* 不加 order：星座图是装饰，标题和摘要必须先出现在首屏。 */
   .constellation {
     justify-self: center;
     width: min(70%,260px);
-    order: -1;
   }
 
   .live {
