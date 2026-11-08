@@ -64,24 +64,28 @@ type retentionResult struct {
 }
 
 type Service struct {
-	store          Store
-	nodes          *storage.Database
-	samples        chan Sample
-	retention      chan retentionRequest
-	stop           chan context.Context
-	done           chan struct{}
-	cancel         context.CancelFunc
-	once           sync.Once
-	err            error // published by closing done
-	now            func() time.Time
-	logger         *slog.Logger
-	pending        map[bucketKey]map[string]aggregate // owned by run
-	inflight       []Bucket                           // 提交未明的不可变批次，不与新样本混合
-	dropped        atomic.Uint64
-	observeFlush   func(time.Duration, int)
-	paths          map[string]map[string]struct{} // owned by run; one entry per observed node
-	seriesRejected atomic.Uint64
-	seriesRetryAt  time.Time // owned by run
+	store             Store
+	nodes             *storage.Database
+	samples           chan Sample
+	retention         chan retentionRequest
+	stop              chan context.Context
+	done              chan struct{}
+	cancel            context.CancelFunc
+	once              sync.Once
+	err               error // published by closing done
+	now               func() time.Time
+	logger            *slog.Logger
+	pending           map[bucketKey]map[string]aggregate // owned by run
+	inflight          []Bucket                           // 提交未明的不可变批次，不与新样本混合
+	dropped           atomic.Uint64
+	observeFlush      func(time.Duration, int)
+	paths             map[string]map[string]struct{} // owned by run; one entry per observed node
+	seriesRejected    atomic.Uint64
+	seriesRetryAt     time.Time // owned by run
+	deleted           map[string]bool
+	mainGeneration    uint64
+	pathGeneration    uint64
+	historyGeneration uint64
 }
 
 // Open 创建独立历史域；清理时先固定主库，再访问历史库。
@@ -105,6 +109,11 @@ func newService(store Store, nodes *storage.Database, opts Options) *Service {
 	}
 	workCtx, cancel := context.WithCancel(context.Background())
 	s := &Service{store: store, nodes: nodes, samples: make(chan Sample, SampleBufferSize), retention: make(chan retentionRequest), stop: make(chan context.Context, 1), done: make(chan struct{}), cancel: cancel, now: opts.Now, logger: opts.Logger, pending: make(map[bucketKey]map[string]aggregate), paths: make(map[string]map[string]struct{}), observeFlush: opts.ObserveFlush}
+	if sqlStore, ok := store.(*sqliteStore); ok {
+		sqlStore.nodes = nodes
+		s.pathGeneration = sqlStore.db.Generation()
+		s.historyGeneration = s.pathGeneration
+	}
 	go s.run(workCtx)
 	return s
 }
@@ -133,6 +142,10 @@ func (s *Service) Database() *storage.Database {
 
 func (s *Service) add(sample Sample) {
 	if sample.NodeID == "" || sample.ReceivedAt.IsZero() || len(sample.Values) == 0 {
+		return
+	}
+	s.invalidateGenerations()
+	if s.deleted[sample.NodeID] {
 		return
 	}
 	key := bucketKey{sample.NodeID, sample.ReceivedAt.Truncate(time.Minute).Unix()}
@@ -173,6 +186,7 @@ func diskSeriesPath(metric string) (string, bool) {
 // 只有 run 调用 admitPath。首次从存储读取已有序列，失败时拒绝分区样本，
 // 退避结束后的下一个样本再重试。
 func (s *Service) admitPath(node, path string) bool {
+	s.invalidateGenerations()
 	paths, loaded := s.paths[node]
 	if !loaded {
 		paths = make(map[string]struct{})
@@ -182,6 +196,12 @@ func (s *Service) admitPath(node, path string) bool {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
+			if err := s.prepareHistoryGeneration(ctx, s.now()); err != nil {
+				return false
+			}
+			if s.deleted[node] {
+				return false
+			}
 			series, err := s.store.Series(ctx, node)
 			if err != nil {
 				s.seriesRetryAt = s.now().Add(seriesRetryDelay)
@@ -190,6 +210,22 @@ func (s *Service) admitPath(node, path string) bool {
 			for _, metric := range series {
 				if known, ok := diskSeriesPath(metric); ok {
 					paths[known] = struct{}{}
+				}
+			}
+			for key, values := range s.pending {
+				if key.node == node {
+					for metric := range values {
+						if known, ok := diskSeriesPath(metric); ok {
+							paths[known] = struct{}{}
+						}
+					}
+				}
+			}
+			for _, bucket := range s.inflight {
+				if bucket.Node == node {
+					if known, ok := diskSeriesPath(bucket.Series); ok {
+						paths[known] = struct{}{}
+					}
 				}
 			}
 		}
@@ -288,7 +324,7 @@ func (s *Service) flushShutdown(ctx context.Context) error {
 // flush 按分钟、节点、指标顺序逐批排空；一个节点分钟的三档聚合始终在同一事务。
 func (s *Service) flush(ctx context.Context, now time.Time, all bool) error {
 	if len(s.inflight) > 0 {
-		if err := s.writeInflight(ctx); err != nil {
+		if err := s.writeInflight(ctx, now); err != nil {
 			return err
 		}
 		s.drain()
@@ -296,8 +332,21 @@ func (s *Service) flush(ctx context.Context, now time.Time, all bool) error {
 			return err
 		}
 	}
+	if err := s.prepareHistoryGeneration(ctx, now); err != nil {
+		return err
+	}
+	if err := s.refreshDeletions(ctx); err != nil {
+		return err
+	}
 	keys := make([]bucketKey, 0, len(s.pending))
 	for key := range s.pending {
+		if key.t < now.Add(-Retention1m).Truncate(time.Minute).Unix() {
+			delete(s.pending, key)
+			continue
+		}
+		if s.deleted[key.node] {
+			continue
+		}
 		if all || key.t < now.Truncate(time.Minute).Unix() {
 			keys = append(keys, key)
 		}
@@ -341,7 +390,7 @@ func (s *Service) flush(ctx context.Context, now time.Time, all bool) error {
 				return errors.Join(rejected, errHistoryBatchInvalid)
 			}
 			s.inflight = buckets
-			if err := s.writeInflight(ctx); err != nil {
+			if err := s.writeInflight(ctx, now); err != nil {
 				if !errors.Is(err, storage.ErrCommitUnknown) {
 					s.restorePending(s.inflight)
 					s.inflight = nil
@@ -386,23 +435,68 @@ func (s *Service) restorePending(buckets []Bucket) {
 }
 
 // Store 对未解析提交保留原事务收据；只允许携带完全相同的不可变批次重入。
-func (s *Service) writeInflight(ctx context.Context) error {
-	var started time.Time
-	if s.observeFlush != nil {
-		started = time.Now()
+func (s *Service) writeInflight(ctx context.Context, now time.Time) error {
+	rows := 3 * len(s.inflight)
+	if observer := s.observeFlush; observer != nil {
+		started := time.Now()
+		defer func() { observer(time.Since(started), rows) }()
 	}
-	rows, err := s.store.Write(ctx, s.inflight)
-	if s.observeFlush != nil {
-		s.observeFlush(time.Since(started), rows)
+	if store, ok := s.store.(*sqliteStore); ok && store.unresolved != nil {
+		committed, err := store.resolveInflight(ctx)
+		if err != nil {
+			return err
+		}
+		if !committed {
+			s.restorePending(s.inflight)
+		}
+		s.inflight = nil
+		return nil
 	}
+	if err := s.prepareHistoryGeneration(ctx, now); err != nil {
+		return err
+	}
+	lease, err := s.deletionSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	if lease != nil {
+		defer lease.Close()
+		ctx = lease.Context()
+	}
+	if db := s.Database(); db != nil {
+		history, err := db.Acquire(ctx, storage.Writer)
+		if err != nil {
+			return err
+		}
+		defer history.Close()
+		if history.Generation() != s.historyGeneration {
+			return storage.ErrUnavailable
+		}
+		ctx = history.Context()
+	}
+	kept := s.inflight[:0]
+	for _, bucket := range s.inflight {
+		if bucket.T < now.Add(-Retention1m).Truncate(time.Minute).Unix() {
+			continue
+		}
+		if s.deleted[bucket.Node] {
+			s.restorePending([]Bucket{bucket})
+		} else {
+			kept = append(kept, bucket)
+		}
+	}
+	s.inflight = kept
+	if len(s.inflight) == 0 {
+		return nil
+	}
+	rows, err = s.store.Write(ctx, s.inflight)
 	if err == nil {
 		s.inflight = nil
 	}
 	return err
 }
 
-// Cleanup 与刷写串行化，并从所有层级和待处理内存中清除已删除的节点。
-// 它从不在主数据库上加写锁。
+// Cleanup 串行处理 TTL、有效墓碑及刷写；每个跨域删除批次固定 main → history。
 func (s *Service) Cleanup(ctx context.Context, now time.Time) (int64, error) {
 	result := make(chan retentionResult, 1)
 	select {
@@ -421,79 +515,33 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time) (int64, error) {
 }
 
 func (s *Service) cleanup(ctx context.Context, now time.Time) (int64, error) {
-	if len(s.inflight) > 0 {
-		if err := s.writeInflight(ctx); err != nil {
-			return 0, err
-		}
-	}
-	var mainLease *storage.Lease
-	if s.nodes != nil {
-		lease, err := s.nodes.Acquire(ctx, storage.Reader)
+	if store, ok := s.store.(*sqliteStore); ok && store.unresolved != nil {
+		committed, err := store.resolveInflight(ctx)
 		if err != nil {
 			return 0, err
 		}
-		defer lease.Close()
-		ctx = lease.Context()
-		mainLease = lease
+		if !committed {
+			s.restorePending(s.inflight)
+		}
+		s.inflight = nil
 	}
-	candidates := make(map[string]bool)
-	for key := range s.pending {
-		candidates[key.node] = true
-	}
-	for id := range s.paths {
-		candidates[id] = true
-	}
-	err := s.store.NodeIDs(ctx, func(id string) {
-		candidates[id] = true
-		s.drain()
-	})
+	s.invalidateGenerations()
+	removed, err := s.store.DeleteExpired(ctx, now, s.drain)
 	if err != nil {
-		return 0, err
+		return removed, err
 	}
-	// 在读取活跃 ID 之前冻结候选。排空可能添加待处理节点，
-	// 但在这份存在性快照之后，它们不可能成为孤儿候选。
-	if s.nodes != nil {
-		rows, err := mainLease.QueryContext(ctx, `SELECT id FROM nodes`)
-		if err != nil {
-			return 0, err
-		}
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				_ = rows.Close()
-				return 0, err
-			}
-			delete(candidates, id)
-			s.drain()
-		}
-		err = rows.Err()
-		_ = rows.Close()
-		if err != nil {
-			return 0, err
-		}
-	} else {
-		clear(candidates)
-	}
-	var removed int64
-	for id := range candidates {
-		n, err := s.store.DeleteNode(ctx, id, s.drain)
-		removed += n
-		if err != nil {
-			return removed, err
-		}
-	}
-	n, err := s.store.DeleteExpired(ctx, now, s.drain)
+	n, err := s.purgeDeleted(ctx, s.drain)
 	removed += n
 	if err != nil {
 		return removed, err
 	}
 	for key := range s.pending {
-		if candidates[key.node] || key.t < now.Add(-Retention1m).Truncate(time.Minute).Unix() {
+		if key.t < now.Add(-Retention1m).Truncate(time.Minute).Unix() {
 			delete(s.pending, key)
 		}
 	}
-	for id := range candidates {
-		delete(s.paths, id)
+	if err := s.cleanupTombstones(ctx, now); err != nil {
+		return removed, err
 	}
 	return removed, s.flush(ctx, now, false)
 }

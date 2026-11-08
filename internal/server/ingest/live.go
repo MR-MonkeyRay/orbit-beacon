@@ -18,7 +18,7 @@ func (s *Service) ProjectLiveRecord(record *nodes.LiveRecord, now time.Time) nod
 		state := s.acquireExistingState(record.ID)
 		if state != nil {
 			state.mu.Lock()
-			if state.matchesIdentity(identity.Credential[:], identity.CredentialEpoch, identity.Generation, identity.Session) {
+			if s.db.Ready() && state.storageGeneration != 0 && state.storageGeneration == s.db.Generation() && state.matchesIdentity(identity.Credential[:], identity.CredentialEpoch, identity.Generation, identity.Session) {
 				if out.LastSeen == nil || state.receivedAt.After(*out.LastSeen) {
 					seen := state.receivedAt
 					out.LastSeen = &seen
@@ -94,7 +94,7 @@ func (s *Service) liveSampleSnapshot(id string, identity *nodes.LiveIdentity) ([
 	defer s.releaseState(state)
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if !state.matchesIdentity(identity.Credential[:], identity.CredentialEpoch, identity.Generation, identity.Session) {
+	if !s.db.Ready() || state.storageGeneration == 0 || state.storageGeneration != s.db.Generation() || !state.matchesIdentity(identity.Credential[:], identity.CredentialEpoch, identity.Generation, identity.Session) {
 		return nil, time.Time{}, false
 	}
 	return state.latest, state.receivedAt, true

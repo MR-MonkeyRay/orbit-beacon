@@ -190,7 +190,10 @@ func applyReplicaTransaction(ctx context.Context, target *Database, batch *repli
 		return safeFailure(err)
 	}
 	resource, _, err := replicaIdentity(ctx, target)
-	if err != nil || resource != batch.Resource {
+	if err != nil {
+		return err
+	}
+	if resource != batch.Resource {
 		return ErrIdentityMismatch
 	}
 	p, err := position(ctx, tx)
@@ -201,9 +204,11 @@ func applyReplicaTransaction(ctx context.Context, target *Database, batch *repli
 		var id string
 		err = tx.QueryRowContext(ctx, "SELECT tx_uuid FROM replica_transactions WHERE epoch_uuid=? AND seq=?", batch.Epoch, batch.Seq).Scan(&id)
 		if batch.Seq == p.Seq && batch.Epoch == p.Epoch && batch.ID == p.ID {
+			target.journalCommitted(batch.Bytes)
 			return nil
 		}
 		if err == nil && id == batch.ID {
+			target.journalCommitted(batch.Bytes)
 			return nil
 		}
 		return ErrReplicaDiverged
@@ -261,6 +266,7 @@ func applyReplicaTransaction(ctx context.Context, target *Database, batch *repli
 		return safeFailure(err)
 	}
 	if err = tx.Commit(); err == nil {
+		target.journalCommitted(batch.Bytes)
 		return nil
 	}
 	// ACK 未知只读新 guard 解析，不重做业务行。
@@ -337,6 +343,7 @@ func resolveReplicaACK(ctx context.Context, target *Database, b *replicaTransact
 		return ErrCommitUnknown
 	}
 	if p.Epoch == b.Epoch && p.Seq == b.Seq && p.ID == b.ID {
+		target.journalCommitted(b.Bytes)
 		return nil
 	}
 	if p.Epoch == b.Epoch && p.Seq == b.Seq-1 && p.ID == b.Previous {

@@ -169,6 +169,7 @@ func TestCleanupForgetsPathsOfDeletedNodes(t *testing.T) {
 	defer main.Close()
 	s, _ := testService(t, main)
 	stopped(t, s)
+	insertTestTombstone(t, s.nodes, "deleted", time.Now().UTC())
 	if !s.admitPath("deleted", "/a") {
 		t.Fatal("path rejected")
 	}

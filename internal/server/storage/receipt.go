@@ -16,6 +16,9 @@ type commitReceipt struct {
 	mu               sync.Mutex
 	id               string
 	known, committed bool
+	position         *replicaPosition
+	boot             string
+	journalBytes     int64
 }
 
 func (tx *Tx) Dialect() Dialect { return tx.lease.Dialect() }
@@ -90,17 +93,32 @@ func (db *Database) resolvePending(ctx context.Context) error {
 	if err = barrier.QueryRowContext(ctx, query).Scan(&id); err != nil {
 		return ErrCommitUnknown
 	}
+	var resolved replicaPosition
+	if db.replica != nil {
+		resolved, err = position(ctx, barrier)
+		if err != nil {
+			return ErrCommitUnknown
+		}
+	}
 	// 只读屏障无需提交：持锁查询已证明前一事务完成。
 	if err = barrier.Rollback(); err != nil {
 		return ErrCommitUnknown
+	}
+	db.mu.Lock()
+	if db.current != gen || db.pending != pending {
+		db.mu.Unlock()
+		return nil
 	}
 	pending.mu.Lock()
 	pending.known = true
 	pending.committed = id == pending.id
 	pending.mu.Unlock()
-	db.mu.Lock()
-	if db.pending == pending {
-		db.pending = nil
+	db.pending = nil
+	if id == pending.id {
+		db.journalCommitted(pending.journalBytes)
+	}
+	if db.replica != nil {
+		db.possible = possibleCommit{position: resolved, boot: pending.boot, valid: pending.boot != ""}
 	}
 	db.mu.Unlock()
 	return nil

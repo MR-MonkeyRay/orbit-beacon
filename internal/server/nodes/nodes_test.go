@@ -207,6 +207,10 @@ func TestDeletionRequiresConfirmationAndRevokesCredentials(t *testing.T) {
 	if _, err := service.AuthenticateToken(ctx, token); !errors.Is(err, nodes.ErrUnauthenticated) {
 		t.Errorf("deleted node credential still authenticates: %v", err)
 	}
+	var deletedAt string
+	if err := db.QueryRowContext(ctx, "SELECT deleted_at FROM node_deletions WHERE node_id=?", node.ID).Scan(&deletedAt); err != nil || deletedAt == "" {
+		t.Fatalf("successful deletion did not record tombstone: %q %v", deletedAt, err)
+	}
 }
 
 func TestDeletionFailureRollsBackIdentityChanges(t *testing.T) {
@@ -231,6 +235,10 @@ func TestDeletionFailureRollsBackIdentityChanges(t *testing.T) {
 			}
 			if got, err := service.AuthenticateToken(ctx, token); err != nil || got.ID != node.ID {
 				t.Errorf("failed deletion revoked identity: node=%+v err=%v", got, err)
+			}
+			var tombstones int
+			if err := db.QueryRowContext(ctx, "SELECT count(*) FROM node_deletions WHERE node_id=?", node.ID).Scan(&tombstones); err != nil || tombstones != 0 {
+				t.Fatalf("failed deletion left tombstone: %d %v", tombstones, err)
 			}
 		})
 	}

@@ -107,17 +107,22 @@ func TestPublicPageCoalescesMissesAndAllowsWaiterCancellation(t *testing.T) {
 }
 
 func TestProjectPublicRecordChecksEveryFenceWithoutCreatingState(t *testing.T) {
-	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
-	s := NewService(nil, Options{})
-	record := nodes.PublicRecord{ID: "public", Settings: nodes.PublicSettings{Name: "Public"}, LastSeen: now, Generation: 1, Session: "session"}
+	f := newCoalesceFixture(t, time.Second)
+	now := f.now
+	s := NewService(f.nodes.Database(), Options{Now: func() time.Time { return now }})
+	records, _, err := f.nodes.ListPublicRecords(context.Background(), 100, 0, now)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("records=%+v err=%v", records, err)
+	}
+	record := records[0]
 	out, _ := s.ProjectPublicRecord(record, now)
 	if out.Status != "online" || out.CPUPercent != nil || len(s.states) != 0 {
 		t.Fatalf("cold projection: %+v states=%d", out, len(s.states))
 	}
-	state := s.acquireState(record.ID)
-	state.generation, state.session = record.Generation, record.Session
-	state.public = publicMetrics{receivedAt: now, cpu: publicMetric{valid: true, value: 25, intervalMS: 10000}}
-	s.releaseState(state)
+	f.report.Metrics.CPUPercent = new(25.0)
+	if _, err := acceptReport(context.Background(), s, coalesceToken, f.report); err != nil {
+		t.Fatal(err)
+	}
 	out, _ = s.ProjectPublicRecord(record, now)
 	if out.CPUPercent == nil || *out.CPUPercent != 25 {
 		t.Fatalf("matching fence: %+v", out)

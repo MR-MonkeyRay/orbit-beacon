@@ -542,6 +542,13 @@ func (s *Service) Delete(ctx context.Context, id string, confirm bool) error {
 	if err := affected(result, err); err != nil {
 		return err
 	}
+	query := "INSERT INTO node_deletions(node_id,deleted_at) VALUES(?,?) ON CONFLICT(node_id) DO UPDATE SET deleted_at=excluded.deleted_at"
+	if tx.Dialect() == storage.MySQL {
+		query = "INSERT INTO node_deletions(node_id,deleted_at) VALUES(?,?) ON DUPLICATE KEY UPDATE deleted_at=VALUES(deleted_at)"
+	}
+	if _, err := tx.ExecContext(ctx, query, id, timekey.Format(s.now())); err != nil {
+		return err
+	}
 	if err := audit.Insert(ctx, tx, "node.delete", id, s.now()); err != nil {
 		return err
 	}

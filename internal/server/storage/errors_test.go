@@ -77,7 +77,7 @@ func TestConnectionFailureExcludesRequestCancellation(t *testing.T) {
 			t.Errorf("request cancellation classified as connection failure: %v", err)
 		}
 	}
-	for _, err := range []error{driver.ErrBadConn, mysql.ErrInvalidConn, io.EOF, io.ErrUnexpectedEOF, &net.OpError{Op: "read", Net: "tcp", Err: &net.DNSError{IsTimeout: true}}, &mysql.MySQLError{Number: 1290}, &mysql.MySQLError{Number: 2006}, &mysql.MySQLError{Number: 2013}, &mysql.MySQLError{Number: 1053}} {
+	for _, err := range []error{driver.ErrBadConn, mysql.ErrInvalidConn, io.EOF, io.ErrUnexpectedEOF, &net.OpError{Op: "read", Net: "tcp", Err: &net.DNSError{IsTimeout: true}}, &mysql.MySQLError{Number: 1290}, &mysql.MySQLError{Number: 3989}, &mysql.MySQLError{Number: 2006}, &mysql.MySQLError{Number: 2013}, &mysql.MySQLError{Number: 1053}} {
 		if !storage.IsConnectionFailure(fmt.Errorf("database: %w", err)) {
 			t.Errorf("connection failure not classified: %T", err)
 		}

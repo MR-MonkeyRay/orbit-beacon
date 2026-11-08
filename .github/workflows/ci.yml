@@ -86,7 +86,7 @@ jobs:
           unset ORBITBEACON_TEST_MYSQL_ADMIN_CONFIG ORBITBEACON_TEST_MYSQL_ADMIN_PASSWORD
           export ORBITBEACON_TEST_MYSQL=1
           export ORBITBEACON_TEST_MYSQL_CONFIG="$private_dir/admin.json"
-          go test -count=1 -timeout=20m ./internal/server ./internal/server/storage ./internal/server/history ./internal/server/auth ./internal/server/nodes ./internal/server/enrollment ./internal/server/ingest ./internal/server/backup ./internal/server/notify ./internal/server/inbox ./internal/server/alerts ./internal/server/management ./internal/server/app ./cmd/orbitbeacon-server
+          go test -p 1 -count=1 -timeout=20m ./internal/server ./internal/server/storage ./internal/server/history ./internal/server/auth ./internal/server/nodes ./internal/server/enrollment ./internal/server/ingest ./internal/server/backup ./internal/server/notify ./internal/server/inbox ./internal/server/alerts ./internal/server/management ./internal/server/app ./cmd/orbitbeacon-server
 
       - name: 运行竞态测试
         env:

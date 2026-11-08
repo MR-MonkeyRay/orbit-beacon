@@ -10,6 +10,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -77,6 +78,9 @@ func replicaIdentity(ctx context.Context, db *Database) (resource, instance stri
 	var domain string
 	var version int
 	err = db.current.reader.QueryRowContext(ctx, "SELECT resource_uuid,instance_uuid,domain,schema_version FROM replica_identity WHERE id=1").Scan(&resource, &instance, &domain, &version)
+	if err != nil && (storageFailure(err) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		return "", "", safeFailure(err)
+	}
 	expected := CurrentSchemaVersion
 	if db.domain == HistoryDomain {
 		expected = HistorySchemaVersion
@@ -93,7 +97,10 @@ func installReplica(ctx context.Context, db *Database, resource, instance, epoch
 	}
 	if registered {
 		r, i, err := replicaIdentity(ctx, db)
-		if err != nil || r != resource || i != instance {
+		if err != nil {
+			return err
+		}
+		if r != resource || i != instance {
 			return ErrIdentityMismatch
 		}
 	}
@@ -146,11 +153,13 @@ func validateReplicaSchema(ctx context.Context, db *Database) error {
 	for _, t := range Tables(db.domain) {
 		known[t.Name] = true
 	}
+	phase, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	q := "SELECT name,type FROM sqlite_schema WHERE type IN ('table','trigger') AND name NOT LIKE 'sqlite_%'"
 	if db.current.dialect == MySQL {
 		q = "SELECT table_name,'table' FROM information_schema.tables WHERE table_schema=DATABASE() UNION ALL SELECT trigger_name,'trigger' FROM information_schema.triggers WHERE trigger_schema=DATABASE()"
 	}
-	rows, err := db.current.reader.QueryContext(ctx, q)
+	rows, err := db.current.reader.QueryContext(phase, q)
 	if err != nil {
 		return safeFailure(err)
 	}
@@ -172,7 +181,10 @@ func validateReplicaSchema(ctx context.Context, db *Database) error {
 	}
 	// 核对真实 PK、基础列类型与 FK，不能给未知 DDL 安装复制捕获。
 	for _, table := range Tables(db.domain) {
-		if err = validateReplicaTable(ctx, db, table); err != nil {
+		phase, cancel := context.WithTimeout(ctx, 2*time.Second)
+		err = validateReplicaTable(phase, db, table)
+		cancel()
+		if err != nil {
 			return err
 		}
 	}
@@ -390,7 +402,19 @@ func jsonImage(d Dialect, table TableSpec, prefix string, pk bool) string {
 	return "json_array(" + strings.Join(parts, ",") + ")"
 }
 func installCaptureTriggers(ctx context.Context, db *Database) error {
+	return reconcileCaptureTriggers(ctx, db, true)
+}
+
+func validateCaptureTriggers(ctx context.Context, db *Database) error {
+	return reconcileCaptureTriggers(ctx, db, false)
+}
+
+func reconcileCaptureTriggers(ctx context.Context, db *Database, install bool) error {
 	d := db.current.dialect
+	bodies, err := captureTriggerBodies(ctx, db)
+	if err != nil {
+		return err
+	}
 	for _, table := range Tables(db.domain) {
 		for _, op := range []string{"i", "u", "d"} {
 			name := fmt.Sprintf("ob_replica_%d_%s", table.ID, op)
@@ -431,7 +455,17 @@ func installCaptureTriggers(ctx context.Context, db *Database) error {
 				q += "IF (SELECT capture_mode='source' FROM replica_state WHERE id=1) THEN INSERT INTO replica_changes(epoch_uuid,seq,ordinal,table_id,operation,primary_key,after_image) SELECT epoch_uuid,head_seq+1,next_ordinal," + strconv.Itoa(int(table.ID)) + ",'" + op + "'," + pk + "," + after + " FROM replica_state WHERE id=1; "
 				q += "UPDATE replica_transactions SET change_count=change_count+1,payload_bytes=payload_bytes+OCTET_LENGTH(" + pk + ")+COALESCE(OCTET_LENGTH(" + after + "),0)+64 WHERE tx_uuid=(SELECT open_tx_uuid FROM replica_state WHERE id=1); UPDATE replica_state SET next_ordinal=next_ordinal+1 WHERE id=1; IF (SELECT payload_bytes>67108864 FROM replica_transactions WHERE tx_uuid=(SELECT open_tx_uuid FROM replica_state WHERE id=1)) THEN SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO=60001,MESSAGE_TEXT='storage_transaction_too_large'; END IF; END IF; END"
 			}
-			if err := ensureCaptureTrigger(ctx, db, name, q); err != nil {
+			existing, found := bodies[name]
+			if found && captureTriggerBody(existing) == captureTriggerBody(q) {
+				continue
+			}
+			if !install {
+				return ErrSchemaIncompatible
+			}
+			phase, cancel := context.WithTimeout(ctx, 2*time.Second)
+			err := ensureCaptureTrigger(phase, db, name, q, existing, found)
+			cancel()
+			if err != nil {
 				return mysqlStartupFailure(db.domain, "capture_trigger", int(table.ID), err)
 			}
 		}

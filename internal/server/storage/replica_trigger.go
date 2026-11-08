@@ -3,32 +3,46 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"strings"
+	"time"
 )
 
-func ensureCaptureTrigger(ctx context.Context, db *Database, name, query string) error {
-	var existing string
-	q := "SELECT sql FROM sqlite_schema WHERE type='trigger' AND name=?"
+func captureTriggerBody(s string) string {
+	if i := strings.Index(strings.ToUpper(s), "BEGIN "); i >= 0 {
+		s = s[i:]
+	}
+	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
+}
+
+func captureTriggerBodies(ctx context.Context, db *Database) (map[string]string, error) {
+	phase, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	query := "SELECT name,sql FROM sqlite_schema WHERE type='trigger'"
 	if db.current.dialect == MySQL {
-		q = "SELECT action_statement FROM information_schema.triggers WHERE trigger_schema=DATABASE() AND trigger_name=?"
+		query = "SELECT trigger_name,action_statement FROM information_schema.triggers WHERE trigger_schema=DATABASE()"
 	}
-	err := db.current.reader.QueryRowContext(ctx, q, name).Scan(&existing)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return safeFailure(err)
+	rows, err := db.current.reader.QueryContext(phase, query)
+	if err != nil {
+		return nil, safeFailure(err)
 	}
-	canonical := func(s string) string {
-		i := strings.Index(strings.ToUpper(s), "BEGIN ")
-		if i >= 0 {
-			s = s[i:]
+	defer rows.Close()
+	bodies := make(map[string]string)
+	for rows.Next() {
+		var name, body string
+		if err = rows.Scan(&name, &body); err != nil {
+			return nil, safeFailure(err)
 		}
-		return strings.Join(strings.Fields(strings.ToLower(s)), " ")
+		bodies[name] = body
 	}
-	if err == nil && canonical(existing) == canonical(query) {
+	return bodies, safeFailure(rows.Err())
+}
+
+func ensureCaptureTrigger(ctx context.Context, db *Database, name, query, existing string, found bool) error {
+	if found && captureTriggerBody(existing) == captureTriggerBody(query) {
 		return nil
 	}
-	if errors.Is(err, sql.ErrNoRows) {
-		_, err = db.current.writer.ExecContext(ctx, query)
+	if !found {
+		_, err := db.current.writer.ExecContext(ctx, query)
 		return safeFailure(err)
 	}
 	// 启动尚未开放业务；先跨 guard 证明旧事务结束，再替换本功能自己的固定触发器。

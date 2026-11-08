@@ -180,14 +180,26 @@ func TestLiveMetricSummaryUsesAvailableMemoryAndOKStatus(t *testing.T) {
 }
 
 func TestLiveMetricProjectionRequiresMatchingOnlineIdentity(t *testing.T) {
-	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
-	credential := sha256.Sum256([]byte("credential"))
 	for _, mutation := range []string{"none", "credential", "epoch", "generation", "session", "unregistered", "reset-generation", "reset-session", "no-latest", "offline", "disabled", "pending"} {
 		t.Run(mutation, func(t *testing.T) {
-			state := &nodeState{credential: credential, credentialEpoch: 1, generation: 1, session: "session", latest: []byte("invalid JSON must not be decoded"), receivedAt: now, cpuPercent: new(10.0), memoryUsedPercent: new(75.0)}
-			service := NewService(nil, Options{})
-			service.states["node"] = state
-			record := nodes.LiveRecord{LiveNode: nodes.LiveNode{ID: "node", Status: "unknown", LastSeen: new(now), CPUPercent: new(99.0), MemoryUsedPercent: new(99.0)}, Identity: nodes.LiveIdentity{Credential: credential, CredentialEpoch: 1, Generation: 1, Session: "session", HasCredential: true}}
+			f := newCoalesceFixture(t, 30*time.Second)
+			f.report.Seq++
+			f.report.Metrics.MemoryAvailableBytes = new(uint64(2048))
+			if _, err := acceptReport(context.Background(), f.service, coalesceToken, f.report); err != nil {
+				t.Fatal(err)
+			}
+			service, now := f.service, f.now
+			state := service.acquireExistingState(f.id)
+			defer service.releaseState(state)
+			state.mu.Lock()
+			state.latest = []byte("invalid JSON must not be decoded")
+			state.mu.Unlock()
+			records, err := f.nodes.LiveRecords(context.Background())
+			if err != nil || len(records) != 1 {
+				t.Fatalf("records=%+v err=%v", records, err)
+			}
+			record := records[0]
+			record.CPUPercent, record.MemoryUsedPercent = new(99.0), new(99.0)
 			switch mutation {
 			case "credential":
 				record.Identity.Credential = sha256.Sum256([]byte("other"))

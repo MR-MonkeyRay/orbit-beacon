@@ -17,12 +17,16 @@ import (
 	"orbitbeacon/internal/server/storagetest"
 )
 
-func TestMySQLHARestore(t *testing.T) {
+func TestMySQLHARestore(t *testing.T) { testMySQLHARestore(t, false) }
+
+func TestMySQLHAMixedActiveRestore(t *testing.T) { testMySQLHARestore(t, true) }
+
+func testMySQLHARestore(t *testing.T, mixed bool) {
 	for _, standbyDriver := range []string{"mysql", "sqlite"} {
 		t.Run(standbyDriver, func(t *testing.T) {
 			for _, boundary := range []string{"success", "prepared:durable", "restore:pending:durable", "install:main:committed", "install:history:committed", "install:key:durable", "committed:durable", "finish:storage:durable"} {
 				t.Run(boundary, func(t *testing.T) {
-					fixture, cfg, old := haRestoreFixture(t, standbyDriver)
+					fixture, cfg, old := haRestoreFixtureMode(t, standbyDriver, mixed)
 					next := restoreFixture(t, "source")
 					archive, password := restoreArchive(t, next, []Category{Configuration, Monitoring, Events})
 					oldKey, err := datadir.LoadKey(filepath.Join(cfg.DataDir, "secrets.key"))
@@ -124,7 +128,11 @@ func TestMySQLHARestore(t *testing.T) {
 						}
 						lease.Close()
 						var ready bool
-						if err = haStandbyReader(t, fixture, cfg, db.Domain()).QueryRow(`SELECT ready FROM replica_state`).Scan(&ready); err != nil || ready {
+						inactive := haStandbyReader(t, fixture, cfg, db.Domain())
+						if mixed && db.Domain() == storage.MainDomain {
+							inactive = fixture.RawEndpoint(t, "primary", db.Domain())
+						}
+						if err = inactive.QueryRow(`SELECT ready FROM replica_state`).Scan(&ready); err != nil || ready {
 							t.Fatalf("old standby retained eligibility: domain=%d ready=%t err=%v", i, ready, err)
 						}
 					}
@@ -194,6 +202,10 @@ func TestMySQLHARestore(t *testing.T) {
 type haRestorePosition struct{ instance, epoch string }
 
 func haRestoreFixture(t *testing.T, standbyDriver string) (*storagetest.Fixture, config.Server, [2]haRestorePosition) {
+	return haRestoreFixtureMode(t, standbyDriver, false)
+}
+
+func haRestoreFixtureMode(t *testing.T, standbyDriver string, mixed bool) (*storagetest.Fixture, config.Server, [2]haRestorePosition) {
 	t.Helper()
 	fixture := storagetest.Start(t)
 	dir := framingTempDir(t)
@@ -212,6 +224,9 @@ func haRestoreFixture(t *testing.T, standbyDriver string) (*storagetest.Fixture,
 	cfg.DataDir = dir
 	cfg.Database.Primary = fixture.Endpoint("primary")
 	cfg.Database.Standby = &standby
+	if mixed {
+		cfg.Database.Failover = config.FailoverConfig{FailureTimeout: time.Second, MaxLossWindow: 10 * time.Second, RecoveryStable: 60 * time.Second, ManualAfter: time.Hour}
+	}
 	for i, domain := range []storage.Domain{storage.MainDomain, storage.HistoryDomain} {
 		db, err := storage.OpenDomain(t.Context(), cfg.Database.Primary, domain, dir)
 		if err != nil {
@@ -227,6 +242,9 @@ func haRestoreFixture(t *testing.T, standbyDriver string) (*storagetest.Fixture,
 		t.Fatal(err)
 	}
 	defer domains.Close()
+	if err = domains.CompleteBootstrap(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	if err = domains.StartReplication(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -258,6 +276,83 @@ func haRestoreFixture(t *testing.T, standbyDriver string) (*storagetest.Fixture,
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
+	}
+	if mixed {
+		lease, err := domains.Main.Acquire(t.Context(), storage.Writer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx, err := lease.BeginWrite(lease.Context())
+		if err == nil {
+			err = tx.Commit()
+		}
+		lease.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var expectedEpoch, expectedID string
+		var expectedSeq int64
+		if err = fixture.RawEndpoint(t, "primary", storage.MainDomain).QueryRow("SELECT epoch_uuid,head_seq,head_tx_uuid FROM replica_state WHERE id=1").Scan(&expectedEpoch, &expectedSeq, &expectedID); err != nil {
+			t.Fatal(err)
+		}
+		candidate := haStandbyReader(t, fixture, cfg, storage.MainDomain)
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			var count int
+			if candidate.QueryRow("SELECT count(*) FROM replica_transactions WHERE epoch_uuid=? AND seq=? AND tx_uuid=? AND boot_id<>'' AND barrier_ns>0", expectedEpoch, expectedSeq, expectedID).Scan(&count) == nil && count == 1 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("mixed candidate never ACKed real bounded barrier")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		// 一域真实只读故障，另一域仍在原主服务；不直接改控制记录伪造角色。
+		fixture.SetReadOnly(t, "primary", storage.MainDomain, true)
+		lease, acquireErr := domains.Main.Acquire(t.Context(), storage.Writer)
+		if acquireErr == nil {
+			tx, writeErr := lease.BeginWrite(lease.Context())
+			if writeErr == nil {
+				writeErr = tx.Commit()
+			}
+			lease.Close()
+			if writeErr == nil {
+				t.Fatal("scoped read-only fault did not reject write")
+			}
+		}
+		deadline = time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) {
+			id, idErr := domains.Main.InstanceID(t.Context())
+			if idErr == nil && id != positions[0].instance && domains.Main.Ready() && domains.History.Ready() {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if !domains.Main.Ready() || !domains.History.Ready() {
+			t.Fatal("mixed active roles never became serviceable")
+		}
+		id, err := domains.Main.InstanceID(t.Context())
+		if err != nil || id == positions[0].instance {
+			t.Fatal("main did not actually promote", err)
+		}
+		positions[0].instance = id
+		lease, err = domains.Main.Acquire(t.Context(), storage.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = lease.QueryRowContext(lease.Context(), "SELECT epoch_uuid FROM replica_state WHERE id=1").Scan(&positions[0].epoch)
+		lease.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err = domains.History.InstanceID(t.Context())
+		if err != nil || id != positions[1].instance {
+			t.Fatal("healthy history changed authority", err)
+		}
+		if err = domains.StopReplication(); err != nil {
+			t.Fatal(err)
+		}
+		fixture.SetReadOnly(t, "primary", storage.MainDomain, false)
 	}
 	if err = domains.StopReplication(); err != nil {
 		t.Fatal(err)

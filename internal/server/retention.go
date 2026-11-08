@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -96,7 +97,16 @@ func retentionAttrs(result RetentionResult) []slog.Attr {
 	}
 }
 
-func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (RetentionResult, error) {
+func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (result RetentionResult, resultErr error) {
+	defer func() {
+		if h.history != nil {
+			removed, err := h.history.Cleanup(ctx, now.UTC())
+			result.HistoryBuckets = removed
+			if err != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("cleanup metric history: %w", err))
+			}
+		}
+	}()
 	if h.management == nil || h.enrollments == nil {
 		return RetentionResult{}, fmt.Errorf("retention services are unavailable")
 	}
@@ -109,7 +119,7 @@ func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (Retentio
 	if err != nil {
 		return RetentionResult{AuditEvents: removedAudit}, fmt.Errorf("cleanup enrollment tickets: %w", err)
 	}
-	result := RetentionResult{AuditEvents: removedAudit, EnrollmentTickets: removedTickets}
+	result = RetentionResult{AuditEvents: removedAudit, EnrollmentTickets: removedTickets}
 	if h.announcements != nil {
 		result.Announcements, err = cleanupRetentionBacklog(ctx, now.Add(-90*24*time.Hour), h.announcements.Cleanup)
 		if err != nil {
@@ -192,12 +202,6 @@ func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (Retentio
 	result.ProbeRows, err = cleanupRetentionBacklog(ctx, now.Add(-7*24*time.Hour), h.nodes.CleanupProbeHistory)
 	if err != nil {
 		return result, fmt.Errorf("cleanup probe history: %w", err)
-	}
-	if h.history != nil {
-		result.HistoryBuckets, err = h.history.Cleanup(ctx, now)
-		if err != nil {
-			return result, fmt.Errorf("cleanup metric history: %w", err)
-		}
 	}
 	return result, nil
 }

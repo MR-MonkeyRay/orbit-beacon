@@ -10,12 +10,15 @@ import (
 	"orbitbeacon/internal/server/storage"
 )
 
-func prepareDatabaseKey(ctx context.Context, dir string, db *storage.Database) error {
+func prepareDatabaseKey(ctx context.Context, dir string, db *storage.Database, establishedHA bool) error {
 	exists, err := securefs.ValidateFile(filepath.Join(dir, "secrets.key"))
 	if err != nil {
 		return err
 	}
 	if !exists {
+		if establishedHA {
+			return errors.New("secrets_key_missing: restore the matching key for this registered cluster")
+		}
 		lease, err := db.Acquire(ctx, storage.Reader)
 		if err != nil {
 			return err

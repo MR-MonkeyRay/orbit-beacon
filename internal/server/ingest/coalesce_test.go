@@ -67,6 +67,14 @@ func newCoalesceFixtureWithOptions(t *testing.T, opts Options, targets ...string
 	}
 	opts.Now = clock
 	f.service = NewService(stableDatabase(t, db), opts)
+	f.report = coalesceReport(f.now, targets...)
+	if _, err := acceptReport(context.Background(), f.service, coalesceToken, f.report); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func coalesceReport(now time.Time, targets ...string) v1.Report {
 	cpu, load, uptime := 10.0, 0.5, 100.0
 	total, available, zero := uint64(8192), uint64(4096), uint64(0)
 	window := int64(10000)
@@ -80,14 +88,11 @@ func newCoalesceFixtureWithOptions(t *testing.T, opts Options, targets ...string
 	source := m.Sources["cpu"]
 	source.MeasurementWindowMS = &window
 	m.Sources["cpu"] = source
-	f.report = v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "session", Seq: 1, SampledAt: f.now, Runtime: v1.DefaultRuntimeSettings(), System: &v1.System{Hostname: "host", OS: "linux", Arch: "amd64"}, Metrics: m, Traffic: []v1.Traffic{}}
+	report := v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "session", Seq: 1, SampledAt: now, Runtime: v1.DefaultRuntimeSettings(), System: &v1.System{Hostname: "host", OS: "linux", Arch: "amd64"}, Metrics: m, Traffic: []v1.Traffic{}}
 	if len(targets) != 0 {
-		f.report.Runtime.ProbeTargets = targets
+		report.Runtime.ProbeTargets = targets
 	}
-	if _, err := acceptReport(context.Background(), f.service, coalesceToken, f.report); err != nil {
-		t.Fatal(err)
-	}
-	return f
+	return report
 }
 
 func (f *coalesceFixture) writes(t *testing.T) int {

@@ -130,7 +130,11 @@ func TestMySQLDeploymentRejectsUnsafeCapabilities(t *testing.T) {
 			if test.valid && err != nil {
 				t.Fatalf("valid capabilities rejected: %v", err)
 			}
-			if !test.valid && !errors.Is(err, ErrDeployment) {
+			if !test.valid && test.readOnly != 0 {
+				if !storageFailure(err) || errors.Is(err, ErrDeployment) {
+					t.Fatalf("read-only endpoint lost its recoverable classification: %v", err)
+				}
+			} else if !test.valid && !errors.Is(err, ErrDeployment) {
 				t.Fatalf("unsafe deployment accepted: %v", err)
 			}
 		})

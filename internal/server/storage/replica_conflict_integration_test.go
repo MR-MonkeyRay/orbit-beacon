@@ -104,11 +104,11 @@ func TestMySQLReplicaTargetConstraintsRevokeWithoutRetry(t *testing.T) {
 				}
 				deadline := time.Now().Add(4 * time.Second)
 				state := read()
-				for time.Now().Before(deadline) && state.State != "error" {
+				for time.Now().Before(deadline) && state.State != "manual_required" {
 					time.Sleep(20 * time.Millisecond)
 					state = read()
 				}
-				if state.Ready || state.State != "error" {
+				if state.Ready || state.State != "manual_required" {
 					t.Errorf("deterministic target conflict remained retryable/qualified: %+v", state)
 				}
 				var after, count int64
@@ -128,7 +128,7 @@ func TestMySQLReplicaTargetConstraintsRevokeWithoutRetry(t *testing.T) {
 					}
 				}
 				time.Sleep(1100 * time.Millisecond)
-				if final := read(); final.State != "error" || final.Ready {
+				if final := read(); final.State != "manual_required" || final.Ready {
 					t.Error("conflict silently resumed", final)
 				}
 				if err = target.QueryRow("SELECT head_seq FROM replica_state WHERE id=1").Scan(&after); err != nil || after != before {

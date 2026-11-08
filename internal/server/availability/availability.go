@@ -22,6 +22,7 @@ type Service struct {
 	now               func() time.Time
 	logger            *slog.Logger
 	started, previous time.Time
+	storageGeneration uint64
 }
 
 func NewService(db *storage.Database, clock func() time.Time, logger *slog.Logger) *Service {
@@ -42,6 +43,10 @@ func (s *Service) Tick(ctx context.Context) error {
 	}
 	defer lease.Close()
 	ctx = lease.Context()
+	if s.storageGeneration != lease.Generation() {
+		s.storageGeneration = lease.Generation()
+		s.started, s.previous = time.Time{}, time.Time{}
+	}
 	now := s.now().UTC()
 	previous := s.previous
 	s.previous = now

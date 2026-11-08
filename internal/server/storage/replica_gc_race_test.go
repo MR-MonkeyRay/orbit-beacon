@@ -81,7 +81,7 @@ func TestReplicaGCRebuildSurvivesInFlightGap(t *testing.T) {
 		r.mu.Lock()
 		state, ready = r.record.Domains[MainDomain].State, r.record.Domains[MainDomain].Ready
 		r.mu.Unlock()
-		if state == "error" {
+		if state == "manual_required" {
 			t.Fatal("stale catch-up failure overwrote durable rebuild_required")
 		}
 		if state == "healthy" && ready {
@@ -111,7 +111,7 @@ func TestReplicaIdentityFailureStillStopsAfterRebuild(t *testing.T) {
 		r.mu.Lock()
 		state, ready := r.record.Domains[MainDomain].State, r.record.Domains[MainDomain].Ready
 		r.mu.Unlock()
-		if state == "error" && !ready {
+		if state == "manual_required" && !ready {
 			var value string
 			if err := target.current.reader.QueryRowContext(ctx, "SELECT value FROM settings WHERE `key`='kept'").Scan(&value); err != nil || value != "foreign" {
 				t.Fatal("foreign target was cleared", value, err)

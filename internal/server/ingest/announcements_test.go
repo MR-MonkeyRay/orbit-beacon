@@ -18,7 +18,7 @@ func TestAnnouncementsRealSQLitePublicCacheAndReader(t *testing.T) {
 	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
 	ns := f.nodes
-	s := NewService(nil, Options{})
+	s := NewService(ns.Database(), Options{})
 	svc := announcements.New(ns.Database(), clock, ns.InvalidatePublicSafety)
 	read := func(offset int) PublicPage {
 		t.Helper()

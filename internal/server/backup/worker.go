@@ -29,20 +29,6 @@ func (s *Service) Run(ctx context.Context) {
 	}
 	defer s.running.Store(false)
 	defer s.closeCleanup()
-	for ctx.Err() == nil {
-		if err := s.recoverRunning(ctx); err == nil {
-			break
-		}
-		if !workerDelay(ctx) {
-			return
-		}
-	}
-	if ctx.Err() != nil {
-		return
-	}
-	_ = s.cleanupWork(ctx)
-	_, _ = s.CleanupOrphans(ctx, 500)
-	_, _ = s.CleanupLocalTemps(ctx, 500)
 	workerCtx, cancelWorker := context.WithCancel(ctx)
 	type job struct {
 		task  Task
@@ -67,14 +53,40 @@ func (s *Service) Run(ctx context.Context) {
 	}()
 	timer := time.NewTimer(time.Hour)
 	defer timer.Stop()
+	var generation uint64
+	var generationDone <-chan struct{}
 	for ctx.Err() == nil {
+		done := s.db.GenerationDone()
+		if generation != s.db.Generation() || generationDone != done {
+			first := generation == 0
+			recovered, err := s.recoverRunning(ctx)
+			if err != nil {
+				if !workerDelay(ctx) {
+					return
+				}
+				continue
+			}
+			if done != s.db.GenerationDone() {
+				continue
+			}
+			generation, generationDone = recovered, done
+			if first {
+				_ = s.cleanupWork(ctx)
+				_, _ = s.CleanupOrphans(ctx, 500)
+				_, _ = s.CleanupLocalTemps(ctx, 500)
+			}
+		}
 		now := s.opts.Now()
 		tickErr := s.Tick(ctx, now)
 		var claimErr error
-		if !executing.Load() {
+		if tickErr == nil && !executing.Load() {
 			lease, err := s.db.Acquire(workerCtx, storage.Writer)
 			claimErr = err
 			if err == nil {
+				if lease.Generation() != generation || generationDone != s.db.GenerationDone() {
+					lease.Close()
+					continue
+				}
 				task, err := s.claim(lease.Context())
 				claimErr = err
 				if err == nil {
@@ -91,6 +103,9 @@ func (s *Service) Run(ctx context.Context) {
 			}
 		}
 		wait, waitErr := s.schedulerWait(ctx, s.opts.Now())
+		if generation != s.db.Generation() || generationDone != s.db.GenerationDone() {
+			continue
+		}
 		if tickErr != nil || waitErr != nil || claimErr != nil && !errors.Is(claimErr, sql.ErrNoRows) {
 			wait = time.Second
 		}
@@ -99,6 +114,8 @@ func (s *Service) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-s.wake:
+		case <-generationDone:
+			generationDone = nil
 		case <-timer.C:
 		}
 	}
@@ -113,29 +130,29 @@ func workerDelay(ctx context.Context) bool {
 		return true
 	}
 }
-func (s *Service) recoverRunning(ctx context.Context) error {
+func (s *Service) recoverRunning(ctx context.Context) (uint64, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
-		return leaseErr
+		return 0, leaseErr
 	}
 	defer lease.Close()
 	ctx = lease.Context()
 	rows, err := lease.QueryContext(ctx, taskSelect+` WHERE state='running' ORDER BY created_at,id`)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var tasks []Task
 	for rows.Next() {
 		t, e := scanTask(rows)
 		if e != nil {
 			rows.Close()
-			return e
+			return 0, e
 		}
 		tasks = append(tasks, t)
 	}
 	err = errors.Join(rows.Err(), rows.Close())
 	if err != nil {
-		return err
+		return 0, err
 	}
 	for _, task := range tasks {
 		warning := ""
@@ -143,10 +160,10 @@ func (s *Service) recoverRunning(ctx context.Context) error {
 			warning = "storage_outcome_unknown"
 		}
 		if !s.finish(ctx, task, "failed", "interrupted", warning) {
-			return ctx.Err()
+			return 0, errors.Join(ctx.Err(), errors.New("backup_recovery_failed"))
 		}
 	}
-	return nil
+	return lease.Generation(), nil
 }
 func (s *Service) claim(ctx context.Context) (Task, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)

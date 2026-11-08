@@ -16,19 +16,21 @@ import (
 type replicaProbeKey struct{}
 
 var errReplicaProbeBusy = errors.New("storage_replica_probe_busy")
+var errReplicaJournalPressure = errors.New("storage_replica_journal_pressure")
 
 type replicaDomain struct {
-	source, target  *Database
-	control         *replication
-	resource, epoch string
-	domain          Domain
-	mu              sync.Mutex
-	pin             int64
-	pinned          bool
-	cancelSeed      context.CancelFunc
-	revoke          func(context.Context) error
-	applied         atomic.Int64
-	seedBlocked     atomic.Bool
+	source, target    *Database
+	control           *replication
+	resource, epoch   string
+	domain            Domain
+	mu                sync.Mutex
+	pin               int64
+	pinned            bool
+	cancelSeed        context.CancelFunc
+	revoke            func(context.Context) error
+	applied           atomic.Int64
+	seedBlocked       atomic.Bool
+	stabilityObserved bool
 }
 
 func mysqlConnectorDB(cfg *mysql.Config) (*sql.DB, error) {
@@ -83,8 +85,11 @@ func (tx *Tx) beginCapture() error {
 	if err != nil {
 		return err
 	}
+	tx.lease.db.notePossibleCommit(boot, p)
 	id := tx.receipt.id
 	b := &replicaTransaction{replicaPosition: replicaPosition{Epoch: p.Epoch, Seq: p.Seq + 1, ID: id}, Resource: r.resource, Previous: p.ID, Boot: boot, Barrier: barrier}
+	tx.receipt.position = &b.replicaPosition
+	tx.receipt.boot = boot
 	if _, err = tx.tx.ExecContext(tx.ctx, "INSERT INTO replica_transactions VALUES(?,?,?,?,?,?,0,?)", b.Epoch, b.Seq, b.ID, b.Previous, b.Boot, b.Barrier, transactionOverhead); err != nil {
 		return safeFailure(err)
 	}
@@ -112,6 +117,7 @@ func (tx *Tx) finishCapture() error {
 	if b.Bytes > maxTransactionBytes {
 		return ErrTransactionTooLarge
 	}
+	tx.receipt.journalBytes = b.Bytes
 	if journal+b.Bytes > maxJournalBytes {
 		if err := tx.lease.db.replica.pruneTx(tx.ctx, tx.tx, time.Now(), b.Bytes); err != nil {
 			return err
@@ -139,9 +145,7 @@ func (dbs *Databases) StartReplication(ctx context.Context) error {
 	r.done = make(chan struct{})
 	var wg sync.WaitGroup
 	for _, d := range r.domains {
-		if d.target == nil {
-			continue
-		}
+		d.stabilityObserved = false
 		wg.Add(1)
 		go func(d *replicaDomain) { defer wg.Done(); d.run(run) }(d)
 	}
@@ -179,7 +183,7 @@ func (d *replicaDomain) run(ctx context.Context) {
 			return
 		case <-timer.C:
 		}
-		if err := d.step(ctx); err != nil {
+		if err := d.coordinatorStep(ctx); err != nil {
 			if errors.Is(err, ErrIdentityMismatch) || errors.Is(err, ErrReplicaDiverged) || errors.Is(err, ErrSchemaIncompatible) || errors.Is(err, ErrTransactionTooLarge) {
 				if d.control != nil {
 					r := d.control
@@ -189,7 +193,8 @@ func (d *replicaDomain) run(ctx context.Context) {
 					// GC 已撤销资格时，旧追赶快照的缺洞不得覆盖可重建决定。
 					if m != nil && (m.Ready || m.State != "error") && !(gap && !m.Ready && m.State == "rebuild_required") {
 						old := *m
-						m.Ready, m.State = false, "error"
+						m.Ready, m.State = false, "manual_required"
+						m.Manual, m.Reason = true, "replica_integrity_error"
 						r.record.Revision++
 						if persistErr := r.persistLocked(ctx); persistErr != nil {
 							*m = old
@@ -236,17 +241,17 @@ func (d *replicaDomain) barrier(ctx context.Context) error {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return safeFailure(err)
 	}
-	if previousBoot == boot && now-previous < int64(time.Second) {
+	if d.source.Ready() && previousBoot == boot && now-previous < int64(time.Second) {
 		return nil
 	}
-	l, err := d.source.Acquire(probe, Writer)
+	l, err := d.source.privateLease(probe, Writer)
 	if err != nil {
 		return err
 	}
 	defer l.Close()
 	tx, err := l.BeginWrite(probe)
 	if errors.Is(err, errReplicaProbeBusy) {
-		return nil
+		return errReplicaProbeBusy
 	}
 	if err != nil {
 		return err
@@ -257,7 +262,7 @@ func (d *replicaDomain) barrier(ctx context.Context) error {
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return safeFailure(err)
 		}
-		if err == nil && previousBoot == boot && tx.capture.Barrier-previous < int64(time.Second) {
+		if d.source.Ready() && err == nil && previousBoot == boot && tx.capture.Barrier-previous < int64(time.Second) {
 			return nil
 		}
 	}
@@ -277,16 +282,16 @@ func (d *replicaDomain) catchUp(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		d.applied.Store(target.Seq)
 		source, err := position(ctx, d.source.current.reader)
 		if err != nil {
 			return err
 		}
-		if target == source {
-			return nil
-		}
 		if target.Epoch != source.Epoch || target.Seq > source.Seq {
 			return ErrReplicaDiverged
+		}
+		d.applied.Store(target.Seq)
+		if target == source {
+			return nil
 		}
 		batch, err := readReplicaTransaction(ctx, d.source, target.Seq)
 		if err != nil {
@@ -336,6 +341,15 @@ func (d *replicaDomain) pruneTx(ctx context.Context, tx *sql.Tx, now time.Time, 
 	if err := tx.QueryRowContext(ctx, "SELECT epoch_uuid,journal_bytes,head_seq FROM replica_state WHERE id=1").Scan(&epoch, &total, &head); err != nil {
 		return safeFailure(err)
 	}
+	db := d.source
+	if db.journalEpoch != epoch {
+		db.journalEpoch, db.journalCursor = epoch, epoch
+		db.journalRequired = 0
+	}
+	if db.journalRequired > 0 && total+db.journalRequired <= maxJournalBytes {
+		db.journalRequired = 0
+	}
+	pressure := max(incoming, db.journalRequired)
 	boot, current, err := replicaClock()
 	if err != nil {
 		return err
@@ -344,6 +358,16 @@ func (d *replicaDomain) pruneTx(ctx context.Context, tx *sql.Tx, now time.Time, 
 	elapsed := time.Since(now)
 	if elapsed < 0 {
 		current -= int64(elapsed)
+	}
+	ancestorBytes, err := d.pruneAncestors(ctx, tx, epoch, boot, current, age, total, pressure)
+	if err != nil {
+		return err
+	}
+	if ancestorBytes != 0 {
+		if _, err = tx.ExecContext(ctx, "UPDATE replica_state SET journal_bytes=journal_bytes-? WHERE id=1", ancestorBytes); err != nil {
+			return safeFailure(err)
+		}
+		total -= ancestorBytes
 	}
 	var removed, cursor, lastRemoved, count int64
 	stop := false
@@ -381,7 +405,7 @@ func (d *replicaDomain) pruneTx(ctx context.Context, tx *sql.Tx, now time.Time, 
 	}
 	if count == 0 {
 		if total+incoming > maxJournalBytes {
-			return ErrTransactionTooLarge
+			return db.journalPressure(incoming)
 		}
 		return nil
 	}
@@ -413,7 +437,7 @@ func (d *replicaDomain) pruneTx(ctx context.Context, tx *sql.Tx, now time.Time, 
 		return safeFailure(err)
 	}
 	if total+incoming-removed > maxJournalBytes {
-		return ErrTransactionTooLarge
+		return db.journalPressure(incoming)
 	}
 	return nil
 }

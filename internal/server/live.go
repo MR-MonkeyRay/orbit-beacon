@@ -62,6 +62,7 @@ type liveStreams struct {
 	active  map[*liveStream]struct{}
 	done    chan struct{}
 	closing bool
+	paused  bool
 }
 
 type liveStream struct {
@@ -81,7 +82,7 @@ type liveStream struct {
 func (s *liveStreams) acquire(ip string) (*liveStream, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closing || s.total >= 200 || s.byIP[ip] >= 4 {
+	if s.closing || s.paused || s.total >= 200 || s.byIP[ip] >= 4 {
 		return nil, false
 	}
 	if s.byIP == nil {

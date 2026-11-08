@@ -28,7 +28,7 @@ Redis 使用 **DB `2`**、key 前缀 **`orbitbeacon:dev:`**。TLS 认证、临�
 
 - `server-ha-mysql.json`：当前 TLS 主备配置；运行目录 `server-data-tls`，保留其中的 `secrets.key`、`storage-control.db`，不要混用旧目录 `server-data`。
 - `mysql-development.json` / `mysql-app.password`：TLS 应用连接、四库名称与应用凭据。
-- `mysql-admin.json`（同 `mysql-admin-tls.json`）/ `mysql-admin.password`：TLS 隔离测试管理员；真实 COMMIT 回包黑洞与未知 ACK 恢复也已通过 TLS 验证。
+- `mysql-admin.json` / `mysql-admin.password`：TLS 管理连接，仅供隔离测试库使用。
 - `redis.json` / `redis.password`：TLS 连接、DB `2` 和前缀。
 - `console-credentials.json`：控制台账户；`*-plain.json` 保留迁移前配置，仅用于明确回退。
 
@@ -36,5 +36,5 @@ Redis 使用 **DB `2`**、key 前缀 **`orbitbeacon:dev:`**。TLS 认证、临�
 go run ./cmd/orbitbeacon-server serve --config "$HOME/.orbitbeacon-remote-development/server-ha-mysql.json"
 ```
 
-控制台：`http://127.0.0.1:18091`。MySQL 集成测试设置 `ORBITBEACON_TEST_MYSQL=1`、`ORBITBEACON_TEST_MYSQL_CONFIG="$HOME/.orbitbeacon-remote-development/mysql-admin.json"`；夹具只创建并清理本次 `orbitbeacon_test_<UUID>_{pm,ph,sm,sh}` 四库和临时账户，不清空开发库。
+控制台：`http://127.0.0.1:18091`。MySQL 集成测试设置 `ORBITBEACON_TEST_MYSQL=1`、`ORBITBEACON_TEST_MYSQL_CONFIG="$HOME/.orbitbeacon-remote-development/mysql-admin.json"`，使用 `go test -p 1` 串行运行，避免耗尽远端连接。夹具只清理本次 `orbitbeacon_test_<UUID>_{pm,ph,sm,sh}` 四库和临时账户，不清空开发库。
 

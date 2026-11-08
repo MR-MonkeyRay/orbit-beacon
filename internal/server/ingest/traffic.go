@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -272,8 +273,11 @@ func (s *Service) drainTraffic(ctx context.Context) error {
 }
 
 func (s *Service) drainNodeTraffic(ctx context.Context, id string, state *nodeState) error {
+	if err := s.resolveReportCommit(ctx, state); err != nil {
+		return err
+	}
 	state.mu.Lock()
-	pending := len(state.traffic.pending) > 0 || (state.stagedTraffic != nil && len(state.stagedTraffic.pending) > 0) || state.probesPending()
+	pending := state.pendingCommit != nil || len(state.traffic.pending) > 0 || (state.stagedTraffic != nil && len(state.stagedTraffic.pending) > 0) || state.probesPending()
 	state.mu.Unlock()
 	if !pending {
 		return nil
@@ -284,6 +288,7 @@ func (s *Service) drainNodeTraffic(ctx context.Context, id string, state *nodeSt
 	}
 	defer lease.Close()
 	ctx = lease.Context()
+	s.finishReportCommit(state)
 	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
@@ -309,8 +314,8 @@ func (s *Service) drainNodeTraffic(ctx context.Context, id string, state *nodeSt
 		return err
 	}
 	state.mu.Lock()
-	state.fenceTraffic(credential, credentialEpoch, observedGeneration, session)
-	state.fenceProbes(credential, credentialEpoch, observedGeneration, session)
+	state.invalidateStorageGeneration(lease.Generation())
+	state.invalidateIdentity(credential, credentialEpoch, observedGeneration, session)
 	state.mu.Unlock()
 	now := s.now().UTC()
 	committed, err := state.persistTraffic(ctx, tx, id, now)
@@ -327,6 +332,10 @@ func (s *Service) drainNodeTraffic(ctx context.Context, id string, state *nodeSt
 		return err
 	}
 	if err := tx.Commit(); err != nil {
+		if errors.Is(err, storage.ErrCommitUnknown) {
+			probes.generation, probes.session = observedGeneration, session
+			state.rememberReportCommit(tx, lease.Generation(), committed, probes, nil)
+		}
 		return err
 	}
 	state.commitTraffic(committed, now)

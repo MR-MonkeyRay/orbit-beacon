@@ -155,11 +155,12 @@ func TestServiceStoreFailedDeleteKeepsPathsAndPending(t *testing.T) {
 	s.add(Sample{"orphan", now.Add(-time.Minute), diskValues("/data")})
 	key := bucketKey{"orphan", now.Add(-time.Minute).Unix()}
 	pending := maps.Clone(s.pending[key])
+	insertTestTombstone(t, nodes, "orphan", now)
 	removed, err := s.cleanup(context.Background(), now)
 	if removed != 0 || !errors.Is(err, failure) || len(s.pending) != 1 || !reflect.DeepEqual(s.pending[key], pending) || len(s.paths["orphan"]) != 1 {
 		t.Fatalf("removed=%d pending=%v paths=%v err=%v", removed, s.pending, s.paths, err)
 	}
-	if !reflect.DeepEqual(store.deleted, []string{"orphan"}) || store.expired || len(store.writes) != 0 {
+	if !reflect.DeepEqual(store.deleted, []string{"orphan"}) || !store.expired || len(store.writes) != 0 {
 		t.Fatalf("deletes=%v expired=%v writes=%v", store.deleted, store.expired, store.writes)
 	}
 	store.deleteErr = nil
@@ -218,19 +219,17 @@ func TestServiceStoreQueryErrors(t *testing.T) {
 	}
 }
 
-func TestServiceStoreCleanupFreezesCandidatesBeforeDraining(t *testing.T) {
+func TestServiceStoreCleanupUsesOnlyTombstonesAndDrains(t *testing.T) {
 	store := &fakeStore{}
 	nodes := emptyTestMain(t)
 	s := stoppedStoreService(t, store, nodes, Options{})
 	now := time.Now().UTC().Truncate(time.Minute)
 	s.add(Sample{"pending", now.Add(-time.Minute), map[string]float64{"cpu_percent": 10}})
 	s.paths["paths"] = map[string]struct{}{"/data": {}}
-	store.nodeIDs = func(visit func(string)) error {
-		// 扫描历史节点时排空的新样本不应追加到已冻结的内存候选中。
-		s.samples <- Sample{"late", now.Add(-time.Minute), diskValues("/late")}
-		visit("stored")
-		return nil
+	for _, id := range []string{"pending", "paths", "stored"} {
+		insertTestTombstone(t, nodes, id, now)
 	}
+	s.samples <- Sample{"late", now.Add(-time.Minute), diskValues("/late")}
 	if _, err := s.cleanup(context.Background(), now); err != nil {
 		t.Fatal(err)
 	}

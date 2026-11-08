@@ -125,7 +125,7 @@ func (s *Service) ProjectPublicRecord(record nodes.PublicRecord, now time.Time) 
 	state := s.acquireExistingState(record.ID)
 	if state != nil {
 		state.mu.Lock()
-		if state.credential == record.Credential && state.credentialEpoch == record.CredentialEpoch && state.generation == record.Generation && state.session == record.Session {
+		if s.db.Ready() && state.storageGeneration != 0 && state.storageGeneration == s.db.Generation() && state.credential == record.Credential && state.credentialEpoch == record.CredentialEpoch && state.generation == record.Generation && state.session == record.Session {
 			lastSeen = record.LatestSeen(state.receivedAt)
 			if state.lastSeenPersisted.Equal(record.LastSeen) || state.public.receivedAt.Equal(record.LastSeen) {
 				snapshot = state.public
@@ -164,8 +164,9 @@ type publicPageKey struct {
 }
 
 type publicPageEntry struct {
-	page    PublicPage
-	version uint64
+	page       PublicPage
+	version    uint64
+	generation uint64
 }
 
 type publicPageCall struct {
@@ -198,7 +199,7 @@ func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offs
 		version := ns.PublicVisibilityVersion()
 		now := clock().UTC()
 		entry, ok := cache.entries[key]
-		if age := now.Sub(entry.page.GeneratedAt); ok && entry.version == version && age >= 0 && age < ttl {
+		if age := now.Sub(entry.page.GeneratedAt); ok && entry.version == version && entry.generation == lease.Generation() && age >= 0 && age < ttl {
 			cache.mu.Unlock()
 			return entry.page, nil
 		}
@@ -251,7 +252,7 @@ func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offs
 					break
 				}
 			}
-			cache.entries[key] = publicPageEntry{page: page, version: version}
+			cache.entries[key] = publicPageEntry{page: page, version: version, generation: lease.Generation()}
 		}
 		call.err = err
 		delete(cache.calls, key)

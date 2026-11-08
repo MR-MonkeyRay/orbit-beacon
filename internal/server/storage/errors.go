@@ -13,9 +13,14 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-// IsBusy 只依据双引擎的数值错误码识别锁争用。
+var errMySQLReadOnly = errors.New("storage_mysql_read_only")
+
+// IsBusy 识别数值锁错误与已知回滚后等待有限日志回收的暂时忙状态。
 // 数据损坏、I/O 失败和约束冲突不据此重试，也不按错误文本判定。
 func IsBusy(err error) bool {
+	if errors.Is(err, errReplicaJournalPressure) {
+		return true
+	}
 	if code, ok := MySQLCode(err); ok {
 		return code == 1205 || code == 1213 || code == 3572
 	}
@@ -51,10 +56,13 @@ func IsUnique(err error) bool {
 	return ok && (code == sqlite3.SQLITE_CONSTRAINT_UNIQUE || code == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY)
 }
 func IsConnectionFailure(err error) bool {
+	if err == nil {
+		return false
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	if errors.Is(err, driver.ErrBadConn) || errors.Is(err, mysql.ErrInvalidConn) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+	if errors.Is(err, errMySQLReadOnly) || errors.Is(err, driver.ErrBadConn) || errors.Is(err, mysql.ErrInvalidConn) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
 	var network net.Error
@@ -62,7 +70,15 @@ func IsConnectionFailure(err error) bool {
 		return true
 	}
 	code, ok := MySQLCode(err)
-	return ok && (code == 1290 || code == 2006 || code == 2013 || code == 1053)
+	if ok {
+		return code == 1290 || code == 3989 || code == 2006 || code == 2013 || code == 1053
+	}
+	sqliteCode, ok := SQLiteCode(err)
+	if !ok {
+		return false
+	}
+	sqliteCode &= 0xff
+	return sqliteCode == sqlite3.SQLITE_IOERR || sqliteCode == sqlite3.SQLITE_FULL || sqliteCode == sqlite3.SQLITE_READONLY || sqliteCode == sqlite3.SQLITE_CORRUPT
 }
 
 type safeError struct{ cause error }

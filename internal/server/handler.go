@@ -25,6 +25,7 @@ import (
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/notify"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/traffic"
 	"orbitbeacon/internal/server/webui"
 )
@@ -47,6 +48,7 @@ type Options struct {
 	TrustedProxies           []netip.Prefix
 	PublicURL                string
 	WebUpdateIntervalSeconds int
+	RecoverUnavailableMain   bool
 	Assets                   fs.FS
 	Logger                   *slog.Logger
 	AccessLog                bool
@@ -87,6 +89,7 @@ type handler struct {
 	streamLifetime           time.Duration
 	webUpdateIntervalSeconds int
 	publicPageDisabled       atomic.Bool
+	publicPageUnknown        atomic.Bool
 	publicPageMu             sync.Mutex
 }
 
@@ -119,10 +122,7 @@ func NewHandler(opts Options) (*handler, error) {
 	if opts.WebUpdateIntervalSeconds < 2 || opts.WebUpdateIntervalSeconds > 60 {
 		return nil, errors.New("web_update_interval_seconds must be between 2 and 60")
 	}
-	publicPage, err := opts.Management.PublicPageSettings(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("public page settings: %w", err)
-	}
+
 	if opts.Assets == nil {
 		opts.Assets = webui.Assets()
 	}
@@ -151,7 +151,18 @@ func NewHandler(opts Options) (*handler, error) {
 	h.announcements = newAnnouncementService(opts.Nodes, opts.Now)
 	h.commands = commands.New(opts.Nodes.Database(), opts.Now)
 	h.saturation = opts.SaturationMetrics
-	h.publicPageDisabled.Store(!publicPage.Enabled)
+	h.publicPageUnknown.Store(true)
+	publicPage, err := opts.Management.PublicPageSettings(context.Background())
+	if err != nil {
+		recovering := opts.RecoverUnavailableMain && !opts.Nodes.Database().Ready() &&
+			(errors.Is(err, storage.ErrUnavailable) || storage.IsConnectionFailure(err) || errors.Is(err, context.Canceled))
+		if !recovering {
+			return nil, fmt.Errorf("public page settings: %w", err)
+		}
+	} else {
+		h.publicPageDisabled.Store(!publicPage.Enabled)
+		h.publicPageUnknown.Store(false)
+	}
 	h.webUpdateIntervalSeconds = opts.WebUpdateIntervalSeconds
 	return h, nil
 }

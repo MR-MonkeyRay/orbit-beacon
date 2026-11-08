@@ -249,6 +249,41 @@ func (f *Fixture) RawEndpoint(t testing.TB, role string, domain storage.Domain) 
 	return db
 }
 
+// SetReadOnly 只改变本夹具成功创建的单个 schema，不修改共享实例全局状态。
+func (f *Fixture) SetReadOnly(t testing.TB, role string, domain storage.Domain, enabled bool) {
+	t.Helper()
+	if role != "primary" && role != "standby" || domain != storage.MainDomain && domain != storage.HistoryDomain {
+		t.Fatal("mysql_fixture_endpoint_invalid")
+	}
+	endpoint := f.Endpoint(role)
+	name := endpoint.MainDatabase
+	if domain == storage.HistoryDomain {
+		name = endpoint.HistoryDatabase
+	}
+	owned := false
+	for _, created := range f.created {
+		owned = owned || name == created
+	}
+	if !owned {
+		t.Fatal("mysql_fixture_schema_not_owned")
+	}
+	apply := func(value bool) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		flag := "0"
+		if value {
+			flag = "1"
+		}
+		if _, err := f.admin.ExecContext(ctx, "ALTER DATABASE `"+name+"` READ ONLY = "+flag); err != nil {
+			t.Error(fixtureFailure("schema_read_only", err))
+		}
+	}
+	if enabled {
+		t.Cleanup(func() { apply(false) })
+	}
+	apply(enabled)
+}
+
 func fixtureFailure(phase string, err error) error {
 	var failure *mysql.MySQLError
 	if errors.As(err, &failure) && failure != nil {

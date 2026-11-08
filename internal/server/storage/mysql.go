@@ -211,8 +211,11 @@ func checkMySQLDeployment(ctx context.Context, db *sql.DB, domain Domain) error 
 		}
 		return mysqlStartupFailure(domain, "deployment", 0, err)
 	}
-	if (support != "DEFAULT" && support != "YES") || transactions != "YES" || durable != 1 || readOnly != 0 || (binlog != 0 && (syncBinlog != 1 || trust != 1)) {
+	if (support != "DEFAULT" && support != "YES") || transactions != "YES" || durable != 1 || (binlog != 0 && (syncBinlog != 1 || trust != 1)) {
 		return ErrDeployment
+	}
+	if readOnly != 0 {
+		return mysqlStartupFailure(domain, "read_only", 0, errMySQLReadOnly)
 	}
 	return nil
 }
@@ -258,12 +261,25 @@ func initializeMySQLSchema(ctx context.Context, db *sql.DB, domain Domain) error
 		return ErrSchemaIncompatible
 	}
 	// 标记是最后一步；非空半成品或手工删表不能作为空库重建。
-	for _, table := range Tables(domain) {
-		var found int
-		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=? AND engine='InnoDB'", table.Name).Scan(&found); err != nil {
+	rows, err := db.QueryContext(ctx, "SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE() AND engine='InnoDB'")
+	if err != nil {
+		return err
+	}
+	found := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			rows.Close()
 			return err
 		}
-		if found != 1 {
+		found[name] = true
+	}
+	err = errors.Join(rows.Err(), rows.Close())
+	if err != nil {
+		return err
+	}
+	for _, table := range Tables(domain) {
+		if !found[table.Name] {
 			return ErrSchemaIncompatible
 		}
 	}

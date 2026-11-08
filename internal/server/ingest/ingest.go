@@ -53,6 +53,8 @@ type nodeState struct {
 	touch             uint64
 	credential        [sha256.Size]byte
 	credentialEpoch   int64
+	storageGeneration uint64
+	pendingCommit     *reportCommit
 	generation        uint64
 	session           string
 	seq               uint64
@@ -72,6 +74,30 @@ type nodeState struct {
 // 这些辅助函数要求持有 state.mu。限流历史独立于进程身份，失效后仍然保留。
 func (state *nodeState) matchesIdentity(credential []byte, credentialEpoch int64, generation uint64, session string) bool {
 	return len(state.latest) != 0 && subtle.ConstantTimeCompare(state.credential[:], credential) == 1 && state.credentialEpoch == credentialEpoch && state.generation == generation && state.session == session
+}
+
+func (state *nodeState) invalidateStorageGeneration(generation uint64) bool {
+	if state.storageGeneration == generation {
+		return false
+	}
+	state.public = publicMetrics{}
+	state.cpuPercent, state.memoryUsedPercent = nil, nil
+	state.lastSeenPersisted = time.Time{}
+	clear(state.traffic.committed)
+	if state.stagedTraffic != nil {
+		clear(state.stagedTraffic.committed)
+	}
+	// 已确认但回退的数据不重建；仅保留尚未提交的检查及其去重水位。
+	for target, entry := range state.probes.targets {
+		entry.counted = time.Time{}
+		for _, result := range entry.pending {
+			if result.CheckedAt.After(entry.counted) {
+				entry.counted = result.CheckedAt
+			}
+		}
+		state.probes.targets[target] = entry
+	}
+	return true
 }
 
 func (state *nodeState) invalidateIdentity(credential []byte, credentialEpoch int64, generation uint64, session string) {
@@ -219,12 +245,13 @@ func (s *Service) Shutdown(ctx context.Context) error {
 }
 
 type Admission struct {
-	service         *Service
-	nodeID          string
-	credential      [sha256.Size]byte
-	credentialEpoch int64
-	usedMu          sync.Mutex
-	used            bool
+	service           *Service
+	nodeID            string
+	credential        [sha256.Size]byte
+	credentialEpoch   int64
+	storageGeneration uint64
+	usedMu            sync.Mutex
+	used              bool
 }
 
 func (s *Service) AdmitToken(ctx context.Context, token string) (*Admission, error) {
@@ -265,7 +292,7 @@ func (s *Service) AdmitToken(ctx context.Context, token string) (*Admission, err
 	if err := s.charge(state); err != nil {
 		return nil, err
 	}
-	return &Admission{service: s, nodeID: nodeID, credential: digest, credentialEpoch: credentialEpoch}, nil
+	return &Admission{service: s, nodeID: nodeID, credential: digest, credentialEpoch: credentialEpoch, storageGeneration: lease.Generation()}, nil
 }
 
 func (s *Service) AcceptAdmitted(ctx context.Context, admission *Admission, report v1.Report) (v1.ReportResponse, error) {
@@ -279,7 +306,7 @@ func (s *Service) AcceptAdmitted(ctx context.Context, admission *Admission, repo
 	}
 	admission.used = true
 	admission.usedMu.Unlock()
-	return s.accept(ctx, admission.nodeID, admission.credential[:], admission.credentialEpoch, report)
+	return s.acceptGeneration(ctx, admission.nodeID, admission.credential[:], admission.credentialEpoch, admission.storageGeneration, report)
 }
 
 func (s *Service) acquireState(nodeID string) *nodeState {
@@ -386,9 +413,71 @@ type acceptanceSnapshot struct {
 	cachedSession        string
 	cachedSeq            uint64
 	hasLatest, duplicate bool
+	persistedLastSeen    time.Time
 }
 
-func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, credentialEpoch int64, report v1.Report) (v1.ReportResponse, error) {
+type reportCommit struct {
+	tx                  *storage.Tx
+	generation          uint64
+	traffic             map[trafficKey]trafficCounters
+	probes              probeBuffer
+	publish             func()
+	resolved, committed bool
+}
+
+// acceptGate 串行保护收据；解析时不持有本次调用的数据库租约。
+func (s *Service) resolveReportCommit(ctx context.Context, state *nodeState) error {
+	state.mu.Lock()
+	pending := state.pendingCommit
+	state.mu.Unlock()
+	if pending == nil {
+		return nil
+	}
+	committed, err := pending.tx.ResolveCommit(ctx)
+	if err != nil {
+		return err
+	}
+	pending.resolved, pending.committed = true, committed
+	return nil
+}
+
+func (s *Service) finishReportCommit(state *nodeState) {
+	state.mu.Lock()
+	pending := state.pendingCommit
+	state.mu.Unlock()
+	if pending == nil || !pending.resolved {
+		return
+	}
+	if pending.committed {
+		state.commitTraffic(pending.traffic, s.now().UTC())
+		state.commitProbes(pending.probes, pending.probes.generation, pending.probes.session)
+		if pending.publish != nil {
+			pending.publish()
+		}
+	}
+	state.mu.Lock()
+	state.pendingCommit = nil
+	if pending.generation != s.db.Generation() {
+		state.invalidateStorageGeneration(s.db.Generation())
+	}
+	state.mu.Unlock()
+}
+
+func (state *nodeState) rememberReportCommit(tx *storage.Tx, generation uint64, traffic map[trafficKey]trafficCounters, probes probeBuffer, publish func()) {
+	state.mu.Lock()
+	state.pendingCommit = &reportCommit{tx: tx, generation: generation, traffic: traffic, probes: probes, publish: publish}
+	state.mu.Unlock()
+}
+
+func snapshotPublicFromLatest(body []byte, receivedAt time.Time) publicMetrics {
+	var report v1.Report
+	if json.Unmarshal(body, &report) != nil {
+		return publicMetrics{}
+	}
+	return snapshotPublic(report.Metrics, receivedAt)
+}
+
+func (s *Service) acceptGeneration(ctx context.Context, nodeID string, credential []byte, credentialEpoch int64, admissionGeneration uint64, report v1.Report) (v1.ReportResponse, error) {
 	finish, err := s.beginUse(ctx)
 	if err != nil {
 		return v1.ReportResponse{}, err
@@ -399,12 +488,6 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 		return v1.ReportResponse{}, err
 	}
 	report = normalized.Report
-	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
-	if leaseErr != nil {
-		return v1.ReportResponse{}, leaseErr
-	}
-	defer lease.Close()
-	ctx = lease.Context()
 	state := s.acquireState(nodeID)
 	defer s.releaseState(state)
 	// 同一节点的上报串行处理，但已取消的请求无需等待该节点的慢写入操作。
@@ -418,6 +501,19 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	if err := ctx.Err(); err != nil {
 		return v1.ReportResponse{}, err
 	}
+	if err := s.resolveReportCommit(ctx, state); err != nil {
+		return v1.ReportResponse{}, err
+	}
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return v1.ReportResponse{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	if admissionGeneration != 0 && admissionGeneration != lease.Generation() {
+		return v1.ReportResponse{}, nodes.ErrUnauthenticated
+	}
+	s.finishReportCommit(state)
 	// 只读认证围栏在下面的 SELECT 处线性化。
 	// 在它之前提交的凭据/状态变更总能被观察到；
 	// 在它之后提交的变更在这个并发请求之后才生效。
@@ -443,6 +539,7 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 		return v1.ReportResponse{}, err
 	}
 	state.mu.Lock()
+	newStorageGeneration := state.invalidateStorageGeneration(lease.Generation())
 	state.invalidateIdentity(storedCredential, storedEpoch, generation, session)
 	cachedCredential, cachedEpoch, cachedGeneration, cachedSession := state.credential, state.credentialEpoch, state.generation, state.session
 	cachedSeq, hasLatest := state.seq, len(state.latest) != 0
@@ -467,11 +564,11 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	sameSystem := report.System == nil || subtle.ConstantTimeCompare(storedSystemHash[:], normalized.systemHash[:]) == 1
 	intervalDue := s.persistenceDue(nodeID, persistedLastSeen, now)
 	duplicate := sameState && report.Seq <= cachedSeq
-	durable := activeCommand || len(report.CommandResults) > 0 || !sameState || generation != report.RunGeneration || session != report.SessionID ||
+	durable := newStorageGeneration || activeCommand || len(report.CommandResults) > 0 || !sameState || generation != report.RunGeneration || session != report.SessionID ||
 		(!duplicate && (storedRuntime != string(normalized.runtimeJSON) || !sameSystem)) || intervalDue
 	response := v1.ReportResponse{NodeID: nodeID, AcceptedSeq: report.Seq, ServerTime: now}
 	fence := acceptanceSnapshot{credential: storedCredential, epoch: storedEpoch, generationText: generationText, generation: generation, session: session, runtime: storedRuntime,
-		cachedCredential: cachedCredential, cachedEpoch: cachedEpoch, cachedGeneration: cachedGeneration, cachedSession: cachedSession, cachedSeq: cachedSeq, hasLatest: hasLatest, duplicate: duplicate}
+		cachedCredential: cachedCredential, cachedEpoch: cachedEpoch, cachedGeneration: cachedGeneration, cachedSession: cachedSession, cachedSeq: cachedSeq, hasLatest: hasLatest, duplicate: duplicate, persistedLastSeen: persistedLastSeen}
 	if !durable {
 		return s.acceptInMemory(ctx, lease, nodeID, state, normalized, fence, response)
 	}
@@ -493,6 +590,9 @@ func (s *Service) acceptInMemory(ctx context.Context, lease *storage.Lease, node
 	if err := probes.buffer(ctx, lease, nodeID, report.ProbeResults, currentRuntime.ProbeTargets); err != nil {
 		return v1.ReportResponse{}, err
 	}
+	if err := ctx.Err(); err != nil {
+		return v1.ReportResponse{}, err
+	}
 	state.commitProbes(probes, fence.generation, fence.session)
 	state.bufferTraffic(fence.credential, fence.epoch, report.Report, fence.generation, fence.session, now)
 	response.TrafficAcks = state.trafficAcks(report.Traffic, now)
@@ -505,6 +605,7 @@ func (s *Service) acceptInMemory(ctx context.Context, lease *storage.Lease, node
 	state.seq, state.latest, state.receivedAt = report.Seq, report.body, now
 	state.public = snapshot
 	state.cpuPercent, state.memoryUsedPercent = liveMetricValue(snapshot.cpu), liveMetricValue(snapshot.memory)
+	state.storageGeneration = lease.Generation()
 	state.mu.Unlock()
 	s.recordSample(nodeID, now, report.Metrics)
 	return response, nil
@@ -608,9 +709,21 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 			return v1.ReportResponse{}, err
 		}
 		if err := tx.Commit(); err != nil {
+			if errors.Is(err, storage.ErrCommitUnknown) {
+				probes.generation, probes.session = fence.generation, txSession
+				state.rememberReportCommit(tx, writer.Generation(), committed, probes, nil)
+			}
 			return v1.ReportResponse{}, err
 		}
 		state.commitTraffic(committed, now)
+		state.mu.Lock()
+		state.storageGeneration = writer.Generation()
+		state.lastSeenPersisted = fence.persistedLastSeen
+		if state.public.receivedAt.IsZero() {
+			state.public = snapshotPublicFromLatest(state.latest, state.receivedAt)
+		}
+		state.cpuPercent, state.memoryUsedPercent = liveMetricValue(state.public.cpu), liveMetricValue(state.public.memory)
+		state.mu.Unlock()
 		state.commitProbes(probes, fence.generation, txSession)
 		response.TrafficAcks = state.trafficAcks(report.Traffic, now)
 		return response, nil
@@ -625,6 +738,27 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 		return v1.ReportResponse{}, err
 	}
 	if err := tx.Commit(); err != nil {
+		if errors.Is(err, storage.ErrCommitUnknown) {
+			probes.generation, probes.session = report.RunGeneration, report.SessionID
+			snapshot := snapshotPublic(report.Metrics, now)
+			var sample history.Sample
+			if s.samples != nil {
+				sample = history.Snapshot(nodeID, now, report.Metrics)
+			}
+			state.rememberReportCommit(tx, writer.Generation(), committed, probes, func() {
+				state.mu.Lock()
+				state.generation, state.seq, state.latest, state.receivedAt = report.RunGeneration, report.Seq, report.body, now
+				state.storageGeneration = 0
+				state.public = snapshot
+				state.cpuPercent, state.memoryUsedPercent = liveMetricValue(snapshot.cpu), liveMetricValue(snapshot.memory)
+				copy(state.credential[:], txCredential)
+				state.credentialEpoch, state.session, state.lastSeenPersisted = txEpoch, report.SessionID, now
+				state.mu.Unlock()
+				if s.samples != nil {
+					s.publishSample(sample)
+				}
+			})
+		}
 		return v1.ReportResponse{}, err
 	}
 	state.commitTraffic(committed, now)
@@ -633,6 +767,7 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 	snapshot := snapshotPublic(report.Metrics, now)
 	state.mu.Lock()
 	state.generation, state.seq, state.latest, state.receivedAt = report.RunGeneration, report.Seq, report.body, now
+	state.storageGeneration = writer.Generation()
 	state.public = snapshot
 	state.cpuPercent, state.memoryUsedPercent = liveMetricValue(snapshot.cpu), liveMetricValue(snapshot.memory)
 	copy(state.credential[:], txCredential)
@@ -675,7 +810,10 @@ func (s *Service) stateCandidates() map[string]stateCandidate {
 	defer s.mu.Unlock()
 	candidates := make(map[string]stateCandidate)
 	for id, state := range s.states {
-		if state.refs == 0 {
+		state.mu.Lock()
+		hasPending := state.pendingCommit != nil
+		state.mu.Unlock()
+		if state.refs == 0 && !hasPending {
 			candidates[id] = stateCandidate{state: state, touch: state.touch}
 		}
 	}
@@ -738,7 +876,7 @@ func (s *Service) Latest(ctx context.Context, nodeID string) (LatestReport, erro
 	}
 	defer s.releaseState(state)
 	state.mu.Lock()
-	if !state.matchesIdentity(credential, credentialEpoch, generation, session) {
+	if !s.db.Ready() || state.storageGeneration != lease.Generation() || lease.Generation() != s.db.Generation() || !state.matchesIdentity(credential, credentialEpoch, generation, session) {
 		state.mu.Unlock()
 		return LatestReport{}, nodes.ErrNotFound
 	}
@@ -763,6 +901,10 @@ func (s *Service) recordSample(nodeID string, now time.Time, metrics v1.Metrics)
 		return
 	}
 	sample := history.Snapshot(nodeID, now, metrics)
+	s.publishSample(sample)
+}
+
+func (s *Service) publishSample(sample history.Sample) {
 	select {
 	case s.samples <- sample:
 	default:

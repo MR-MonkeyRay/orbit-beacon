@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"orbitbeacon/internal/config"
@@ -18,6 +19,15 @@ type memberRecord struct {
 	Resource, Primary, Standby, Epoch, Active, State string
 	Ready, PrimaryRegistered, StandbyRegistered      bool
 	Checkpoint                                       *replicaCheckpoint
+	Generation                                       uint64
+	Freeze                                           *freezePoint
+	FailureSince                                     time.Time
+	StableSince                                      *freezePoint
+	Manual                                           bool
+	Reason                                           string
+	Intent                                           *switchIntent
+	LossNanos                                        *int64
+	Rebuild                                          *rebuildOperation
 }
 type controlRecord struct {
 	Cluster, Binding, Pending, Finished string
@@ -25,6 +35,8 @@ type controlRecord struct {
 	Revision                            uint64
 	Domains                             map[Domain]*memberRecord
 	RestoreDomains                      []Domain
+	Bootstrapped                        bool
+	BootstrapPending                    bool
 }
 type replication struct {
 	mu      sync.Mutex
@@ -35,6 +47,7 @@ type replication struct {
 	done    chan struct{}
 	cfg     config.DatabaseConfig
 	dataDir string
+	clock   func() (string, int64, time.Time, error)
 }
 
 func configBinding(cfg config.DatabaseConfig) string {
@@ -96,7 +109,7 @@ func openControl(ctx context.Context, dataDir string, create bool) (*replication
 			return fail(err)
 		}
 	}
-	r := &replication{control: db, domains: map[Domain]*replicaDomain{}}
+	r := &replication{control: db, domains: map[Domain]*replicaDomain{}, dataDir: dataDir}
 	var raw []byte
 	err = db.QueryRowContext(ctx, "SELECT record FROM storage_control WHERE id=1").Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) && !exists {
@@ -242,9 +255,9 @@ func openConfigured(ctx context.Context, cfg config.DatabaseConfig, dataDir stri
 	r.cfg = cfg
 	r.dataDir = dataDir
 	if r.record.Cluster == "" {
-		r.record = controlRecord{Cluster: uuid.NewString(), Binding: configBinding(cfg), Revision: 1, Domains: map[Domain]*memberRecord{}}
+		r.record = controlRecord{Cluster: uuid.NewString(), Binding: configBinding(cfg), Revision: 1, BootstrapPending: true, Domains: map[Domain]*memberRecord{}}
 		for _, domain := range []Domain{MainDomain, HistoryDomain} {
-			r.record.Domains[domain] = &memberRecord{Resource: uuid.NewString(), Primary: uuid.NewString(), Standby: uuid.NewString(), Epoch: uuid.NewString(), Active: "primary", State: "initializing"}
+			r.record.Domains[domain] = &memberRecord{Resource: uuid.NewString(), Primary: uuid.NewString(), Standby: uuid.NewString(), Epoch: uuid.NewString(), Active: "primary", State: "initializing", Generation: 1}
 		}
 		if err = r.persistLocked(ctx); err != nil {
 			return fail(err)
@@ -254,9 +267,10 @@ func openConfigured(ctx context.Context, cfg config.DatabaseConfig, dataDir stri
 		return fail(ErrIdentityMismatch)
 	}
 	if !offline && controlExists {
-		if err = validateEndpointSeparation(ctx, cfg); err != nil {
+		if err = r.openRegistered(ctx, result, domains); err != nil {
 			return fail(err)
 		}
+		return result, nil
 	}
 	if r.record.Pending != "" && (!offline || only != "") {
 		return fail(ErrRestorePending)
@@ -265,6 +279,9 @@ func openConfigured(ctx context.Context, cfg config.DatabaseConfig, dataDir stri
 		m := r.record.Domains[domain]
 		if m == nil {
 			return fail(ErrIdentityMismatch)
+		}
+		if m.Intent != nil || (m.Freeze != nil && r.record.Pending == "") {
+			return fail(ErrUnavailable)
 		}
 		endpoint := cfg.Primary
 		activeID := m.Primary
@@ -481,6 +498,19 @@ func (dbs *Databases) BeginRestore(ctx context.Context, operationID string, doma
 	if r.record.Pending != "" && r.record.Pending != operationID {
 		r.mu.Unlock()
 		return ErrRestorePending
+	}
+	if r.record.Pending == "" {
+		for _, domain := range domains {
+			m := r.record.Domains[domain]
+			if m == nil {
+				r.mu.Unlock()
+				return ErrIdentityMismatch
+			}
+			if m.Freeze != nil || m.Intent != nil {
+				r.mu.Unlock()
+				return ErrUnavailable
+			}
+		}
 	}
 	r.record.Pending = operationID
 	r.record.RestoreDomains = append([]Domain(nil), domains...)

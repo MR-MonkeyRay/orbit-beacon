@@ -12,9 +12,10 @@ import (
 
 type replicaHookConnector struct {
 	driver.Connector
-	before func()
-	fired  atomic.Bool
-	done   chan error
+	before      func()
+	afterCommit func(error)
+	fired       atomic.Bool
+	done        chan error
 }
 
 func (c *replicaHookConnector) Connect(ctx context.Context) (driver.Conn, error) {
@@ -99,6 +100,9 @@ func (tx *replicaHookTx) Commit() error {
 		tx.owner.before()
 	}
 	err := tx.Tx.Commit()
+	if first && tx.owner.afterCommit != nil {
+		tx.owner.afterCommit(err)
+	}
 	if first {
 		tx.owner.done <- safeFailure(err)
 	}

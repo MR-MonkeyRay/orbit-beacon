@@ -81,12 +81,13 @@ type evaluationNode struct {
 }
 
 type Evaluator struct {
-	service     *Service
-	latest      LatestReader
-	opts        EvaluatorOptions
-	mu          sync.Mutex // Evaluate 串行执行，包括显式的测试/手动 tick。
-	pending     map[pair]pending
-	resolutions map[pair]pendingResolution
+	service           *Service
+	latest            LatestReader
+	opts              EvaluatorOptions
+	mu                sync.Mutex // Evaluate 串行执行，包括显式的测试/手动 tick。
+	pending           map[pair]pending
+	resolutions       map[pair]pendingResolution
+	storageGeneration uint64
 }
 
 func NewEvaluator(service *Service, latest LatestReader, opts EvaluatorOptions) *Evaluator {
@@ -239,6 +240,11 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 	ctx = lease.Context()
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.storageGeneration != lease.Generation() {
+		e.storageGeneration = lease.Generation()
+		clear(e.pending)
+		clear(e.resolutions)
+	}
 	now = now.UTC()
 	rules, err := e.service.List(ctx)
 	if err != nil {

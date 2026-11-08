@@ -47,18 +47,23 @@ type generation struct {
 }
 
 type Database struct {
-	mu             sync.Mutex
-	domain         Domain
-	current        *generation
-	admitting      bool
-	closed         bool
-	writeGate      chan struct{}
-	pending        *commitReceipt
-	writeFailed    bool
-	replica        *replicaDomain
-	applyPool      *sql.DB
-	ownedControl   *sql.DB
-	restoreAllowed bool
+	mu              sync.Mutex
+	domain          Domain
+	current         *generation
+	admitting       bool
+	closed          bool
+	writeGate       chan struct{}
+	pending         *commitReceipt
+	writeFailed     bool
+	replica         *replicaDomain
+	applyPool       *sql.DB
+	ownedControl    *sql.DB
+	restoreAllowed  bool
+	hooks           SwitchHooks
+	possible        possibleCommit
+	journalEpoch    string
+	journalCursor   string
+	journalRequired int64
 }
 
 type leaseKey struct{}
@@ -99,6 +104,25 @@ func OpenMain(ctx context.Context, path string) (*Database, error) {
 	return newDatabase(MainDomain, writer, reader), nil
 }
 
+// Generation 不因探测或复制延迟变化；尚未选定可用成员时为零。
+func (db *Database) Generation() uint64 {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if db.current == nil {
+		return 0
+	}
+	return db.current.id
+}
+
+// GenerationDone 不持有租约，复用当前世代的取消信号供空闲任务退出等待。
+func (db *Database) GenerationDone() <-chan struct{} {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if db.current == nil || db.current.id == 0 {
+		return nil
+	}
+	return db.current.ctx.Done()
+}
 func (db *Database) Acquire(ctx context.Context, pool Pool) (*Lease, error) {
 	if pool != Writer && pool != Reader {
 		return nil, ErrUnavailable
@@ -129,7 +153,7 @@ func (db *Database) Acquire(ctx context.Context, pool Pool) (*Lease, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if !db.admitting {
+		if !db.admitting || gen == nil || gen.writer == nil || gen.ctx.Err() != nil {
 			return nil, ErrUnavailable
 		}
 	}
@@ -181,19 +205,26 @@ func (l *Lease) release() {
 	l.mu.Unlock()
 	l.db.release(l.gen)
 }
-func (l *Lease) Context() context.Context { return l.ctx }
-func (l *Lease) Generation() uint64       { return l.gen.id }
-func (l *Lease) Dialect() Dialect         { return l.gen.dialect }
-func (l *Lease) failure(err error) error {
-	if l.Dialect() != MySQL {
-		return err
+func (l *Lease) Context() context.Context {
+	if l.gen.ctx.Err() != nil {
+		l.cancel()
 	}
-	if IsConnectionFailure(err) {
+	return l.ctx
+}
+func (l *Lease) Generation() uint64 { return l.gen.id }
+func (l *Lease) Dialect() Dialect   { return l.gen.dialect }
+func (l *Lease) failure(err error) error {
+	if l.db.replica != nil && storageFailure(err) {
+		l.db.replica.freeze(context.Background(), "active_unreachable")
+	} else if l.Dialect() == MySQL && IsConnectionFailure(err) {
 		l.db.mu.Lock()
 		l.db.writeFailed = true
 		l.db.mu.Unlock()
 	}
-	return safeFailure(err)
+	if l.Dialect() == MySQL {
+		return safeFailure(err)
+	}
+	return err
 }
 func (l *Lease) Close() error {
 	l.mu.Lock()
@@ -230,7 +261,7 @@ func (l *Lease) poolDB() *sql.DB {
 func (db *Database) Stats() (writer, reader sql.DBStats, ok bool) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	if db.closed || db.current == nil {
+	if db.closed || db.current == nil || db.current.writer == nil {
 		return writer, reader, false
 	}
 	return db.current.writer.Stats(), db.current.reader.Stats(), true
@@ -244,6 +275,10 @@ func (db *Database) drain(ctx context.Context) error {
 	db.mu.Lock()
 	db.admitting = false
 	gen := db.current
+	if gen == nil {
+		db.mu.Unlock()
+		return nil
+	}
 	gen.cancel()
 	idle := gen.idle
 	db.mu.Unlock()
@@ -291,6 +326,9 @@ func (db *Database) Close() error {
 	var controlErr error
 	if db.ownedControl != nil {
 		controlErr = db.ownedControl.Close()
+	}
+	if gen == nil || gen.writer == nil {
+		return errors.Join(applyErr, controlErr)
 	}
 	return errors.Join(gen.reader.Close(), gen.writer.Close(), applyErr, controlErr)
 }
@@ -396,7 +434,7 @@ func (l *Lease) begin(ctx context.Context, write bool) (*Tx, error) {
 	if write && l.db.replica != nil {
 		if err = result.beginCapture(); err != nil {
 			_ = result.Rollback()
-			return nil, err
+			return nil, l.failure(err)
 		}
 	}
 	return result, nil
@@ -439,6 +477,9 @@ func (tx *Tx) Commit() error {
 		if err != nil {
 			_ = tx.tx.Rollback()
 		} else {
+			if tx.capture != nil {
+				tx.lease.db.notePossibleCommit(tx.capture.Boot, tx.capture.replicaPosition)
+			}
 			err = tx.tx.Commit()
 			if err != nil && tx.receipt != nil {
 				tx.lease.db.mu.Lock()
@@ -458,6 +499,7 @@ func (tx *Tx) Commit() error {
 		tx.lease.db.mu.Lock()
 		tx.lease.db.writeFailed = false
 		tx.lease.db.mu.Unlock()
+		tx.lease.db.journalCommitted(tx.receipt.journalBytes)
 	}
 	err = tx.lease.failure(err)
 	if tx.finish != nil {

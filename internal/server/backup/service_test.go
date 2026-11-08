@@ -138,7 +138,9 @@ func waitWorkerTask(t *testing.T, db *sql.DB, id, state string) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("task %s did not become %s", id, state)
+	var current, phase, code string
+	_ = db.QueryRow(`SELECT state,phase,error_code FROM backup_tasks WHERE id=?`, id).Scan(&current, &phase, &code)
+	t.Fatalf("task %s did not become %s: state=%s phase=%s code=%s", id, state, current, phase, code)
 }
 
 func insertWorkerTask(t *testing.T, db *sql.DB, id, kind, state, phase string, destination string, cipher []byte) {

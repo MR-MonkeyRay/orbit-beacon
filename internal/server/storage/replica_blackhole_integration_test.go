@@ -27,6 +27,10 @@ func TestMySQLReplicaCompleteCommitResponseBlackholeResolvesGuard(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer dbs.Close()
+	generation := dbs.Main.Generation()
+	if err = dbs.CompleteBootstrap(ctx); err != nil {
+		t.Fatal(err)
+	}
 	observed, err := storage.ReplicaTestInstallCommitHook(dbs.Main, primary, false, proxy.blackhole)
 	if err != nil {
 		t.Fatal(err)
@@ -71,8 +75,15 @@ func TestMySQLReplicaCompleteCommitResponseBlackholeResolvesGuard(t *testing.T) 
 	if err != nil || !committed {
 		t.Fatalf("guard result committed=%v err=%v", committed, err)
 	}
-	if !dbs.Main.Ready() {
-		t.Fatal("resolved source remained frozen")
+	if err = dbs.StartReplication(ctx); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && (!dbs.Main.Ready() || dbs.Main.Generation() <= generation) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !dbs.Main.Ready() || dbs.Main.Generation() <= generation {
+		t.Fatal("coordinator did not publish a recovered generation", dbs.Main.Generation())
 	}
 	raw := f.RawEndpoint(t, "primary", storage.MainDomain)
 	var rows, logs int

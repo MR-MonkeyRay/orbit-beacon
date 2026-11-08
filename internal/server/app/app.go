@@ -100,7 +100,8 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 	a.db = databases
 	a.replication = databases
 	db := databases.Main
-	if err := prepareDatabaseKey(ctx, cfg.DataDir, db); err != nil {
+	establishedHA := cfg.Database.Standby != nil && !databases.BootstrapRequired()
+	if err := prepareDatabaseKey(ctx, cfg.DataDir, db, establishedHA); err != nil {
 		return nil, err
 	}
 	nodeService := nodes.NewService(db, nodes.Options{MaxNodes: cfg.MaxNodes})
@@ -130,9 +131,15 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 		return nil, err
 	}
 	authService := auth.NewService(db, auth.Options{SecretBox: accountBox})
-	if err := authService.InitializeAdministrator(ctx, os.LookupEnv); err != nil {
-		clear(key)
-		return nil, err
+	if db.Ready() && databases.BootstrapRequired() {
+		if err := authService.InitializeAdministrator(ctx, os.LookupEnv); err != nil {
+			clear(key)
+			return nil, err
+		}
+		if err := databases.CompleteBootstrap(ctx); err != nil {
+			clear(key)
+			return nil, err
+		}
 	}
 	box, err := secretbox.New(key, "orbitbeacon notification channel v1")
 	if err != nil {
@@ -165,10 +172,24 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 			nodeService.InvalidatePublic()
 		}
 	})
-	handler, err := server.NewHandler(server.Options{Management: authService.Management(), Enrollments: enrollments, Traffic: trafficService, Availability: availabilityService, Inbox: inbox.New(db), Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, WebUpdateIntervalSeconds: cfg.WebUpdateIntervalSeconds, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: version, SaturationMetrics: saturation})
+	handler, err := server.NewHandler(server.Options{RecoverUnavailableMain: cfg.Database.Standby != nil, Management: authService.Management(), Enrollments: enrollments, Traffic: trafficService, Availability: availabilityService, Inbox: inbox.New(db), Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, WebUpdateIntervalSeconds: cfg.WebUpdateIntervalSeconds, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: version, SaturationMetrics: saturation})
 	if err != nil {
 		return nil, err
 	}
+	databases.SetMainSwitchHooks(storage.SwitchHooks{
+		Prepare: handler.PrepareDatabaseSwitch,
+		Publish: func(ctx context.Context, lease *storage.Lease) error {
+			if databases.BootstrapRequired() {
+				if err := authService.InitializeAdministrator(lease.Context(), os.LookupEnv); err != nil {
+					return err
+				}
+				if err := databases.CompleteBootstrap(lease.Context()); err != nil {
+					return err
+				}
+			}
+			return handler.PublishDatabaseGeneration(ctx, lease)
+		},
+	})
 	httpServer := newHTTPServer(cfg.ListenAddr, handler, logger)
 	httpServer.RegisterOnShutdown(handler.CloseLiveStreams)
 	var metricsServer *http.Server

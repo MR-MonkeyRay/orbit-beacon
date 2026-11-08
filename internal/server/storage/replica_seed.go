@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/google/uuid"
 	"strings"
 )
 
@@ -47,8 +48,23 @@ func (d *replicaDomain) seed(parent context.Context) error {
 	<-d.source.writeGate
 	defer func() { d.mu.Lock(); d.pinned = false; d.cancelSeed = nil; d.mu.Unlock() }()
 	resource, instance, err := replicaIdentity(ctx, d.target)
-	if err != nil || resource != d.resource {
+	if err != nil {
+		return err
+	}
+	if resource != d.resource {
 		return ErrIdentityMismatch
+	}
+	member := d.member()
+	expected, active := member.Standby, member.Primary
+	if member.Active == "standby" {
+		expected, active = member.Primary, member.Standby
+	}
+	if instance != expected || instance == active {
+		return ErrIdentityMismatch
+	}
+	op := &rebuildOperation{ID: uuid.NewString(), Source: active, Target: instance, Epoch: p.Epoch, Checkpoint: p, Phase: "clearing"}
+	if err = d.update(ctx, func(m *memberRecord) { m.Rebuild = op }); err != nil {
+		return err
 	}
 	if err = validateReplicaSchema(ctx, d.target); err != nil {
 		return err
@@ -152,6 +168,11 @@ func (d *replicaDomain) seed(parent context.Context) error {
 				return err
 			}
 		}
+	}
+	copying := *op
+	copying.Phase = "copying"
+	if err = d.update(ctx, func(m *memberRecord) { m.Rebuild = &copying }); err != nil {
+		return err
 	}
 	for _, table := range tables {
 		cols := columns(table)
@@ -265,6 +286,11 @@ func (d *replicaDomain) seed(parent context.Context) error {
 		return err
 	}
 	d.applied.Store(p.Seq)
+	catching := *op
+	catching.Phase = "catching_up"
+	if err = d.update(ctx, func(m *memberRecord) { m.Rebuild = &catching }); err != nil {
+		return err
+	}
 	if err = d.catchUp(ctx); err != nil {
 		return err
 	}
@@ -285,7 +311,12 @@ func (d *replicaDomain) seed(parent context.Context) error {
 	m := d.control.record.Domains[d.domain]
 	old := *m
 	m.Ready = true
-	m.State = "healthy"
+	if m.Active == "standby" {
+		m.State = "standby_active"
+	} else {
+		m.State = "healthy"
+	}
+	m.Rebuild = nil
 	m.Epoch = p.Epoch
 	m.Checkpoint = &replicaCheckpoint{Instance: instance, Position: p}
 	d.control.record.Revision++

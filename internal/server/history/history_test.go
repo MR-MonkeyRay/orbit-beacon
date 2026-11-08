@@ -233,7 +233,7 @@ func TestFlushCompletedOnlyAndRestartMergesPartialMinute(t *testing.T) {
 	if err := s.flush(context.Background(), now, true); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := Open(context.Background(), dir, nil, Options{})
+	restarted, err := Open(context.Background(), dir, nil, Options{Now: func() time.Time { return now.Add(20 * time.Second) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +513,7 @@ func TestOpenRejectsUnsafeHistoryFileAndSidecars(t *testing.T) {
 
 func TestNetworkRateAggregationOmitsMissingSamples(t *testing.T) {
 	s, _ := testService(t, nil)
-	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Hour)
 	for _, values := range []map[string]float64{
 		{"net_rx_bytes_per_second": 100, "net_tx_bytes_per_second": 20},
 		{"cpu_percent": 50}, // a failed/missing network measurement contributes no zero
@@ -576,11 +576,18 @@ func TestRetentionPreservesIntersectingBoundaryBuckets(t *testing.T) {
 
 func TestLoadHistoryQueriesAcrossNinetyDays(t *testing.T) {
 	s, _ := testService(t, nil)
-	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
-	for _, age := range []time.Duration{91 * 24 * time.Hour, 90 * 24 * time.Hour, 60 * 24 * time.Hour, time.Minute} {
-		s.samples <- Sample{NodeID: "node", ReceivedAt: now.Add(-age), Values: map[string]float64{"load1": 1.5, "load5": 2.5, "load15": 3.5}}
-	}
 	stopped(t, s)
+	now := time.Now().UTC().Truncate(time.Hour)
+	// 模拟当时已持久化的历史，不把九十天前的迟到样本重新生成聚合。
+	for _, age := range []time.Duration{91 * 24 * time.Hour, 90 * 24 * time.Hour, 60 * 24 * time.Hour, time.Minute} {
+		var buckets []Bucket
+		for metric, value := range map[string]float64{"load1": 1.5, "load5": 2.5, "load15": 3.5} {
+			buckets = append(buckets, Bucket{Node: "node", Series: metric, T: now.Add(-age).Unix(), Total: value, Peak: value, Samples: 1})
+		}
+		if _, err := s.store.Write(t.Context(), buckets); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for metric, want := range map[string]float64{"load1": 1.5, "load5": 2.5, "load15": 3.5} {
 		response, err := s.Query(context.Background(), "node", metric, "90d", now, "")
 		if err != nil || response.Unit != "load" || response.StepSeconds != 3600 || len(response.Points) != 3 {
