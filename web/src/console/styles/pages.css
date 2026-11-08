@@ -300,12 +300,22 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sp-tight);
+  max-width: 100%;
   margin-top: 10px;
   padding: 2px 2px 2px 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--ink-muted);
   font-size: var(--fs-xs);
+}
+
+/* 36 位 UUID 不该独占页头；截断后完整值仍在 title、复制和朗读文本里。 */
+.id-chip .mono {
+  min-width: 0;
+  max-width: 12ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .facts {

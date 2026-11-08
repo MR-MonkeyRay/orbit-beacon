@@ -32,7 +32,8 @@ export async function nodePage() {
       throw error;
     })
   ]);
-  const idText = h('span', {class: 'mono'}, node.id);
+  // 视觉上由 CSS 截断，textContent 保持完整，复制和屏幕阅读器都能拿到全值。
+  const idText = h('span', {class: 'mono', title: node.id}, node.id);
   const showCopied = () => {
     copy.replaceChildren(icon('check'));
     setTimeout(() => copy.replaceChildren(icon('copy')), 1600);
