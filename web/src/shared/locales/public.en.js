@@ -30,6 +30,7 @@ export default {
   'public.summary.allOnline': {one: '{count} node online', other: 'All {count} nodes online'},
   'public.summary.online': {one: '{online} / {count} node online', other: '{online} / {count} nodes online'},
   'public.summary.page': {one: '{count} node on this page.', other: '{count} nodes on this page.'},
+  'public.summary.joined': '{status} · {page}',
   'public.updatedAt': 'Updated at {time}',
   'public.autoUpdate': 'Automatic updates',
   'public.localTime': '{time} (local time)',

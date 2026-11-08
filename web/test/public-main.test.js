@@ -212,7 +212,7 @@ test('public-page disable clears rendered data and timers before replacing the r
   const redirects = [];
   location.replace = (target) => {
     assert.equal(ui.elements.nodes.children.length, 0);
-    assert.equal(ui.elements.summary.textContent, '—');
+    assert.equal(ui.elements.summary.textContent, copy('public.loading'));
     assert.equal(ui.sockets[0].closed, true);
     assert.equal(ui.timers.size, 0);
     redirects.push(target);

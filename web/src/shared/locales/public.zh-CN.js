@@ -30,6 +30,7 @@ export default {
   'public.summary.allOnline': {other: '{count} 个节点全部在线'},
   'public.summary.online': '{online} / {count} 个节点在线',
   'public.summary.page': {other: '本页 {count} 个节点。'},
+  'public.summary.joined': '{status}，{page}',
   'public.updatedAt': '更新于 {time}',
   'public.autoUpdate': '自动更新',
   'public.localTime': '{time}（本地时间）',

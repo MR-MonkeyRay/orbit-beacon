@@ -120,7 +120,7 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
       summary.textContent = t(partial ? 'public.empty.page' : 'public.empty.all');
     } else {
       const status = online === nodes.length ? t('public.summary.allOnline', {count: nodes.length}) : t('public.summary.online', {online, count: nodes.length});
-      summary.textContent = partial ? `${status} · ${t('public.summary.page', {count: nodes.length})}` : status;
+      summary.textContent = partial ? t('public.summary.joined', {status, page: t('public.summary.page', {count: nodes.length})}) : status;
     }
     lastGenerated = new Date(result.generated_at);
     updateText(t('public.updatedAt', {time: timeFormat.format(lastGenerated)}), t('public.autoUpdate'));
@@ -143,7 +143,8 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
     current = [];
     constellation.clear();
     headline.textContent = t('public.heading');
-    summary.textContent = '—';
+    // 摘要区回到加载文案，避免显示未本地化的破折号。
+    summary.textContent = t('public.loading');
     updateText(t('public.notUpdated'));
     updated.removeAttribute('title');
     nextOffset = null;
