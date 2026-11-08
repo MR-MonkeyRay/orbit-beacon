@@ -17,7 +17,7 @@ function gauge(label) {
   const element = h('div', {class: 'gauge'}, h('div', {class: 'gauge-line'}, h('span', null, label), value), track, h('span', {class: 'na'}, t('public.metric.noData')));
   let baseText = '';
   let stale = false;
-  const publish = () => { track.setAttribute('aria-valuetext', stale ? `${baseText}（${t('public.metric.staleNote')}）` : baseText); };
+  const publish = () => { track.setAttribute('aria-valuetext', stale ? t('public.metric.staleValue', {value: baseText, note: t('public.metric.staleNote')}) : baseText); };
   element.set = (percent) => {
     const missing = percent === null;
     element.classList.toggle('missing', missing);

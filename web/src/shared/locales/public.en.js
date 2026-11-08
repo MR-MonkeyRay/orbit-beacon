@@ -47,6 +47,7 @@ export default {
   'public.announcement.starts': 'From {start}',
   'public.metric.noData': 'No valid data yet',
   'public.metric.staleNote': 'value may be outdated',
+  'public.metric.staleValue': '{value} ({note})',
   'public.metric.cpu': 'CPU',
   'public.metric.memory': 'Memory',
   'public.metric.load': '1-minute load',

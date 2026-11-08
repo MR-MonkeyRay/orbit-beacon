@@ -233,6 +233,9 @@ test('public gauges clear both ARIA values when a metric becomes missing', async
   const meter = ui.elements.nodes.querySelector('.track');
   assert.equal(meter.getAttribute('aria-valuenow'), '80.0');
   assert.equal(meter.getAttribute('aria-valuetext'), '80.0%');
+  data.nodes[0].metric_status.cpu_percent = 'stale';
+  socket.message(snapshot(data));
+  assert.equal(meter.getAttribute('aria-valuetext'), copy('public.metric.staleValue', {value: '80.0%', note: copy('public.metric.staleNote')}));
   data.nodes[0].cpu_percent = null;
   data.nodes[0].metric_status.cpu_percent = 'unavailable';
   socket.message(snapshot(data));

@@ -47,6 +47,7 @@ export default {
   'public.announcement.starts': '{start} 起',
   'public.metric.noData': '暂无有效数据',
   'public.metric.staleNote': '数值可能已过期',
+  'public.metric.staleValue': '{value}（{note}）',
   'public.metric.cpu': 'CPU',
   'public.metric.memory': '内存',
   'public.metric.load': '1分钟负载',
