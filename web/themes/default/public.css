@@ -830,12 +830,16 @@ footer {
    reduced-motion 只压缩时长不压缩延迟（tokens.css），3s 延时仍然生效。
    page.js 启动后立即移除该节点，提示随之失效。 */
 .script-error {
-  display: none;
+  visibility: hidden;
+  max-height: 0;
+  overflow: hidden;
   animation: script-error-reveal 1ms 3s both;
 }
 
+/* display 动画超出浏览器下限（Chrome 116/FF 129），改用 visibility + max-height；
+   max-height 同时折叠占位高度，避免脚本正常加载前留出空白虚线框。 */
 @keyframes script-error-reveal {
-  to { display: block; }
+  to { visibility: visible; max-height: 100vh; }
 }
 
 @media (prefers-reduced-motion:reduce) {
