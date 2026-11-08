@@ -153,9 +153,12 @@
     max-width: 100%;
   }
 
+  /* 72px 栏内文字只剩几个像素，直接隐藏文字，
+     以下拉箭头作为控件外观；完整语言名仍在 aria-label 和 title。 */
   .account-locale select {
-    padding-inline: var(--sp-tight);
-    font-size: var(--fs-micro);
+    padding: 0;
+    color: transparent;
+    background-position: 50% 50%;
   }
 
   .account-actions {
