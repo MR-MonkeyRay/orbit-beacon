@@ -34,6 +34,8 @@ test('public announcements render plain text, preserve unchanged DOM and hide em
     assert.equal(title.textContent, entry.title);
     assert.equal(article.querySelector('.announcement-body').textContent, entry.body);
     assert.ok(article.textContent.includes(copy('alerts.severity.warning')));
+    const when = article.querySelector('.announcement-when').querySelector('time');
+    assert.equal(when.getAttribute('datetime'), entry.starts_at);
     assert.equal(article.querySelector('img'), null); assert.equal(article.querySelector('script'), null); assert.equal(article.querySelector('a'), null);
     assert.equal(container.getAttribute('aria-live'), null);
     let replacements = 0; const replace = container.replaceChildren.bind(container); container.replaceChildren = (...nodes) => { replacements++; replace(...nodes); };
@@ -41,6 +43,9 @@ test('public announcements render plain text, preserve unchanged DOM and hide em
     render([entry, {...entry, title: 'other'}]); assert.equal(container.children[0], article);
     render([{...entry, body: 'changed'}]); assert.notEqual(container.children[0], article);
     render([]); assert.equal(container.hidden, true); assert.equal(container.children.length, 0);
+    render([{...entry, ends_at: '2030-01-02T00:00:00Z'}]);
+    const windowed = container.children[0].querySelector('.announcement-when').querySelector('time');
+    assert.equal(windowed.getAttribute('datetime'), entry.starts_at);
   } finally { dom.restore(); }
 });
 

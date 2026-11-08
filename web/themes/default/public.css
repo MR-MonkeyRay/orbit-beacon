@@ -818,6 +818,8 @@ footer {
 .public-announcement.critical { border-left-color: var(--bad); }
 .public-announcement h2 { font-size: var(--fs-lg); }
 .public-announcement .announcement-level { color: var(--ink-subtle); }
+.public-announcement .announcement-when { font-size: var(--fs-sm); color: var(--ink-subtle); }
+.public-announcement .announcement-when time { font-variant-numeric: tabular-nums; }
 .public-announcement .announcement-body { white-space: pre-line; }
 
 /* 脚本 3 秒未启动时显示回退提示：没有 JS 可切换类名，只能用 CSS 延时动画。

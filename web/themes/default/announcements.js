@@ -1,5 +1,9 @@
 import {h} from '../../src/shared/dom.js';
-import {t} from '../../src/shared/i18n.js';
+import {t, tParts, getLocale} from '../../src/shared/i18n.js';
+
+const windowFormat = new Intl.DateTimeFormat(getLocale(), {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false});
+
+const time = (iso) => h('time', {datetime: iso, title: iso}, windowFormat.format(new Date(iso)));
 
 export function announcementRenderer(container) {
   let previous = [];
@@ -12,11 +16,13 @@ export function announcementRenderer(container) {
       const element = h('article', {class: `public-announcement ${item.level}`});
       const level = h('p', {class: 'announcement-level'});
       const title = h('h2');
+      const when = h('p', {class: 'announcement-when'},
+        item.ends_at ? tParts('public.announcement.window', {start: time(item.starts_at), end: time(item.ends_at)}) : tParts('public.announcement.starts', {start: time(item.starts_at)}));
       const body = h('p', {class: 'announcement-body'});
       level.textContent = t(`alerts.severity.${item.level}`);
       title.textContent = item.title;
       body.textContent = item.body;
-      element.append(level, title, body);
+      element.append(level, title, when, body);
       return {key, element};
     });
     for (const entry of unused) entry.element.remove();

@@ -43,6 +43,8 @@ export default {
   'public.duration.daysHours': '{days}天 {hours}小时',
   'public.duration.hoursMinutes': '{hours}小时 {minutes}分钟',
   'public.duration.minutes': '{minutes}分钟',
+  'public.announcement.window': '{start} – {end}',
+  'public.announcement.starts': '{start} 起',
   'public.metric.noData': '暂无有效数据',
   'public.metric.staleNote': '数值可能已过期',
   'public.metric.cpu': 'CPU',
