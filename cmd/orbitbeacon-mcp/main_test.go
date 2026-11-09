@@ -661,28 +661,30 @@ func TestReleaseMCPAssets(t *testing.T) {
 	var workflow struct {
 		Jobs map[string]struct {
 			Steps []struct {
-				Name string `yaml:"name"`
-				ID   string `yaml:"id"`
-				Run  string `yaml:"run"`
+				ID  string `yaml:"id"`
+				Run string `yaml:"run"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(data, &workflow); err != nil {
 		t.Fatal(err)
 	}
+	// 步骤按 run 内容与稳定 step id 定位，不依赖会随翻译变化的步骤名称。
 	var build, checks, publish string
-	for _, step := range workflow.Jobs["publish"].Steps {
-		switch {
-		case step.Name == "构建发布二进制":
-			build = step.Run
-		case step.ID == "publication-state":
-			checks = step.Run
-		case step.Name == "发布 GitHub Release 二进制":
-			publish = step.Run
+	for _, job := range workflow.Jobs {
+		for _, step := range job.Steps {
+			switch {
+			case strings.Contains(step.Run, "for kind in server agent mcp; do"):
+				build = step.Run
+			case step.ID == "publication-state":
+				checks = step.Run
+			case strings.Contains(step.Run, "assets=("):
+				publish = step.Run
+			}
 		}
 	}
-	if !strings.Contains(build, "for kind in server agent mcp; do") {
-		t.Fatal("MCP missing from build kinds")
+	if build == "" {
+		t.Fatal("release workflow lacks the binary build step")
 	}
 	for _, arch := range []string{"amd64", "arm64"} {
 		check := "grep -Fxq orbitbeacon-mcp-linux-" + arch + " &&"
