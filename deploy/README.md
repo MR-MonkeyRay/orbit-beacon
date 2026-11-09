@@ -23,9 +23,9 @@
 
 ## 配置参考
 
-**CLI > `ORBITBEACON_` 环境变量 > JSON > 默认值**。JSON 由 `--config` 指定，未知键、null、错误类型或无效值会报错。环境变量用大写键名，CLI 用连字符，例如 `ORBITBEACON_MAX_NODES=100`、`--max-nodes 100`。Agent 本地参数也使用此优先级，固定安装策略另行校验。
+**CLI > `ORBITBEACON_` 环境变量 > YAML > 默认值**。YAML 由 `--config` 指定，使用单个映射文档；重复键、未知键、null、错误类型或无效值会报错。环境变量用大写键名，CLI 用连字符，例如 `ORBITBEACON_MAX_NODES=100`、`--max-nodes 100`。Agent 本地参数也使用此优先级，固定安装策略另行校验。
 
-| JSON 键 | 默认值 | 含义 |
+| YAML 键 | 默认值 | 含义 |
 | --- | --- | --- |
 | `listen_addr` | `127.0.0.1:8080` | HTTP 业务监听地址 |
 | `data_dir` | `./data` | 持久化目录，遵守[目录要求](#数据目录) |
@@ -37,7 +37,7 @@
 | `access_log` | `false` | 访问日志；健康检查仅记录 5xx，不记录查询字符串、Cookie、Authorization 或注册票据 |
 | `allow_insecure_webhooks` | `false` | 允许字面回环地址的 HTTP Webhook，见[通知网络](#通知网络) |
 | `notification_allow_private_networks` | `false` | 允许内网通知目标，见[通知网络](#通知网络) |
-| `database` | `{}` | 默认 SQLite；MySQL 使用完整 JSON 对象，见[数据库](#数据库) |
+| `database` | `{}` | 默认 SQLite；MySQL 使用嵌套映射，见[数据库](#数据库) |
 
 `public_url` 与 Origin：
 
@@ -47,7 +47,7 @@
 
 `trusted_proxies` 与客户端地址：
 
-- 只有直连来源可信时才解析 `X-Forwarded-For`：从右往左跳过可信代理，取第一个不可信地址；缺失、畸形或全可信时回退直连 IP。JSON 用数组，环境变量和 CLI 用逗号分隔；禁止 `/0`。
+- 只有直连来源可信时才解析 `X-Forwarded-For`：从右往左跳过可信代理，取第一个不可信地址；缺失、畸形或全可信时回退直连 IP。YAML 用序列，环境变量和 CLI 用逗号分隔；禁止 `/0`。
 - 同机原生代理可用 `["127.0.0.1", "::1"]`。容器填写服务器实际看到的代理源 IP 或最小 CIDR，避免信任整个共享网络；入口代理要覆盖或正确追加真实客户端地址。
 
 会话 Cookie 为 `orbitbeacon_session`：host-only（无 Domain）、`HttpOnly`、`SameSite=Lax`、`Path=/`；仅 HTTPS `public_url` 启用 `Secure`，不受代理到服务器的协议或转发头影响。
@@ -57,12 +57,12 @@
 [快速开始](../README.md#2-启动)说明初始账户。需要自定义时，在首次 `serve` 前设置 `ORBITBEACON_ADMIN_USERNAME`、`ORBITBEACON_ADMIN_PASSWORD`：
 
 - 可单项覆盖，未设置的一项保留默认；显式空值或无效凭据拒绝启动。密码为 8–1024 个 UTF-8 字节，不裁剪空格。
-- 已有用户时忽略两变量，不重置密码或新增账户；初始化变量不写入 JSON 或备份。
+- 已有用户时忽略两变量，不重置密码或新增账户；初始化变量不写入 YAML 或备份。
 - systemd 用 `[Service]` drop-in 的 `Environment=` / `EnvironmentFile=`，限制凭据文件读取权限；不要把密码放入命令参数。Compose 已显式转发两变量，显式空值也会传入。
 
 ## systemd
 
-配置示例为 [`systemd/server.json`](systemd/server.json)。已有对应架构的二进制可跳过编译；Go 版本见 [go.mod](../go.mod)。
+配置示例为 [`systemd/server.yaml`](systemd/server.yaml)。已有对应架构的二进制可跳过编译；Go 版本见 [go.mod](../go.mod)。
 
 ```sh
 mkdir -p build
@@ -73,11 +73,11 @@ sudo useradd --system --user-group --home /var/lib/orbitbeacon \
 sudo install -D -o root -g root -m 0755 \
   build/orbitbeacon-server /usr/local/bin/orbitbeacon-server
 sudo install -D -o root -g orbitbeacon -m 0640 \
-  deploy/systemd/server.json /etc/orbitbeacon/server.json
+  deploy/systemd/server.yaml /etc/orbitbeacon/server.yaml
 sudo install -D -o root -g root -m 0644 \
   deploy/systemd/orbitbeacon-server.service /etc/systemd/system/orbitbeacon-server.service
 sudo install -d -o orbitbeacon -g orbitbeacon -m 0700 /var/lib/orbitbeacon
-sudoedit /etc/orbitbeacon/server.json
+sudoedit /etc/orbitbeacon/server.yaml
 sudo systemctl daemon-reload
 sudo systemctl enable --now orbitbeacon-server
 sudo journalctl -u orbitbeacon-server -n 100 --no-pager
@@ -102,7 +102,7 @@ docker compose -f deploy/docker/compose.yaml logs --tail=100 orbitbeacon
 ```
 
 - 容器监听 `0.0.0.0:8080`，只发布到宿主机 `127.0.0.1:8080`；直接远程 HTTP 要改端口发布并限制访问。数据卷固定叫 `orbitbeacon-data`，不要 `down -v` 或删卷。运行身份是 `65532:65532`，bind mount 要匹配这个身份和[目录权限](#数据目录)。
-- 镜像构建时把 [`docker/server.json`](docker/server.json) 复制进去；改仓库副本不影响现有容器。额外配置在 Compose `environment` 传入，或只读挂载完整配置到 `/etc/orbitbeacon/server.json`。宿主机变量只有被 Compose 引用或显式传入才进容器；环境或镜像变了用 `up -d` 重建。指标采集另配可达网络或端口。本地构建见 [`build/server.Dockerfile`](../build/server.Dockerfile)。
+- 镜像构建时把 [`docker/server.yaml`](docker/server.yaml) 复制进去；改仓库副本不影响现有容器。额外配置在 Compose `environment` 传入，或只读挂载完整配置到 `/etc/orbitbeacon/server.yaml`。宿主机变量只有被 Compose 引用或显式传入才进容器；环境或镜像变了用 `up -d` 重建。指标采集另配可达网络或端口。本地构建见 [`build/server.Dockerfile`](../build/server.Dockerfile)。
 
 本地从源码构建（无需预先生成二进制）：
 
@@ -160,40 +160,36 @@ curl --fail http://localhost:8080/healthz/ready
 
 省略 `database` 或使用 `{}` 保持本地 SQLite。MySQL 使用两个预建 database，业务和历史分别存储；`data_dir` 仍须持久化目录锁、加密 key、归档工作文件及恢复决定。启动按事务、持久化及触发器所需能力检查，不按版本字符串设门槛。
 
-```json
-{
-  "database": {
-    "primary": {
-      "driver": "mysql",
-      "network": "tcp",
-      "address": "db.example:3306",
-      "user": "orbitbeacon",
-      "password_file": "/run/secrets/database-password",
-      "main_database": "orbitbeacon",
-      "history_database": "orbitbeacon_history"
-    }
-  }
-}
+```yaml
+database:
+  primary:
+    driver: mysql
+    network: tcp
+    address: "db.example:3306"
+    user: orbitbeacon
+    password_file: /run/secrets/database-password
+    main_database: orbitbeacon
+    history_database: orbitbeacon_history
 ```
 
 - `ORBITBEACON_DATABASE` 整体替换 JSON 对象，不与文件中的 endpoint 或 failover 深合并。数据库密码只能放在 `password_file`：归运行用户所有、`0600`、非空、不超过 64 KiB，只去掉一个末尾 LF。
 - TCP 省略 `tls` 就是明文，只适合本机或受控网络。显式 `tls: {}` 启用 TLS 1.2+，默认校验系统根和 address 主机名；可用 `ca_file`、`server_name` 指定私有 CA 和验证名称。握手、证书或主机名失败就拒绝连接，不回退明文。Unix socket 用 `network: "unix"` 和绝对路径，不带 `tls`。
-- 私有 CA 示例：在 endpoint 中加入 `"tls": {"server_name": "db.example", "ca_file": "/etc/orbitbeacon/mysql-ca.pem"}`，并把 CA 文件只读挂载到同一路径。
+- 私有 CA 示例：在 endpoint 中加入 `tls: {server_name: db.example, ca_file: /etc/orbitbeacon/mysql-ca.pem}`，并把 CA 文件只读挂载到同一路径。
 - `network` 默认 `tcp`。database 名以 ASCII 字母或下划线开头，后续只能是字母、数字、下划线，最长 64 字节，两个名称不能相同。SQLite endpoint 不接受 MySQL 字段或自定义路径。
 - 应用账户只需两个 database 内的 `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER`，不需要 SUPER 或全局 `CREATE DATABASE`。只允许这个 Server 写应用 schema；不要跑第二个使用不同 `data_dir` 的 Server，也不要让 DBA 直接改业务行。
 - MySQL 必须可写，使用事务型 InnoDB，并设置 `innodb_flush_log_at_trx_commit=1`；启用 binlog 时还要 `sync_binlog=1` 和 `log_bin_trust_function_creators=1`。Server 只校验条件，不改全局变量。所有连接固定 5 秒连接、读、写超时。
 - COMMIT 结果未知会返回 `503 storage_commit_unknown`；先查当前状态，不要直接重发。主库故障不会拿旧缓存假装成功；历史库读不了时，包含 Monitoring 的归档会失败。
 - 保留并备份与数据库匹配的 `data_dir/secrets.key`。HA 集群完成初始化后缺 key 一律拒绝启动，不生成替代；只有控制记录还允许首次初始化，且确认业务库没有加密数据时，才可首次生成。其他部署如果已有 TOTP、通知或备份加密数据，key 缺失也会拒绝；恢复原 key 或用完整可验证的配置归档恢复。
-- systemd 沿用 `/etc/orbitbeacon/server.json`，secret 放在 `ProtectHome` 之外的 `/etc/orbitbeacon` 或 `/run`。Docker 的配置、secret 和 CA 只读挂载，secret 属主 `65532:65532`、`0600`；不要因为容器读不到就放宽权限。默认 Compose 不添加 MySQL 服务。
+- systemd 沿用 `/etc/orbitbeacon/server.yaml`，secret 放在 `ProtectHome` 之外的 `/etc/orbitbeacon` 或 `/run`。Docker 的配置、secret 和 CA 只读挂载，secret 属主 `65532:65532`、`0600`；不要因为容器读不到就放宽权限。默认 Compose 不添加 MySQL 服务。
 
 Docker 可用 override 文件补充现有服务：
 
 ```yaml
 services:
   orbitbeacon:
-    command: ["serve", "--config", "/etc/orbitbeacon/server.json"]
+    command: ["serve", "--config", "/etc/orbitbeacon/server.yaml"]
     volumes:
-      - /etc/orbitbeacon/server.json:/etc/orbitbeacon/server.json:ro
+      - /etc/orbitbeacon/server.yaml:/etc/orbitbeacon/server.yaml:ro
       - /etc/orbitbeacon/database-password:/run/secrets/database-password:ro
 ```
 
@@ -201,7 +197,7 @@ services:
 
 ### 异步备库
 
-仅 MySQL primary 可配置 `database.standby`：MySQL 备用端点使用相同字段并预建独立的业务、历史 database；也可使用 `{"driver":"sqlite"}`，保存在本地固定文件。正常读写 primary，故障后按控制记录选择 active；业务、历史可分别切换到不同角色，不向非活动副本分流读取。两端不能实际指向同一 server UUID + database，跨域重叠同样拒绝。
+仅 MySQL primary 可配置 `database.standby`：MySQL 备用端点使用相同字段并预建独立的业务、历史 database；也可使用 `{driver: sqlite}`，保存在本地固定文件。正常读写 primary，故障后按控制记录选择 active；业务、历史可分别切换到不同角色，不向非活动副本分流读取。两端不能实际指向同一 server UUID + database，跨域重叠同样拒绝。
 
 - 备用目标必须真正为空；非空且未登记为本集群成员时拒绝自动接管。只允许重建已登记的非活动成员，不碰陌生数据库。`data_dir/storage-control.db` 及 sidecar 和 `secrets.key` 一起保留；绑定后不能直接删 standby、换 endpoint/schema 或互换角色。
 - 行日志单事务上限 64 MiB；超过就回滚并返回 `409 storage_transaction_too_large`，要缩小操作，不自动拆分。每域保留 24 小时、256 MiB；落后副本需要的日志被淘汰前会失去资格，随后重新同步。目标主键、唯一键或外键冲突会回滚整笔事务、撤销副本资格并停止重试，不用覆盖写掩盖分叉。不要从外部改应用行或手工补协议表。
@@ -213,13 +209,11 @@ services:
 
 `database.failover` 仅在配置 standby 时使用，默认如下；省略任一字段保留该字段默认值：
 
-```json
-{
-  "failure_timeout": "30s",
-  "max_loss_window": "10s",
-  "recovery_stable": "60s",
-  "manual_after": "24h"
-}
+```yaml
+failure_timeout: 30s
+max_loss_window: 10s
+recovery_stable: 60s
+manual_after: 24h
 ```
 
 - 首次确认连接、只读或持久写失败即关闭该域准入、取消并排空旧世代；等待 30 秒期间不继续向旧库收写。普通请求取消、约束失败或繁忙的写 gate 不触发提升。
@@ -236,11 +230,11 @@ services:
 无法安全认证时，在 Server 主机以运行用户操作。`status` 可在运行中读本地观测；`preview`、`run` 必须先停服，并使用同一配置和 `data_dir`。
 
 ```sh
-orbitbeacon-server storage status --config /etc/orbitbeacon/server.json
+orbitbeacon-server storage status --config /etc/orbitbeacon/server.yaml
 # 停止 Server；下例仅重建当前非活动的 standby，实际方向以预览为准。
-orbitbeacon-server storage preview --config /etc/orbitbeacon/server.json --domain main --action rebuild --target standby
+orbitbeacon-server storage preview --config /etc/orbitbeacon/server.yaml --domain main --action rebuild --target standby
 # 将下列占位符替换为刚才输出的操作 UUID 与精确确认值。
-orbitbeacon-server storage run --config /etc/orbitbeacon/server.json --operation '<operation-id>' --confirm '<domain/target/instance_uuid>'
+orbitbeacon-server storage run --config /etc/orbitbeacon/server.yaml --operation '<operation-id>' --confirm '<domain/target/instance_uuid>'
 ```
 
 - `rebuild` 清空已登记的非活动目标，从当前活动源重建；保留源数据，永不重建活动成员或清空陌生库。
@@ -257,9 +251,9 @@ orbitbeacon-server storage run --config /etc/orbitbeacon/server.json --operation
 需要改回单库时，先查看集群 ID，再停服清退；只有当前主库健康、仍为权威且无待决操作才允许完成：
 
 ```sh
-orbitbeacon-server storage status --config /etc/orbitbeacon/server.json
+orbitbeacon-server storage status --config /etc/orbitbeacon/server.yaml
 # 停止 Server；精确填写 status 输出的集群 UUID。
-orbitbeacon-server storage disable --config /etc/orbitbeacon/server.json --confirm '<cluster-id>'
+orbitbeacon-server storage disable --config /etc/orbitbeacon/server.yaml --confirm '<cluster-id>'
 ```
 
 status 只读取本地记录，`observed_at` 不代表远端此刻健康。disable 保留两端业务数据；完成后再移除 standby 配置。
@@ -339,7 +333,7 @@ return hmac.Equal(got, mac.Sum(nil))
 2. 密码文件归运行用户所有、`0600`，含该包密码，可带换行；省略 `--password-file` 则终端无回显输入，不接受参数或环境变量明文密码。
 
 ```sh
-sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore --config /etc/orbitbeacon/server.json \
+sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore --config /etc/orbitbeacon/server.yaml \
   --input /backup/orbitbeacon-....tar.gz.age \
   --replace --password-file /backup/password.txt
 ```
@@ -353,6 +347,8 @@ sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore --config /etc/orbi
 ## 升级
 
 原生 Agent 可在控制台按版本远程升级。发布源、回滚和信任边界见[远程升级](../docs/agent.md#远程升级)；安装器默认用 GitHub Releases，重装不传 `--update-base-url` 时保留已有地址，传 URL 可换 HTTPS 镜像；只有策略值为空才关闭升级。
+
+启动配置已统一为 YAML。升级前备份旧配置，复制 `server.json` 为 `server.yaml`（JSON 是 YAML 子集，可暂保留内容），同步 systemd 的 `--config` 和 Docker 挂载目标后再启动；不要用示例覆盖现有数据库、目录或访问源设置。Agent 的两份配置迁移见 [Agent 升级](../docs/agent.md#升级与卸载)。JSON API、命令 `--json` 输出与身份/状态文件格式不变。
 
 当前主库、历史库及归档要求 schema baseline **2**。旧 baseline 1 数据库和归档明确拒绝，不提供自动迁移或清空。使用新数据目录与空的专用 MySQL schema；升级前保留旧数据库、key、归档密码和原二进制。结构调整直接更新可信原生建表 SQL。
 

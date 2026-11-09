@@ -30,11 +30,11 @@ LABEL org.opencontainers.image.title="OrbitBeacon" \
     org.opencontainers.image.revision="${COMMIT}" \
     org.opencontainers.image.created="${BUILD_DATE}"
 COPY --from=data --chown=nonroot:nonroot --chmod=0700 /data /var/lib/orbitbeacon
-COPY deploy/docker/server.json /etc/orbitbeacon/server.json
+COPY deploy/docker/server.yaml /etc/orbitbeacon/server.yaml
 EXPOSE 8080
 USER nonroot:nonroot
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["/usr/local/bin/orbitbeacon-server","health","--url","http://127.0.0.1:8080"]
-ENTRYPOINT ["/usr/local/bin/orbitbeacon-server", "serve", "--config", "/etc/orbitbeacon/server.json"]
+ENTRYPOINT ["/usr/local/bin/orbitbeacon-server", "serve", "--config", "/etc/orbitbeacon/server.yaml"]
 
 FROM runtime AS precompiled
 ARG TARGETARCH

@@ -61,10 +61,10 @@ func TestAgentRuntimeRejectsInvalidEverySourceAndHiddenLowerLayer(t *testing.T) 
 		{"probe_targets", []string{"bad"}, `["bad"]`, `[]`},
 	} {
 		t.Run(test.key, func(t *testing.T) {
-			for _, source := range []string{"JSON", "environment", "flag"} {
+			for _, source := range []string{"YAML", "environment", "flag"} {
 				opts := config.LoadOptions{LookupEnv: lookup(nil)}
 				switch source {
-				case "JSON":
+				case "YAML":
 					opts.File = configFile(t, map[string]any{test.key: test.invalid})
 				case "environment":
 					opts.LookupEnv = lookup(map[string]string{"ORBITBEACON_" + strings.ToUpper(test.key): test.text})
@@ -78,7 +78,7 @@ func TestAgentRuntimeRejectsInvalidEverySourceAndHiddenLowerLayer(t *testing.T) 
 			for _, invalid := range []any{nil, test.invalid} {
 				opts := config.LoadOptions{File: configFile(t, map[string]any{test.key: invalid}), LookupEnv: lookup(nil), Flags: map[string]string{test.key: test.valid}}
 				if _, err := config.LoadAgent(opts, &policy); err == nil {
-					t.Fatal("higher override hid invalid local JSON")
+					t.Fatal("higher override hid invalid local YAML")
 				}
 			}
 		})

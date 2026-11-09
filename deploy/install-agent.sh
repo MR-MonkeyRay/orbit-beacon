@@ -65,8 +65,8 @@ bin_dir=$install_root/bin
 libexec=$install_root/libexec
 binary=$bin_dir/orbitbeacon-agent
 config_dir=$install_root/etc
-policy=$config_dir/install-policy.json
-runtime_config=$config_dir/agent.json
+policy=$config_dir/install-policy.yaml
+runtime_config=$config_dir/agent.yaml
 ca_copy=$config_dir/ca.pem
 state=$install_root/state
 token_file=$state/enrollment.token
@@ -128,9 +128,18 @@ if [ "$uninstall" = 1 ]; then
     exit 0
 fi
 [ "$yes" = 0 ] || die '--yes 仅与 --uninstall 搭配使用。'
+# JSON 本身也是 YAML；只复制配置内容，不移动或重建身份目录。
+for name in install-policy agent; do
+    legacy=$config_dir/$name.json
+    current=$config_dir/$name.yaml
+    if { [ -e "$legacy" ] || [ -L "$legacy" ]; } && [ ! -e "$current" ]; then
+        die "发现旧配置 $legacy。请先备份，再将该普通文件的原有内容安全复制到 $current（JSON 是 YAML 子集，可直接加载），设置 root 属主和 0640 权限；保留 $state/identity.json，然后重试。"
+    fi
+done
 [ ! -e "$runtime_config" ] || [ -f "$runtime_config" ] || die '本地 Agent 配置必须是普通文件。'
+[ ! -e "$policy" ] || [ -f "$policy" ] || die '安装策略必须是普通文件。'
 [ -n "$server" ] || die '必须指定 --server。'
-# 保守的 ASCII Origin 语法同时保证 JSON 和 shell 安全。
+# 保守的 ASCII Origin 语法同时保证 YAML 字符串和 shell 安全。
 # 允许单个末尾斜杠并规范化去除。禁止用户信息、路径、查询参数、
 # 片段、空白、引号、反斜杠、IPv6 区域标识或百分号编码主机。
 server=${server%/}
@@ -171,11 +180,25 @@ esac
 if [ -n "$port" ]; then
     if [ "${#port}" -gt 5 ] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then die '无效的服务器端口。'; fi
 fi
-# 重装沿用已有发布源；显式空值或无法提取时保持关闭，绝不改回默认源。
-if [ "$update_base_set" = 0 ] && [ -f "$policy" ] && grep -q '"update_base_url"' "$policy"; then
-    update_base_url=$(sed -n 's/.*"update_base_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$policy")
+# shortcut: 只读取安装器生成的扁平 YAML；需自动保留任意策略写法时改由二进制解析。
+if [ "$update_base_set" = 0 ] && [ -f "$policy" ]; then
+    update_base_url=$(awk '
+        /^[[:space:]]*(#.*)?$/ { next }
+        /^[a-z_]+: ("[^"\\]*"|[0-9]+)$/ {
+            key=$0; sub(/:.*/, "", key)
+            if (key !~ /^(server_url|update_base_url|ca_file|state_dir|expected_uid|expected_gid|expected_account|install_mode)$/ || seen[key]++) bad=1
+            count++
+            if (key == "update_base_url") {
+                if ($0 !~ /^update_base_url: "[^"\\]*"$/) bad=1
+                source=$0; sub(/^update_base_url: "/, "", source); sub(/"$/, "", source)
+            }
+            next
+        }
+        { bad=1 }
+        END { if (bad || count != 8 || !seen["update_base_url"]) exit 1; print source }
+    ' "$policy") || die "无法安全读取 $policy 的发布源；请显式指定 --update-base-url HTTPS地址，或恢复安装器生成的 YAML 格式（update_base_url: \"\" 表示关闭远程升级）。"
 fi
-# HTTPS 根地址同时用于安装下载和后续远程升级；限制字符以安全写入 JSON。
+# HTTPS 根地址同时用于安装下载和后续远程升级；限制字符以安全写入 YAML。
 update_base_url=$(printf '%s' "$update_base_url" | sed 's:/*$::')
 if [ -n "$update_base_url" ]; then
     # 用变量传正则：BusyBox awk 不接受字面量里字符类中的 /。
@@ -335,16 +358,22 @@ mv -fT -- "$policy_tmp" "$libexec/orbitbeacon-agent-rollback"
 policy_tmp=
 policy_tmp=$(mktemp "$config_dir/.install-policy.XXXXXXXX")
 cat > "$policy_tmp" <<EOF
-{
-  "server_url": "$server",
-  "update_base_url": "$update_base_url",
-  "ca_file": "$ca_file",
-  "state_dir": "$state",
-  "expected_uid": $agent_uid,
-  "expected_gid": $agent_gid,
-  "expected_account": "$account",
-  "install_mode": "native"
-}
+# 修改后重启 Agent；归 root 所有，Agent 组只读（0640）。
+# Server 根地址，不含路径、查询或凭据。
+server_url: "$server"
+# 可信 HTTPS 发布根地址；空为关闭远程升级。
+update_base_url: "$update_base_url"
+# CA PEM 路径；空用系统证书，HTTP 时必须留空。
+ca_file: "$ca_file"
+# 身份与运行状态目录；变更须停服并迁移原目录。
+state_dir: "$state"
+# 必须匹配实际非 root UID/GID；安装器自动填写。
+expected_uid: $agent_uid
+expected_gid: $agent_gid
+# 运行账户名；空则只校验 UID/GID。
+expected_account: "$account"
+# native：systemd；docker：容器；foreground：前台。此项不安装服务。
+install_mode: "native"
 EOF
 chown -h "root:$agent_gid" "$policy_tmp"
 chmod 0640 "$policy_tmp"
@@ -354,7 +383,26 @@ policy_tmp=
 safe_path "$runtime_config"
 if [ ! -e "$runtime_config" ]; then
     policy_tmp=$(mktemp "$config_dir/.agent.XXXXXXXX")
-    printf '%s\n' '{}' > "$policy_tmp"
+    cat > "$policy_tmp" <<'RUNTIME'
+# 修改后执行 systemctl reload orbitbeacon-agent；重装保留本文件。
+# 采集与上报间隔（秒，5–60）。
+report_interval_seconds: 10
+# 磁盘容量采集间隔（秒，60–3600）。
+disk_interval_seconds: 60
+# [] 使用默认路由网卡；最多 8 项，例如 ["eth0"]。
+interfaces: []
+# [] 使用根路径；最多 8 个绝对路径，例如 ["/", "/srv/data"]。
+disk_paths: []
+# [] 不探测；最多 5 个 TCP、HTTP(S)、DNS 或 ICMP 目标。
+probe_targets: []
+# HTTP(S) 预期状态码（100–599）；键须在 probe_targets 中。
+probe_expected_status: {}
+# [] 禁止全部远程指令；upgrade 还需安装策略配置可信发布源。
+remote_commands: ["upgrade", "restart", "stop"]
+# 可选：disk、network、traffic、probes、disk_io、pressure、temperature。
+# 关闭 network 同时关闭 traffic；关闭 disk 同时关闭 disk_io。
+disabled_features: []
+RUNTIME
     mv -fT -- "$policy_tmp" "$runtime_config"
     policy_tmp=
 fi
@@ -433,7 +481,7 @@ Type=simple
 User=orbitbeacon-agent
 Group=orbitbeacon-agent
 ExecStartPre=-/opt/orbit-beacon/libexec/orbitbeacon-agent-rollback
-ExecStart=/opt/orbit-beacon/bin/orbitbeacon-agent run --install-policy /opt/orbit-beacon/etc/install-policy.json --config /opt/orbit-beacon/etc/agent.json
+ExecStart=/opt/orbit-beacon/bin/orbitbeacon-agent run --install-policy /opt/orbit-beacon/etc/install-policy.yaml --config /opt/orbit-beacon/etc/agent.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10s

@@ -10,7 +10,7 @@ import (
 )
 
 func TestAgentLoaderReloadKeepsStartupOverridesAndPolicy(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "agent.json")
+	path := filepath.Join(t.TempDir(), "agent.yaml")
 	put := func(data string) {
 		t.Helper()
 		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
@@ -20,7 +20,7 @@ func TestAgentLoaderReloadKeepsStartupOverridesAndPolicy(t *testing.T) {
 	policy := config.InstallPolicy{ServerURL: "https://beacon.example.test", StateDir: t.TempDir(), ExpectedUID: 1000, ExpectedGID: 1000, InstallMode: "foreground"}
 	t.Setenv("ORBITBEACON_REPORT_INTERVAL_SECONDS", "15")
 	t.Setenv("ORBITBEACON_INTERFACES", `["eth0"]`)
-	put(`{"report_interval_seconds":20,"disk_interval_seconds":120,"probe_expected_status":{"https://example.test/a,b":204}}`)
+	put("report_interval_seconds: 20\ndisk_interval_seconds: 120\nprobe_expected_status:\n  https://example.test/a,b: 204\n")
 	flags := map[string]string{"disk_interval_seconds": "180", "probe_targets": `["https://example.test/a,b"]`}
 	load, err := agentLoader(path, flags, policy)
 	if err != nil {
@@ -37,7 +37,7 @@ func TestAgentLoaderReloadKeepsStartupOverridesAndPolicy(t *testing.T) {
 	t.Setenv("ORBITBEACON_SERVER_URL", "https://untrusted.example.test")
 	flags["disk_interval_seconds"] = "3600"
 	policy.ServerURL = "https://changed.example.test"
-	put(`{"report_interval_seconds":5,"disk_interval_seconds":60,"disk_paths":["/srv/a,b"],"probe_expected_status":{"https://example.test/a,b":200}}`)
+	put("report_interval_seconds: 5\ndisk_interval_seconds: 60\ndisk_paths:\n  - /srv/a,b\nprobe_expected_status:\n  https://example.test/a,b: 200\n")
 	next, err := load()
 	if err != nil {
 		t.Fatal(err)
@@ -45,21 +45,21 @@ func TestAgentLoaderReloadKeepsStartupOverridesAndPolicy(t *testing.T) {
 	if next.ReportIntervalSeconds != 15 || next.DiskIntervalSeconds != 180 || next.ServerURL != first.ServerURL || next.Interfaces[0] != "eth0" || next.DiskPaths[0] != "/srv/a,b" || next.ProbeExpectedStatus["https://example.test/a,b"] != 200 {
 		t.Fatalf("reload changed frozen sources: %+v", next)
 	}
-	put(`{"server_url":"https://untrusted.example.test"}`)
+	put("server_url: https://untrusted.example.test\n")
 	if _, err := load(); err == nil {
 		t.Fatal("reload changed protected policy")
 	}
-	put(`{"interfaces":null}`)
+	put("interfaces: null\n")
 	if _, err := load(); err == nil {
 		t.Fatal("reload accepted null hidden by captured env override")
 	}
-	put(`{"unknown":1}`)
+	put("unknown: 1\n")
 	if _, err := load(); err == nil {
 		t.Fatal("reload accepted unknown local key")
 	}
-	put(`{"disk_interval_seconds":`)
+	put("disk_interval_seconds: [\n")
 	if _, err := load(); err == nil {
-		t.Fatal("reload accepted malformed JSON")
+		t.Fatal("reload accepted malformed YAML")
 	}
 }
 

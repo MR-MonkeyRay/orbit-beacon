@@ -18,7 +18,7 @@ import (
 
 func runStorageRecovery(action string, args []string) error {
 	fs := flag.NewFlagSet("storage "+action, flag.ContinueOnError)
-	configPath := fs.String("config", "", "JSON 配置文件")
+	configPath := fs.String("config", "", "YAML 配置文件")
 	dataDir := fs.String("data-dir", "", "本地持久化数据目录")
 	asJSON := fs.Bool("json", false, "输出机器可读的预览或终态")
 	var domain, operationAction, target, operation, confirmation string

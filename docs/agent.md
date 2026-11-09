@@ -55,8 +55,8 @@ unset TOKEN
 | `/opt/orbit-beacon/bin/` | orbitbeacon-agent:orbitbeacon-agent，`0750`；内含可替换的 `orbitbeacon-agent`，`0750` |
 | `/opt/orbit-beacon/etc/` | root:orbitbeacon-agent，`0750`；文件 `0640`，Agent 只读 |
 | `/opt/orbit-beacon/libexec/orbitbeacon-agent-rollback` | root:root，`0755`；以 Agent 用户运行的启动回滚脚本 |
-| `/opt/orbit-beacon/etc/install-policy.json` | root:orbitbeacon-agent，`0640`；安装策略，模式 `native` |
-| `/opt/orbit-beacon/etc/agent.json` | 本地运行参数；新装为 `{}`，root:orbitbeacon-agent、`0640`；重装保留，拒绝符号链接 |
+| `/opt/orbit-beacon/etc/install-policy.yaml` | root:orbitbeacon-agent，`0640`；安装策略，模式 `native` |
+| `/opt/orbit-beacon/etc/agent.yaml` | 带注释的本地运行配置；root:orbitbeacon-agent、`0640`；重装保留，拒绝符号链接 |
 | `/opt/orbit-beacon/etc/ca.pem` | root:orbitbeacon-agent，`0640`；可选 CA 副本 |
 | `/opt/orbit-beacon/state/` | orbitbeacon-agent:orbitbeacon-agent，`0700`；identity、enrollment.token、run.lock 等身份和状态不应共享 |
 | `/etc/systemd/system/orbitbeacon-agent.service` | 非 root systemd 服务 |
@@ -67,8 +67,8 @@ unset TOKEN
 
 ```sh
 sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent enroll \
-  --install-policy /opt/orbit-beacon/etc/install-policy.json \
-  --config /opt/orbit-beacon/etc/agent.json \
+  --install-policy /opt/orbit-beacon/etc/install-policy.yaml \
+  --config /opt/orbit-beacon/etc/agent.yaml \
   --token-file /opt/orbit-beacon/state/enrollment.token
 ```
 
@@ -80,7 +80,7 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent enroll \
 sudo systemctl status orbitbeacon-agent
 sudo journalctl -u orbitbeacon-agent -n 100 --no-pager
 sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent doctor \
-  --install-policy /opt/orbit-beacon/etc/install-policy.json --config /opt/orbit-beacon/etc/agent.json --json
+  --install-policy /opt/orbit-beacon/etc/install-policy.yaml --config /opt/orbit-beacon/etc/agent.yaml --json
 ```
 
 `doctor` 检查配置、身份文件、HTTP/HTTPS 连通性和采集（HTTPS 同时验证证书），**不注册、不上报、不验证节点凭据**；`authentication: "not_checked"` 是预期结果。
@@ -103,6 +103,26 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent doctor \
 
 以下参数在 `run`、`enroll`、`doctor` 中一致，合并顺序见[配置参考](../deploy/README.md#配置参考)。安装策略固定信任根、身份与目录；每个来源独立检查，后续覆盖不能隐藏冲突。
 
+编辑 `/opt/orbit-beacon/etc/agent.yaml`；完整默认模板见 [`agent.yaml`](../deploy/systemd/agent.yaml)。例如，指定磁盘路径、网卡和 HTTP 探测，关闭温度采集及所有远程指令：
+
+```yaml
+report_interval_seconds: 10
+disk_interval_seconds: 60
+interfaces:
+  - eth0
+disk_paths:
+  - /srv/data
+probe_targets:
+  - https://example.com/health
+probe_expected_status:
+  https://example.com/health: 204
+remote_commands: []
+disabled_features:
+  - temperature
+```
+
+状态目录 `state_dir`、CA 路径 `ca_file`、服务器 `server_url` 和升级源 `update_base_url` 在 root 管理的 [`install-policy.yaml`](../deploy/systemd/install-policy.yaml) 中配置，不放入运行配置。修改安装策略需重启；变更状态目录须停服、迁移完整原状态并同步目录权限和 unit 的 `ReadWritePaths=`，不能创建空目录代替原身份。安装脚本仍使用固定安装布局；自定义策略路径时自行维护 unit，重跑安装脚本会重建安装策略。
+
 | 参数 | 默认值 | 范围 / 选择 |
 | --- | --- | --- |
 | `report_interval_seconds` | `10` | 5–60 秒，采集与正常上报共用周期 |
@@ -116,15 +136,15 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent doctor \
 
 选择还受 JSON 转义后 64 KiB 报告预算约束。
 
-环境变量为 `ORBITBEACON_REPORT_INTERVAL_SECONDS` 等大写参数名；`remote_commands` 和 `disabled_features` 不提供 flag，其余 flag 使用 `--report-interval-seconds` 等连字符形式。列表必须是 JSON 数组字符串，例如 `ORBITBEACON_INTERFACES='["eth0"]'` 或 `--probe-targets '["https://example.com/a,b"]'`，不按逗号拆分。`probe_expected_status` 使用 JSON 对象，例如 `--probe-expected-status '{"https://example.com/health":204}'`。
+环境变量为 `ORBITBEACON_REPORT_INTERVAL_SECONDS` 等大写参数名；`remote_commands` 和 `disabled_features` 不提供 flag，其余 flag 使用 `--report-interval-seconds` 等连字符形式。**配置文件使用 YAML 序列和映射；环境变量、CLI 的复合值仍使用 JSON**，例如 `ORBITBEACON_INTERFACES='["eth0"]'` 或 `--probe-targets '["https://example.com/a,b"]'`，不按逗号拆分。`probe_expected_status` 的 flag 示例为 `--probe-expected-status '{"https://example.com/health":204}'`。
 
-修改后执行 `sudo systemctl reload orbitbeacon-agent`（前台进程用 `kill -HUP <PID>`）。reload 重读原 JSON，沿用启动时环境和显式 flags，不重读 policy；有效变更在采样边界完整应用并重采，不重置身份或累计流量，坏配置保留旧值。检查日志 `configuration_reloaded` / `configuration_unchanged` / `configuration_reload_rejected` 和下一报告；systemctl 成功只代表信号送达。
+修改后执行 `sudo systemctl reload orbitbeacon-agent`（前台进程用 `kill -HUP <PID>`）。reload 重读原 YAML，沿用启动时环境和显式 flags，不重读 policy；有效变更在采样边界完整应用并重采，不重置身份或累计流量，坏配置保留旧值。检查日志 `configuration_reloaded` / `configuration_unchanged` / `configuration_reload_rejected` 和下一报告；systemctl 成功只代表信号送达。
 
 ## 远程升级
 
 控制台的节点“升级”或分组“升级全部”只指定版本号。分组会要求输入组名；已运行目标版本、已关闭或本地不允许的节点跳过。当前版本也必须是正式三段版本，目标必须严格更新；开发版、相同版本和降级返回 `rejected/downgrade`。
 
-安装器把 `update_base_url` 写进 root 所有的安装策略，默认 `https://github.com/mr-monkeyray/orbit-beacon/releases/download`；可用 `--update-base-url URL` 指定 HTTPS 镜像，重装保留已有地址，空值关闭升级能力。这个值不能通过 `agent.json`、reload 或服务器修改，也不随报告上传。docker/foreground 不支持远程升级。
+安装器把 `update_base_url` 写进 root 所有的安装策略，默认 `https://github.com/mr-monkeyray/orbit-beacon/releases/download`；可用 `--update-base-url URL` 指定 HTTPS 镜像，重装保留已有地址，空值关闭升级能力。安装器只自动读取自己生成的扁平 YAML 策略；若手工改用其他 YAML 写法，重装须显式传入 `--update-base-url URL`（关闭时传 `--update-base-url ''`）。这个值不能通过 `agent.yaml`、reload 或服务器修改，也不随报告上传。docker/foreground 不支持远程升级。
 
 下载和自检在后台执行，期间继续上报；只支持 Linux amd64/arm64。下载使用系统证书及策略中的 `ca_file`，只允许 HTTPS（最多五次重定向）。二进制上限 64 MiB，清单上限 64 KiB。候选版本通过 SHA256 和 `version --json` 自检后，保留 `bin/orbitbeacon-agent.prev`，写入 `state/upgrade-pending`，再原子替换并以 75 退出。下载最多十分钟，并预留 7 分钟给重启、启动确认和结果上报；指令剩余不足 7 分钟就拒绝执行。
 
@@ -134,6 +154,8 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent doctor \
 
 ## 升级与卸载
 
+从 JSON 配置升级时，先停止 Agent、备份配置，再将 `etc/agent.json` 和 `etc/install-policy.json` 分别复制为 `etc/agent.yaml` 和 `etc/install-policy.yaml`，保留 root 属主、Agent 组及 `0640` 权限。JSON 是 YAML 子集，原内容可直接加载，之后再整理为 YAML 块格式。安装器发现旧文件未迁移会在更改前中止；重装时显式传入原升级源 `--update-base-url URL`（原为空则传 `''`），保留整个 `state/`，**不要修改或删除 `identity.json`**。重跑新安装器会更新 unit 的配置路径；手工部署则同步修改 `--config`、`--install-policy` 并 `daemon-reload`。
+
 按[升级顺序](../deploy/README.md#升级)检查服务器后，下载并检查目标版本的脚本，更新 `VERSION`，再执行：
 
 ```sh
@@ -141,7 +163,7 @@ sudo sh ./install-agent.sh --server https://beacon.your-domain.com \
   --version "$VERSION" < /dev/null
 ```
 
-已有 `identity.json` 且没有传入注册票据时，脚本保留身份与本地 `agent.json`，跳过注册，替换二进制后重启服务。仍须传相同 `--server` 和所需 `--ca-file`；省略 CA 参数会使新 policy 改用系统信任。
+已有 `identity.json` 且没有传入注册票据时，脚本保留身份与本地 `agent.yaml`，跳过注册，替换二进制后重启服务。仍须传相同 `--server` 和所需 `--ca-file`；省略 CA 参数会使新 policy 改用系统信任。
 
 卸载前先在控制台吊销节点凭据或删除节点；对应 API 为 `DELETE /api/v1/nodes/{id}/credential`。然后：
 
@@ -166,23 +188,20 @@ sudo install -d -o "$AGENT_UID" -g "$AGENT_GID" -m 0700 /opt/orbit-beacon/state
 AGENT_TMP=$(sudo mktemp /opt/orbit-beacon/.agent.XXXXXXXX)
 sudo install -o "$AGENT_UID" -g "$AGENT_GID" -m 0750 build/orbitbeacon-agent "$AGENT_TMP"
 sudo mv -fT -- "$AGENT_TMP" /opt/orbit-beacon/bin/orbitbeacon-agent
-sudo tee /opt/orbit-beacon/etc/install-policy.json > /dev/null <<EOF
-{
-  "server_url": "https://beacon.your-domain.com",
-  "update_base_url": "",
-  "ca_file": "",
-  "state_dir": "/opt/orbit-beacon/state",
-  "expected_uid": $AGENT_UID,
-  "expected_gid": $AGENT_GID,
-  "expected_account": "",
-  "install_mode": "foreground"
-}
+sudo tee /opt/orbit-beacon/etc/install-policy.yaml > /dev/null <<EOF
+server_url: "https://beacon.your-domain.com"
+update_base_url: ""
+ca_file: ""
+state_dir: /opt/orbit-beacon/state
+expected_uid: $AGENT_UID
+expected_gid: $AGENT_GID
+expected_account: ""
+install_mode: foreground
 EOF
-sudo chown "root:$AGENT_GID" /opt/orbit-beacon/etc/install-policy.json
-sudo chmod 0640 /opt/orbit-beacon/etc/install-policy.json
-printf '%s\n' '{}' | sudo tee /opt/orbit-beacon/etc/agent.json > /dev/null
-sudo chown "root:$AGENT_GID" /opt/orbit-beacon/etc/agent.json
-sudo chmod 0640 /opt/orbit-beacon/etc/agent.json
+sudo chown "root:$AGENT_GID" /opt/orbit-beacon/etc/install-policy.yaml
+sudo chmod 0640 /opt/orbit-beacon/etc/install-policy.yaml
+sudo install -o root -g "$AGENT_GID" -m 0640 \
+  deploy/systemd/agent.yaml /opt/orbit-beacon/etc/agent.yaml
 ```
 
 CA 使用限制见[配置参考](../deploy/README.md#配置参考)。私有 CA 由 root 安装为 `/opt/orbit-beacon/etc/ca.pem`（root:Agent 组、`0640`），并填写 policy 的 `ca_file`。policy、CA 及祖先目录须 root 所有且不可被组/其他用户写入，无符号链接；不要放在家目录或 `/tmp`。state 按[安装路径](#安装与启动)的要求归运行用户所有。
@@ -202,18 +221,18 @@ CA 使用限制见[配置参考](../deploy/README.md#配置参考)。私有 CA �
   stty echo
   printf '%s\n' "$token" > /opt/orbit-beacon/state/enrollment.token
   unset token
-  /opt/orbit-beacon/bin/orbitbeacon-agent enroll --install-policy /opt/orbit-beacon/etc/install-policy.json --config /opt/orbit-beacon/etc/agent.json --token-file /opt/orbit-beacon/state/enrollment.token
+  /opt/orbit-beacon/bin/orbitbeacon-agent enroll --install-policy /opt/orbit-beacon/etc/install-policy.yaml --config /opt/orbit-beacon/etc/agent.yaml --token-file /opt/orbit-beacon/state/enrollment.token
 )
 ```
 
 注册成功后执行：
 
 ```sh
-/opt/orbit-beacon/bin/orbitbeacon-agent doctor --install-policy /opt/orbit-beacon/etc/install-policy.json --config /opt/orbit-beacon/etc/agent.json --json
-/opt/orbit-beacon/bin/orbitbeacon-agent run --install-policy /opt/orbit-beacon/etc/install-policy.json --config /opt/orbit-beacon/etc/agent.json
+/opt/orbit-beacon/bin/orbitbeacon-agent doctor --install-policy /opt/orbit-beacon/etc/install-policy.yaml --config /opt/orbit-beacon/etc/agent.yaml --json
+/opt/orbit-beacon/bin/orbitbeacon-agent run --install-policy /opt/orbit-beacon/etc/install-policy.yaml --config /opt/orbit-beacon/etc/agent.yaml
 ```
 
-Ctrl+C 或 SIGTERM 停止。额外的 Agent JSON 配置非必需。若需要 systemd 长期运行，优先使用安装脚本；自行配置 [unit](../deploy/systemd/orbitbeacon-agent.service) 时必须同步账号、state 所有权、policy 的 UID/GID 和 `install_mode: "native"`，不能只复制 unit。`install_mode` 本身不会安装服务。
+Ctrl+C 或 SIGTERM 停止。不传 `--config` 时使用默认运行参数。若需要 systemd 长期运行，优先使用安装脚本；自行配置 [unit](../deploy/systemd/orbitbeacon-agent.service) 时必须同步账号、state 所有权、policy 的 UID/GID 和 `install_mode: native`，不能只复制 unit。`install_mode` 本身不会安装服务。
 
 ## API 签发
 
@@ -238,7 +257,7 @@ Ctrl+C 或 SIGTERM 停止。额外的 Agent JSON 配置非必需。若需要 sys
 | `dns://host` | DNS 地址解析耗时；至少一个地址为成功，仅接受主机，不含端口、路径、查询、凭据或片段 |
 | `icmp://host` | ICMP Echo 往返耗时；不能带端口、路径或查询；仅 Linux 非特权 datagram socket 支持，其他系统为 `unsupported` |
 
-`probe_expected_status` 是仅保存在本地的 JSON 对象，例如 `{"https://example.com/health":204}`：键须在 `probe_targets` 中且为 HTTP(S)，值须为 100–599 的整数。设置后仅精确匹配成功（含低于 400 的不匹配响应），未设置仍以低于 400 为成功；reload 生效，不随报告发送。
+`probe_expected_status` 是仅保存在本地 YAML 配置中的映射，例如 `https://example.com/health: 204`：键须在 `probe_targets` 中且为 HTTP(S)，值须为 100–599 的整数。设置后仅精确匹配成功（含低于 400 的不匹配响应），未设置仍以低于 400 为成功；reload 生效，不随报告发送。
 
 HTTPS 收到响应时携带叶证书到期时间 `tls_expires_at`，状态码不匹配时仍携带；握手失败（含过期证书）为 `tls` 且无到期时间。
 

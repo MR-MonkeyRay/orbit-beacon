@@ -10,12 +10,22 @@ import (
 	"testing"
 
 	"orbitbeacon/internal/config"
+
+	"gopkg.in/yaml.v3"
 )
 
 func configFile(t *testing.T, values map[string]any) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "config.json")
+	path := filepath.Join(t.TempDir(), "config.yaml")
 	data, err := json.Marshal(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var normalized map[string]any
+	if err := json.Unmarshal(data, &normalized); err != nil {
+		t.Fatal(err)
+	}
+	data, err = yaml.Marshal(normalized)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,8 +58,8 @@ func TestServerConfigurationPrecedence(t *testing.T) {
 		wantCapacity int
 	}{
 		{name: "defaults", wantAddress: "127.0.0.1:8080", wantCapacity: 500},
-		{name: "JSON overrides defaults", file: file, wantAddress: "127.0.0.1:8101", wantCapacity: 101},
-		{name: "environment overrides JSON", file: file, env: map[string]string{
+		{name: "YAML overrides defaults", file: file, wantAddress: "127.0.0.1:8101", wantCapacity: 101},
+		{name: "environment overrides YAML", file: file, env: map[string]string{
 			"ORBITBEACON_LISTEN_ADDR": "127.0.0.1:8102", "ORBITBEACON_MAX_NODES": "202",
 		}, wantAddress: "127.0.0.1:8102", wantCapacity: 202},
 		{name: "flags override environment", file: file, env: map[string]string{
@@ -81,11 +91,11 @@ func TestServerTrustedProxiesPrecedenceAndParsing(t *testing.T) {
 		want  []netip.Prefix
 	}{
 		{name: "default is empty", want: []netip.Prefix{}},
-		{name: "JSON array", file: file, want: []netip.Prefix{netip.MustParsePrefix("192.0.2.10/32"), netip.MustParsePrefix("2001:db8::/48")}},
-		{name: "environment comma list overrides JSON", file: file, env: map[string]string{"ORBITBEACON_TRUSTED_PROXIES": "10.0.0.0/8, 2001:db8:1::1"}, want: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("2001:db8:1::1/128")}},
+		{name: "YAML array", file: file, want: []netip.Prefix{netip.MustParsePrefix("192.0.2.10/32"), netip.MustParsePrefix("2001:db8::/48")}},
+		{name: "environment comma list overrides YAML", file: file, env: map[string]string{"ORBITBEACON_TRUSTED_PROXIES": "10.0.0.0/8, 2001:db8:1::1"}, want: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("2001:db8:1::1/128")}},
 		{name: "flag overrides environment", file: file, env: map[string]string{"ORBITBEACON_TRUSTED_PROXIES": "10.0.0.0/8"}, flags: map[string]string{"trusted_proxies": "172.16.4.9,fd00::/8"}, want: []netip.Prefix{netip.MustParsePrefix("172.16.4.9/32"), netip.MustParsePrefix("fd00::/8")}},
 		{name: "mapped IPv4 is normalized", env: map[string]string{"ORBITBEACON_TRUSTED_PROXIES": "::ffff:192.0.2.10,::ffff:198.51.100.0/120"}, want: []netip.Prefix{netip.MustParsePrefix("192.0.2.10/32"), netip.MustParsePrefix("198.51.100.0/24")}},
-		{name: "empty environment clears JSON", file: file, env: map[string]string{"ORBITBEACON_TRUSTED_PROXIES": ""}, want: []netip.Prefix{}},
+		{name: "empty environment clears YAML", file: file, env: map[string]string{"ORBITBEACON_TRUSTED_PROXIES": ""}, want: []netip.Prefix{}},
 		{name: "empty flag clears environment", env: map[string]string{"ORBITBEACON_TRUSTED_PROXIES": "10.0.0.0/8"}, flags: map[string]string{"trusted_proxies": ""}, want: []netip.Prefix{}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -118,14 +128,14 @@ func TestServerTrustedProxiesRejectInvalidValues(t *testing.T) {
 		{name: "scoped address", value: []string{"fe80::1%eth0"}, text: "fe80::1%eth0"},
 		{name: "mapped IPv4 prefix covers non-IPv4 addresses", value: []string{"::ffff:0:0/96"}, text: "::ffff:0:0/96"},
 		{name: "empty list entry", value: []string{""}, text: ",10.0.0.1"},
-		{name: "JSON string", value: "10.0.0.1", text: "10.0.0.1"},
-		{name: "JSON null", value: nil, text: "10.0.0.1"},
+		{name: "YAML string", value: "10.0.0.1", text: "10.0.0.1"},
+		{name: "YAML null", value: nil, text: "10.0.0.1"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if _, err := config.LoadServer(config.LoadOptions{File: configFile(t, map[string]any{"trusted_proxies": tt.value}), LookupEnv: lookup(nil)}); err == nil {
-				t.Fatal("accepted invalid trusted_proxies JSON value")
+				t.Fatal("accepted invalid trusted_proxies YAML value")
 			}
-			if tt.name == "JSON string" || tt.name == "JSON null" {
+			if tt.name == "YAML string" || tt.name == "YAML null" {
 				return
 			}
 			for _, source := range []string{"environment", "flag"} {
@@ -162,12 +172,12 @@ func TestServerConfigurationRejectsInvalidValuesFromEverySource(t *testing.T) {
 		{"network directory URI", "data_dir", "ORBITBEACON_DATA_DIR", "https://example.test/database"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			for _, source := range []string{"JSON", "environment", "flag"} {
+			for _, source := range []string{"YAML", "environment", "flag"} {
 				t.Run(source, func(t *testing.T) {
 					values := map[string]any{"data_dir": t.TempDir(), "public_url": "https://beacon.example.test"}
 					opts := config.LoadOptions{LookupEnv: lookup(nil)}
 					switch source {
-					case "JSON":
+					case "YAML":
 						var value any = tt.value
 						if tt.key == "max_nodes" {
 							if err := json.Unmarshal([]byte(tt.value), &value); err != nil {
@@ -257,11 +267,11 @@ func TestAgentInstallPolicyCannotBeOverridden(t *testing.T) {
 		{"install_mode", "ORBITBEACON_INSTALL_MODE", "docker", "docker"},
 	} {
 		t.Run(tt.key, func(t *testing.T) {
-			for _, source := range []string{"JSON", "environment", "flag"} {
+			for _, source := range []string{"YAML", "environment", "flag"} {
 				t.Run(source, func(t *testing.T) {
 					opts := config.LoadOptions{LookupEnv: lookup(nil)}
 					switch source {
-					case "JSON":
+					case "YAML":
 						opts.File = configFile(t, map[string]any{tt.key: tt.value})
 					case "environment":
 						opts.LookupEnv = lookup(map[string]string{tt.env: tt.text})
@@ -364,7 +374,7 @@ func TestServerRejectsRemovedTLSConfiguration(t *testing.T) {
 			if _, err := config.LoadServer(config.LoadOptions{
 				File: configFile(t, map[string]any{key: "server.pem"}), LookupEnv: lookup(nil),
 			}); err == nil {
-				t.Fatal("accepted removed TLS JSON key")
+				t.Fatal("accepted removed TLS YAML key")
 			}
 			if _, err := config.LoadServer(config.LoadOptions{
 				LookupEnv: lookup(nil), Flags: map[string]string{key: "server.pem"},
@@ -452,11 +462,11 @@ func TestHTTPTransportConfiguration(t *testing.T) {
 	})
 	t.Run("HTTP public URL from every source", func(t *testing.T) {
 		const publicURL = "http://192.0.2.10:8080"
-		for _, source := range []string{"JSON", "environment", "flag"} {
+		for _, source := range []string{"YAML", "environment", "flag"} {
 			t.Run(source, func(t *testing.T) {
 				opts := config.LoadOptions{LookupEnv: lookup(nil)}
 				switch source {
-				case "JSON":
+				case "YAML":
 					opts.File = configFile(t, map[string]any{"public_url": publicURL})
 				case "environment":
 					opts.LookupEnv = lookup(map[string]string{"ORBITBEACON_PUBLIC_URL": publicURL})

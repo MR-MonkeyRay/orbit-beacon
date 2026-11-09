@@ -77,7 +77,7 @@ func parseCommand(fs *flag.FlagSet, args []string) (bool, error) {
 
 func runServe(args []string, logger *slog.Logger) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	configPath := fs.String("config", "", "JSON 配置文件")
+	configPath := fs.String("config", "", "YAML 配置文件")
 	fs.String("data-dir", "", "本地持久化数据目录")
 	fs.String("listen-addr", "127.0.0.1:8080", "HTTP 监听地址")
 	fs.String("metrics-listen", "", "可选的独立 Prometheus 指标监听地址")
@@ -136,7 +136,7 @@ func runHealth(args []string) error {
 
 func runRestore(args []string) error {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
-	configPath := fs.String("config", "", "JSON 配置文件")
+	configPath := fs.String("config", "", "YAML 配置文件")
 	dataDir := fs.String("data-dir", "", "本地持久化数据目录")
 	input := fs.String("input", "", "待恢复的归档文件")
 	replace := fs.Bool("replace", false, "替换现有数据目录中选定的类别")
@@ -171,7 +171,7 @@ func runRestore(args []string) error {
 
 func runResetTOTP(args []string) error {
 	fs := flag.NewFlagSet("reset-totp", flag.ContinueOnError)
-	configPath := fs.String("config", "", "JSON 配置文件")
+	configPath := fs.String("config", "", "YAML 配置文件")
 	dataDir := fs.String("data-dir", "", "本地持久化数据目录")
 	username := fs.String("username", "", "管理员用户名")
 	if ok, err := parseCommand(fs, args); !ok {

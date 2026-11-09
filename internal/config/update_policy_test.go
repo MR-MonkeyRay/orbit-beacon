@@ -43,8 +43,8 @@ func TestUpdatePolicyTrustAndCapabilities(t *testing.T) {
 }
 
 func TestReadInstallPolicyAcceptsUpdateSource(t *testing.T) {
-	path := filepath.Join(securePolicyDirectory(t), "install-policy.json")
-	raw := `{"server_url":"https://beacon.example.test","update_base_url":"https://release.example.test/download/","state_dir":"/opt/orbit-beacon/state","install_mode":"native"}`
+	path := filepath.Join(securePolicyDirectory(t), "install-policy.yaml")
+	raw := "server_url: https://beacon.example.test\nupdate_base_url: https://release.example.test/download/\nstate_dir: /opt/orbit-beacon/state\ninstall_mode: native\n"
 	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
 		t.Fatal(err)
 	}

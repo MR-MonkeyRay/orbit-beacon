@@ -1,0 +1,16 @@
+# 修改后重启 Agent；归 root 所有，Agent 组只读（0640）。
+# Server 根地址，不含路径、查询或凭据。
+server_url: "https://beacon.example.com"
+# 可信 HTTPS 发布根地址；空为关闭远程升级。
+update_base_url: "https://github.com/mr-monkeyray/orbit-beacon/releases/download"
+# CA PEM 路径；空用系统证书，HTTP 时必须留空。
+ca_file: ""
+# 身份与运行状态目录；变更须停服并迁移原目录。
+state_dir: "/opt/orbit-beacon/state"
+# 必须匹配实际非 root UID/GID；安装器自动填写。
+expected_uid: 1000
+expected_gid: 1000
+# 运行账户名；空则只校验 UID/GID。
+expected_account: "orbitbeacon-agent"
+# native：systemd；docker：容器；foreground：前台。此项不安装服务。
+install_mode: "native"

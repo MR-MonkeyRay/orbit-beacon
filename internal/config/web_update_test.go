@@ -17,8 +17,8 @@ func TestServerWebUpdateIntervalLayers(t *testing.T) {
 		want  int
 	}{
 		{name: "default browser cadence", want: 10},
-		{name: "JSON minimum", file: file, want: 2},
-		{name: "environment overrides JSON", file: file, env: map[string]string{"ORBITBEACON_WEB_UPDATE_INTERVAL_SECONDS": "30"}, want: 30},
+		{name: "YAML minimum", file: file, want: 2},
+		{name: "environment overrides YAML", file: file, env: map[string]string{"ORBITBEACON_WEB_UPDATE_INTERVAL_SECONDS": "30"}, want: 30},
 		{name: "explicit maximum overrides environment", file: file, env: map[string]string{"ORBITBEACON_WEB_UPDATE_INTERVAL_SECONDS": "30"}, flags: map[string]string{"web_update_interval_seconds": "60"}, want: 60},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -37,7 +37,7 @@ func TestServerWebUpdateIntervalRejectsInvalidSelection(t *testing.T) {
 	for _, value := range []any{nil, 0, 1, 61, -2, 2.5, true, "10", []any{}, map[string]any{}} {
 		_, err := config.LoadServer(config.LoadOptions{File: configFile(t, map[string]any{"web_update_interval_seconds": value}), LookupEnv: lookup(nil)})
 		if err == nil || !strings.Contains(err.Error(), "web_update_interval_seconds") {
-			t.Fatalf("JSON value %#v error=%v", value, err)
+			t.Fatalf("YAML value %#v error=%v", value, err)
 		}
 	}
 	for _, value := range []string{"", "0", "1", "61", "-2", "2.5", "true", "null"} {

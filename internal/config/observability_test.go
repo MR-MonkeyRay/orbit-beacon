@@ -21,8 +21,8 @@ func TestServerObservabilityConfiguration(t *testing.T) {
 		wantMetrics string
 	}{
 		{name: "disabled by default"},
-		{name: "JSON", file: file, wantAccess: true, wantMetrics: "127.0.0.1:9464"},
-		{name: "environment overrides JSON", file: file, env: map[string]string{
+		{name: "YAML", file: file, wantAccess: true, wantMetrics: "127.0.0.1:9464"},
+		{name: "environment overrides YAML", file: file, env: map[string]string{
 			"ORBITBEACON_ACCESS_LOG":     "false",
 			"ORBITBEACON_METRICS_LISTEN": "127.0.0.1:9465",
 		}, wantMetrics: "127.0.0.1:9465"},
@@ -60,11 +60,11 @@ func TestServerObservabilityConfigurationRejectsInvalidValues(t *testing.T) {
 		{name: "metrics shares the default listener", key: "metrics_listen", env: "ORBITBEACON_METRICS_LISTEN", value: "127.0.0.1:8080"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			for _, source := range []string{"JSON", "environment", "flag"} {
+			for _, source := range []string{"YAML", "environment", "flag"} {
 				t.Run(source, func(t *testing.T) {
 					opts := config.LoadOptions{LookupEnv: lookup(nil)}
 					switch source {
-					case "JSON":
+					case "YAML":
 						opts.File = configFile(t, map[string]any{tt.key: tt.value})
 					case "environment":
 						opts.LookupEnv = lookup(map[string]string{tt.env: tt.value})

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,24 +23,18 @@ func ReadInstallPolicy(path string, expectedOwner int) (InstallPolicy, error) {
 	defer file.Close()
 
 	limited := &io.LimitedReader{R: file, N: maxInstallPolicySize + 1}
-	decoder := json.NewDecoder(limited)
-	decoder.DisallowUnknownFields()
-	var policy *InstallPolicy
-	if err := decoder.Decode(&policy); err != nil {
-		return InstallPolicy{}, fmt.Errorf("解码安装策略失败: %w", err)
-	}
-	if policy == nil {
-		return InstallPolicy{}, errors.New("安装策略必须是一个 JSON 对象")
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			return InstallPolicy{}, errors.New("安装策略只能包含一个 JSON 对象")
-		}
-		return InstallPolicy{}, fmt.Errorf("解码安装策略失败: %w", err)
-	}
+	data, err := decodeYAML(limited)
 	if limited.N == 0 {
 		return InstallPolicy{}, errors.New("安装策略超过 64 KiB 大小限制")
 	}
-	return *policy, nil
+	if err != nil {
+		return InstallPolicy{}, fmt.Errorf("解码安装策略失败: %w", err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var policy InstallPolicy
+	if err := decoder.Decode(&policy); err != nil {
+		return InstallPolicy{}, errors.New("安装策略字段或类型无效")
+	}
+	return policy, nil
 }

@@ -1,0 +1,23 @@
+# 修改后重建容器；命令行和环境变量优先于本文件。
+# 容器内 HTTP 监听地址；公网访问使用 HTTPS 反向代理。
+listen_addr: "0.0.0.0:8080"
+# 持久化目录：挂载数据卷，运行用户须有写权限。
+data_dir: /var/lib/orbitbeacon
+# 浏览器实际访问源：协议、主机和端口必须匹配。
+public_url: "http://localhost:8080"
+# 节点上限，包含待注册和禁用节点。
+max_nodes: 500
+# 网页更新周期（秒，2–60），不影响 Agent 采集。
+web_update_interval_seconds: 10
+# 可信代理 IP/CIDR；无代理时保持空，禁止 /0。
+trusted_proxies: []
+# 指标监听地址；空为关闭。无认证，勿暴露公网。
+metrics_listen: ""
+# 请求访问日志；健康检查仅记录 5xx。
+access_log: false
+# 允许回环 IP 的 HTTP Webhook；还需开启下项。
+allow_insecure_webhooks: false
+# 允许通知访问内网；元数据地址始终禁止。
+notification_allow_private_networks: false
+# {} 使用本地 SQLite；MySQL 密码仅从 password_file 读取。
+database: {}

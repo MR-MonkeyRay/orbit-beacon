@@ -107,8 +107,8 @@ type runtimeCommand struct {
 
 func prepareRuntimeCommand(name string, args []string, configure func(*flag.FlagSet) error) (*runtimeCommand, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	file := fs.String("config", "", "Agent 的 JSON 配置文件")
-	policyPath := fs.String("install-policy", "", "归管理员所有、运行时不可修改的安装策略 JSON 文件")
+	file := fs.String("config", "", "Agent 的 YAML 配置文件")
+	policyPath := fs.String("install-policy", "", "归管理员所有、运行时不可修改的安装策略 YAML 文件")
 	runtimeFlags := map[string]*string{
 		"report_interval_seconds": fs.String("report-interval-seconds", "", "覆盖指标上报间隔（秒）"),
 		"disk_interval_seconds":   fs.String("disk-interval-seconds", "", "覆盖磁盘采集间隔（秒）"),
@@ -269,7 +269,7 @@ func runDoctor(args []string, logger *slog.Logger) error {
 }
 
 // 启动时固定已校验的策略、环境变量和显式命令行参数。重载只重新读取同一个
-// 本地 JSON 文件，信任根不随进程环境变化。
+// 本地 YAML 文件，信任根不随进程环境变化。
 func agentLoader(file string, flags map[string]string, policy config.InstallPolicy) (func() (config.Agent, error), error) {
 	if file != "" {
 		var err error

@@ -34,7 +34,7 @@ func runStorage(args []string) error {
 
 func runStorageDisable(args []string) error {
 	fs := flag.NewFlagSet("storage disable", flag.ContinueOnError)
-	configPath := fs.String("config", "", "JSON 配置文件")
+	configPath := fs.String("config", "", "YAML 配置文件")
 	dataDir := fs.String("data-dir", "", "本地持久化数据目录")
 	confirmation := fs.String("confirm", "", "精确的集群 UUID；仅主库健康且为当前权威时可清退主备")
 	if ok, err := parseCommand(fs, args); !ok {
@@ -65,7 +65,7 @@ func runStorageDisable(args []string) error {
 
 func runStorageStatus(args []string) error {
 	fs := flag.NewFlagSet("storage status", flag.ContinueOnError)
-	configPath := fs.String("config", "", "JSON 配置文件")
+	configPath := fs.String("config", "", "YAML 配置文件")
 	dataDir := fs.String("data-dir", "", "本地持久化数据目录")
 	asJSON := fs.Bool("json", false, "输出机器可读的状态；observed_at 不是远端健康证明")
 	if ok, err := parseCommand(fs, args); !ok {

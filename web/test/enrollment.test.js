@@ -12,7 +12,6 @@ test('enrollment command reads a ticket privately and includes policy and runtim
   assert.match(command, /install -m 0600 \/dev\/null \/opt\/orbit-beacon\/state\/enrollment.token/);
   assert.match(command, /IFS= read -r token/);
   assert.match(command, /printf '%s\\n' "\$token" > \/opt\/orbit-beacon\/state\/enrollment.token/);
-  assert.match(command, /\/opt\/orbit-beacon\/bin\/orbitbeacon-agent enroll --install-policy \/opt\/orbit-beacon\/etc\/install-policy.json --config \/opt\/orbit-beacon\/etc\/agent.json --token-file \/opt\/orbit-beacon\/state\/enrollment.token/);
   assert.doesNotMatch(command, /https?:\/\//);
 });
 

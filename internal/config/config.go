@@ -64,6 +64,10 @@ func sources(opts LoadOptions, keys []string) ([]map[string]json.RawMessage, err
 		if err != nil {
 			return nil, fmt.Errorf("读取配置失败: %w", err)
 		}
+		data, err = decodeYAML(bytes.NewReader(data))
+		if err != nil {
+			return nil, fmt.Errorf("解码配置失败: %w", err)
+		}
 		if err := json.Unmarshal(data, &file); err != nil {
 			return nil, fmt.Errorf("解码配置失败: %w", err)
 		}
@@ -419,10 +423,14 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 				continue
 			}
 			var actual, expected any
-			if err := json.Unmarshal(value, &actual); err != nil {
+			actualDecoder := json.NewDecoder(bytes.NewReader(value))
+			actualDecoder.UseNumber()
+			if err := actualDecoder.Decode(&actual); err != nil {
 				return Agent{}, err
 			}
-			if err := json.Unmarshal(protected[key], &expected); err != nil {
+			expectedDecoder := json.NewDecoder(bytes.NewReader(protected[key]))
+			expectedDecoder.UseNumber()
+			if err := expectedDecoder.Decode(&expected); err != nil {
 				return Agent{}, err
 			}
 			if !reflect.DeepEqual(actual, expected) {

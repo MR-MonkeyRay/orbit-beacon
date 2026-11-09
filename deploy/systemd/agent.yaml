@@ -1,0 +1,18 @@
+# 修改后执行 systemctl reload orbitbeacon-agent；重装保留本文件。
+# 采集与上报间隔（秒，5–60）。
+report_interval_seconds: 10
+# 磁盘容量采集间隔（秒，60–3600）。
+disk_interval_seconds: 60
+# [] 使用默认路由网卡；最多 8 项，例如 ["eth0"]。
+interfaces: []
+# [] 使用根路径；最多 8 个绝对路径，例如 ["/", "/srv/data"]。
+disk_paths: []
+# [] 不探测；最多 5 个 TCP、HTTP(S)、DNS 或 ICMP 目标。
+probe_targets: []
+# HTTP(S) 预期状态码（100–599）；键须在 probe_targets 中。
+probe_expected_status: {}
+# [] 禁止全部远程指令；upgrade 还需安装策略配置可信发布源。
+remote_commands: ["upgrade", "restart", "stop"]
+# 可选：disk、network、traffic、probes、disk_io、pressure、temperature。
+# 关闭 network 同时关闭 traffic；关闭 disk 同时关闭 disk_io。
+disabled_features: []

@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,18 +17,15 @@ func TestRestoreAndResetTOTPAcceptConfiguredDataDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(parent, "restored")
-	cfgPath := filepath.Join(t.TempDir(), "server.json")
-	body, err := json.Marshal(map[string]any{"data_dir": dir})
-	if err != nil {
+	cfgPath := filepath.Join(t.TempDir(), "server.yaml")
+	body := []byte(fmt.Sprintf("data_dir: %q\n", dir))
+	if err := os.WriteFile(cfgPath, body, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(cfgPath, body, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err = run([]string{"restore", "--config", cfgPath, "--input", archive, "--password-file", passwordFile}); err != nil {
+	if err := run([]string{"restore", "--config", cfgPath, "--input", archive, "--password-file", passwordFile}); err != nil {
 		t.Fatalf("configured restore: %v", err)
 	}
-	if err = run([]string{"reset-totp", "--config", cfgPath, "--username", "archive-admin"}); err != nil {
+	if err := run([]string{"reset-totp", "--config", cfgPath, "--username", "archive-admin"}); err != nil {
 		t.Fatalf("configured reset: %v", err)
 	}
 	db, err := storage.Open(context.Background(), filepath.Join(dir, "orbitbeacon.db"))

@@ -1,13 +1,11 @@
 package main
 
 import (
-	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
-
-	"orbitbeacon/internal/config"
 )
 
 func TestCLIRejectsUnsafeInstallPolicyBeforeRuntimeSetup(t *testing.T) {
@@ -32,11 +30,8 @@ func TestCLIRejectsUnsafeInstallPolicyBeforeRuntimeSetup(t *testing.T) {
 			if err := os.Mkdir(parent, 0700); err != nil {
 				t.Fatal(err)
 			}
-			path := filepath.Join(parent, "install.json")
-			data, err := json.Marshal(config.InstallPolicy{ServerURL: "https://beacon.example.test", StateDir: filepath.Join(base, "state"), ExpectedUID: 1000, ExpectedGID: 1000, InstallMode: "native"})
-			if err != nil {
-				t.Fatal(err)
-			}
+			path := filepath.Join(parent, "install-policy.yaml")
+			data := []byte(fmt.Sprintf("server_url: https://beacon.example.test\nstate_dir: %q\nexpected_uid: 1000\nexpected_gid: 1000\ninstall_mode: native\n", filepath.Join(base, "state")))
 			if err := os.WriteFile(path, data, 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -50,7 +45,7 @@ func TestCLIRejectsUnsafeInstallPolicyBeforeRuntimeSetup(t *testing.T) {
 				if err := os.Symlink(parent, link); err != nil {
 					t.Fatal(err)
 				}
-				path = filepath.Join(link, "install.json")
+				path = filepath.Join(link, "install-policy.yaml")
 			}
 			err = run([]string{"doctor", "--install-policy", path})
 			if err == nil {

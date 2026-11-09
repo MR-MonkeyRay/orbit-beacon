@@ -39,7 +39,7 @@ go build -o build/orbitbeacon-mcp ./cmd/orbitbeacon-mcp
 ### 2. 启动
 
 ```sh
-build/orbitbeacon-server serve --data-dir "$HOME/orbitbeacon-demo"
+build/orbitbeacon-server serve --config deploy/systemd/server.yaml --data-dir "$HOME/orbitbeacon-demo"
 ```
 
 默认监听 `127.0.0.1:8080`。HTTP 不加密密码与凭据，仅用于本机或受控网络；公网访问前请配置外置 HTTPS 代理。
