@@ -64,7 +64,11 @@ func TestAnnouncementRetentionRealWiring(t *testing.T) {
 	start := timekey.Format(now.Add(-200 * 24 * time.Hour))
 	old := timekey.Format(now.Add(-91 * 24 * time.Hour))
 	boundary := timekey.Format(now.Add(-90 * 24 * time.Hour))
-	for i := 0; i < 1003; i++ {
+	tx, err := f.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 1003 {
 		var end any = old
 		if i == 1001 {
 			end = nil
@@ -72,9 +76,13 @@ func TestAnnouncementRetentionRealWiring(t *testing.T) {
 		if i == 1002 {
 			end = boundary
 		}
-		if _, err = f.db.Exec(`INSERT INTO announcements VALUES(?,'info','T','B',?,?,?,?)`, fmt.Sprint(i), start, end, start, start); err != nil {
+		if _, err = tx.Exec(`INSERT INTO announcements VALUES(?,'info','T','B',?,?,?,?)`, fmt.Sprint(i), start, end, start, start); err != nil {
+			tx.Rollback()
 			t.Fatal(err)
 		}
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
 	}
 	result, err := h.CleanupRetention(context.Background(), now)
 	if err != nil || result.Announcements != 1001 {

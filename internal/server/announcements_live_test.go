@@ -88,7 +88,11 @@ func TestAnnouncementCleanupRetentionRealSQLiteConnection(t *testing.T) {
 	h := &handler{nodes: nodes.NewService(stable, nodes.Options{}), management: management.NewService(stable), enrollments: enrollment.NewService(stable, enrollment.Options{Now: clock}), auth: auth.NewService(stable, auth.Options{Now: clock}), announcements: announcements.New(stable, clock, nil)}
 	start := timekey.Format(now.Add(-200 * 24 * time.Hour))
 	old := timekey.Format(now.Add(-91 * 24 * time.Hour))
-	for i := 0; i < 1003; i++ {
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 1003 {
 		var end any = old
 		if i == 1001 {
 			end = nil
@@ -96,9 +100,13 @@ func TestAnnouncementCleanupRetentionRealSQLiteConnection(t *testing.T) {
 		if i == 1002 {
 			end = timekey.Format(now.Add(-90 * 24 * time.Hour))
 		}
-		if _, err := db.Exec(`INSERT INTO announcements VALUES(?,'info','T','B',?,?,?,?)`, fmt.Sprint(i), start, end, start, start); err != nil {
+		if _, err = tx.Exec(`INSERT INTO announcements VALUES(?,'info','T','B',?,?,?,?)`, fmt.Sprint(i), start, end, start, start); err != nil {
+			tx.Rollback()
 			t.Fatal(err)
 		}
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
 	}
 	result, err := h.CleanupRetention(context.Background(), now)
 	if err != nil || result.Announcements != 1001 {
