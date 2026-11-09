@@ -304,7 +304,8 @@ func TestMySQLBackupRestore(t *testing.T) {
 			defer clear(got)
 			var expected []byte
 			if want == "old" {
-				journalDirs, err := filepath.Glob(filepath.Join(cfg.DataDir, ".restore-*", "old", "secrets.key"))
+				var journalDirs []string
+				journalDirs, err = filepath.Glob(filepath.Join(cfg.DataDir, ".restore-*", "old", "secrets.key"))
 				if err != nil || len(journalDirs) != 1 {
 					t.Fatalf("rollback key: %v %v", journalDirs, err)
 				}

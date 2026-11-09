@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -210,7 +209,7 @@ func ReplicaTestEpochJournalPlan(t *testing.T, db *Database, endpoint *config.Da
 	if seen.Load() < 4 {
 		t.Fatal("production log queries were not explained", seen.Load())
 	}
-	t.Log(fmt.Sprintf("actual %v engine, %d active headers, %d explained production queries", db.current.dialect, head, seen.Load()))
+	t.Logf("actual %v engine, %d active headers, %d explained production queries", db.current.dialect, head, seen.Load())
 }
 func TestReplicaJournalUsesEpochPrimaryKeySQLite(t *testing.T) {
 	ReplicaTestEpochJournalPlan(t, replicaBareMain(t), nil)

@@ -30,10 +30,7 @@ type replicaObservedConn struct {
 }
 
 func (c *replicaObservedConn) BeginTx(ctx context.Context, o driver.TxOptions) (driver.Tx, error) {
-	if b, ok := c.Conn.(driver.ConnBeginTx); ok {
-		return b.BeginTx(ctx, o)
-	}
-	return c.Conn.Begin()
+	return c.Conn.(driver.ConnBeginTx).BeginTx(ctx, o)
 }
 func (c *replicaObservedConn) ExecContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
 	c.before(ctx, q, args)

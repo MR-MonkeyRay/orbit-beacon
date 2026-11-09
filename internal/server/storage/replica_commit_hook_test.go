@@ -32,17 +32,10 @@ type replicaHookConn struct {
 }
 
 func (c *replicaHookConn) Begin() (driver.Tx, error) {
-	tx, err := c.Conn.Begin()
-	if err != nil {
-		return nil, err
-	}
-	return &replicaHookTx{Tx: tx, owner: c.owner}, nil
+	return c.BeginTx(context.Background(), driver.TxOptions{})
 }
 func (c *replicaHookConn) BeginTx(ctx context.Context, o driver.TxOptions) (driver.Tx, error) {
-	begin, ok := c.Conn.(driver.ConnBeginTx)
-	if !ok {
-		return c.Begin()
-	}
+	begin := c.Conn.(driver.ConnBeginTx)
 	tx, err := begin.BeginTx(ctx, o)
 	if err != nil {
 		return nil, err
