@@ -192,6 +192,21 @@ test('dialog entries close the drawer first so a closing dialog returns focus to
   state(env, false);
 });
 
+test('a closing dialog abandons an opener the drawer turned inert', async (t) => {
+  const env = await setup(t);
+  const {modal} = await import('../src/console/ui/dialogs.js');
+  // 模拟对话框打开期间视口跨越 767px：抽屉收起把侧栏置为 inert，入口不能再收回焦点。
+  env.command.closest = (selector) => selector === '[inert]' ? env.sidebar : null;
+  env.sidebar.inert = true;
+  env.command.focus();
+  const {close, closed} = modal(copy('shell.commandPalette'), () => h('input', {dataset: {autofocus: ''}}));
+  const input = document.querySelector('dialog').querySelector('[data-autofocus]');
+  assert.equal(document.activeElement, input);
+  close('done'); await closed;
+  assert.notEqual(document.activeElement, env.command, 'focus must not land on the inert opener');
+  env.command.closest = undefined;
+});
+
 test('theme control stays out of the drawer close path', async (t) => {
   const env = await setup(t); env.menu.click();
   const theme = h('button', {class: 'icon-button'});

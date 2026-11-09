@@ -46,7 +46,8 @@ export function modal(title, build) {
     dialogs.delete(entry);
     if (dialog.open) dialog.close(value);
     dialog.remove();
-    const target = opener?.isConnected && !opener.disabled ? opener : document.querySelector('#view h1');
+    // 视口跨越 767px 时抽屉会把入口所在容器置为 inert，焦点必须改落到页面标题。
+    const target = opener?.isConnected && !opener.disabled && !opener.closest?.('[inert]') ? opener : document.querySelector('#view h1');
     if (target) target.focus({preventScroll: true});
     resolve(value);
   };
