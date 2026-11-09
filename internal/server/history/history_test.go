@@ -79,9 +79,8 @@ func TestLargeCleanupKeepsAcceptingSamples(t *testing.T) {
 			}
 			cleanupProducer.Store(&produce)
 			defer cleanupProducer.Store(nil)
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			removed, err := s.Cleanup(ctx, now)
+			// 验证批次间的采样准入，不将 race 或 CI 的执行速度作为断言；由 go test 总超时兜底。
+			removed, err := s.Cleanup(t.Context(), now)
 			if err != nil || removed != rows {
 				t.Fatalf("removed=%d err=%v", removed, err)
 			}
