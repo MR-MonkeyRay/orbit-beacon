@@ -187,6 +187,7 @@ var allowedInternalImports = map[string]map[string]bool{
 		"orbitbeacon/internal/logging":        true,
 		"orbitbeacon/internal/protocol/v1":    true,
 		"orbitbeacon/internal/server/storage": true,
+		"orbitbeacon/internal/timekey":        true,
 	},
 	"orbitbeacon/internal/server/ingest": {
 		"orbitbeacon/internal/server/storage":       true,
@@ -230,6 +231,7 @@ var allowedInternalImports = map[string]map[string]bool{
 		"orbitbeacon/internal/server/alerts":     true,
 		"orbitbeacon/internal/server/audit":      true,
 		"orbitbeacon/internal/server/egress":     true,
+		"orbitbeacon/internal/server/inbox":      true,
 		"orbitbeacon/internal/server/management": true,
 		"orbitbeacon/internal/server/secretbox":  true,
 		"orbitbeacon/internal/server/validation": true,
