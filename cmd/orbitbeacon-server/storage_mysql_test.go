@@ -13,7 +13,7 @@ import (
 	"orbitbeacon/internal/server/storagetest"
 )
 
-func TestHAResetTOTPDoesNotRequireHealthyHistory(t *testing.T) {
+func TestMySQLHAResetTOTPDoesNotRequireHealthyHistory(t *testing.T) {
 	fixture := storagetest.Start(t)
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0700); err != nil {

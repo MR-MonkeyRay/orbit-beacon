@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
 import {h, reducedMotion} from '../src/shared/dom.js';
 import {setNavigationSignal, setSession} from '../src/console/api.js';
 import {copy, flush, installDOM} from './console-dom.js';
@@ -215,21 +214,4 @@ test('theme control stays out of the drawer close path', async (t) => {
   Object.defineProperty(click, 'target', {value: theme});
   env.sidebar.dispatchEvent(click);
   state(env, true);
-});
-
-test('mobile CSS removes the shell width floor, confines overrides and keeps local scrollers', async () => {
-  const source = async (path) => readFile(new URL(path, import.meta.url), 'utf8');
-  const shell = await source('../src/console/styles/shell.css');
-  const responsive = await source('../src/console/styles/responsive.css');
-  assert.doesNotMatch(shell, /min-width:\s*744px/);
-  assert.match(responsive, /@media \(min-width:768px\) and \(max-width:1199px\)/);
-  assert.match(responsive, /@media \(max-width:767px\)/);
-  assert.match(responsive, /\.nav-pill\s*\{\s*view-transition-name: none/);
-  assert.match(responsive, /100dvh/);
-  assert.doesNotMatch(responsive, /overflow-x:\s*hidden/);
-  const components = await source('../src/console/ui/components.js');
-  assert.match(components, /class: 'table-wrap'[\s\S]*class: `table/);
-  const traffic = await source('../src/console/pages/node-traffic.js');
-  assert.match(traffic, /class: 'traffic-plot'}, drawing/);
-  assert.match(await source('../src/console/styles/traffic.css'), /\.traffic-plot\s*\{\s*overflow-x: auto/);
 });

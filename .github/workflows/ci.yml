@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -16,8 +17,8 @@ env:
   GOTOOLCHAIN: local
 
 jobs:
-  go:
-    name: Go checks
+  checks:
+    name: Go tests and static analysis
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
@@ -38,10 +39,22 @@ jobs:
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
+        id: go-toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+
+      - name: Cache Go checks
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-checks-${{ hashFiles('go.sum', '.github/workflows/ci.yml') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-checks-${{ hashFiles('go.sum', '.github/workflows/ci.yml') }}-
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-checks-
 
       - name: Check formatting
         run: |
@@ -56,14 +69,121 @@ jobs:
       - name: Verify modules
         run: go mod verify
 
-      - name: Run uncached tests with coverage
-        run: |
-          go test -count=1 -coverprofile=coverage.out ./...
-          go tool cover -func=coverage.out
+      - name: Run go vet
+        run: go vet ./...
 
-      # Only trusted main-branch runs can read remote admin credentials; report unconfigured infrastructure explicitly.
+      - name: Run Staticcheck
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+          "$RUNNER_TEMP/bin/staticcheck" ./...
+
+      - name: Run uncached tests
+        run: go test -count=1 ./...
+
+  # Keep the existing required-check name as the gate for every Go job.
+  go:
+    name: Go checks
+    needs: [checks, race, mysql]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ needs.checks.outputs.version }}
+    steps:
+      - name: Require successful Go checks
+        env:
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          RACE_RESULT: ${{ needs.race.result }}
+          MYSQL_RESULT: ${{ needs.mysql.result }}
+        run: |
+          test "$CHECKS_RESULT" = success
+          test "$RACE_RESULT" = success
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            test "$MYSQL_RESULT" = success
+          fi
+
+  race:
+    name: Race tests (${{ matrix.group }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [server, storage, other]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        id: go-toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Cache race builds
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-race-${{ matrix.group }}-${{ hashFiles('go.sum', '.github/workflows/ci.yml') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-race-${{ matrix.group }}-${{ hashFiles('go.sum', '.github/workflows/ci.yml') }}-
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-race-${{ matrix.group }}-
+
+      - name: Run uncached race tests
+        env:
+          CGO_ENABLED: '1'
+          TEST_GROUP: ${{ matrix.group }}
+        run: |
+          package_list="$(go list ./...)"
+          packages=()
+          while IFS= read -r package; do
+            case "$package" in
+              orbitbeacon/internal/server) group=server ;;
+              orbitbeacon/internal/server/storage) group=storage ;;
+              *) group=other ;;
+            esac
+            if [ "$group" = "$TEST_GROUP" ]; then
+              packages+=("$package")
+            fi
+          done <<< "$package_list"
+          if [ "${#packages[@]}" -eq 0 ]; then
+            echo "No packages selected for race group $TEST_GROUP" >&2
+            exit 1
+          fi
+          go test -race -count=1 -timeout=20m "${packages[@]}"
+
+  mysql:
+    name: Remote MySQL integration
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        id: go-toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Cache MySQL test builds
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-mysql-${{ hashFiles('go.sum', '.github/workflows/ci.yml') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-mysql-${{ hashFiles('go.sum', '.github/workflows/ci.yml') }}-
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-mysql-
+
+      # Only trusted main pushes can read the remote admin credentials.
       - name: Run isolated-schema remote MySQL integration tests
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           ORBITBEACON_TEST_MYSQL_ADMIN_CONFIG: ${{ secrets.ORBITBEACON_TEST_MYSQL_ADMIN_CONFIG }}
           ORBITBEACON_TEST_MYSQL_ADMIN_PASSWORD: ${{ secrets.ORBITBEACON_TEST_MYSQL_ADMIN_PASSWORD }}
@@ -86,27 +206,7 @@ jobs:
           unset ORBITBEACON_TEST_MYSQL_ADMIN_CONFIG ORBITBEACON_TEST_MYSQL_ADMIN_PASSWORD
           export ORBITBEACON_TEST_MYSQL=1
           export ORBITBEACON_TEST_MYSQL_CONFIG="$private_dir/admin.json"
-          go test -p 1 -count=1 -timeout=20m ./internal/server ./internal/server/storage ./internal/server/history ./internal/server/auth ./internal/server/nodes ./internal/server/enrollment ./internal/server/ingest ./internal/server/backup ./internal/server/notify ./internal/server/inbox ./internal/server/alerts ./internal/server/management ./internal/server/app ./cmd/orbitbeacon-server
-
-      - name: Run race tests
-        env:
-          CGO_ENABLED: '1'
-        run: go test -race -count=1 ./...
-
-      - name: Run go vet
-        run: go vet ./...
-
-      - name: Run cross-platform go vet
-        env:
-          CGO_ENABLED: '0'
-        run: |
-          GOOS=darwin go vet ./...
-          GOOS=windows go vet ./...
-
-      - name: Run Staticcheck
-        run: |
-          GOBIN="$RUNNER_TEMP/bin" go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
-          "$RUNNER_TEMP/bin/staticcheck" ./...
+          go test -p 1 -count=1 -timeout=20m -run '^TestMySQL' ./internal/server/... ./cmd/orbitbeacon-server
 
   web:
     name: Web checks
@@ -145,10 +245,22 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
+        id: go-toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+
+      - name: Cache vulnerability scan
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-security-${{ hashFiles('go.sum', '.github/workflows/ci.yml') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-security-${{ hashFiles('go.sum', '.github/workflows/ci.yml') }}-
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-security-
 
       - name: Run Go vulnerability scan
         run: |

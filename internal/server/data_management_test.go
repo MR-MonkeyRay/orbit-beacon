@@ -219,7 +219,7 @@ func dataManagementHTTP(t *testing.T, dbs *storage.Databases) fixture {
 	return fixture{handler: h, auth: a, nodes: n}
 }
 
-func TestDataManagementHistoryAndMySQLParity(t *testing.T) {
+func TestMySQLDataManagementHistoryAndMySQLParity(t *testing.T) {
 	for _, driver := range []string{"sqlite", "mysql"} {
 		t.Run(driver, func(t *testing.T) {
 			var dbs storage.Databases

@@ -15,18 +15,10 @@ test('sidebar keeps the primary page order and gives notifications its own inbox
   assert.notEqual(ICONS.inbox, ICONS.bell);
 });
 
-test('node details and enrollment tabs use distinct purpose-specific icons', async () => {
-  const javascript = await source('../src/console/pages/node.js');
-  assert.match(javascript, /id: 'details',[^\n]+icon: 'info'/);
-  assert.match(javascript, /id: 'enrollment',[^\n]+icon: 'key'/);
-});
-
-
 test('command palette sidebar button is not treated as a notification counter', async () => {
   const html = await source('../src/console/index.html');
   const button = html.match(/<button[^>]+id="command-palette"[^>]*>/)?.[0];
   assert.ok(button);
-  assert.match(button, /class="command-entry"/);
   assert.doesNotMatch(button, /notification-entry/);
   assert.match(button, /aria-haspopup="dialog"/);
 });

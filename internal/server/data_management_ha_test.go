@@ -11,7 +11,7 @@ import (
 	"orbitbeacon/internal/server/storagetest"
 )
 
-func TestDataManagementMySQLHACleanupReplicates(t *testing.T) {
+func TestMySQLDataManagementHACleanupReplicates(t *testing.T) {
 	native := storagetest.Start(t)
 	standby := native.Endpoint("standby")
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)

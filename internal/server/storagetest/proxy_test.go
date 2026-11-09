@@ -10,7 +10,7 @@ import (
 	"orbitbeacon/internal/server/storage"
 )
 
-func TestProxyEndpointInterruptsOnlyOwnedConnectionsAndPreservesTLS(t *testing.T) {
+func TestMySQLProxyEndpointInterruptsOnlyOwnedConnectionsAndPreservesTLS(t *testing.T) {
 	f := Start(t)
 	endpoint := f.Endpoint("primary")
 	proxy, through := ProxyEndpoint(t, endpoint)

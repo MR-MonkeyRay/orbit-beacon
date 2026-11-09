@@ -10,7 +10,7 @@ import (
 	"orbitbeacon/internal/server/storage"
 )
 
-func TestScopedDatabaseReadOnlyFaultPreservesOtherDomain(t *testing.T) {
+func TestMySQLScopedDatabaseReadOnlyFaultPreservesOtherDomain(t *testing.T) {
 	f := Start(t)
 	main := f.Open(t, storage.MainDomain)
 	_ = f.Open(t, storage.HistoryDomain)

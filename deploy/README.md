@@ -104,6 +104,14 @@ docker compose -f deploy/docker/compose.yaml logs --tail=100 orbitbeacon
 - 容器监听 `0.0.0.0:8080`，只发布到宿主机 `127.0.0.1:8080`；直接远程 HTTP 要改端口发布并限制访问。数据卷固定叫 `orbitbeacon-data`，不要 `down -v` 或删卷。运行身份是 `65532:65532`，bind mount 要匹配这个身份和[目录权限](#数据目录)。
 - 镜像构建时把 [`docker/server.json`](docker/server.json) 复制进去；改仓库副本不影响现有容器。额外配置在 Compose `environment` 传入，或只读挂载完整配置到 `/etc/orbitbeacon/server.json`。宿主机变量只有被 Compose 引用或显式传入才进容器；环境或镜像变了用 `up -d` 重建。指标采集另配可达网络或端口。本地构建见 [`build/server.Dockerfile`](../build/server.Dockerfile)。
 
+本地从源码构建（无需预先生成二进制）：
+
+```sh
+docker build -f build/server.Dockerfile -t orbitbeacon-server:local .
+```
+
+CI 使用同一 Dockerfile 的 `precompiled` target，通过 `release-binaries` named context 复制本次发布的对应架构 Server；镜像和 Release 共用版本、提交与构建时间，不再编译第二遍。默认 target 仍从源码构建。
+
 ## HTTPS 与反向代理
 
 - 服务器仅提供 HTTP，不生成或加载入站 TLS 证书。HTTP 不加密密码、会话、节点凭据或上报；仅用于本机或受控网络，公网由外置代理提供可信 HTTPS。

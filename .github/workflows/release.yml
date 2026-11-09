@@ -64,11 +64,24 @@ jobs:
           printf 'skip=%s\n' "$skip" >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
+        id: go-toolchain
         if: steps.publication-state.outputs.skip != 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+
+      - name: Cache release Go dependencies and builds
+        if: steps.publication-state.outputs.skip != 'true'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-release-${{ hashFiles('go.sum', '.github/workflows/release.yml', 'build/server.Dockerfile') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-release-${{ hashFiles('go.sum', '.github/workflows/release.yml', 'build/server.Dockerfile') }}-
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-release-
 
       - name: Build release binaries
         if: steps.publication-state.outputs.skip != 'true'
@@ -77,6 +90,7 @@ jobs:
           output_dir="$RUNNER_TEMP/release"
           mkdir -p "$output_dir"
           build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          printf 'BUILD_DATE=%s\n' "$build_date" >> "$GITHUB_ENV"
           for arch in amd64 arm64; do
             for kind in server agent mcp; do
               CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
@@ -95,6 +109,8 @@ jobs:
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
           docker buildx build \
             --file build/server.Dockerfile \
+            --target precompiled \
+            --build-context "release-binaries=$RUNNER_TEMP/release" \
             --platform linux/amd64,linux/arm64 \
             --provenance=true \
             --sbom=true \
@@ -104,32 +120,23 @@ jobs:
             --tag "$image:latest" \
             --build-arg VERSION="$VERSION" \
             --build-arg COMMIT="$GITHUB_SHA" \
-            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --build-arg BUILD_DATE="$BUILD_DATE" \
             .
 
       - name: Publish GitHub Release assets
+        if: steps.publication-state.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SKIP_PUBLICATION: ${{ steps.publication-state.outputs.skip }}
         run: |
           set -eu
           tag="v$VERSION"
           assets=("$RUNNER_TEMP/release/orbitbeacon-server-linux-amd64" "$RUNNER_TEMP/release/orbitbeacon-server-linux-arm64" "$RUNNER_TEMP/release/orbitbeacon-agent-linux-amd64" "$RUNNER_TEMP/release/orbitbeacon-agent-linux-arm64" "$RUNNER_TEMP/release/orbitbeacon-mcp-linux-amd64" "$RUNNER_TEMP/release/orbitbeacon-mcp-linux-arm64" "$RUNNER_TEMP/release/SHA256SUMS")
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release edit "$tag" --title "$VERSION"
-            if [ "$SKIP_PUBLICATION" != 'true' ]; then
-              gh release upload "$tag" "${assets[@]}" --clobber
-            fi
+            gh release upload "$tag" "${assets[@]}" --clobber
           else
             gh release create "$tag" "${assets[@]}" \
               --target "$GITHUB_SHA" \
               --title "$VERSION" \
               --notes "OrbitBeacon $VERSION release. See SHA256SUMS for checksums."
           fi
-          release_assets="$(gh release view "$tag" --json assets --jq '.assets[].name')"
-          for arch in amd64 arm64; do
-            legacy_asset="orbitbeacon-$VERSION-linux-$arch.tar.gz"
-            if printf '%s\n' "$release_assets" | grep -Fxq "$legacy_asset"; then
-              gh release delete-asset "$tag" "$legacy_asset" --yes
-            fi
-          done

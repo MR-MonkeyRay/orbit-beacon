@@ -81,17 +81,18 @@ build/orbitbeacon-server health --url http://localhost:8080
 
 入口在 [`cmd/`](cmd/)，实现在 [`internal/`](internal/)；界面修改与产物同步见 [Web 开发](web/README.md)。
 
-接口字段、认证与错误码见[接口契约（OpenAPI）](api/openapi.yaml)。`info.version` 仅随接口契约变更更新，独立于程序发布版本 `VERSION`；仅修改说明文字不升版。
+接口字段、认证与错误码见[接口契约（OpenAPI）](api/openapi.yaml)。
 
 ```sh
 go mod verify
 go test -count=1 ./...
-go test -race -count=1 ./internal/server/... ./internal/agent/...
+go test -race -count=1 ./...
 go vet ./...
-go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 ```
 
-[CI](.github/workflows/ci.yml) 检查 Go、Web、漏洞和安装脚本；`main` 全部通过后调用[发布流程](.github/workflows/release.yml)。Release 标题用 [`VERSION`](VERSION)（如 `0.1.0`），Git 标签为 `v0.1.0`。发布上传六个独立二进制（server/agent/mcp × amd64/arm64）和统一 `SHA256SUMS`；文件名不带版本号，也不打压缩包，镜像仍支持两种架构。手动下载后先核对校验和，再 `chmod +x`。
+[CI](.github/workflows/ci.yml) 在 PR 和 `main` push 时运行 Go 测试（含 race）、静态分析、Web 检查、漏洞扫描与安装脚本测试；远程 MySQL 回归仅在配置测试凭据后的 `main` push 时运行。
+
+`main` 全部检查通过后调用[发布流程](.github/workflows/release.yml)，提供 server、agent、mcp 的 amd64 / arm64 独立二进制、`SHA256SUMS` 与双架构服务端镜像。手动下载后先核对校验和，再 `chmod +x`。
 
 ## 许可证
 
