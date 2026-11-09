@@ -8,7 +8,7 @@ import (
 
 // ValidateDetails 校验通知消费方使用的不可变快照格式，
 // 不查询实时数据源，不产生任何副作用。
-// 历史快照中的字段可省略；未知元数据原样保留。
+// task/alert 兼容历史可省略元数据；storage 固定为五个字段。
 func ValidateDetails(kind string, data json.RawMessage) error {
 	if len(data) > 64<<10 {
 		return ErrInvalidInput
@@ -71,6 +71,30 @@ func ValidateDetails(kind string, data json.RawMessage) error {
 			if json.Unmarshal(raw, &value) != nil {
 				return ErrInvalidInput
 			}
+		}
+	case "storage":
+		if len(fields) != 5 || !detailsStrings(fields, false, "domain", "transition", "reason_code", "occurred_at") || !detailsStrings(fields, true, "active_role") || !detailsTimes(fields, false, "occurred_at") {
+			return ErrInvalidInput
+		}
+		var detail struct {
+			Domain     string    `json:"domain"`
+			Transition string    `json:"transition"`
+			ActiveRole *string   `json:"active_role"`
+			ReasonCode string    `json:"reason_code"`
+			OccurredAt time.Time `json:"occurred_at"`
+		}
+		if json.Unmarshal(data, &detail) != nil || detail.OccurredAt.IsZero() || (detail.Domain != "main" && detail.Domain != "history") || (detail.ActiveRole != nil && *detail.ActiveRole != "primary" && *detail.ActiveRole != "standby") {
+			return ErrInvalidInput
+		}
+		for _, name := range []string{"domain", "transition", "active_role", "reason_code", "occurred_at"} {
+			if _, present := fields[name]; !present {
+				return ErrInvalidInput
+			}
+		}
+		switch detail.Transition {
+		case "replica_unavailable", "standby_activated", "manual_required", "recovery_failed", "primary_restored":
+		default:
+			return ErrInvalidInput
 		}
 	default:
 		return ErrInvalidInput

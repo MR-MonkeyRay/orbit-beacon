@@ -150,3 +150,46 @@ test('checkbox fields put the native control before its text in one clickable la
     assert.equal(wrapper.querySelector('.field-error').hidden, true);
   } finally { dom.restore(); }
 });
+
+test('blur on a touched invalid field syncs aria-invalid with the red border', async () => {
+  const dom = installDOM();
+  try {
+    const {copy} = await import('./console-dom.js');
+    const {field, input} = await import('../src/console/ui/forms.js');
+    const control = input({name: 'name', required: true});
+    const wrapper = field('Name', control);
+    dom.body.append(wrapper);
+    control.value = 'too short';
+    control.setCustomValidity('boom');
+    control.dispatchEvent(new Event('blur'));
+    assert.equal(control.classList.contains('touched'), true);
+    assert.equal(control.getAttribute('aria-invalid'), 'true');
+    assert.equal(wrapper.querySelector('.field-error').hidden, false);
+    // 值恢复合法后再离开焦点，aria-invalid 必须撤掉。
+    control.setCustomValidity('');
+    control.dispatchEvent(new Event('blur'));
+    assert.equal(control.getAttribute('aria-invalid'), null);
+    assert.equal(wrapper.querySelector('.field-error').hidden, true);
+  } finally { dom.restore(); }
+});
+
+test('required marker follows runtime required toggles and survives label rewrites', async () => {
+  const dom = installDOM();
+  try {
+    const {copy} = await import('./console-dom.js');
+    const {field, input} = await import('../src/console/ui/forms.js');
+    const control = input({name: 'secret'});
+    const wrapper = field(copy('alerts.channels.signingSecret'), control);
+    dom.body.append(wrapper);
+    const marker = wrapper.querySelector('.field-required');
+    assert.equal(marker.hidden, true);
+    control.required = true;
+    assert.equal(marker.hidden, false);
+    // 标签整体重写不应擦掉 marker（它在 label 之外）。
+    wrapper.querySelector('label').textContent = 'Bot token';
+    assert.ok(wrapper.querySelector('.field-required'));
+    assert.equal(wrapper.querySelector('label').textContent, 'Bot token');
+    control.required = false;
+    assert.equal(marker.hidden, true);
+  } finally { dom.restore(); }
+});

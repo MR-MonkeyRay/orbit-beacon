@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"orbitbeacon/internal/server/commands"
 	"orbitbeacon/internal/server/history"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -51,6 +53,8 @@ type nodeState struct {
 	touch             uint64
 	credential        [sha256.Size]byte
 	credentialEpoch   int64
+	storageGeneration uint64
+	pendingCommit     *reportCommit
 	generation        uint64
 	session           string
 	seq               uint64
@@ -72,6 +76,30 @@ func (state *nodeState) matchesIdentity(credential []byte, credentialEpoch int64
 	return len(state.latest) != 0 && subtle.ConstantTimeCompare(state.credential[:], credential) == 1 && state.credentialEpoch == credentialEpoch && state.generation == generation && state.session == session
 }
 
+func (state *nodeState) invalidateStorageGeneration(generation uint64) bool {
+	if state.storageGeneration == generation {
+		return false
+	}
+	state.public = publicMetrics{}
+	state.cpuPercent, state.memoryUsedPercent = nil, nil
+	state.lastSeenPersisted = time.Time{}
+	clear(state.traffic.committed)
+	if state.stagedTraffic != nil {
+		clear(state.stagedTraffic.committed)
+	}
+	// 已确认但回退的数据不重建；仅保留尚未提交的检查及其去重水位。
+	for target, entry := range state.probes.targets {
+		entry.counted = time.Time{}
+		for _, result := range entry.pending {
+			if result.CheckedAt.After(entry.counted) {
+				entry.counted = result.CheckedAt
+			}
+		}
+		state.probes.targets[target] = entry
+	}
+	return true
+}
+
 func (state *nodeState) invalidateIdentity(credential []byte, credentialEpoch int64, generation uint64, session string) {
 	state.fenceTraffic(credential, credentialEpoch, generation, session)
 	state.fenceProbes(credential, credentialEpoch, generation, session)
@@ -91,7 +119,7 @@ type Service struct {
 	samples              chan<- history.Sample
 	samplesDropped       atomic.Uint64
 	publicPages          publicPageCache
-	db                   *sql.DB
+	db                   *storage.Database
 	now                  func() time.Time
 	persistInterval      time.Duration
 	disablePersistOffset bool
@@ -113,7 +141,7 @@ type stateCandidate struct {
 	touch uint64
 }
 
-func NewService(db *sql.DB, opts Options) *Service {
+func NewService(db *storage.Database, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -217,12 +245,13 @@ func (s *Service) Shutdown(ctx context.Context) error {
 }
 
 type Admission struct {
-	service         *Service
-	nodeID          string
-	credential      [sha256.Size]byte
-	credentialEpoch int64
-	usedMu          sync.Mutex
-	used            bool
+	service           *Service
+	nodeID            string
+	credential        [sha256.Size]byte
+	credentialEpoch   int64
+	storageGeneration uint64
+	usedMu            sync.Mutex
+	used              bool
 }
 
 func (s *Service) AdmitToken(ctx context.Context, token string) (*Admission, error) {
@@ -232,7 +261,13 @@ func (s *Service) AdmitToken(ctx context.Context, token string) (*Admission, err
 	digest := sha256.Sum256([]byte(token))
 	var nodeID, status string
 	var credentialEpoch int64
-	if err := s.db.QueryRowContext(ctx, "SELECT id, status, credential_epoch FROM nodes WHERE token_hash = ?", digest[:]).Scan(&nodeID, &status, &credentialEpoch); err != nil {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	if err := lease.QueryRowContext(ctx, "SELECT id, status, credential_epoch FROM nodes WHERE token_hash = ?", digest[:]).Scan(&nodeID, &status, &credentialEpoch); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nodes.ErrUnauthenticated
 		}
@@ -246,7 +281,7 @@ func (s *Service) AdmitToken(ctx context.Context, token string) (*Admission, err
 	_, exists := s.states[nodeID]
 	s.mu.Unlock()
 	if !exists {
-		if err := s.prune(ctx, s.db); err != nil {
+		if err := s.prune(ctx, lease); err != nil {
 			return nil, err
 		}
 	}
@@ -257,7 +292,7 @@ func (s *Service) AdmitToken(ctx context.Context, token string) (*Admission, err
 	if err := s.charge(state); err != nil {
 		return nil, err
 	}
-	return &Admission{service: s, nodeID: nodeID, credential: digest, credentialEpoch: credentialEpoch}, nil
+	return &Admission{service: s, nodeID: nodeID, credential: digest, credentialEpoch: credentialEpoch, storageGeneration: lease.Generation()}, nil
 }
 
 func (s *Service) AcceptAdmitted(ctx context.Context, admission *Admission, report v1.Report) (v1.ReportResponse, error) {
@@ -271,7 +306,7 @@ func (s *Service) AcceptAdmitted(ctx context.Context, admission *Admission, repo
 	}
 	admission.used = true
 	admission.usedMu.Unlock()
-	return s.accept(ctx, admission.nodeID, admission.credential[:], admission.credentialEpoch, report)
+	return s.acceptGeneration(ctx, admission.nodeID, admission.credential[:], admission.credentialEpoch, admission.storageGeneration, report)
 }
 
 func (s *Service) acquireState(nodeID string) *nodeState {
@@ -378,9 +413,71 @@ type acceptanceSnapshot struct {
 	cachedSession        string
 	cachedSeq            uint64
 	hasLatest, duplicate bool
+	persistedLastSeen    time.Time
 }
 
-func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, credentialEpoch int64, report v1.Report) (v1.ReportResponse, error) {
+type reportCommit struct {
+	tx                  *storage.Tx
+	generation          uint64
+	traffic             map[trafficKey]trafficCounters
+	probes              probeBuffer
+	publish             func()
+	resolved, committed bool
+}
+
+// acceptGate 串行保护收据；解析时不持有本次调用的数据库租约。
+func (s *Service) resolveReportCommit(ctx context.Context, state *nodeState) error {
+	state.mu.Lock()
+	pending := state.pendingCommit
+	state.mu.Unlock()
+	if pending == nil {
+		return nil
+	}
+	committed, err := pending.tx.ResolveCommit(ctx)
+	if err != nil {
+		return err
+	}
+	pending.resolved, pending.committed = true, committed
+	return nil
+}
+
+func (s *Service) finishReportCommit(state *nodeState) {
+	state.mu.Lock()
+	pending := state.pendingCommit
+	state.mu.Unlock()
+	if pending == nil || !pending.resolved {
+		return
+	}
+	if pending.committed {
+		state.commitTraffic(pending.traffic, s.now().UTC())
+		state.commitProbes(pending.probes, pending.probes.generation, pending.probes.session)
+		if pending.publish != nil {
+			pending.publish()
+		}
+	}
+	state.mu.Lock()
+	state.pendingCommit = nil
+	if pending.generation != s.db.Generation() {
+		state.invalidateStorageGeneration(s.db.Generation())
+	}
+	state.mu.Unlock()
+}
+
+func (state *nodeState) rememberReportCommit(tx *storage.Tx, generation uint64, traffic map[trafficKey]trafficCounters, probes probeBuffer, publish func()) {
+	state.mu.Lock()
+	state.pendingCommit = &reportCommit{tx: tx, generation: generation, traffic: traffic, probes: probes, publish: publish}
+	state.mu.Unlock()
+}
+
+func snapshotPublicFromLatest(body []byte, receivedAt time.Time) publicMetrics {
+	var report v1.Report
+	if json.Unmarshal(body, &report) != nil {
+		return publicMetrics{}
+	}
+	return snapshotPublic(report.Metrics, receivedAt)
+}
+
+func (s *Service) acceptGeneration(ctx context.Context, nodeID string, credential []byte, credentialEpoch int64, admissionGeneration uint64, report v1.Report) (v1.ReportResponse, error) {
 	finish, err := s.beginUse(ctx)
 	if err != nil {
 		return v1.ReportResponse{}, err
@@ -404,6 +501,19 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	if err := ctx.Err(); err != nil {
 		return v1.ReportResponse{}, err
 	}
+	if err := s.resolveReportCommit(ctx, state); err != nil {
+		return v1.ReportResponse{}, err
+	}
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return v1.ReportResponse{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	if admissionGeneration != 0 && admissionGeneration != lease.Generation() {
+		return v1.ReportResponse{}, nodes.ErrUnauthenticated
+	}
+	s.finishReportCommit(state)
 	// 只读认证围栏在下面的 SELECT 处线性化。
 	// 在它之前提交的凭据/状态变更总能被观察到；
 	// 在它之后提交的变更在这个并发请求之后才生效。
@@ -412,7 +522,7 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	var storedCredential []byte
 	var storedEpoch int64
 	var activeCommand bool
-	if err := s.db.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status, COALESCE(system, ''), agent_runtime, last_seen, EXISTS(SELECT 1 FROM agent_commands WHERE node_id=nodes.id AND state IN ('pending','delivered')) FROM nodes WHERE id = ?", nodeID).Scan(&generationText, &session, &storedCredential, &storedEpoch, &status, &storedSystem, &storedRuntime, &lastSeenText, &activeCommand); err != nil {
+	if err := lease.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status, COALESCE(`system`, ''), agent_runtime, last_seen, EXISTS(SELECT 1 FROM agent_commands WHERE node_id=nodes.id AND state IN ('pending','delivered')) FROM nodes WHERE id = ?", nodeID).Scan(&generationText, &session, &storedCredential, &storedEpoch, &status, &storedSystem, &storedRuntime, &lastSeenText, &activeCommand); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return v1.ReportResponse{}, nodes.ErrUnauthenticated
 		}
@@ -429,6 +539,7 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 		return v1.ReportResponse{}, err
 	}
 	state.mu.Lock()
+	newStorageGeneration := state.invalidateStorageGeneration(lease.Generation())
 	state.invalidateIdentity(storedCredential, storedEpoch, generation, session)
 	cachedCredential, cachedEpoch, cachedGeneration, cachedSession := state.credential, state.credentialEpoch, state.generation, state.session
 	cachedSeq, hasLatest := state.seq, len(state.latest) != 0
@@ -453,18 +564,18 @@ func (s *Service) accept(ctx context.Context, nodeID string, credential []byte, 
 	sameSystem := report.System == nil || subtle.ConstantTimeCompare(storedSystemHash[:], normalized.systemHash[:]) == 1
 	intervalDue := s.persistenceDue(nodeID, persistedLastSeen, now)
 	duplicate := sameState && report.Seq <= cachedSeq
-	durable := activeCommand || len(report.CommandResults) > 0 || !sameState || generation != report.RunGeneration || session != report.SessionID ||
+	durable := newStorageGeneration || activeCommand || len(report.CommandResults) > 0 || !sameState || generation != report.RunGeneration || session != report.SessionID ||
 		(!duplicate && (storedRuntime != string(normalized.runtimeJSON) || !sameSystem)) || intervalDue
 	response := v1.ReportResponse{NodeID: nodeID, AcceptedSeq: report.Seq, ServerTime: now}
 	fence := acceptanceSnapshot{credential: storedCredential, epoch: storedEpoch, generationText: generationText, generation: generation, session: session, runtime: storedRuntime,
-		cachedCredential: cachedCredential, cachedEpoch: cachedEpoch, cachedGeneration: cachedGeneration, cachedSession: cachedSession, cachedSeq: cachedSeq, hasLatest: hasLatest, duplicate: duplicate}
+		cachedCredential: cachedCredential, cachedEpoch: cachedEpoch, cachedGeneration: cachedGeneration, cachedSession: cachedSession, cachedSeq: cachedSeq, hasLatest: hasLatest, duplicate: duplicate, persistedLastSeen: persistedLastSeen}
 	if !durable {
-		return s.acceptInMemory(ctx, nodeID, state, normalized, fence, response)
+		return s.acceptInMemory(ctx, lease, nodeID, state, normalized, fence, response)
 	}
 	return s.persistReport(ctx, nodeID, credential, state, normalized, fence, response)
 }
 
-func (s *Service) acceptInMemory(ctx context.Context, nodeID string, state *nodeState, report normalizedReport, fence acceptanceSnapshot, response v1.ReportResponse) (v1.ReportResponse, error) {
+func (s *Service) acceptInMemory(ctx context.Context, lease *storage.Lease, nodeID string, state *nodeState, report normalizedReport, fence acceptanceSnapshot, response v1.ReportResponse) (v1.ReportResponse, error) {
 	now := response.ServerTime
 	var err error
 	probes := state.copyProbes(fence.credential, fence.epoch, fence.generation, fence.session)
@@ -476,7 +587,10 @@ func (s *Service) acceptInMemory(ctx context.Context, nodeID string, state *node
 		}
 	}
 	probes.retainTargets(currentRuntime.ProbeTargets)
-	if err := probes.buffer(ctx, s.db, nodeID, report.ProbeResults, currentRuntime.ProbeTargets); err != nil {
+	if err := probes.buffer(ctx, lease, nodeID, report.ProbeResults, currentRuntime.ProbeTargets); err != nil {
+		return v1.ReportResponse{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return v1.ReportResponse{}, err
 	}
 	state.commitProbes(probes, fence.generation, fence.session)
@@ -491,6 +605,7 @@ func (s *Service) acceptInMemory(ctx context.Context, nodeID string, state *node
 	state.seq, state.latest, state.receivedAt = report.Seq, report.body, now
 	state.public = snapshot
 	state.cpuPercent, state.memoryUsedPercent = liveMetricValue(snapshot.cpu), liveMetricValue(snapshot.memory)
+	state.storageGeneration = lease.Generation()
 	state.mu.Unlock()
 	s.recordSample(nodeID, now, report.Metrics)
 	return response, nil
@@ -505,7 +620,13 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 	}
 	defer releaseWrite()
 	state.stageTraffic(fence.credential, fence.epoch, report.Report, fence.generation, fence.session, now)
-	tx, err := s.db.BeginTx(ctx, nil)
+	writer, err := s.db.Acquire(ctx, storage.Writer)
+	if err != nil {
+		return v1.ReportResponse{}, err
+	}
+	defer writer.Close()
+	ctx = writer.Context()
+	tx, err := writer.BeginWrite(ctx)
 	if err != nil {
 		return v1.ReportResponse{}, err
 	}
@@ -558,8 +679,16 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 	probes := state.copyProbes(txCredential, txEpoch, fence.generation, txSession)
 	probes.retainTargets(currentRuntime.ProbeTargets)
 	if !fence.duplicate && txRuntime != string(report.runtimeJSON) {
+		args := []any{nodeID}
+		condition := ""
+		if len(currentRuntime.ProbeTargets) > 0 {
+			condition = " AND target NOT IN (" + strings.TrimSuffix(strings.Repeat("?,", len(currentRuntime.ProbeTargets)), ",") + ")"
+			for _, target := range currentRuntime.ProbeTargets {
+				args = append(args, target)
+			}
+		}
 		for _, table := range []string{"probe_latest", "probe_hourly"} {
-			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE node_id=? AND target NOT IN (SELECT value FROM json_each(?, '$.probe_targets'))", nodeID, string(report.runtimeJSON)); err != nil {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE node_id=?"+condition, args...); err != nil {
 				return v1.ReportResponse{}, err
 			}
 		}
@@ -580,9 +709,21 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 			return v1.ReportResponse{}, err
 		}
 		if err := tx.Commit(); err != nil {
+			if errors.Is(err, storage.ErrCommitUnknown) {
+				probes.generation, probes.session = fence.generation, txSession
+				state.rememberReportCommit(tx, writer.Generation(), committed, probes, nil)
+			}
 			return v1.ReportResponse{}, err
 		}
 		state.commitTraffic(committed, now)
+		state.mu.Lock()
+		state.storageGeneration = writer.Generation()
+		state.lastSeenPersisted = fence.persistedLastSeen
+		if state.public.receivedAt.IsZero() {
+			state.public = snapshotPublicFromLatest(state.latest, state.receivedAt)
+		}
+		state.cpuPercent, state.memoryUsedPercent = liveMetricValue(state.public.cpu), liveMetricValue(state.public.memory)
+		state.mu.Unlock()
 		state.commitProbes(probes, fence.generation, txSession)
 		response.TrafficAcks = state.trafficAcks(report.Traffic, now)
 		return response, nil
@@ -593,10 +734,31 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 	if err != nil {
 		return v1.ReportResponse{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET run_generation = ?, report_session_id = ?, last_seen = ?, system = COALESCE(?, system), agent_runtime = ? WHERE id = ?`, strconv.FormatUint(report.RunGeneration, 10), report.SessionID, timekey.Format(now), report.system, string(report.runtimeJSON), nodeID); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE nodes SET run_generation = ?, report_session_id = ?, last_seen = ?, `system` = COALESCE(?, `system`), agent_runtime = ? WHERE id = ?", strconv.FormatUint(report.RunGeneration, 10), report.SessionID, timekey.Format(now), report.system, string(report.runtimeJSON), nodeID); err != nil {
 		return v1.ReportResponse{}, err
 	}
 	if err := tx.Commit(); err != nil {
+		if errors.Is(err, storage.ErrCommitUnknown) {
+			probes.generation, probes.session = report.RunGeneration, report.SessionID
+			snapshot := snapshotPublic(report.Metrics, now)
+			var sample history.Sample
+			if s.samples != nil {
+				sample = history.Snapshot(nodeID, now, report.Metrics)
+			}
+			state.rememberReportCommit(tx, writer.Generation(), committed, probes, func() {
+				state.mu.Lock()
+				state.generation, state.seq, state.latest, state.receivedAt = report.RunGeneration, report.Seq, report.body, now
+				state.storageGeneration = 0
+				state.public = snapshot
+				state.cpuPercent, state.memoryUsedPercent = liveMetricValue(snapshot.cpu), liveMetricValue(snapshot.memory)
+				copy(state.credential[:], txCredential)
+				state.credentialEpoch, state.session, state.lastSeenPersisted = txEpoch, report.SessionID, now
+				state.mu.Unlock()
+				if s.samples != nil {
+					s.publishSample(sample)
+				}
+			})
+		}
 		return v1.ReportResponse{}, err
 	}
 	state.commitTraffic(committed, now)
@@ -605,6 +767,7 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 	snapshot := snapshotPublic(report.Metrics, now)
 	state.mu.Lock()
 	state.generation, state.seq, state.latest, state.receivedAt = report.RunGeneration, report.Seq, report.body, now
+	state.storageGeneration = writer.Generation()
 	state.public = snapshot
 	state.cpuPercent, state.memoryUsedPercent = liveMetricValue(snapshot.cpu), liveMetricValue(snapshot.memory)
 	copy(state.credential[:], txCredential)
@@ -617,7 +780,7 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 }
 
 type rowQueryer interface {
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryContext(context.Context, string, ...any) (*storage.Rows, error)
 }
 
 func (s *Service) prune(ctx context.Context, query rowQueryer) error {
@@ -647,7 +810,10 @@ func (s *Service) stateCandidates() map[string]stateCandidate {
 	defer s.mu.Unlock()
 	candidates := make(map[string]stateCandidate)
 	for id, state := range s.states {
-		if state.refs == 0 {
+		state.mu.Lock()
+		hasPending := state.pendingCommit != nil
+		state.mu.Unlock()
+		if state.refs == 0 && !hasPending {
 			candidates[id] = stateCandidate{state: state, touch: state.touch}
 		}
 	}
@@ -685,7 +851,13 @@ func (s *Service) Latest(ctx context.Context, nodeID string) (LatestReport, erro
 	var credential []byte
 	var credentialEpoch int64
 	var status, generationText, session string
-	if err := s.db.QueryRowContext(ctx, "SELECT token_hash, credential_epoch, status, run_generation, report_session_id FROM nodes WHERE id = ?", nodeID).Scan(&credential, &credentialEpoch, &status, &generationText, &session); err != nil {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return LatestReport{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	if err := lease.QueryRowContext(ctx, "SELECT token_hash, credential_epoch, status, run_generation, report_session_id FROM nodes WHERE id = ?", nodeID).Scan(&credential, &credentialEpoch, &status, &generationText, &session); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return LatestReport{}, nodes.ErrNotFound
 		}
@@ -704,7 +876,7 @@ func (s *Service) Latest(ctx context.Context, nodeID string) (LatestReport, erro
 	}
 	defer s.releaseState(state)
 	state.mu.Lock()
-	if !state.matchesIdentity(credential, credentialEpoch, generation, session) {
+	if !s.db.Ready() || state.storageGeneration != lease.Generation() || lease.Generation() != s.db.Generation() || !state.matchesIdentity(credential, credentialEpoch, generation, session) {
 		state.mu.Unlock()
 		return LatestReport{}, nodes.ErrNotFound
 	}
@@ -729,6 +901,10 @@ func (s *Service) recordSample(nodeID string, now time.Time, metrics v1.Metrics)
 		return
 	}
 	sample := history.Snapshot(nodeID, now, metrics)
+	s.publishSample(sample)
+}
+
+func (s *Service) publishSample(sample history.Sample) {
 	select {
 	case s.samples <- sample:
 	default:

@@ -28,7 +28,7 @@ func TestLatestAndPublicProjectionFenceReplacementIdentity(t *testing.T) {
 				if err := f.nodes.RevokeCredential(ctx, f.id); err != nil {
 					t.Fatal(err)
 				}
-				es := enrollment.NewService(f.db, enrollment.Options{Now: func() time.Time { return f.now }})
+				es := enrollment.NewService(f.nodes.Database(), enrollment.Options{Now: func() time.Time { return f.now }})
 				ticket, err := es.CreateSingle(ctx, f.id)
 				if err != nil {
 					t.Fatal(err)
@@ -49,7 +49,7 @@ func TestLatestAndPublicProjectionFenceReplacementIdentity(t *testing.T) {
 			}
 			// 另一 ingest 实例已接受新身份的报告；代次、会话和接收时间与旧身份相同。
 			// 原实例仍持有旧报告，因此只有凭据或 epoch 围栏能阻止串用。
-			current := NewService(f.db, Options{Now: func() time.Time { return f.now }})
+			current := NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }})
 			report := f.report
 			report.Metrics.CPUPercent = new(20.0)
 			if _, err := acceptReport(ctx, current, token, report); err != nil {

@@ -76,6 +76,8 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
       const severity = controls.severity = select(SEVERITIES, item?.severity || 'warning', {name: 'severity'});
       const routing = controls.channel_ids = select(channels.map((entry) => [entry.id, entry.enabled ? entry.name : t('alerts.disabledName', {name: entry.name})]), '', {name: 'channel_ids', multiple: true, size: Math.min(6, Math.max(2, channels.length)), class: 'input alert-multiselect'});
       for (const option of routing.options) option.selected = Boolean(item?.channel_ids.includes(option.value));
+      // 没有频道时不渲染空列表，只保留说明；提交仍携带空数组。
+      routing.hidden = channels.length === 0;
       form.append(field(t('alerts.column.name'), name), field(t('alerts.state.enabled'), enabled), field(t('alerts.column.metric'), metric), targetField, condition,
         h('div', {class: 'form-row'}, field(t('alerts.rules.durationMinutes'), minutes), field(t('alerts.rules.additionalSeconds'), seconds)),
         ...scopeFields, field(t('alerts.column.severity'), severity),
@@ -112,7 +114,7 @@ export function rulesPanel({rules, groups, nodes, channels, signal, saved}) {
       toast(t('alerts.rules.deleted'));
     } catch (error) { if (!signal?.aborted) toastError(error); }
   };
-  return panel(t('alerts.tab.rules'), {action: button(t('alerts.rules.add'), {small: true, variant: 'primary', onClick: () => edit(null)})},
+  return panel(null, {action: button(t('alerts.rules.add'), {small: true, variant: 'primary', onClick: () => edit(null)})},
     rules.length ? dataTable({caption: t('alerts.rules.caption'),
       columns: ['name', 'condition', 'scope', 'severity', 'state', 'channels', 'actions'].map((key) => t(`alerts.column.${key}`)),
       body: h('tbody', null, rules.map((rule) => h('tr', null,

@@ -13,6 +13,7 @@ import (
 
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
 )
@@ -53,11 +54,11 @@ type Record struct {
 }
 
 type Service struct {
-	db  *sql.DB
+	db  *storage.Database
 	now func() time.Time
 }
 
-func New(db *sql.DB, now func() time.Time) *Service {
+func New(db *storage.Database, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
 	}
@@ -106,7 +107,13 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 	if !uuid.ValidUUID(nodeID) || !req.valid() {
 		return Record{}, ErrInvalid
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return Record{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return Record{}, err
 	}
@@ -115,7 +122,11 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 	var epoch int64
 	var credential sql.NullBool
 	var stopped bool
-	err = tx.QueryRowContext(ctx, `SELECT name,status,agent_runtime,credential_epoch,length(token_hash)>0,run_generation,report_session_id,CASE WHEN json_valid(system) THEN COALESCE(json_extract(system,'$.agent_version'),'') ELSE '' END,`+StoppedSQL+` FROM nodes WHERE id=?`, nodeID).Scan(&name, &status, &raw, &epoch, &credential, &generation, &session, &version, &stopped)
+	versionSQL := "CASE WHEN json_valid(`system`) THEN COALESCE(json_extract(`system`,'$.agent_version'),'') ELSE '' END"
+	if tx.Dialect() == storage.MySQL {
+		versionSQL = "CASE WHEN JSON_VALID(`system`) THEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(`system`,'$.agent_version')) COLLATE utf8mb4_0900_bin,'') ELSE '' END"
+	}
+	err = tx.QueryRowContext(ctx, `SELECT name,status,agent_runtime,credential_epoch,length(token_hash)>0,run_generation,report_session_id,`+versionSQL+`,`+StoppedSQL+` FROM nodes WHERE id=?`, nodeID).Scan(&name, &status, &raw, &epoch, &credential, &generation, &session, &version, &stopped)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
@@ -180,7 +191,13 @@ func (s *Service) CreateGroup(ctx context.Context, groupID, actor string, req Cr
 		return result, ErrInvalid
 	}
 	var name string
-	if err := s.db.QueryRowContext(ctx, `SELECT name FROM groups WHERE id=?`, groupID).Scan(&name); err != nil {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return result, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	if err := lease.QueryRowContext(ctx, "SELECT name FROM `groups` WHERE id=?", groupID).Scan(&name); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return result, ErrNotFound
 		}
@@ -189,7 +206,7 @@ func (s *Service) CreateGroup(ctx context.Context, groupID, actor string, req Cr
 	if req.Confirm != name {
 		return result, ErrInvalid
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name FROM nodes WHERE group_id=? ORDER BY id`, groupID)
+	rows, err := lease.QueryContext(ctx, `SELECT id,name FROM nodes WHERE group_id=? ORDER BY id`, groupID)
 	if err != nil {
 		return result, err
 	}
@@ -218,7 +235,7 @@ func (s *Service) CreateGroup(ctx context.Context, groupID, actor string, req Cr
 			result.Created++
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return result, err
 	}
@@ -235,7 +252,13 @@ func (s *Service) Cancel(ctx context.Context, nodeID, id string) error {
 	if !uuid.ValidUUID(id) {
 		return ErrInvalid
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -261,13 +284,19 @@ const columns = `id,kind,target_version,expires_at,node_id,credential_epoch,stat
 
 func (s *Service) List(ctx context.Context, nodeID string) ([]Record, error) {
 	var exists bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE id=?)`, nodeID).Scan(&exists); err != nil {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	if err := lease.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE id=?)`, nodeID).Scan(&exists); err != nil {
 		return nil, err
 	}
 	if !exists {
 		return nil, ErrNotFound
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+columns+` FROM agent_commands WHERE node_id=? ORDER BY created_at DESC,id DESC LIMIT 20`, nodeID)
+	rows, err := lease.QueryContext(ctx, `SELECT `+columns+` FROM agent_commands WHERE node_id=? ORDER BY created_at DESC,id DESC LIMIT 20`, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +341,7 @@ func (s *Service) List(ctx context.Context, nodeID string) ([]Record, error) {
 	return result, rows.Err()
 }
 
-func transition(ctx context.Context, tx *sql.Tx, nodeID, id, state, code string, now time.Time, delivering bool) error {
+func transition(ctx context.Context, tx *storage.Tx, nodeID, id, state, code string, now time.Time, delivering bool) error {
 	query := `UPDATE agent_commands SET state=?,result_code=?,finished_at=? WHERE id=? AND state IN ('pending','delivered')`
 	if delivering {
 		query = `UPDATE agent_commands SET state=?,result_code=?,delivered_at=? WHERE id=? AND state='pending'`
@@ -328,7 +357,7 @@ func transition(ctx context.Context, tx *sql.Tx, nodeID, id, state, code string,
 	}
 	return audit.InsertDetails(ctx, tx, "command."+state, nodeID, now, audit.Details{"command_id": id, "result_code": code})
 }
-func transitionMatching(ctx context.Context, tx *sql.Tx, nodeID, condition, state, code string, now time.Time, args ...any) error {
+func transitionMatching(ctx context.Context, tx *storage.Tx, nodeID, condition, state, code string, now time.Time, args ...any) error {
 	values := append([]any{nodeID}, args...)
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM agent_commands WHERE node_id=? AND state IN ('pending','delivered') AND `+condition, values...)
 	if err != nil {
@@ -355,18 +384,18 @@ func transitionMatching(ctx context.Context, tx *sql.Tx, nodeID, condition, stat
 	}
 	return nil
 }
-func expire(ctx context.Context, tx *sql.Tx, nodeID string, now time.Time) error {
+func expire(ctx context.Context, tx *storage.Tx, nodeID string, now time.Time) error {
 	return transitionMatching(audit.WithSystemActor(ctx, "server"), tx, nodeID, `expires_at<=?`, "expired", "expired", now, timekey.Format(now))
 }
 
 // CancelActive is used by identity/disable transactions, including credential reset.
-func CancelActive(ctx context.Context, tx *sql.Tx, nodeID string, now time.Time) error {
+func CancelActive(ctx context.Context, tx *storage.Tx, nodeID string, now time.Time) error {
 	return transitionMatching(audit.WithSystemActor(ctx, "server"), tx, nodeID, "1=1", "canceled", "", now)
 }
 
 // Exchange applies results before recording the delivery, so a result recovered
 // by a new process stays bound to the generation that received the command.
-func Exchange(ctx context.Context, tx *sql.Tx, nodeID string, epoch int64, generation string, results []v1.CommandResult, now time.Time) (*v1.Command, error) {
+func Exchange(ctx context.Context, tx *storage.Tx, nodeID string, epoch int64, generation string, results []v1.CommandResult, now time.Time) (*v1.Command, error) {
 	ctx = audit.WithSystemActor(ctx, "agent")
 	if len(results) > 2 {
 		return nil, ErrInvalid
@@ -426,7 +455,13 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64,
 	if limit <= 0 {
 		return 0, ErrInvalid
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return 0, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -454,11 +489,7 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64,
 			return 0, err
 		}
 	}
-	result, err := tx.ExecContext(ctx, `DELETE FROM agent_commands WHERE id IN (SELECT c.id FROM agent_commands c WHERE c.state NOT IN ('pending','delivered') AND c.finished_at<? AND c.id<>(SELECT n.id FROM agent_commands n WHERE n.node_id=c.node_id ORDER BY n.created_at DESC,n.id DESC LIMIT 1) ORDER BY c.finished_at LIMIT ?)`, timekey.Format(now.Add(-Retention)), limit)
-	if err != nil {
-		return 0, err
-	}
-	count, err := result.RowsAffected()
+	count, err := storage.DeleteBatch(ctx, tx, `SELECT c.id FROM agent_commands c WHERE c.state NOT IN ('pending','delivered') AND c.finished_at<? AND c.id<>(SELECT n.id FROM agent_commands n WHERE n.node_id=c.node_id ORDER BY n.created_at DESC,n.id DESC LIMIT 1) ORDER BY c.finished_at LIMIT ?`, `DELETE FROM agent_commands WHERE id=?`, timekey.Format(now.Add(-Retention)), limit)
 	if err != nil {
 		return 0, err
 	}

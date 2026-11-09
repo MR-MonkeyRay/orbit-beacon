@@ -2,7 +2,7 @@ package storage
 
 const announcementsSchema = `
 CREATE TABLE announcements (
- id TEXT PRIMARY KEY,
+ id TEXT PRIMARY KEY NOT NULL,
  level TEXT NOT NULL CHECK(level IN ('info','warning','critical')),
  title TEXT NOT NULL,
  body TEXT NOT NULL,

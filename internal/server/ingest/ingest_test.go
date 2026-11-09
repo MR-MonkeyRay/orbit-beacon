@@ -2,10 +2,12 @@ package ingest_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"math"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,13 +31,13 @@ func TestNonFiniteMetricsRejectedBeforeStateMutation(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer db.Close()
-			n := nodes.NewService(db, nodes.Options{MaxNodes: 1})
+			n := nodes.NewService(stableDatabase(t, db), nodes.Options{MaxNodes: 1})
 			node, err := n.CreatePending(ctx, nodes.CreateRequest{Name: "invalid metric"})
 			if err != nil {
 				t.Fatal(err)
 			}
 			now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
-			enrollments := enrollment.NewService(db, enrollment.Options{MaxNodes: 1, Now: func() time.Time { return now }})
+			enrollments := enrollment.NewService(stableDatabase(t, db), enrollment.Options{MaxNodes: 1, Now: func() time.Time { return now }})
 			ticket, err := enrollments.CreateSingle(ctx, node.ID)
 			if err != nil {
 				t.Fatal(err)
@@ -43,7 +45,7 @@ func TestNonFiniteMetricsRejectedBeforeStateMutation(t *testing.T) {
 			if _, err := enrollments.Enroll(ctx, ticket.Token, v1.EnrollmentRequest{ProtocolVersion: 1, InstallationID: "installation-one", NodeToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}); err != nil {
 				t.Fatal(err)
 			}
-			s := ingest.NewService(db, ingest.Options{Now: func() time.Time { return now }})
+			s := ingest.NewService(stableDatabase(t, db), ingest.Options{Now: func() time.Time { return now }})
 			var report v1.Report
 			if err := json.Unmarshal([]byte(`{"protocol_version":1,"run_generation":1,"session_id":"one","seq":1,"sampled_at":"2026-10-26T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]},"metrics":{"cpu_percent":10,"load1":0,"load5":0,"load15":0,"memory_total_bytes":100,"memory_available_bytes":50,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":10,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000}}},"traffic":[]}`), &report); err != nil {
 				t.Fatal(err)
@@ -100,4 +102,27 @@ func publicNode(ctx context.Context, ns *nodes.Service, s *ingest.Service, id st
 		}
 	}
 	return ingest.PublicNode{}, nodes.ErrNotFound
+}
+
+var fixtureDatabases sync.Map
+
+func stableDatabase(t *testing.T, db *sql.DB) *storage.Database {
+	t.Helper()
+	if stable, ok := fixtureDatabases.Load(db); ok {
+		return stable.(*storage.Database)
+	}
+	var path string
+	if err := db.QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	stable, err := storage.OpenMain(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureDatabases.Store(db, stable)
+	t.Cleanup(func() {
+		fixtureDatabases.Delete(db)
+		_ = stable.Close()
+	})
+	return stable
 }

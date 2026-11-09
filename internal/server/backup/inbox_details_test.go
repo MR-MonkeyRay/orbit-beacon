@@ -31,7 +31,7 @@ func TestRestoreRejectsMalformedInboxDetailsBeforeInstall(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			work := framingTempDir(t)
-			payloads, err := CreateSnapshotPayloads(ctx, source, filepath.Join(work, "payloads"), []Category{Events}, time.Now)
+			payloads, err := CreateSnapshotPayloads(ctx, snapshotSources(t, source), source, filepath.Join(work, "payloads"), []Category{Events}, time.Now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -52,11 +52,11 @@ func TestRestoreRejectsMalformedInboxDetailsBeforeInstall(t *testing.T) {
 			}
 			archive := filepath.Join(work, "malformed-inbox.tar.gz.age")
 			password := "AbCdEf0123456789"
-			_, err = WriteArchive(ctx, archive, Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: "88888888-8888-4888-8888-888888888888", CreatedAt: time.Now().UTC(), ServerVersion: "test", SchemaVersion: storage.CurrentSchemaVersion, HistorySchemaVersion: 1, Categories: []Category{Events}, Snapshots: payloads.Snapshots}, payloads.Files, password)
+			_, err = WriteArchive(ctx, archive, Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: "88888888-8888-4888-8888-888888888888", CreatedAt: time.Now().UTC(), ServerVersion: "test", SchemaVersion: storage.CurrentSchemaVersion, HistorySchemaVersion: storage.HistorySchemaVersion, Categories: []Category{Events}, Snapshots: payloads.Snapshots}, payloads.Files, password)
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = Restore(ctx, target, archive, password, true)
+			_, err = Restore(ctx, restoreConfig(target), archive, password, true)
 			if restoreCode(err) != "restore_invalid_data" {
 				t.Errorf("malformed inbox details restore error = %v, want restore_invalid_data", err)
 			}

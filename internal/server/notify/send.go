@@ -71,6 +71,7 @@ type sender struct {
 	// 刻意不导出：仅同包测试可覆盖 Telegram/TLS。
 	telegramBase string
 	now          func() time.Time
+	slots        chan struct{}
 }
 
 func newSender(opts Options) *sender {
@@ -79,11 +80,15 @@ func newSender(opts Options) *sender {
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	// 避免 net/http 的空闲连接诊断把远端主动发来的字节写入日志。
 	transport := &http.Transport{DisableKeepAlives: true, Proxy: nil, DialContext: safe.DialContext, TLSClientConfig: tlsCfg, TLSHandshakeTimeout: SendTimeout, ResponseHeaderTimeout: SendTimeout, MaxIdleConns: 8, MaxIdleConnsPerHost: 2, IdleConnTimeout: 30 * time.Second}
-	return &sender{allowInsecureWebhooks: opts.AllowInsecureWebhooks, client: &http.Client{Timeout: SendTimeout, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, dialer: safe, tlsConfig: tlsCfg, telegramBase: "https://api.telegram.org", now: opts.Now}
+	return &sender{allowInsecureWebhooks: opts.AllowInsecureWebhooks, client: &http.Client{Timeout: SendTimeout, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, dialer: safe, tlsConfig: tlsCfg, telegramBase: "https://api.telegram.org", now: opts.Now, slots: make(chan struct{}, 4)}
 }
 func (s *sender) Send(ctx context.Context, c Channel, secret string, p Payload) Result {
 	ctx, cancel := context.WithTimeout(ctx, SendTimeout)
 	defer cancel()
+	if !s.reserveSlot(ctx) {
+		return networkFailure(ctx.Err())
+	}
+	defer func() { <-s.slots }()
 	if c.Kind == "email" {
 		return s.email(ctx, c, secret, p)
 	}
@@ -91,6 +96,19 @@ func (s *sender) Send(ctx context.Context, c Channel, secret string, p Payload) 
 	if e != "" {
 		return failure(e, false)
 	}
+	return s.sendHTTP(req, c.Kind)
+}
+
+func (s *sender) reserveSlot(ctx context.Context) bool {
+	select {
+	case s.slots <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (s *sender) sendHTTP(req *http.Request, kind string) Result {
 	response, err := s.client.Do(req)
 	if err != nil {
 		return networkFailure(err)
@@ -102,7 +120,7 @@ func (s *sender) Send(ctx context.Context, c Channel, secret string, p Payload) 
 		if readErr != nil {
 			return networkFailure(readErr)
 		}
-		return channelResponse(c.Kind, body)
+		return channelResponse(kind, body)
 	}
 	if response.StatusCode >= 300 && response.StatusCode < 400 {
 		return failure("redirect_denied", false)
@@ -122,8 +140,16 @@ func (s *sender) Send(ctx context.Context, c Channel, secret string, p Payload) 
 	return result
 }
 func (s *sender) buildRequest(ctx context.Context, c Channel, secret string, p Payload) (*http.Request, string) {
+	text := ""
+	if c.Kind != "webhook" {
+		text = renderMessage(p, c.Config.Template, messageLimit(c.Kind))
+	}
+	return s.messageRequest(ctx, c, secret, p, text, p.Rule.Severity)
+}
+
+func (s *sender) messageRequest(ctx context.Context, c Channel, secret string, payload any, text, severity string) (*http.Request, string) {
 	if _, ok := imChannels[c.Kind]; ok {
-		return s.imRequest(ctx, c, secret, p)
+		return s.imTextRequest(ctx, c, secret, text, severity)
 	}
 	var raw []byte
 	target := c.Config.URL
@@ -134,7 +160,7 @@ func (s *sender) buildRequest(ctx context.Context, c Channel, secret string, p P
 			return nil, code
 		}
 		var err error
-		raw, err = json.Marshal(p)
+		raw, err = json.Marshal(payload)
 		if err != nil {
 			return nil, "invalid_payload"
 		}
@@ -143,7 +169,7 @@ func (s *sender) buildRequest(ctx context.Context, c Channel, secret string, p P
 		raw, _ = json.Marshal(struct {
 			ChatID string `json:"chat_id"`
 			Text   string `json:"text"`
-		}{c.Config.ChatID, renderMessage(p, c.Config.Template, 4096)})
+		}{c.Config.ChatID, text})
 	default:
 		return nil, "invalid_destination"
 	}

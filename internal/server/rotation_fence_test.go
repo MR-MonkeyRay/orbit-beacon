@@ -39,7 +39,7 @@ func TestCredentialRotationReleasesPoisonedFenceWithoutResettingExactRetries(t *
 				t.Fatalf("rotation retained revoked snapshot: %+v, %v", latest, err)
 			}
 			assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, claim), http.StatusOK)
-			restarted := ingest.NewService(f.db, ingest.Options{Now: func() time.Time { return f.now }})
+			restarted := ingest.NewService(f.nodes.Database(), ingest.Options{Now: func() time.Time { return f.now }})
 			if _, err := acceptReport(context.Background(), restarted, newToken, mustReport(t, reportBody(1, 2, "clone", 50))); err == nil {
 				t.Fatal("exact enrollment retry reset established session fence")
 			}

@@ -31,14 +31,14 @@ func (l *outboxLatest) Latest(context.Context, string) (ingest.LatestReport, err
 
 func (f *fixture) evaluator(t *testing.T, nodes int) (*alerts.Evaluator, *outboxLatest) {
 	t.Helper()
-	tx, err := f.db.BeginTx(context.Background(), nil)
+	tx, err := beginMainWrite(t, f.db, context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
 	for i := range nodes {
 		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
-		if _, err = tx.Exec(`INSERT INTO nodes(id,name,status,token_hash,first_enrolled_at,last_seen,created_at) VALUES(?,'node','unknown',?,?,?,?)`, id, []byte(id), timekey.Format(f.now), timekey.Format(f.now), timekey.Format(f.now)); err != nil {
+		if _, err = tx.ExecContext(context.Background(), `INSERT INTO nodes(id,name,status,token_hash,first_enrolled_at,last_seen,created_at) VALUES(?,'node','unknown',?,?,?,?)`, id, []byte(id), timekey.Format(f.now), timekey.Format(f.now), timekey.Format(f.now)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -46,7 +46,7 @@ func (f *fixture) evaluator(t *testing.T, nodes int) (*alerts.Evaluator, *outbox
 		t.Fatal(err)
 	}
 	latest := &outboxLatest{f: f, value: 90}
-	return alerts.NewEvaluator(alerts.NewService(f.db, nil), latest, alerts.EvaluatorOptions{Notifier: f.s, Now: func() time.Time { return f.now }}), latest
+	return alerts.NewEvaluator(alerts.NewService(mainHandle(t, f.db), nil), latest, alerts.EvaluatorOptions{Notifier: f.s, Now: func() time.Time { return f.now }}), latest
 }
 
 func (f *fixture) count(t *testing.T, query string, want int) {
@@ -60,7 +60,7 @@ func (f *fixture) count(t *testing.T, query string, want int) {
 func TestDeliveryFailureRollsBackAlertAndInboxAndRetries(t *testing.T) {
 	f := newFixture(t)
 	// 持续时间已满足后的失败不能重新开始计时。
-	if _, err := alerts.NewService(f.db, nil).Save(context.Background(), f.rule.ID, alerts.Patch{ForSeconds: json.RawMessage(`60`)}); err != nil {
+	if _, err := alerts.NewService(mainHandle(t, f.db), nil).Save(context.Background(), f.rule.ID, alerts.Patch{ForSeconds: json.RawMessage(`60`)}); err != nil {
 		t.Fatal(err)
 	}
 	e, latest := f.evaluator(t, 1)
@@ -165,8 +165,8 @@ func TestCommittedAlertSurvivesServiceLossWithoutWorker(t *testing.T) {
 		t.Fatal("enqueue sent before worker start")
 	}
 	// 丢弃整个 Service（包括唤醒提示），只有同一数据库传给新实例。
-	f.s = New(f.db, f.s.box, f.s.opts)
-	e = alerts.NewEvaluator(alerts.NewService(f.db, nil), latest, alerts.EvaluatorOptions{Notifier: f.s})
+	f.s = New(mainHandle(t, f.db), f.s.box, f.s.opts)
+	e = alerts.NewEvaluator(alerts.NewService(mainHandle(t, f.db), nil), latest, alerts.EvaluatorOptions{Notifier: f.s})
 	if err := e.Evaluate(context.Background(), f.now); err != nil {
 		t.Fatal(err)
 	}
@@ -207,8 +207,8 @@ func TestMoreThan256AlertEventsPersistAndCoalesceWithoutReplay(t *testing.T) {
 	f.count(t, "SELECT count(*) FROM notification_deliveries", MaxPendingPerChannel)
 	f.count(t, "SELECT sum(coalesced_count) FROM notification_deliveries", events)
 	// 丢弃唤醒，重建评估器和通知服务不能给已合并事件补发单条通知。
-	f.s = New(f.db, f.s.box, f.s.opts)
-	e = alerts.NewEvaluator(alerts.NewService(f.db, nil), latest, alerts.EvaluatorOptions{Notifier: f.s})
+	f.s = New(mainHandle(t, f.db), f.s.box, f.s.opts)
+	e = alerts.NewEvaluator(alerts.NewService(mainHandle(t, f.db), nil), latest, alerts.EvaluatorOptions{Notifier: f.s})
 	if err := e.Evaluate(context.Background(), f.now); err != nil {
 		t.Fatal(err)
 	}
@@ -247,11 +247,14 @@ func TestEnqueueEnabledChannelsAndIdempotency(t *testing.T) {
 	f.enqueue(t, n)
 	f.enqueue(t, n)
 	f.count(t, "SELECT count(*) FROM notification_deliveries", 1)
+	n.NodeName += " "
+	f.enqueue(t, n)
+	f.count(t, "SELECT count(*) FROM notification_deliveries", 2)
 	if _, err := f.s.Save(context.Background(), f.channel.ID, Patch{Enabled: new(bool)}); err != nil {
 		t.Fatal(err)
 	}
 	f.enqueue(t, f.note("disabled-channel"))
-	f.count(t, "SELECT count(*) FROM notification_deliveries", 1)
+	f.count(t, "SELECT count(*) FROM notification_deliveries", 2)
 }
 
 func TestCoalescingRollbackKeepsOriginalSummary(t *testing.T) {
@@ -259,7 +262,7 @@ func TestCoalescingRollbackKeepsOriginalSummary(t *testing.T) {
 	for i := range MaxPendingPerChannel {
 		f.enqueue(t, f.note(fmt.Sprintf("event-%d", i)))
 	}
-	tx, err := f.db.BeginTx(context.Background(), nil)
+	tx, err := beginMainWrite(t, f.db, context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +388,7 @@ func TestSilenceSkipsPersistentOutboxUntilRelease(t *testing.T) {
 	f := newFixture(t)
 	e, latest := f.evaluator(t, 1)
 	ctx := context.Background()
-	service := alerts.NewService(f.db, func() time.Time { return f.now })
+	service := alerts.NewService(mainHandle(t, f.db), func() time.Time { return f.now })
 	raw, _ := json.Marshal(map[string]any{"reason": "maintenance", "scope_kind": "all", "ends_at": f.now.Add(time.Hour)})
 	var req alerts.SilenceRequest
 	if err := json.Unmarshal(raw, &req); err != nil {

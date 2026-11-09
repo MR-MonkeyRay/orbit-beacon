@@ -6,7 +6,7 @@ export function localeSelect({beforeChange = async () => true, onError = () => {
   let pending = false;
   let mounted = false;
   const preferenceNames = {system: t('controls.followSystem'), 'zh-CN': '中文', en: 'English'};
-  const select = h('select', {class: 'input', value: preference, title: t('controls.language.preference', {preference: preferenceNames[preference]}), 'aria-label': t('controls.language')},
+  const select = h('select', {class: 'input', value: preference, title: t('controls.language.preference', {preference: preferenceNames[preference]}), 'aria-label': t('controls.language.preference', {preference: preferenceNames[preference]})},
     h('option', {value: 'system'}, t('controls.followSystem')),
     h('option', {value: 'zh-CN'}, '中文'),
     h('option', {value: 'en'}, 'English'));
@@ -35,6 +35,7 @@ export function localeSelect({beforeChange = async () => true, onError = () => {
       }
       preference = next;
       select.title = t('controls.language.preference', {preference: preferenceNames[next]});
+      select.setAttribute('aria-label', select.title);
       reload();
     } catch (error) {
       select.value = preference;

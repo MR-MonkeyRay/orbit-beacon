@@ -10,9 +10,15 @@ export const availabilityLevel = (value) => value === null ? 'neutral' : value >
 
 // Keep the same thirty elements when a public snapshot updates.
 export function availabilityBar() {
-  const bars = Array.from({length: 30}, () => h('span', {class: 'availability-day', 'aria-hidden': 'true'}));
+  // 触屏没有 hover：点按某天时把它的 title 显示在下方说明行。
+  const detail = h('span', {class: 'availability-detail', hidden: true});
+  const bars = Array.from({length: 30}, () => {
+    const bar = h('span', {class: 'availability-day', 'aria-hidden': 'true'});
+    bar.addEventListener('click', () => { detail.textContent = bar.getAttribute('title'); detail.hidden = false; });
+    return bar;
+  });
   const total = h('span', {class: 'availability-total num', 'aria-hidden': 'true'});
-  const root = h('div', {class: 'availability', role: 'img'}, h('div', {class: 'availability-days'}, bars), total);
+  const root = h('div', {class: 'availability', role: 'img'}, h('div', {class: 'availability-days'}, bars), total, detail);
   root.update = (data) => {
     const start = Date.parse(`${data.start_day}T00:00:00Z`);
     const end = new Date(start + 29 * DAY).toISOString().slice(0, 10);

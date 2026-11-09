@@ -64,7 +64,6 @@ export function backupPlanDialog(plan, {signal, onSaved}) {
   let controls;
   const dialog = formDialog({
     title: plan ? t('data.plan.editTitle', {name: plan.name}) : t('data.plan.addTitle'),
-    intro: t('data.plan.intro'),
     submit: t(plan ? 'data.plan.save' : 'data.plan.add'),
     build: (form) => {
       form.classList.add('data-plan-form');
@@ -86,14 +85,14 @@ export function backupPlanDialog(plan, {signal, onSaved}) {
       const region = input({name: 'region', 'data-field': 'destination.region', value: destination.region || '', required: true, autocomplete: 'off'});
       const bucket = input({name: 'bucket', 'data-field': 'destination.bucket', value: destination.bucket || '', required: true, autocomplete: 'off'});
       const prefix = input({name: 'prefix', 'data-field': 'destination.prefix', value: destination.prefix || '', autocomplete: 'off'});
-      const pathStyle = checkField(t('data.plan.pathStyle'), 'path_style', destination.path_style ?? true, t('data.plan.pathStyleHint'));
+      const pathStyle = checkField(t('data.plan.pathStyle'), 'path_style', destination.path_style ?? true);
       const replace = checkField(t('data.plan.replaceCredentials'), 'replace_credentials', !plan, t('data.plan.replaceCredentialsHint'));
       const keyID = input({name: 'access_key_id', 'data-field': 'credentials.access_key_id', autocomplete: 'off', spellcheck: false});
       const secret = input({name: 'secret_access_key', 'data-field': 'credentials.secret_access_key', type: 'password', autocomplete: 'new-password'});
       const token = input({name: 'session_token', 'data-field': 'credentials.session_token', type: 'password', autocomplete: 'new-password'});
       const credentialFields = h('fieldset', {class: 'data-destination'}, h('legend', null, t('data.plan.replacementCredentials')),
         field(t('data.plan.keyID'), keyID), field(t('data.plan.secretKey'), secret), field(t('data.plan.sessionToken'), token));
-      const credentialsNote = h('p', {class: 'text-note'}, plan ? t('data.plan.credentialsStatus', {credentials: t(plan.credentials_set ? 'data.plan.set' : 'data.plan.notSet'), token: t(plan.session_token_set ? 'data.plan.set' : 'data.plan.notSet')}) : t('data.plan.credentialsRequired'));
+      const credentialsNote = plan ? h('p', {class: 'text-note'}, t('data.plan.credentialsStatus', {credentials: t(plan.credentials_set ? 'data.plan.set' : 'data.plan.notSet'), token: t(plan.session_token_set ? 'data.plan.set' : 'data.plan.notSet')})) : null;
       const allowPrivate = checkField(t('data.plan.allowPrivate'), 'allow_private_networks', destination.allow_private_networks || false, t('data.plan.allowPrivateHint'));
       const providerHint = h('p', {class: 'text-note'});
       const recommendation = button(t('data.plan.useEndpoint'), {onClick: () => {

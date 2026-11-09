@@ -155,11 +155,34 @@ export function field(label, control, options = {}) {
   visible.addEventListener('input', () => {
     if (visible.classList.contains('touched') || visible.hasAttribute('aria-invalid')) control.showError(validationText(control));
   });
-  visible.addEventListener('blur', () => { if (control.value !== '') visible.classList.add('touched'); });
+  visible.addEventListener('blur', () => {
+    if (control.value !== '') {
+      visible.classList.add('touched');
+      // touched 触发 .touched:invalid 的红框，但 aria-invalid 只在 showError 时设置；
+      // blur 后同步一次，让读屏与视觉一致。
+      control.showError(validationText(control));
+    }
+  });
   const check = ['checkbox', 'radio'].includes(control.type) && !options.inner;
+  // aria-required 已表达必填；星号只做视觉提示，对读屏隐藏。
+  // 星号放在 label 旁边而不是内部：运行期 required 会切换（通道类型、
+  // 告警指标等），且部分标签整体重写 textContent，放在内部会被擦掉。
+  const marker = check ? null : h('span', {class: 'field-required', 'aria-hidden': 'true'}, '*');
+  const syncMarker = () => { if (marker) marker.hidden = !control.required; };
+  if (marker) {
+    let owner = control;
+    while (owner && !Object.getOwnPropertyDescriptor(owner, 'required')?.get) owner = Object.getPrototypeOf(owner);
+    const walk = owner && Object.getOwnPropertyDescriptor(owner, 'required');
+    let fallback = control.required;
+    Object.defineProperty(control, 'required', {configurable: true,
+      get() { return walk?.get ? walk.get.call(control) : fallback; },
+      set(next) { if (walk?.set) walk.set.call(control, next); else fallback = next; syncMarker(); }
+    });
+  }
+  syncMarker();
   return h('div', {class: 'field'},
     check ? h('label', {class: 'check-row', for: control.id}, control, h('strong', null, label))
-      : h('label', {for: visible.id, class: 'field-label', id: labelID}, label),
+      : h('div', {class: 'field-label-row'}, h('label', {for: visible.id, class: 'field-label', id: labelID}, label), marker),
     check ? null : options.inner || (control.entry ? control.wrapper : control),
     options.hint ? h('span', {class: 'text-note', id: hintID}, options.hint) : null,
     error);
@@ -312,7 +335,7 @@ export function tagEditor(values) {
   function render() {
     box.replaceChildren(...tags.map((tag) => h('span', {class: 'tag'}, h('span', {title: tag}, tag),
       h('button', {type: 'button', 'aria-label': t('controls.tags.remove', {tag}), onclick: () => { tags = tags.filter((item) => item !== tag); changed(); entry.focus(); }}, icon('x')))), entry);
-    entry.placeholder = t(tags.length ? 'controls.tags.add' : 'controls.tags.placeholder');
+    entry.placeholder = t('controls.tags.add');
   }
   render();
   return h('div', {class: 'field'}, h('label', {for: entry.id, class: 'field-label', id: labelID}, t('controls.tags.label')), box,

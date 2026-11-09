@@ -7,6 +7,7 @@ export default {
   'common.status.stopped': 'Stopped',
 
   'common.refresh': 'Refresh',
+  'common.state': 'Status',
   'common.retry': 'Retry',
   'common.status.online': 'Online',
   'common.status.offline': 'Offline',
@@ -22,7 +23,7 @@ export default {
   'common.unavailable': 'Unavailable',
   'common.none': 'None',
   'common.language': 'Language',
-  'errors.generic': 'The operation could not be completed.',
+  'errors.generic': 'The operation could not be completed. Check your connection and try again.',
   'errors.withRequest': '{message} (request {id})',
   'errors.locale_storage_failed': 'Could not save language preference.',
   'common.status.never': 'Never seen',

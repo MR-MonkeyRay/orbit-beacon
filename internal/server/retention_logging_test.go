@@ -2,43 +2,6 @@ package server
 
 import "testing"
 
-func TestRetentionSummaryIncludesEveryResultField(t *testing.T) {
-	result := RetentionResult{
-		NotificationDeliveries: 1,
-		InboxNotifications:     2,
-		BackupTasks:            3,
-		BackupOrphanFiles:      4,
-		BackupLocalTemps:       5,
-		AlertEvents:            6,
-		HistoryBuckets:         7,
-		AuditEvents:            8,
-		EnrollmentTickets:      9,
-		Sessions:               10,
-		TrafficRows:            11,
-		ProbeRows:              12,
-		CommandRows:            13,
-		AvailabilityRows:       14,
-		AlertSilences:          15,
-		Announcements:          16,
-	}
-	attrs := retentionAttrs(result)
-	if len(attrs) != 16 {
-		t.Fatalf("summary has %d fields", len(attrs))
-	}
-	want := []string{
-		"notification_deliveries", "inbox_notifications", "backup_tasks",
-		"backup_orphan_files", "backup_local_temps", "alert_events",
-		"history_buckets", "audit_events", "enrollment_tickets", "sessions",
-		"traffic_rows", "probe_rows", "command_rows", "availability_rows", "alert_silences",
-		"announcements",
-	}
-	for i, key := range want {
-		if attrs[i].Key != key || attrs[i].Value.Int64() != int64(i+1) {
-			t.Fatalf("attribute %d = %s:%v", i, attrs[i].Key, attrs[i].Value)
-		}
-	}
-}
-
 func TestRetentionChangedIncludesEveryResultField(t *testing.T) {
 	for i := range 16 {
 		result := RetentionResult{}

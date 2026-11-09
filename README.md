@@ -1,24 +1,24 @@
 # OrbitBeacon
 
-自托管的多节点监控系统：Go 服务器提供 API、内嵌网页与 SQLite 存储；Linux Agent 以非 root 身份采集并通过 HTTP / HTTPS 上报。控制台与状态页均支持简体中文（zh-CN）和英文（en）。
+自托管的多节点监控系统：Go 服务器提供 API、内嵌控制台与状态页，默认使用 SQLite，也可配置 [MySQL 主备](deploy/README.md#数据库)；Linux Agent 以非 root 身份采集并通过 HTTP / HTTPS 上报。控制台与状态页支持简体中文（zh-CN）和英文（en），状态页支持公告与可替换主题。
 
 ## 功能
 
-| 功能 | 界面入口 |
+| 功能 | 入口 / 方式 |
 | --- | --- |
-| 节点指标、历史与服务探测 | 节点 / Nodes；Agent 设置 / Agent settings 查看本地运行参数 |
-| 流量计费 | 节点详情 → 详情 → 流量计费 / Details → Traffic billing |
-| Agent 注册 | 节点详情 → 注册 Agent / Enroll Agent；分组支持批量注册 |
-| 匿名展示 | 设置 → 状态页 / Settings → Status page；节点详情 → 状态页展示 / Status page listing |
-| 告警规则、事件与通知通道 | 告警 / Alerts |
-| 管理员与个人密码 | 设置 → 管理员、账户 / Settings → Administrators, Account |
-| 加密导出与备份计划 | 设置 → 数据操作 / Settings → Data operations |
-| 告警与备份结果 | 站内通知 / Notifications |
+| 节点指标、历史、探测与可用率 | 节点 / Nodes；节点详情 → 监控 / Monitoring、服务探测 / Service probes |
+| 流量计费与配额告警 | 节点详情 → 流量 / Traffic；告警 / Alerts（配额规则） |
+| Agent 注册、运行设置与远程升级 | 节点详情 → 注册 Agent / Enroll Agent、Agent 设置 / Agent settings；设置 → 分组 / Groups |
+| 状态页、公告、公开字段与主题 | 设置 → 状态页 / Status page；节点详情 → 状态页展示 / Status page listing；构建时选择 `web/themes/<name>` |
+| 告警、静默与通知 | 告警 / Alerts；站内通知 / Notifications |
+| 管理员、两步验证与只读 API 令牌 | 设置 → 管理员 / Administrators、账户 / Account |
+| 加密导出、备份计划、恢复与数据清理 | 设置 → 数据操作 / Data operations；数据管理 / Data management |
 
 ## 重要限制
 
-- 控制台面向桌面和平板，最小宽度 744px；状态页支持手机。
-- 节点状态、指标历史与通知可靠性边界见[状态与历史](docs/architecture.md#状态与历史)、[告警与通知](docs/architecture.md#告警与通知)。
+- 控制台支持桌面、平板与手机；手机使用抽屉导航，宽表格横向滚动。状态页支持所有设备。
+- 节点状态、历史、可用率、公告与通知可靠性边界见[状态与历史](docs/architecture.md#状态与历史)、[实时传输](docs/architecture.md#实时传输)、[告警与通知](docs/architecture.md#告警与通知)。
+- 公告与公开字段均为匿名可见文本，不自动脱敏；不要填写凭据、IP、主机名或秘密。
 - 当前部署支持 Linux；Agent 支持本地许可控制的远程版本升级，不提供终端或任意命令执行。
 
 ## 快速开始
@@ -64,7 +64,7 @@ build/orbitbeacon-server health --url http://localhost:8080
 
 ### 6. 公开节点
 
-在“状态页展示 / Status page listing”填写公开信息，勾选“公开此节点 / Publish this node”。展示资格、公开范围及全站开关规则见[安全](docs/architecture.md#安全)、[实时传输](docs/architecture.md#实时传输)。
+在“状态页展示 / Status page listing”填写公开信息，勾选“公开此节点 / Publish this node”。展示资格、公开范围及全站开关规则见[安全](docs/architecture.md#安全)、[实时传输](docs/architecture.md#实时传输)。全站公告在“设置 → 状态页 / Settings → Status page”添加，只在开始时间后显示；设置结束时间后到点隐藏。
 
 ## 文档
 
@@ -73,6 +73,7 @@ build/orbitbeacon-server health --url http://localhost:8080
 - [只读 MCP 客户端](docs/mcp.md)
 - [数据流、状态、保留与安全边界](docs/architecture.md)
 - [Web 开发](web/README.md)
+- [公开首页主题开发](web/themes/README.md)
 - [术语、日志与文案约定](docs/conventions.md)
 - [接口契约（OpenAPI）](api/openapi.yaml)
 
@@ -80,17 +81,18 @@ build/orbitbeacon-server health --url http://localhost:8080
 
 入口在 [`cmd/`](cmd/)，实现在 [`internal/`](internal/)；界面修改与产物同步见 [Web 开发](web/README.md)。
 
-接口字段、认证与错误码见[接口契约（OpenAPI）](api/openapi.yaml)。`info.version` 仅随接口契约变更更新，独立于程序发布版本 `VERSION`；仅修改说明文字不升版。
+接口字段、认证与错误码见[接口契约（OpenAPI）](api/openapi.yaml)。
 
 ```sh
 go mod verify
 go test -count=1 ./...
-go test -race -count=1 ./internal/server/... ./internal/agent/...
+go test -race -count=1 ./...
 go vet ./...
-go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 ```
 
-[CI](.github/workflows/ci.yml) 检查 Go、Web、漏洞及安装脚本；`main` push 全部通过后调用[发布流程](.github/workflows/release.yml)。Release 标题直接使用 [`VERSION`](VERSION)（如 `0.1.0`），Git 标签仍为 `v0.1.0`。直接上传 `orbitbeacon-<server|agent|mcp>-linux-<amd64|arm64>` 六个独立二进制及统一的 `SHA256SUMS`，文件名不重复版本号、不再打压缩包；镜像仍支持两种架构。手动下载后先核对校验和，再用 `chmod +x` 赋予执行权限。重跑同版本发布会在二进制上传成功后移除该版本原有的分架构压缩包。使用前确认目标版本已发布。
+[CI](.github/workflows/ci.yml) 在 PR 和 `main` push 时运行 Go 测试（含 race）、静态分析、Web 检查、漏洞扫描与安装脚本测试；远程 MySQL 回归仅在配置测试凭据后的 `main` push 时运行。
+
+`main` 全部检查通过后调用[发布流程](.github/workflows/release.yml)，提供 server、agent、mcp 的 amd64 / arm64 独立二进制、`SHA256SUMS` 与双架构服务端镜像。手动下载后先核对校验和，再 `chmod +x`。
 
 ## 许可证
 

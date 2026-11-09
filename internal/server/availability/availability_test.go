@@ -27,7 +27,7 @@ func fixture(t *testing.T) (*Service, *sql.DB, *time.Time) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return NewService(db, func() time.Time { return now }, nil), db, &now
+	return NewService(mainHandle(t, db), func() time.Time { return now }, nil), db, &now
 }
 func exec(t *testing.T, db *sql.DB, query string, args ...any) {
 	t.Helper()

@@ -125,7 +125,7 @@ func TestConsoleLiveDetailRetainsDurableRuntimeWithoutInMemorySample(t *testing.
 	id, token, _ := enrollHTTP(t, f, "restart", 174)
 	cookie, _ := loginAgent(t, f, "admin")
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, reportBody(1, 1, "restart", 25)), 1)
-	f.ingest = ingest.NewService(f.db, ingest.Options{Now: func() time.Time { return f.now }})
+	f.ingest = ingest.NewService(f.nodes.Database(), ingest.Options{Now: func() time.Time { return f.now }})
 	var err error
 	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return f.now }}))
 	if err != nil {

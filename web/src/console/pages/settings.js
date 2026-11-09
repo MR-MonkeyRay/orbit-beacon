@@ -5,7 +5,8 @@ import {h, icon} from '../../shared/dom.js';
 import {allNodes, api, getNavigationSignal, groupsList, invalidate, invalidateSession, nameLookup, session, updateUser, usersList} from '../api.js';
 import {when} from '../format.js';
 import {ignoreNavigationCancellation, refresh} from '../router.js';
-import {busy, button, emptyState, facts, iconButton, link, pageHead, panel, skeleton} from '../ui/components.js';
+import {busy, button, emptyState, facts, iconButton, link, pageHead, panel} from '../ui/components.js';
+import {lazyTab} from '../ui/lazy-tab.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, onSubmit, passwordInput, validateBytes} from '../ui/forms.js';
@@ -42,44 +43,8 @@ export async function settingsPage() {
     'public-page': publicPageTab
   };
   return h('div', null,
-    pageHead(t('shell.settings'), null),
+    pageHead(t('shell.settings')),
     tabSet(settingsTabs.map((tab) => ({...tab, label: t(tab.label), build: builds[tab.id]})), t('settings.settingsSections')));
-}
-
-function lazyTab(load, render) {
-  const navigation = getNavigationSignal();
-  let result;
-  let hasResult = false;
-  let pending;
-  let requestEpoch = 0;
-  return () => {
-    const element = h('div');
-    const start = () => {
-      if (navigation?.aborted) return;
-      element.replaceChildren(skeleton());
-      if (!pending) { pending = load(); requestEpoch += 1; }
-      const request = pending;
-      const epoch = requestEpoch;
-      request.then((value) => {
-        if (navigation?.aborted || epoch !== requestEpoch) return;
-        if (!hasResult) {
-          result = value;
-          hasResult = true;
-          pending = null;
-        }
-        element.replaceChildren(render(value));
-      }, (error) => {
-        if (navigation?.aborted || epoch !== requestEpoch) return;
-        pending = null;
-        element.replaceChildren(h('div', {class: 'form-error', role: 'alert'},
-          h('p', null, errorText(error)),
-          button(t('common.retry'), {onClick: start})));
-      });
-    };
-    if (hasResult) element.replaceChildren(render(result));
-    else start();
-    return element;
-  };
 }
 
 function publicPageTab() {
@@ -147,7 +112,8 @@ function publicPageTab() {
       control.disabled = !active() || !session.csrf;
     }
   });
-  const element = panel(t('settings.publicPage'), {},
+  // 面板标题与“公开页”标签页同名，省略。
+  const element = panel(null, {},
     h('label', {class: 'switch'}, control, h('span', {class: 'switch-track', 'aria-hidden': 'true'}),
       h('span', {class: 'switch-text'}, h('strong', null, t('settings.publicEnable')))),
     errorBox, note, retry);
@@ -234,7 +200,7 @@ function administratorsTab(users) {
         validateBytes(username, 1, 128, t('account.username'));
         validateBytes(password, 8, 1024, t('account.password'));
         form.append(field(t('account.username'), username),
-          field(t('settings.initialPassword'), password, {inner: password.wrapper, hint: t('settings.initialPasswordHint')}),
+          field(t('settings.initialPassword'), password, {inner: password.wrapper, hint: t('account.passwordBytes')}),
           h('label', {class: 'check-row'}, mustChangePassword, h('span', null, t('settings.requirePasswordChange'))));
       },
       action: async () => {
@@ -265,8 +231,9 @@ function administratorsTab(users) {
  })}) : null, iconButton('edit', t('settings.renameAdministratorLabel', {name: item.username}), () => editUser(item)), remove));
   });
 
-  return h('section', {class: 'panel', 'aria-labelledby': 'administrators-title'},
-    h('div', {class: 'panel-head'}, h('h2', {id: 'administrators-title'}, t('settings.administrators')), button(t('settings.addAdministrator'), {icon: 'plus', variant: 'primary', small: true, onClick: createUser})),
+  // 标题与“管理员”标签页同名，省略；操作按钮靠右。
+  return h('section', {class: 'panel'},
+    h('div', {class: 'panel-head panel-head-end'}, button(t('settings.addAdministrator'), {icon: 'plus', variant: 'primary', small: true, onClick: createUser})),
     h('div', {class: 'table-wrap'}, h('table', {class: 'table administrators-table'},
       h('thead', null, h('tr', null, h('th', {scope: 'col'}, t('account.username')), h('th', {scope: 'col', class: 'hide-compact'}, t('settings.created')),
         h('th', {scope: 'col'}, t('account.totp')), h('th', {scope: 'col'}, h('span', {class: 'sr'}, t('settings.actions'))))),
@@ -317,8 +284,8 @@ function groupsTab(groups, nodes) {
     } catch (error) { toastError(error); }
   };
   const addButton = button(t('settings.addGroup'), {icon: 'plus', variant: 'primary', small: !!groups.length, onClick: () => groupForm()});
-  if (!groups.length) return panel(t('settings.groups'), {}, emptyState(t('settings.noGroups'), null, addButton));
-  return panel(t('settings.groups'), {action: addButton},
+  if (!groups.length) return panel(null, {}, emptyState(t('settings.noGroups'), null, addButton));
+  return panel(null, {action: addButton},
     h('ul', {class: 'rows'}, groups.map((item) => {
       const size = nodes.filter((node) => node.group_id === item.id).length;
       const enrollment = button(t('settings.batchEnrollment'), {small: true});
@@ -350,6 +317,6 @@ function auditTab(page, names) {
     finally { busy(more, false); }
   }});
   more.hidden = !page.has_more;
-  return panel(t('settings.audit'), {},
+  return panel(null, {},
     events.length ? [list, more] : emptyState(t('settings.noAudit')));
 }

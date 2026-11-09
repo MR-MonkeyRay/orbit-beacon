@@ -4,22 +4,13 @@ import {h} from '../../shared/dom.js';
 import {api} from '../api.js';
 import {busy, button} from '../ui/components.js';
 import {confirmDialog, modal} from '../ui/dialogs.js';
+import {typedConfirmation} from '../ui/typed-confirmation.js';
 import {toastError} from '../ui/feedback.js';
 
-export async function confirmNodeDeletion(count) {
-  const expected = t('nodes.deletePhrase', {count});
-  const confirmation = h('input', {class: 'input', autocomplete: 'off', spellcheck: 'false', 'aria-label': t('nodes.typeConfirmLabel', {value: expected})});
-  const confirm = button(t('nodes.deleteNodes'), {variant: 'danger', className: 'solid', disabled: true});
-  const {closed} = modal(t('nodes.deleteBatchTitle', {count}), (close) => {
-    confirmation.addEventListener('input', () => { confirm.disabled = confirmation.value !== expected; });
-    confirm.addEventListener('click', () => close('confirm'));
-    return h('div', null,
-      h('div', {class: 'dialog-body'}, h('p', null, t('nodes.deleteIntro')),
-        h('p', null, t('nodes.typeConfirm', {value: expected})), confirmation),
-      h('div', {class: 'dialog-foot'}, button(t('nodes.cancel'), {onClick: () => close('dismiss')}), confirm));
-  });
-  return await closed === 'confirm';
-}
+export const confirmNodeDeletion = (count) => typedConfirmation({
+  title: t('nodes.deleteBatchTitle', {count}), expected: t('nodes.deletePhrase', {count}),
+  confirm: t('nodes.deleteNodes'), message: t('nodes.deleteIntro')
+});
 
 export function showNodeBatchResults(action, results, names) {
   const succeeded = results.filter((result) => result.status === 'succeeded').length;

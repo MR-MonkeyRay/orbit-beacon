@@ -21,13 +21,8 @@ var ErrSchemaTooNew = errors.New("database schema is newer than this binary")
 // ErrSchemaIncompatible 需要新的数据目录，而不是升级。
 var ErrSchemaIncompatible = errors.New("database schema is incompatible; initialize a new data directory")
 
-type Migration struct {
-	Version int
-	SQL     string
-}
-
 // CurrentSchemaVersion 是本二进制使用的主库 schema 基线版本。
-const CurrentSchemaVersion = 1
+const CurrentSchemaVersion = 2
 
 // Open 打开持久化本地数据库。驱动对池中每个连接应用连接级 pragma，
 // 而不仅是迁移连接。
@@ -37,20 +32,6 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		return nil, err
 	}
 	if err := initializeMainSchema(ctx, db); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	return db, nil
-}
-
-// OpenWithMigrations 使用与主数据库相同的安全文件检查和 SQLite 连接设置，
-// 应用独立的 schema。
-func OpenWithMigrations(ctx context.Context, path string, migrations []Migration) (*sql.DB, error) {
-	db, err := openDatabase(ctx, path)
-	if err != nil {
-		return nil, err
-	}
-	if err := Migrate(ctx, db, migrations); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -91,6 +72,10 @@ func openDatabase(ctx context.Context, path string) (*sql.DB, error) {
 }
 
 func initializeMainSchema(ctx context.Context, db *sql.DB) error {
+	return initializeSQLiteSchema(ctx, db, mainSchema, CurrentSchemaVersion)
+}
+
+func initializeSQLiteSchema(ctx context.Context, db *sql.DB, schema string, expected int) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -101,10 +86,10 @@ func initializeMainSchema(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	if objects == 0 {
-		if _, err := tx.ExecContext(ctx, mainSchema+`CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);`); err != nil {
+		if _, err := tx.ExecContext(ctx, schema+sqliteGuardSchema+`CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);`); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)`, CurrentSchemaVersion, timekey.Format(time.Now())); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)`, expected, timekey.Format(time.Now())); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -121,10 +106,27 @@ func initializeMainSchema(ctx context.Context, db *sql.DB) error {
 	if err := tx.QueryRowContext(ctx, `SELECT count(*),max(version) FROM schema_migrations`).Scan(&count, &version); err != nil {
 		return fmt.Errorf("%w: %v", ErrSchemaIncompatible, err)
 	}
-	if version.Valid && version.Int64 > CurrentSchemaVersion {
+	if version.Valid && version.Int64 > int64(expected) {
 		return ErrSchemaTooNew
 	}
-	if count != 1 || !version.Valid || version.Int64 != CurrentSchemaVersion {
+	if count != 1 || !version.Valid || version.Int64 != int64(expected) {
+		return ErrSchemaIncompatible
+	}
+	domain := MainDomain
+	if schema == historySchema {
+		domain = HistoryDomain
+	}
+	for _, table := range Tables(domain) {
+		rows, err := tx.QueryContext(ctx, "SELECT "+columnNames(table.Columns)+" FROM `"+table.Name+"` LIMIT 0")
+		if err != nil {
+			return ErrSchemaIncompatible
+		}
+		if err = rows.Close(); err != nil {
+			return err
+		}
+	}
+	var guard int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM storage_write_guard WHERE id=1").Scan(&guard); err != nil || guard != 1 {
 		return ErrSchemaIncompatible
 	}
 	return tx.Commit()
@@ -185,62 +187,9 @@ func validateDatabasePath(path string) (string, bool, error) {
 	return absolute, exists, nil
 }
 
-// Migrate 原子地应用每个未应用的版本及其台账行。
-func Migrate(ctx context.Context, db *sql.DB, migrations []Migration) error {
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
-		return err
-	}
-	// 旧二进制绝不能运行在由新二进制写入的 schema 上：
-	// 它会悄悄忽略自己不知道的列和不变量。
-	known := 0
-	for _, migration := range migrations {
-		known = max(known, migration.Version)
-	}
-	var applied sql.NullInt64
-	if err := db.QueryRowContext(ctx, "SELECT max(version) FROM schema_migrations").Scan(&applied); err != nil {
-		return err
-	}
-	if applied.Valid && applied.Int64 > int64(known) {
-		return fmt.Errorf("%w: database schema version %d is newer than supported version %d", ErrSchemaTooNew, applied.Int64, known)
-	}
-	for _, migration := range migrations {
-		if migration.Version < 1 {
-			return fmt.Errorf("migration version must be positive")
-		}
-		if err := applyMigration(ctx, db, migration); err != nil {
-			return fmt.Errorf("migration %d: %w", migration.Version, err)
-		}
-	}
-	return nil
-}
-
-func applyMigration(ctx context.Context, db *sql.DB, migration Migration) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var count int
-	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations WHERE version = ?", migration.Version).Scan(&count); err != nil {
-		return err
-	}
-	if count != 0 {
-		return tx.Commit()
-	}
-	if migration.SQL != "" {
-		if _, err := tx.ExecContext(ctx, migration.SQL); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)", migration.Version, timekey.Format(time.Now())); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 const foundationSchema = `
 CREATE TABLE users (
- id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+ id TEXT PRIMARY KEY NOT NULL, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
  must_change_password INTEGER NOT NULL DEFAULT 0 CHECK(must_change_password IN (0,1)),
  totp_ciphertext BLOB, totp_pending_ciphertext BLOB, totp_pending_at TEXT,
  totp_last_step INTEGER NOT NULL DEFAULT 0,
@@ -252,21 +201,21 @@ CREATE TABLE recovery_codes (
  PRIMARY KEY(user_id, code_hash)
 );
 CREATE TABLE sessions (
- token_hash BLOB PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ token_hash BLOB PRIMARY KEY NOT NULL, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
  expires_at INTEGER NOT NULL
 );
 CREATE INDEX sessions_user ON sessions(user_id);
 CREATE INDEX sessions_expiry ON sessions(expires_at);
 CREATE TABLE api_tokens (
- id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash BLOB NOT NULL UNIQUE,
+ id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, token_hash BLOB NOT NULL UNIQUE,
  created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
  created_at TEXT NOT NULL, expires_at TEXT, last_used_at TEXT,
  rate_limit_per_minute INTEGER CHECK (rate_limit_per_minute IS NULL OR rate_limit_per_minute BETWEEN 1 AND 100000)
 );
 CREATE INDEX api_tokens_owner ON api_tokens(created_by);
-CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+CREATE TABLE groups (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL UNIQUE);
 CREATE TABLE nodes (
- id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+ id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
  group_id TEXT REFERENCES groups(id) ON DELETE SET NULL,
  region TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', expires_on TEXT,
  token_hash BLOB UNIQUE, installation_id TEXT, first_enrolled_at TEXT, last_seen TEXT,
@@ -279,7 +228,7 @@ CREATE TABLE nodes (
 CREATE UNIQUE INDEX nodes_installation_identity ON nodes(installation_id) WHERE installation_id IS NOT NULL;
 CREATE INDEX nodes_group ON nodes(group_id);
 CREATE TABLE agent_commands (
- id TEXT PRIMARY KEY, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+ id TEXT PRIMARY KEY NOT NULL, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
  credential_epoch INTEGER NOT NULL,
  kind TEXT NOT NULL CHECK(kind IN ('upgrade','restart','stop')),
  target_version TEXT NOT NULL DEFAULT '',
@@ -294,7 +243,7 @@ CREATE INDEX agent_commands_recent ON agent_commands(node_id,created_at DESC,id 
 CREATE INDEX agent_commands_finished ON agent_commands(finished_at) WHERE state NOT IN ('pending','delivered');
 CREATE TABLE node_tags (node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE, tag TEXT NOT NULL, PRIMARY KEY(node_id,tag));
 CREATE TABLE enrollment_tokens (
- id TEXT PRIMARY KEY, token_hash BLOB NOT NULL UNIQUE, node_id TEXT REFERENCES nodes(id) ON DELETE CASCADE,
+ id TEXT PRIMARY KEY NOT NULL, token_hash BLOB NOT NULL UNIQUE, node_id TEXT REFERENCES nodes(id) ON DELETE CASCADE,
  group_id TEXT REFERENCES groups(id) ON DELETE SET NULL, expires_at TEXT NOT NULL,
  max_uses INTEGER NOT NULL DEFAULT 1, uses INTEGER NOT NULL DEFAULT 0, revoked_at TEXT
 );
@@ -307,9 +256,9 @@ CREATE INDEX enrollment_tokens_expiry_id ON enrollment_tokens(expires_at DESC, i
 CREATE INDEX enrollment_tokens_node ON enrollment_tokens(node_id);
 CREATE INDEX enrollment_tokens_group ON enrollment_tokens(group_id);
 CREATE INDEX enrollment_claims_node ON enrollment_claims(node_id);
-CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
 CREATE TABLE audit_events (
- id TEXT PRIMARY KEY, actor_id TEXT, action TEXT NOT NULL, target_id TEXT,
+ id TEXT PRIMARY KEY NOT NULL, actor_id TEXT, action TEXT NOT NULL, target_id TEXT,
  created_at TEXT NOT NULL, details TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX audit_events_created_id ON audit_events(created_at DESC, id DESC);

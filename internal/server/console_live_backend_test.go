@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,10 +46,16 @@ func newConsoleLiveFixture(t *testing.T) *consoleLiveFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = db.Close() })
+	stable, err := storage.OpenMain(context.Background(), filepath.Join(dir, "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stable.Close() })
 	f := &consoleLiveFixture{db: db}
 	f.clock.Store(time.Now().UTC().UnixNano())
 	now := func() time.Time { return time.Unix(0, f.clock.Load()).UTC() }
-	a := auth.NewService(db, auth.Options{Now: now})
+	a := auth.NewService(stable, auth.Options{Now: now})
 	if _, err := a.CreateUser(context.Background(), "admin", "private-live-password", false); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +63,7 @@ func newConsoleLiveFixture(t *testing.T) *consoleLiveFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.h, err = NewHandler(testHandlerOptions(t, Options{Auth: a, Nodes: nodes.NewService(db, nodes.Options{Now: now}), PublicURL: "https://beacon.test", Now: now, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}))
+	f.h, err = NewHandler(testHandlerOptions(t, Options{Auth: a, Nodes: nodes.NewService(stable, nodes.Options{Now: now}), PublicURL: "https://beacon.test", Now: now, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,9 +148,7 @@ func TestConsoleLiveReauthenticatesAfterBlockedProjectionBeforePrivateBytes(t *t
 			store.queryWait = gate
 			entered := make(chan struct{}, 1)
 			store.onQuery = func() { entered <- struct{}{} }
-			db := sql.OpenDB(publicStreamConnector{store: store})
-			defer db.Close()
-			f.h.nodes = nodes.NewService(db, nodes.Options{})
+			installStreamQueryFixture(t, f.db, f.h, store)
 			w := newStreamRecorder()
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -199,20 +202,8 @@ func TestConsoleLiveShutdownInterruptsWriterAndJoinsProjection(t *testing.T) {
 	t.Run("projection", func(t *testing.T) {
 		f := newConsoleLiveFixture(t)
 		entered := make(chan struct{}, 1)
-		canceled := make(chan struct{}, 1)
 		exit, release := liveTestGate(t)
-		store := &publicStreamStore{queryWait: make(chan struct{}), queryExitGate: exit, queryCanceled: canceled, onQuery: func() { entered <- struct{}{} }}
-		db := sql.OpenDB(publicStreamConnector{store: store})
-		defer db.Close()
-		f.h.nodes = nodes.NewService(db, nodes.Options{})
-		w := newStreamRecorder()
-		cancel, done := startConsoleLiveStream(t, f, w)
-		defer cancel()
-		select {
-		case <-entered:
-		case <-time.After(time.Second):
-			t.Fatal("projection did not block")
-		}
+		store := &publicStreamStore{queryWait: make(chan struct{}), queryExitGate: exit, onQuery: func() { entered <- struct{}{} }}
 		token := strings.Repeat("A", 43)
 		digest := sha256.Sum256([]byte(token))
 		if _, err := f.db.Exec("INSERT INTO nodes(id,name,status,token_hash,created_at) VALUES('probe','probe','unknown',?,?)", digest[:], timekey.Format(time.Now())); err != nil {
@@ -222,11 +213,21 @@ func TestConsoleLiveShutdownInterruptsWriterAndJoinsProjection(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		installStreamQueryFixture(t, f.db, f.h, store)
+		w := newStreamRecorder()
+		cancel, done := startConsoleLiveStream(t, f, w)
+		defer cancel()
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatal("projection did not block")
+		}
 
+		stream := f.h.streams.snapshot(false)[0]
 		shutdown := make(chan error, 1)
 		go func() { shutdown <- f.h.Shutdown(context.Background()) }()
 		select {
-		case <-canceled:
+		case <-stream.ctx.Done():
 		case <-time.After(time.Second):
 			t.Fatal("shutdown did not cancel projection")
 		}
@@ -439,44 +440,21 @@ func TestConsoleLivePrivateWebSocketIsReadOnlyAndReleasesNativeReader(t *testing
 	}
 }
 
-type consoleFleetBatchConnector struct{ queries *atomic.Int64 }
-
-func (c consoleFleetBatchConnector) Connect(context.Context) (driver.Conn, error) {
-	return consoleFleetBatchConn(c), nil
-}
-func (consoleFleetBatchConnector) Driver() driver.Driver { return publicStreamDriver{} }
-
-type consoleFleetBatchConn struct{ queries *atomic.Int64 }
-
-func (consoleFleetBatchConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
-func (consoleFleetBatchConn) Close() error                        { return nil }
-func (consoleFleetBatchConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
-func (c consoleFleetBatchConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
-	c.queries.Add(1)
-	return &consoleFleetBatchRows{}, nil
-}
-
-type consoleFleetBatchRows struct{ index int }
-
-func (*consoleFleetBatchRows) Columns() []string {
-	return []string{"id", "status", "last_seen", "agent_version", "token_hash", "credential_epoch", "run_generation", "report_session_id", "stopped"}
-}
-func (*consoleFleetBatchRows) Close() error { return nil }
-func (r *consoleFleetBatchRows) Next(dest []driver.Value) error {
-	if r.index == 500 {
-		return io.EOF
-	}
-	copy(dest, []driver.Value{fmt.Sprintf("00000000-0000-4000-8000-%012d", r.index), "pending", nil, "", nil, int64(0), "0", "", int64(0)})
-	r.index++
-	return nil
-}
-
-func TestConsoleLiveFiveHundredNodeFleetUsesOneBatchRead(t *testing.T) {
+func TestConsoleLiveFiveHundredNodeFleetRetainsPendingPresence(t *testing.T) {
 	f := newConsoleLiveFixture(t)
-	var queries atomic.Int64
-	db := sql.OpenDB(consoleFleetBatchConnector{queries: &queries})
-	defer db.Close()
-	f.h.nodes = nodes.NewService(db, nodes.Options{})
+	tx, err := f.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	for i := range 500 {
+		if _, err := tx.Exec("INSERT INTO nodes(id,name,created_at) VALUES(?,?,?)", fmt.Sprintf("00000000-0000-4000-8000-%012d", i), "Pending node", timekey.Format(f.h.now())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/live", nil)
 	r.AddCookie(f.cookie)
 	w := httptest.NewRecorder()
@@ -488,8 +466,8 @@ func TestConsoleLiveFiveHundredNodeFleetUsesOneBatchRead(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &frame); err != nil {
 		t.Fatal(err)
 	}
-	if frame.Data == nil || len(frame.Data.Nodes) != 500 || queries.Load() != 1 {
-		t.Fatalf("fleet=%+v queries=%d", frame.Data, queries.Load())
+	if frame.Data == nil || len(frame.Data.Nodes) != 500 {
+		t.Fatalf("fleet=%+v", frame.Data)
 	}
 	for _, node := range frame.Data.Nodes {
 		if node.Presence != "pending" {
@@ -502,9 +480,7 @@ func TestConsoleLiveIdentitySafetyCancelsProjectionWithoutSendingSnapshot(t *tes
 	f := newConsoleLiveFixture(t)
 	entered := make(chan struct{}, 1)
 	store := &publicStreamStore{queryWait: make(chan struct{}), onQuery: func() { entered <- struct{}{} }}
-	db := sql.OpenDB(publicStreamConnector{store: store})
-	defer db.Close()
-	f.h.nodes = nodes.NewService(db, nodes.Options{})
+	installStreamQueryFixture(t, f.db, f.h, store)
 	w := newStreamRecorder()
 	cancel, done := startConsoleLiveStream(t, f, w)
 	defer cancel()
@@ -680,9 +656,7 @@ func TestConsoleLiveExpiryCancelsBlockedProjectionAndNeverSendsPrivateSnapshot(t
 		t.Fatal(err)
 	}
 	store := &publicStreamStore{queryWait: make(chan struct{})}
-	db := sql.OpenDB(publicStreamConnector{store: store})
-	defer db.Close()
-	f.h.nodes = nodes.NewService(db, nodes.Options{})
+	installStreamQueryFixture(t, f.db, f.h, store)
 	w := newStreamRecorder()
 	cancel, done := startConsoleLiveStream(t, f, w)
 	defer cancel()

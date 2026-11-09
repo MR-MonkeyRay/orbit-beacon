@@ -10,6 +10,7 @@ import (
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -34,7 +35,7 @@ type probeBuffer struct {
 }
 
 type probeQueryer interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryRowContext(context.Context, string, ...any) *storage.Row
 }
 
 // 节点的接受闸门串行化缓冲区变更与提交。身份是缓冲时观测到的持久化身份，
@@ -140,7 +141,7 @@ func (b *probeBuffer) buffer(ctx context.Context, q probeQueryer, nodeID string,
 	return nil
 }
 
-func (b *probeBuffer) persist(ctx context.Context, tx *sql.Tx, nodeID string, now time.Time) error {
+func (b *probeBuffer) persist(ctx context.Context, tx *storage.Tx, nodeID string, now time.Time) error {
 	for target, entry := range b.targets {
 		if len(entry.pending) == 0 {
 			continue
@@ -159,7 +160,11 @@ func (b *probeBuffer) persist(ctx context.Context, tx *sql.Tx, nodeID string, no
 			if result.TLSExpiresAt != nil {
 				expiry = timekey.Format(*result.TLSExpiresAt)
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO probe_latest(node_id,target,ok,latency_ms,error,status_code,checked_at,tls_expires_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(node_id,target) DO UPDATE SET ok=excluded.ok,latency_ms=excluded.latency_ms,error=excluded.error,status_code=excluded.status_code,checked_at=excluded.checked_at,tls_expires_at=excluded.tls_expires_at WHERE excluded.checked_at>probe_latest.checked_at`, nodeID, target, result.OK, result.LatencyMS, result.Error, result.StatusCode, timekey.Format(result.CheckedAt), expiry); err != nil {
+			query := `INSERT INTO probe_latest(node_id,target,ok,latency_ms,error,status_code,checked_at,tls_expires_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(node_id,target) DO UPDATE SET ok=excluded.ok,latency_ms=excluded.latency_ms,error=excluded.error,status_code=excluded.status_code,checked_at=excluded.checked_at,tls_expires_at=excluded.tls_expires_at WHERE excluded.checked_at>probe_latest.checked_at`
+			if tx.Dialect() == storage.MySQL {
+				query = `INSERT INTO probe_latest(node_id,target,ok,latency_ms,error,status_code,checked_at,tls_expires_at) VALUES(?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE ok=IF(VALUES(checked_at)>checked_at,VALUES(ok),ok),latency_ms=IF(VALUES(checked_at)>checked_at,VALUES(latency_ms),latency_ms),error=IF(VALUES(checked_at)>checked_at,VALUES(error),error),status_code=IF(VALUES(checked_at)>checked_at,VALUES(status_code),status_code),tls_expires_at=IF(VALUES(checked_at)>checked_at,VALUES(tls_expires_at),tls_expires_at),checked_at=GREATEST(checked_at,VALUES(checked_at))`
+			}
+			if _, err := tx.ExecContext(ctx, query, nodeID, target, result.OK, result.LatencyMS, result.Error, result.StatusCode, timekey.Format(result.CheckedAt), expiry); err != nil {
 				return err
 			}
 			counted = result.CheckedAt
@@ -177,7 +182,11 @@ func (b *probeBuffer) persist(ctx context.Context, tx *sql.Tx, nodeID string, no
 			if result.LatencyMS != nil {
 				latency = *result.LatencyMS
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms,latency_max_ms) VALUES(?,?,?,1,?,?,?) ON CONFLICT(node_id,target,hour) DO UPDATE SET checks=probe_hourly.checks+1,failures=probe_hourly.failures+excluded.failures,latency_sum_ms=probe_hourly.latency_sum_ms+excluded.latency_sum_ms,latency_max_ms=max(probe_hourly.latency_max_ms,excluded.latency_max_ms)`, nodeID, target, timekey.Format(hour), failures, latency, latency); err != nil {
+			query = `INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms,latency_max_ms) VALUES(?,?,?,1,?,?,?) ON CONFLICT(node_id,target,hour) DO UPDATE SET checks=probe_hourly.checks+1,failures=probe_hourly.failures+excluded.failures,latency_sum_ms=probe_hourly.latency_sum_ms+excluded.latency_sum_ms,latency_max_ms=max(probe_hourly.latency_max_ms,excluded.latency_max_ms)`
+			if tx.Dialect() == storage.MySQL {
+				query = `INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms,latency_max_ms) VALUES(?,?,?,1,?,?,?) ON DUPLICATE KEY UPDATE checks=checks+1,failures=failures+VALUES(failures),latency_sum_ms=latency_sum_ms+VALUES(latency_sum_ms),latency_max_ms=GREATEST(latency_max_ms,VALUES(latency_max_ms))`
+			}
+			if _, err := tx.ExecContext(ctx, query, nodeID, target, timekey.Format(hour), failures, latency, latency); err != nil {
 				return err
 			}
 		}

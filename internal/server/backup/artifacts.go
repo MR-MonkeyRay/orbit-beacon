@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/server/securefs"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/uuid"
 )
 
@@ -87,6 +88,12 @@ func (s *Service) openTaskArtifact(task Task) (*os.File, error) {
 // OpenArtifact 暴露可定位的描述符，而非缓冲后的归档。存储的
 // result_location 仅供展示，绝不参与文件选择。
 func (s *Service) OpenArtifact(ctx context.Context, id string) (*os.File, Task, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, Task{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if !uuid.ValidUUID(id) {
 		return nil, Task{}, &Error{Code: "task_not_found"}
 	}

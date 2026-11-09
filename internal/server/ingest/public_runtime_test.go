@@ -27,12 +27,12 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 	defer db.Close()
 	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
-	ns := nodes.NewService(db, nodes.Options{Now: clock})
+	ns := nodes.NewService(stableDatabase(t, db), nodes.Options{Now: clock})
 	n, err := ns.CreatePending(ctx, nodes.CreateRequest{Name: "private"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	es := enrollment.NewService(db, enrollment.Options{Now: clock})
+	es := enrollment.NewService(stableDatabase(t, db), enrollment.Options{Now: clock})
 	ticket, err := es.CreateSingle(ctx, n.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +45,7 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 	if _, err := ns.PatchPublicSettings(ctx, n.ID, nodes.PublicSettingsPatch{Enabled: &enabled, Name: &name}); err != nil {
 		t.Fatal(err)
 	}
-	s := ingest.NewService(db, ingest.Options{Now: clock, DisablePersistOffset: true})
+	s := ingest.NewService(stableDatabase(t, db), ingest.Options{Now: clock, DisablePersistOffset: true})
 	out, err := publicNode(ctx, ns, s, n.ID, now)
 	if err != nil || out.Status != "unknown" || out.CPUPercent != nil {
 		t.Fatalf("before reports: %+v %v", out, err)
@@ -83,7 +83,7 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 			t.Fatalf("at %v: %+v %v", test.delta, out, err)
 		}
 	}
-	restarted := ingest.NewService(db, ingest.Options{Now: clock})
+	restarted := ingest.NewService(stableDatabase(t, db), ingest.Options{Now: clock})
 	out, err = publicNode(ctx, ns, restarted, n.ID, now)
 	if err != nil || out.Status != "online" || out.CPUPercent != nil {
 		t.Fatalf("restart: %+v %v", out, err)

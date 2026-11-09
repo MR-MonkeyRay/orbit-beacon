@@ -70,14 +70,14 @@
 .shell {
   display: grid;
   grid-template-columns: 248px minmax(0,1fr);
-  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .sidebar {
   position: sticky;
   top: 0;
   z-index: var(--z-nav);
-  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   gap: 6px;

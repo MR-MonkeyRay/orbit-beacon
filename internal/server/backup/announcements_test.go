@@ -52,7 +52,7 @@ func TestAnnouncementBackupRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	work := filepath.Join(framingTempDir(t), "orbit-c2-payloads")
-	if _, err = CreateSnapshotPayloads(ctx, source, work, []Category{Configuration}, time.Now); err != nil {
+	if _, err = CreateSnapshotPayloads(ctx, snapshotSources(t, source), source, work, []Category{Configuration}, time.Now); err != nil {
 		t.Fatal(err)
 	}
 	payload, err := openPayload(ctx, filepath.Join(work, "configuration.sqlite"))
@@ -66,7 +66,7 @@ func TestAnnouncementBackupRoundTrip(t *testing.T) {
 		t.Fatalf("snapshot %d %v", count, err)
 	}
 	archive, password := restoreArchive(t, source, []Category{Configuration})
-	if _, err = Restore(ctx, target, archive, password, true); err != nil {
+	if _, err = Restore(ctx, restoreConfig(target), archive, password, true); err != nil {
 		t.Fatal(err)
 	}
 	var body string

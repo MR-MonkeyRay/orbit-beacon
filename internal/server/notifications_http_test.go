@@ -18,7 +18,7 @@ const validChannel = `{"name":"Primary webhook","kind":"webhook","enabled":true,
 func TestNotificationHTTPCRUDRoutingAuthzAndSecretSafety(t *testing.T) {
 	f := newHTTP(t, 2)
 	box, _ := secretbox.New(bytes.Repeat([]byte{9}, 32), "orbitbeacon notification channel v1")
-	notifications := notify.New(f.db, box, notify.Options{})
+	notifications := notify.New(f.nodes.Database(), box, notify.Options{})
 	var logs bytes.Buffer
 	h, e := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Notifications: notifications, PublicURL: publicURL, AccessLog: true, Logger: slog.New(slog.NewJSONHandler(&logs, nil))}))
 	if e != nil {
@@ -102,7 +102,7 @@ func TestNotificationHTTPCRUDRoutingAuthzAndSecretSafety(t *testing.T) {
 func TestNotificationHTTP405AndCapacity(t *testing.T) {
 	f := newHTTP(t, 1)
 	box, _ := secretbox.New(bytes.Repeat([]byte{1}, 32), "orbitbeacon notification channel v1")
-	ns := notify.New(f.db, box, notify.Options{})
+	ns := notify.New(f.nodes.Database(), box, notify.Options{})
 	h, e := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Notifications: ns, PublicURL: publicURL}))
 	if e != nil {
 		t.Fatal(e)
@@ -130,7 +130,7 @@ func TestNotificationHTTP405AndCapacity(t *testing.T) {
 func TestWebhookURLPrivacyAndKeyMismatchRepairHTTP(t *testing.T) {
 	f := newHTTP(t, 1)
 	oldBox, _ := secretbox.New(bytes.Repeat([]byte{3}, 32), "orbitbeacon notification channel v1")
-	ns := notify.New(f.db, oldBox, notify.Options{})
+	ns := notify.New(f.nodes.Database(), oldBox, notify.Options{})
 	var logs bytes.Buffer
 	makeHandler := func(n *notify.Service) {
 		t.Helper()
@@ -168,7 +168,7 @@ func TestWebhookURLPrivacyAndKeyMismatchRepairHTTP(t *testing.T) {
 		}
 	}
 	wrongBox, _ := secretbox.New(bytes.Repeat([]byte{4}, 32), "orbitbeacon notification channel v1")
-	makeHandler(notify.New(f.db, wrongBox, notify.Options{}))
+	makeHandler(notify.New(f.nodes.Database(), wrongBox, notify.Options{}))
 	r = request(t, f.handler, "POST", path+"/test", "", admin, csrf, publicURL)
 	assertHTTPStatus(t, r, 409)
 	check(r.Body.String())
@@ -215,7 +215,7 @@ func TestWebhookURLPrivacyAndKeyMismatchRepairHTTP(t *testing.T) {
 func TestNotificationHTTPTemplateRoundTrip(t *testing.T) {
 	f := newHTTP(t, 1)
 	box, _ := secretbox.New(bytes.Repeat([]byte{9}, 32), "orbitbeacon notification channel v1")
-	ns := notify.New(f.db, box, notify.Options{})
+	ns := notify.New(f.nodes.Database(), box, notify.Options{})
 	h, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Notifications: ns, PublicURL: publicURL}))
 	if err != nil {
 		t.Fatal(err)

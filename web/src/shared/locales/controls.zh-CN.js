@@ -25,7 +25,6 @@ export default {
   'controls.discard': '放弃更改',
   'controls.unsaved': '有未保存的更改',
   'controls.discard.title': '放弃未保存的更改？',
-  'controls.discard.message': '此处的更改尚未保存。',
   'controls.cancel': '取消',
   'controls.dialog.close': '关闭对话框',
   'controls.confirmation.type': '输入 {expected} 以确认',
@@ -41,6 +40,5 @@ export default {
   'controls.tags.duplicate': '已添加“{value}”。',
   'controls.tags.remove': '移除标签 {tag}',
   'controls.tags.add': '添加标签',
-  'controls.tags.placeholder': '输入标签后按 Enter 键',
-  'controls.tags.hint': '按 Enter 或逗号添加，每个 1–255 个 UTF-8 字节。'
+  'controls.tags.hint': '按 Enter 或逗号添加。'
 };

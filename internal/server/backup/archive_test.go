@@ -33,7 +33,7 @@ func framingTempDir(t *testing.T) string {
 
 func framingManifest(categories []Category) Manifest {
 	now := time.Date(2026, 10, 27, 12, 0, 0, 123, time.UTC)
-	m := Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: "c03eca08-973d-4b86-979f-beb99dbe5e1f", CreatedAt: now, ServerVersion: "test", SchemaVersion: storage.CurrentSchemaVersion, HistorySchemaVersion: 1, Categories: categories, Snapshots: Snapshots{MainAt: now}}
+	m := Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: "c03eca08-973d-4b86-979f-beb99dbe5e1f", CreatedAt: now, ServerVersion: "test", SchemaVersion: storage.CurrentSchemaVersion, HistorySchemaVersion: storage.HistorySchemaVersion, Categories: categories, Snapshots: Snapshots{MainAt: now}}
 	for _, c := range categories {
 		if c == Monitoring {
 			m.Snapshots.MetricsAt = &now
@@ -309,7 +309,7 @@ func TestArchiveRejectsMaliciousFraming(t *testing.T) {
 			case "schema":
 				m.SchemaVersion = storage.CurrentSchemaVersion - 1
 			case "history_schema":
-				m.HistorySchemaVersion = 2
+				m.HistorySchemaVersion = storage.HistorySchemaVersion + 1
 			case "uuid":
 				m.ArchiveID = "not-uuid"
 			case "time":

@@ -9,7 +9,8 @@ export function agentSettingsTab(node, runtime) {
   const body = h('div');
   const values = readonlyFacts();
   const empty = h('p', {class: 'text-note'}, t('nodes.agentEmpty'));
-  const element = panel(t('nodes.agentSettings'), {}, guidance, offline, body);
+  // 面板标题与“Agent 设置”标签页同名，省略。
+  const element = panel(null, {}, guidance, offline, body);
   element.snapshot = (current, observed) => {
     offline.hidden = !observed || current.presence !== 'offline';
     if (!offline.hidden) offline.replaceChildren(...(current.last_seen

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,10 +13,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"modernc.org/sqlite"
-
 	"orbitbeacon/internal/server/announcements"
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
@@ -106,7 +104,13 @@ func decodePublic(raw string) (PublicSettings, error) {
 
 func (s *Service) GetPublicSettings(ctx context.Context, id string) (PublicSettings, error) {
 	var raw string
-	if err := s.db.QueryRowContext(ctx, "SELECT public_settings FROM nodes WHERE id = ?", id).Scan(&raw); err != nil {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return PublicSettings{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	if err := lease.QueryRowContext(ctx, "SELECT public_settings FROM nodes WHERE id = ?", id).Scan(&raw); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return PublicSettings{}, ErrNotFound
 		}
@@ -119,7 +123,13 @@ func (s *Service) PatchPublicSettings(ctx context.Context, id string, patch Publ
 	if !uuid.ValidUUID(id) {
 		return PublicSettings{}, ErrInvalidInput
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return PublicSettings{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return PublicSettings{}, err
 	}
@@ -177,25 +187,6 @@ func (s *Service) PatchPublicSettings(ctx context.Context, id string, patch Publ
 	return p, nil
 }
 
-func init() {
-	// 在 SQLite 内部用相同的 Unicode 规则校验，确保 LIMIT/OFFSET 之前数据合法。
-	sqlite.MustRegisterDeterministicScalarFunction("orbitbeacon_public_valid", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
-		raw, ok := args[0].(string)
-		if ok {
-			if _, valid := visibleSettings(raw); valid {
-				return int64(1), nil
-			}
-		}
-		return int64(0), nil
-	})
-}
-
-const publicVisibility = `status = 'unknown' AND token_hash IS NOT NULL AND first_enrolled_at IS NOT NULL
- AND CASE WHEN json_valid(public_settings) THEN
- json_type(public_settings,'$.enabled') = 'true' AND json_type(public_settings,'$.name') = 'text'
-	AND length(trim(json_extract(public_settings,'$.name'))) > 0
-	AND orbitbeacon_public_valid(public_settings) = 1 ELSE 0 END`
-
 func visibleSettings(raw string) (PublicSettings, bool) {
 	p, err := decodePublic(raw)
 	return p, err == nil && p.Enabled && p.Validate() == nil
@@ -208,47 +199,96 @@ func (s *Service) PublicVisibilityVersion() uint64 {
 	return s.publicVersion
 }
 
-// SetPublicReader 选择仅供匿名页面查询使用的隔离连接池。
-// 传 nil 恢复为现有构造函数使用的主连接池。
-func (s *Service) SetPublicReader(db *sql.DB) { s.publicReader.Store(db) }
-
-// ListPublicRecords 用一条查询返回一页记录及其最近 30 个 UTC 日的可用性计数。
+// ListPublicRecords 在同一快照中过滤合法候选，再批量读取所选节点的可用性。
 func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int, now time.Time) ([]PublicRecord, bool, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, false, ErrInvalidInput
 	}
-	db := s.publicReader.Load()
-	if db == nil {
-		db = s.db
-	}
-	now = now.UTC()
-	rows, err := db.QueryContext(ctx, `WITH page AS (
- SELECT created_at,id,public_settings,last_seen,token_hash,credential_epoch,run_generation,report_session_id
- FROM nodes WHERE `+publicVisibility+` ORDER BY created_at,id LIMIT ? OFFSET ?
-), daily AS (
- SELECT a.node_id,json_group_array(json_object('day',a.day,'online_seconds',a.online_seconds,'offline_seconds',a.offline_seconds)) AS counts
- FROM node_availability_daily a JOIN page p ON p.id=a.node_id WHERE a.day>=? AND a.day<=? GROUP BY a.node_id
-)
-SELECT p.id,p.public_settings,p.last_seen,p.token_hash,p.credential_epoch,p.run_generation,p.report_session_id,COALESCE(d.counts,'[]')
-FROM page p LEFT JOIN daily d ON d.node_id=p.id ORDER BY p.created_at,p.id`,
-		limit+1, offset, now.AddDate(0, 0, -29).Format(time.DateOnly), now.Format(time.DateOnly))
+	lease, err := s.db.Acquire(ctx, storage.Reader)
 	if err != nil {
 		return nil, false, err
 	}
-	defer rows.Close()
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginRead(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT id,public_settings,last_seen,token_hash,credential_epoch,run_generation,report_session_id,'[]' FROM nodes WHERE status='unknown' AND token_hash IS NOT NULL AND first_enrolled_at IS NOT NULL ORDER BY created_at,id`)
+	if err != nil {
+		return nil, false, err
+	}
 	records := make([]PublicRecord, 0, limit)
+	more := false
 	for rows.Next() {
-		// 多取的一行仅用于判断 has_more。
-		if len(records) == limit {
-			return records, true, nil
+		record, scanErr := scanPublicRecord(rows)
+		if errors.Is(scanErr, ErrNotFound) {
+			continue
 		}
-		record, err := scanPublicRecord(rows)
-		if err != nil {
-			return nil, false, err
+		if scanErr != nil {
+			rows.Close()
+			return nil, false, scanErr
+		}
+		if offset > 0 {
+			offset--
+			continue
+		}
+		if len(records) == limit {
+			more = true
+			break
 		}
 		records = append(records, record)
 	}
-	return records, false, rows.Err()
+	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, false, err
+	}
+	if len(records) > 0 {
+		args := make([]any, 0, len(records)+2)
+		byID := make(map[string]int, len(records))
+		for i, record := range records {
+			args = append(args, record.ID)
+			byID[record.ID] = i
+		}
+		now = now.UTC()
+		args = append(args, now.AddDate(0, 0, -29).Format(time.DateOnly), now.Format(time.DateOnly))
+		rows, err = tx.QueryContext(ctx, `SELECT node_id,day,online_seconds,offline_seconds FROM node_availability_daily WHERE node_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(records)), ",")+`) AND day>=? AND day<=? ORDER BY node_id,day`, args...)
+		if err != nil {
+			return nil, false, err
+		}
+		type daily struct {
+			Day     string `json:"day"`
+			Online  int64  `json:"online_seconds"`
+			Offline int64  `json:"offline_seconds"`
+		}
+		counts := make([][]daily, len(records))
+		for rows.Next() {
+			var id string
+			var day daily
+			if err = rows.Scan(&id, &day.Day, &day.Online, &day.Offline); err != nil {
+				rows.Close()
+				return nil, false, err
+			}
+			i := byID[id]
+			counts[i] = append(counts[i], day)
+		}
+		if err = errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, false, err
+		}
+		for i, days := range counts {
+			if len(days) > 0 {
+				raw, err := json.Marshal(days)
+				if err != nil {
+					return nil, false, err
+				}
+				records[i].AvailabilityJSON = string(raw)
+			}
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	return records, more, nil
 }
 
 // PublicRecord 是内部身份围栏，绝不作为 HTTP 响应。
@@ -289,27 +329,29 @@ func scanPublicRecord(row interface{ Scan(...any) error }) (PublicRecord, error)
 	if !ok {
 		return PublicRecord{}, ErrNotFound
 	}
-	if len(credential) != len(p.Credential) {
-		return PublicRecord{}, errors.New("invalid public node credential")
+	if len(credential) != len(p.Credential) || p.CredentialEpoch < 0 {
+		return PublicRecord{}, ErrNotFound
 	}
 	copy(p.Credential[:], credential)
 	p.Generation, err = strconv.ParseUint(generation, 10, 64)
 	if err != nil {
-		return PublicRecord{}, err
+		return PublicRecord{}, ErrNotFound
 	}
 	if seen.Valid {
 		p.LastSeen, err = timekey.Parse(seen.String)
 		if err != nil {
-			return PublicRecord{}, err
+			return PublicRecord{}, ErrNotFound
 		}
 	}
 	return p, nil
 }
 
 func (s *Service) ListPublicAnnouncements(ctx context.Context, now time.Time) ([]announcements.Public, error) {
-	db := s.publicReader.Load()
-	if db == nil {
-		db = s.db
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
 	}
-	return announcements.ListPublic(ctx, db, now)
+	defer lease.Close()
+	ctx = lease.Context()
+	return announcements.ListPublic(ctx, s.db, now)
 }

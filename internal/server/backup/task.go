@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -88,5 +89,12 @@ func scanTask(row taskScanner) (Task, error) {
 	return t, nil
 }
 func (s *Service) loadTask(ctx context.Context, id string) (Task, error) {
-	return scanTask(s.db.QueryRowContext(ctx, taskSelect+` WHERE id=?`, id))
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Task{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	return scanTask(lease.QueryRowContext(ctx, taskSelect+` WHERE id=?`, id))
+
 }

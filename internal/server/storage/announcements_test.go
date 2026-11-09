@@ -17,8 +17,8 @@ func TestAnnouncementsSchema(t *testing.T) {
 	if err = initializeMainSchema(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	if CurrentSchemaVersion != 1 {
-		t.Fatal("unexpected migration")
+	if CurrentSchemaVersion != 2 {
+		t.Fatal("unexpected schema baseline")
 	}
 	for _, values := range []struct {
 		level, start string

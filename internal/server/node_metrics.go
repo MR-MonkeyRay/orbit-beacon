@@ -10,6 +10,7 @@ import (
 
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/storage"
 )
 
 var nodeMetricFamilies = [...]struct{ name, help string }{
@@ -48,8 +49,14 @@ func (h *handler) serveNodeMetrics(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
+	lease, err := h.nodes.Database().Acquire(r.Context(), storage.Reader)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	defer lease.Close()
 	// 两次批量读取及编码全部成功后才写响应；身份变更期间重试完整投影。
-	body, _, err := consoleSnapshot(h, r.Context(), h.nodeMetrics)
+	body, _, err := consoleSnapshot(h, lease.Context(), h.nodeMetrics)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

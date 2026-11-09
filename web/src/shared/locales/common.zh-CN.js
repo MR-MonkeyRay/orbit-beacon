@@ -7,6 +7,7 @@ export default {
   'common.status.stopped': '已关闭',
 
   'common.refresh': '刷新',
+  'common.state': '状态',
   'common.retry': '重试',
   'common.status.online': '在线',
   'common.status.offline': '离线',
@@ -26,7 +27,7 @@ export default {
   'common.unavailable': '不可用',
   'common.none': '无',
   'common.language': '语言',
-  'errors.generic': '无法完成此操作。',
+  'errors.generic': '无法完成此操作，请检查网络后重试。',
   'errors.withRequest': '{message}（请求 {id}）',
   'errors.locale_storage_failed': '无法保存语言设置。'
 };

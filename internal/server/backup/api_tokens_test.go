@@ -30,8 +30,11 @@ func TestAPITokensExcludedAndRestoreRevokesOldTokens(t *testing.T) {
 		if _, err = db.Exec(`INSERT INTO api_tokens(id,name,token_hash,created_by,created_at) VALUES(?,?,?,?,?)`, restorePlan, "restore-token", digest[:], restoreUser, timekey.Format(time.Now())); err != nil {
 			t.Fatal(err)
 		}
-		if err = auth.NewService(db, auth.Options{}).AuthenticateAPIToken(ctx, token); err != nil {
+		if err = auth.NewService(mainHandle(t, db), auth.Options{}).AuthenticateAPIToken(ctx, token); err != nil {
 			t.Fatal("seed token invalid", err)
+		}
+		if err := mainHandle(t, db).Close(); err != nil {
+			t.Fatal(err)
 		}
 	}
 	seed(source)
@@ -40,7 +43,7 @@ func TestAPITokensExcludedAndRestoreRevokesOldTokens(t *testing.T) {
 			target := restoreFixture(t, "target")
 			seed(target)
 			archive, password := restoreArchive(t, source, []Category{category})
-			if _, err := Restore(ctx, target, archive, password, true); err != nil {
+			if _, err := Restore(ctx, restoreConfig(target), archive, password, true); err != nil {
 				t.Fatal(err)
 			}
 			restored := restoreDB(t, target)
@@ -48,7 +51,7 @@ func TestAPITokensExcludedAndRestoreRevokesOldTokens(t *testing.T) {
 			if err := restored.QueryRow(`SELECT count(*) FROM api_tokens`).Scan(&count); err != nil || count != 0 {
 				t.Fatal("tokens retained", count, err)
 			}
-			if err := auth.NewService(restored, auth.Options{}).AuthenticateAPIToken(ctx, token); !errors.Is(err, auth.ErrUnauthenticated) {
+			if err := auth.NewService(mainHandle(t, restored), auth.Options{}).AuthenticateAPIToken(ctx, token); !errors.Is(err, auth.ErrUnauthenticated) {
 				t.Fatal("old token survived restore", err)
 			}
 		})

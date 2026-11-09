@@ -47,7 +47,7 @@ func TestLargeCleanupKeepsAcceptingSamples(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer main.Close()
-			live, err := nodes.NewService(main, nodes.Options{}).CreatePending(context.Background(), nodes.CreateRequest{Name: "live"})
+			live, err := nodes.NewService(mainHandle(t, main), nodes.Options{}).CreatePending(context.Background(), nodes.CreateRequest{Name: "live"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -59,11 +59,11 @@ func TestLargeCleanupKeepsAcceptingSamples(t *testing.T) {
 			}
 			const batches = 12
 			const rows = batches * 1000
-			_, err = sqlitePools(t, s).db.Exec(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<?) INSERT INTO buckets SELECT ?, 'cpu_percent', 60, ?-n*60, 10, 10, 1 FROM seq`, rows, id, now.Add(-Retention1m).Unix())
+			_, err = observeHistory(t, s).Exec(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<?) INSERT INTO buckets SELECT ?, 'cpu_percent', 60, ?-n*60, 10, 10, 1 FROM seq`, rows, id, now.Add(-Retention1m).Unix())
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := sqlitePools(t, s).db.Exec(`CREATE TRIGGER cleanup_producer BEFORE DELETE ON buckets WHEN OLD.t % 60000 = 0 BEGIN SELECT history_test_cleanup_produce(); END`); err != nil {
+			if _, err := observeHistory(t, s).Exec(`CREATE TRIGGER cleanup_producer BEFORE DELETE ON buckets WHEN OLD.t % 60000 = 0 BEGIN SELECT history_test_cleanup_produce(); END`); err != nil {
 				t.Fatal(err)
 			}
 			var offered, dropped int
@@ -79,9 +79,8 @@ func TestLargeCleanupKeepsAcceptingSamples(t *testing.T) {
 			}
 			cleanupProducer.Store(&produce)
 			defer cleanupProducer.Store(nil)
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			removed, err := s.Cleanup(ctx, now)
+			// 验证批次间的采样准入，不将 race 或 CI 的执行速度作为断言；由 go test 总超时兜底。
+			removed, err := s.Cleanup(t.Context(), now)
 			if err != nil || removed != rows {
 				t.Fatalf("removed=%d err=%v", removed, err)
 			}
@@ -90,7 +89,7 @@ func TestLargeCleanupKeepsAcceptingSamples(t *testing.T) {
 				t.Fatalf("offered=%d dropped=%d buckets_dropped=%d", offered, dropped, s.DroppedBuckets())
 			}
 			var accepted int
-			if err := sqlitePools(t, s).db.QueryRow(`SELECT samples FROM buckets WHERE node_id=? AND step=60`, live.ID).Scan(&accepted); err != nil || accepted != offered {
+			if err := observeHistory(t, s).QueryRow(`SELECT samples FROM buckets WHERE node_id=? AND step=60`, live.ID).Scan(&accepted); err != nil || accepted != offered {
 				t.Fatalf("accepted=%d offered=%d err=%v", accepted, offered, err)
 			}
 		})
@@ -99,7 +98,7 @@ func TestLargeCleanupKeepsAcceptingSamples(t *testing.T) {
 
 func TestOrphanDiscoveryUsesNodeSeeks(t *testing.T) {
 	s, _ := testService(t, nil)
-	rows, err := sqlitePools(t, s).db.Query(`EXPLAIN QUERY PLAN ` + historyNodesQuery)
+	rows, err := observeHistory(t, s).Query(`EXPLAIN QUERY PLAN ` + historyNodesQuery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +143,7 @@ func TestQuerySkipsNonFiniteStoredPoints(t *testing.T) {
 	stopped(t, s)
 	now := time.Now().UTC().Truncate(time.Minute)
 	for i, values := range [][2]float64{{math.Inf(1), 1}, {1, math.Inf(1)}, {math.Inf(-1), 1}, {1, math.Inf(-1)}, {10, 10}} {
-		if _, err := sqlitePools(t, s).db.Exec(`INSERT INTO buckets VALUES('node','load1',60,?,?,?,1)`, now.Add(time.Duration(-i)*time.Minute).Unix(), values[0], values[1]); err != nil {
+		if _, err := observeHistory(t, s).Exec(`INSERT INTO buckets VALUES('node','load1',60,?,?,?,1)`, now.Add(time.Duration(-i)*time.Minute).Unix(), values[0], values[1]); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -163,10 +162,11 @@ func testService(t *testing.T, main *sql.DB) (*Service, string) {
 	if err := os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Open(context.Background(), dir, main, Options{})
+	s, err := Open(context.Background(), dir, mainHandle(t, main), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerHistoryObserver(t, s, dir)
 	t.Cleanup(func() {
 		if err := s.Close(); err != nil {
 			t.Error(err)
@@ -232,7 +232,7 @@ func TestFlushCompletedOnlyAndRestartMergesPartialMinute(t *testing.T) {
 	if err := s.flush(context.Background(), now, true); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := Open(context.Background(), dir, nil, Options{})
+	restarted, err := Open(context.Background(), dir, nil, Options{Now: func() time.Time { return now.Add(20 * time.Second) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestRetentionAndDeletedNodePurge(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer main.Close()
-	ns := nodes.NewService(main, nodes.Options{})
+	ns := nodes.NewService(mainHandle(t, main), nodes.Options{})
 	live, err := ns.CreatePending(context.Background(), nodes.CreateRequest{Name: "live"})
 	if err != nil {
 		t.Fatal(err)
@@ -285,7 +285,7 @@ func TestRetentionAndDeletedNodePurge(t *testing.T) {
 			keep time.Duration
 		}{{60, Retention1m}, {300, Retention5m}, {3600, Retention1h}} {
 			for _, timestamp := range []int64{now.Add(-tier.keep).Unix() - 1, now.Add(-tier.keep).Unix(), now.Unix()} {
-				if _, err := sqlitePools(t, s).db.Exec(`INSERT INTO buckets VALUES(?, 'cpu_percent', ?, ?, 10, 10, 1)`, id, tier.step, timestamp); err != nil {
+				if _, err := observeHistory(t, s).Exec(`INSERT INTO buckets VALUES(?, 'cpu_percent', ?, ?, 10, 10, 1)`, id, tier.step, timestamp); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -302,7 +302,7 @@ func TestRetentionAndDeletedNodePurge(t *testing.T) {
 		t.Fatalf("removed=%d err=%v", removed, err)
 	}
 	var count int
-	if err := sqlitePools(t, s).db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id=?`, deleted.ID).Scan(&count); err != nil || count != 0 {
+	if err := observeHistory(t, s).QueryRow(`SELECT count(*) FROM buckets WHERE node_id=?`, deleted.ID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("orphan rows=%d err=%v", count, err)
 	}
 	if len(s.paths) != 1 || len(s.paths[live.ID]) != 1 {
@@ -311,7 +311,7 @@ func TestRetentionAndDeletedNodePurge(t *testing.T) {
 	if len(s.pending) != 0 {
 		t.Fatal("orphan pending bucket survived")
 	}
-	if err := sqlitePools(t, s).db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id=?`, live.ID).Scan(&count); err != nil || count != 6 {
+	if err := observeHistory(t, s).QueryRow(`SELECT count(*) FROM buckets WHERE node_id=?`, live.ID).Scan(&count); err != nil || count != 6 {
 		t.Fatalf("retained rows=%d err=%v", count, err)
 	}
 }
@@ -326,7 +326,7 @@ func TestIndependentWriterLockAndCleanupDrainsQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer main.Close()
-	ns := nodes.NewService(main, nodes.Options{})
+	ns := nodes.NewService(mainHandle(t, main), nodes.Options{})
 	live, err := ns.CreatePending(context.Background(), nodes.CreateRequest{Name: "node"})
 	if err != nil {
 		t.Fatal(err)
@@ -353,7 +353,7 @@ func TestIndependentWriterLockAndCleanupDrainsQueue(t *testing.T) {
 func TestSchemaTooNewAndPermissions(t *testing.T) {
 	s, dir := testService(t, nil)
 	stopped(t, s)
-	if _, err := sqlitePools(t, s).db.Exec(`INSERT INTO schema_migrations VALUES(?, 'future')`, CurrentSchemaVersion+1); err != nil {
+	if _, err := observeHistory(t, s).Exec(`INSERT INTO schema_migrations VALUES(?, 'future')`, CurrentSchemaVersion+1); err != nil {
 		t.Fatal(err)
 	}
 	newer, err := Open(context.Background(), dir, nil, Options{})
@@ -425,7 +425,7 @@ func TestConcurrentSamplesAndShutdown(t *testing.T) {
 	stopped(t, s)
 	stopped(t, s) // idempotent
 	var count int
-	if err := sqlitePools(t, s).db.QueryRow(`SELECT sum(samples) FROM buckets WHERE step=60`).Scan(&count); err != nil || count != 800 {
+	if err := observeHistory(t, s).QueryRow(`SELECT sum(samples) FROM buckets WHERE step=60`).Scan(&count); err != nil || count != 800 {
 		t.Fatalf("count=%d err=%v", count, err)
 	}
 }
@@ -460,12 +460,16 @@ func TestShutdownDeadlineInterruptsBlockedWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sqlitePools(t, s).db.SetMaxOpenConns(1)
-	held, err := sqlitePools(t, s).db.Conn(context.Background())
+	held, err := s.Database().Acquire(t.Context(), storage.Writer)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer held.Close()
+	tx, err := held.BeginWrite(held.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
 	s.samples <- Sample{"node", time.Now(), map[string]float64{"cpu_percent": 1}}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
@@ -474,9 +478,10 @@ func TestShutdownDeadlineInterruptsBlockedWriter(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > time.Second {
 		t.Fatalf("shutdown took %v err=%v", time.Since(start), err)
 	}
-	if err := held.Close(); err != nil {
+	if err := tx.Rollback(); err != nil {
 		t.Fatal(err)
 	}
+	held.Close()
 	select {
 	case <-s.done:
 	case <-time.After(time.Second):
@@ -507,7 +512,7 @@ func TestOpenRejectsUnsafeHistoryFileAndSidecars(t *testing.T) {
 
 func TestNetworkRateAggregationOmitsMissingSamples(t *testing.T) {
 	s, _ := testService(t, nil)
-	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Hour)
 	for _, values := range []map[string]float64{
 		{"net_rx_bytes_per_second": 100, "net_tx_bytes_per_second": 20},
 		{"cpu_percent": 50}, // a failed/missing network measurement contributes no zero
@@ -537,7 +542,7 @@ func TestRetentionPreservesIntersectingBoundaryBuckets(t *testing.T) {
 	}{{60, Retention1m}, {300, Retention5m}, {3600, Retention1h}} {
 		cutoff := now.Add(-tier.keep).Truncate(time.Duration(tier.step) * time.Second)
 		for _, timestamp := range []int64{cutoff.Unix() - int64(tier.step), cutoff.Unix()} {
-			if _, err := sqlitePools(t, s).db.Exec(`INSERT INTO buckets VALUES('node','cpu_percent',?,?,10,10,1)`, tier.step, timestamp); err != nil {
+			if _, err := observeHistory(t, s).Exec(`INSERT INTO buckets VALUES('node','cpu_percent',?,?,10,10,1)`, tier.step, timestamp); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -548,7 +553,7 @@ func TestRetentionPreservesIntersectingBoundaryBuckets(t *testing.T) {
 	}
 	for _, step := range []int{60, 300, 3600} {
 		var count int
-		if err := sqlitePools(t, s).db.QueryRow(`SELECT count(*) FROM buckets WHERE step=?`, step).Scan(&count); err != nil || count != 1 {
+		if err := observeHistory(t, s).QueryRow(`SELECT count(*) FROM buckets WHERE step=?`, step).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("step=%d count=%d err=%v", step, count, err)
 		}
 	}
@@ -560,21 +565,28 @@ func TestRetentionPreservesIntersectingBoundaryBuckets(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := sqlitePools(t, s).db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id='pending'`).Scan(&count); err != nil || count != 3 {
+	if err := observeHistory(t, s).QueryRow(`SELECT count(*) FROM buckets WHERE node_id='pending'`).Scan(&count); err != nil || count != 3 {
 		t.Fatalf("pending count=%d err=%v", count, err)
 	}
-	if err := sqlitePools(t, s).db.QueryRow(`SELECT count(*) FROM buckets WHERE node_id='expired'`).Scan(&count); err != nil || count != 0 {
+	if err := observeHistory(t, s).QueryRow(`SELECT count(*) FROM buckets WHERE node_id='expired'`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("expired count=%d err=%v", count, err)
 	}
 }
 
 func TestLoadHistoryQueriesAcrossNinetyDays(t *testing.T) {
 	s, _ := testService(t, nil)
-	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
-	for _, age := range []time.Duration{91 * 24 * time.Hour, 90 * 24 * time.Hour, 60 * 24 * time.Hour, time.Minute} {
-		s.samples <- Sample{NodeID: "node", ReceivedAt: now.Add(-age), Values: map[string]float64{"load1": 1.5, "load5": 2.5, "load15": 3.5}}
-	}
 	stopped(t, s)
+	now := time.Now().UTC().Truncate(time.Hour)
+	// 模拟当时已持久化的历史，不把九十天前的迟到样本重新生成聚合。
+	for _, age := range []time.Duration{91 * 24 * time.Hour, 90 * 24 * time.Hour, 60 * 24 * time.Hour, time.Minute} {
+		var buckets []Bucket
+		for metric, value := range map[string]float64{"load1": 1.5, "load5": 2.5, "load15": 3.5} {
+			buckets = append(buckets, Bucket{Node: "node", Series: metric, T: now.Add(-age).Unix(), Total: value, Peak: value, Samples: 1})
+		}
+		if _, err := s.store.Write(t.Context(), buckets); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for metric, want := range map[string]float64{"load1": 1.5, "load5": 2.5, "load15": 3.5} {
 		response, err := s.Query(context.Background(), "node", metric, "90d", now, "")
 		if err != nil || response.Unit != "load" || response.StepSeconds != 3600 || len(response.Points) != 3 {

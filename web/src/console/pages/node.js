@@ -32,7 +32,8 @@ export async function nodePage() {
       throw error;
     })
   ]);
-  const idText = h('span', {class: 'mono'}, node.id);
+  // 视觉上由 CSS 截断，textContent 保持完整，复制和屏幕阅读器都能拿到全值。
+  const idText = h('span', {class: 'mono', title: node.id}, node.id);
   const showCopied = () => {
     copy.replaceChildren(icon('check'));
     setTimeout(() => copy.replaceChildren(icon('copy')), 1600);
@@ -110,7 +111,7 @@ export async function nodePage() {
     }},
     {id: 'enrollment', label: t('nodes.enrollAgent'), icon: 'key', build: () => enrollmentTab(node)}
   ], t('nodes.sections'));
-  const head = pageHead(node.name, null, connection.element, actions);
+  const head = pageHead(node.name, connection.element, actions);
   const title = head.querySelector('h1');
   head.lastElementChild.className = 'detail-actions';
   head.firstElementChild.replaceChildren(back,
@@ -224,7 +225,7 @@ function detailsTab(node, groups) {
   const notes = textarea({name: 'notes', id: 'node-notes'}, node.notes);
   const controls = saveBar(t('nodes.saveChanges'), 'node-save');
   const form = h('form', {class: 'form form-wide'},
-    field(t('nodes.name'), name, {hint: t('nodes.internalNameHint')}),
+    field(t('nodes.name'), name),
     h('div', {class: 'form-row'}, field(t('nodes.region'), region), field(t('nodes.provider'), provider)),
     field(t('nodes.group'), groupID), tags, field(t('nodes.expiresOn'), expiresOn), field(t('nodes.notes'), notes), controls.bar);
   editableForm(form, controls, async () => {
@@ -283,12 +284,13 @@ function publicTab(node, settings) {
   const form = h('form', {class: 'form form-wide'},
     h('label', {class: 'switch'}, enabled, h('span', {class: 'switch-track', 'aria-hidden': 'true'}),
       h('span', {class: 'switch-text'}, h('strong', null, t('nodes.publish')))),
-    field(t('nodes.publicName'), name, {hint: t('nodes.publicNameHint')}),
-    h('div', {class: 'form-row'}, field(t('nodes.publicRegion'), region, {hint: t('nodes.publicLocationHint')}), field(t('nodes.publicProvider'), provider, {hint: t('nodes.publicLocationHint')})),
+    field(t('nodes.publicName'), name),
+    h('div', {class: 'form-row'}, field(t('nodes.publicRegion'), region), field(t('nodes.publicProvider'), provider)),
     controls.bar);
   editableForm(form, controls, async () => {
     await api(`/nodes/${encodeURIComponent(node.id)}/public-settings`, {method: 'PATCH', body: {enabled: enabled.checked, name: name.value, region: region.value, provider: provider.value}});
     return enabled.checked ? t('nodes.publicSaved') : t('nodes.publicHidden');
   }, node);
-  return h('div', {class: 'split'}, panel(t('nodes.publicPage'), {}, h('div', {class: 'stack'}, hidden, privacy, form)), previewPanel);
+  // 左侧面板标题与“公开页”标签页同名，省略；预览面板保留自己的标题。
+  return h('div', {class: 'split'}, panel(null, {}, h('div', {class: 'stack'}, hidden, privacy, form)), previewPanel);
 }

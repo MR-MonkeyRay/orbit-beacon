@@ -37,8 +37,8 @@ func setup(t *testing.T, capacity int) (*enrollment.Service, *nodes.Service, *sq
 	t.Cleanup(func() { _ = db.Close() })
 	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
-	n := nodes.NewService(db, nodes.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{11})})
-	s := enrollment.NewService(db, enrollment.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{12})})
+	n := nodes.NewService(stableDatabase(t, db), nodes.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{11})})
+	s := enrollment.NewService(stableDatabase(t, db), enrollment.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{12})})
 	return s, n, db, &now
 }
 
@@ -337,4 +337,27 @@ func TestDeletedBatchClaimCannotRecreateNode(t *testing.T) {
 	if err := db.QueryRow("SELECT count(*) FROM nodes").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("nodes=%d err=%v, want only the other installation", count, err)
 	}
+}
+
+var fixtureDatabases sync.Map
+
+func stableDatabase(t *testing.T, db *sql.DB) *storage.Database {
+	t.Helper()
+	if stable, ok := fixtureDatabases.Load(db); ok {
+		return stable.(*storage.Database)
+	}
+	var path string
+	if err := db.QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	stable, err := storage.OpenMain(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureDatabases.Store(db, stable)
+	t.Cleanup(func() {
+		fixtureDatabases.Delete(db)
+		_ = stable.Close()
+	})
+	return stable
 }

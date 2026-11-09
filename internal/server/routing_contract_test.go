@@ -13,6 +13,8 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"orbitbeacon/internal/server/nodes"
 )
 
 const routingContractID = "01234567-89ab-4cde-abcd-0123456789ab"
@@ -22,10 +24,10 @@ const routingContractID = "01234567-89ab-4cde-abcd-0123456789ab"
 func routingContractHandler(t *testing.T) *handler {
 	t.Helper()
 	assets, err := prepareStaticAssets(fstest.MapFS{
-		"200.html":                   {Data: []byte("console shell")},
-		"public.html":                {Data: []byte("public shell")},
-		"_app/immutable/app.test.js": {Data: []byte("export const app = true;")},
-		"favicon.svg":                {Data: []byte("<svg></svg>")},
+		"200.html":                {Data: []byte("console shell")},
+		"public.html":             {Data: []byte("public shell")},
+		"_app/assets/app.test.js": {Data: []byte("export const app = true;")},
+		"favicon.svg":             {Data: []byte("<svg></svg>")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -220,6 +222,8 @@ func TestRoutingContractUnknownAPIPaths(t *testing.T) {
 
 func TestRoutingContractAcceptedPathSpellings(t *testing.T) {
 	h := routingContractHandler(t)
+	_, stable := testMainDatabases(t)
+	h.nodes = nodes.NewService(stable, nodes.Options{})
 	for _, path := range []string{
 		"/api/v1/nodes/" + routingContractID,
 		"/api/v1/nodes/" + strings.ToUpper(routingContractID),
@@ -262,7 +266,7 @@ func TestRoutingContractStaticAndHealthMethods(t *testing.T) {
 		{"/", "public shell", 200, false},
 		{"/login", "console shell", 200, false},
 		{"/nodes/" + routingContractID, "console shell", 200, false},
-		{"/_app/immutable/app.test.js", "export const app = true;", 200, false},
+		{"/_app/assets/app.test.js", "export const app = true;", 200, false},
 		{"/favicon.svg", "<svg></svg>", 200, false},
 		{"/missing", "404 page not found\n", 404, false},
 	} {
@@ -291,7 +295,7 @@ func TestRoutingContractStaticAndHealthMethods(t *testing.T) {
 
 func TestRoutingContractConsolePaths(t *testing.T) {
 	h := routingContractHandler(t)
-	console := []string{"/login", "/change-password", "/overview", "/nodes", "/alerts", "/settings", "/nodes/" + routingContractID, "/nodes/" + strings.ToUpper(routingContractID)}
+	console := []string{"/login", "/change-password", "/overview", "/nodes", "/alerts", "/settings", "/data", "/nodes/" + routingContractID, "/nodes/" + strings.ToUpper(routingContractID)}
 	missing := []string{"/users", "/groups", "/tasks", "/notifications", "/backups", "/console", "/overview/extra", "/nodes/batch", "/nodes/not-a-uuid", "/nodes/00000000-0000-0000-0000-000000000000", "/nodes/" + routingContractID + "/runtime", "/nodes/" + routingContractID + "%2Fruntime", "/nodes//" + routingContractID, "//nodes", "/nodes/../settings"}
 	for _, path := range console {
 		missing = append(missing, path+"/")
@@ -320,6 +324,8 @@ func TestRoutingContractConsolePaths(t *testing.T) {
 
 func TestRoutingContractPublicPageGate(t *testing.T) {
 	h := routingContractHandler(t)
+	_, stable := testMainDatabases(t)
+	h.nodes = nodes.NewService(stable, nodes.Options{})
 	h.publicPageDisabled.Store(true)
 	for _, path := range []string{"/api/public/v1/nodes", "/api/public/v1/stream", "/api/public/v1/ws"} {
 		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodHead, http.MethodOptions} {
@@ -364,8 +370,8 @@ func TestRoutingContractLabels(t *testing.T) {
 		"/200.html":                   "unmatched",
 		"/public.html":                "unmatched",
 		"/favicon.svg":                "unmatched",
-		"/_app/immutable/app.test.js": "/_app/immutable/{asset}",
-		"/_app/immutable/missing.js":  "/_app/immutable/{asset}",
+		"/_app/assets/app.test.js":    "/_app/assets/{asset}",
+		"/_app/assets/missing.js":     "/_app/assets/{asset}",
 	} {
 		labels[path] = label
 	}

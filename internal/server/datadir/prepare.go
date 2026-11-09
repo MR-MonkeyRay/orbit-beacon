@@ -60,7 +60,7 @@ func ValidateRestore(path string) error {
 			return err
 		}
 	}
-	for _, database := range []string{"orbitbeacon.db", "metrics.db"} {
+	for _, database := range []string{"orbitbeacon.db", "metrics.db", "storage-control.db"} {
 		for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
 			if _, err := securefs.ValidateFile(filepath.Join(dir, database+suffix)); err != nil {
 				return err

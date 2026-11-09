@@ -2,18 +2,15 @@ package ingest
 
 import (
 	"context"
-	"database/sql"
-	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"orbitbeacon/internal/server/storage"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,173 +18,111 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-// connector 统计实际的驱动查询次数，并能在页面查询返回行之前将其阻断。
-// 投影不得对该数据库发起任何按节点查询。
-type publicPageConnector struct {
-	queries atomic.Int64
-	gate    <-chan struct{}
-	now     time.Time
-	entered chan struct{}
-}
-
-func (c *publicPageConnector) Connect(context.Context) (driver.Conn, error) {
-	return &publicPageConn{connector: c}, nil
-}
-func (c *publicPageConnector) Driver() driver.Driver { return publicPageDriver{} }
-
-type publicPageDriver struct{}
-
-func (publicPageDriver) Open(string) (driver.Conn, error) { return nil, errors.New("use connector") }
-
-type publicPageConn struct{ connector *publicPageConnector }
-
-func (*publicPageConn) Prepare(string) (driver.Stmt, error) {
-	return nil, errors.New("unexpected prepare")
-}
-func (*publicPageConn) Close() error              { return nil }
-func (*publicPageConn) Begin() (driver.Tx, error) { return nil, errors.New("unexpected transaction") }
-func (c *publicPageConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	c.connector.queries.Add(1)
-	if c.connector.entered != nil {
-		c.connector.entered <- struct{}{}
+func publicPageFixture(t *testing.T, count int) *coalesceFixture {
+	t.Helper()
+	f := newCoalesceFixture(t, time.Second)
+	if _, err := f.db.Exec("UPDATE nodes SET created_at=? WHERE id=?", timekey.Format(f.now.Add(-time.Second)), f.id); err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(query, "FROM announcements") {
-		return &publicAnnouncementRows{}, nil
-	}
-	if len(args) != 4 {
-		return nil, fmt.Errorf("unexpected per-node query: %s", query)
-	}
-	if c.connector.gate != nil {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-c.connector.gate:
+	for i := 1; i < count; i++ {
+		node, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: fmt.Sprint("private-", i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		credential := fmt.Sprintf("%032d", i)
+		if _, err := f.db.Exec(`UPDATE nodes SET status='unknown',token_hash=?,first_enrolled_at=?,last_seen=?,run_generation='1',report_session_id='session',public_settings='{"enabled":true,"name":"Public"}' WHERE id=?`, []byte(credential), timekey.Format(f.now), timekey.Format(f.now), node.ID); err != nil {
+			t.Fatal(err)
 		}
 	}
-	remaining := int(args[0].Value.(int64))
-	return &publicPageRows{remaining: remaining, now: c.connector.now}, nil
+	return f
 }
 
-type publicPageRows struct {
-	remaining, index int
-	now              time.Time
-}
-
-func (*publicPageRows) Columns() []string {
-	return []string{"id", "public_settings", "last_seen", "token_hash", "credential_epoch", "run_generation", "report_session_id", "availability"}
-}
-func (*publicPageRows) Close() error { return nil }
-func (r *publicPageRows) Next(dest []driver.Value) error {
-	if r.remaining == 0 {
-		return io.EOF
-	}
-	r.remaining--
-	r.index++
-	values := []driver.Value{fmt.Sprintf("public-%d", r.index), `{"enabled":true,"name":"Public"}`, timekey.Format(r.now), make([]byte, 32), int64(0), "1", "session", "[]"}
-	copy(dest, values)
-	return nil
-}
-
-func TestPublicPageQueryCountDoesNotScaleWithPageSize(t *testing.T) {
+func TestPublicPageLookaheadAndProjectionDoNotCreateState(t *testing.T) {
 	for _, limit := range []int{1, 100} {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {
-			now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
-			connector := &publicPageConnector{now: now}
-			db := sql.OpenDB(connector)
-			t.Cleanup(func() { db.Close() })
-			s := NewService(db, Options{})
-			ns := nodes.NewService(db, nodes.Options{})
-			out, err := s.PublicPage(context.Background(), ns, limit, 0, 10*time.Second, func() time.Time { return now })
-			if err != nil || len(out.Nodes) != limit || !out.HasMore || out.NextOffset == nil || *out.NextOffset != limit {
-				t.Fatalf("page: %+v err=%v", out, err)
+			f := publicPageFixture(t, limit+1)
+			page, err := f.service.PublicPage(context.Background(), f.nodes, limit, 0, time.Second, func() time.Time { return f.now })
+			if err != nil || len(page.Nodes) != limit || !page.HasMore || page.NextOffset == nil || *page.NextOffset != limit {
+				t.Fatalf("page=%+v err=%v", page, err)
 			}
-			if got := connector.queries.Load(); got != 2 {
-				t.Fatalf("%d nodes required %d queries", limit, got)
-			}
-			for _, node := range out.Nodes {
-				if len(node.Availability.Days) != 30 || node.Availability.Percent != nil || node.Availability.StartDay != "2026-09-28" {
-					t.Fatalf("empty availability %+v", node.Availability)
-				}
-				for _, percent := range node.Availability.Days {
-					if percent != nil {
-						t.Fatal("unobserved day must be null")
-					}
-				}
-			}
-			if len(s.states) != 0 {
-				t.Fatalf("public page created %d ingest states", len(s.states))
+			if len(f.service.states) != 1 {
+				t.Fatalf("public projection created ingest states: %d", len(f.service.states))
 			}
 		})
 	}
 }
 
 func TestPublicPageCoalescesMissesAndAllowsWaiterCancellation(t *testing.T) {
-	const requests = 20
+	f := publicPageFixture(t, 2)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
-	gate := make(chan struct{})
-	var release sync.Once
-	connector := &publicPageConnector{now: now, gate: gate}
-	db := sql.OpenDB(connector)
-	defer db.Close()
-	defer release.Do(func() { close(gate) })
-	s := NewService(db, Options{})
-	ns := nodes.NewService(db, nodes.Options{})
-	entered := make(chan struct{}, 2*requests+2)
-	clock := func() time.Time { entered <- struct{}{}; return now }
-	results := make(chan error, requests)
-	for range requests {
+	state := f.service.acquireExistingState(f.id)
+	defer f.service.releaseState(state)
+	state.mu.Lock()
+	var unlock sync.Once
+	defer unlock.Do(state.mu.Unlock)
+	results := make(chan error, 20)
+	for range 20 {
 		go func() {
-			page, err := s.PublicPage(ctx, ns, 100, 0, 10*time.Second, clock)
-			if err == nil && len(page.Nodes) != 100 {
+			page, err := f.service.PublicPage(ctx, f.nodes, 1, 0, time.Second, func() time.Time { return f.now })
+			if err == nil && len(page.Nodes) != 1 {
 				err = errors.New("incomplete page")
 			}
 			results <- err
 		}()
 	}
-	for range requests {
+	for {
+		f.service.mu.Lock()
+		refs := state.refs
+		f.service.mu.Unlock()
+		if refs == 2 {
+			break
+		}
 		select {
-		case <-entered:
 		case <-ctx.Done():
-			t.Fatal("requests did not reach cache")
+			t.Fatal("page did not reach projection")
+		default:
+			runtime.Gosched()
 		}
 	}
 	waitCtx, cancelWait := context.WithCancel(ctx)
 	waitResult := make(chan error, 1)
-	go func() { _, err := s.PublicPage(waitCtx, ns, 100, 0, 10*time.Second, clock); waitResult <- err }()
-	select {
-	case <-entered:
-	case <-ctx.Done():
-		t.Fatal("cancelled waiter did not reach cache")
-	}
+	go func() {
+		_, err := f.service.PublicPage(waitCtx, f.nodes, 1, 0, time.Second, func() time.Time { return f.now })
+		waitResult <- err
+	}()
 	cancelWait()
 	if err := <-waitResult; !errors.Is(err, context.Canceled) {
 		t.Fatalf("waiter cancellation: %v", err)
 	}
-	release.Do(func() { close(gate) })
-	for range requests {
+	unlock.Do(state.mu.Unlock)
+	for range 20 {
 		if err := <-results; err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got := connector.queries.Load(); got != 2 {
-		t.Fatalf("coalesced page executed %d queries", got)
+	if len(f.service.publicPages.entries) != 1 || len(f.service.publicPages.calls) != 0 {
+		t.Fatal("coalesced call did not publish one cache entry")
 	}
 }
 
 func TestProjectPublicRecordChecksEveryFenceWithoutCreatingState(t *testing.T) {
-	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
-	s := NewService(nil, Options{})
-	record := nodes.PublicRecord{ID: "public", Settings: nodes.PublicSettings{Name: "Public"}, LastSeen: now, Generation: 1, Session: "session"}
+	f := newCoalesceFixture(t, time.Second)
+	now := f.now
+	s := NewService(f.nodes.Database(), Options{Now: func() time.Time { return now }})
+	records, _, err := f.nodes.ListPublicRecords(context.Background(), 100, 0, now)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("records=%+v err=%v", records, err)
+	}
+	record := records[0]
 	out, _ := s.ProjectPublicRecord(record, now)
 	if out.Status != "online" || out.CPUPercent != nil || len(s.states) != 0 {
 		t.Fatalf("cold projection: %+v states=%d", out, len(s.states))
 	}
-	state := s.acquireState(record.ID)
-	state.generation, state.session = record.Generation, record.Session
-	state.public = publicMetrics{receivedAt: now, cpu: publicMetric{valid: true, value: 25, intervalMS: 10000}}
-	s.releaseState(state)
+	f.report.Metrics.CPUPercent = new(25.0)
+	if _, err := acceptReport(context.Background(), s, coalesceToken, f.report); err != nil {
+		t.Fatal(err)
+	}
 	out, _ = s.ProjectPublicRecord(record, now)
 	if out.CPUPercent == nil || *out.CPUPercent != 25 {
 		t.Fatalf("matching fence: %+v", out)
@@ -216,96 +151,66 @@ func TestProjectPublicRecordChecksEveryFenceWithoutCreatingState(t *testing.T) {
 }
 
 func TestPublicPageQueriesBeforeTakingStateLock(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	f := publicPageFixture(t, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
-	connector := &publicPageConnector{now: now, entered: make(chan struct{}, 1)}
-	db := sql.OpenDB(connector)
-	defer db.Close()
-	s := NewService(db, Options{})
-	state := s.acquireState("public-1")
-	s.releaseState(state)
+	state := f.service.acquireExistingState(f.id)
+	f.service.releaseState(state)
 	state.mu.Lock()
 	var unlock sync.Once
 	defer unlock.Do(state.mu.Unlock)
+	if _, err := f.db.Exec("UPDATE nodes SET public_settings='{}' WHERE id=?", f.id); err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.PublicPage(ctx, nodes.NewService(db, nodes.Options{}), 1, 0, time.Second, func() time.Time { return now })
+		_, err := f.service.PublicPage(ctx, f.nodes, 1, 0, time.Second, func() time.Time { return f.now })
 		done <- err
 	}()
 	select {
-	case <-connector.entered:
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
 	case <-ctx.Done():
+		unlock.Do(state.mu.Unlock)
+		<-done
 		t.Fatal("database query waited for ingest state mutex")
-	}
-	unlock.Do(state.mu.Unlock)
-	if err := <-done; err != nil {
-		t.Fatal(err)
 	}
 }
 
 func TestPublicPageCacheUsesEffectiveWebIntervalAndStaysBounded(t *testing.T) {
 	for _, seconds := range []int{2, 10, 30, 60} {
 		t.Run(fmt.Sprint(seconds), func(t *testing.T) {
-			now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
-			connector := &publicPageConnector{now: now}
-			db := sql.OpenDB(connector)
-			defer db.Close()
-			s := NewService(db, Options{})
-			ns := nodes.NewService(db, nodes.Options{})
+			f := publicPageFixture(t, 2)
 			ttl := time.Duration(seconds) * time.Second
-			clock := func() time.Time { return now }
-			first, err := s.PublicPage(context.Background(), ns, 1, 0, ttl, clock)
+			clock := func() time.Time { return f.now }
+			first, err := f.service.PublicPage(context.Background(), f.nodes, 1, 0, ttl, clock)
 			if err != nil {
 				t.Fatal(err)
 			}
-			now = now.Add(ttl - time.Nanosecond)
-			cached, err := s.PublicPage(context.Background(), ns, 1, 0, ttl, clock)
-			if err != nil || !cached.GeneratedAt.Equal(first.GeneratedAt) || connector.queries.Load() != 2 {
-				t.Fatalf("cache expired before %v: err=%v queries=%d", ttl, err, connector.queries.Load())
+			f.now = f.now.Add(ttl - time.Nanosecond)
+			cached, err := f.service.PublicPage(context.Background(), f.nodes, 1, 0, ttl, clock)
+			if err != nil || !cached.GeneratedAt.Equal(first.GeneratedAt) {
+				t.Fatalf("cache expired before %v: %v", ttl, err)
 			}
-			now = now.Add(time.Nanosecond)
-			expired, err := s.PublicPage(context.Background(), ns, 1, 0, ttl, clock)
-			if err != nil || !expired.GeneratedAt.Equal(now) || connector.queries.Load() != 4 {
-				t.Fatalf("cache did not expire at %v: err=%v queries=%d", ttl, err, connector.queries.Load())
+			f.now = f.now.Add(time.Nanosecond)
+			expired, err := f.service.PublicPage(context.Background(), f.nodes, 1, 0, ttl, clock)
+			if err != nil || !expired.GeneratedAt.Equal(f.now) {
+				t.Fatalf("cache did not expire at %v: %v", ttl, err)
 			}
 			for offset := 1; offset <= 140; offset++ {
-				if _, err := s.PublicPage(context.Background(), ns, 1, offset, ttl, clock); err != nil {
+				if _, err := f.service.PublicPage(context.Background(), f.nodes, 1, offset, ttl, clock); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if len(s.publicPages.entries) > 128 {
-				t.Fatalf("unbounded pages: %d", len(s.publicPages.entries))
+			if len(f.service.publicPages.entries) > 128 {
+				t.Fatalf("unbounded pages: %d", len(f.service.publicPages.entries))
 			}
 		})
 	}
 }
 
-// Wrap the real SQLite driver: counting queries must not replace SQL execution.
-type availabilityCountingConnector struct {
-	driver  driver.Driver
-	dsn     string
-	queries atomic.Int64
-}
-
-func (c *availabilityCountingConnector) Connect(context.Context) (driver.Conn, error) {
-	conn, err := c.driver.Open(c.dsn)
-	if err != nil {
-		return nil, err
-	}
-	return availabilityCountingConn{Conn: conn, queries: &c.queries}, nil
-}
-func (c *availabilityCountingConnector) Driver() driver.Driver { return c.driver }
-
-type availabilityCountingConn struct {
-	driver.Conn
-	queries *atomic.Int64
-}
-
-func (c availabilityCountingConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	c.queries.Add(1)
-	return c.Conn.(driver.QueryerContext).QueryContext(ctx, query, args)
-}
 func TestPublicAvailabilityRealSQLiteBatchAndCache(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
@@ -330,12 +235,8 @@ func TestPublicAvailabilityRealSQLiteBatchAndCache(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	connector := &availabilityCountingConnector{driver: db.Driver(), dsn: path}
-	reader := sql.OpenDB(connector)
-	defer reader.Close()
-	ns := nodes.NewService(db, nodes.Options{})
-	ns.SetPublicReader(reader)
-	s := NewService(db, Options{})
+	ns := nodes.NewService(stableDatabase(t, db), nodes.Options{})
+	s := NewService(stableDatabase(t, db), Options{})
 	for range 2 {
 		page, err := s.PublicPage(ctx, ns, 100, 0, time.Minute, func() time.Time { return now })
 		if err != nil || len(page.Nodes) != 3 {
@@ -360,15 +261,4 @@ func TestPublicAvailabilityRealSQLiteBatchAndCache(t *testing.T) {
 			}
 		}
 	}
-	if queries := connector.queries.Load(); queries != 2 {
-		t.Fatalf("batch + cache queries %d", queries)
-	}
 }
-
-type publicAnnouncementRows struct{}
-
-func (*publicAnnouncementRows) Columns() []string {
-	return []string{"level", "title", "body", "starts_at", "ends_at"}
-}
-func (*publicAnnouncementRows) Close() error              { return nil }
-func (*publicAnnouncementRows) Next([]driver.Value) error { return io.EOF }

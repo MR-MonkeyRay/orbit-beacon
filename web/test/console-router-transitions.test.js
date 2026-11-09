@@ -16,7 +16,7 @@ function deferred() {
   return {promise, resolve, reject};
 }
 
-async function routing(t, {hidden = false} = {}) {
+async function routing(t, {hidden = false, routes} = {}) {
 	const env = liveHarness(t, () => response({user: {id: 'routing-user', username: 'administrator', must_change_password: false},
 	  csrf_token: 'routing-proof', expires_at: '2026-10-28T00:10:00Z'}, {headers: {Date: 'Wed, 28 Oct 2026 00:00:00 GMT'}}));
   const originals = new Map(['matchMedia', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
@@ -48,7 +48,7 @@ async function routing(t, {hidden = false} = {}) {
   client.setNavigationSignal(null);
   client.setSession({user: {id: 'routing-user', username: 'administrator', must_change_password: false}, csrf_token: 'routing-proof', expires_at: '2026-10-28T00:10:00Z'});
   const router = await import(`../src/console/router.js?transition-${encodeURIComponent(t.name)}`);
-  const stop = router.startRouter([{match: () => true, page: async () => {
+  const stop = router.startRouter(routes || [{match: () => true, page: async () => {
     const heading = new TestElement('h1'); heading.append(location.pathname);
     const content = new TestElement('section'); content.append(heading); return content;
   }}]);
@@ -79,6 +79,25 @@ for (const target of ['/?from=login#status', '/public.html']) {
     });
   }
 }
+
+test('an unmatched path renders the not-found page instead of silently falling back', async (t) => {
+  const page = async () => {
+    const heading = new TestElement('h1'); heading.append(location.pathname);
+    const content = new TestElement('section'); content.append(heading); return content;
+  };
+  const env = await routing(t, {hidden: true, routes: [
+    {match: (path) => path === '/overview', nav: '/overview', fallback: true, page},
+    {match: (path) => path === '/nodes', nav: '/nodes', page}
+  ]});
+  try {
+    await env.go('/nodess');
+    const view = document.getElementById('view');
+    assert.equal(view.textContent.includes('/nodess'), false, 'the fallback page must not render');
+    assert.equal(view.querySelector('h1').textContent, 'Not found');
+    await env.go('/nodes');
+    assert.equal(document.getElementById('view').textContent, '/nodes');
+  } finally { env.clean(); }
+});
 
 test('hidden initial routing and hidden navigation update content without starting ineligible transitions', async (t) => {
   const env = await routing(t, {hidden: true});
@@ -240,6 +259,31 @@ test('locale confirmation includes dialog drafts and uses one prompt for a dirty
   } finally { env.clean(); }
 });
 
+
+test('dialog drafts block go and popstate with the same discard confirmation as locale changes', async (t) => {
+  const env = await routing(t, {hidden: true});
+  const {modal} = await import('../src/console/ui/dialogs.js');
+  const input = new TestElement('input');
+  const dialog = modal('Private form', () => input);
+  input.value = 'unsaved secret';
+  try {
+    const pending = env.go('/draft-guard');
+    await flush();
+    const confirmations = env.body.querySelectorAll('dialog');
+    assert.equal(confirmations.length, 2, 'navigation adds one discard confirmation beside the draft dialog');
+    confirmations.at(-1).close('cancel');
+    await assert.rejects(pending, (error) => error.name === 'AbortError');
+    assert.equal(input.value, 'unsaved secret');
+    assert.equal(document.getElementById('view').textContent, '/initial');
+    location.pathname = '/back';
+    env.window.dispatchEvent(Object.assign(new Event('popstate'), {state: {scroll: 0}}));
+    await flush();
+    env.body.querySelectorAll('dialog').at(-1).close('cancel');
+    await flush();
+    assert.equal(location.pathname, '/initial', 'cancelled back navigation restores the previous URL');
+    dialog.close('done');
+  } finally { env.clean(); }
+});
 
 test('reduced motion navigates without view transitions and restores scroll instantly', async (t) => {
   const env = await routing(t);

@@ -23,6 +23,7 @@ import (
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/server/secretbox"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
 )
@@ -80,7 +81,7 @@ type Options struct {
 }
 
 type Service struct {
-	db           *sql.DB
+	db           *storage.Database
 	now          func() time.Time
 	random       io.Reader
 	box          *secretbox.Box
@@ -105,7 +106,7 @@ type Service struct {
 	totpFailureOverflow    loginBucket
 }
 
-func NewService(db *sql.DB, opts Options) *Service {
+func NewService(db *storage.Database, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -258,7 +259,13 @@ func (s *Service) BootstrapAdministrator(ctx context.Context, username, password
 	if err != nil {
 		return User{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return User{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -291,7 +298,13 @@ func (s *Service) CreateUser(ctx context.Context, username, password string, mus
 	if err != nil {
 		return User{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return User{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -320,7 +333,7 @@ func (s *Service) prepareUser(username, password string, mustChangePassword bool
 	return User{ID: id, Username: username, MustChangePassword: mustChangePassword, CreatedAt: s.now().UTC()}, hash, nil
 }
 
-func (s *Service) insertUser(ctx context.Context, tx *sql.Tx, user User, hash string) error {
+func (s *Service) insertUser(ctx context.Context, tx *storage.Tx, user User, hash string) error {
 	if err := requireAvailableUsername(ctx, tx, user.Username, ""); err != nil {
 		return err
 	}
@@ -348,7 +361,13 @@ func (s *Service) Login(ctx context.Context, username, password, otp string) (Se
 	}
 	var user User
 	var hash, created string
-	err := s.db.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password, password_hash FROM users WHERE username = ?", username).Scan(&user.ID, &user.Username, &created, &user.MustChangePassword, &hash)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return Session{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	err := lease.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password, password_hash FROM users WHERE username = ?", username).Scan(&user.ID, &user.Username, &created, &user.MustChangePassword, &hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		// 未知用户名消耗与错误密码相同的 Argon2 计算。
 		var salt [16]byte
@@ -394,7 +413,7 @@ func (s *Service) Login(ctx context.Context, username, password, otp string) (Se
 	now := s.now().UTC()
 	session := Session{Token: token, CSRFToken: sessionCSRF(token), ExpiresAt: now.Add(SessionLifetime), User: user}
 	digest := sha256.Sum256([]byte(token))
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return Session{}, err
 	}
@@ -420,7 +439,11 @@ func (s *Service) Login(ctx context.Context, username, password, otp string) (Se
 		}
 	}
 	// 若其他服务已提交密码修改或用户删除，不能再用先前验证的旧凭据创建会话。
-	result, err := tx.ExecContext(ctx, "INSERT INTO sessions(token_hash, user_id, expires_at) SELECT ?, id, ? FROM users WHERE id = ? AND password_hash = ? AND totp_ciphertext IS ?", digest[:], session.ExpiresAt.UnixNano(), user.ID, newHash, state.cipher)
+	query := "INSERT INTO sessions(token_hash, user_id, expires_at) SELECT ?, id, ? FROM users WHERE id = ? AND password_hash = ? AND totp_ciphertext IS ?"
+	if tx.Dialect() == storage.MySQL {
+		query = "INSERT INTO sessions(token_hash, user_id, expires_at) SELECT ?, id, ? FROM users WHERE id = ? AND password_hash = ? AND totp_ciphertext <=> ?"
+	}
+	result, err := tx.ExecContext(ctx, query, digest[:], session.ExpiresAt.UnixNano(), user.ID, newHash, state.cipher)
 	if err != nil {
 		return Session{}, err
 	}
@@ -442,7 +465,7 @@ func (s *Service) Login(ctx context.Context, username, password, otp string) (Se
 		return Session{}, err
 	}
 	// 只在新会话能够成功提交时回收有界批次。
-	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE token_hash IN (SELECT token_hash FROM sessions WHERE expires_at <= ? ORDER BY expires_at LIMIT 128)", now.UnixNano()); err != nil {
+	if _, err := cleanupSessions(ctx, tx, now.UnixNano()); err != nil {
 		return Session{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -489,7 +512,13 @@ func (s *Service) lookupSession(ctx context.Context, token string) (User, int64,
 	var user User
 	var created string
 	var expiry int64
-	err := s.db.QueryRowContext(ctx, `SELECT u.id, u.username, u.created_at, u.must_change_password, u.totp_ciphertext IS NOT NULL, s.expires_at
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return User{}, 0, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	err := lease.QueryRowContext(ctx, `SELECT u.id, u.username, u.created_at, u.must_change_password, u.totp_ciphertext IS NOT NULL, s.expires_at
  FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`, digest[:]).Scan(&user.ID, &user.Username, &created, &user.MustChangePassword, &user.TOTPEnabled, &expiry)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, 0, ErrUnauthenticated
@@ -505,13 +534,28 @@ func (s *Service) lookupSession(ctx context.Context, token string) (User, int64,
 }
 
 // CleanupExpiredSessions 最多删除一个有界批次，并报告删除的会话数量。
-// 由定期清理任务调用，避免请求处理仅为回收会话而占用 SQLite 写锁。
+// 由定期清理任务调用，避免请求处理仅为回收会话而占用写锁。
 func (s *Service) CleanupExpiredSessions(ctx context.Context) (int64, error) {
-	result, err := s.db.ExecContext(ctx, "DELETE FROM sessions WHERE token_hash IN (SELECT token_hash FROM sessions WHERE expires_at <= ? ORDER BY expires_at LIMIT 128)", s.now().UnixNano())
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return 0, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	defer tx.Rollback()
+	count, err := cleanupSessions(ctx, tx, s.now().UnixNano())
+	if err != nil {
+		return 0, err
+	}
+	return count, tx.Commit()
+}
+
+func cleanupSessions(ctx context.Context, tx *storage.Tx, before int64) (int64, error) {
+	return storage.DeleteBatch(ctx, tx, `SELECT token_hash FROM sessions WHERE expires_at<=? ORDER BY expires_at LIMIT 128`, `DELETE FROM sessions WHERE token_hash=?`, before)
 }
 
 func (s *Service) VerifyCSRF(ctx context.Context, token, csrf string) (bool, error) {
@@ -524,7 +568,13 @@ func (s *Service) VerifyCSRF(ctx context.Context, token, csrf string) (bool, err
 	}
 	digest := sha256.Sum256([]byte(token))
 	var present int
-	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM sessions WHERE token_hash = ? AND expires_at > ?", digest[:], s.now().UnixNano()).Scan(&present)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return false, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	err := lease.QueryRowContext(ctx, "SELECT 1 FROM sessions WHERE token_hash = ? AND expires_at > ?", digest[:], s.now().UnixNano()).Scan(&present)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -550,17 +600,26 @@ func sessionCSRF(token string) string {
 
 func (s *Service) Logout(ctx context.Context, token string) error {
 	digest := sha256.Sum256([]byte(token))
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	var userID string
-	err = tx.QueryRowContext(ctx, "DELETE FROM sessions WHERE token_hash = ? RETURNING user_id", digest[:]).Scan(&userID)
+	err = tx.QueryRowContext(ctx, "SELECT user_id FROM sessions WHERE token_hash = ?", digest[:]).Scan(&userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return tx.Commit()
 	}
 	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE token_hash = ?", digest[:]); err != nil {
 		return err
 	}
 	if err := audit.Insert(ctx, tx, "session.delete", userID, s.now()); err != nil {
@@ -585,7 +644,13 @@ func (s *Service) ChangePassword(ctx context.Context, userID, oldPassword, newPa
 		return err
 	}
 	var hash string
-	if err := s.db.QueryRowContext(ctx, "SELECT password_hash FROM users WHERE id = ?", userID).Scan(&hash); err != nil {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	if err := lease.QueryRowContext(ctx, "SELECT password_hash FROM users WHERE id = ?", userID).Scan(&hash); err != nil {
 		return err
 	}
 	ok, err := VerifyPassword(oldPassword, hash)
@@ -599,7 +664,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID, oldPassword, newPa
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}

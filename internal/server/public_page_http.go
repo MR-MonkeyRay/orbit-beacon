@@ -6,11 +6,15 @@ import (
 
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/management"
+	"orbitbeacon/internal/server/storage"
 )
 
 var errPublicPageDisabled = errors.New("public page is disabled")
 
 func (h *handler) publicPageAccess() error {
+	if h.publicPageUnknown.Load() {
+		return storage.ErrUnavailable
+	}
 	if h.publicPageDisabled.Load() {
 		return errPublicPageDisabled
 	}
@@ -18,6 +22,10 @@ func (h *handler) publicPageAccess() error {
 }
 
 func (h *handler) publicPageError(w http.ResponseWriter, requestID string) {
+	if h.publicPageUnknown.Load() {
+		h.serviceError(w, storage.ErrUnavailable, requestID)
+		return
+	}
 	fail(w, http.StatusForbidden, "public_page_disabled", "Public access is disabled", requestID)
 }
 
@@ -57,6 +65,10 @@ func (h *handler) publicPageRoot(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Set("Cache-Control", "no-store")
 	if h.publicPageAccess() == nil {
 		return true
+	}
+	if h.publicPageUnknown.Load() {
+		h.serviceError(w, storage.ErrUnavailable, w.Header().Get("X-Request-ID"))
+		return false
 	}
 	target := "/login"
 	if cookie, err := r.Cookie(sessionCookie); err == nil {

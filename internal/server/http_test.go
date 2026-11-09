@@ -45,9 +45,14 @@ func newHTTP(t *testing.T, capacity int) fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	stable, err := storage.OpenMain(context.Background(), filepath.Join(dir, "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stable.Close() })
 	now := func() time.Time { return time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC) }
-	authService := auth.NewService(db, auth.Options{Now: now, Random: rand.NewChaCha8([32]byte{31})})
-	nodeService := nodes.NewService(db, nodes.Options{MaxNodes: capacity, Now: now, Random: rand.NewChaCha8([32]byte{32})})
+	authService := auth.NewService(stable, auth.Options{Now: now, Random: rand.NewChaCha8([32]byte{31})})
+	nodeService := nodes.NewService(stable, nodes.Options{MaxNodes: capacity, Now: now, Random: rand.NewChaCha8([32]byte{32})})
 	if _, err := authService.CreateUser(context.Background(), "admin", password, false); err != nil {
 		t.Fatal(err)
 	}
@@ -57,9 +62,9 @@ func newHTTP(t *testing.T, capacity int) fixture {
 	handler, err := server.NewHandler(testHandlerOptions(t, server.Options{
 		Auth: authService, Nodes: nodeService, PublicURL: publicURL,
 		Assets: fstest.MapFS{
-			"200.html":               &fstest.MapFile{Data: []byte("<!doctype html><main>regression SPA shell</main>")},
-			"public.html":            &fstest.MapFile{Data: []byte("<!doctype html><main>regression public shell</main>")},
-			"_app/immutable/main.js": &fstest.MapFile{Data: []byte("export const fixture = true;")},
+			"200.html":            &fstest.MapFile{Data: []byte("<!doctype html><main>regression SPA shell</main>")},
+			"public.html":         &fstest.MapFile{Data: []byte("<!doctype html><main>regression public shell</main>")},
+			"_app/assets/main.js": &fstest.MapFile{Data: []byte("export const fixture = true;")},
 		},
 	}))
 	if err != nil {
@@ -347,7 +352,7 @@ func TestAPIFailuresHaveStructuredErrorsAndNeverSPAFallback(t *testing.T) {
 func TestStaticFallbackIsLimitedToDeclaredUIRoutes(t *testing.T) {
 	f := newHTTP(t, 2)
 	cookie, _ := login(t, f, "admin")
-	for _, path := range []string{"/login", "/change-password", "/overview", "/nodes", "/nodes/00000000-0000-4000-8000-000000000123", "/alerts", "/settings"} {
+	for _, path := range []string{"/login", "/change-password", "/overview", "/nodes", "/nodes/00000000-0000-4000-8000-000000000123", "/alerts", "/settings", "/data"} {
 		t.Run(path, func(t *testing.T) {
 			response := request(t, f.handler, http.MethodGet, path, "", cookie, "", "")
 			if response.Code != http.StatusOK || !strings.HasPrefix(response.Header().Get("Content-Type"), "text/html") {
@@ -360,7 +365,7 @@ func TestStaticFallbackIsLimitedToDeclaredUIRoutes(t *testing.T) {
 	}
 	for _, path := range []string{
 		"/not-a-page", "/overview/unexpected", "/nodes/00000000-0000-4000-8000-000000000123/extra",
-		"/_app/immutable/missing.js", "/favicon-missing.svg", "/api/v1/missing", "/api/agent/v1/missing",
+		"/_app/assets/missing.js", "/favicon-missing.svg", "/api/v1/missing", "/api/agent/v1/missing",
 		"/status",
 	} {
 		t.Run(path, func(t *testing.T) {
@@ -373,11 +378,11 @@ func TestStaticFallbackIsLimitedToDeclaredUIRoutes(t *testing.T) {
 			}
 		})
 	}
-	response := request(t, f.handler, http.MethodGet, "/_app/immutable/main.js", "", nil, "", "")
+	response := request(t, f.handler, http.MethodGet, "/_app/assets/main.js", "", nil, "", "")
 	if response.Code != http.StatusOK || response.Body.String() != "export const fixture = true;" {
 		t.Errorf("real static asset not delivered: %d %s", response.Code, response.Body)
 	}
-	response = request(t, f.handler, http.MethodHead, "/_app/immutable/main.js", "", nil, "", "")
+	response = request(t, f.handler, http.MethodHead, "/_app/assets/main.js", "", nil, "", "")
 	if response.Code != http.StatusOK || response.Body.Len() != 0 {
 		t.Errorf("HEAD asset response = %d with %d body bytes", response.Code, response.Body.Len())
 	}

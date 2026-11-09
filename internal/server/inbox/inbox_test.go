@@ -27,13 +27,13 @@ func TestAdministratorVisibilityReadsAndMonotonicWatermark(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := inbox.New(db)
+	s := inbox.New(mainHandle(t, db))
 	a := inbox.Identity{UserID: "a"}
 	b := inbox.Identity{UserID: "b"}
 	now := time.Date(2026, 10, 27, 3, 0, 0, 0, time.UTC)
 	add := func(id, kind string, at time.Time) {
 		t.Helper()
-		tx, e := db.BeginTx(ctx, nil)
+		tx, e := beginMainWrite(t, db, ctx)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -137,7 +137,7 @@ func TestInsertRollsBackWithSourceAndDeduplicatesTransition(t *testing.T) {
 	}
 	defer db.Close()
 	event := inbox.Event{ID: "10000000-0000-4000-8000-000000000001", Kind: "alert", SourceID: "episode", Transition: "firing", Severity: "warning", CreatedAt: time.Now(), Details: json.RawMessage(`{}`)}
-	tx, e := db.BeginTx(ctx, nil)
+	tx, e := beginMainWrite(t, db, ctx)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -152,7 +152,7 @@ func TestInsertRollsBackWithSourceAndDeduplicatesTransition(t *testing.T) {
 		t.Fatalf("rollback count=%d err=%v", n, e)
 	}
 	for i := range 2 {
-		tx, e = db.BeginTx(ctx, nil)
+		tx, e = beginMainWrite(t, db, ctx)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -167,5 +167,12 @@ func TestInsertRollsBackWithSourceAndDeduplicatesTransition(t *testing.T) {
 	}
 	if e = db.QueryRow(`SELECT count(*) FROM inbox_notifications`).Scan(&n); e != nil || n != 1 {
 		t.Fatalf("duplicate transition count=%d err=%v", n, e)
+	}
+	var sequence, counter int64
+	if e = db.QueryRow(`SELECT sequence FROM inbox_notifications`).Scan(&sequence); e != nil {
+		t.Fatal(e)
+	}
+	if e = db.QueryRow(`SELECT value FROM inbox_sequence WHERE id=1`).Scan(&counter); e != nil || counter != sequence || counter != 1 {
+		t.Fatalf("sequence=%d counter=%d err=%v", sequence, counter, e)
 	}
 }

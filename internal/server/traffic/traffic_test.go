@@ -25,7 +25,7 @@ func newFixture(t *testing.T) (*traffic.Service, *sql.DB) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	return traffic.NewService(db), db
+	return traffic.NewService(mainHandle(t, db)), db
 }
 
 func insertNode(t *testing.T, db *sql.DB, id string, billingDay int, quota string) {

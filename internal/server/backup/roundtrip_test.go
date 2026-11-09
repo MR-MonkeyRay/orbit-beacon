@@ -54,7 +54,7 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 	if _, err = db.Exec(`INSERT INTO audit_events VALUES('44444444-4444-4444-8444-444444444444',NULL,'fixture',NULL,?,?)`, at, `{"marker":"events-canary"}`); err != nil {
 		t.Fatal(err)
 	}
-	metrics, err := history.Open(ctx, dir, db, history.Options{})
+	metrics, err := history.Open(ctx, dir, mainHandle(t, db), history.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 				}
 			}
 			work := filepath.Join(dir, fmt.Sprintf("work-%d", mask))
-			payloads, err := CreateSnapshotPayloads(ctx, dir, work, categories, func() time.Time { return now })
+			payloads, err := CreateSnapshotPayloads(ctx, snapshotSources(t, dir), dir, work, categories, func() time.Time { return now })
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -83,7 +83,7 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			manifest := Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: id, CreatedAt: now, ServerVersion: "test", SchemaVersion: storage.CurrentSchemaVersion, HistorySchemaVersion: 1, Categories: categories, Snapshots: payloads.Snapshots}
+			manifest := Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: id, CreatedAt: now, ServerVersion: "test", SchemaVersion: storage.CurrentSchemaVersion, HistorySchemaVersion: storage.HistorySchemaVersion, Categories: categories, Snapshots: payloads.Snapshots}
 			info, err := WriteArchive(ctx, archive, manifest, payloads.Files, password)
 			if err != nil {
 				t.Fatal(err)
@@ -189,7 +189,7 @@ func TestMonitoringMissingHistoryFailsButConfigurationDoesNotRequireIt(t *testin
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := CreateSnapshotPayloads(ctx, dir, filepath.Join(dir, "monitoring-work"), []Category{Monitoring}, time.Now); err == nil || err.Error() != "history_unavailable" {
+	if _, err := CreateSnapshotPayloads(ctx, snapshotSources(t, dir), dir, filepath.Join(dir, "monitoring-work"), []Category{Monitoring}, time.Now); err == nil || err.Error() != "history_unavailable" {
 		t.Fatalf("missing history=%v", err)
 	}
 	hash, err := auth.HashPassword("backup-fixture-password", rand.Reader)
@@ -199,7 +199,7 @@ func TestMonitoringMissingHistoryFailsButConfigurationDoesNotRequireIt(t *testin
 	if _, err = db.Exec(`INSERT INTO users(id,username,password_hash,created_at,must_change_password) VALUES('11111111-1111-4111-8111-111111111111','admin',?,?,0)`, hash, timekey.Format(time.Now())); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = CreateSnapshotPayloads(ctx, dir, filepath.Join(dir, "configuration-work"), []Category{Configuration}, time.Now); err != nil {
+	if _, err = CreateSnapshotPayloads(ctx, snapshotSources(t, dir), dir, filepath.Join(dir, "configuration-work"), []Category{Configuration}, time.Now); err != nil {
 		t.Fatal(err)
 	}
 }

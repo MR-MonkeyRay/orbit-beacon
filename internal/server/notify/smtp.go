@@ -175,6 +175,10 @@ func (c *smtpClient) data(raw string) error {
 	return e
 }
 func (s *sender) email(ctx context.Context, c Channel, password string, p Payload) Result {
+	return s.emailText(ctx, c, password, "OrbitBeacon alert notification", renderMessage(p, c.Config.Template, 0))
+}
+
+func (s *sender) emailText(ctx context.Context, c Channel, password, subject, text string) Result {
 	cfg := c.Config
 	conn, e := s.dialer.DialContext(ctx, "tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))
 	if e != nil {
@@ -249,7 +253,7 @@ func (s *sender) email(ctx context.Context, c Channel, password string, p Payloa
 			return smtpFailure(e)
 		}
 	}
-	raw, e := mailMessage(cfg, p, s.now())
+	raw, e := mailText(cfg, subject, text, s.now())
 	if e != nil {
 		return failure("invalid_payload", false)
 	}
@@ -260,6 +264,10 @@ func (s *sender) email(ctx context.Context, c Channel, password string, p Payloa
 	return Result{OK: true}
 }
 func mailMessage(cfg Config, p Payload, now time.Time) (string, error) {
+	return mailText(cfg, "OrbitBeacon alert notification", renderMessage(p, cfg.Template, 0), now)
+}
+
+func mailText(cfg Config, subject, text string, now time.Time) (string, error) {
 	if !validAddress(cfg.From) {
 		return "", errSMTPProtocol
 	}
@@ -268,12 +276,11 @@ func mailMessage(cfg Config, p Payload, now time.Time) (string, error) {
 			return "", errSMTPProtocol
 		}
 	}
-	subject := "OrbitBeacon alert notification"
 	id, e := uuid.UUID(rand.Reader)
 	if e != nil {
 		return "", e
 	}
-	body := base64.StdEncoding.EncodeToString([]byte(renderMessage(p, cfg.Template, 0)))
+	body := base64.StdEncoding.EncodeToString([]byte(text))
 	var wrapped strings.Builder
 	for len(body) > 0 {
 		n := min(76, len(body))

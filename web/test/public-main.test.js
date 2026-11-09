@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
 import {reducedMotion} from '../src/shared/dom.js';
 import {copy, flush, TestElement} from './console-dom.js';
 import {frame, liveHarness, response, stream} from './live-harness.js';
 
-const entry = new URL('../src/public/main.js', import.meta.url);
-const source = (await readFile(entry, 'utf8')).replace("import './public.css';", '')
-  .replace(/from '(\.\.?\/[^']+)'/g, (_match, path) => `from '${new URL(path, entry).href}'`);
-let run = 0;
+const loadRenderers = async () => ({
+  ...await import('../themes/default/cards.js'),
+  ...await import('../themes/default/constellation.js'),
+  ...await import('../themes/default/announcements.js')
+});
 const payload = (name = 'edge', extra = {}) => ({
   announcements: [],
   nodes: [{name, region: '', provider: '', status: 'online', last_seen: '2026-10-27T12:34:56Z',
@@ -23,7 +23,7 @@ class PublicElement extends TestElement {
   get lastChild() { return this.children.at(-1); }
   getBoundingClientRect() { return {}; }
 }
-async function setup(t, respond) {
+async function setup(t, respond, customize) {
   const env = liveHarness(t, respond);
   globalThis.localStorage.getItem = (key) => key === 'orbitbeacon-locale' ? 'en' : null;
   env.document.createElement = (tag) => new PublicElement(tag);
@@ -32,7 +32,9 @@ async function setup(t, respond) {
   const elements = Object.fromEntries(ids.map((id) => {
     const element = new PublicElement('div'); element.id = id; env.body.append(element); return [id, element];
   }));
-  await import(`data:text/javascript;base64,${Buffer.from(`${source}\n// run ${++run}`).toString('base64')}`);
+  const {mountPublicPage} = await import('../src/public/page.js');
+  const renderers = await loadRenderers();
+  mountPublicPage(customize ? customize(renderers) : renderers);
   await flush();
   return {...env, elements};
 }
@@ -62,6 +64,7 @@ test('public page turn keeps the announcement element until the next page replac
   const article = ui.elements.announcements.children[0];
   ui.elements.next.click();
   assert.equal(ui.elements.announcements.children[0], article);
+  assert.ok(document.title.startsWith(copy('public.page', {page: 2})));
   ui.sockets[1].open(); ui.sockets[1].message(snapshot(payload('two', {announcements: [notice]})));
   assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'two');
   assert.equal(ui.elements.announcements.children[0], article);
@@ -100,16 +103,13 @@ test('public broken channel retains values and online presence until the next va
   assert.equal(card.querySelector('.last-report').hidden, false);
   sse.frame(snapshot(payload('', {nodes: []}))); await flush();
   assert.equal(ui.elements.nodes.children.length, 0);
-  assert.notEqual(ui.elements.headline.textContent, '');
+  assert.equal(ui.elements.headline.textContent, copy('public.heading'));
   assert.equal(ui.elements.retry.hidden, true);
-  // 空集合只由标题说明一次；空态盒子保持隐藏。
+  // 空集合只由摘要行说明一次；空态盒子保持隐藏。
   assert.equal(ui.elements.empty.hidden, true);
-  assert.equal(ui.elements.headline.textContent, copy('public.empty.all'));
-  assert.equal(ui.elements.summary.textContent, '');
-  assert.equal(ui.elements.summary.parentElement, ui.elements.headline.parentElement);
+  assert.equal(ui.elements.summary.textContent, copy('public.empty.all'));
   sse.frame(snapshot(payload('returned'))); await flush();
   assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'returned');
-  assert.equal(ui.elements.summary.textContent, copy('public.summary.full', {count: 1}));
 });
 
 test('public invalid snapshot cannot clear an accepted collection or change its values', async (t) => {
@@ -212,7 +212,7 @@ test('public-page disable clears rendered data and timers before replacing the r
   const redirects = [];
   location.replace = (target) => {
     assert.equal(ui.elements.nodes.children.length, 0);
-    assert.equal(ui.elements.summary.textContent, '—');
+    assert.equal(ui.elements.summary.textContent, copy('public.loading'));
     assert.equal(ui.sockets[0].closed, true);
     assert.equal(ui.timers.size, 0);
     redirects.push(target);
@@ -233,6 +233,9 @@ test('public gauges clear both ARIA values when a metric becomes missing', async
   const meter = ui.elements.nodes.querySelector('.track');
   assert.equal(meter.getAttribute('aria-valuenow'), '80.0');
   assert.equal(meter.getAttribute('aria-valuetext'), '80.0%');
+  data.nodes[0].metric_status.cpu_percent = 'stale';
+  socket.message(snapshot(data));
+  assert.equal(meter.getAttribute('aria-valuetext'), copy('public.metric.staleValue', {value: '80.0%', note: copy('public.metric.staleNote')}));
   data.nodes[0].cpu_percent = null;
   data.nodes[0].metric_status.cpu_percent = 'unavailable';
   socket.message(snapshot(data));
@@ -261,4 +264,44 @@ test('reduced-motion HTTP refresh and loading state work without any animation c
   assert.equal(ui.requests.length, 3, 'next HTTP poll is independent of CSS animationend');
   release(); await flush();
   assert.equal(ui.elements.refresh.hasAttribute('aria-busy'), false);
+});
+
+test('theme renderers receive validated snapshots, stale state and terminal withdrawal without owning transport', async (t) => {
+  const events = [];
+  const ui = await setup(t, () => new Promise(() => {}), (renderers) => ({
+    ...renderers,
+    createCard() {
+      const card = renderers.createCard();
+      const update = card.update;
+      card.update = (node) => { events.push(['card', node.name]); update(node); };
+      const setStale = card.setStale;
+      card.setStale = () => { events.push(['stale']); setStale(); };
+      return card;
+    },
+    createConstellation(container) {
+      const constellation = renderers.createConstellation(container);
+      return {
+        update(nodes) { events.push(['overview', nodes.length]); constellation.update(nodes); },
+        clear() { events.push(['clear']); constellation.clear(); }
+      };
+    },
+    announcementRenderer(container) {
+      const render = renderers.announcementRenderer(container);
+      return (items) => { events.push(['announcements', items.length]); render(items); };
+    }
+  }));
+  const socket = ui.sockets[0]; socket.open();
+  socket.message(snapshot(payload('theme node')));
+  assert.deepEqual(events, [['announcements', 0], ['card', 'theme node'], ['overview', 1]]);
+  socket.message(snapshot(payload('rejected', {next_offset: 50})));
+  await flush();
+  assert.ok(events.some(([kind]) => kind === 'stale'));
+  assert.ok(!events.some(([, name]) => name === 'rejected'));
+  location.replace = (target) => { events.push(['redirect', target]); };
+  // The replacement SSE request is deliberately pending; a new refresh opens WS.
+  ui.elements.refresh.click();
+  const next = ui.sockets.at(-1); next.open();
+  next.message(frame('error', {code: 'public_page_disabled'}));
+  await flush();
+  assert.deepEqual(events.slice(-3), [['announcements', 0], ['clear'], ['redirect', '/']]);
 });

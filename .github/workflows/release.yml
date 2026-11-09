@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       version:
-        description: CI 已校验的项目版本
+        description: Project version validated by CI
         required: true
         type: string
 
@@ -29,18 +29,18 @@ jobs:
       contents: write
       packages: write
     steps:
-      - name: 检出源码
+      - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: 配置 Buildx
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - name: 登录 GitHub Container Registry
+      - name: Log in to GitHub Container Registry
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
-      - name: 检查该版本是否已发布
+      - name: Check existing publication
         id: publication-state
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -58,25 +58,39 @@ jobs:
               printf '%s\n' "$release_assets" | grep -Fxq orbitbeacon-mcp-linux-arm64 && \
               printf '%s\n' "$release_assets" | grep -Fxq SHA256SUMS; then
               skip=true
-              echo "版本 $VERSION 的镜像和 Release 资产已存在；跳过发布"
+              echo "Image and Release assets for version $VERSION already exist; skipping publication"
             fi
           fi
           printf 'skip=%s\n' "$skip" >> "$GITHUB_OUTPUT"
 
-      - name: 配置 Go
+      - name: Set up Go
+        id: go-toolchain
         if: steps.publication-state.outputs.skip != 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
 
-      - name: 构建发布二进制
+      - name: Cache release Go dependencies and builds
+        if: steps.publication-state.outputs.skip != 'true'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-release-${{ hashFiles('go.sum', '.github/workflows/release.yml', 'build/server.Dockerfile') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-release-${{ hashFiles('go.sum', '.github/workflows/release.yml', 'build/server.Dockerfile') }}-
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-toolchain.outputs.go-version }}-release-
+
+      - name: Build release binaries
         if: steps.publication-state.outputs.skip != 'true'
         run: |
           set -eu
           output_dir="$RUNNER_TEMP/release"
           mkdir -p "$output_dir"
           build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          printf 'BUILD_DATE=%s\n' "$build_date" >> "$GITHUB_ENV"
           for arch in amd64 arm64; do
             for kind in server agent mcp; do
               CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
@@ -88,13 +102,15 @@ jobs:
           done
           (cd "$output_dir" && sha256sum orbitbeacon-*-linux-* > SHA256SUMS)
 
-      - name: 构建并推送镜像
+      - name: Build and push image
         if: steps.publication-state.outputs.skip != 'true'
         run: |
           set -eu
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
           docker buildx build \
             --file build/server.Dockerfile \
+            --target precompiled \
+            --build-context "release-binaries=$RUNNER_TEMP/release" \
             --platform linux/amd64,linux/arm64 \
             --provenance=true \
             --sbom=true \
@@ -104,32 +120,23 @@ jobs:
             --tag "$image:latest" \
             --build-arg VERSION="$VERSION" \
             --build-arg COMMIT="$GITHUB_SHA" \
-            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --build-arg BUILD_DATE="$BUILD_DATE" \
             .
 
-      - name: 发布 GitHub Release 二进制
+      - name: Publish GitHub Release assets
+        if: steps.publication-state.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SKIP_PUBLICATION: ${{ steps.publication-state.outputs.skip }}
         run: |
           set -eu
           tag="v$VERSION"
           assets=("$RUNNER_TEMP/release/orbitbeacon-server-linux-amd64" "$RUNNER_TEMP/release/orbitbeacon-server-linux-arm64" "$RUNNER_TEMP/release/orbitbeacon-agent-linux-amd64" "$RUNNER_TEMP/release/orbitbeacon-agent-linux-arm64" "$RUNNER_TEMP/release/orbitbeacon-mcp-linux-amd64" "$RUNNER_TEMP/release/orbitbeacon-mcp-linux-arm64" "$RUNNER_TEMP/release/SHA256SUMS")
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release edit "$tag" --title "$VERSION"
-            if [ "$SKIP_PUBLICATION" != 'true' ]; then
-              gh release upload "$tag" "${assets[@]}" --clobber
-            fi
+            gh release upload "$tag" "${assets[@]}" --clobber
           else
             gh release create "$tag" "${assets[@]}" \
               --target "$GITHUB_SHA" \
               --title "$VERSION" \
-              --notes "OrbitBeacon $VERSION 发布。校验和见 SHA256SUMS。"
+              --notes "OrbitBeacon $VERSION release. See SHA256SUMS for checksums."
           fi
-          release_assets="$(gh release view "$tag" --json assets --jq '.assets[].name')"
-          for arch in amd64 arm64; do
-            legacy_asset="orbitbeacon-$VERSION-linux-$arch.tar.gz"
-            if printf '%s\n' "$release_assets" | grep -Fxq "$legacy_asset"; then
-              gh release delete-asset "$tag" "$legacy_asset" --yes
-            fi
-          done

@@ -46,7 +46,7 @@ func TestProbeHistoryBackupRoundTrip(t *testing.T) {
 	db.Close()
 	archive, password := restoreArchive(t, source, []Category{Configuration, Monitoring})
 	target := restoreFixture(t, "target")
-	if _, err := Restore(ctx, target, archive, password, true); err != nil {
+	if _, err := Restore(ctx, restoreConfig(target), archive, password, true); err != nil {
 		t.Fatal(err)
 	}
 	var maximum, sum float64

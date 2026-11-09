@@ -14,6 +14,7 @@ import (
 	"orbitbeacon/internal/server/announcements"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/ingest"
+	"orbitbeacon/internal/server/storage"
 )
 
 // liveFrame 是通用的只读浏览器传输契约。数据仅存在于快照帧中；
@@ -61,6 +62,7 @@ type liveStreams struct {
 	active  map[*liveStream]struct{}
 	done    chan struct{}
 	closing bool
+	paused  bool
 }
 
 type liveStream struct {
@@ -80,7 +82,7 @@ type liveStream struct {
 func (s *liveStreams) acquire(ip string) (*liveStream, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closing || s.total >= 200 || s.byIP[ip] >= 4 {
+	if s.closing || s.paused || s.total >= 200 || s.byIP[ip] >= 4 {
 		return nil, false
 	}
 	if s.byIP == nil {
@@ -376,8 +378,9 @@ func runLive[T any](h *handler, ctx context.Context, request context.Context, st
 	first := true
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	operationCtx := ctx
 	write := func(frame liveFrame[T], terminal bool) error {
-		return writeLiveFrame(h, ctx, stream, source.authenticate, send, projectionVersion, frame, terminal)
+		return writeLiveFrame(h, operationCtx, stream, source.authenticate, send, projectionVersion, frame, terminal)
 	}
 	terminalError := func(err error) bool { return liveTerminalError(h, ctx, source.authenticate, write, err) }
 	closeFrame := func(code string) { closeLiveFrame(h, ctx, source.authenticate, write, code) }
@@ -399,57 +402,71 @@ func runLive[T any](h *handler, ctx context.Context, request context.Context, st
 			closeFrame("renew")
 			return
 		}
-		now := time.Now()
-		if first || !now.Before(nextProjection) {
-			if source.authenticate != nil {
-				if err := source.authenticate(ctx); err != nil {
-					if terminalError(err) {
-						return
-					}
-					if ctx.Err() != nil {
-						continue
-					}
-					return
-				}
-			}
-			page, version, err := source.snapshot(ctx)
+		keepRunning := func() bool {
+			lease, err := h.nodes.Database().Acquire(ctx, storage.Reader)
 			if err != nil {
-				if terminalError(err) {
-					return
-				}
-				if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-					continue
-				}
-				return
+				return false
 			}
-			// 发送数据前再次检查，而不只在缓存前检查；已知失效的页面不能通过任何传输方式发出。
-			if h.nodes.PublicSafetyVersion() != visibility {
-				closeFrame("renew")
-				return
-			}
-			projectionVersion = version
-			nextProjection = time.Now().Add(interval)
-			if first || !source.equal(previous, page) {
-				if err := write(snapshotFrame(h, page), false); err != nil {
+			defer lease.Close()
+			operationCtx = lease.Context()
+			defer func() { operationCtx = ctx }()
+			ctx := operationCtx
+			now := time.Now()
+			if first || !now.Before(nextProjection) {
+				if source.authenticate != nil {
+					if err := source.authenticate(ctx); err != nil {
+						if terminalError(err) {
+							return false
+						}
+						if ctx.Err() != nil {
+							return true
+						}
+						return false
+					}
+				}
+				page, version, err := source.snapshot(ctx)
+				if err != nil {
 					if terminalError(err) {
-						return
+						return false
 					}
-					if errors.Is(err, errSnapshotBusy) && h.nodes.PublicSafetyVersion() != visibility {
-						closeFrame("renew")
+					if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+						return true
 					}
-					return
+					return false
 				}
-				previous = page
+				// 发送数据前再次检查，而不只在缓存前检查；已知失效的页面不能通过任何传输方式发出。
+				if h.nodes.PublicSafetyVersion() != visibility {
+					closeFrame("renew")
+					return false
+				}
+				projectionVersion = version
+				nextProjection = time.Now().Add(interval)
+				if first || !source.equal(previous, page) {
+					if err := write(snapshotFrame(h, page), false); err != nil {
+						if terminalError(err) {
+							return false
+						}
+						if errors.Is(err, errSnapshotBusy) && h.nodes.PublicSafetyVersion() != visibility {
+							closeFrame("renew")
+						}
+						return false
+					}
+					previous = page
+					nextHeartbeat = time.Now().Add(heartbeat)
+				}
+				first = false
+			}
+			if !time.Now().Before(nextHeartbeat) {
+				if err := write(controlFrame[T](h, "heartbeat", ""), false); err != nil {
+					terminalError(err)
+					return false
+				}
 				nextHeartbeat = time.Now().Add(heartbeat)
 			}
-			first = false
-		}
-		if !time.Now().Before(nextHeartbeat) {
-			if err := write(controlFrame[T](h, "heartbeat", ""), false); err != nil {
-				terminalError(err)
-				return
-			}
-			nextHeartbeat = time.Now().Add(heartbeat)
+			return true
+		}()
+		if !keepRunning {
+			return
 		}
 		due := nextProjection
 		if nextHeartbeat.Before(due) {

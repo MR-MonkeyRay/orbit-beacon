@@ -21,6 +21,7 @@ func openTestSQLiteStore(t *testing.T) Store {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerStoreObserver(t, store, filepath.Join(dir, "metrics.db"))
 	t.Cleanup(func() {
 		if err := store.Close(); err != nil {
 			t.Error(err)
@@ -156,7 +157,7 @@ func TestSQLiteStoreRetentionBoundaries(t *testing.T) {
 	}{{60, Retention1m}, {300, Retention5m}, {3600, Retention1h}} {
 		cutoff := now.Add(-tier.keep).Truncate(time.Duration(tier.step) * time.Second).Unix()
 		for _, timestamp := range []int64{cutoff - int64(tier.step), cutoff, cutoff + int64(tier.step)} {
-			if _, err := store.db.ExecContext(ctx, `INSERT INTO buckets(node_id,metric,step,t,total,peak,samples) VALUES('one','cpu_percent',?,?,10,10,1)`, tier.step, timestamp); err != nil {
+			if _, err := observeStore(t, store).ExecContext(ctx, `INSERT INTO buckets(node_id,metric,step,t,total,peak,samples) VALUES('one','cpu_percent',?,?,10,10,1)`, tier.step, timestamp); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -195,7 +196,7 @@ func TestSQLiteStoreWriteRowsAndRollback(t *testing.T) {
 		t.Fatalf("invalid rows=%d err=%v", rows, err)
 	}
 	var total float64
-	if err := store.(*sqliteStore).db.QueryRow(`SELECT total FROM buckets WHERE node_id='one' AND step=60`).Scan(&total); err != nil || total != 10 {
+	if err := observeStore(t, store.(*sqliteStore)).QueryRow(`SELECT total FROM buckets WHERE node_id='one' AND step=60`).Scan(&total); err != nil || total != 10 {
 		t.Fatalf("rollback total=%v err=%v", total, err)
 	}
 }
@@ -206,8 +207,7 @@ func TestSQLiteStoreReportsPools(t *testing.T) {
 	}
 }
 
-// SQLite 查询固定桶起点；远端范围查询以请求的 start 为求值网格。
-// VictoriaMetrics 删除样本后，标签索引仍可能保留旧节点名。
+// 查询固定桶起点，非对齐边界不改变聚合网格。
 func TestSQLiteStoreUnalignedRange(t *testing.T) {
 	store := openTestSQLiteStore(t)
 	ctx := context.Background()

@@ -4,7 +4,7 @@ package storage
 // 以便未结束的告警事件能标记为已恢复。
 const alertsSchema = `
 CREATE TABLE alert_rules (
- id TEXT PRIMARY KEY, name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 100),
+ id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 100),
  enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
  scope_kind TEXT NOT NULL CHECK(scope_kind IN ('all','group','node')), scope_id TEXT,
  scope_group_id TEXT GENERATED ALWAYS AS (CASE WHEN scope_kind='group' THEN scope_id END) VIRTUAL REFERENCES groups(id) ON DELETE CASCADE,
@@ -22,7 +22,7 @@ CREATE TABLE alert_rules (
 CREATE INDEX alert_rules_group ON alert_rules(scope_group_id);
 CREATE INDEX alert_rules_node ON alert_rules(scope_node_id);
 CREATE TABLE alert_silences (
- id TEXT PRIMARY KEY,
+ id TEXT PRIMARY KEY NOT NULL,
  reason TEXT NOT NULL,
  scope_kind TEXT NOT NULL CHECK(scope_kind IN ('all','group','node')),
  scope_id TEXT,
@@ -38,7 +38,7 @@ CREATE INDEX alert_silences_ends ON alert_silences(ends_at);
 CREATE INDEX alert_silences_group ON alert_silences(scope_group_id);
 CREATE INDEX alert_silences_node ON alert_silences(scope_node_id);
 CREATE TABLE alert_events (
- id TEXT PRIMARY KEY, rule_id TEXT NOT NULL, node_id TEXT NOT NULL,
+ id TEXT PRIMARY KEY NOT NULL, rule_id TEXT NOT NULL, node_id TEXT NOT NULL,
  state TEXT NOT NULL CHECK(state IN ('firing','resolved')), value REAL,
  started_at TEXT NOT NULL, resolved_at TEXT, last_notified_at TEXT,
  rule_name TEXT NOT NULL, node_name TEXT NOT NULL, rule_snapshot TEXT NOT NULL,

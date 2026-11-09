@@ -42,7 +42,7 @@ func newNodes(t *testing.T, capacity int) (*nodes.Service, *sql.DB) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	service := nodes.NewService(db, nodes.Options{
+	service := nodes.NewService(stableDatabase(t, db), nodes.Options{
 		MaxNodes: capacity,
 		Now:      func() time.Time { return time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC) },
 		Random:   &lockedReader{r: rand.NewChaCha8([32]byte{23})},
@@ -207,6 +207,10 @@ func TestDeletionRequiresConfirmationAndRevokesCredentials(t *testing.T) {
 	if _, err := service.AuthenticateToken(ctx, token); !errors.Is(err, nodes.ErrUnauthenticated) {
 		t.Errorf("deleted node credential still authenticates: %v", err)
 	}
+	var deletedAt string
+	if err := db.QueryRowContext(ctx, "SELECT deleted_at FROM node_deletions WHERE node_id=?", node.ID).Scan(&deletedAt); err != nil || deletedAt == "" {
+		t.Fatalf("successful deletion did not record tombstone: %q %v", deletedAt, err)
+	}
 }
 
 func TestDeletionFailureRollsBackIdentityChanges(t *testing.T) {
@@ -232,6 +236,33 @@ func TestDeletionFailureRollsBackIdentityChanges(t *testing.T) {
 			if got, err := service.AuthenticateToken(ctx, token); err != nil || got.ID != node.ID {
 				t.Errorf("failed deletion revoked identity: node=%+v err=%v", got, err)
 			}
+			var tombstones int
+			if err := db.QueryRowContext(ctx, "SELECT count(*) FROM node_deletions WHERE node_id=?", node.ID).Scan(&tombstones); err != nil || tombstones != 0 {
+				t.Fatalf("failed deletion left tombstone: %d %v", tombstones, err)
+			}
 		})
 	}
+}
+
+var fixtureDatabases sync.Map
+
+func stableDatabase(t *testing.T, db *sql.DB) *storage.Database {
+	t.Helper()
+	if stable, ok := fixtureDatabases.Load(db); ok {
+		return stable.(*storage.Database)
+	}
+	var path string
+	if err := db.QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	stable, err := storage.OpenMain(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureDatabases.Store(db, stable)
+	t.Cleanup(func() {
+		fixtureDatabases.Delete(db)
+		_ = stable.Close()
+	})
+	return stable
 }

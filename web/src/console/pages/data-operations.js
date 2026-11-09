@@ -33,7 +33,7 @@ function taskTable(tasks, openTask) {
         task.destination.actor_name ? h('small', {class: 'muted'}, t('data.task.startedBy', {name: task.destination.actor_name})) : null),
       cell(t('data.categories'), categoryNames(task.categories)),
       cell(t('data.task.state'), taskStatus(task), task.warning_code ? h('small', {class: 'muted'}, t('data.task.warningDetails')) : null),
-      cell(t('data.task.details'), button(t('data.task.details'), {onClick: () => openTask(task.id)})))))});
+      cell(t('data.task.details'), button(t('data.task.view'), {onClick: () => openTask(task.id)})))))});
 }
 
 function planCard(plan, {openTask, editPlan, deletePlan}) {
@@ -42,7 +42,7 @@ function planCard(plan, {openTask, editPlan, deletePlan}) {
   return h('article', {class: 'data-plan'},
     h('div', {class: 'data-plan-head'}, h('div', null, h('h3', null, plan.name),
       h('span', {class: 'muted'}, plan.kind === 'local' ? t('data.plan.localDirectory') : t(backupProviders.find(([id]) => id === plan.destination.provider)?.[1] || 'data.provider.unknown'))),
-    h('span', {class: `data-state ${plan.enabled ? 'data-state-succeeded' : 'data-state-unknown'}`}, t(plan.enabled ? 'data.plan.enabled' : 'data.plan.disabled'))),
+    h('span', {class: `data-state ${plan.enabled ? 'data-state-enabled' : 'data-state-disabled'}`}, t(plan.enabled ? 'data.plan.enabled' : 'data.plan.disabled'))),
     h('p', {class: 'data-location'}, planLocation(plan)),
     h('dl', {class: 'data-plan-facts'},
       h('div', null, h('dt', null, t('data.plan.cron')), h('dd', null, h('code', null, plan.cron))),
@@ -53,7 +53,7 @@ function planCard(plan, {openTask, editPlan, deletePlan}) {
     h('div', {class: 'data-actions'},
       button(t('data.plan.edit'), {onClick: () => editPlan(plan)}),
       button(t('data.plan.delete'), {variant: 'danger', onClick: () => deletePlan(plan)}),
-      last ? button(t('data.plan.lastDetails'), {onClick: () => openTask(last.id)}) : null));
+      last ? button(t('data.plan.viewLast'), {onClick: () => openTask(last.id)}) : null));
 }
 
 // tabSet 负责挂载。卸载的标签页没有请求和摘要订阅。
@@ -82,7 +82,7 @@ export function dataOperationsTab() {
   const exportError = h('div', {class: 'form-error', role: 'alert', hidden: true});
   const exportStatus = h('p', {class: 'text-note', role: 'status', hidden: true});
   const exportForm = h('form', {class: 'form form-wide'}, exportError, exportCategories.element,
-    h('div', {class: 'form-actions'}, start), exportStatus);
+    h('div', {class: 'form-actions'}, start, h('span', {class: 'text-note'}, t('data.export.hint'))), exportStatus);
   onSubmit(exportForm, start, async () => {
     const signal = controller?.signal;
     if (!signal || signal.aborted) return;
@@ -95,11 +95,9 @@ export function dataOperationsTab() {
     taskPager.cursors = [null];
     await loadTasks();
   }, exportError);
-  const element = h('div', {class: 'data-operations'},
-    panel(t('data.export.title'), {},
-      callout(t('data.export.warning')),
-      h('p', {class: 'text-note'}, t('data.export.hint')),
-      exportForm),
+  const element = h('div', {class: 'data-operations stack'},
+    callout(t('data.export.warning')),
+    panel(t('data.export.title'), {}, exportForm),
     panel(t('data.plans.title'), {action: h('div', {class: 'data-actions'}, planRefresh, addPlan)},
       timezone, planNote, planRows,
       h('div', {class: 'data-pagination'}, planPrevious, planNext)),
@@ -109,7 +107,7 @@ export function dataOperationsTab() {
   const taskView = {pager: taskPager, path: '/tasks', rows: taskRows, note: taskNote, previous: taskPrevious, next: taskNext, refresh: taskRefresh,
     values: (page) => page.tasks,
     render: (page) => page.tasks.length ? taskTable(page.tasks, openTask) : h('p', {class: 'empty'}, t('data.tasks.empty')),
-    success: () => { taskNote.textContent = t('data.tasks.current'); },
+    success: () => { taskNote.textContent = ''; },
     failure: (stale, error) => t(stale ? 'data.tasks.refreshFailedStale' : 'data.tasks.refreshFailed', {error: errorText(error)})};
   const planView = {pager: planPager, path: '/backup-plans', rows: planRows, note: planNote, previous: planPrevious, next: planNext, refresh: planRefresh,
     values: (page) => page.plans,

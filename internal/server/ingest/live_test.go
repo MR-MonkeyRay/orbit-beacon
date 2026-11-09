@@ -73,7 +73,7 @@ func TestLiveDetailResetAndABARejectOldMemoryAndPreserveRestartRuntime(t *testin
 					t.Fatal(err)
 				}
 			case "restart":
-				f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }})
+				f.service = NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }})
 			}
 			record, err := f.nodes.LiveDetail(ctx, f.id)
 			if err != nil {

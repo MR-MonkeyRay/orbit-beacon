@@ -5,7 +5,7 @@ import {api, getNavigationSignal, revalidateSession, session, setSession} from '
 import {go, ignoreNavigationCancellation} from '../router.js';
 import {authLayout} from '../ui/auth-layout.js';
 import {busy, button, callout} from '../ui/components.js';
-import {field, input, passwordInput, trackFormDirty, validateBytes} from '../ui/forms.js';
+import {field, input, passwordInput, validateBytes} from '../ui/forms.js';
 
 
 function nextPath() {
@@ -40,7 +40,7 @@ export async function loginPage() {
   password.addEventListener('input', clearFactor);
   const submit = button(t('shell.signIn'), {type: 'submit', variant: 'primary'});
   const form = h('form', {class: 'form'}, errorBox, field(t('account.username'), username), field(t('account.password'), password, {inner: password.wrapper}), otpField, submit);
-  trackFormDirty(form);
+  // 登录凭据不是可保存的工作成果：不纳入未保存更改守卫，避免误报放弃提示。
   getNavigationSignal()?.addEventListener('abort', () => { password.value = ''; otp.value = ''; }, {once: true});
   window.addEventListener('pagehide', () => { password.value = ''; otp.value = ''; }, {once: true, signal: getNavigationSignal() || undefined});
   form.addEventListener('submit', async (event) => {
@@ -53,7 +53,6 @@ export async function loginPage() {
     try {
       const value = await api('/session', {method: 'POST', body: {username: username.value, password: password.value, ...(factorRequired ? {otp: otp.value} : {})}, noRedirect: true});
       password.value = '';
-      form.markClean();
       setSession(value);
       void go(session.user.must_change_password ? '/change-password' : nextPath(), {replace: true}).catch(ignoreNavigationCancellation);
     } catch (error) {
@@ -72,7 +71,6 @@ export async function loginPage() {
       password.focus();
     } finally {
       if (!keepPassword) { password.value = ''; clearFactor(); }
-      form.syncDirty();
       busy(submit, false);
     }
   });

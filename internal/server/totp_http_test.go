@@ -37,9 +37,9 @@ func TestTOTPHTTPGatesAndSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.auth = auth.NewService(f.db, auth.Options{SecretBox: box, Now: func() time.Time { return now }})
+	f.auth = auth.NewService(f.nodes.Database(), auth.Options{SecretBox: box, Now: func() time.Time { return now }})
 	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, Assets: fstest.MapFS{
-		"200.html": {Data: []byte("console")}, "public.html": {Data: []byte("public")}, "_app/immutable/app.js": {Data: []byte("export{}")},
+		"200.html": {Data: []byte("console")}, "public.html": {Data: []byte("public")}, "_app/assets/app.js": {Data: []byte("export{}")},
 	}}))
 	if err != nil {
 		t.Fatal(err)

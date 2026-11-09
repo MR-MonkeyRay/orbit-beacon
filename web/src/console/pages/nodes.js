@@ -18,7 +18,7 @@ export async function nodesPage() {
   const [nodes, groups] = await Promise.all([allNodes(), groupsList()]);
   const tween = createNumberTween({signal});
   const connection = liveStatus();
-  const head = pageHead(t('nodes.listTitle'), null, connection.element, addNodeButton());
+  const head = pageHead(t('nodes.listTitle'), connection.element, addNodeButton());
 
   const filter = readNodeFilter();
   const groupNames = new Map(groups.map((group) => [group.id, group.name]));
@@ -147,7 +147,7 @@ export async function nodesPage() {
     const shown = new Set(rowRefs.keys());
     rowRefs.clear();
     body.replaceChildren(...(visible.length ? visible.map((node) => row(node, query))
-      : [h('tr', null, h('td', {colspan: 9}, nodes.length
+      : [h('tr', null, h('td', {colspan: 11}, nodes.length
         ? emptyState(t('nodes.noMatch'), null, button(t('nodes.clearFilters'), {onClick: clear}))
         : emptyState(t('nodes.empty'), null, addNodeButton())))]));
     // 搜索和排序会重建表格；只有新进入的行淡入，留在表里的行不闪。

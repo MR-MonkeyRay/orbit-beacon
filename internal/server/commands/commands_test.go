@@ -38,10 +38,15 @@ func fixture(t *testing.T) (*sql.DB, *Service, time.Time) {
 	if _, err := db.Exec(`INSERT INTO nodes(id,name,status,token_hash,agent_runtime,run_generation,report_session_id,created_at) VALUES(?,'host','unknown',?,?,'1','session',?)`, testNode, hash[:], string(runtime), timekey.Format(now)); err != nil {
 		t.Fatal(err)
 	}
-	return db, New(db, func() time.Time { return now }), now
+	stable, err := storage.OpenMain(t.Context(), filepath.Join(dir, "commands.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stable.Close() })
+	return db, New(stable, func() time.Time { return now }), now
 }
 func TestConcurrentCreateOnlyOneActiveAndPendingCancel(t *testing.T) {
-	db, s, _ := fixture(t)
+	_, s, _ := fixture(t)
 	var wg sync.WaitGroup
 	results := make(chan error, 8)
 	for range 8 {
@@ -76,7 +81,12 @@ func TestConcurrentCreateOnlyOneActiveAndPendingCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := db.Begin()
+	lease, err := s.db.Acquire(t.Context(), storage.Writer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	tx, err := lease.BeginWrite(lease.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +165,12 @@ func TestCommandAuditTargetsTheNodeAndSkipsDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := db.Begin()
+	lease, err := s.db.Acquire(t.Context(), storage.Writer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	tx, err := lease.BeginWrite(lease.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +208,7 @@ func TestListShowsUnsweptExpiredCommandAsExpired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	records, err := New(db, func() time.Time { return now.Add(Lifetime) }).List(ctx, testNode)
+	records, err := New(s.db, func() time.Time { return now.Add(Lifetime) }).List(ctx, testNode)
 	if err != nil || len(records) != 1 || records[0].ID != created.ID || records[0].State != "expired" || records[0].ResultCode != "expired" {
 		t.Fatalf("records=%+v err=%v", records, err)
 	}
@@ -319,7 +334,12 @@ func TestUpgradeValidationLifetimeConflictAndAudit(t *testing.T) {
 	if err := json.Unmarshal([]byte(details), &detail); err != nil || detail["target_version"] != "1.2.4" {
 		t.Fatal(details, err)
 	}
-	tx, err := db.Begin()
+	lease, err := s.db.Acquire(t.Context(), storage.Writer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	tx, err := lease.BeginWrite(lease.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

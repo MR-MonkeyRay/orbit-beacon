@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
@@ -87,12 +88,12 @@ func Validate(p *Public) error {
 }
 
 type Service struct {
-	db         *sql.DB
+	db         *storage.Database
 	now        func() time.Time
 	invalidate func()
 }
 
-func New(db *sql.DB, now func() time.Time, invalidate func()) *Service {
+func New(db *storage.Database, now func() time.Time, invalidate func()) *Service {
 	if now == nil {
 		now = time.Now
 	}
@@ -139,8 +140,14 @@ func scan(row interface{ Scan(...any) error }, now time.Time) (Announcement, err
 }
 
 func (s *Service) List(ctx context.Context) ([]Announcement, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	now := s.now().UTC()
-	rows, err := s.db.QueryContext(ctx, "SELECT "+columns+" FROM announcements WHERE ends_at IS NULL OR ends_at>? ORDER BY starts_at DESC,id", timekey.Format(now))
+	rows, err := lease.QueryContext(ctx, "SELECT "+columns+" FROM announcements WHERE ends_at IS NULL OR ends_at>? ORDER BY starts_at DESC,id", timekey.Format(now))
 	if err != nil {
 		return nil, err
 	}
@@ -189,10 +196,16 @@ func merge(p *Public, patch Patch, create bool) error {
 }
 
 func (s *Service) Save(ctx context.Context, id string, patch Patch) (Announcement, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return Announcement{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	now := s.now().UTC()
 	create := id == ""
 	a := Announcement{Public: Public{StartsAt: now}, CreatedAt: now, UpdatedAt: now}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return a, err
 	}
@@ -251,7 +264,13 @@ func (s *Service) Save(ctx context.Context, id string, patch Patch) (Announcemen
 }
 
 func (s *Service) Delete(ctx context.Context, id string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -278,20 +297,40 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 }
 
 func (s *Service) Cleanup(ctx context.Context, before time.Time, limit int) (int64, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return 0, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if limit < 1 {
 		return 0, validation.Invalid("limit", "must be positive")
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM announcements WHERE id IN (SELECT id FROM announcements WHERE ends_at<? ORDER BY ends_at,id LIMIT ?)`, timekey.Format(before), limit)
+	tx, txErr := lease.BeginWrite(ctx)
+	if txErr != nil {
+		return 0, txErr
+	}
+	defer tx.Rollback()
+	count, err := storage.DeleteBatch(ctx, tx, `SELECT id FROM announcements WHERE ends_at<? ORDER BY ends_at,id LIMIT ?`, `DELETE FROM announcements WHERE id=?`, timekey.Format(before), limit)
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	if commitErr := tx.Commit(); commitErr != nil {
+		return 0, commitErr
+	}
+	return count, nil
 }
 
 // ListPublic 在每页缓存未命中时调用一次，走公开页只读连接池。
-func ListPublic(ctx context.Context, db *sql.DB, now time.Time) ([]Public, error) {
+func ListPublic(ctx context.Context, db *storage.Database, now time.Time) ([]Public, error) {
+	lease, leaseErr := db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	stamp := timekey.Format(now)
-	rows, err := db.QueryContext(ctx, `SELECT level,title,body,starts_at,ends_at FROM announcements
+	rows, err := lease.QueryContext(ctx, `SELECT level,title,body,starts_at,ends_at FROM announcements
  WHERE starts_at<=? AND (ends_at IS NULL OR ends_at>?)
  ORDER BY CASE level WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,starts_at DESC,id LIMIT 5`, stamp, stamp)
 	if err != nil {

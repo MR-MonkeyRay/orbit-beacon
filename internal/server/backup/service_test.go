@@ -34,7 +34,12 @@ func workerFixture(t *testing.T) (*sql.DB, Options) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return db, Options{DataDir: dir, SecretBox: box, ServerVersion: "test"}
+	history, err := storage.OpenHistory(t.Context(), filepath.Join(dir, "metrics.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { history.Close() })
+	return db, Options{DataDir: dir, History: history, SecretBox: box, ServerVersion: "test"}
 }
 
 func TestEveryExistingAdministratorCanCreateExport(t *testing.T) {
@@ -43,7 +48,7 @@ func TestEveryExistingAdministratorCanCreateExport(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO users(id,username,password_hash,created_at,must_change_password) VALUES(?,'admin-two',?,?,0)`, second, validationHash, validationTime); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(db, opts)
+	s, err := New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +74,7 @@ func TestEveryExistingAdministratorCanCreateExport(t *testing.T) {
 
 func TestExportAcceptancePersistsAfterRequestCancellationAndBoundsQueue(t *testing.T) {
 	db, opts := workerFixture(t)
-	s, err := New(db, opts)
+	s, err := New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +111,7 @@ func TestServiceRejectsMissingAndWrongSecretBox(t *testing.T) {
 	db, opts := workerFixture(t)
 	saved := opts.SecretBox
 	opts.SecretBox = nil
-	if _, err := New(db, opts); err == nil {
+	if _, err := New(mainHandle(t, db), opts); err == nil {
 		t.Fatal("nil keybox accepted")
 	}
 	opts.SecretBox = saved
@@ -115,7 +120,7 @@ func TestServiceRejectsMissingAndWrongSecretBox(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts.SecretBox = wrong
-	if _, err = New(db, opts); err == nil {
+	if _, err = New(mainHandle(t, db), opts); err == nil {
 		t.Fatal("keybox not matching data-dir accepted")
 	}
 }
@@ -133,7 +138,9 @@ func waitWorkerTask(t *testing.T, db *sql.DB, id, state string) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("task %s did not become %s", id, state)
+	var current, phase, code string
+	_ = db.QueryRow(`SELECT state,phase,error_code FROM backup_tasks WHERE id=?`, id).Scan(&current, &phase, &code)
+	t.Fatalf("task %s did not become %s: state=%s phase=%s code=%s", id, state, current, phase, code)
 }
 
 func insertWorkerTask(t *testing.T, db *sql.DB, id, kind, state, phase string, destination string, cipher []byte) {

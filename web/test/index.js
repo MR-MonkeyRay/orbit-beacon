@@ -1,5 +1,6 @@
 // Node 将显式的 test/ 入口解析到此文件。保持套件导入为静态，
 // 使内置运行器在执行前注册所有测试。
+import './build.test.js';
 import './i18n.test.js';
 import './copy-templates.test.js';
 import './navigation-icons.test.js';
@@ -33,6 +34,7 @@ import './latest-sample-freshness.test.js';
 import './pagination.test.js';
 import './pager.test.js';
 import './data-operations.test.js';
+import './data-management.test.js';
 import './settings-pagination.test.js';
 import './chart.test.js';
 import './alert-utils.test.js';
@@ -53,6 +55,7 @@ import './node-commands.test.js';
 import './availability.test.js';
 import './node-expiry.test.js';
 import './alert-silences.test.js';
+import './alerts-page.test.js';
 import './announcements.test.js';
 
 import './totp.test.js';

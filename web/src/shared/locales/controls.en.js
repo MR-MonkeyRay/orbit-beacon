@@ -25,7 +25,6 @@ export default {
   'controls.discard': 'Discard changes',
   'controls.unsaved': 'Unsaved changes',
   'controls.discard.title': 'Discard unsaved changes?',
-  'controls.discard.message': 'You have edits here that have not been saved.',
   'controls.cancel': 'Cancel',
   'controls.dialog.close': 'Close dialog',
   'controls.confirmation.type': 'Type {expected} to confirm',
@@ -41,6 +40,5 @@ export default {
   'controls.tags.duplicate': '“{value}” is already added.',
   'controls.tags.remove': 'Remove tag {tag}',
   'controls.tags.add': 'Add tag',
-  'controls.tags.placeholder': 'Type a tag and press Enter',
-  'controls.tags.hint': 'Press Enter or comma to add. 1–255 UTF-8 bytes each.'
+  'controls.tags.hint': 'Enter or comma to add.'
 };

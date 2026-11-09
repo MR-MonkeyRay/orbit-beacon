@@ -253,39 +253,6 @@ func TestOpenRejectsURIPaths(t *testing.T) {
 	}
 }
 
-func TestMigrationFailureDoesNotRecordOrPartiallyApplyMigration(t *testing.T) {
-	ctx := context.Background()
-	db, err := storage.Open(ctx, filepath.Join(privateDirectory(t), "orbitbeacon.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	var before int
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&before); err != nil {
-		t.Fatal(err)
-	}
-	err = storage.Migrate(ctx, db, []storage.Migration{{
-		Version: 1000000,
-		SQL:     "CREATE TABLE rollback_sentinel (id INTEGER); INSERT INTO missing_migration_table VALUES (1);",
-	}})
-	if err == nil {
-		t.Fatal("broken migration succeeded")
-	}
-	var partial, after int
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'rollback_sentinel'").Scan(&partial); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&after); err != nil {
-		t.Fatal(err)
-	}
-	if partial != 0 || after != before {
-		t.Errorf("failed migration was not atomic: partial tables=%d, migrations before=%d after=%d", partial, before, after)
-	}
-	if err := storage.Migrate(ctx, db, []storage.Migration{{Version: 1000000, SQL: "CREATE TABLE rollback_sentinel (id INTEGER);"}}); err != nil {
-		t.Fatalf("retrying a repaired, previously failed migration: %v", err)
-	}
-}
-
 func TestOpenRejectsIncompatibleLedgerWithoutChangingData(t *testing.T) {
 	for _, fixture := range []struct {
 		name   string

@@ -104,6 +104,10 @@
   padding: 18px 22px 0;
 }
 
+.panel-head-end {
+  justify-content: flex-end;
+}
+
 .panel-head h2 {
   font-size: var(--fs-lg);
   font-weight: var(--fw-heading);
@@ -507,12 +511,23 @@
 .table th .icon {
   width: 13px;
   height: 13px;
-  opacity: 0;
+  /* 常驻低透明度线索，触屏无 hover 也能看出可排序。 */
+  opacity: .35;
   transition: opacity var(--motion-fast),transform var(--motion-fast);
 }
 
 .table th[aria-sort] .icon {
   opacity: 1;
+}
+
+@media (hover:hover) {
+  .table th button:hover .icon {
+    opacity: .8;
+  }
+}
+
+.table th button:focus-visible .icon {
+  opacity: .8;
 }
 
 .table th[aria-sort="descending"] .icon {
@@ -719,7 +734,7 @@ p.empty {
 /* 对话框 */
 dialog {
   width: min(520px,calc(100vw - 32px));
-  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   padding: 0;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
@@ -849,11 +864,8 @@ dialog.closing::backdrop {
 
 .toast .icon {
   margin-top: 1px;
-  color: var(--ok);
-}
-
-.toast.error .icon {
-  color: var(--bad);
+  /* 反色底上语义色对比不足，图标沿用正文色保证可见。 */
+  color: currentColor;
 }
 
 .toast p {

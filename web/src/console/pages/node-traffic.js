@@ -142,7 +142,8 @@ function trafficContent(data) {
 // 切换详情标签页时保留面板；流量计费设置变更只刷新此面板。
 export function trafficPanel(id, signal) {
   const content = h('div', {class: 'traffic-body'});
-  const root = panel(t('nodes.traffic'), {}, content);
+  // 标签页按钮已命名该面板，不重复标题。
+  const root = panel(null, {}, content);
   let loadVersion = 0;
   let currentPlot;
   let followLatest = true;

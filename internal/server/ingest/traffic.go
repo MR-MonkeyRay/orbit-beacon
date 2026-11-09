@@ -5,11 +5,13 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -158,7 +160,7 @@ func (state *nodeState) trafficAcks(entries []v1.Traffic, now time.Time) []v1.Tr
 	return acks
 }
 
-func (state *nodeState) persistTraffic(ctx context.Context, tx *sql.Tx, nodeID string, now time.Time) (map[trafficKey]trafficCounters, error) {
+func (state *nodeState) persistTraffic(ctx context.Context, tx *storage.Tx, nodeID string, now time.Time) (map[trafficKey]trafficCounters, error) {
 	// 调用方须按本事务内读取的已认证节点身份校验缓冲区，清除旧身份的数据。
 	// acceptGate 保证 I/O 期间缓冲区稳定。
 	state.mu.Lock()
@@ -186,7 +188,7 @@ func copyTrafficPending(pending map[trafficKey]trafficCounters) map[trafficKey]t
 	return owned
 }
 
-func persistTrafficPending(ctx context.Context, tx *sql.Tx, nodeID string, pending map[trafficKey]trafficCounters, now time.Time) (map[trafficKey]trafficCounters, error) {
+func persistTrafficPending(ctx context.Context, tx *storage.Tx, nodeID string, pending map[trafficKey]trafficCounters, now time.Time) (map[trafficKey]trafficCounters, error) {
 	committed := make(map[trafficKey]trafficCounters, len(pending))
 	for key, value := range pending {
 		period, _ := timekey.Parse(key.period)
@@ -194,7 +196,14 @@ func persistTrafficPending(ctx context.Context, tx *sql.Tx, nodeID string, pendi
 			continue
 		}
 		var stored trafficCounters
-		err := tx.QueryRowContext(ctx, `INSERT INTO traffic_hourly(node_id,epoch,period_start,rx_bytes,tx_bytes,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(node_id,epoch,period_start) DO UPDATE SET rx_bytes=MAX(traffic_hourly.rx_bytes,excluded.rx_bytes),tx_bytes=MAX(traffic_hourly.tx_bytes,excluded.tx_bytes),updated_at=MAX(traffic_hourly.updated_at,excluded.updated_at) RETURNING rx_bytes,tx_bytes`, nodeID, key.epoch, key.period, value.rx, value.tx, timekey.Format(now)).Scan(&stored.rx, &stored.tx)
+		query := `INSERT INTO traffic_hourly(node_id,epoch,period_start,rx_bytes,tx_bytes,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(node_id,epoch,period_start) DO UPDATE SET rx_bytes=MAX(traffic_hourly.rx_bytes,excluded.rx_bytes),tx_bytes=MAX(traffic_hourly.tx_bytes,excluded.tx_bytes),updated_at=MAX(traffic_hourly.updated_at,excluded.updated_at)`
+		if tx.Dialect() == storage.MySQL {
+			query = `INSERT INTO traffic_hourly(node_id,epoch,period_start,rx_bytes,tx_bytes,updated_at) VALUES(?,?,?,?,?,?) ON DUPLICATE KEY UPDATE rx_bytes=GREATEST(rx_bytes,VALUES(rx_bytes)),tx_bytes=GREATEST(tx_bytes,VALUES(tx_bytes)),updated_at=GREATEST(updated_at,VALUES(updated_at))`
+		}
+		if _, err := tx.ExecContext(ctx, query, nodeID, key.epoch, key.period, value.rx, value.tx, timekey.Format(now)); err != nil {
+			return nil, err
+		}
+		err := tx.QueryRowContext(ctx, `SELECT rx_bytes,tx_bytes FROM traffic_hourly WHERE node_id=? AND epoch=? AND period_start=?`, nodeID, key.epoch, key.period).Scan(&stored.rx, &stored.tx)
 		if err != nil {
 			return nil, err
 		}
@@ -264,13 +273,23 @@ func (s *Service) drainTraffic(ctx context.Context) error {
 }
 
 func (s *Service) drainNodeTraffic(ctx context.Context, id string, state *nodeState) error {
+	if err := s.resolveReportCommit(ctx, state); err != nil {
+		return err
+	}
 	state.mu.Lock()
-	pending := len(state.traffic.pending) > 0 || (state.stagedTraffic != nil && len(state.stagedTraffic.pending) > 0) || state.probesPending()
+	pending := state.pendingCommit != nil || len(state.traffic.pending) > 0 || (state.stagedTraffic != nil && len(state.stagedTraffic.pending) > 0) || state.probesPending()
 	state.mu.Unlock()
 	if !pending {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	s.finishReportCommit(state)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -295,8 +314,8 @@ func (s *Service) drainNodeTraffic(ctx context.Context, id string, state *nodeSt
 		return err
 	}
 	state.mu.Lock()
-	state.fenceTraffic(credential, credentialEpoch, observedGeneration, session)
-	state.fenceProbes(credential, credentialEpoch, observedGeneration, session)
+	state.invalidateStorageGeneration(lease.Generation())
+	state.invalidateIdentity(credential, credentialEpoch, observedGeneration, session)
 	state.mu.Unlock()
 	now := s.now().UTC()
 	committed, err := state.persistTraffic(ctx, tx, id, now)
@@ -313,6 +332,10 @@ func (s *Service) drainNodeTraffic(ctx context.Context, id string, state *nodeSt
 		return err
 	}
 	if err := tx.Commit(); err != nil {
+		if errors.Is(err, storage.ErrCommitUnknown) {
+			probes.generation, probes.session = observedGeneration, session
+			state.rememberReportCommit(tx, lease.Generation(), committed, probes, nil)
+		}
 		return err
 	}
 	state.commitTraffic(committed, now)

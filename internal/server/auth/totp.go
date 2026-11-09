@@ -17,6 +17,7 @@ import (
 	"rsc.io/qr"
 
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -60,7 +61,13 @@ type totpState struct {
 
 func (s *Service) readTOTP(ctx context.Context, id string) (totpState, error) {
 	var state totpState
-	err := s.db.QueryRowContext(ctx, `SELECT totp_ciphertext,totp_pending_ciphertext,totp_pending_at,totp_last_step FROM users WHERE id=?`, id).Scan(&state.cipher, &state.pending, &state.pendingAt, &state.last)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return totpState{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	err := lease.QueryRowContext(ctx, `SELECT totp_ciphertext,totp_pending_ciphertext,totp_pending_at,totp_last_step FROM users WHERE id=?`, id).Scan(&state.cipher, &state.pending, &state.pendingAt, &state.last)
 	if err == sql.ErrNoRows {
 		err = ErrNotFound
 	}
@@ -137,14 +144,18 @@ func (s *Service) verifySecondFactor(id string, state totpState, otp string) (se
 	}
 	return secondFactor{kind: "totp", step: step}, nil
 }
-func (s *Service) consumeSecondFactor(ctx context.Context, tx *sql.Tx, id string, state totpState, factor secondFactor) error {
+func (s *Service) consumeSecondFactor(ctx context.Context, tx *storage.Tx, id string, state totpState, factor secondFactor) error {
 	var result sql.Result
 	var err error
+	equal := " IS "
+	if tx.Dialect() == storage.MySQL {
+		equal = " <=> "
+	}
 	switch factor.kind {
 	case "totp":
-		result, err = tx.ExecContext(ctx, `UPDATE users SET totp_last_step=? WHERE id=? AND totp_last_step<? AND totp_ciphertext IS ?`, factor.step, id, factor.step, state.cipher)
+		result, err = tx.ExecContext(ctx, `UPDATE users SET totp_last_step=? WHERE id=? AND totp_last_step<? AND totp_ciphertext`+equal+`?`, factor.step, id, factor.step, state.cipher)
 	case "recovery":
-		result, err = tx.ExecContext(ctx, `DELETE FROM recovery_codes WHERE user_id=? AND code_hash=? AND EXISTS(SELECT 1 FROM users WHERE id=? AND totp_ciphertext IS ?)`, id, factor.hash[:], id, state.cipher)
+		result, err = tx.ExecContext(ctx, `DELETE FROM recovery_codes WHERE user_id=? AND code_hash=? AND EXISTS(SELECT 1 FROM users WHERE id=? AND totp_ciphertext`+equal+`?)`, id, factor.hash[:], id, state.cipher)
 	default:
 		return nil
 	}
@@ -168,7 +179,13 @@ type TOTPStatus struct {
 
 func (s *Service) TOTPStatus(ctx context.Context, id string) (TOTPStatus, error) {
 	var status TOTPStatus
-	err := s.db.QueryRowContext(ctx, `SELECT totp_ciphertext IS NOT NULL,(SELECT count(*) FROM recovery_codes WHERE user_id=users.id) FROM users WHERE id=?`, id).Scan(&status.Enabled, &status.RecoveryCodesRemaining)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return TOTPStatus{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	err := lease.QueryRowContext(ctx, `SELECT totp_ciphertext IS NOT NULL,(SELECT count(*) FROM recovery_codes WHERE user_id=users.id) FROM users WHERE id=?`, id).Scan(&status.Enabled, &status.RecoveryCodesRemaining)
 	return status, err
 }
 
@@ -189,7 +206,13 @@ func (s *Service) accountPassword(ctx context.Context, id, password string) (str
 		return "", err
 	}
 	var hash string
-	if err := s.db.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE id=?`, id).Scan(&hash); err != nil {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return "", leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	if err := lease.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE id=?`, id).Scan(&hash); err != nil {
 		return "", err
 	}
 	ok, err := VerifyPassword(password, hash)
@@ -220,6 +243,12 @@ func (s *Service) SetupTOTP(ctx context.Context, id, password string) (TOTPSetup
 		return setup, err
 	}
 	defer func() { <-s.gate }()
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return TOTPSetup{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	hash, err := s.accountPassword(ctx, id, password)
 	if err != nil {
 		return setup, err
@@ -241,7 +270,7 @@ func (s *Service) SetupTOTP(ctx context.Context, id, password string) (TOTPSetup
 		return setup, ErrTOTPUnavailable
 	}
 	var username string
-	if err = s.db.QueryRowContext(ctx, `SELECT username FROM users WHERE id=?`, id).Scan(&username); err != nil {
+	if err = lease.QueryRowContext(ctx, `SELECT username FROM users WHERE id=?`, id).Scan(&username); err != nil {
 		return setup, err
 	}
 	setup.Secret = totpEncoding.EncodeToString(secret)
@@ -261,8 +290,16 @@ func (s *Service) SetupTOTP(ctx context.Context, id, password string) (TOTPSetup
 		}
 	}
 	setup.QR.Modules = string(modules)
-	result, err := s.db.ExecContext(ctx, `UPDATE users SET totp_pending_ciphertext=?,totp_pending_at=? WHERE id=? AND password_hash=? AND totp_ciphertext IS NULL`, cipher, timekey.Format(s.now()), id, hash)
+	tx, err := lease.BeginWrite(ctx)
+	if err != nil {
+		return TOTPSetup{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE users SET totp_pending_ciphertext=?,totp_pending_at=? WHERE id=? AND password_hash=? AND totp_ciphertext IS NULL`, cipher, timekey.Format(s.now()), id, hash)
 	if err = requireChanged(result, err, ErrTOTPAlreadyEnabled); err != nil {
+		return TOTPSetup{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return TOTPSetup{}, err
 	}
 	return setup, nil
@@ -285,7 +322,7 @@ func (s *Service) newRecoveryCodes() ([]string, error) {
 	}
 	return codes, nil
 }
-func replaceRecoveryCodes(ctx context.Context, tx *sql.Tx, id string, codes []string) error {
+func replaceRecoveryCodes(ctx context.Context, tx *storage.Tx, id string, codes []string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM recovery_codes WHERE user_id=?`, id); err != nil {
 		return err
 	}
@@ -297,7 +334,7 @@ func replaceRecoveryCodes(ctx context.Context, tx *sql.Tx, id string, codes []st
 	}
 	return nil
 }
-func requireTOTPSession(ctx context.Context, tx *sql.Tx, id, token string, now time.Time) error {
+func requireTOTPSession(ctx context.Context, tx *storage.Tx, id, token string, now time.Time) error {
 	digest := sha256.Sum256([]byte(token))
 	var present int
 	err := tx.QueryRowContext(ctx, `SELECT 1 FROM sessions WHERE user_id=? AND token_hash=? AND expires_at>?`, id, digest[:], now.UnixNano()).Scan(&present)
@@ -307,7 +344,7 @@ func requireTOTPSession(ctx context.Context, tx *sql.Tx, id, token string, now t
 	return err
 }
 
-func keepSession(ctx context.Context, tx *sql.Tx, id, token string) error {
+func keepSession(ctx context.Context, tx *storage.Tx, id, token string) error {
 	digest := sha256.Sum256([]byte(token))
 	_, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=? AND token_hash<>?`, id, digest[:])
 	return err
@@ -320,6 +357,12 @@ func (s *Service) ConfirmTOTP(ctx context.Context, id, token, code string) ([]st
 		return nil, err
 	}
 	defer func() { <-s.gate }()
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	state, err := s.readTOTP(ctx, id)
 	if err != nil {
 		return nil, err
@@ -346,7 +389,7 @@ func (s *Service) ConfirmTOTP(ctx context.Context, id, token, code string) ([]st
 	if err != nil {
 		return nil, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +397,11 @@ func (s *Service) ConfirmTOTP(ctx context.Context, id, token, code string) ([]st
 	if err = requireTOTPSession(ctx, tx, id, token, s.now()); err != nil {
 		return nil, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE users SET totp_ciphertext=totp_pending_ciphertext,totp_pending_ciphertext=NULL,totp_pending_at=NULL,totp_last_step=? WHERE id=? AND totp_ciphertext IS NULL AND totp_pending_ciphertext IS ? AND totp_pending_at=? AND totp_last_step<?`, step, id, state.pending, state.pendingAt.String, step)
+	equal := " IS "
+	if tx.Dialect() == storage.MySQL {
+		equal = " <=> "
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE users SET totp_ciphertext=totp_pending_ciphertext,totp_pending_ciphertext=NULL,totp_pending_at=NULL,totp_last_step=? WHERE id=? AND totp_ciphertext IS NULL AND totp_pending_ciphertext`+equal+`? AND totp_pending_at=? AND totp_last_step<?`, step, id, state.pending, state.pendingAt.String, step)
 	if err = requireChanged(result, err, ErrTOTPSetupExpired); err != nil {
 		return nil, err
 	}
@@ -380,6 +427,12 @@ func (s *Service) changeTOTP(ctx context.Context, id, token, password, otp strin
 		return nil, err
 	}
 	defer func() { <-s.gate }()
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	hash, err := s.accountPassword(ctx, id, password)
 	if err != nil {
 		return nil, err
@@ -392,7 +445,7 @@ func (s *Service) changeTOTP(ctx context.Context, id, token, password, otp strin
 		return nil, ErrTOTPInvalid
 	}
 	var username string
-	if err = s.db.QueryRowContext(ctx, `SELECT username FROM users WHERE id=?`, id).Scan(&username); err != nil {
+	if err = lease.QueryRowContext(ctx, `SELECT username FROM users WHERE id=?`, id).Scan(&username); err != nil {
 		return nil, err
 	}
 	factor, err := s.verifySecondFactor(id, state, otp)
@@ -409,7 +462,7 @@ func (s *Service) changeTOTP(ctx context.Context, id, token, password, otp strin
 			return nil, err
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -424,7 +477,11 @@ func (s *Service) changeTOTP(ctx context.Context, id, token, password, otp strin
 		}
 		return nil, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE users SET totp_last_step=totp_last_step WHERE id=? AND password_hash=? AND totp_ciphertext IS ?`, id, hash, state.cipher)
+	equal := " IS "
+	if tx.Dialect() == storage.MySQL {
+		equal = " <=> "
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE users SET totp_last_step=totp_last_step WHERE id=? AND password_hash=? AND totp_ciphertext`+equal+`?`, id, hash, state.cipher)
 	if err = requireChanged(result, err, ErrWrongPassword); err != nil {
 		return nil, err
 	}
@@ -460,7 +517,7 @@ func (s *Service) RegenerateRecoveryCodes(ctx context.Context, id, token, passwo
 	return s.changeTOTP(ctx, id, token, password, otp, false)
 }
 
-func resetTOTP(ctx context.Context, tx *sql.Tx, id string, now time.Time) error {
+func resetTOTP(ctx context.Context, tx *storage.Tx, id string, now time.Time) error {
 	result, err := tx.ExecContext(ctx, `UPDATE users SET totp_ciphertext=NULL,totp_pending_ciphertext=NULL,totp_pending_at=NULL,totp_last_step=0 WHERE id=?`, id)
 	if err = requireChanged(result, err, ErrNotFound); err != nil {
 		return err
@@ -476,8 +533,14 @@ func resetTOTP(ctx context.Context, tx *sql.Tx, id string, now time.Time) error 
 	}
 	return audit.Insert(ctx, tx, "user.totp.reset", id, now)
 }
-func ResetTOTP(ctx context.Context, db *sql.DB, username string, now time.Time) error {
-	tx, err := db.BeginTx(ctx, nil)
+func ResetTOTP(ctx context.Context, db *storage.Database, username string, now time.Time) error {
+	lease, leaseErr := db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -504,11 +567,17 @@ func (s *Service) ResetUserTOTP(ctx context.Context, actorID, token, targetID, p
 		return err
 	}
 	defer func() { <-s.gate }()
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	hash, err := s.accountPassword(ctx, actorID, password)
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}

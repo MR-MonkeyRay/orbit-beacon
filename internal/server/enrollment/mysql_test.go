@@ -1,0 +1,88 @@
+package enrollment_test
+
+import (
+	"context"
+	"errors"
+	"strings"
+
+	"testing"
+	"time"
+
+	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/server/enrollment"
+	"orbitbeacon/internal/server/management"
+	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/storage"
+	"orbitbeacon/internal/server/storagetest"
+)
+
+func TestMySQLEnrollmentClaimsQuotaAndGroupCascade(t *testing.T) {
+
+	f := storagetest.Start(t)
+	db := f.Open(t, storage.MainDomain)
+	now := time.Date(2026, 11, 1, 2, 3, 4, 987654321, time.UTC)
+	ctx := context.Background()
+	m := management.NewService(db)
+	group, err := m.SaveGroup(ctx, "", "Group")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := nodes.NewService(db, nodes.Options{MaxNodes: 2, Now: func() time.Time { return now }})
+	s := enrollment.NewService(db, enrollment.Options{MaxNodes: 2, Now: func() time.Time { return now }})
+	batch, err := s.CreateBatch(ctx, group.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installation := strings.Repeat("界", 83) + "Aa\x00x  "
+	if _, err := s.Enroll(ctx, batch.Token, claim(installation+"x", 1)); !errors.Is(err, enrollment.ErrInvalidInput) {
+		t.Fatalf("256-byte installation accepted: %v", err)
+	}
+	first, err := s.Enroll(ctx, batch.Token, claim(installation, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := s.Enroll(ctx, batch.Token, claim(installation, 1))
+	if err != nil || repeated.NodeID != first.NodeID {
+		t.Fatalf("retry=%+v err=%v", repeated, err)
+	}
+	if _, err := s.Enroll(ctx, batch.Token, claim(strings.Repeat("界", 83)+"aa\x00x  ", 2)); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := s.Recover(ctx, nodeSecret(1), v1.RecoveryRequest{InstallationID: installation})
+	if err != nil || recovered.NodeID != first.NodeID {
+		t.Fatalf("recovery=%+v err=%v", recovered, err)
+	}
+	if _, err := s.Recover(ctx, nodeSecret(1), v1.RecoveryRequest{InstallationID: installation + "x"}); !errors.Is(err, enrollment.ErrInvalidInput) {
+		t.Fatalf("256-byte recovery accepted: %v", err)
+	}
+	lease, err := db.Acquire(ctx, storage.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	var storedInstallation, claimedInstallation string
+	if err := lease.QueryRowContext(ctx, "SELECT n.installation_id,c.installation_id FROM nodes n JOIN enrollment_claims c ON c.node_id=n.id WHERE n.id=?", first.NodeID).Scan(&storedInstallation, &claimedInstallation); err != nil || storedInstallation != installation || claimedInstallation != installation {
+		t.Fatalf("installation bytes changed: node=%q claim=%q err=%v", storedInstallation, claimedInstallation, err)
+	}
+	if _, err := s.Enroll(ctx, batch.Token, claim("mysql-c", 3)); err == nil {
+		t.Fatal("node quota bypassed")
+	}
+	node, err := n.Get(ctx, first.NodeID)
+	if err != nil || node.GroupID == nil || *node.GroupID != group.ID {
+		t.Fatalf("node=%+v err=%v", node, err)
+	}
+	if err := m.DeleteGroup(ctx, group.ID); err != nil {
+		t.Fatal(err)
+	}
+	node, err = n.Get(ctx, first.NodeID)
+	if err != nil || node.GroupID != nil {
+		t.Fatalf("cascade=%+v err=%v", node, err)
+	}
+	now = now.Add(time.Hour)
+	if _, err := s.CleanupExpiredTickets(ctx, now, 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CleanupAuditEvents(ctx, now, 100); err != nil {
+		t.Fatal(err)
+	}
+}

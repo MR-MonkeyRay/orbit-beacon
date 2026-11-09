@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/server/management"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 )
@@ -73,12 +74,36 @@ func scanEvent(row scanner) (Event, error) {
 	return e, nil
 }
 
-const eventColumns = "e.id,e.rule_id,e.node_id,COALESCE(r.name,e.rule_name),COALESCE(n.name,e.node_name),e.state,e.value,e.started_at,e.resolved_at,e.last_notified_at,e.silenced,json_extract(e.rule_snapshot,'$.target')"
-const eventSelect = "SELECT " + eventColumns + ",COALESCE(json_extract(e.rule_snapshot,'$.metric'),''),COALESCE(json_extract(e.rule_snapshot,'$.severity'),'') FROM alert_events e LEFT JOIN alert_rules r ON r.id=e.rule_id LEFT JOIN nodes n ON n.id=e.node_id"
+const eventColumnsBase = "e.id,e.rule_id,e.node_id,COALESCE(r.name,e.rule_name),COALESCE(n.name,e.node_name),e.state,e.value,e.started_at,e.resolved_at,e.last_notified_at,e.silenced,"
+const eventColumnsSQLite = eventColumnsBase + "json_extract(e.rule_snapshot,'$.target')"
+
+// JSON_UNQUOTE 固定返回 utf8mb4_bin，须显式对齐连接排序规则以保留大小写和尾空格比较。
+const eventColumnsMySQL = eventColumnsBase + "NULLIF(JSON_UNQUOTE(JSON_EXTRACT(e.rule_snapshot,'$.target')) COLLATE utf8mb4_0900_bin,'null')"
+const eventTables = " FROM alert_events e LEFT JOIN alert_rules r ON r.id=e.rule_id LEFT JOIN nodes n ON n.id=e.node_id"
+
+func eventColumns(dialect storage.Dialect) string {
+	if dialect == storage.MySQL {
+		return eventColumnsMySQL
+	}
+	return eventColumnsSQLite
+}
+
+func eventSelect(dialect storage.Dialect) string {
+	if dialect == storage.MySQL {
+		return "SELECT " + eventColumnsMySQL + ",COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.rule_snapshot,'$.metric')) COLLATE utf8mb4_0900_bin,''),COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.rule_snapshot,'$.severity')) COLLATE utf8mb4_0900_bin,'')" + eventTables
+	}
+	return "SELECT " + eventColumnsSQLite + ",COALESCE(json_extract(e.rule_snapshot,'$.metric'),''),COALESCE(json_extract(e.rule_snapshot,'$.severity'),'')" + eventTables
+}
 
 // Event 按 ID 直接读取历史事件，沿用列表中的当前名称回退规则和不可变快照字段。
 func (s *Service) Event(ctx context.Context, id string) (Event, error) {
-	event, err := scanEvent(s.db.QueryRowContext(ctx, eventSelect+" WHERE e.id=?", id))
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Event{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	event, err := scanEvent(lease.QueryRowContext(ctx, eventSelect(lease.Dialect())+" WHERE e.id=?", id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Event{}, ErrNotFound
 	}
@@ -87,25 +112,33 @@ func (s *Service) Event(ctx context.Context, id string) (Event, error) {
 
 // Summary 从一个一致的快照中读取计数和最新事件。
 func (s *Service) Summary(ctx context.Context) (AlertSummary, error) {
-	// SQLite 驱动对 ReadOnly 事务使用普通的 BEGIN，绕过了主连接池的 _txlock=immediate，
-	// 因此这里绝不会占用写锁。
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return AlertSummary{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginRead(ctx)
 	if err != nil {
 		return AlertSummary{}, err
 	}
 	defer tx.Rollback()
 	summary := AlertSummary{Newest: make([]Event, 0, 5)}
 	counts := &summary.Firing
+	severity := `json_extract(rule_snapshot,'$.severity')`
+	if tx.Dialect() == storage.MySQL {
+		severity = `JSON_UNQUOTE(JSON_EXTRACT(rule_snapshot,'$.severity')) COLLATE utf8mb4_0900_bin`
+	}
 	err = tx.QueryRowContext(ctx, `SELECT count(*),
- count(CASE WHEN json_extract(rule_snapshot,'$.severity')='info' THEN 1 END),
- count(CASE WHEN json_extract(rule_snapshot,'$.severity')='warning' THEN 1 END),
- count(CASE WHEN json_extract(rule_snapshot,'$.severity')='critical' THEN 1 END)
+ count(CASE WHEN `+severity+`='info' THEN 1 END),
+ count(CASE WHEN `+severity+`='warning' THEN 1 END),
+ count(CASE WHEN `+severity+`='critical' THEN 1 END)
  FROM alert_events WHERE state='firing'`).Scan(&counts.Total, &counts.Info, &counts.Warning, &counts.Critical)
 	if err != nil {
 		return AlertSummary{}, err
 	}
 	counts.Unknown = counts.Total - counts.Info - counts.Warning - counts.Critical
-	rows, err := tx.QueryContext(ctx, eventSelect+" WHERE e.state='firing' ORDER BY e.started_at DESC,e.id DESC LIMIT 5")
+	rows, err := tx.QueryContext(ctx, eventSelect(tx.Dialect())+" WHERE e.state='firing' ORDER BY e.started_at DESC,e.id DESC LIMIT 5")
 	if err != nil {
 		return AlertSummary{}, err
 	}
@@ -130,6 +163,12 @@ func (s *Service) Summary(ctx context.Context) (AlertSummary, error) {
 }
 
 func (s *Service) Events(ctx context.Context, state string, limit int, before string) (EventPage, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return EventPage{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if state == "" {
 		state = "all"
 	}
@@ -140,7 +179,7 @@ func (s *Service) Events(ctx context.Context, state string, limit int, before st
 		return EventPage{}, validation.Invalid("limit", "must be between 1 and 100")
 	}
 	// 指标和严重级别取自告警触发时的快照，避免规则修改或删除后改变历史含义。
-	query := eventSelect + " WHERE 1=1"
+	query := eventSelect(lease.Dialect()) + " WHERE 1=1"
 	args := []any{}
 	if state != "all" {
 		query += " AND e.state=?"
@@ -156,7 +195,7 @@ func (s *Service) Events(ctx context.Context, state string, limit int, before st
 	}
 	query += " ORDER BY e.started_at DESC,e.id DESC LIMIT ?"
 	args = append(args, limit+1)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := lease.QueryContext(ctx, query, args...)
 	if err != nil {
 		return EventPage{}, err
 	}
@@ -181,12 +220,26 @@ func (s *Service) Events(ctx context.Context, state string, limit int, before st
 	return page, nil
 }
 func (s *Service) Cleanup(ctx context.Context, before time.Time, limit int) (int64, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return 0, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if limit < 1 {
 		return 0, validation.Invalid("limit", "must be positive")
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM alert_events WHERE id IN (SELECT id FROM alert_events WHERE state='resolved' AND resolved_at<? ORDER BY resolved_at,id LIMIT ?)`, timekey.Format(before), limit)
+	tx, txErr := lease.BeginWrite(ctx)
+	if txErr != nil {
+		return 0, txErr
+	}
+	defer tx.Rollback()
+	count, err := storage.DeleteBatch(ctx, tx, `SELECT id FROM alert_events WHERE state='resolved' AND resolved_at<? ORDER BY resolved_at,id LIMIT ?`, `DELETE FROM alert_events WHERE id=?`, timekey.Format(before), limit)
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	if commitErr := tx.Commit(); commitErr != nil {
+		return 0, commitErr
+	}
+	return count, nil
 }

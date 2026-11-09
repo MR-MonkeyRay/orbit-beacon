@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -32,7 +33,13 @@ func scanUser(row interface{ Scan(...any) error }) (User, error) {
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id, username, created_at, must_change_password, totp_ciphertext IS NOT NULL FROM users ORDER BY username, id")
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, err := lease.QueryContext(ctx, "SELECT id, username, created_at, must_change_password, totp_ciphertext IS NOT NULL FROM users ORDER BY username, id")
 	if err != nil {
 		return nil, err
 	}
@@ -52,14 +59,26 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 }
 
 func (s *Service) GetUser(ctx context.Context, id string) (User, error) {
-	return scanUser(s.db.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password, totp_ciphertext IS NOT NULL FROM users WHERE id = ?", id))
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return User{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	return scanUser(lease.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password, totp_ciphertext IS NOT NULL FROM users WHERE id = ?", id))
 }
 
 func (s *Service) PatchUser(ctx context.Context, id string, patch UserPatch) (User, error) {
 	if patch.Username != nil && !validUsername(*patch.Username) {
 		return User{}, ErrInvalidInput
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return User{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -89,7 +108,13 @@ func (s *Service) PatchUser(ctx context.Context, id string, patch UserPatch) (Us
 }
 
 func (s *Service) DeleteUser(ctx context.Context, id string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -117,7 +142,7 @@ func (s *Service) DeleteUser(ctx context.Context, id string) error {
 }
 
 // 立即写事务可防止并发删除各自独立地决定删除最后一名管理员。
-func preserveAdministrator(ctx context.Context, tx *sql.Tx) error {
+func preserveAdministrator(ctx context.Context, tx *storage.Tx) error {
 	var count int
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM users").Scan(&count); err != nil {
 		return err
@@ -128,7 +153,7 @@ func preserveAdministrator(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-func requireAvailableUsername(ctx context.Context, tx *sql.Tx, username, excludeID string) error {
+func requireAvailableUsername(ctx context.Context, tx *storage.Tx, username, excludeID string) error {
 	var taken bool
 	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE username=? AND id<>?)", username, excludeID).Scan(&taken); err != nil {
 		return err

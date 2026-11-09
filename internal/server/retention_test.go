@@ -14,6 +14,7 @@ import (
 	"orbitbeacon/internal/server/inbox"
 	"orbitbeacon/internal/server/notify"
 	"orbitbeacon/internal/server/secretbox"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -21,7 +22,7 @@ func TestRetentionDrainsAlertAndNotificationBacklogs(t *testing.T) {
 	f := newHTTP(t, 1)
 	h, err := server.NewHandler(testHandlerOptions(t, server.Options{
 		Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL,
-		Notifications: notify.New(f.db, nil, notify.Options{}),
+		Notifications: notify.New(f.nodes.Database(), nil, notify.Options{}),
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +125,7 @@ func TestRetentionDrainsInboxAndBackupHistoryPreservingActivePasswords(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	backups, err := backup.New(f.db, backup.Options{DataDir: dir, SecretBox: box})
+	backups, err := backup.New(f.nodes.Database(), backup.Options{DataDir: dir, SecretBox: box})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,13 +133,18 @@ func TestRetentionDrainsInboxAndBackupHistoryPreservingActivePasswords(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := f.db.Begin()
+	lease, err := f.nodes.Database().Acquire(context.Background(), storage.Writer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	tx, err := lease.BeginWrite(lease.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
 	var userID string
-	if err := tx.QueryRow("SELECT id FROM users WHERE username='admin-two'").Scan(&userID); err != nil {
+	if err := tx.QueryRowContext(lease.Context(), "SELECT id FROM users WHERE username='admin-two'").Scan(&userID); err != nil {
 		t.Fatal(err)
 	}
 	const backlog = 1201
@@ -147,15 +153,15 @@ func TestRetentionDrainsInboxAndBackupHistoryPreservingActivePasswords(t *testin
 		if err := inbox.Insert(context.Background(), tx, inbox.Event{ID: id, Kind: "task", SourceID: id, Transition: "succeeded", Severity: "info", CreatedAt: old}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tx.Exec("INSERT INTO inbox_reads(user_id,notification_id,read_at) VALUES(?,?,?)", userID, id, timekey.Format(old)); err != nil {
+		if _, err := tx.ExecContext(lease.Context(), "INSERT INTO inbox_reads(user_id,notification_id,read_at) VALUES(?,?,?)", userID, id, timekey.Format(old)); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tx.Exec(`INSERT INTO backup_tasks(id,kind,state,categories_json,destination_json,created_at,finished_at,password_ciphertext,password_expires_at) VALUES(?,'backup_remote','succeeded','["configuration"]','{}',?,?,X'01',?)`, id, timekey.Format(old), timekey.Format(old), timekey.Format(old.Add(90*24*time.Hour))); err != nil {
+		if _, err := tx.ExecContext(lease.Context(), `INSERT INTO backup_tasks(id,kind,state,categories_json,destination_json,created_at,finished_at,password_ciphertext,password_expires_at) VALUES(?,'backup_remote','succeeded','["configuration"]','{}',?,?,X'01',?)`, id, timekey.Format(old), timekey.Format(old), timekey.Format(old.Add(90*24*time.Hour))); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, state := range []string{"queued", "running"} {
-		if _, err := tx.Exec(`INSERT INTO backup_tasks(id,kind,state,categories_json,destination_json,created_at,password_ciphertext,password_expires_at) VALUES(?,'backup_export',?,'["configuration"]','{}',?,X'01',?)`, state, state, timekey.Format(old), timekey.Format(old)); err != nil {
+		if _, err := tx.ExecContext(lease.Context(), `INSERT INTO backup_tasks(id,kind,state,categories_json,destination_json,created_at,password_ciphertext,password_expires_at) VALUES(?,'backup_export',?,'["configuration"]','{}',?,X'01',?)`, state, state, timekey.Format(old), timekey.Format(old)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -202,7 +208,7 @@ func TestRetentionSweepsOnlyOwnedOrphanExportsAndLocalTemps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	backups, err := backup.New(f.db, backup.Options{DataDir: dir, SecretBox: box})
+	backups, err := backup.New(f.nodes.Database(), backup.Options{DataDir: dir, SecretBox: box})
 	if err != nil {
 		t.Fatal(err)
 	}

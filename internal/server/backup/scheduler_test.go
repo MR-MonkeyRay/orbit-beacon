@@ -35,7 +35,7 @@ func TestSchedulerRunTicksWhileWorkerBusyAndTerminalWake(t *testing.T) {
 	opts.Location = time.UTC
 	uploader := &schedulerBlockingUploader{entered: make(chan string, 4), release: make(chan struct{}, 4)}
 	opts.Uploader = uploader
-	s, err := New(db, opts)
+	s, err := New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}

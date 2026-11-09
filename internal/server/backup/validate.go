@@ -132,10 +132,53 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 			return invalidPayload(table.Name, "")
 		}
 	}
+	if category == Configuration {
+		var raw string
+		err := db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key='storage_notifications'`).Scan(&raw)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return invalidPayload("settings", "")
+		}
+		if err == nil {
+			settings, e := parseStorageNotifications(raw)
+			if e != nil {
+				return invalidPayload("settings", "")
+			}
+			for _, id := range settings.ChannelIDs {
+				var exists bool
+				if e = db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM notification_channels WHERE id=?)`, id).Scan(&exists); e != nil || !exists {
+					return invalidPayload("settings", "")
+				}
+			}
+		}
+	}
 	if category == Configuration && users == 0 {
 		return invalidPayload("users", "")
 	}
 	return nil
+}
+
+type archivedStorageNotifications struct {
+	Inbox      *bool    `json:"inbox"`
+	ChannelIDs []string `json:"channel_ids"`
+}
+
+func parseStorageNotifications(raw string) (archivedStorageNotifications, error) {
+	var settings archivedStorageNotifications
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	if checkJSONValue(decoder) != nil {
+		return settings, invalidRow()
+	}
+	if decodeStrictObject([]byte(raw), &settings) != nil || settings.Inbox == nil || settings.ChannelIDs == nil || len(settings.ChannelIDs) > 20 {
+		return settings, invalidRow()
+	}
+	seen := make(map[string]bool, len(settings.ChannelIDs))
+	for _, id := range settings.ChannelIDs {
+		if !uuid.ValidUUID(id) || seen[id] {
+			return settings, invalidRow()
+		}
+		seen[id] = true
+	}
+	return settings, nil
 }
 
 func invalidPayload(table, id string) error {
@@ -258,6 +301,10 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 		case "api_token_rate_limit_per_minute":
 			limit, err := strconv.Atoi(r.text("value"))
 			if err != nil || limit < 1 || limit > 100000 {
+				return invalidRow()
+			}
+		case "storage_notifications":
+			if _, err := parseStorageNotifications(r.text("value")); err != nil {
 				return invalidRow()
 			}
 		default:
@@ -411,7 +458,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 		_, err := notify.ParsePayload([]byte(r.text("payload_json")))
 		return err
 	case "inbox_notifications":
-		if !oneOf(r.text("kind"), "task", "alert") || r.text("source_id") == "" || r.text("transition") == "" || inbox.ValidateDetails(r.text("kind"), json.RawMessage(r.text("details_json"))) != nil {
+		if !oneOf(r.text("kind"), "task", "alert", "storage") || r.text("source_id") == "" || r.text("transition") == "" || inbox.ValidateDetails(r.text("kind"), json.RawMessage(r.text("details_json"))) != nil {
 			return invalidRow()
 		}
 	case "inbox_reads":

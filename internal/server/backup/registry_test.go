@@ -112,3 +112,20 @@ func TestAPITokensIntentionallyExcludedFromEveryBackupCategory(t *testing.T) {
 		}
 	}
 }
+
+func TestHAProtocolExcludedFromEveryBackupCategory(t *testing.T) {
+	for _, source := range []string{"main", "metrics"} {
+		for _, name := range []string{"replica_identity", "replica_state", "replica_epochs", "replica_transactions", "replica_changes"} {
+			if intentionallyExcluded[source][name] == "" {
+				t.Fatalf("协议表 %s.%s 未登记排除理由", source, name)
+			}
+			for category, specs := range categoryTables {
+				for _, spec := range specs {
+					if spec.Name == name {
+						t.Fatalf("协议表 %s 进入类别 %s", name, category)
+					}
+				}
+			}
+		}
+	}
+}

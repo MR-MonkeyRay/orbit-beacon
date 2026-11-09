@@ -21,7 +21,7 @@ export async function changePasswordPage() {
     }});
   return authLayout({
     title: t('account.changePasswordTitle'),
-    description: t('account.changePasswordDescription'),
+    description: t('account.passwordSignOutHint'),
     content: form
   });
 }

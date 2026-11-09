@@ -16,6 +16,7 @@ import (
 	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/secretbox"
 	"orbitbeacon/internal/server/securefs"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
 	"sync"
@@ -28,6 +29,7 @@ type Uploader interface {
 type UploadResult struct{ OutcomeUnknown bool }
 type Options struct {
 	DataDir       string
+	History       *storage.Database
 	SecretBox     *secretbox.Box
 	ServerVersion string
 	Now           func() time.Time
@@ -37,11 +39,11 @@ type Options struct {
 	Uploader       Uploader
 	removeArtifact func(string) error
 	// 故障钩子仅作用于实例，且只检验简短的终态事务。
-	beforeTerminal      func(*sql.Tx) error
+	beforeTerminal      func(*storage.Tx) error
 	afterTerminalCommit func() error
 }
 type Service struct {
-	db             *sql.DB
+	db             *storage.Database
 	box            *secretbox.Box
 	opts           Options
 	serverLocation *time.Location
@@ -55,7 +57,7 @@ type Service struct {
 	localTempAfter string
 }
 
-func New(db *sql.DB, opts Options) (*Service, error) {
+func New(db *storage.Database, opts Options) (*Service, error) {
 	if db == nil || opts.SecretBox == nil || !filepath.IsAbs(opts.DataDir) {
 		return nil, &Error{Code: "secret_unreadable"}
 	}
@@ -101,6 +103,12 @@ func (s *Service) signal() {
 }
 
 func (s *Service) CreateExport(ctx context.Context, actorID string, categories []Category) (Task, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return Task{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	selected, err := ValidateCategories(categories)
 	if err != nil {
 		return Task{}, err
@@ -115,12 +123,12 @@ func (s *Service) CreateExport(ctx context.Context, actorID string, categories [
 		return Task{}, &Error{Code: "internal_error", Err: err}
 	}
 	now := s.opts.Now().UTC()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return Task{}, err
 	}
 	defer tx.Rollback()
-	// storage.Open 使用 BEGIN IMMEDIATE，容量检查与入队受同一写锁保护。
+	// 容量检查与入队由同一写事务保护。
 	var count int
 	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM backup_tasks WHERE state IN ('queued','running')`).Scan(&count); err != nil {
 		return Task{}, err
@@ -149,4 +157,21 @@ func (s *Service) CreateExport(ctx context.Context, actorID string, categories [
 	}
 	s.signal()
 	return Task{ID: id, Kind: "backup_export", State: "queued", ActorID: &actorID, Categories: selected, Destination: destination, CreatedAt: now}, nil
+}
+
+// execTaskUpdate 将单次状态更新纳入同代短事务，不跨文件或网络操作持锁。
+func execTaskUpdate(ctx context.Context, lease *storage.Lease, query string, args ...any) (sql.Result, error) {
+	tx, err := lease.BeginWrite(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }

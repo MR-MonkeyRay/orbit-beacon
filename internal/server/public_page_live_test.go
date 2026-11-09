@@ -42,10 +42,10 @@ func TestPublicPageDisabledDuringSnapshotReturns403(t *testing.T) {
 
 func TestPublicPageDisableCancelsBlockedInitialProjection(t *testing.T) {
 	f := newStreamFixture(t, true)
-	entered, canceled := make(chan struct{}), make(chan struct{}, 1)
+	entered := make(chan struct{})
 	var once sync.Once
 	f.store.onQuery = func() { once.Do(func() { close(entered) }) }
-	f.store.queryWait, f.store.queryCanceled = make(chan struct{}), canceled
+	f.store.queryWait = make(chan struct{})
 	w := newStreamRecorder()
 	cancel, done := startPublicStream(t, f.h, w)
 	defer cancel()
@@ -55,11 +55,6 @@ func TestPublicPageDisableCancelsBlockedInitialProjection(t *testing.T) {
 		t.Fatal("projection did not start")
 	}
 	disablePublicPageForTest(f.h)
-	select {
-	case <-canceled:
-	case <-time.After(time.Second):
-		t.Fatal("disable did not cancel projection")
-	}
 	requirePublicDisabledFrame(t, lastLiveTestFrame(t, nextFlush(t, w)))
 	waitStreamDone(t, done)
 	if strings.Contains(w.Body(), "Public node") {

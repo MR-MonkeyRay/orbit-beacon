@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	"orbitbeacon/internal/server/storage"
 )
 
 type healthStatus struct {
@@ -25,8 +27,19 @@ func (h *handler) health(w http.ResponseWriter, r *http.Request, requestID strin
 	}
 	pingContext, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-	pingErr := h.nodes.Ping(pingContext)
-	if pingErr != nil || !h.readyState() {
+	lease, err := h.nodes.Database().Acquire(pingContext, storage.Writer)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, healthStatus{Status: "not_ready"})
+		return
+	}
+	defer lease.Close()
+	tx, err := lease.BeginWrite(lease.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, healthStatus{Status: "not_ready"})
+		return
+	}
+	defer tx.Rollback()
+	if err := tx.Commit(); err != nil || !h.readyState() || !h.nodes.Database().Ready() {
 		writeJSON(w, http.StatusServiceUnavailable, healthStatus{Status: "not_ready"})
 		return
 	}

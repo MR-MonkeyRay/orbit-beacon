@@ -29,17 +29,19 @@ export function busy(element, on) {
   if (form) form.dataset.busy = String(on);
 }
 
+// 标题与所在标签页同名时传 null；有操作按钮时仍保留头部，
+// 无标题时头部改为 panel-head-end 让操作按钮靠右。
 export function panel(title, options = {}, ...body) {
   const titleID = title ? uid('panel') : null;
   return h('section', {class: 'panel', 'aria-labelledby': titleID},
-    title ? h('div', {class: 'panel-head'}, h('h2', {id: titleID}, title), options.action) : null,
+    title || options.action ? h('div', {class: title ? 'panel-head' : 'panel-head panel-head-end'}, title ? h('h2', {id: titleID}, title) : null, options.action) : null,
     h('div', {class: 'panel-body'}, body));
 }
 
-export function pageHead(title, subtitle, ...actions) {
+export function pageHead(title, ...actions) {
   actions = actions.filter(Boolean);
   return h('header', {class: 'page-head'},
-    h('div', null, h('h1', {tabindex: '-1'}, title), subtitle ? h('p', null, subtitle) : null),
+    h('div', null, h('h1', {tabindex: '-1'}, title)),
     actions.length ? h('div', {class: 'head-actions'}, actions) : null);
 }
 

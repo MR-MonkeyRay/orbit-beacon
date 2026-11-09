@@ -29,28 +29,19 @@ func (s *Service) Run(ctx context.Context) {
 	}
 	defer s.running.Store(false)
 	defer s.closeCleanup()
-	for ctx.Err() == nil {
-		if err := s.recoverRunning(ctx); err == nil {
-			break
-		}
-		if !workerDelay(ctx) {
-			return
-		}
-	}
-	if ctx.Err() != nil {
-		return
-	}
-	_ = s.cleanupWork(ctx)
-	_, _ = s.CleanupOrphans(ctx, 500)
-	_, _ = s.CleanupLocalTemps(ctx, 500)
 	workerCtx, cancelWorker := context.WithCancel(ctx)
-	jobs := make(chan Task)
+	type job struct {
+		task  Task
+		lease *storage.Lease
+	}
+	jobs := make(chan job)
 	workerDone := make(chan struct{})
 	var executing atomic.Bool
 	go func() {
 		defer close(workerDone)
-		for task := range jobs {
-			s.execute(workerCtx, task)
+		for work := range jobs {
+			s.execute(work.lease.Context(), work.task)
+			work.lease.Close()
 			executing.Store(false)
 			s.signal()
 		}
@@ -62,23 +53,59 @@ func (s *Service) Run(ctx context.Context) {
 	}()
 	timer := time.NewTimer(time.Hour)
 	defer timer.Stop()
+	var generation uint64
+	var generationDone <-chan struct{}
 	for ctx.Err() == nil {
+		done := s.db.GenerationDone()
+		if generation != s.db.Generation() || generationDone != done {
+			first := generation == 0
+			recovered, err := s.recoverRunning(ctx)
+			if err != nil {
+				if !workerDelay(ctx) {
+					return
+				}
+				continue
+			}
+			if done != s.db.GenerationDone() {
+				continue
+			}
+			generation, generationDone = recovered, done
+			if first {
+				_ = s.cleanupWork(ctx)
+				_, _ = s.CleanupOrphans(ctx, 500)
+				_, _ = s.CleanupLocalTemps(ctx, 500)
+			}
+		}
 		now := s.opts.Now()
 		tickErr := s.Tick(ctx, now)
 		var claimErr error
-		if !executing.Load() {
-			var task Task
-			task, claimErr = s.claim(ctx)
-			if claimErr == nil {
-				executing.Store(true)
-				select {
-				case jobs <- task:
-				case <-ctx.Done():
-					return
+		if tickErr == nil && !executing.Load() {
+			lease, err := s.db.Acquire(workerCtx, storage.Writer)
+			claimErr = err
+			if err == nil {
+				if lease.Generation() != generation || generationDone != s.db.GenerationDone() {
+					lease.Close()
+					continue
+				}
+				task, err := s.claim(lease.Context())
+				claimErr = err
+				if err == nil {
+					executing.Store(true)
+					select {
+					case jobs <- job{task, lease}:
+					case <-ctx.Done():
+						lease.Close()
+						return
+					}
+				} else {
+					lease.Close()
 				}
 			}
 		}
 		wait, waitErr := s.schedulerWait(ctx, s.opts.Now())
+		if generation != s.db.Generation() || generationDone != s.db.GenerationDone() {
+			continue
+		}
 		if tickErr != nil || waitErr != nil || claimErr != nil && !errors.Is(claimErr, sql.ErrNoRows) {
 			wait = time.Second
 		}
@@ -87,6 +114,8 @@ func (s *Service) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-s.wake:
+		case <-generationDone:
+			generationDone = nil
 		case <-timer.C:
 		}
 	}
@@ -101,23 +130,29 @@ func workerDelay(ctx context.Context) bool {
 		return true
 	}
 }
-func (s *Service) recoverRunning(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, taskSelect+` WHERE state='running' ORDER BY created_at,id`)
+func (s *Service) recoverRunning(ctx context.Context) (uint64, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return 0, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, err := lease.QueryContext(ctx, taskSelect+` WHERE state='running' ORDER BY created_at,id`)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var tasks []Task
 	for rows.Next() {
 		t, e := scanTask(rows)
 		if e != nil {
 			rows.Close()
-			return e
+			return 0, e
 		}
 		tasks = append(tasks, t)
 	}
 	err = errors.Join(rows.Err(), rows.Close())
 	if err != nil {
-		return err
+		return 0, err
 	}
 	for _, task := range tasks {
 		warning := ""
@@ -125,13 +160,19 @@ func (s *Service) recoverRunning(ctx context.Context) error {
 			warning = "storage_outcome_unknown"
 		}
 		if !s.finish(ctx, task, "failed", "interrupted", warning) {
-			return ctx.Err()
+			return 0, errors.Join(ctx.Err(), errors.New("backup_recovery_failed"))
 		}
 	}
-	return nil
+	return lease.Generation(), nil
 }
 func (s *Service) claim(ctx context.Context) (Task, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return Task{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return Task{}, err
 	}
@@ -181,6 +222,12 @@ func privateDirectory(path string) error {
 }
 
 func (s *Service) execute(ctx context.Context, task Task) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	warning := ""
 	fail := func(err error, fallback string) {
 		if ctx.Err() == nil {
@@ -202,7 +249,7 @@ func (s *Service) execute(ctx context.Context, task Task) {
 		fail(err, "secret_unreadable")
 		return
 	}
-	if _, err = s.db.ExecContext(ctx, `UPDATE backup_tasks SET password_ciphertext=?,password_expires_at=NULL WHERE id=? AND state='running'`, cipher, task.ID); err != nil {
+	if _, err = execTaskUpdate(ctx, lease, `UPDATE backup_tasks SET password_ciphertext=?,password_expires_at=NULL WHERE id=? AND state='running'`, cipher, task.ID); err != nil {
 		fail(err, "internal_error")
 		return
 	}
@@ -222,14 +269,14 @@ func (s *Service) execute(ctx context.Context, task Task) {
 		return
 	}
 	defer os.RemoveAll(work)
-	payloads, err := CreateSnapshotPayloads(ctx, s.opts.DataDir, work, task.Categories, s.opts.Now)
+	payloads, err := CreateSnapshotPayloads(ctx, SnapshotSources{Main: s.db, History: s.opts.History}, s.opts.DataDir, work, task.Categories, s.opts.Now)
 	if err != nil {
 		fail(err, "snapshot_failed")
 		return
 	}
 	created := s.opts.Now().UTC()
 	name := "orbitbeacon-" + created.Format("20060102T150405Z") + "-" + task.ID + ".tar.gz.age"
-	if _, err = s.db.ExecContext(ctx, `UPDATE backup_tasks SET phase='packaging',artifact_name=? WHERE id=? AND state='running'`, name, task.ID); err != nil {
+	if _, err = execTaskUpdate(ctx, lease, `UPDATE backup_tasks SET phase='packaging',artifact_name=? WHERE id=? AND state='running'`, name, task.ID); err != nil {
 		fail(err, "internal_error")
 		return
 	}
@@ -296,7 +343,7 @@ func (s *Service) execute(ctx context.Context, task Task) {
 	defer func() { credentials = ObjectCredentials{} }()
 	temporary := filepath.Join(outputDir, "."+name+".tmp")
 	defer os.Remove(temporary)
-	manifest := Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: task.ID, CreatedAt: created, ServerVersion: s.opts.ServerVersion, SchemaVersion: storage.CurrentSchemaVersion, HistorySchemaVersion: 1, Categories: task.Categories, Snapshots: payloads.Snapshots}
+	manifest := Manifest{Format: "orbitbeacon-backup", Version: 1, ArchiveID: task.ID, CreatedAt: created, ServerVersion: s.opts.ServerVersion, SchemaVersion: storage.CurrentSchemaVersion, HistorySchemaVersion: storage.HistorySchemaVersion, Categories: task.Categories, Snapshots: payloads.Snapshots}
 	info, err := WriteArchive(ctx, temporary, manifest, payloads.Files, password)
 	password = ""
 	if err != nil {
@@ -307,7 +354,7 @@ func (s *Service) execute(ctx context.Context, task Task) {
 	if task.Kind == "backup_remote" {
 		location = objectKey
 	}
-	if _, err = s.db.ExecContext(ctx, `UPDATE backup_tasks SET phase='storing',artifact_name=?,artifact_bytes=?,artifact_sha256=?,result_location=? WHERE id=? AND state='running'`, name, info.Bytes, info.SHA256, location, task.ID); err != nil {
+	if _, err = execTaskUpdate(ctx, lease, `UPDATE backup_tasks SET phase='storing',artifact_name=?,artifact_bytes=?,artifact_sha256=?,result_location=? WHERE id=? AND state='running'`, name, info.Bytes, info.SHA256, location, task.ID); err != nil {
 		fail(err, "internal_error")
 		return
 	}
@@ -362,6 +409,12 @@ func (s *Service) execute(ctx context.Context, task Task) {
 }
 
 func (s *Service) finish(ctx context.Context, task Task, state, code, warning string) bool {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return false
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	finished := s.opts.Now().UTC()
 	for ctx.Err() == nil {
 		err := s.finishTransaction(ctx, task, state, code, warning, finished)
@@ -373,7 +426,7 @@ func (s *Service) finish(ctx context.Context, task Task, state, code, warning st
 		// 缺少通知的终态任务绝不视为完成。
 		var current string
 		var notifications int
-		readErr := s.db.QueryRowContext(ctx, `SELECT state,(SELECT count(*) FROM inbox_notifications WHERE kind='task' AND source_id=backup_tasks.id AND transition=?) FROM backup_tasks WHERE id=?`, state, task.ID).Scan(&current, &notifications)
+		readErr := lease.QueryRowContext(ctx, `SELECT state,(SELECT count(*) FROM inbox_notifications WHERE kind='task' AND source_id=backup_tasks.id AND transition=?) FROM backup_tasks WHERE id=?`, state, task.ID).Scan(&current, &notifications)
 		if readErr == nil && current == state && notifications == 1 {
 			s.signal()
 			return true
@@ -385,7 +438,13 @@ func (s *Service) finish(ctx context.Context, task Task, state, code, warning st
 	return false
 }
 func (s *Service) finishTransaction(ctx context.Context, task Task, state, code, warning string, finished time.Time) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -461,6 +520,12 @@ func safeWorkerCode(err error, fallback string) string {
 // cleanupWork 只在认领任何任务之前运行。仍有 queued/running 引用的 UUID
 // 目录保持不动；不涉及任何用户选择的路径。
 func (s *Service) cleanupWork(ctx context.Context) error {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	root := filepath.Join(s.opts.DataDir, "backup-work")
 	dir, err := openCleanupDirectory(root)
 	if os.IsNotExist(err) {
@@ -485,7 +550,7 @@ func (s *Service) cleanupWork(ctx context.Context) error {
 		id := names[0]
 		if uuid.ValidUUID(id) {
 			var active bool
-			if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM backup_tasks WHERE id=? AND state IN ('queued','running') AND restored=0)`, id).Scan(&active); err != nil {
+			if err = lease.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM backup_tasks WHERE id=? AND state IN ('queued','running') AND restored=0)`, id).Scan(&active); err != nil {
 				return err
 			}
 			if !active {

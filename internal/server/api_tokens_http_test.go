@@ -470,7 +470,7 @@ func TestAPITokenDiskHistoryQueriesMatchAdministrator(t *testing.T) {
 	if err := os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	hs, err := history.Open(ctx, dir, f.db, history.Options{})
+	hs, err := history.Open(ctx, dir, f.nodes.Database(), history.Options{Now: func() time.Time { return f.now }})
 	if err != nil {
 		t.Fatal(err)
 	}

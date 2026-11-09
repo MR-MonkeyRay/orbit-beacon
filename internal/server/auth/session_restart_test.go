@@ -24,10 +24,13 @@ func TestSessionSurvivesDatabaseRestart(t *testing.T) {
 	if err := db.QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path); err != nil {
 		t.Fatal(err)
 	}
+	if err := stableDatabase(t, db).Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := storage.Open(ctx, path)
+	reopened, err := storage.OpenMain(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}

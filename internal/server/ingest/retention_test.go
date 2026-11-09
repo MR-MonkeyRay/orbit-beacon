@@ -52,7 +52,7 @@ func TestRetainedLastSampleLifecycle(t *testing.T) {
 	if err != nil || len(records) != 1 {
 		t.Fatalf("durable page=%+v err=%v", records, err)
 	}
-	restarted := NewService(f.db, Options{Now: func() time.Time { return f.now }})
+	restarted := NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }})
 	node, err := publicNode(ctx, f.nodes, restarted, f.id, f.now)
 	if err != nil || node.Status != "offline" || node.Name != "Coalesce" || node.CPUPercent != nil || node.UptimeSeconds != nil {
 		t.Fatalf("restart node=%+v err=%v", node, err)

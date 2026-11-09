@@ -50,8 +50,11 @@ export function createNodeRow({node, query, selected, deleted, groupNames, rowRe
     h('td', null, badge), cpu, memory, version, lastSeen,
     h('td', {class: 'hide-compact'}, node.group_id ? groupNames.get(node.group_id) || h('span', {class: 'muted'}, t('common.status.unknown')) : h('span', {class: 'muted'}, t('nodes.none'))),
     h('td', {class: 'hide-compact'}, formatList([node.region, node.provider].filter(Boolean)) || h('span', {class: 'muted'}, t('nodes.none'))),
-    h('td', {class: 'hide-compact'}, h('div', {class: 'cell-tags'}, node.tags.slice(0, 3).map((tag) => h('span', {class: 'tag static'}, tag)),
-      node.tags.length > 3 ? h('span', {class: 'muted'}, `+${node.tags.length - 3}`) : null)),
+    h('td', {class: 'hide-compact'}, (() => {
+      const extra = node.tags.slice(3);
+      return h('div', {class: 'cell-tags'}, node.tags.slice(0, 3).map((tag) => h('span', {class: 'tag static'}, tag)),
+        extra.length ? h('span', {class: 'muted', title: formatList(extra), 'aria-label': `${t('nodes.tagsMore', {count: extra.length})}: ${formatList(extra)}`}, `+${extra.length}`) : null);
+    })()),
     h('td', {class: 'hide-compact muted'}, when(node.created_at)));
   tween.set(cpu, node.cpu_percent, metricText);
   tween.set(memory, node.memory_used_percent, metricText);

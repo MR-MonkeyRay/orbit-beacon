@@ -23,7 +23,7 @@ func initializationService(t *testing.T) (*sql.DB, *auth.Service) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	return db, auth.NewService(db, auth.Options{})
+	return db, auth.NewService(stableDatabase(t, db), auth.Options{})
 }
 
 func TestInitializeAdministratorCredentials(t *testing.T) {
@@ -88,7 +88,7 @@ func TestInitializeAdministratorCredentials(t *testing.T) {
 
 func TestInitializeAdministratorDatabaseErrorsFailClosed(t *testing.T) {
 	db, service := initializationService(t)
-	if err := db.Close(); err != nil {
+	if err := stableDatabase(t, db).Close(); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.InitializeAdministrator(context.Background(), func(string) (string, bool) { panic("database failure read credentials") }); err == nil {

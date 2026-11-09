@@ -56,7 +56,7 @@ func TestChangePasswordRateLimitAndWrongPasswordError(t *testing.T) {
 			t.Fatalf("wrong-password attempt %d error = %v, want ErrWrongPassword", i+1, err)
 		}
 	}
-	if err := db.Close(); err != nil {
+	if err := stableDatabase(t, db).Close(); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.ChangePassword(context.Background(), user.ID, initialPassword, "unused replacement password"); !errors.Is(err, auth.ErrRateLimited) {
@@ -85,7 +85,7 @@ func TestChangePasswordCASConflictPreservesConcurrentPasswordAndSession(t *testi
 	}
 
 	random := newBlockingReader(42)
-	service = auth.NewService(db, auth.Options{Now: func() time.Time { return *now }, Random: random})
+	service = auth.NewService(stableDatabase(t, db), auth.Options{Now: func() time.Time { return *now }, Random: random})
 	result := make(chan error, 1)
 	go func() {
 		result <- service.ChangePassword(ctx, user.ID, initialPassword, "requested replacement password")
@@ -127,7 +127,7 @@ func TestPasswordHashingDoesNotHoldSQLiteWriter(t *testing.T) {
 			t.Fatal(err)
 		}
 		random := newBlockingReader(51)
-		service = auth.NewService(db, auth.Options{Now: func() time.Time { return *now }, Random: random})
+		service = auth.NewService(stableDatabase(t, db), auth.Options{Now: func() time.Time { return *now }, Random: random})
 		assertWriterAvailableDuringEntropy(t, db, random, func() error {
 			return service.ChangePassword(context.Background(), user.ID, initialPassword, "replacement password")
 		})
@@ -136,7 +136,7 @@ func TestPasswordHashingDoesNotHoldSQLiteWriter(t *testing.T) {
 	t.Run("create user", func(t *testing.T) {
 		_, db, now := newAuth(t)
 		random := newBlockingReader(52)
-		service := auth.NewService(db, auth.Options{Now: func() time.Time { return *now }, Random: random})
+		service := auth.NewService(stableDatabase(t, db), auth.Options{Now: func() time.Time { return *now }, Random: random})
 		assertWriterAvailableDuringEntropy(t, db, random, func() error {
 			_, err := service.CreateUser(context.Background(), "admin-two", initialPassword, false)
 			return err
@@ -146,7 +146,7 @@ func TestPasswordHashingDoesNotHoldSQLiteWriter(t *testing.T) {
 	t.Run("bootstrap administrator", func(t *testing.T) {
 		_, db, now := newAuth(t)
 		random := newBlockingReader(53)
-		service := auth.NewService(db, auth.Options{Now: func() time.Time { return *now }, Random: random})
+		service := auth.NewService(stableDatabase(t, db), auth.Options{Now: func() time.Time { return *now }, Random: random})
 		assertWriterAvailableDuringEntropy(t, db, random, func() error {
 			_, err := service.BootstrapAdministrator(context.Background(), "admin", initialPassword)
 			return err
@@ -296,7 +296,7 @@ func TestLoginRehashCASConflictCreatesNoSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	random := newBlockingReader(62)
-	service = auth.NewService(db, auth.Options{Now: func() time.Time { return *now }, Random: random})
+	service = auth.NewService(stableDatabase(t, db), auth.Options{Now: func() time.Time { return *now }, Random: random})
 
 	result := make(chan error, 1)
 	go func() {

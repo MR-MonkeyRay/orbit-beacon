@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
 
@@ -32,13 +33,20 @@ type ProbeHistoryPoint struct {
 
 func (s *Service) ProbeHistory(ctx context.Context, id, target string, window time.Time) ([]ProbeHistoryPoint, error) {
 	// 一次读取快照把节点是否存在、当前身份选中的目标和历史绑定在一起。
-	rows, err := s.db.QueryContext(ctx, `
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	selected := probeTargetsSQL(lease.Dialect())
+	rows, err := lease.QueryContext(ctx, `
 		SELECT nodes.id, hourly.hour, hourly.checks, hourly.failures,
 		       hourly.latency_sum_ms, hourly.latency_max_ms
 		FROM nodes
 		LEFT JOIN probe_hourly AS hourly ON hourly.node_id=nodes.id AND hourly.target=? AND hourly.hour>=?
 		 AND EXISTS (
-		  SELECT 1 FROM json_each(CASE WHEN length(nodes.token_hash)>0 AND nodes.run_generation!='0' AND nodes.report_session_id!='' THEN nullif(nodes.agent_runtime,'') ELSE NULL END, '$.probe_targets') AS selected
+		  SELECT 1 FROM `+selected+` AS selected
 		  WHERE selected.value=hourly.target
 		 )
 		WHERE nodes.id=? ORDER BY hourly.hour`, target, timekey.Format(window), id)
@@ -83,15 +91,22 @@ func (s *Service) ProbeHistory(ctx context.Context, id, target string, window ti
 func (s *Service) ObservedProbes(ctx context.Context, id string, window time.Time) ([]ObservedProbe, error) {
 	// 一次读取快照把目标列表和观测结果绑定到同一凭据。
 	// 轮换不会把旧目标变成新身份的探测项。
-	rows, err := s.db.QueryContext(ctx, `
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	selected := probeTargetsSQL(lease.Dialect())
+	rows, err := lease.QueryContext(ctx, `
 		SELECT nodes.id, selected.value, latest.ok, latest.latency_ms, latest.error,
 		       latest.status_code, latest.checked_at, latest.tls_expires_at,
 		       coalesce(sum(hourly.checks),0), coalesce(sum(hourly.failures),0)
 		FROM nodes
-		LEFT JOIN json_each(CASE WHEN length(nodes.token_hash)>0 AND nodes.run_generation!='0' AND nodes.report_session_id!='' THEN nullif(nodes.agent_runtime,'') ELSE NULL END, '$.probe_targets') AS selected ON true
+		LEFT JOIN `+selected+` AS selected ON true
 		LEFT JOIN probe_latest AS latest ON latest.node_id=nodes.id AND latest.target=selected.value
 		LEFT JOIN probe_hourly AS hourly ON hourly.node_id=nodes.id AND hourly.target=selected.value AND hourly.hour>=?
-		WHERE nodes.id=? GROUP BY nodes.id,selected.key ORDER BY selected.key`, timekey.Format(window), id)
+		WHERE nodes.id=? GROUP BY nodes.id,selected.`+"`key`"+`,selected.value,latest.ok,latest.latency_ms,latest.error,latest.status_code,latest.checked_at,latest.tls_expires_at ORDER BY selected.`+"`key`", timekey.Format(window), id)
 	if err != nil {
 		return nil, fmt.Errorf("read observed probes: %w", err)
 	}
@@ -153,23 +168,45 @@ func (s *Service) ObservedProbes(ctx context.Context, id string, window time.Tim
 	return probes, nil
 }
 
+func probeTargetsSQL(dialect storage.Dialect) string {
+	if dialect == storage.MySQL {
+		return "JSON_TABLE(CASE WHEN length(nodes.token_hash)>0 AND nodes.run_generation!='0' AND nodes.report_session_id!='' THEN COALESCE(NULLIF(nodes.agent_runtime,''),'{}') ELSE '{}' END, '$.probe_targets[*]' COLUMNS (`key` FOR ORDINALITY,value VARCHAR(1024) PATH '$'))"
+	}
+	return `json_each(CASE WHEN length(nodes.token_hash)>0 AND nodes.run_generation!='0' AND nodes.report_session_id!='' THEN nullif(nodes.agent_runtime,'') ELSE NULL END, '$.probe_targets')`
+}
+
 func (s *Service) CleanupProbeHistory(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
 	if s == nil || s.db == nil || limit < 1 {
 		return 0, errors.New("probe retention is unavailable")
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM probe_hourly
-WHERE (node_id,target,hour) IN (
- SELECT node_id,target,hour FROM probe_hourly WHERE hour < ? ORDER BY hour LIMIT ?
-)`, timekey.Format(cutoff), limit)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return 0, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	defer tx.Rollback()
+	count, err := storage.DeleteBatch(ctx, tx, `SELECT node_id,target,hour FROM probe_hourly WHERE hour<? ORDER BY hour LIMIT ?`, `DELETE FROM probe_hourly WHERE node_id=? AND target=? AND hour=?`, timekey.Format(cutoff), limit)
+	if err != nil {
+		return 0, err
+	}
+	return count, tx.Commit()
 }
 
 func (s *Service) Ping(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return errors.New("node database is unavailable")
 	}
-	return s.db.PingContext(ctx)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	var present int
+	return lease.QueryRowContext(ctx, "SELECT 1").Scan(&present)
 }

@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/validation"
@@ -21,23 +22,15 @@ var testNow = time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 
 func testDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(context.Background(), filepath.Join(dir, "announcements.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
-	// 真实 SQLite 业务表；实际 schema 由 storage 包单独测试。
-	if _, err = db.Exec(`CREATE TABLE announcements (
- id TEXT PRIMARY KEY,level TEXT NOT NULL CHECK(level IN ('info','warning','critical')),
- title TEXT NOT NULL,body TEXT NOT NULL,starts_at TEXT NOT NULL,ends_at TEXT,
- created_at TEXT NOT NULL,updated_at TEXT NOT NULL,CHECK(ends_at IS NULL OR ends_at>starts_at));
- CREATE TABLE audit_events(id TEXT PRIMARY KEY,actor_id TEXT,action TEXT,target_id TEXT,created_at TEXT,details TEXT);`); err != nil {
-		t.Fatal(err)
-	}
-	if storage.CurrentSchemaVersion != 1 {
-		t.Fatal("schema version changed")
-	}
 	return db
 }
 func patch(t *testing.T, raw string) Patch {
@@ -104,7 +97,7 @@ func TestCRUDPatchAuditAtomicityAndCapacity(t *testing.T) {
 	db := testDB(t)
 	calls := 0
 	clockCalls := 0
-	s := New(db, func() time.Time { clockCalls++; return testNow }, func() {
+	s := New(mainHandle(t, db), func() time.Time { clockCalls++; return testNow }, func() {
 		calls++
 		var n int
 		if err := db.QueryRow("SELECT count(*) FROM audit_events").Scan(&n); err != nil || n != calls {
@@ -192,7 +185,7 @@ func TestCRUDPatchAuditAtomicityAndCapacity(t *testing.T) {
 
 func TestWindowsListPublicAndCleanup(t *testing.T) {
 	db := testDB(t)
-	s := New(db, func() time.Time { return testNow }, nil)
+	s := New(mainHandle(t, db), func() time.Time { return testNow }, nil)
 	ctx := context.Background()
 	for _, end := range []string{"2026-11-05T12:00:00Z", "2026-11-05T11:00:00Z"} {
 		if _, err := s.Save(ctx, "", patch(t, fmt.Sprintf(`{"level":"info","title":"T","body":"B","starts_at":"2026-01-01T00:00:00Z","ends_at":%q}`, end))); err == nil {
@@ -214,7 +207,7 @@ func TestWindowsListPublicAndCleanup(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	public, err := ListPublic(ctx, db, testNow)
+	public, err := ListPublic(ctx, mainHandle(t, db), testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +263,7 @@ func TestPublicAnnouncementSortBreaksTiesByID(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	items, err := ListPublic(context.Background(), db, testNow)
+	items, err := ListPublic(context.Background(), mainHandle(t, db), testNow)
 	if err != nil || len(items) != 2 || items[0].Title != "a" || items[1].Title != "b" {
 		t.Fatalf("tie order %+v %v", items, err)
 	}

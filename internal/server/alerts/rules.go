@@ -14,6 +14,7 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/validation"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
@@ -60,11 +61,11 @@ type Patch struct {
 }
 
 type Service struct {
-	db  *sql.DB
+	db  *storage.Database
 	now func() time.Time
 }
 
-func NewService(db *sql.DB, now func() time.Time) *Service {
+func NewService(db *storage.Database, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
 	}
@@ -197,7 +198,7 @@ func ValidateRuleSyntax(r Rule) error {
 	return nil
 }
 
-func validate(ctx context.Context, tx *sql.Tx, r Rule) error {
+func validate(ctx context.Context, tx *storage.Tx, r Rule) error {
 	if err := ValidateRuleSyntax(r); err != nil {
 		return err
 	}
@@ -206,7 +207,7 @@ func validate(ctx context.Context, tx *sql.Tx, r Rule) error {
 	}
 	table := "nodes"
 	if r.ScopeKind == "group" {
-		table = "groups"
+		table = "`groups`"
 	}
 	var n int
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM "+table+" WHERE id=?", *r.ScopeID).Scan(&n); err != nil {
@@ -240,7 +241,13 @@ func scanRule(row scanner) (Rule, error) {
 	return r, err
 }
 func (s *Service) List(ctx context.Context) ([]Rule, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+ruleColumns+" FROM alert_rules ORDER BY created_at,id")
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, err := lease.QueryContext(ctx, "SELECT "+ruleColumns+" FROM alert_rules ORDER BY created_at,id")
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +265,7 @@ func (s *Service) List(ctx context.Context) ([]Rule, error) {
 	}
 	rows.Close()
 	for i := range result {
-		result[i].ChannelIDs, err = ruleChannels(ctx, s.db, result[i].ID)
+		result[i].ChannelIDs, err = ruleChannels(ctx, lease, result[i].ID)
 		if err != nil {
 			return nil, err
 		}
@@ -266,14 +273,26 @@ func (s *Service) List(ctx context.Context) ([]Rule, error) {
 	return result, nil
 }
 func (s *Service) Get(ctx context.Context, id string) (Rule, error) {
-	r, err := scanRule(s.db.QueryRowContext(ctx, "SELECT "+ruleColumns+" FROM alert_rules WHERE id=?", id))
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Rule{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	r, err := scanRule(lease.QueryRowContext(ctx, "SELECT "+ruleColumns+" FROM alert_rules WHERE id=?", id))
 	if err == nil {
-		r.ChannelIDs, err = ruleChannels(ctx, s.db, id)
+		r.ChannelIDs, err = ruleChannels(ctx, lease, id)
 	}
 	return r, err
 }
 func (s *Service) Save(ctx context.Context, id string, p Patch) (Rule, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return Rule{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return Rule{}, err
 	}
@@ -357,7 +376,13 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Rule, error) {
 	return r, tx.Commit()
 }
 func (s *Service) Delete(ctx context.Context, id string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -381,7 +406,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 
 // 路由与规则及其审计记录在同一把写锁下保存。
 func ruleChannels(ctx context.Context, q interface {
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryContext(context.Context, string, ...any) (*storage.Rows, error)
 }, id string) ([]string, error) {
 	rows, err := q.QueryContext(ctx, "SELECT channel_id FROM alert_rule_channels WHERE rule_id=? ORDER BY channel_id", id)
 	if err != nil {

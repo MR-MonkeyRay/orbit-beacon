@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
 )
@@ -20,9 +21,9 @@ var (
 	ErrInvalidInput = errors.New("invalid management input")
 )
 
-type Service struct{ db *sql.DB }
+type Service struct{ db *storage.Database }
 
-func NewService(db *sql.DB) *Service { return &Service{db: db} }
+func NewService(db *storage.Database) *Service { return &Service{db: db} }
 
 type Group struct {
 	ID   string `json:"id"`
@@ -86,7 +87,13 @@ func scanGroup(row interface{ Scan(...any) error }) (Group, error) {
 }
 
 func (s *Service) Groups(ctx context.Context) ([]Group, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id, name FROM groups ORDER BY name, id")
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return nil, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	rows, err := lease.QueryContext(ctx, "SELECT id, name FROM `groups` ORDER BY name, id")
 	if err != nil {
 		return nil, err
 	}
@@ -103,10 +110,22 @@ func (s *Service) Groups(ctx context.Context) ([]Group, error) {
 }
 
 func (s *Service) Group(ctx context.Context, id string) (Group, error) {
-	return scanGroup(s.db.QueryRowContext(ctx, "SELECT id, name FROM groups WHERE id = ?", id))
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return Group{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	return scanGroup(lease.QueryRowContext(ctx, "SELECT id, name FROM `groups` WHERE id = ?", id))
 }
 
 func (s *Service) SaveGroup(ctx context.Context, id, name string) (Group, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return Group{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if strings.TrimSpace(name) == "" || len(name) > 255 {
 		return Group{}, ErrInvalidInput
 	}
@@ -120,23 +139,23 @@ func (s *Service) SaveGroup(ctx context.Context, id, name string) (Group, error)
 		}
 		action = "group.create"
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return Group{}, err
 	}
 	defer tx.Rollback()
 	var duplicate int
-	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM groups WHERE name = ? AND id <> ?", name, id).Scan(&duplicate); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM `groups` WHERE name = ? AND id <> ?", name, id).Scan(&duplicate); err != nil {
 		return Group{}, err
 	}
 	if duplicate != 0 {
 		return Group{}, ErrInvalidInput
 	}
 	if create {
-		_, err = tx.ExecContext(ctx, "INSERT INTO groups(id, name) VALUES (?, ?)", id, name)
+		_, err = tx.ExecContext(ctx, "INSERT INTO `groups`(id, name) VALUES (?, ?)", id, name)
 	} else {
 		var result sql.Result
-		result, err = tx.ExecContext(ctx, "UPDATE groups SET name = ? WHERE id = ?", name, id)
+		result, err = tx.ExecContext(ctx, "UPDATE `groups` SET name = ? WHERE id = ?", name, id)
 		if err == nil {
 			err = requireRow(result)
 		}
@@ -165,7 +184,13 @@ func requireRow(result sql.Result) error {
 }
 
 func (s *Service) DeleteGroup(ctx context.Context, id string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -174,7 +199,7 @@ func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 		return err
 	}
 	// ON DELETE SET NULL 在同一事务中解除节点与注册引用的关联。
-	result, err := tx.ExecContext(ctx, "DELETE FROM groups WHERE id = ?", id)
+	result, err := tx.ExecContext(ctx, "DELETE FROM `groups` WHERE id = ?", id)
 	if err != nil {
 		return err
 	}
@@ -188,6 +213,12 @@ func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 }
 
 func (s *Service) Events(ctx context.Context, limit, offset int, before string) (EventPage, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return EventPage{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if limit < 1 || limit > 100 || offset < 0 {
 		return EventPage{}, ErrInvalidInput
 	}
@@ -204,7 +235,7 @@ func (s *Service) Events(ctx context.Context, limit, offset int, before string) 
 	}
 	query += " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
 	args = append(args, limit+1, offset)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := lease.QueryContext(ctx, query, args...)
 	if err != nil {
 		return EventPage{}, err
 	}
@@ -240,18 +271,26 @@ func (s *Service) Events(ctx context.Context, limit, offset int, before string) 
 // CleanupAuditEvents 最多删除 before 之前的 limit 条事件。
 // 保留策略由调用方决定；本方法仅提供有界、可随 context 取消的删除。
 func (s *Service) CleanupAuditEvents(ctx context.Context, before time.Time, limit int) (int64, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return 0, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	if limit < 1 {
 		return 0, ErrInvalidInput
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM audit_events
-WHERE id IN (
-	SELECT id FROM audit_events
-	WHERE created_at < ?
-	ORDER BY created_at ASC, id ASC
-	LIMIT ?
-	)`, timekey.Format(before), limit)
+	tx, txErr := lease.BeginWrite(ctx)
+	if txErr != nil {
+		return 0, txErr
+	}
+	defer tx.Rollback()
+	count, err := storage.DeleteBatch(ctx, tx, `SELECT id FROM audit_events WHERE created_at<? ORDER BY created_at,id LIMIT ?`, `DELETE FROM audit_events WHERE id=?`, timekey.Format(before), limit)
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	if commitErr := tx.Commit(); commitErr != nil {
+		return 0, commitErr
+	}
+	return count, nil
 }

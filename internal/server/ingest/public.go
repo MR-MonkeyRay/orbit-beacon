@@ -11,6 +11,7 @@ import (
 	"orbitbeacon/internal/server/announcements"
 	"orbitbeacon/internal/server/availability"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/storage"
 )
 
 // PublicNode 是严格的匿名投影，独立于内部清单。
@@ -124,7 +125,7 @@ func (s *Service) ProjectPublicRecord(record nodes.PublicRecord, now time.Time) 
 	state := s.acquireExistingState(record.ID)
 	if state != nil {
 		state.mu.Lock()
-		if state.credential == record.Credential && state.credentialEpoch == record.CredentialEpoch && state.generation == record.Generation && state.session == record.Session {
+		if s.db.Ready() && state.storageGeneration != 0 && state.storageGeneration == s.db.Generation() && state.credential == record.Credential && state.credentialEpoch == record.CredentialEpoch && state.generation == record.Generation && state.session == record.Session {
 			lastSeen = record.LatestSeen(state.receivedAt)
 			if state.lastSeenPersisted.Equal(record.LastSeen) || state.public.receivedAt.Equal(record.LastSeen) {
 				snapshot = state.public
@@ -163,8 +164,9 @@ type publicPageKey struct {
 }
 
 type publicPageEntry struct {
-	page    PublicPage
-	version uint64
+	page       PublicPage
+	version    uint64
+	generation uint64
 }
 
 type publicPageCall struct {
@@ -181,6 +183,12 @@ type publicPageCache struct {
 // PublicPage 合并并发的缓存未命中，并限制缓存页数。可见性版本在查询前捕获：
 // 竞争的变更无法用新版本为旧数据背书。缓存期间的返回页面不可变。
 func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offset int, ttl time.Duration, clock func() time.Time) (PublicPage, error) {
+	lease, leaseErr := ns.Database().Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return PublicPage{}, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	key := publicPageKey{service: ns, limit: limit, offset: offset, ttl: ttl}
 	cache := &s.publicPages
 	for {
@@ -191,7 +199,7 @@ func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offs
 		version := ns.PublicVisibilityVersion()
 		now := clock().UTC()
 		entry, ok := cache.entries[key]
-		if age := now.Sub(entry.page.GeneratedAt); ok && entry.version == version && age >= 0 && age < ttl {
+		if age := now.Sub(entry.page.GeneratedAt); ok && entry.version == version && entry.generation == lease.Generation() && age >= 0 && age < ttl {
 			cache.mu.Unlock()
 			return entry.page, nil
 		}
@@ -244,7 +252,7 @@ func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offs
 					break
 				}
 			}
-			cache.entries[key] = publicPageEntry{page: page, version: version}
+			cache.entries[key] = publicPageEntry{page: page, version: version, generation: lease.Generation()}
 		}
 		call.err = err
 		delete(cache.calls, key)

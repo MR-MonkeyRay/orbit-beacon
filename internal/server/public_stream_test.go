@@ -3,8 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
-	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -20,115 +22,9 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/storage"
+	"orbitbeacon/internal/timekey"
 )
-
-type publicStreamStore struct {
-	mu            sync.Mutex
-	visible       bool
-	queries       int
-	queryErr      error
-	queryWait     <-chan struct{}
-	onQuery       func()
-	name          string
-	queryExitGate <-chan struct{}
-	queryCanceled chan<- struct{}
-}
-
-type publicStreamConnector struct{ store *publicStreamStore }
-
-func (c publicStreamConnector) Connect(context.Context) (driver.Conn, error) {
-	return publicStreamConn(c), nil
-}
-
-func (c publicStreamConnector) Driver() driver.Driver { return publicStreamDriver{} }
-
-type publicStreamDriver struct{}
-
-func (publicStreamDriver) Open(string) (driver.Conn, error) {
-	return nil, errors.New("public stream test driver requires a connector")
-}
-
-type publicStreamConn struct{ store *publicStreamStore }
-
-func (publicStreamConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
-func (publicStreamConn) Close() error                        { return nil }
-func (publicStreamConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
-
-func (c publicStreamConn) QueryContext(ctx context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
-	if strings.HasPrefix(query, "SELECT id, status, credential_epoch") {
-		return &streamAdmissionRows{}, nil
-	}
-	if strings.Contains(query, "FROM announcements") {
-		return &streamAnnouncementRows{}, nil
-	}
-	if query == "SELECT id FROM nodes" {
-		return &streamAdmissionRows{done: true}, nil
-	}
-
-	c.store.mu.Lock()
-	c.store.queries++
-	visible := c.store.visible
-	err := c.store.queryErr
-	wait := c.store.queryWait
-	onQuery := c.store.onQuery
-	name := c.store.name
-	exitGate, canceled := c.store.queryExitGate, c.store.queryCanceled
-	c.store.mu.Unlock()
-	if onQuery != nil {
-		onQuery()
-	}
-	if wait != nil {
-		select {
-		case <-wait:
-		case <-ctx.Done():
-			if canceled != nil {
-				canceled <- struct{}{}
-			}
-			if exitGate != nil {
-				<-exitGate
-			}
-			return nil, ctx.Err()
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-	if name == "" {
-		name = "Public node"
-	}
-	settings, _ := json.Marshal(nodes.PublicSettings{Enabled: true, Name: name, Region: "Earth", Provider: "Test"})
-	rows := &publicStreamRows{}
-	if visible {
-		rows.values = [][]driver.Value{{
-			"00000000-0000-4000-8000-000000000001",
-			string(settings),
-			nil,
-			bytes.Repeat([]byte{1}, 32),
-			int64(0),
-			"0",
-			"", "[]",
-		}}
-	}
-	return rows, nil
-}
-
-type publicStreamRows struct {
-	values [][]driver.Value
-	index  int
-}
-
-func (*publicStreamRows) Columns() []string {
-	return []string{"id", "public_settings", "last_seen", "token_hash", "credential_epoch", "run_generation", "report_session_id", "availability"}
-}
-func (*publicStreamRows) Close() error { return nil }
-func (r *publicStreamRows) Next(dest []driver.Value) error {
-	if r.index == len(r.values) {
-		return io.EOF
-	}
-	copy(dest, r.values[r.index])
-	r.index++
-	return nil
-}
 
 type streamRecorder struct {
 	mu          sync.Mutex
@@ -228,13 +124,31 @@ type streamFixture struct {
 
 func newStreamFixture(t *testing.T, visible bool) *streamFixture {
 	t.Helper()
-	store := &publicStreamStore{visible: visible}
-	db := sql.OpenDB(publicStreamConnector{store: store})
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	databasePath := filepath.Join(dir, "server.db")
+	db, err := storage.Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	stable, err := storage.OpenMain(context.Background(), databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stable.Close() })
+	store := &publicStreamStore{}
 	now := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
-	ns := nodes.NewService(db, nodes.Options{Now: func() time.Time { return now }})
+	digest := sha256.Sum256([]byte(strings.Repeat("A", 43)))
+	if _, err := db.Exec("INSERT INTO nodes(id,name,status,token_hash,first_enrolled_at,created_at) VALUES(?,?,'unknown',?,?,?)", "00000000-0000-4000-8000-000000000001", "Private node", digest[:], timekey.Format(now), timekey.Format(now)); err != nil {
+		t.Fatal(err)
+	}
+	ns := nodes.NewService(stable, nodes.Options{Now: func() time.Time { return now }})
 	h := &handler{
 		nodes:           ns,
-		ingest:          ingest.NewService(db, ingest.Options{Now: func() time.Time { return now }}),
+		ingest:          ingest.NewService(stable, ingest.Options{Now: func() time.Time { return now }}),
 		metrics:         newHTTPMetrics("test"),
 		logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 		now:             func() time.Time { return now },
@@ -242,7 +156,8 @@ func newStreamFixture(t *testing.T, visible bool) *streamFixture {
 		streamHeartbeat: time.Second,
 		streamLifetime:  30 * time.Second,
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	installStreamQueryFixture(t, db, h, store)
+	setStreamPublicSettings(t, db, visible, "Public node")
 	return &streamFixture{h: h, store: store, db: db}
 }
 
@@ -369,10 +284,7 @@ func TestPublicStreamDiscardsPageInvalidatedDuringQuery(t *testing.T) {
 		}
 	}
 	// 进行中的查询已把该节点读取为已发布。
-	f.store.mu.Lock()
-	f.store.visible = false
-	f.store.queryWait = nil
-	f.store.mu.Unlock()
+	setStreamPublicSettings(t, f.db, false, "Public node")
 	f.h.nodes.InvalidatePublicSafety()
 	close(blocked)
 	if first := nextFlush(t, recorder); strings.Contains(first, "Public node") || strings.Contains(first, `"type":"snapshot"`) {
@@ -389,9 +301,7 @@ func TestPublicStreamUnpublishInvalidatesCachedPage(t *testing.T) {
 	if !strings.Contains(first, `"name":"Public node"`) {
 		t.Fatalf("published node absent from first frame: %q", first)
 	}
-	f.store.mu.Lock()
-	f.store.visible = false
-	f.store.mu.Unlock()
+	setStreamPublicSettings(t, f.db, false, "Public node")
 	f.h.nodes.InvalidatePublicSafety()
 	second := lastLiveTestFrame(t, nextFlush(t, recorder))
 	if string(second["type"]) != `"close"` || string(second["code"]) != `"renew"` {
@@ -468,7 +378,7 @@ func assertStreamBusy(t *testing.T, response *httptest.ResponseRecorder) {
 func TestPublicStreamLifetimeAndShutdownClose(t *testing.T) {
 	t.Run("lifetime", func(t *testing.T) {
 		f := newStreamFixture(t, false)
-		f.h.streamLifetime = 35 * time.Millisecond
+		f.h.streamLifetime = 500 * time.Millisecond
 		recorder := newStreamRecorder()
 		_, done := startPublicStream(t, f.h, recorder)
 		_ = nextFlush(t, recorder)
@@ -535,7 +445,7 @@ func TestPublicStreamShutdownCancelsBlockedPublicPage(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			f := newStreamFixture(t, false)
 			if test.name == "lifetime" {
-				f.h.streamLifetime = 35 * time.Millisecond
+				f.h.streamLifetime = 500 * time.Millisecond
 			}
 			blocked := make(chan struct{})
 			f.store.mu.Lock()
@@ -631,33 +541,20 @@ func TestPublicStreamRoutingValidationAndMetrics(t *testing.T) {
 	}
 }
 
-type streamAdmissionRows struct{ done bool }
-
-func (*streamAdmissionRows) Columns() []string { return []string{"id", "status", "credential_epoch"} }
-func (*streamAdmissionRows) Close() error      { return nil }
-func (r *streamAdmissionRows) Next(dest []driver.Value) error {
-	if r.done {
-		return io.EOF
-	}
-	r.done = true
-	copy(dest, []driver.Value{"unused", "unknown", int64(0)})
-	return nil
-}
-
-func probeIngestLifecycle(t *testing.T, s *ingest.Service) error {
+func newIngestLifecycleProbe(t *testing.T, s *ingest.Service) func() error {
 	t.Helper()
-	admission, err := s.AdmitToken(context.Background(), strings.Repeat("A", 43))
-	if err != nil {
-		t.Fatal(err)
+	admissions := make([]*ingest.Admission, 2)
+	for i := range admissions {
+		var err error
+		admissions[i], err = s.AdmitToken(context.Background(), strings.Repeat("A", 43))
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
-	_, err = s.AcceptAdmitted(context.Background(), admission, v1.Report{})
-	return err
+	return func() error {
+		admission := admissions[0]
+		admissions = admissions[1:]
+		_, err := s.AcceptAdmitted(context.Background(), admission, v1.Report{})
+		return err
+	}
 }
-
-type streamAnnouncementRows struct{}
-
-func (*streamAnnouncementRows) Columns() []string {
-	return []string{"level", "title", "body", "starts_at", "ends_at"}
-}
-func (*streamAnnouncementRows) Close() error              { return nil }
-func (*streamAnnouncementRows) Next([]driver.Value) error { return io.EOF }

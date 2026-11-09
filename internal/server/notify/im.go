@@ -117,12 +117,15 @@ func destinationURL(kind, raw string, allowInsecure bool) (*url.URL, string) {
 }
 
 func (s *sender) imRequest(ctx context.Context, c Channel, secret string, p Payload) (*http.Request, string) {
+	return s.imTextRequest(ctx, c, secret, renderMessage(p, c.Config.Template, imChannels[c.Kind].maxBytes), p.Rule.Severity)
+}
+
+func (s *sender) imTextRequest(ctx context.Context, c Channel, secret, text, severity string) (*http.Request, string) {
 	// 配置与运行时策略可能变化，不能信任数据库中的旧 URL。
 	u, code := destinationURL(c.Kind, c.Config.URL, s.allowInsecureWebhooks)
 	if code != "" {
 		return nil, code
 	}
-	text := renderMessage(p, c.Config.Template, imChannels[c.Kind].maxBytes)
 	var payload any
 	switch c.Kind {
 	case "feishu":
@@ -165,7 +168,7 @@ func (s *sender) imRequest(ctx context.Context, c Channel, secret string, p Payl
 	if c.Kind == "ntfy" {
 		req.Header.Set("Content-Type", "text/plain; charset=utf-8")
 		req.Header.Set("Title", "OrbitBeacon")
-		priority := map[string]string{"critical": "5", "warning": "4"}[p.Rule.Severity]
+		priority := map[string]string{"critical": "5", "warning": "4"}[severity]
 		if priority == "" {
 			priority = "3"
 		}

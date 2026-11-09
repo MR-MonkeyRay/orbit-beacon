@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/google/uuid"
+	"orbitbeacon/internal/config"
 
 	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/securefs"
@@ -37,6 +38,7 @@ type restoreJournal struct {
 	ID      string            `json:"id"`
 	State   string            `json:"state"`
 	Files   []restoreOriginal `json:"files"`
+	Remote  *restoreRemote    `json:"remote,omitempty"`
 }
 
 // fsOps 刻意限定在本协议的持久化边界内。标签只有固定的协议阶段和固定的托管基名，
@@ -320,7 +322,24 @@ func writeRestoreJournal(ctx context.Context, dataDir string, journal restoreJou
 // RecoverRestore 将已准备好的事务收敛为完整的原始文件组，
 // 或保留已提交的组。它必须在持久锁下、Prepare 或任何 SQLite 打开之前运行，
 // 且绝不忽略 metrics 的失败。
-func RecoverRestore(dataDir string) error { return recoverRestore(dataDir, osFSOps()) }
+func RecoverRestore(ctx context.Context, cfg config.Server) error {
+	path := filepath.Join(cfg.DataDir, restoreJournalName)
+	exists, err := securefs.ValidateFile(path)
+	if err != nil {
+		return &Error{Code: "restore_recovery_failed", Err: err}
+	}
+	if !exists {
+		return nil
+	}
+	journal, err := readRestoreJournal(path)
+	if err != nil {
+		return &Error{Code: "restore_recovery_failed", Err: err}
+	}
+	if journal.Remote != nil {
+		return recoverRemoteRestore(ctx, cfg, journal, osFSOps())
+	}
+	return recoverRestore(cfg.DataDir, osFSOps())
+}
 
 func recoverRestore(dataDir string, ops fsOps) (result error) {
 	defer func() {
@@ -442,31 +461,48 @@ func readRestoreJournal(path string) (restoreJournal, error) {
 	if _, err := decoder.Token(); err != io.EOF {
 		return journal, errors.New("trailing restore journal data")
 	}
-	fields, err := requiredJSONFields(body, "version", "id", "state", "files")
-	if err != nil {
-		return journal, err
-	}
 	decoder = json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&journal); err != nil {
 		return journal, err
 	}
-	if !canonicalUUID(journal.ID) || journal.Version != 1 || (journal.State != "prepared" && journal.State != "committed") {
+	if !canonicalUUID(journal.ID) || (journal.Version != 1 && journal.Version != 2) || (journal.State != "prepared" && journal.State != "committed") || (journal.Version == 2) != (journal.Remote != nil) {
 		return journal, errors.New("invalid restore journal header")
+	}
+	names := []string{"version", "id", "state", "files"}
+	if journal.Remote != nil {
+		names = append(names, "remote")
+	}
+	fields, err := requiredJSONFields(body, names...)
+	if err != nil {
+		return journal, err
 	}
 	var originals []json.RawMessage
 	if err := json.Unmarshal(fields["files"], &originals); err != nil {
 		return journal, err
 	}
-	if len(originals) != len(restoreFiles) || len(journal.Files) != len(restoreFiles) {
+	expected := restoreFiles[:]
+	if journal.Remote != nil {
+		expected = restoreInstallFiles[:]
+		if err := validateRestoreRemote(journal.Remote); err != nil {
+			return journal, err
+		}
+		if journal.Remote.RollbackID == journal.ID {
+			return journal, errors.New("restore operation IDs overlap")
+		}
+	}
+	if len(originals) != len(expected) || len(journal.Files) != len(expected) {
 		return journal, errors.New("invalid restore journal file count")
 	}
 	for index, original := range journal.Files {
 		if _, err := requiredJSONFields(originals[index], "name", "exists", "size", "sha256"); err != nil {
 			return journal, err
 		}
-		if original.Name != restoreFiles[index] || original.Size < 0 {
+		if original.Name != expected[index] || original.Size < 0 {
 			return journal, errors.New("invalid restore journal file")
+		}
+		if journal.Remote != nil && index < 2 && !original.Exists {
+			return journal, errors.New("missing domain rollback image")
 		}
 		if !original.Exists {
 			if original.Size != 0 || original.SHA256 != "" {

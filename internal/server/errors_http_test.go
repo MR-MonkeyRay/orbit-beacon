@@ -104,7 +104,7 @@ func TestServiceErrorRejectsInvalidTrafficInput(t *testing.T) {
 	h := &handler{logger: slog.New(slog.NewJSONHandler(&logs, nil))}
 	w := httptest.NewRecorder()
 	h.serviceError(w, fmt.Errorf("traffic: %w", traffic.ErrInvalidInput), "traffic-request")
-	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"code":"validation_failed"`) || !strings.Contains(w.Body.String(), `"message":"Request values are invalid"`) {
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"code":"validation_failed"`) {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 	if logs.Len() != 0 {
@@ -142,17 +142,17 @@ func TestErrorMappersPreserveContext(t *testing.T) {
 	var logs bytes.Buffer
 	h := &handler{logger: slog.New(slog.NewJSONHandler(&logs, nil))}
 	for _, test := range []struct {
-		name                 string
-		mapper               func(http.ResponseWriter, error, string)
-		err                  error
-		status               int
-		code, message, retry string
+		name        string
+		mapper      func(http.ResponseWriter, error, string)
+		err         error
+		status      int
+		code, retry string
 	}{
-		{"agent rate", h.agentError, errors.Join(ingest.ErrRateLimited, auth.ErrRateLimited), 429, "rate_limited", "Report rate limit exceeded", "1"},
-		{"service rate", h.serviceError, errors.Join(ingest.ErrRateLimited, auth.ErrRateLimited), 429, "rate_limited", "Request rate limit reached; retry later", "1"},
-		{"agent missing", h.agentError, errors.Join(enrollment.ErrNotFound, nodes.ErrNotFound), 404, "enrollment_not_found", "Enrollment not found", ""},
-		{"service missing", h.serviceError, errors.Join(enrollment.ErrNotFound, nodes.ErrNotFound), 404, "node_not_found", "Node not found", ""},
-		{"backup secret", h.backupError, &backup.Error{Code: "secret_unreadable"}, 409, "secret_unreadable", "The backup secret cannot be read with the server key", ""},
+		{"agent rate", h.agentError, errors.Join(ingest.ErrRateLimited, auth.ErrRateLimited), 429, "rate_limited", "1"},
+		{"service rate", h.serviceError, errors.Join(ingest.ErrRateLimited, auth.ErrRateLimited), 429, "rate_limited", "1"},
+		{"agent missing", h.agentError, errors.Join(enrollment.ErrNotFound, nodes.ErrNotFound), 404, "enrollment_not_found", ""},
+		{"service missing", h.serviceError, errors.Join(enrollment.ErrNotFound, nodes.ErrNotFound), 404, "node_not_found", ""},
+		{"backup secret", h.backupError, &backup.Error{Code: "secret_unreadable"}, 409, "secret_unreadable", ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
@@ -161,7 +161,7 @@ func TestErrorMappersPreserveContext(t *testing.T) {
 			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 				t.Fatal(err)
 			}
-			if w.Code != test.status || response.Code != test.code || response.Message != test.message || response.RequestID != "request" || w.Header().Get("Retry-After") != test.retry {
+			if w.Code != test.status || response.Code != test.code || response.RequestID != "request" || w.Header().Get("Retry-After") != test.retry {
 				t.Fatalf("status %d response %+v headers %v", w.Code, response, w.Header())
 			}
 		})

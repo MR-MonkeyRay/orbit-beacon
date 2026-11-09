@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
-	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/inbox"
 	"orbitbeacon/internal/server/secretbox"
@@ -107,7 +107,10 @@ func copyRestoreRows(ctx context.Context, source *sql.DB, destination *sql.Tx, n
 	}
 	defer rows.Close()
 	names := strings.Split(columns, ",")
-	statement, err := destination.PrepareContext(ctx, "INSERT INTO "+name+" ("+columns+") VALUES ("+strings.TrimSuffix(strings.Repeat("?,", len(names)), ",")+")")
+	if name == "inbox_notifications" {
+		columns += ",sequence"
+	}
+	statement, err := destination.PrepareContext(ctx, "INSERT INTO "+name+" ("+columns+") VALUES ("+strings.TrimSuffix(strings.Repeat("?,", strings.Count(columns, ",")+1), ",")+")")
 	if err != nil {
 		return err
 	}
@@ -116,6 +119,10 @@ func copyRestoreRows(ctx context.Context, source *sql.DB, destination *sql.Tx, n
 	pointers := make([]any, len(names))
 	for i := range values {
 		pointers[i] = &values[i]
+	}
+	row := values
+	if name == "inbox_notifications" {
+		row = make([]any, len(values)+1)
 	}
 	for rows.Next() {
 		if err = rows.Scan(pointers...); err != nil {
@@ -126,7 +133,15 @@ func copyRestoreRows(ctx context.Context, source *sql.DB, destination *sql.Tx, n
 				return err
 			}
 		}
-		if _, err = statement.ExecContext(ctx, values...); err != nil {
+		if name == "inbox_notifications" {
+			sequence, e := nextRestoreSequence(ctx, destination)
+			if e != nil {
+				return e
+			}
+			copy(row, values)
+			row[len(values)] = sequence
+		}
+		if _, err = statement.ExecContext(ctx, row...); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -138,6 +153,23 @@ func copyRestoreRows(ctx context.Context, source *sql.DB, destination *sql.Tx, n
 		}
 	}
 	return rows.Err()
+}
+
+func nextRestoreSequence(ctx context.Context, tx *sql.Tx) (int64, error) {
+	result, err := tx.ExecContext(ctx, `UPDATE inbox_sequence SET value=value+1 WHERE id=1 AND value<9223372036854775807`)
+	if err != nil {
+		return 0, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if n != 1 {
+		return 0, errors.New("inbox sequence exhausted")
+	}
+	var sequence int64
+	err = tx.QueryRowContext(ctx, `SELECT value FROM inbox_sequence WHERE id=1`).Scan(&sequence)
+	return sequence, err
 }
 func rowIndex(names []string, name string) int {
 	for i, n := range names {
@@ -333,7 +365,23 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 						if e != nil {
 							return invalidPayload("backup_tasks", id)
 						}
-						return inbox.Insert(ctx, tx, inbox.Event{Kind: "task", SourceID: id, Transition: "failed", Severity: "warning", CreatedAt: now, Details: details})
+						if inbox.ValidateDetails("task", details) != nil {
+							return invalidPayload("backup_tasks", id)
+						}
+						notificationID, e := uuid.UUID(rand.Reader)
+						if e != nil {
+							return e
+						}
+						var exists bool
+						if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM inbox_notifications WHERE kind='task' AND source_id=? AND transition='failed')`, id).Scan(&exists); e != nil || exists {
+							return e
+						}
+						sequence, e := nextRestoreSequence(ctx, tx)
+						if e != nil {
+							return e
+						}
+						_, e = tx.ExecContext(ctx, `INSERT INTO inbox_notifications(sequence,id,kind,source_id,transition,severity,created_at,details_json) VALUES(?,?,'task',?,'failed','warning',?,?)`, sequence, notificationID, id, timekey.Format(now), string(details))
+						return e
 					}
 				}
 			}
@@ -357,7 +405,15 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 	if err = validateRestoreDependencies(ctx, tx); err != nil {
 		return err
 	}
-	if err = audit.InsertDetails(audit.WithSystemActor(ctx, "restore"), tx, "backup.restore", archiveID, now, audit.Details{"archive_id": archiveID, "state": "succeeded"}); err != nil {
+	auditID, err := uuid.UUID(rand.Reader)
+	if err != nil {
+		return err
+	}
+	details, err := json.Marshal(map[string]any{"actor_kind": "restore", "archive_id": archiveID, "state": "succeeded"})
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO audit_events(id,actor_id,action,target_id,created_at,details) VALUES(?,NULL,'backup.restore',?,?,?)`, auditID, archiveID, timekey.Format(now), string(details)); err != nil {
 		return err
 	}
 	if err = mt.Commit(); err != nil {

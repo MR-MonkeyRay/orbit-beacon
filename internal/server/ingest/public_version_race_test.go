@@ -28,7 +28,7 @@ func TestPublicPageCapturesVisibilityVersionBeforeRacingMutation(t *testing.T) {
 	defer db.Close()
 
 	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
-	ns := nodes.NewService(db, nodes.Options{Now: func() time.Time { return now }})
+	ns := nodes.NewService(stableDatabase(t, db), nodes.Options{Now: func() time.Time { return now }})
 	node, err := ns.CreatePending(ctx, nodes.CreateRequest{Name: "private"})
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func TestPublicPageCapturesVisibilityVersionBeforeRacingMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := NewService(db, Options{Now: func() time.Time { return now }})
+	s := NewService(stableDatabase(t, db), Options{Now: func() time.Time { return now }})
 	state := s.acquireState(node.ID)
 	state.credential = credential
 	state.generation = 1

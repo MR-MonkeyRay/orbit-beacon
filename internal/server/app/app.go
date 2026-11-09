@@ -55,7 +55,8 @@ type App struct {
 	logger                    *slog.Logger
 	version                   string
 	lock                      io.Closer
-	db, reader                io.Closer
+	db                        io.Closer
+	replication               *storage.Databases
 	history                   historyService
 	ingest                    interface{ Shutdown(context.Context) error }
 	notifications             notificationService
@@ -83,33 +84,35 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 		return nil, err
 	}
 	a.lock = dataLock
-	if err := backup.RecoverRestore(cfg.DataDir); err != nil {
+	if err := backup.RecoverRestore(ctx, cfg); err != nil {
 		return nil, err
 	}
-	if err := datadir.Prepare(cfg.DataDir); err != nil {
+	if err := datadir.ValidateRestore(cfg.DataDir); err != nil {
 		return nil, err
 	}
-	databasePath := filepath.Join(cfg.DataDir, "orbitbeacon.db")
-	db, err := storage.Open(ctx, databasePath)
-	if err != nil {
+	databases, openErr := storage.OpenDatabases(ctx, cfg.Database, cfg.DataDir)
+	if openErr != nil {
+		if databases == nil || databases.Main == nil || cfg.Database.Primary.Driver == "mysql" {
+			return nil, openErr
+		}
+		logger.LogAttrs(ctx, slog.LevelWarn, "history_disabled", logging.ErrorAttrs(openErr, "history_open_failed")...)
+	}
+	a.db = databases
+	a.replication = databases
+	db := databases.Main
+	establishedHA := cfg.Database.Standby != nil && !databases.BootstrapRequired()
+	if err := prepareDatabaseKey(ctx, cfg.DataDir, db, establishedHA); err != nil {
 		return nil, err
 	}
-	a.db = db
-	publicReader, err := storage.OpenReader(ctx, databasePath)
-	if err != nil {
-		return nil, err
-	}
-	a.reader = publicReader
 	nodeService := nodes.NewService(db, nodes.Options{MaxNodes: cfg.MaxNodes})
-	nodeService.SetPublicReader(publicReader)
 
 	var saturation *server.SaturationMetrics
 	var observeFlush func(time.Duration, int)
 	if cfg.MetricsListen != "" {
-		saturation = server.NewSaturationMetrics(db, publicReader, cfg.DataDir)
+		saturation = server.NewSaturationMetrics(db, cfg.DataDir)
 		observeFlush = saturation.ObserveHistoryFlush
 	}
-	metricHistory := openMetricHistory(ctx, cfg, publicReader, logger, observeFlush)
+	metricHistory := openMetricHistory(db, databases.History, logger, observeFlush)
 	if metricHistory != nil {
 		a.history = metricHistory
 	}
@@ -128,9 +131,15 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 		return nil, err
 	}
 	authService := auth.NewService(db, auth.Options{SecretBox: accountBox})
-	if err := authService.InitializeAdministrator(ctx, os.LookupEnv); err != nil {
-		clear(key)
-		return nil, err
+	if db.Ready() && databases.BootstrapRequired() {
+		if err := authService.InitializeAdministrator(ctx, os.LookupEnv); err != nil {
+			clear(key)
+			return nil, err
+		}
+		if err := databases.CompleteBootstrap(ctx); err != nil {
+			clear(key)
+			return nil, err
+		}
 	}
 	box, err := secretbox.New(key, "orbitbeacon notification channel v1")
 	if err != nil {
@@ -138,15 +147,29 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 		return nil, err
 	}
 	backupBox, err := secretbox.New(key, "orbitbeacon backup secrets v1")
+	if err != nil {
+		clear(key)
+		return nil, err
+	}
+	notificationOptions := notify.Options{Logger: logger, AllowInsecureWebhooks: cfg.AllowInsecureWebhooks, AllowPrivateNetworks: cfg.NotificationAllowPrivateNetworks}
+	if cfg.Database.Standby != nil {
+		notificationOptions.StorageBox, err = secretbox.New(key, "orbitbeacon storage notifications v1")
+		if err != nil {
+			clear(key)
+			return nil, err
+		}
+		notificationOptions.Storage = databases
+	}
 	clear(key)
+	backupOptions := backup.Options{DataDir: cfg.DataDir, SecretBox: backupBox, ServerVersion: version, Uploader: backup.NewObjectUploader()}
+	if metricHistory != nil {
+		backupOptions.History = metricHistory.Database()
+	}
+	backups, err := backup.New(db, backupOptions)
 	if err != nil {
 		return nil, err
 	}
-	backups, err := backup.New(db, backup.Options{DataDir: cfg.DataDir, SecretBox: backupBox, ServerVersion: version, Uploader: backup.NewObjectUploader()})
-	if err != nil {
-		return nil, err
-	}
-	notifications := notify.New(db, box, notify.Options{Logger: logger, AllowInsecureWebhooks: cfg.AllowInsecureWebhooks, AllowPrivateNetworks: cfg.NotificationAllowPrivateNetworks})
+	notifications := notify.New(db, box, notificationOptions)
 	alertService := alerts.NewService(db, nil)
 	trafficService := traffic.NewService(db)
 	availabilityService := availability.NewService(db, nil, logger)
@@ -159,10 +182,27 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 			nodeService.InvalidatePublic()
 		}
 	})
-	handler, err := server.NewHandler(server.Options{Management: authService.Management(), Enrollments: enrollments, Traffic: trafficService, Availability: availabilityService, Inbox: inbox.New(db), Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, WebUpdateIntervalSeconds: cfg.WebUpdateIntervalSeconds, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: version, SaturationMetrics: saturation})
+	handler, err := server.NewHandler(server.Options{Storage: databases, RecoverUnavailableMain: cfg.Database.Standby != nil, Management: authService.Management(), Enrollments: enrollments, Traffic: trafficService, Availability: availabilityService, Inbox: inbox.New(db), Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, WebUpdateIntervalSeconds: cfg.WebUpdateIntervalSeconds, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: version, SaturationMetrics: saturation})
 	if err != nil {
 		return nil, err
 	}
+	databases.SetMainSwitchHooks(storage.SwitchHooks{
+		Prepare: handler.PrepareDatabaseSwitch,
+		Publish: func(ctx context.Context, lease *storage.Lease) error {
+			if databases.BootstrapRequired() {
+				if err := authService.InitializeAdministrator(lease.Context(), os.LookupEnv); err != nil {
+					return err
+				}
+				if err := databases.CompleteBootstrap(lease.Context()); err != nil {
+					return err
+				}
+			}
+			if err := notifications.SyncStorageSnapshot(lease.Context()); err != nil {
+				return err
+			}
+			return handler.PublishDatabaseGeneration(ctx, lease)
+		},
+	})
 	httpServer := newHTTPServer(cfg.ListenAddr, handler, logger)
 	httpServer.RegisterOnShutdown(handler.CloseLiveStreams)
 	var metricsServer *http.Server
@@ -187,12 +227,22 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 	a.handler, a.httpServer = handler, httpServer
 	a.ingest, a.notifications = ingestService, notifications
 	a.background = []func(context.Context){availabilityService.Run, backups.Run, notifications.Run, evaluator.Run, handler.RunRetention}
+	if cfg.Database.Standby != nil {
+		a.background = append(a.background, notifications.RunStorage)
+	}
 	return a, nil
 }
 
 func (a *App) Run(ctx context.Context) error {
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
+	if a.replication != nil {
+		if err := a.replication.StartReplication(runCtx); err != nil {
+			stop()
+			a.shutdown(&sync.WaitGroup{})
+			return err
+		}
+	}
 	// 后台任务随 runCtx 结束，须在数据库关闭前完成。
 	var background sync.WaitGroup
 	for _, run := range a.background {
@@ -229,8 +279,8 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 // shutdown 在 Run 的上下文结束时执行（收到信号或 HTTP 服务出错后）。
-// HTTP 与实时流共用 10 秒；后续每个组件各有 5 秒关闭时限，
-// 总时长不超过 deploy/ 中配置的 30 秒停机宽限期。
+// HTTP 与实时流共用 10 秒，后续组件各有独立关闭时限；
+// 复制必须实际结束后才能关闭历史库和连接池。
 func (a *App) shutdown(background *sync.WaitGroup) {
 	// 先上报 not-ready，让负载均衡器停止转发新流量。
 	a.handler.MarkNotReady()
@@ -242,6 +292,9 @@ func (a *App) shutdown(background *sync.WaitGroup) {
 		a.withDeadline(a.notifications.Shutdown, "notification_shutdown_timeout", "shutdown_timeout")
 	}
 	background.Wait()
+	if err := a.stopReplication(); err != nil {
+		a.logger.LogAttrs(context.Background(), slog.LevelError, "replication_stop_failed", logging.ErrorAttrs(err, "close_failed")...)
+	}
 	if a.history != nil {
 		a.withDeadline(a.history.CloseContext, "history_shutdown_failed", "history_flush_failed")
 		a.history = nil
@@ -298,13 +351,10 @@ func (a *App) close(ctx context.Context) error {
 		_ = a.listener.Close()
 		a.listener = nil
 	}
+	failures = append(failures, a.stopReplication())
 	if a.history != nil {
 		failures = append(failures, a.history.CloseContext(ctx))
 		a.history = nil
-	}
-	if a.reader != nil {
-		failures = append(failures, a.reader.Close())
-		a.reader = nil
 	}
 	if a.db != nil {
 		failures = append(failures, a.db.Close())
@@ -315,6 +365,15 @@ func (a *App) close(ctx context.Context) error {
 		a.lock = nil
 	}
 	return errors.Join(failures...)
+}
+
+func (a *App) stopReplication() error {
+	if a.replication == nil {
+		return nil
+	}
+	databases := a.replication
+	a.replication = nil
+	return databases.StopReplication()
 }
 
 func newHTTPServer(address string, handler http.Handler, logger *slog.Logger) *http.Server {

@@ -41,7 +41,7 @@ func table(name, source, where, definition, primary string) tableSpec {
 	return spec
 }
 
-// intentionallyExcluded records ephemeral tables that must never be restored.
+// intentionallyExcluded 登记不得进入分类归档的临时/内部状态表。
 var intentionallyExcluded = map[string]map[string]string{
 	"main": {
 		"api_tokens":               "API 令牌不恢复",
@@ -50,6 +50,22 @@ var intentionallyExcluded = map[string]map[string]string{
 		"enrollment_claims":        "临时注册回执不恢复",
 		"notification_rate_limits": "运行时限流不恢复",
 		"agent_commands":           "指令及回执不备份，恢复绝不能重放指令",
+		"inbox_sequence":           "恢复时根据通知重新分配序号",
+		"node_deletions":           "跨域删除内部状态不归档",
+		"storage_write_guard":      "端点事务收据不归档",
+		"replica_identity":         "主备成员身份仅保存在私有回滚材料",
+		"replica_state":            "主备捕获状态不归档",
+		"replica_epochs":           "主备世代不归档",
+		"replica_transactions":     "主备事务日志不归档",
+		"replica_changes":          "主备行日志不归档",
+	},
+	"metrics": {
+		"storage_write_guard":  "端点事务收据不归档",
+		"replica_identity":     "主备成员身份仅保存在私有回滚材料",
+		"replica_state":        "主备捕获状态不归档",
+		"replica_epochs":       "主备世代不归档",
+		"replica_transactions": "主备事务日志不归档",
+		"replica_changes":      "主备行日志不归档",
 	},
 }
 
@@ -57,7 +73,7 @@ var categoryTables = map[Category][]tableSpec{
 	Configuration: {
 		table("users", "main", "", "id TEXT,username TEXT,password_hash TEXT,created_at TEXT,must_change_password INTEGER,totp_ciphertext BLOB,totp_pending_ciphertext BLOB,totp_pending_at TEXT,totp_last_step INTEGER", "id"),
 		table("recovery_codes", "main", "", "user_id TEXT,code_hash BLOB", "user_id,code_hash"),
-		table("settings", "main", "key IN ('public_page_enabled','api_token_rate_limit_per_minute')", "key TEXT,value TEXT", "key"),
+		table("settings", "main", "key IN ('public_page_enabled','api_token_rate_limit_per_minute','storage_notifications')", "key TEXT,value TEXT", "key"),
 		table("groups", "main", "", "id TEXT,name TEXT", "id"),
 		table("nodes", "main", "", "id TEXT,name TEXT,status TEXT,group_id TEXT,region TEXT,provider TEXT,notes TEXT,expires_on TEXT,created_at TEXT,public_settings TEXT,billing_day INTEGER,quota_bytes TEXT,billing_mode TEXT,token_hash BLOB,credential_epoch INTEGER,installation_id TEXT,first_enrolled_at TEXT,run_generation TEXT,report_session_id TEXT", "id"),
 		table("node_tags", "main", "", "node_id TEXT,tag TEXT", "node_id,tag"),

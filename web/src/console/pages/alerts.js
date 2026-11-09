@@ -3,6 +3,7 @@ import {h} from '../../shared/dom.js';
 import {t} from '../i18n.js';
 import {allNodes, api, getNavigationSignal, groupsList} from '../api.js';
 import {refresh} from '../router.js';
+import {lazyTab} from '../ui/lazy-tab.js';
 import {pageHead} from '../ui/components.js';
 import {tabSet} from '../ui/tabs.js';
 import {eventsPanel} from './alert-events.js';
@@ -13,20 +14,26 @@ import {showAlert} from './alert-detail.js';
 
 export async function alertsPage() {
   const signal = getNavigationSignal();
-  const [{rules}, {channels}, groups, nodes, {silences}] = await Promise.all([
-    api('/alert-rules', {signal}), api('/notification-channels', {signal}), groupsList(), allNodes(), api('/alert-silences', {signal})
-  ]);
-  const context = {silences, rules, channels, groups, nodes, signal, saved: refresh};
-  const event = new URLSearchParams(location.search).get('event');
-  if (event !== null) requestAnimationFrame(() => { if (!signal?.aborted) showAlert(event, signal); });
+  // 各标签页独立加载：某个接口故障只影响自己，失败处原地重试。
   const builds = {
     'active': () => eventsPanel('firing', signal),
     'history': () => eventsPanel('all', signal),
-    'rules': () => rulesPanel(context),
-    'silences': () => silencesPanel(context),
-    'channels': () => h('div', null, channelsPanel(context), deliveriesPanel(channels, signal))
+    'rules': lazyTab(
+      () => Promise.all([api('/alert-rules', {signal}), groupsList(), allNodes(), api('/notification-channels', {signal})]),
+      ([{rules}, groups, nodes, {channels}]) => rulesPanel({rules, groups, nodes, channels, signal, saved: refresh})
+    ),
+    'silences': lazyTab(
+      () => Promise.all([api('/alert-silences', {signal}), groupsList(), allNodes()]),
+      ([{silences}, groups, nodes]) => silencesPanel({silences, groups, nodes, signal, saved: refresh})
+    ),
+    'channels': lazyTab(
+      () => api('/notification-channels', {signal}),
+      ({channels}) => h('div', null, channelsPanel({channels, signal, saved: refresh}), deliveriesPanel(channels, signal))
+    )
   };
+  const event = new URLSearchParams(location.search).get('event');
+  if (event !== null) requestAnimationFrame(() => { if (!signal?.aborted) showAlert(event, signal); });
   return h('div', null,
-    pageHead(t('alerts.title'), null),
+    pageHead(t('alerts.title')),
     tabSet(alertTabs.map((tab) => ({...tab, label: t(tab.label), build: builds[tab.id]})), t('alerts.sections')));
 }

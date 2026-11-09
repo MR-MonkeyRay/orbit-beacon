@@ -61,7 +61,7 @@ func newFixture(t *testing.T, seconds int) *alertFixture {
 	}
 	t.Cleanup(func() { db.Close() })
 	f := &alertFixture{db: db, now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC), node: "00000000-0000-4000-8000-000000000001", latest: &latestStub{}}
-	f.s = NewService(db, func() time.Time { return f.now })
+	f.s = NewService(mainHandle(t, db), func() time.Time { return f.now })
 	if _, err = db.Exec("INSERT INTO nodes(id,name,status,token_hash,first_enrolled_at,last_seen,created_at) VALUES(?,'node','unknown',x'01',?,?,?)", f.node, timekey.Format(f.now), timekey.Format(f.now), timekey.Format(f.now)); err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +380,7 @@ type recordingNotifier struct {
 	wakes         int
 }
 
-func (n *recordingNotifier) Enqueue(_ context.Context, _ *sql.Tx, v Notification) error {
+func (n *recordingNotifier) Enqueue(_ context.Context, _ *storage.Tx, v Notification) error {
 	n.notifications = append(n.notifications, v)
 	return nil
 }
@@ -392,7 +392,7 @@ type checkingNotifier struct {
 	f *alertFixture
 }
 
-func (n checkingNotifier) Enqueue(ctx context.Context, tx *sql.Tx, v Notification) error {
+func (n checkingNotifier) Enqueue(ctx context.Context, tx *storage.Tx, v Notification) error {
 	n.t.Helper()
 	var state string
 	if err := tx.QueryRowContext(ctx, "SELECT state FROM alert_events WHERE id=?", v.EventID).Scan(&state); err != nil || state != v.State {
@@ -766,7 +766,7 @@ func TestFireRevalidatesIdentityAndDisabledRules(t *testing.T) {
 }
 func TestRealIngestIdentityFence(t *testing.T) {
 	f := newFixture(t, 0)
-	real := ingest.NewService(f.db, ingest.Options{Now: func() time.Time { return f.now }})
+	real := ingest.NewService(mainHandle(t, f.db), ingest.Options{Now: func() time.Time { return f.now }})
 	f.e = NewEvaluator(f.s, real, EvaluatorOptions{})
 	f.exec(t, "UPDATE nodes SET run_generation='1',report_session_id='one' WHERE id=?", f.node)
 	var report v1.Report

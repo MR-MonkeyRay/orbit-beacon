@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"orbitbeacon/internal/config"
 	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/history"
 	"orbitbeacon/internal/server/securefs"
@@ -22,18 +23,19 @@ type RestoreResult struct {
 
 // Restore 是离线、受锁保护的类别替换。只有通过校验、
 // 已关闭的可信数据库才会进入可恢复的多文件提交协议。
-func Restore(ctx context.Context, dataDir, input, password string, replace bool) (RestoreResult, error) {
+func Restore(ctx context.Context, cfg config.Server, input, password string, replace bool) (RestoreResult, error) {
 	var result RestoreResult
-	dir, err := filepath.Abs(dataDir)
+	dir, err := filepath.Abs(cfg.DataDir)
 	if err != nil {
 		return result, err
 	}
+	cfg.DataDir = dir
 	lock, err := datadir.Lock(dir)
 	if err != nil {
 		return result, err
 	}
 	defer lock.Close()
-	if err = RecoverRestore(dir); err != nil {
+	if err = RecoverRestore(ctx, cfg); err != nil {
 		return result, err
 	}
 	if err = datadir.ValidateRestore(dir); err != nil {
@@ -43,7 +45,31 @@ func Restore(ctx context.Context, dataDir, input, password string, replace bool)
 	if err != nil {
 		return result, err
 	}
-	if !empty && !replace {
+	needsReplace := !empty
+	var domains *storage.Databases
+	controlExists, err := securefs.ValidateFile(filepath.Join(dir, "storage-control.db"))
+	if err != nil {
+		return result, err
+	}
+	remote := cfg.Database.Primary.Driver == "mysql" || cfg.Database.Standby != nil || controlExists
+	if remote {
+		domains, err = storage.OpenOfflineDatabases(ctx, cfg.Database, dir)
+		if err != nil {
+			return result, err
+		}
+		defer domains.Close()
+		mainEmpty, e := domains.Main.IsEmpty(ctx)
+		if e != nil {
+			return result, e
+		}
+		historyEmpty, e := domains.History.IsEmpty(ctx)
+		if e != nil {
+			return result, e
+		}
+		empty = mainEmpty && historyEmpty
+		needsReplace = needsReplace || !empty
+	}
+	if needsReplace && !replace {
 		return result, &Error{Code: "restore_requires_replace"}
 	}
 	work, err := os.MkdirTemp(dir, ".restore-work-")
@@ -96,13 +122,21 @@ func Restore(ctx context.Context, dataDir, input, password string, replace bool)
 	}
 	var target, metrics *sql.DB
 	if !empty && len(selected) < 3 {
-		target, err = restoreTargetSnapshot(ctx, dir, work, "orbitbeacon.db", storage.CurrentSchemaVersion)
+		if remote {
+			target, err = restoreDomainSnapshot(ctx, domains.Main, filepath.Join(work, "target-orbitbeacon.db"))
+		} else {
+			target, err = restoreTargetSnapshot(ctx, dir, work, "orbitbeacon.db", storage.CurrentSchemaVersion)
+		}
 		if err != nil {
 			return result, err
 		}
 		defer target.Close()
 		if !selected[Monitoring] {
-			metrics, err = restoreTargetSnapshot(ctx, dir, work, "metrics.db", history.CurrentSchemaVersion)
+			if remote {
+				metrics, err = restoreDomainSnapshot(ctx, domains.History, filepath.Join(work, "target-metrics.db"))
+			} else {
+				metrics, err = restoreTargetHistorySnapshot(ctx, dir, work)
+			}
 			if err != nil {
 				return result, err
 			}
@@ -170,7 +204,12 @@ func Restore(ctx context.Context, dataDir, input, password string, replace bool)
 	if err = writeRestoreKey(filepath.Join(newDir, "secrets.key"), key); err != nil {
 		return result, err
 	}
-	rollback, err := CommitRestore(ctx, dir, newDir)
+	var rollback string
+	if remote {
+		rollback, err = commitRemoteRestore(ctx, cfg, domains, newDir, osFSOps())
+	} else {
+		rollback, err = CommitRestore(ctx, dir, newDir)
+	}
 	if err != nil {
 		return result, err
 	}
@@ -190,6 +229,24 @@ func restoreTargetEmpty(dir string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+func restoreTargetHistorySnapshot(ctx context.Context, dir, work string) (*sql.DB, error) {
+	path := filepath.Join(dir, "metrics.db")
+	exists, err := securefs.ValidateFile(path)
+	if err != nil {
+		return nil, &Error{Code: "restore_invalid_data", Err: err}
+	}
+	if exists {
+		return restoreTargetSnapshot(ctx, dir, work, "metrics.db", history.CurrentSchemaVersion)
+	}
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if exists, err := securefs.ValidateFile(path + suffix); err != nil || exists {
+			return nil, &Error{Code: "restore_invalid_data", Err: err}
+		}
+	}
+	// 缺失历史只在离线私有状态中建立，任何残留 sidecar 均拒绝。
+	return history.OpenDatabase(ctx, filepath.Join(work, "target-metrics.db"))
 }
 
 // 打开之前先复制完整的 SQLite 文件组。恢复/checkpoint 活动
@@ -228,6 +285,18 @@ func restoreTargetSnapshot(ctx context.Context, dir, work, name string, version 
 		return nil, err
 	}
 	return db, nil
+}
+
+func restoreDomainSnapshot(ctx context.Context, database *storage.Database, path string) (*sql.DB, error) {
+	lease, err := database.Acquire(ctx, storage.Reader)
+	if err != nil {
+		return nil, err
+	}
+	defer lease.Close()
+	if err = lease.Snapshot(lease.Context(), path); err != nil {
+		return nil, err
+	}
+	return openPayload(ctx, path)
 }
 
 func copyRestoreFile(ctx context.Context, source, destination string) error {

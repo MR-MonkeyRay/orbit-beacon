@@ -13,11 +13,15 @@ import (
 
 func TestAccessLogRedactsPrivateDataAndCorrelatesResponse(t *testing.T) {
 	var logs bytes.Buffer
-	h := &handler{accessLog: true, metrics: newHTTPMetrics("test"), logger: slog.New(slog.NewJSONHandler(&logs, nil)), trustedProxies: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}}
+	f := newConsoleLiveFixture(t)
+	h := f.h
+	h.accessLog = true
+	h.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	h.trustedProxies = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
 	for _, path := range []string{
 		"/api/v1/nodes/00000000-0000-4000-8000-000000000001/runtime?token=private-query",
 		"/api/agent/v1/enroll/private-enrollment-token?other=private-query",
-		"/_app/immutable/private-filename?secret=private-query",
+		"/_app/assets/private-filename?secret=private-query",
 	} {
 		logs.Reset()
 		request := httptest.NewRequest(http.MethodGet, "https://beacon.test"+path, nil)

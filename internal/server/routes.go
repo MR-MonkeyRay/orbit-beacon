@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"orbitbeacon/internal/server/auth"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/uuid"
 )
 
@@ -57,6 +58,14 @@ var routes = []route{
 	{"POST /api/agent/v1/enroll/check", agent, endpoint((*handler).agentRoute)},
 	{"POST /api/agent/v1/report", agent, endpoint((*handler).agentRoute)},
 	{"POST /api/agent/v1/recover", agent, endpoint((*handler).agentRoute)},
+	{"GET /api/v1/data-management", admin, endpoint((*handler).dataManagement)},
+	{"POST /api/v1/data-management/cleanup", admin, endpoint((*handler).dataManagement)},
+	{"POST /api/v1/data-management/compact", admin, endpoint((*handler).dataManagement)},
+	{"GET /api/v1/storage", admin, withSession((*handler).storageRoute)},
+	{"PATCH /api/v1/storage/notifications", admin, withSession((*handler).storageRoute)},
+	{"POST /api/v1/storage/operations/preview", admin, withSession((*handler).storageRoute)},
+	{"GET /api/v1/storage/operations/{operation_id}", admin, withSession((*handler).storageRoute)},
+	{"POST /api/v1/storage/operations/{operation_id}", admin, withSession((*handler).storageRoute)},
 	{"GET /api/v1/settings/api-tokens", admin, (*handler).apiTokenSettings},
 	{"PATCH /api/v1/settings/api-tokens", admin, (*handler).apiTokenSettings},
 	{"GET /api/v1/settings/public-page", admin, endpoint((*handler).publicPageSettings)},
@@ -216,13 +225,23 @@ func (registry *routeRegistry) serve(h *handler, w http.ResponseWriter, r *http.
 	if requested := registry.endpoints[r.Method+" "+entry.label]; requested != nil {
 		level = requested.auth
 	}
-	if level == admin || level == pendingPasswordAllowed {
-		if carriesAPIToken(r) {
-			h.serveAPIToken(w, r, requestID, r.Method+" "+entry.label)
+	tokenRequest := (level == admin || level == pendingPasswordAllowed) && carriesAPIToken(r)
+	if !tokenRequest && !method(w, r, requestID, registry.methods[entry.label]...) {
+		return
+	}
+	stream := entry.label == "/api/public/v1/stream" || entry.label == "/api/public/v1/ws" ||
+		entry.label == "/api/v1/live/stream" || entry.label == "/api/v1/live/ws"
+	if !stream && !strings.HasPrefix(entry.label, "/healthz/") {
+		lease, err := h.nodes.Database().Acquire(r.Context(), storage.Reader)
+		if err != nil {
+			h.serviceError(w, err, requestID)
 			return
 		}
+		defer lease.Close()
+		r = r.WithContext(lease.Context())
 	}
-	if !method(w, r, requestID, registry.methods[entry.label]...) {
+	if tokenRequest {
+		h.serveAPIToken(w, r, requestID, r.Method+" "+entry.label)
 		return
 	}
 	entry, ok := registry.endpoints[r.Method+" "+entry.label]

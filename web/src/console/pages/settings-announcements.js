@@ -13,7 +13,7 @@ import {errorText} from '../../shared/errors.js';
 export function announcementEditor(item, {signal, saved}) {
   if (!session.user || !session.csrf || signal?.aborted) return;
   let level, title, body, starts, ends;
-  return formDialog({title: t(item ? 'announcements.edit' : 'announcements.add'),
+  return formDialog({title: t(item ? 'announcements.edit' : 'announcements.new'),
     submit: t(item ? 'settings.save' : 'announcements.add'),
     build(form) {
       level = select(['info', 'warning', 'critical'].map((value) => [value, t(`alerts.severity.${value}`)]), item?.level || 'info', {name: 'level'});
@@ -49,7 +49,7 @@ export function announcementList(items, context) {
   const {signal, saved} = context;
   const remove = async (item) => {
     if (!session.user || !session.csrf || signal?.aborted) return;
-    if (!(await confirmDialog({title: t('announcements.delete'), confirm: t('announcements.delete'), danger: true}))) return;
+    if (!(await confirmDialog({title: t('announcements.deleteNamed', {name: item.title}), confirm: t('announcements.delete'), danger: true}))) return;
     if (!session.user || !session.csrf || signal?.aborted) return;
     try {
       await api(`/announcements/${encodeURIComponent(item.id)}`, {method: 'DELETE', signal});

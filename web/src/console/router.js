@@ -3,7 +3,7 @@ import {errorText} from '../shared/errors.js';
 import {h, reducedMotion} from '../shared/dom.js';
 import {ensureSession, onSession, pauseSessionVerification, session, setNavigationSignal, verifySession} from './api.js';
 import {setActiveNav} from './shell.js';
-import {button, emptyState, linkButton, pageHead, resetIDs, skeleton} from './ui/components.js';
+import {button, linkButton, pageHead, panel, resetIDs, skeleton} from './ui/components.js';
 import {closeDialogs, confirmDiscard, dialogActionStale, hasUnsavedDialogChanges} from './ui/dialogs.js';
 import {progress} from './ui/feedback.js';
 
@@ -30,11 +30,13 @@ export function ignoreNavigationCancellation(error) {
 }
 
 const hasUnsavedChanges = () => Boolean(view.querySelector('form[data-dirty="true"]'));
+// SPA 导航与后退必须与语言切换、卸载路径一致地保护打开的对话框输入。
+const hasUnsavedWork = () => hasUnsavedChanges() || hasUnsavedDialogChanges();
 
 const localeChangeBusy = () => Boolean(document.querySelector('[data-busy="true"],button.busy'));
 export async function confirmLocaleChange() {
   if (localeChangeBusy()) return false;
-  if ((hasUnsavedChanges() || hasUnsavedDialogChanges()) && !(await confirmDiscard())) return false;
+  if (hasUnsavedWork() && !(await confirmDiscard())) return false;
   return !localeChangeBusy();
 }
 
@@ -52,7 +54,7 @@ function skipTransition(hidden = false) {
 
 export async function go(target, options = {}) {
   const attempt = ++intent;
-  if (!options.force && hasUnsavedChanges() && !(await confirmDiscard())) throw new NavigationCancelled();
+  if (!options.force && hasUnsavedWork() && !(await confirmDiscard())) throw new NavigationCancelled();
   if (attempt !== intent) throw new NavigationCancelled();
   const destination = new URL(target, location.href);
   if (destination.pathname === '/' || destination.pathname === '/public.html') {
@@ -78,7 +80,9 @@ async function render(options = {}) {
   setNavigationSignal(controller.signal);
   const openerID = closeDialogs();
   currentURL = location.pathname + location.search + location.hash;
-  const route = routes.find((item) => item.match(location.pathname)) || routes.find((item) => item.fallback);
+  const matched = routes.find((item) => item.match(location.pathname));
+  // 兜底路由只用于高亮导航和骨架；拼错的深链必须显式报 404，而不是静默渲染概览。
+  const route = matched || routes.find((item) => item.fallback);
   const focusID = options.quiet ? openerID || document.activeElement?.id : '';
   progress.start();
   let skeletonShown = false;
@@ -105,6 +109,7 @@ async function render(options = {}) {
     if (location.pathname === '/change-password' && !session.user?.must_change_password) {
       return go(session.user ? '/overview' : '/login', {replace: true, force: true});
     }
+    if (!matched) throw Object.assign(new Error('Not found'), {status: 404});
     content = await route.page();
   } catch (error) {
     if (token !== navigation) throw new NavigationCancelled();
@@ -162,10 +167,8 @@ function swap(content, route, mode, token) {
 function errorPage(error) {
   const notFound = error.status === 404;
   return h('div', null, pageHead(notFound ? t('shell.notFound') : t('shell.pageLoadFailed')),
-    h('div', {class: 'panel'}, emptyState(
-      notFound ? t('shell.resourceMissing') : t('shell.serverUnreachable'),
-      notFound ? t('shell.resourceMissingHint') : errorText(error),
-      notFound ? linkButton('/nodes', t('shell.goToNodes')) : button(t('shell.tryAgain'), {icon: 'refresh', variant: 'primary', onClick: () => { void render().catch(ignoreNavigationCancellation); }}))));
+    panel(null, {}, h('p', null, notFound ? t('shell.resourceMissingHint') : errorText(error)),
+      notFound ? linkButton('/nodes', t('shell.goToNodes')) : button(t('shell.tryAgain'), {icon: 'refresh', variant: 'primary', onClick: () => { void render().catch(ignoreNavigationCancellation); }})));
 }
 
 export function startRouter(table) {
@@ -205,7 +208,7 @@ export function startRouter(table) {
     const attempt = ++intent;
     const previousURL = currentURL;
     const scroll = window.scrollY;
-    if (hasUnsavedChanges() && !(await confirmDiscard())) {
+    if (hasUnsavedWork() && !(await confirmDiscard())) {
       if (attempt !== intent) return;
       history.pushState({scroll}, '', previousURL);
       window.scrollTo({top: scroll, behavior: 'instant'});
@@ -227,7 +230,7 @@ export function startRouter(table) {
   listen(window, 'pageshow', revalidate);
   listen(window, 'beforeunload', (event) => {
     if (confirmedUnload) { confirmedUnload = false; return; }
-    if (hasUnsavedChanges() || hasUnsavedDialogChanges()) event.preventDefault();
+    if (hasUnsavedWork()) event.preventDefault();
   });
   void render().catch(ignoreNavigationCancellation);
   return () => {

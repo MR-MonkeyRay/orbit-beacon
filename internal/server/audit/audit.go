@@ -3,10 +3,10 @@ package audit
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/json"
 	"time"
 
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
 )
@@ -30,12 +30,12 @@ func WithSystemActor(ctx context.Context, kind string) context.Context {
 type Details map[string]any
 
 // Insert 在变更事务内写入审计事件。未设置主体的内部初始化和测试数据操作不产生事件。
-func Insert(ctx context.Context, tx *sql.Tx, action, targetID string, now time.Time) error {
+func Insert(ctx context.Context, tx *storage.Tx, action, targetID string, now time.Time) error {
 	return InsertDetails(ctx, tx, action, targetID, now, nil)
 }
 
 // InsertDetails 同 Insert，附带结构化 details。
-func InsertDetails(ctx context.Context, tx *sql.Tx, action, targetID string, now time.Time, details Details) error {
+func InsertDetails(ctx context.Context, tx *storage.Tx, action, targetID string, now time.Time, details Details) error {
 	var actor any
 	if actorID, _ := ctx.Value(actorKey{}).(string); actorID != "" {
 		actor = actorID
@@ -63,7 +63,7 @@ func InsertDetails(ctx context.Context, tx *sql.Tx, action, targetID string, now
 }
 
 // ScopedAlertRuleDeletes 将清单作用域级联删除的规则归属于同一主体和事务。
-func ScopedAlertRuleDeletes(ctx context.Context, tx *sql.Tx, kind, scopeID string, now time.Time) error {
+func ScopedAlertRuleDeletes(ctx context.Context, tx *storage.Tx, kind, scopeID string, now time.Time) error {
 	rows, err := tx.QueryContext(ctx, "SELECT id FROM alert_rules WHERE scope_kind=? AND scope_id=?", kind, scopeID)
 	if err != nil {
 		return err

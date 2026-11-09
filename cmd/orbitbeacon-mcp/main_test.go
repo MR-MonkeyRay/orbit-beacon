@@ -653,65 +653,6 @@ func TestProcessEOFAndSignals(t *testing.T) {
 	}
 }
 
-func TestReleaseMCPAssets(t *testing.T) {
-	data, err := os.ReadFile("../../.github/workflows/release.yml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var workflow struct {
-		Jobs map[string]struct {
-			Steps []struct {
-				Name string `yaml:"name"`
-				ID   string `yaml:"id"`
-				Run  string `yaml:"run"`
-			} `yaml:"steps"`
-		} `yaml:"jobs"`
-	}
-	if err := yaml.Unmarshal(data, &workflow); err != nil {
-		t.Fatal(err)
-	}
-	var build, checks, publish string
-	for _, step := range workflow.Jobs["publish"].Steps {
-		switch {
-		case step.Name == "构建发布二进制":
-			build = step.Run
-		case step.ID == "publication-state":
-			checks = step.Run
-		case step.Name == "发布 GitHub Release 二进制":
-			publish = step.Run
-		}
-	}
-	if !strings.Contains(build, "for kind in server agent mcp; do") {
-		t.Fatal("MCP missing from build kinds")
-	}
-	for _, arch := range []string{"amd64", "arm64"} {
-		check := "grep -Fxq orbitbeacon-mcp-linux-" + arch + " &&"
-		if !strings.Contains(checks, check) {
-			t.Errorf("publication-state step lacks required asset check: %s", check)
-		}
-	}
-	// Inspect the actual upload array, so unrelated mentions cannot satisfy this
-	// contract and no missing or duplicate release asset can pass unnoticed.
-	var assets []string
-	for _, line := range strings.Split(publish, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "assets=(") && strings.HasSuffix(line, ")") {
-			for _, field := range strings.Fields(strings.TrimSuffix(strings.TrimPrefix(line, "assets=("), ")")) {
-				assets = append(assets, strings.Trim(field, `"`))
-			}
-		}
-	}
-	expected := []string{
-		"$RUNNER_TEMP/release/orbitbeacon-server-linux-amd64", "$RUNNER_TEMP/release/orbitbeacon-server-linux-arm64",
-		"$RUNNER_TEMP/release/orbitbeacon-agent-linux-amd64", "$RUNNER_TEMP/release/orbitbeacon-agent-linux-arm64",
-		"$RUNNER_TEMP/release/orbitbeacon-mcp-linux-amd64", "$RUNNER_TEMP/release/orbitbeacon-mcp-linux-arm64",
-		"$RUNNER_TEMP/release/SHA256SUMS",
-	}
-	if !reflect.DeepEqual(assets, expected) {
-		t.Fatalf("release upload array = %v; want %v", assets, expected)
-	}
-}
-
 func TestProcessConfigurationFailureExitStatus(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {

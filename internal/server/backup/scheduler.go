@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/server/audit"
+	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
 )
@@ -77,8 +78,14 @@ func (s *Service) PreviewCron(raw string, now time.Time) (CronPreview, error) {
 // Tick 将每个到期计划原子地合并为至多一个任务。被阻塞的计划
 // 保留其原始到期时间戳；合并后的唤醒会在完成时重试它们。
 func (s *Service) Tick(ctx context.Context, now time.Time) error {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	now = now.UTC()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := lease.BeginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -170,17 +177,15 @@ func (s *Service) Tick(ctx context.Context, now time.Time) error {
 		if e != nil {
 			return e
 		}
-		// 唯一性约束是防止重放已调度 UTC 时刻的第二道持久屏障，
-		// 也涵盖夏令时切换时重复出现的本地时间。
-		result, e := tx.ExecContext(ctx, `INSERT INTO backup_tasks(id,kind,state,plan_id,categories_json,destination_json,input_credentials_ciphertext,scheduled_at,created_at) VALUES(?,?,'queued',?,?,?,?,?,?) ON CONFLICT(plan_id,scheduled_at) DO NOTHING`, id, kind, p.ID, string(cats), string(target), cipher, timekey.Format(*p.NextRunAt), timekey.Format(now))
-		if e != nil {
+		// guard 内检查完整唯一键，只跳过已调度时刻，不吞其他约束错误。
+		var exists bool
+		if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM backup_tasks WHERE plan_id=? AND scheduled_at=?)`, p.ID, timekey.Format(*p.NextRunAt)).Scan(&exists); e != nil {
 			return e
 		}
-		inserted, e := result.RowsAffected()
-		if e != nil {
-			return e
-		}
-		if inserted == 1 {
+		if !exists {
+			if _, e = tx.ExecContext(ctx, `INSERT INTO backup_tasks(id,kind,state,plan_id,categories_json,destination_json,input_credentials_ciphertext,scheduled_at,created_at) VALUES(?,?,'queued',?,?,?,?,?,?)`, id, kind, p.ID, string(cats), string(target), cipher, timekey.Format(*p.NextRunAt), timekey.Format(now)); e != nil {
+				return e
+			}
 			active++
 			enqueued = true
 			if e = audit.InsertDetails(ctx, tx, "backup.schedule", id, now, audit.Details{"plan_id": p.ID, "categories": p.Categories, "state": "queued"}); e != nil {
@@ -203,8 +208,14 @@ func (s *Service) Tick(ctx context.Context, now time.Time) error {
 // 到期未执行的计划可能被容量或自身的活跃任务阻塞。绝不为它们设置过去时间戳的定时器：
 // 完成/变更会唤醒它们，这个有界兜底同时覆盖瞬时的数据库故障。
 func (s *Service) schedulerWait(ctx context.Context, now time.Time) (time.Duration, error) {
+	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
+	if leaseErr != nil {
+		return time.Second, leaseErr
+	}
+	defer lease.Close()
+	ctx = lease.Context()
 	var raw string
-	err := s.db.QueryRowContext(ctx, `SELECT next_run_at FROM backup_plans WHERE enabled=1 AND next_run_at>? ORDER BY next_run_at,id LIMIT 1`, timekey.Format(now)).Scan(&raw)
+	err := lease.QueryRowContext(ctx, `SELECT next_run_at FROM backup_plans WHERE enabled=1 AND next_run_at>? ORDER BY next_run_at,id LIMIT 1`, timekey.Format(now)).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Minute, nil
 	}

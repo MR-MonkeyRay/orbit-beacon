@@ -32,7 +32,7 @@ func TestStoppedSuppressesOfflineAndResolvesExistingEvent(t *testing.T) {
 		t.Fatal("stopped fired offline")
 	}
 	f.exec(t, `UPDATE nodes SET run_generation='1',last_seen=? WHERE id=?`, timekey.Format(f.now), f.node)
-	n, err := nodes.NewService(f.db, nodes.Options{}).Get(context.Background(), f.node)
+	n, err := nodes.NewService(mainHandle(t, f.db), nodes.Options{}).Get(context.Background(), f.node)
 	if err != nil || n.Stopped {
 		t.Fatalf("new report failed to clear: %+v %v", n, err)
 	}

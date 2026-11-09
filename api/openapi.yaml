@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: OrbitBeacon 服务端与 Agent API
-  version: 0.3.0
+  version: 0.5.0
   description: |
     定义管理、Agent 与匿名 API 的字段、认证和错误码；各端点说明各自的访问要求。
     info.version 是接口契约版本，独立于程序发布版本，仅随契约变更更新；说明文字修订不升版。
@@ -20,6 +20,131 @@ servers:
 security:
   - session: []
 paths:
+  /api/v1/data-management:
+    get:
+      operationId: getDataManagement
+      description: 管理员会话专用。统计当前活动业务及历史数据库，不包含备库、本地控制库、SQLite WAL 或备份文件。MySQL 分配空间是引擎估计值；不返回数据库地址或凭据。
+      parameters:
+        - name: keep_days
+          in: query
+          schema: {type: integer, enum: [7, 30, 90, 180, 365], default: 30}
+      responses:
+        '200':
+          description: 当前统计；缺少历史数据库时省略该域及其类别。before 是本次预览的 UTC 清理边界。
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [databases, categories, before]
+                properties:
+                  before: {type: string, format: date-time}
+                  databases:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [domain, driver, size_bytes, reusable_bytes, compact_supported]
+                      properties:
+                        domain: {type: string, enum: [main, history]}
+                        driver: {type: string, enum: [sqlite, mysql]}
+                        size_bytes: {type: integer, minimum: 0, description: SQLite page_count × page_size；MySQL DATA_LENGTH + INDEX_LENGTH 估计值。}
+                        reusable_bytes: {type: [integer, 'null'], minimum: 0, description: SQLite 空闲页大小；MySQL 为 null，不保证等于操作系统可回收空间。}
+                        compact_supported: {type: boolean}
+                  categories:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, domain, rows, eligible_rows]
+                      properties:
+                        id: {type: string, enum: [metric_history, probe_history, availability_history, resolved_alerts, notification_history, delivery_history, audit_events]}
+                        domain: {type: string, enum: [main, history]}
+                        rows: {type: integer, minimum: 0}
+                        eligible_rows: {type: integer, minimum: 0}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/data-management/cleanup:
+    post:
+      operationId: cleanupManagedData
+      description: |
+        管理员会话、Origin 与 CSRF 校验。只删除所选类别中早于 before 的记录；客户端传入预览的 before，服务端验证不晚于当前 keep_days 边界。
+        指标按桶时间、探测按小时、可用率按完整 UTC 日、告警按恢复时间、站内通知及审计按创建时间、终态投递按更新时间判断。
+        保留触发中告警、pending 投递、账户、节点、设置、会话、流量及备份。站内通知同时级联删除已读关系，不重置通知序号。
+        每类别最多删除 5000 行，分短事务提交；has_more=true 时需刷新后由管理员再次确认。类别间及批次间不承诺原子性，失败可能已有部分提交，必须刷新核实，禁止自动重发未知提交。
+        逻辑删除不承诺立即缩小数据库文件；SQLite 整理为独立操作，MySQL 不执行 OPTIMIZE 或 TRUNCATE。
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [categories, keep_days, before, confirmation]
+              properties:
+                categories:
+                  type: array
+                  minItems: 1
+                  maxItems: 7
+                  uniqueItems: true
+                  items: {type: string, enum: [metric_history, probe_history, availability_history, resolved_alerts, notification_history, delivery_history, audit_events]}
+                keep_days: {type: integer, enum: [7, 30, 90, 180, 365]}
+                before: {type: string, format: date-time}
+                confirmation: {type: string, const: CLEAN}
+      responses:
+        '200':
+          description: 已完成的各类别清理结果；按请求顺序返回。
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [results, before]
+                properties:
+                  before: {type: string, format: date-time}
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, deleted_rows, has_more]
+                      properties:
+                        id: {type: string}
+                        deleted_rows: {type: integer, minimum: 0, maximum: 5000}
+                        has_more: {type: boolean}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/data-management/compact:
+    post:
+      operationId: compactManagedDatabase
+      description: 管理员会话、Origin 与 CSRF 校验。只整理当前活动 SQLite 域；写 gate 内执行 VACUUM 与 WAL checkpoint，不改变逻辑行。可能暂时阻塞写入并需要额外磁盘空间。MySQL 拒绝，不能整理备库。失败或响应中断后先刷新核实，禁止自动重发。
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [domain, confirmation]
+              properties:
+                domain: {type: string, enum: [main, history]}
+                confirmation: {type: string, const: COMPACT}
+      responses:
+        '200':
+          description: 整理成功；重新读取统计获取最新空间。
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [domain]
+                properties:
+                  domain: {type: string, enum: [main, history]}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/api-tokens:
     get:
       operationId: listAPITokens
@@ -939,6 +1064,102 @@ paths:
         '204': {description: 分组已删除，节点已解绑。}
         '404': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/storage:
+    get:
+      operationId: getStorageStatus
+      security: [{session: []}]
+      description: 管理员会话读取两个逻辑域的当前状态；不接受 API 令牌。状态与服务角色分开，ready 仅表示副本完整，不表示可提升。健康业务库的通知偏好读取失败时，保留控制记录中的偏好并返回 snapshot_ready=false，允许 PATCH 修复；业务库不可用或请求世代失效仍返回 503，无匿名恢复旁路。
+      responses:
+        '200':
+          description: 当前状态；Cache-Control 为 no-store。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StorageStatus'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/storage/notifications:
+    patch:
+      operationId: updateStorageNotifications
+      security: [{session: []}]
+      description: 替换故障通知订阅。频道必须存在且已启用；inbox 默认 true、外部频道默认空。频道快照按业务世代与缓存修订双重校准；snapshot_ready=false 时外发暂停，但允许保存修复配置。
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/StorageNotificationPreferences'}
+      responses:
+        '200':
+          description: 已提交的订阅与快照状态。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StorageNotificationSettings'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/storage/operations/preview:
+    post:
+      operationId: previewStorageRecovery
+      security: [{session: []}]
+      description: 创建五分钟有效的确认，绑定当前用户、域、方向、实例、epoch 与修订；不执行恢复。只可替换尚未接受的确认，queued/running 时拒绝。目标不得是当前活动成员，不能清空陌生或身份不符的数据库。
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/StorageRecoveryRequest'}
+      responses:
+        '200':
+          description: 源为保留数据的当前权威，目标为本次恢复对象；确认值必须原样提交。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StorageRecoveryPreview'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/storage/operations/{operation_id}:
+    parameters:
+      - name: operation_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getStorageRecoveryOperation
+      security: [{session: []}]
+      description: 仅原确认用户可查，包括 awaiting_confirmation；过期或无权限均返回 404。接受后终态保留 30 天且最多 1000 条。卡片中操作消失不代表成功，只认此端点的终态。
+      responses:
+        '200':
+          description: 操作的持久状态。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StorageRecoveryOperation'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: acceptStorageRecovery
+      security: [{session: []}]
+      description: 原子排队后立即返回 202，由协调器执行，不在认证租约中等待切换。精确确认值为 domain/target/instance_uuid；人工提升必须显式接受数据丢失。重复提交已接受操作只返回原记录，不重做。409 storage_confirmation_stale 须重新预览；503 storage_commit_unknown 或网络结果不明时只能 GET 此 ID 核实，不自动重发。
+      parameters:
+        - {$ref: '#/components/parameters/Origin'}
+        - {$ref: '#/components/parameters/CSRF'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [confirmation, accept_data_loss]
+              properties:
+                confirmation: {type: string, minLength: 1}
+                accept_data_loss: {type: boolean}
+      responses:
+        '202':
+          description: 已接受，或返回之前已接受的操作；关闭客户端不取消工作。
+          headers:
+            Location: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StorageRecoveryOperation'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/notification-channels:
     get:
       operationId: listNotificationChannels
@@ -1637,7 +1858,7 @@ paths:
     get:
       operationId: listInboxNotifications
       description: |
-        所有管理员共享任务与告警通知。各账户的已读状态独立；
+        所有管理员共享任务、告警与存储故障通知。各账户的已读状态独立；
         新账户可读取保留的共享事件。通知保留 90 天。
         按 created_at DESC、id DESC 排序，使用键集分页。
         未知、重复、空或格式错误的查询参数返回 400 validation_failed。
@@ -1679,7 +1900,7 @@ paths:
       - $ref: '#/components/parameters/ResourceID'
     get:
       operationId: getInboxNotification
-      description: 须会话。通知不存在返回 404 not_found。即使来源任务/告警已过期或删除，仍返回不可变的安全快照；快照的可用性标志是历史的，须获取任务详情了解当前可用性。GET 从不标记已读。拒绝查询参数。
+      description: 须会话。通知不存在返回 404 not_found。即使来源任务或告警已过期或删除，仍返回不可变的安全快照；存储故障快照不对应任务或告警 ID。快照的可用性标志是历史的，须获取任务详情了解当前可用性。GET 从不标记已读。拒绝查询参数。
       responses:
         '200':
           description: 通知快照与当前账户的已读标志。
@@ -2742,7 +2963,7 @@ components:
         application/octet-stream:
           schema: {type: string, format: binary}
     Error:
-      description: 结构化失败。无效 JSON/输入或未变更的新密码（password_unchanged）返回 400，无效凭据返回 401，浏览器 Origin/CSRF 失败、受限管理会话（password_change_required）、全局禁用的匿名访问（public_page_disabled）或已禁用节点的 Agent 请求返回 403，资源不存在返回 404，计划忙碌/密钥/注册/身份/用户名或最后管理员冲突返回 409，过期或缺失的备份产物/密码返回 410，超过 64 KiB 的请求体返回 413，不支持的 Agent 协议返回 426，限流或备份队列容量返回 429，可重试的 SQLite 争用返回 503 storage_busy。不支持的方法在认证前返回 405 并附 Allow；未知 API 路由返回 404。API 错误不返回 SPA 外壳。
+      description: 结构化失败。无效 JSON/输入或未变更的新密码（password_unchanged）返回 400，无效凭据返回 401，浏览器 Origin/CSRF 失败、受限管理会话（password_change_required）、全局禁用的匿名访问（public_page_disabled）或已禁用节点的 Agent 请求返回 403，资源不存在返回 404，计划忙碌/密钥/注册/身份/用户名或最后管理员冲突返回 409，过期或缺失的备份产物/密码返回 410，超过 64 KiB 的请求体返回 413，不支持的 Agent 协议返回 426，限流或备份队列容量返回 429。存储锁争用返回 503 storage_busy，准入暂不可用返回 503 storage_unavailable，均附 Retry-After。COMMIT 结果未知返回 503 storage_commit_unknown，不附重试提示，客户端先核对当前状态，不直接重发写入。不支持的方法在认证前返回 405 并附 Allow；未知 API 路由返回 404。API 错误不返回 SPA 外壳。
       headers:
         X-Request-ID:
           schema: {type: string, format: uuid}
@@ -2750,7 +2971,7 @@ components:
           description: 405 时存在；列出该路由支持的方法。
           schema: {type: string}
         Retry-After:
-          description: 限流 429 与可重试存储 503 时存在；延迟秒数。backup_queue_full 不包含此头。
+          description: 限流 429 与可重试存储 503 时存在；延迟秒数。backup_queue_full 和 storage_commit_unknown 不包含此头。
           schema: {type: string, pattern: '^[1-9][0-9]*$'}
       content:
         application/json:
@@ -3140,15 +3361,146 @@ components:
         value: {type: [number, 'null']}
         started_at: {type: string, format: date-time}
         resolved_at: {type: [string, 'null'], format: date-time}
+    StorageRole:
+      type: string
+      enum: [primary, standby]
+    StorageAction:
+      type: string
+      enum: [rebuild, resume, promote]
+    StorageTransition:
+      type: string
+      enum: [replica_unavailable, standby_activated, manual_required, recovery_failed, primary_restored]
+    StorageEndpoint:
+      type: object
+      additionalProperties: false
+      required: [role, driver, label, instance_id, reachable, ready]
+      properties:
+        role: {$ref: '#/components/schemas/StorageRole'}
+        driver: {type: string, enum: [sqlite, mysql]}
+        label: {type: string, description: 不含用户、密码或连接字符串的显示名称。}
+        instance_id: {type: string, description: 已登记实例 UUID；未登记时为空。}
+        reachable: {type: boolean}
+        ready: {type: boolean, description: 仅表示完整副本，不表示满足 RPO 或可提升。}
+    StorageRecoveryAction:
+      type: object
+      additionalProperties: false
+      required: [action, target]
+      properties:
+        action: {$ref: '#/components/schemas/StorageAction'}
+        target: {$ref: '#/components/schemas/StorageRole'}
+    StorageRecoveryRequest:
+      type: object
+      additionalProperties: false
+      required: [domain, action, target]
+      properties:
+        domain: {type: string, enum: [main, history]}
+        action: {$ref: '#/components/schemas/StorageAction'}
+        target: {$ref: '#/components/schemas/StorageRole'}
+    StorageRecoveryPreview:
+      type: object
+      additionalProperties: false
+      required: [operation_id, expires_at, revision, source, target, confirmation, requires_data_loss_acceptance]
+      properties:
+        operation_id: {type: string, format: uuid}
+        expires_at: {type: string, format: date-time}
+        revision: {type: integer, minimum: 0}
+        source:
+          oneOf: [{$ref: '#/components/schemas/StorageEndpoint'}, {type: 'null'}]
+        target: {$ref: '#/components/schemas/StorageEndpoint'}
+        confirmation: {type: string, description: 精确的 domain/target/instance_uuid，不裁剪或忽略大小写。}
+        requires_data_loss_acceptance: {type: boolean}
+    StorageRecoveryOperation:
+      type: object
+      additionalProperties: false
+      required: [id, action, target, status, phase, rows_copied, error_code]
+      properties:
+        id: {type: string, format: uuid}
+        action: {$ref: '#/components/schemas/StorageAction'}
+        target: {$ref: '#/components/schemas/StorageRole'}
+        status: {type: string, enum: [awaiting_confirmation, queued, running, succeeded, failed]}
+        phase: {type: [string, 'null'], enum: [validating, clearing, copying, catching_up, switching, done, null]}
+        rows_copied: {type: integer, minimum: 0, description: 已复制行数，不是总量或百分比。}
+        error_code: {type: string, description: 稳定失败码；无错误时为空。}
+    StorageDomain:
+      type: object
+      additionalProperties: false
+      required: [domain, state, active_role, primary, standby, replication_status, last_synced_at, proven_loss_seconds, failure_since, manual_deadline_at, manual_required, reason_code, operation, available_actions]
+      properties:
+        domain: {type: string, enum: [main, history]}
+        state: {type: string, enum: [initializing, healthy, suspect, standby_active, resyncing, rebuilding, manual_required, unavailable]}
+        active_role: {type: [string, 'null'], enum: [primary, standby, null]}
+        primary: {$ref: '#/components/schemas/StorageEndpoint'}
+        standby:
+          oneOf: [{$ref: '#/components/schemas/StorageEndpoint'}, {type: 'null'}]
+        replication_status: {type: string, enum: [unconfigured, initializing, caught_up, lagging, offline, rebuild_required, error]}
+        last_synced_at: {type: [string, 'null'], format: date-time, description: 最后完整 ACK 的服务端墙钟时间，仅用于展示，不能推算丢失界。}
+        proven_loss_seconds: {type: [number, 'null'], minimum: 0, description: 有效冻结点及屏障证明的非负秒数上界；未知或正常健康时为 null，不代表零丢失。}
+        failure_since: {type: [string, 'null'], format: date-time}
+        manual_deadline_at: {type: [string, 'null'], format: date-time, description: 人工处理期限的绝对时间，不是持续时长。}
+        manual_required: {type: boolean}
+        reason_code: {type: string}
+        operation:
+          description: 仅包含已接受操作；未接受预览仅由操作 GET 查询。
+          oneOf: [{$ref: '#/components/schemas/StorageRecoveryOperation'}, {type: 'null'}]
+        available_actions: {type: array, items: {$ref: '#/components/schemas/StorageRecoveryAction'}, description: 服务端判断的合法动作；客户端不得从 state 或 ready 推算资格。}
+    StorageNotificationPreferences:
+      type: object
+      additionalProperties: false
+      required: [inbox, channel_ids]
+      properties:
+        inbox: {type: boolean, default: true}
+        channel_ids: {type: array, maxItems: 20, uniqueItems: true, items: {type: string, format: uuid}}
+    StorageNotificationSettings:
+      type: object
+      additionalProperties: false
+      required: [inbox, channel_ids, snapshot_ready]
+      properties:
+        inbox: {type: boolean}
+        channel_ids: {type: array, maxItems: 20, uniqueItems: true, items: {type: string, format: uuid}}
+        snapshot_ready: {type: boolean, description: 所选频道快照已完成当前世代校准；false 时外发暂停，站内开关独立生效。}
+    StorageStatus:
+      type: object
+      additionalProperties: false
+      required: [enabled, revision, server_time, notification_settings, domains]
+      properties:
+        enabled: {type: boolean}
+        revision: {type: integer, minimum: 0}
+        server_time: {type: string, format: date-time}
+        observed_at: {type: string, format: date-time, description: 仅离线 CLI 的本地记录观测时间，不证明远端此刻健康。}
+        notification_settings: {$ref: '#/components/schemas/StorageNotificationSettings'}
+        domains: {type: array, minItems: 2, maxItems: 2, items: {$ref: '#/components/schemas/StorageDomain'}}
+    InboxStorageSnapshot:
+      type: object
+      additionalProperties: false
+      required: [domain, transition, active_role, reason_code, occurred_at]
+      properties:
+        domain: {type: string, enum: [main, history]}
+        transition: {$ref: '#/components/schemas/StorageTransition'}
+        active_role: {type: [string, 'null'], enum: [primary, standby, null]}
+        reason_code: {type: string}
+        occurred_at: {type: string, format: date-time}
+    StorageWebhookPayload:
+      type: object
+      additionalProperties: false
+      description: 存储故障专用固定 Webhook；使用原 HMAC 签名，不改变普通告警格式，不含连接字符串或频道凭据。
+      required: [kind, event_id, domain, transition, active_role, reason_code, occurred_at]
+      properties:
+        kind: {type: string, const: storage}
+        event_id: {type: string, format: uuid}
+        domain: {type: string, enum: [main, history]}
+        transition: {$ref: '#/components/schemas/StorageTransition'}
+        active_role: {type: [string, 'null'], enum: [primary, standby, null]}
+        reason_code: {type: string}
+        occurred_at: {type: string, format: date-time}
     InboxNotification:
       type: object
       additionalProperties: false
       required: [id, kind, source_id, transition, severity, created_at, details, read]
       properties:
         id: {type: string, format: uuid}
-        kind: {type: string, enum: [task, alert]}
-        source_id: {type: string, description: 来源任务或告警事件标识符；可能已无法解析。}
-        transition: {type: string, enum: [succeeded, failed, firing, resolved]}
+        kind: {type: string, enum: [task, alert, storage]}
+        source_id: {type: string, description: 来源任务、告警或本地控制事件的 UUID；可能已无法解析。}
+        transition: {type: string, enum: [succeeded, failed, firing, resolved, replica_unavailable, standby_activated, manual_required, recovery_failed, primary_restored]}
         severity: {type: string}
         created_at: {type: string, format: date-time, description: '通知的实际创建时间，非告警条件的起始时间。'}
         details:
@@ -3156,6 +3508,7 @@ components:
             - $ref: '#/components/schemas/InboxTaskSnapshot'
             - $ref: '#/components/schemas/InboxRestoreInterruptedSnapshot'
             - $ref: '#/components/schemas/InboxAlertSnapshot'
+            - $ref: '#/components/schemas/InboxStorageSnapshot'
         read: {type: boolean, description: 仅针对已认证用户的已读标志。}
     InboxPage:
       type: object
@@ -3420,7 +3773,7 @@ components:
         code:
           type: string
           description: 机器可读的失败码；validation_failed 可包含逐字段信息。客户端须容忍新的错误码。
-          examples: [totp_required, totp_invalid, totp_already_enabled, totp_setup_expired, unauthenticated, forbidden, password_change_required, public_page_disabled, invalid_old_password, password_unchanged, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, username_conflict, invalid_json, invalid_input, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, backup_queue_full, backup_plan_busy, backup_plan_not_found, task_not_found, artifact_not_ready, artifact_expired, artifact_missing, password_unavailable, password_expired, secret_unreadable, storage_busy, not_available, internal_error]
+          examples: [totp_required, totp_invalid, totp_already_enabled, totp_setup_expired, unauthenticated, forbidden, password_change_required, public_page_disabled, invalid_old_password, password_unchanged, not_found, node_not_found, enrollment_not_found, node_capacity_reached, enrollment_conflict, identity_conflict, last_administrator, username_conflict, invalid_json, invalid_input, validation_failed, body_too_large, protocol_unsupported, method_not_allowed, rate_limited, backup_queue_full, backup_plan_busy, backup_plan_not_found, task_not_found, artifact_not_ready, artifact_expired, artifact_missing, password_unavailable, password_expired, secret_unreadable, storage_busy, storage_unavailable, storage_commit_unknown, storage_confirmation_stale, storage_manual_required, storage_identity_mismatch, storage_transaction_too_large, not_available, internal_error]
         message: {type: string, minLength: 1}
         request_id: {type: string, format: uuid, description: 将响应与内部服务失败的安全服务端诊断元数据关联。}
         fields:

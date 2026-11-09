@@ -37,7 +37,7 @@ func totpFixture(t *testing.T) (*auth.Service, *sql.DB, *time.Time, *secretbox.B
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := auth.NewService(db, auth.Options{Now: func() time.Time { return *now }, SecretBox: box})
+	s := auth.NewService(stableDatabase(t, db), auth.Options{Now: func() time.Time { return *now }, SecretBox: box})
 	user, err := s.CreateUser(context.Background(), "totp-admin", initialPassword, false)
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestTOTPLoginReplayRecoveryAndFailClosed(t *testing.T) {
 	if err != nil || !status.Enabled || status.RecoveryCodesRemaining != 9 {
 		t.Fatal(status, err)
 	}
-	noBox := auth.NewService(db, auth.Options{Now: func() time.Time { return *now }})
+	noBox := auth.NewService(stableDatabase(t, db), auth.Options{Now: func() time.Time { return *now }})
 	if _, err = noBox.Login(ctx, user.Username, initialPassword, codes[1]); !errors.Is(err, auth.ErrTOTPUnavailable) {
 		t.Fatal("nil box did not fail closed", err)
 	}
@@ -171,7 +171,7 @@ func TestTOTPConcurrentCodeConsumption(t *testing.T) {
 			if recovery {
 				otp = codes[0]
 			}
-			second := auth.NewService(db, auth.Options{Now: func() time.Time { return *now }, SecretBox: box})
+			second := auth.NewService(stableDatabase(t, db), auth.Options{Now: func() time.Time { return *now }, SecretBox: box})
 			var wg sync.WaitGroup
 			errs := make(chan error, 2)
 			for _, service := range []*auth.Service{s, second} {
@@ -278,10 +278,10 @@ func TestTOTPDisableRegenerateAndReset(t *testing.T) {
 	*now = now.Add(time.Minute)
 	enableTOTP(t, s, user, current, *now)
 	system := audit.WithSystemActor(context.Background(), "reset-totp")
-	if err = auth.ResetTOTP(system, db, user.Username, *now); err != nil {
+	if err = auth.ResetTOTP(system, stableDatabase(t, db), user.Username, *now); err != nil {
 		t.Fatal(err)
 	}
-	if err = auth.ResetTOTP(system, db, "missing", *now); !errors.Is(err, auth.ErrNotFound) {
+	if err = auth.ResetTOTP(system, stableDatabase(t, db), "missing", *now); !errors.Is(err, auth.ErrNotFound) {
 		t.Fatal(err)
 	}
 	var count int
@@ -307,7 +307,7 @@ func TestTOTPFailureBudgetRejectsValidCodeAndAllowsRecovery(t *testing.T) {
 		}
 	}
 	// 以一个新服务隔离恢复码无效造成的用户名预算消耗。
-	s = auth.NewService(db, auth.Options{Now: func() time.Time { return *now }, SecretBox: box})
+	s = auth.NewService(stableDatabase(t, db), auth.Options{Now: func() time.Time { return *now }, SecretBox: box})
 	invalidCode := ""
 	for candidate := 0; candidate < 10; candidate++ {
 		value := fmt.Sprintf("%06d", candidate)
@@ -375,7 +375,7 @@ func TestTOTPLoginRejectsConcurrentStateChanges(t *testing.T) {
 				otp = testOTP(secret, *now)
 			}
 			random := newBlockingReader(91)
-			service := auth.NewService(db, auth.Options{Now: func() time.Time { return *now }, SecretBox: box, Random: random})
+			service := auth.NewService(stableDatabase(t, db), auth.Options{Now: func() time.Time { return *now }, SecretBox: box, Random: random})
 			result := make(chan error, 1)
 			go func() {
 				_, err := service.Login(context.Background(), user.Username, initialPassword, otp)
@@ -460,14 +460,14 @@ func TestResetTOTPClearsRecoveryCodes(t *testing.T) {
 	s, db, now, _, user, current := totpFixture(t)
 	enableTOTP(t, s, user, current, *now)
 	ctx := audit.WithSystemActor(context.Background(), "test")
-	if err := auth.ResetTOTP(ctx, db, user.Username, *now); err != nil {
+	if err := auth.ResetTOTP(ctx, stableDatabase(t, db), user.Username, *now); err != nil {
 		t.Fatal(err)
 	}
 	var count int
 	if err := db.QueryRow(`SELECT count(*) FROM recovery_codes`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("recovery codes=%d err=%v", count, err)
 	}
-	if err := auth.ResetTOTP(ctx, db, "missing", *now); !errors.Is(err, auth.ErrNotFound) {
+	if err := auth.ResetTOTP(ctx, stableDatabase(t, db), "missing", *now); !errors.Is(err, auth.ErrNotFound) {
 		t.Fatal(err)
 	}
 }

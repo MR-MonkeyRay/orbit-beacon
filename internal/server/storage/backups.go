@@ -4,7 +4,7 @@ package storage
 // 有意不把级联外键引入操作历史。
 const backupsSchema = `
 CREATE TABLE backup_plans (
- id TEXT PRIMARY KEY, name TEXT NOT NULL,
+ id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL,
  enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
  kind TEXT NOT NULL CHECK(kind IN ('local','object')),
  categories_json TEXT NOT NULL, cron TEXT NOT NULL, destination_json TEXT NOT NULL,
@@ -13,7 +13,7 @@ CREATE TABLE backup_plans (
 );
 CREATE INDEX backup_plans_due ON backup_plans(enabled,next_run_at,id);
 CREATE TABLE backup_tasks (
- id TEXT PRIMARY KEY,
+ id TEXT PRIMARY KEY NOT NULL,
  kind TEXT NOT NULL CHECK(kind IN ('backup_export','backup_local','backup_remote')),
  state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed')),
  phase TEXT NOT NULL DEFAULT '' CHECK(phase IN ('','snapshot','packaging','storing')),
@@ -35,8 +35,8 @@ CREATE INDEX backup_tasks_password_expiry ON backup_tasks(password_expires_at,id
 CREATE INDEX backup_tasks_artifact_cleanup ON backup_tasks(artifact_cleanup_after,id)
  WHERE kind='backup_export' AND artifact_deleted_at IS NULL AND restored=0;
 CREATE TABLE inbox_notifications (
- sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL,
- kind TEXT NOT NULL CHECK(kind IN ('task','alert')), source_id TEXT NOT NULL,
+ sequence INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL,
+ kind TEXT NOT NULL CHECK(kind IN ('task','alert','storage')), source_id TEXT NOT NULL,
  transition TEXT NOT NULL,
  severity TEXT NOT NULL, created_at TEXT NOT NULL, details_json TEXT NOT NULL,
  UNIQUE(kind,source_id,transition)
@@ -48,4 +48,7 @@ CREATE TABLE inbox_reads (
  read_at TEXT NOT NULL, PRIMARY KEY(user_id,notification_id)
 );
 CREATE INDEX inbox_reads_notification ON inbox_reads(notification_id);
+CREATE TABLE inbox_sequence (id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL CHECK(value>=0));
+INSERT INTO inbox_sequence(id,value) VALUES(1,0);
+CREATE TABLE node_deletions (node_id TEXT PRIMARY KEY NOT NULL, deleted_at TEXT NOT NULL);
 `

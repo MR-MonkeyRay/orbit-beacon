@@ -63,7 +63,7 @@ func TestNonSQLiteInternalFailureDoesNotLogErrorText(t *testing.T) {
 	f := newHTTP(t, 5)
 	var logs bytes.Buffer
 	const privateFailure = "/private/credential-file: token=private-entropy-secret"
-	failingNodes := nodes.NewService(f.db, nodes.Options{MaxNodes: 5, Random: privateFailureReader{errors.New(privateFailure)}})
+	failingNodes := nodes.NewService(f.nodes.Database(), nodes.Options{MaxNodes: 5, Random: privateFailureReader{errors.New(privateFailure)}})
 	handler, err := server.NewHandler(testHandlerOptions(t, server.Options{
 		Auth: f.auth, Nodes: failingNodes, PublicURL: publicURL,
 		Logger: slog.New(slog.NewJSONHandler(&logs, nil)),

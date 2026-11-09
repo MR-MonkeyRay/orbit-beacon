@@ -168,7 +168,7 @@ func TestPersistOffsetImmediateChanges(t *testing.T) {
 			case "system":
 				f.report.System.Hostname = "changed"
 			case "restart":
-				f.service = NewService(f.db, Options{Now: func() time.Time { return f.now }})
+				f.service = NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }})
 			}
 			if _, err := acceptReport(context.Background(), f.service, token, f.report); err != nil {
 				t.Fatal(err)
@@ -204,7 +204,7 @@ func TestPersistOffsetPublicLivenessAndRestart(t *testing.T) {
 	if f.writes(t) != 1 {
 		t.Fatal("liveness reads persisted a report")
 	}
-	restarted := NewService(f.db, Options{Now: func() time.Time { return f.now }})
+	restarted := NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }})
 	public, err := publicNode(ctx, f.nodes, restarted, f.id, f.now)
 	if err != nil || public.Status != "online" || public.CPUPercent != nil || public.LastSeen == nil || !public.LastSeen.Equal(persisted) {
 		t.Fatalf("restart public=%+v err=%v", public, err)

@@ -44,7 +44,7 @@ func TestPlansDefaultsAndInvalidCronAtomic(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	opts.Now = func() time.Time { return now }
 	opts.Location = time.FixedZone("UTC+08", 8*3600)
-	s, err := New(db, opts)
+	s, err := New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestPlanCronTimezoneDSTAndWeekdaySemantics(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts.Location = loc
-	s, err := New(db, opts)
+	s, err := New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestPlanCronTimezoneDSTAndWeekdaySemantics(t *testing.T) {
 		}
 	}
 	opts.Location = time.UTC
-	s, err = New(db, opts)
+	s, err = New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestPlanCronTimezoneDSTAndWeekdaySemantics(t *testing.T) {
 
 func TestPlanLocalPathValidation(t *testing.T) {
 	db, opts := workerFixture(t)
-	s, err := New(db, opts)
+	s, err := New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestPlanObjectSecretsReplacementAndSnapshot(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	opts.Now = func() time.Time { return now }
 	opts.Location = time.UTC
-	s, err := New(db, opts)
+	s, err := New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestSchedulerCoalescesAndPreservesBlockedDue(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	opts.Now = func() time.Time { return now }
 	opts.Location = time.UTC
-	s, err := New(db, opts)
+	s, err := New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +334,7 @@ func TestSchedulerCoalescesAndPreservesBlockedDue(t *testing.T) {
 func TestPlansPaginationAndLastTask(t *testing.T) {
 	db, opts := workerFixture(t)
 	opts.Now = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
-	s, err := New(db, opts)
+	s, err := New(mainHandle(t, db), opts)
 	if err != nil {
 		t.Fatal(err)
 	}

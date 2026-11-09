@@ -3,15 +3,17 @@ package history
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
-	"io"
 	"maps"
 	"math"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"testing"
 	"time"
+
+	"orbitbeacon/internal/server/storage"
 )
 
 type fakeStore struct {
@@ -66,7 +68,7 @@ func (f *fakeStore) DatabaseStats() (sql.DBStats, sql.DBStats, bool) {
 }
 func (f *fakeStore) Close() error { f.closed = true; return nil }
 
-func stoppedStoreService(t *testing.T, store Store, nodes *sql.DB, opts Options) *Service {
+func stoppedStoreService(t *testing.T, store Store, nodes *storage.Database, opts Options) *Service {
 	t.Helper()
 	s := newService(store, nodes, opts)
 	stopped(t, s)
@@ -105,45 +107,60 @@ func TestServiceStoreFailedWriteRetainsPending(t *testing.T) {
 	}
 }
 
-// 空节点快照使用内存驱动，隔离历史清理的失败语义与文件权限检查。
-type emptyNodesConnector struct{}
-type emptyNodesDriver struct{}
-type emptyNodesConn struct{}
-type emptyNodesRows struct{}
-
-func (emptyNodesConnector) Connect(context.Context) (driver.Conn, error) {
-	return emptyNodesConn{}, nil
-}
-func (emptyNodesConnector) Driver() driver.Driver          { return emptyNodesDriver{} }
-func (emptyNodesDriver) Open(string) (driver.Conn, error)  { return emptyNodesConn{}, nil }
-func (emptyNodesConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
-func (emptyNodesConn) Close() error                        { return nil }
-func (emptyNodesConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
-func (emptyNodesConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
-	if query != "SELECT id FROM nodes" {
-		return nil, errors.New("unexpected nodes query")
+func TestUnknownHistoryCommitKeepsImmutableInflight(t *testing.T) {
+	store := &fakeStore{writeErr: storage.ErrCommitUnknown}
+	s := stoppedStoreService(t, store, nil, Options{})
+	now := time.Now().UTC().Truncate(time.Minute)
+	at := now.Add(-time.Minute)
+	s.add(Sample{"node", at, map[string]float64{"cpu_percent": 20}})
+	if err := s.flush(context.Background(), now, false); !errors.Is(err, storage.ErrCommitUnknown) {
+		t.Fatal(err)
 	}
-	return emptyNodesRows{}, nil
+	if len(s.inflight) != 1 || len(s.pending) != 0 {
+		t.Fatalf("inflight=%v pending=%v", s.inflight, s.pending)
+	}
+	s.add(Sample{"node", at, map[string]float64{"cpu_percent": 30}})
+	if s.inflight[0].Total != 20 {
+		t.Fatal("new sample changed uncertain batch")
+	}
+	store.writeErr = nil
+	if err := s.flush(context.Background(), now, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) != 3 || !reflect.DeepEqual(store.writes[0], store.writes[1]) || store.writes[2][0].Total != 30 || len(s.inflight) != 0 || len(s.pending) != 0 {
+		t.Fatalf("writes=%v pending=%v inflight=%v", store.writes, s.pending, s.inflight)
+	}
 }
-func (emptyNodesRows) Columns() []string         { return []string{"id"} }
-func (emptyNodesRows) Close() error              { return nil }
-func (emptyNodesRows) Next([]driver.Value) error { return io.EOF }
+
+func emptyTestMain(t *testing.T) *storage.Database {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.OpenMain(t.Context(), filepath.Join(dir, "orbitbeacon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
 
 func TestServiceStoreFailedDeleteKeepsPathsAndPending(t *testing.T) {
 	failure := errors.New("delete failed")
 	store := &fakeStore{deleteErr: failure, ids: []string{"orphan"}}
-	nodes := sql.OpenDB(emptyNodesConnector{})
-	defer nodes.Close()
+	nodes := emptyTestMain(t)
 	s := stoppedStoreService(t, store, nodes, Options{})
 	now := time.Now().UTC().Truncate(time.Minute)
 	s.add(Sample{"orphan", now.Add(-time.Minute), diskValues("/data")})
 	key := bucketKey{"orphan", now.Add(-time.Minute).Unix()}
 	pending := maps.Clone(s.pending[key])
+	insertTestTombstone(t, nodes, "orphan", now)
 	removed, err := s.cleanup(context.Background(), now)
 	if removed != 0 || !errors.Is(err, failure) || len(s.pending) != 1 || !reflect.DeepEqual(s.pending[key], pending) || len(s.paths["orphan"]) != 1 {
 		t.Fatalf("removed=%d pending=%v paths=%v err=%v", removed, s.pending, s.paths, err)
 	}
-	if !reflect.DeepEqual(store.deleted, []string{"orphan"}) || store.expired || len(store.writes) != 0 {
+	if !reflect.DeepEqual(store.deleted, []string{"orphan"}) || !store.expired || len(store.writes) != 0 {
 		t.Fatalf("deletes=%v expired=%v writes=%v", store.deleted, store.expired, store.writes)
 	}
 	store.deleteErr = nil
@@ -202,20 +219,17 @@ func TestServiceStoreQueryErrors(t *testing.T) {
 	}
 }
 
-func TestServiceStoreCleanupFreezesCandidatesBeforeDraining(t *testing.T) {
+func TestServiceStoreCleanupUsesOnlyTombstonesAndDrains(t *testing.T) {
 	store := &fakeStore{}
-	nodes := sql.OpenDB(emptyNodesConnector{})
-	defer nodes.Close()
+	nodes := emptyTestMain(t)
 	s := stoppedStoreService(t, store, nodes, Options{})
 	now := time.Now().UTC().Truncate(time.Minute)
 	s.add(Sample{"pending", now.Add(-time.Minute), map[string]float64{"cpu_percent": 10}})
 	s.paths["paths"] = map[string]struct{}{"/data": {}}
-	store.nodeIDs = func(visit func(string)) error {
-		// 扫描历史节点时排空的新样本不应追加到已冻结的内存候选中。
-		s.samples <- Sample{"late", now.Add(-time.Minute), diskValues("/late")}
-		visit("stored")
-		return nil
+	for _, id := range []string{"pending", "paths", "stored"} {
+		insertTestTombstone(t, nodes, id, now)
 	}
+	s.samples <- Sample{"late", now.Add(-time.Minute), diskValues("/late")}
 	if _, err := s.cleanup(context.Background(), now); err != nil {
 		t.Fatal(err)
 	}
