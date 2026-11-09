@@ -80,7 +80,9 @@ async function render(options = {}) {
   setNavigationSignal(controller.signal);
   const openerID = closeDialogs();
   currentURL = location.pathname + location.search + location.hash;
-  const route = routes.find((item) => item.match(location.pathname)) || routes.find((item) => item.fallback);
+  const matched = routes.find((item) => item.match(location.pathname));
+  // 兜底路由只用于高亮导航和骨架；拼错的深链必须显式报 404，而不是静默渲染概览。
+  const route = matched || routes.find((item) => item.fallback);
   const focusID = options.quiet ? openerID || document.activeElement?.id : '';
   progress.start();
   let skeletonShown = false;
@@ -107,6 +109,7 @@ async function render(options = {}) {
     if (location.pathname === '/change-password' && !session.user?.must_change_password) {
       return go(session.user ? '/overview' : '/login', {replace: true, force: true});
     }
+    if (!matched) throw Object.assign(new Error('Not found'), {status: 404});
     content = await route.page();
   } catch (error) {
     if (token !== navigation) throw new NavigationCancelled();
