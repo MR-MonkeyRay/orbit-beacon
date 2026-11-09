@@ -5,8 +5,9 @@
 ## 准备
 
 - 服务器已启动，Agent 可访问其源站；管理员已完成初始化改密。
-- 安装脚本支持 Linux amd64 / arm64，需 root 安装、非 root 运行；支持 `useradd` 或 BusyBox 的 `adduser` / `addgroup`，并需 `runuser` 或 `su`。
-- 下载需 `curl`、`sha256sum`、`awk`，另需常用 POSIX 工具和 `install`；独立二进制不需要 `tar`。离线提供二进制时不下载。
+- 安装器识别 CentOS/RHEL、Debian、Ubuntu、Alpine 及其衍生系统，未知 Linux 使用通用工具检测。支持 `x86_64` / `amd64` 与 `aarch64` / `arm64`，不提供 32 位 x86/ARM 发布包。
+- 需 root 安装、专用非 root 账户运行；账户工具为 `useradd` / `groupadd` 或 BusyBox `adduser` / `addgroup`，注册需 `runuser` 或 `su`。下载需 `curl`、`sha256sum`、`awk`，另需常用 POSIX 工具及 `install`、支持 `mv -T` / `chown -h` 的工具；无需 `tar`。离线 `--binary` 不需要 curl。
+- 不自动安装软件包。Debian/Ubuntu 可用 `apt-get install curl ca-certificates coreutils passwd util-linux procps`；CentOS/RHEL 用 `dnf install curl ca-certificates coreutils shadow-utils util-linux procps-ng`（旧系统用 `yum`）；Alpine 用 `apk add curl ca-certificates coreutils openrc`，账户和 `su` 可用 BusyBox。systemd 的 reload 还需 `procps` / `procps-ng` 提供 `/bin/kill`。
 - 不要复制服务器私钥、跳过证书校验，或把管理员 Cookie 传到 Agent 主机。
 
 ## 注册票据
@@ -47,7 +48,40 @@ unset TOKEN
 - 脚本自动选择 `orbitbeacon-agent-linux-amd64` 或 `orbitbeacon-agent-linux-arm64`，只下载 Agent 二进制和 `SHA256SUMS`，校验后安装并赋予执行权限，无需 `tar`。新脚本需配套提供独立二进制附件的版本，不兼容旧压缩包发布；旧版本可手动解压后通过 `--binary` 安装。脚本与二进制下载仅用 HTTPS；`SHA256SUMS` 校验不是独立签名验证。
 - 离线安装用 `--binary /安全路径/orbitbeacon-agent-linux-amd64`，可省略版本，自行核对来源与架构。
 
-脚本创建专用账号 `orbitbeacon-agent`，固定实际 UID/GID，不保证是 `1000:1000`。安装路径：
+### 安装器参数
+
+`sh ./install-agent.sh --help` 无需 root。参数使用 `--选项 值`，不接受命令行注册票据。
+
+| 参数 | 用途 / 默认值 |
+| --- | --- |
+| `--server URL` | 必填，HTTP(S) 根地址，不带路径、查询、片段或凭据 |
+| `--version VERSION` | 固定发布版本，不带 `v`；在线安装必填 |
+| `--binary FILE` | 本地非空二进制，替代下载；此时版本可省略 |
+| `--token-file FILE` | 票据文件；也可从 stdin 或终端隐藏提示输入 |
+| `--ca-file FILE` | HTTPS Server 的私有 CA；HTTP 不可使用 |
+| `--update-base-url URL` | HTTPS 发布镜像根地址，重装默认保留；`''` 关闭远程升级 |
+| `--uid N`、`--gid N` | 专用账户的非零数字 UID/GID；不传则自动分配。已有账户/组不匹配时拒绝，不迁移身份、不重编号 |
+| `--service MODE` | `auto`：运行中的 systemd → 已安装的 OpenRC → 前台；可明确指定 `systemd`、`openrc`、`none` |
+| `--no-start` | 完成注册及服务文件安装，但不启用、不启动、不重启服务；已运行的旧进程不会停止 |
+| `--download-timeout N` | 单次下载尝试超时秒数，默认 `300`，范围 `1–3600`；连接超时 15 秒 |
+| `--download-retries N` | 下载失败的额外重试次数，默认 `3`，范围 `0–10`；不影响 Agent 运行时升级下载 |
+| `--uninstall`、`--yes` | 卸载并删除全部本地状态；`--yes` 仅用于跳过卸载确认 |
+| `-h`、`--help` | 显示帮助 |
+
+例如，在账号 ID 未被占用的新主机安装后先检查配置，再手动启动：
+
+```sh
+sudo sh ./install-agent.sh --server https://beacon.your-domain.com \
+  --version "$VERSION" --uid 1000 --gid 1000 --no-start \
+  --download-timeout 120 --download-retries 2
+```
+
+运行参数如网卡、磁盘路径、探测目标仍统一编辑 `agent.yaml`，见[本地运行参数](#本地运行参数与-reload)，不在安装器重复一套配置解析。
+
+### 账户与服务
+
+
+脚本创建专用账号 `orbitbeacon-agent`，默认自动分配并固定实际 UID/GID；需要 `1000:1000` 时显式传入 `--uid 1000 --gid 1000`，不复用其他用户名下的 ID。安装路径：
 
 | 路径 | 内容与权限 |
 | --- | --- |
@@ -55,15 +89,17 @@ unset TOKEN
 | `/opt/orbit-beacon/bin/` | orbitbeacon-agent:orbitbeacon-agent，`0750`；内含可替换的 `orbitbeacon-agent`，`0750` |
 | `/opt/orbit-beacon/etc/` | root:orbitbeacon-agent，`0750`；文件 `0640`，Agent 只读 |
 | `/opt/orbit-beacon/libexec/orbitbeacon-agent-rollback` | root:root，`0755`；以 Agent 用户运行的启动回滚脚本 |
-| `/opt/orbit-beacon/etc/install-policy.yaml` | root:orbitbeacon-agent，`0640`；安装策略，模式 `native` |
+| `/opt/orbit-beacon/etc/install-policy.yaml` | root:orbitbeacon-agent，`0640`；服务模式为 `native`，前台为 `foreground` |
 | `/opt/orbit-beacon/etc/agent.yaml` | 带注释的本地运行配置；root:orbitbeacon-agent、`0640`；重装保留，拒绝符号链接 |
 | `/opt/orbit-beacon/etc/ca.pem` | root:orbitbeacon-agent，`0640`；可选 CA 副本 |
 | `/opt/orbit-beacon/state/` | orbitbeacon-agent:orbitbeacon-agent，`0700`；identity、enrollment.token、run.lock 等身份和状态不应共享 |
 | `/etc/systemd/system/orbitbeacon-agent.service` | 非 root systemd 服务 |
+| `/etc/init.d/orbitbeacon-agent` | 非 root OpenRC 服务，与 systemd 二选一 |
+| `/opt/orbit-beacon/libexec/orbitbeacon-agent-supervise` | OpenRC 专用、root:root、`0755`；以 Agent 用户执行，转发 reload/停止信号，并在异常或升级退出后重启 |
 
 不要以 root 运行 `orbitbeacon-agent`；需要切换用户时用 `sudo -u orbitbeacon-agent`。
 
-脚本以 Agent 账号注册，成功后启动服务；没有运行中的 systemd 时打印前台启动命令。失败保留 state 中的 `enrollment.token`，不启用服务。修复 URL、CA、网络或票据问题后重试：
+脚本以 Agent 账号注册，成功后按所选服务管理器启用并启动（`--no-start` 除外）；`none` 不安装服务，仅打印前台启动命令。OpenRC 服务在每次启动前以 Agent 用户检查升级回滚，正常退出或身份冲突退出码 3 不重启，其他退出延迟 10 秒重启；日志送往系统 syslog，标签 `orbitbeacon-agent`，需主机运行 syslog 服务。注册失败保留 state 中的 `enrollment.token`，不启用服务。修复 URL、CA、网络或票据问题后重试：
 
 ```sh
 sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent enroll \
@@ -74,6 +110,8 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent enroll \
 
 重试成功后，用原来的 `--server`、版本和 CA 参数重跑安装脚本，并加 `< /dev/null`，让脚本补装并启动服务，不再提供注册票据。要换票据，用下方[手动前台安装](#手动前台安装)里的隐藏读取命令；不要把新票据写进命令或 `printf` 字面量。成功后删除 state 里的票据文件，源文件和管理机副本自行清理；如果提示清理失败，先核对注册结果，不能假定认领已回滚。
 
+更换服务管理器前，先停止、禁用旧服务并删除对应 unit/init 文件，保留整个 `/opt/orbit-beacon` 后重装；安装器拒绝同时留下两种服务。systemd 可用 `systemctl disable --now orbitbeacon-agent` 后删除 unit 并 `systemctl daemon-reload`；OpenRC 用 `rc-service orbitbeacon-agent stop`、`rc-update del orbitbeacon-agent default` 后删除 init 文件。`--no-start` 不会自动迁移或停止旧服务。
+
 ## 运行检查
 
 ```sh
@@ -82,6 +120,8 @@ sudo journalctl -u orbitbeacon-agent -n 100 --no-pager
 sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent doctor \
   --install-policy /opt/orbit-beacon/etc/install-policy.yaml --config /opt/orbit-beacon/etc/agent.yaml --json
 ```
+
+Alpine/OpenRC 用 `sudo rc-service orbitbeacon-agent status`；手动启用并启动用 `sudo rc-update add orbitbeacon-agent default`、`sudo rc-service orbitbeacon-agent start`。日志查看系统 syslog（如 `/var/log/messages`）；`doctor` 命令相同，BusyBox 可用 `su -s /bin/sh orbitbeacon-agent -c '…'` 代替 `sudo -u`。
 
 `doctor` 检查配置、身份文件、HTTP/HTTPS 连通性和采集（HTTPS 同时验证证书），**不注册、不上报、不验证节点凭据**；`authentication: "not_checked"` 是预期结果。
 
@@ -94,7 +134,7 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent doctor \
 | `runtime_identity_mismatch` | 用 policy 指定的非 root UID/GID 运行，不能直接 `sudo orbitbeacon-agent run` |
 | `install_policy_conflict` | 检查额外 `--config` 和 `ORBITBEACON_*`，按[安装策略校验](#本地运行参数与-reload)消除冲突 |
 | `401` / `403 node_disabled` | 检查节点是否禁用或凭据已吊销；按[身份变更规则](architecture.md#状态与历史)启用或重新签发注册票据 |
-| `409 identity_conflict`，退出码 3 | 同一身份被更新进程取代；unit 禁止自动重启争抢。克隆机器必须独立 state 并分别注册 |
+| `409 identity_conflict`，退出码 3 | 同一身份被更新进程取代；systemd/OpenRC 均停止自动重启争抢。克隆机器必须独立 state 并分别注册 |
 | 网络或其他 HTTP 错误 | Agent 退避重试，记录首次失败、至少间隔 5 分钟的连续失败摘要及恢复；样本处理见[数据流](architecture.md#数据流) |
 
 `run` 独占 state 中的 `run.lock`。不要删除或替换正在使用的锁；退出后留下空锁文件是正常的。`identity.json` 包含节点凭据，不要手改或复制给另一台机器。`enroll` 不传 `--token-file` 仅恢复已有凭据，不会取得新的授权。
@@ -138,7 +178,7 @@ disabled_features:
 
 环境变量为 `ORBITBEACON_REPORT_INTERVAL_SECONDS` 等大写参数名；`remote_commands` 和 `disabled_features` 不提供 flag，其余 flag 使用 `--report-interval-seconds` 等连字符形式。**配置文件使用 YAML 序列和映射；环境变量、CLI 的复合值仍使用 JSON**，例如 `ORBITBEACON_INTERFACES='["eth0"]'` 或 `--probe-targets '["https://example.com/a,b"]'`，不按逗号拆分。`probe_expected_status` 的 flag 示例为 `--probe-expected-status '{"https://example.com/health":204}'`。
 
-修改后执行 `sudo systemctl reload orbitbeacon-agent`（前台进程用 `kill -HUP <PID>`）。reload 重读原 YAML，沿用启动时环境和显式 flags，不重读 policy；有效变更在采样边界完整应用并重采，不重置身份或累计流量，坏配置保留旧值。检查日志 `configuration_reloaded` / `configuration_unchanged` / `configuration_reload_rejected` 和下一报告；systemctl 成功只代表信号送达。
+修改后执行 `sudo systemctl reload orbitbeacon-agent`，OpenRC 用 `sudo rc-service orbitbeacon-agent reload`，前台进程用 `kill -HUP <PID>`。reload 重读原 YAML，沿用启动时环境和显式 flags，不重读 policy；有效变更在采样边界完整应用并重采，不重置身份或累计流量，坏配置保留旧值。检查日志 `configuration_reloaded` / `configuration_unchanged` / `configuration_reload_rejected` 和下一报告；服务 reload 命令成功只代表信号送达。
 
 ## 远程升级
 
@@ -172,7 +212,13 @@ sudo sh ./install-agent.sh --uninstall
 # 输入 yes 确认；自动化可加 --yes。
 ```
 
-卸载会移除 unit、二进制、policy、本地配置、CA 副本和**全部状态目录**，保留系统账号；没有 systemd 时须先手动停止进程。仅删除本地文件不会使服务器上的节点凭据失效。
+卸载会停止并禁用已安装的 systemd/OpenRC 服务，移除服务文件、二进制、policy、本地配置、CA 副本和**全部状态目录**，保留系统账号；前台进程须先手动停止。仅删除本地文件不会使服务器上的节点凭据失效。
+
+### 容器兼容性检查
+
+从仓库根运行 `sh deploy/install-agent.docker-test.sh`，默认使用 Debian 12、Ubuntu 24.04、CentOS Stream 9、Alpine 3.21；可在命令后传镜像列表缩小范围。需要 Go、Docker 及可访问的镜像/软件仓库，仅构建当前宿主 amd64/arm64 架构。容器无特权，安装脚本和二进制只读挂载，安装写入一次性容器。
+
+检查真实系统工具下的离线安装、账户权限、身份/配置保留、非 root 二进制运行和服务文件；用身份保留标记跳过注册，不覆盖真实注册、完整开机启动或跨架构执行。架构选择、下载校验、票据保护及 OpenRC 退出行为由 `sh deploy/install-agent.test.sh` 覆盖。
 
 ## 手动前台安装
 

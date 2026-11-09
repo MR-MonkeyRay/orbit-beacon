@@ -101,6 +101,8 @@ setup_case() {
 	TEST_FIXTURES=$CASE_DIR/fixtures
 	mkdir -p "$CASE_DIR/bin" "$TEST_ROOT/tmp" "$TEST_ROOT/run/systemd/system" "$TEST_FIXTURES"
 	: >"$TEST_ROOT/.orbitbeacon-install-test-root"
+	mkdir -p "$TEST_ROOT/etc"
+	printf '%s\n' 'ID=debian' 'VERSION_ID="12"' >"$TEST_ROOT/etc/os-release"
 	: >"$TEST_LOG"
 	printf '%s\n' 'test CA certificate' >"$TEST_FIXTURES/ca.pem"
 
@@ -153,6 +155,7 @@ case ${1:-} in
 	-m) printf "%s\\n" "${TEST_ARCH:-x86_64}" ;;
 	*) exit 1 ;;
 esac'
+	write_stub groupadd 'printf "groupadd %s\\n" "$*" >>"$TEST_LOG"'
 	write_stub useradd 'printf "useradd" >>"$TEST_LOG"; printf " %s" "$@" >>"$TEST_LOG"; printf "\\n" >>"$TEST_LOG"; : >"$TEST_ROOT/.account-created"'
 	write_stub adduser 'printf "adduser" >>"$TEST_LOG"; printf " %s" "$@" >>"$TEST_LOG"; printf "\\n" >>"$TEST_LOG"; : >"$TEST_ROOT/.account-created"'
 	write_stub addgroup 'printf "addgroup" >>"$TEST_LOG"; printf " %s" "$@" >>"$TEST_LOG"; printf "\\n" >>"$TEST_LOG"'
@@ -322,7 +325,7 @@ assert_log_has "curl --fail"
 assert_log_has "--proto =https"
 assert_log_has "--tlsv1.2"
 assert_log_has "systemctl daemon-reload"
-assert_log_has "systemctl enable --now orbitbeacon-agent"
+assert_log_has "systemctl enable orbitbeacon-agent"
 assert_log_has "--config $TEST_ROOT/opt/orbit-beacon/etc/agent.yaml"
 assert_log_lacks "$secret"
 if grep -F -- "$secret" "$CASE_DIR/output" >/dev/null 2>&1; then fail "token leaked to installer output"; fi
@@ -422,10 +425,10 @@ for directory in bin state; do
 	pass "install and uninstall reject a symlinked $directory directory before any ownership change"
 done
 
-for machine in x86_64 aarch64 arm64; do
+for machine in x86_64 amd64 aarch64 arm64; do
 	setup_case "architecture_$machine"
 	case $machine in
-		x86_64) expected_arch=amd64; other_arch=arm64 ;;
+		x86_64|amd64) expected_arch=amd64; other_arch=arm64 ;;
 		*) expected_arch=arm64; other_arch=amd64 ;;
 	esac
 	TEST_ARCH=$machine TEST_BAD_CHECKSUM_ARCH=$other_arch run_with_token 'architecture-token' "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0
@@ -733,5 +736,147 @@ if run_with_token policy-token "$CASE_DIR/output" --server https://monitor.examp
 assert_log_lacks 'chown'
 assert_log_lacks 'curl'
 pass 'YAML policy symlink is rejected before mutation'
+
+for distro in centos debian ubuntu alpine; do
+	setup_case "distro_$distro"
+	printf 'ID=%s\nVERSION_ID="test"\n' "$distro" >"$TEST_ROOT/etc/os-release"
+	run_with_token os-token "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 --service none --no-start
+	assert_not_exists "$TEST_ROOT/etc/systemd/system/orbitbeacon-agent.service"
+	assert_log_lacks 'systemctl'
+	grep -F "$distro" "$CASE_DIR/output" >/dev/null || fail 'distribution not detected'
+	"$YAML_DECODER" "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" | python3 -c 'import json, sys; assert json.load(sys.stdin)["install_mode"] == "foreground"'
+done
+pass 'known distributions support explicit foreground installation without a unit'
+
+setup_case no_start
+run_with_token no-start-token "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 --no-start --download-timeout 42 --download-retries 2
+assert_exists "$TEST_ROOT/etc/systemd/system/orbitbeacon-agent.service"
+assert_log_lacks 'systemctl enable'
+assert_log_lacks 'systemctl restart'
+assert_log_has '--max-time 42'
+assert_log_has '--retry 2'
+pass 'no-start installs without enabling or restarting and honors download limits'
+cp "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" "$CASE_DIR/policy-before.yaml"
+if run_installer "$CASE_DIR/conflict-output" --server https://monitor.example.com --version 0.1.0 --service none </dev/null; then fail 'service backend switch left an old unit behind'; fi
+cmp -s "$CASE_DIR/policy-before.yaml" "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" || fail 'backend conflict changed policy'
+assert_exists "$TEST_ROOT/etc/systemd/system/orbitbeacon-agent.service"
+pass 'service backend conflicts are rejected before changing an installed policy'
+
+setup_case invalid_options
+for options in '--service invalid' '--uid 0' '--gid -1' '--download-timeout 0' '--download-retries -1' '--version --no-start'; do
+	# 参数均为测试常量，有意按单词拆分。
+	# shellcheck disable=SC2086
+	if run_installer "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 $options </dev/null; then fail "accepted $options"; fi
+	assert_not_exists "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent"
+done
+for machine in i686 armv7l; do
+	if TEST_ARCH=$machine run_installer "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 </dev/null; then fail "accepted $machine"; fi
+done
+pass 'unsupported options and 32-bit machines fail before installing'
+
+setup_case account_mismatch
+: >"$TEST_ROOT/.account-created"
+if run_with_token account-token "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 --uid 1000; then fail 'existing UID mismatch accepted'; fi
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent"
+pass 'explicit UID cannot silently change an existing account'
+
+setup_case openrc
+rm -rf "$TEST_ROOT/run/systemd"
+write_stub rc-service 'printf "rc-service %s\\n" "$*" >>"$TEST_LOG"'
+write_stub rc-update 'printf "rc-update %s\\n" "$*" >>"$TEST_LOG"'
+write_stub start-stop-daemon 'exit 0'
+run_with_token openrc-token "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 --no-start
+assert_exists "$TEST_ROOT/etc/init.d/orbitbeacon-agent"
+assert_mode "$TEST_ROOT/etc/init.d/orbitbeacon-agent" 755
+assert_exists "$TEST_ROOT/opt/orbit-beacon/libexec/orbitbeacon-agent-supervise"
+assert_not_exists "$TEST_ROOT/etc/systemd/system/orbitbeacon-agent.service"
+assert_log_lacks 'rc-service'
+assert_log_lacks 'rc-update'
+run_installer "$CASE_DIR/restart-output" --server https://monitor.example.com --version 0.1.0 </dev/null
+assert_log_has 'rc-service orbitbeacon-agent restart'
+assert_log_has 'rc-update add orbitbeacon-agent default'
+pass 'OpenRC is selected automatically and no-start leaves runlevels and processes unchanged'
+
+# 执行已安装的 supervisor；验证真实退出码与信号，不检查源码文本。
+supervise=$TEST_ROOT/opt/orbit-beacon/libexec/orbitbeacon-agent-supervise
+supervisor_root=$CASE_DIR/supervisor
+mkdir -p "$supervisor_root/bin" "$supervisor_root/etc" "$supervisor_root/libexec" "$supervisor_root/state"
+cp "$TEST_ROOT/opt/orbit-beacon/libexec/orbitbeacon-agent-rollback" "$supervisor_root/libexec/"
+cat >"$supervisor_root/bin/orbitbeacon-agent" <<'AGENT'
+#!/bin/sh
+root=$SUPERVISOR_ROOT
+if [ -f "$root/state/next" ]; then
+	code=$(cat "$root/state/next")
+	rm "$root/state/next"
+	printf '%s\n' first >>"$root/state/starts"
+	exit "$code"
+fi
+printf '%s\n' restarted >>"$root/state/starts"
+exit 0
+AGENT
+chmod 755 "$supervisor_root/bin/orbitbeacon-agent"
+printf 75 >"$supervisor_root/state/next"
+printf 0 >"$supervisor_root/state/upgrade-pending"
+SUPERVISOR_ROOT=$supervisor_root "$supervise" "$supervisor_root"
+[ "$(cat "$supervisor_root/state/upgrade-pending")" = 2 ] || fail 'rollback was not checked on every startup'
+[ "$(wc -l <"$supervisor_root/state/starts")" = 2 ] || fail 'upgrade exit did not restart exactly once'
+printf 3 >"$supervisor_root/state/next"
+if SUPERVISOR_ROOT=$supervisor_root "$supervise" "$supervisor_root"; then fail 'identity conflict status lost'; else [ "$?" = 3 ] || fail 'identity conflict code changed'; fi
+[ "$(wc -l <"$supervisor_root/state/starts")" = 3 ] || fail 'identity conflict restarted'
+pass 'OpenRC supervisor restarts upgrades with rollback checks and stops on zero or identity conflict'
+
+cat >"$supervisor_root/bin/orbitbeacon-agent" <<'AGENT'
+#!/bin/sh
+trap 'printf reload >"$SUPERVISOR_ROOT/state/reloaded"' HUP
+trap 'exit 0' TERM INT
+printf '%s\n' "$$" >"$SUPERVISOR_ROOT/state/child.pid"
+while :; do sleep 0.1; done
+AGENT
+python3 - "$supervise" "$supervisor_root" <<'PY'
+import os, pathlib, signal, subprocess, sys, time
+supervise, root = sys.argv[1:]
+state = pathlib.Path(root) / 'state'
+proc = subprocess.Popen([supervise, root], env={**os.environ, 'SUPERVISOR_ROOT': root})
+child = None
+def await_file(name):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        path = state / name
+        if path.exists() and path.read_text():
+            return path.read_text()
+        assert proc.poll() is None, 'supervisor exited before signal handling'
+        time.sleep(0.02)
+    raise AssertionError(f'timed out waiting for {name}')
+try:
+    child = int(await_file('child.pid'))
+    proc.send_signal(signal.SIGHUP)
+    assert await_file('reloaded') == 'reload'
+    assert int((state / 'child.pid').read_text()) == child, 'reload restarted Agent'
+    proc.terminate()
+    assert proc.wait(timeout=5) == 0
+    try:
+        os.kill(child, 0)
+    except ProcessLookupError:
+        pass
+    else:
+        raise AssertionError('stopping supervisor left Agent running')
+finally:
+    if proc.poll() is None:
+        proc.kill()
+        proc.wait()
+    if child is not None:
+        try:
+            os.kill(child, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+PY
+pass 'OpenRC supervisor forwards reload without restarting and terminates its Agent child'
+
+run_installer "$CASE_DIR/uninstall-output" --uninstall --yes
+assert_log_has 'rc-service --ifstarted orbitbeacon-agent stop'
+assert_log_has 'rc-update del orbitbeacon-agent default'
+assert_not_exists "$TEST_ROOT/etc/init.d/orbitbeacon-agent"
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon"
+pass 'OpenRC uninstall stops and disables before deleting the installation'
 
 printf '1..%s\n' "$PASS_COUNT"

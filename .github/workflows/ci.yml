@@ -282,7 +282,7 @@ jobs:
           cache: false
 
       - name: Lint shell scripts
-        run: shellcheck deploy/install-agent.sh deploy/install-agent.test.sh
+        run: shellcheck deploy/install-agent.sh deploy/install-agent.test.sh deploy/install-agent.docker-test.sh
 
       - name: Run installer regression tests
         run: sh deploy/install-agent.test.sh

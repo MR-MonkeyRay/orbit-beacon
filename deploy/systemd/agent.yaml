@@ -1,4 +1,4 @@
-# 修改后执行 systemctl reload orbitbeacon-agent；重装保留本文件。
+# 修改后通过服务 reload 或 SIGHUP 重新加载；重装保留本文件。
 # 采集与上报间隔（秒，5–60）。
 report_interval_seconds: 10
 # 磁盘容量采集间隔（秒，60–3600）。

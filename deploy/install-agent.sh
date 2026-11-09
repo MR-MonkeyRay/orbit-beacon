@@ -11,12 +11,36 @@ say() { printf '%s\n' "[orbitbeacon] $*"; }
 die() { printf '%s\n' "[orbitbeacon] ERROR: $*" >&2; exit 1; }
 usage() {
     cat <<'USAGE'
-用法：sh install-agent.sh --server http[s]://HOST[:PORT] --version VERSION
-      [--ca-file FILE] [--token-file FILE] [--binary FILE] [--update-base-url URL]
+用法：sh install-agent.sh --server URL (--version VERSION | --binary FILE) [选项]
       sh install-agent.sh --uninstall [--yes]
-以 root 运行。--binary 替代下载（此时 --version 可选）。
-通过文件、标准输入或终端的隐藏输入提示提供注册票据。
-不接受通过命令行参数传入票据。保留已有身份。
+      sh install-agent.sh --help
+
+安装与信任：
+  --server URL              Server 的 HTTP(S) 根地址，不含路径或凭据
+  --version VERSION         固定发布版本，如 0.1.0（不带 v）
+  --binary FILE             使用本地二进制，跳过下载；此时版本可省略
+  --ca-file FILE            Server 的私有 CA PEM；HTTP 不可使用
+  --token-file FILE         从文件读取注册票据，也支持 stdin 或终端隐藏输入
+  --update-base-url URL     HTTPS 发布镜像根地址；重装默认保留，'' 关闭远程升级
+
+账户与服务：
+  --uid N / --gid N         专用账户的非零 UID/GID；默认自动分配，已有账户须匹配
+  --service MODE            auto（默认）、systemd、openrc 或 none（前台）
+  --no-start                安装服务但不启用、不启动、不重启已有服务
+
+下载与维护：
+  --download-timeout N      每个文件下载超时秒数（默认 300，1–3600）
+  --download-retries N      下载失败重试次数（默认 3，0–10）
+  --uninstall              确认后删除本地安装及全部身份状态；保留账户
+  --yes                    仅用于卸载时跳过确认
+  -h, --help               显示帮助，无需 root
+
+Linux：识别 CentOS/RHEL、Debian、Ubuntu、Alpine 及其衍生系统。
+架构：x86_64/amd64、aarch64/arm64；不提供 32 位发布包。
+安装需 root；Agent 始终以 orbitbeacon-agent 非 root 运行。
+固定安装到 /opt/orbit-beacon，重装保留身份和 agent.yaml，不接受命令行票据。
+例：sh install-agent.sh --server https://beacon.example.com --version 0.1.0
+    sh install-agent.sh --server https://beacon.example.com --binary ./agent --service none
 USAGE
 }
 
@@ -25,10 +49,14 @@ default_update_base=https://github.com/mr-monkeyray/orbit-beacon/releases/downlo
 update_base_url=$default_update_base
 update_base_set=0
 uninstall=0 yes=0
+service=auto no_start=0 requested_uid='' requested_gid=''
+download_timeout=300 download_retries=3
 while [ "$#" -gt 0 ]; do
     case $1 in
-        --server|--version|--ca-file|--token-file|--binary|--update-base-url)
-            if [ "$#" -lt 2 ] || [ -z "$2" ]; then die "缺少 $1 的参数值"; fi
+        --server|--version|--ca-file|--token-file|--binary|--update-base-url|--uid|--gid|--service|--download-timeout|--download-retries)
+            [ "$#" -ge 2 ] || die "缺少 $1 的参数值"
+            case $2 in --*) die "缺少 $1 的参数值" ;; esac
+            [ -n "$2" ] || [ "$1" = --update-base-url ] || die "缺少 $1 的参数值"
             case $1 in
                 --update-base-url) update_base_url=$2; update_base_set=1 ;;
                 --server) server=$2 ;;
@@ -36,14 +64,32 @@ while [ "$#" -gt 0 ]; do
                 --ca-file) ca_source=$2 ;;
                 --token-file) token_source=$2 ;;
                 --binary) local_binary=$2 ;;
+                --uid) requested_uid=$2 ;;
+                --gid) requested_gid=$2 ;;
+                --service) service=$2 ;;
+                --download-timeout) download_timeout=$2 ;;
+                --download-retries) download_retries=$2 ;;
             esac
             shift 2 ;;
         --uninstall) uninstall=1; shift ;;
         --yes) yes=1; shift ;;
+        --no-start) no_start=1; shift ;;
         --help|-h) usage; exit 0 ;;
         *) die '未知选项。请使用 --help；票据只能通过文件、标准输入或终端隐藏输入提示提供。' ;;
     esac
 done
+
+case $service in auto|systemd|openrc|none) ;; *) die '--service 必须是 auto、systemd、openrc 或 none。' ;; esac
+check_number() {
+    case $2 in ''|*[!0-9]*|0[0-9]*) die "$1 必须是范围 $3–$4 内的十进制整数。" ;; esac
+    if [ "${#2}" -gt 10 ] || [ "$2" -lt "$3" ] || [ "$2" -gt "$4" ]; then
+        die "$1 超出允许范围 $3–$4。"
+    fi
+}
+[ -z "$requested_uid" ] || check_number --uid "$requested_uid" 1 2147483647
+[ -z "$requested_gid" ] || check_number --gid "$requested_gid" 1 2147483647
+check_number --download-timeout "$download_timeout" 1 3600
+check_number --download-retries "$download_retries" 0 10
 
 # 仅测试钩子：两个启用变量和哨兵文件缺一不可。正常安装始终使用真实绝对路径，测试框架提供命令桩。
 root=
@@ -59,6 +105,25 @@ fi
 [ "$(id -u)" = 0 ] || die '须以 root 运行此安装器。'
 [ "$(uname -s)" = Linux ] || die '仅支持 Linux。'
 
+case $(uname -m) in
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) die '不支持的架构；仅提供 64 位 x86_64/amd64 与 aarch64/arm64 发布包。' ;;
+esac
+# os-release 是系统提供的 shell 格式文件，不读取用户指定文件。
+ID=unknown ID_LIKE='' VERSION_ID=''
+if [ -r "$root/etc/os-release" ]; then
+    # shellcheck disable=SC1091
+    . "$root/etc/os-release"
+fi
+case " $ID $ID_LIKE " in
+    *' alpine '*) os_family=alpine; packages='apk add curl ca-certificates coreutils openrc' ;;
+    *' ubuntu '*|*' debian '*) os_family=debian; packages='apt-get install curl ca-certificates coreutils passwd util-linux procps' ;;
+    *' centos '*|*' rhel '*|*' fedora '*) os_family=rhel; packages='dnf install curl ca-certificates coreutils shadow-utils util-linux procps-ng（旧版用 yum）' ;;
+    *) os_family=linux; packages='请用系统包管理器安装缺失工具' ;;
+esac
+say "检测到系统：$ID ${VERSION_ID:-未知版本}（$os_family），架构：$arch"
+
 account=orbitbeacon-agent
 install_root=$root/opt/orbit-beacon
 bin_dir=$install_root/bin
@@ -72,6 +137,7 @@ state=$install_root/state
 token_file=$state/enrollment.token
 unit_dir=$root/etc/systemd/system
 unit=$unit_dir/orbitbeacon-agent.service
+openrc_unit=$root/etc/init.d/orbitbeacon-agent
 tmp='' policy_tmp='' binary_tmp='' token_tmp='' unit_tmp='' tty_state=''
 cleanup() {
     if [ -n "$tty_state" ]; then stty "$tty_state" </dev/tty || :; fi
@@ -94,11 +160,14 @@ safe_path() {
     done
 }
 # bin/state 的目录入口由 root 所有的安装根保护；叶子由不跟随链接的操作处理。
-for path in "$bin_dir" "$libexec" "$state" "$policy" "$runtime_config" "$ca_copy" "$unit"; do
+for path in "$bin_dir" "$libexec" "$state" "$policy" "$runtime_config" "$ca_copy" "$unit" "$openrc_unit"; do
     safe_path "$path"
 done
 has_systemd() {
     command -v systemctl >/dev/null 2>&1 && [ -d "$root/run/systemd/system" ]
+}
+has_openrc() {
+    command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1 && command -v start-stop-daemon >/dev/null 2>&1
 }
 has_identity() {
     # stat 默认检查链接本身；root 只探测类型，不读取 Agent 可控制的身份文件。
@@ -106,7 +175,7 @@ has_identity() {
 }
 
 if [ "$uninstall" = 1 ]; then
-    if [ "$update_base_set" != 0 ] || [ -n "$server$version$ca_source$token_source$local_binary" ]; then die '不要将安装选项与 --uninstall 混用。'; fi
+    if [ "$update_base_set" != 0 ] || [ -n "$server$version$ca_source$token_source$local_binary$requested_uid$requested_gid" ] || [ "$service" != auto ] || [ "$no_start" != 0 ] || [ "$download_timeout:$download_retries" != 300:3 ]; then die '不要将安装选项与 --uninstall 混用。'; fi
     say '请先在控制台吊销该节点凭据；本地删除不会吊销。'
     say '卸载将删除服务、二进制、策略、本地配置、CA 副本及全部 Agent 状态。请先停止前台 Agent。'
     if [ "$yes" != 1 ]; then
@@ -120,7 +189,11 @@ if [ "$uninstall" = 1 ]; then
         # unit 不存在无影响；继续删除本地文件。
         systemctl disable --now orbitbeacon-agent >/dev/null 2>&1 || :
     fi
-    rm -f -- "$unit"
+    if has_openrc && [ -f "$openrc_unit" ]; then
+        rc-service --ifstarted orbitbeacon-agent stop
+        rc-update del orbitbeacon-agent default >/dev/null 2>&1 || :
+    fi
+    rm -f -- "$unit" "$openrc_unit"
     # 不加末尾斜杠；rm 不跟随树内的符号链接，也不运行 Agent 二进制。
     rm -rf -- "$install_root"
     if has_systemd; then systemctl daemon-reload; fi
@@ -128,6 +201,31 @@ if [ "$uninstall" = 1 ]; then
     exit 0
 fi
 [ "$yes" = 0 ] || die '--yes 仅与 --uninstall 搭配使用。'
+if [ "$service" = auto ]; then
+    if has_systemd; then service=systemd
+    elif has_openrc; then service=openrc
+    else service=none
+    fi
+fi
+case $service in
+    systemd)
+        command -v systemctl >/dev/null 2>&1 || die '请安装 systemd 或选择 --service none。'
+        [ -x /bin/kill ] || die "systemd reload 需要 /bin/kill。依赖安装参考：$packages" ;;
+    openrc) has_openrc || die '请安装 OpenRC（含 start-stop-daemon）或选择 --service none。' ;;
+esac
+if { [ "$service" != systemd ] && [ -e "$unit" ]; } || { [ "$service" != openrc ] && [ -e "$openrc_unit" ]; }; then
+    die '检测到另一种已安装的服务。请先停止并禁用旧服务、删除旧服务文件（保留 /opt/orbit-beacon），再切换 --service。'
+fi
+install_mode=native
+[ "$service" != none ] || install_mode=foreground
+for tool in awk stat mkdir mktemp chmod chown cp install cat mv rm sed; do
+    command -v "$tool" >/dev/null 2>&1 || die "缺少 $tool。依赖安装参考：$packages"
+done
+if [ -z "$local_binary" ]; then
+    for tool in curl sha256sum; do
+        command -v "$tool" >/dev/null 2>&1 || die "缺少 $tool。依赖安装参考：$packages"
+    done
+fi
 # JSON 本身也是 YAML；只复制配置内容，不移动或重建身份目录。
 for name in install-policy agent; do
     legacy=$config_dir/$name.json
@@ -214,11 +312,6 @@ if [ -n "$version" ]; then
     ' || die '无效版本号（示例：0.1.0，不带 v）。'
 fi
 [ -n "$local_binary" ] || [ -n "$version" ] || die '必须指定 --version 或 --binary。'
-case $(uname -m) in
-    x86_64) arch=amd64 ;;
-    aarch64|arm64) arch=arm64 ;;
-    *) die '不支持的架构（支持：x86_64、aarch64、arm64）。' ;;
-esac
 if [ -n "$local_binary" ]; then
     if [ ! -f "$local_binary" ] || [ ! -s "$local_binary" ]; then die '--binary 必须指定非空普通文件。'; fi
 fi
@@ -247,7 +340,9 @@ else
     release=${update_base_url:-$default_update_base}/v$version
     for asset in "$agent_asset" SHA256SUMS; do
         curl --fail --silent --show-error --location --proto '=https' \
-            --proto-redir '=https' --max-redirs 5 --tlsv1.2 --output "$tmp/$asset" "$release/$asset"
+            --proto-redir '=https' --max-redirs 5 --tlsv1.2 --connect-timeout 15 \
+            --max-time "$download_timeout" --retry "$download_retries" --retry-max-time "$download_timeout" \
+            --output "$tmp/$asset" "$release/$asset"
     done
     # 仅选取一条记录，不信任无关的清单路径或选项。
     awk -v name="$agent_asset" '
@@ -272,19 +367,41 @@ group_name_exists() {
         awk -F: -v name="$account" '$1 == name { found=1 } END { exit !found }' /etc/group
     fi
 }
+if id -u "$account" >/dev/null 2>&1; then
+    [ -z "$requested_uid" ] || [ "$(id -u "$account")" = "$requested_uid" ] || die '已有 Agent 账户 UID 与 --uid 不符；不会迁移或修改已有账户。'
+    [ -z "$requested_gid" ] || [ "$(id -g "$account")" = "$requested_gid" ] || die '已有 Agent 账户 GID 与 --gid 不符；不会迁移或修改已有账户。'
+fi
+if [ -n "$requested_gid" ] && group_name_exists; then
+    if command -v getent >/dev/null 2>&1; then
+        existing_gid=$(getent group "$account" | cut -d: -f3)
+    else
+        existing_gid=$(awk -F: -v name="$account" '$1 == name { print $3 }' /etc/group)
+    fi
+    [ "$existing_gid" = "$requested_gid" ] || die '已有 Agent 组 GID 与 --gid 不符。'
+fi
 if ! id -u "$account" >/dev/null 2>&1; then
+    nologin=/sbin/nologin
+    [ ! -x /usr/sbin/nologin ] || nologin=/usr/sbin/nologin
     if command -v useradd >/dev/null 2>&1; then
-        if group_name_exists; then
-            useradd --system --gid "$account" --home-dir "$state" \
-                --no-create-home --shell /usr/sbin/nologin "$account"
-        else
-            useradd --system --user-group --home-dir "$state" \
-                --no-create-home --shell /usr/sbin/nologin "$account"
+        if ! group_name_exists; then
+            command -v groupadd >/dev/null 2>&1 || die "缺少 groupadd。依赖安装参考：$packages"
+            set -- --system
+            [ -z "$requested_gid" ] || set -- "$@" --gid "$requested_gid"
+            groupadd "$@" "$account"
         fi
+        set -- --system --gid "$account" --home-dir "$state" --no-create-home --shell "$nologin"
+        [ -z "$requested_uid" ] || set -- "$@" --uid "$requested_uid"
+        useradd "$@" "$account"
     elif command -v adduser >/dev/null 2>&1 && command -v addgroup >/dev/null 2>&1; then
         # BusyBox/Alpine 等效操作；保留已有的系统组。
-        if ! group_name_exists; then addgroup -S "$account"; fi
-        adduser -S -D -H -h "$state" -s /usr/sbin/nologin -G "$account" "$account"
+        if ! group_name_exists; then
+            set -- -S
+            [ -z "$requested_gid" ] || set -- "$@" -g "$requested_gid"
+            addgroup "$@" "$account"
+        fi
+        set -- -S -D -H -h "$state" -s "$nologin" -G "$account"
+        [ -z "$requested_uid" ] || set -- "$@" -u "$requested_uid"
+        adduser "$@" "$account"
     else
         die '须安装 useradd 或 BusyBox adduser/addgroup 后重试。'
     fi
@@ -293,6 +410,8 @@ agent_uid=$(id -u "$account")
 agent_gid=$(id -g "$account")
 case $agent_uid:$agent_gid in *[!0-9:]*|:*|*:) die '无法确定 Agent 的数字 UID/GID。' ;; esac
 if [ "$agent_uid" -eq 0 ] || [ "$agent_gid" -eq 0 ]; then die 'Agent 账户的 UID 和 GID 不得为 root。'; fi
+[ -z "$requested_uid" ] || [ "$agent_uid" = "$requested_uid" ] || die '账户 UID 不匹配。'
+[ -z "$requested_gid" ] || [ "$agent_gid" = "$requested_gid" ] || die '账户 GID 不匹配。'
 [ "$(id -gn "$account")" = "$account" ] || die 'Agent 主组必须是 orbitbeacon-agent（systemd 服务单元要求）。'
 
 say '正在安装二进制、私有状态目录和归 root 所有的策略...'
@@ -372,8 +491,8 @@ expected_uid: $agent_uid
 expected_gid: $agent_gid
 # 运行账户名；空则只校验 UID/GID。
 expected_account: "$account"
-# native：systemd；docker：容器；foreground：前台。此项不安装服务。
-install_mode: "native"
+# native：系统服务；docker：容器；foreground：前台。此项不安装服务。
+install_mode: "$install_mode"
 EOF
 chown -h "root:$agent_gid" "$policy_tmp"
 chmod 0640 "$policy_tmp"
@@ -384,7 +503,7 @@ safe_path "$runtime_config"
 if [ ! -e "$runtime_config" ]; then
     policy_tmp=$(mktemp "$config_dir/.agent.XXXXXXXX")
     cat > "$policy_tmp" <<'RUNTIME'
-# 修改后执行 systemctl reload orbitbeacon-agent；重装保留本文件。
+# 修改后通过服务 reload 或 SIGHUP 重新加载；重装保留本文件。
 # 采集与上报间隔（秒，5–60）。
 report_interval_seconds: 10
 # 磁盘容量采集间隔（秒，60–3600）。
@@ -463,6 +582,7 @@ else
     die '未提供注册票据。请通过 --token-file、stdin 或终端提示输入后重试。'
 fi
 
+if [ "$service" = systemd ]; then
 say '正在安装 systemd 服务单元...'
 mkdir -p "$unit_dir"
 chown root:root "$unit_dir"
@@ -523,12 +643,88 @@ mv -f -- "$unit_tmp" "$unit"
 unit_tmp=
 if has_systemd; then
     systemctl daemon-reload
-    systemctl enable --now orbitbeacon-agent
-    # enable --now 不会替换已运行服务的旧二进制。
-    systemctl restart orbitbeacon-agent
-    say '已安装并启动。查看日志：journalctl -u orbitbeacon-agent.service'
+    if [ "$no_start" = 0 ]; then
+        systemctl enable orbitbeacon-agent
+        systemctl restart orbitbeacon-agent
+        say '已安装并启动。查看日志：journalctl -u orbitbeacon-agent.service'
+    else
+        say '已安装，未改变服务运行/启用状态。启动：systemctl enable --now orbitbeacon-agent'
+    fi
 else
-    say 'systemd 未运行。以 Agent 用户前台执行：'
+    say 'systemd 未运行；启动后执行：systemctl enable --now orbitbeacon-agent'
+fi
+elif [ "$service" = openrc ]; then
+    say '正在安装 OpenRC 服务...'
+    policy_tmp=$(mktemp "$libexec/.supervise.XXXXXXXX")
+    cat > "$policy_tmp" <<'SUPERVISOR'
+#!/bin/sh
+# 以 Agent 用户运行；保留 systemd 的 0/3 停止、其他退出重启语义。
+set -u
+root=${1:-/opt/orbit-beacon}
+child= stopping=0
+trap 'stopping=1; [ -z "$child" ] || kill -TERM "$child" 2>/dev/null || :' TERM INT
+trap '[ -z "$child" ] || kill -HUP "$child" 2>/dev/null || :' HUP
+while [ "$stopping" = 0 ]; do
+    "$root/libexec/orbitbeacon-agent-rollback" "$root"
+    "$root/bin/orbitbeacon-agent" run --install-policy "$root/etc/install-policy.yaml" --config "$root/etc/agent.yaml" &
+    child=$!
+    while :; do
+        wait "$child"
+        code=$?
+        kill -0 "$child" 2>/dev/null || break
+    done
+    child=
+    [ "$stopping" = 0 ] || break
+    case $code in 0|3) exit "$code" ;; esac
+    sleep 10 &
+    child=$!
+    wait "$child" || :
+    child=
+done
+exit 0
+SUPERVISOR
+    chown root:root "$policy_tmp"
+    chmod 0755 "$policy_tmp"
+    mv -fT -- "$policy_tmp" "$libexec/orbitbeacon-agent-supervise"
+    policy_tmp=
+    mkdir -p "$root/etc/init.d"
+    unit_tmp=$(mktemp "$root/etc/init.d/.orbitbeacon-agent.XXXXXXXX")
+    cat > "$unit_tmp" <<'OPENRC'
+#!/sbin/openrc-run
+description="OrbitBeacon Agent"
+command="/opt/orbit-beacon/libexec/orbitbeacon-agent-supervise"
+command_user="orbitbeacon-agent:orbitbeacon-agent"
+command_background=true
+pidfile="/run/orbitbeacon-agent.pid"
+output_logger="logger -t orbitbeacon-agent"
+error_logger="logger -t orbitbeacon-agent"
+umask=0077
+retry="TERM/30/KILL/5"
+extra_started_commands="reload"
+description_reload="重读 Agent 本地配置"
+depend() {
+    need net
+    after firewall
+}
+reload() {
+    ebegin "Reloading OrbitBeacon Agent"
+    start-stop-daemon --signal HUP --pidfile "$pidfile"
+    eend $?
+}
+OPENRC
+    chown root:root "$unit_tmp"
+    chmod 0755 "$unit_tmp"
+    mv -fT -- "$unit_tmp" "$openrc_unit"
+    unit_tmp=
+    if [ "$no_start" = 0 ]; then
+        rc-update add orbitbeacon-agent default
+        rc-service orbitbeacon-agent restart
+        say '已安装并启动。日志见系统 syslog（标签 orbitbeacon-agent）。'
+    else
+        say '已安装，未改变服务运行/启用状态。启动：rc-update add orbitbeacon-agent default && rc-service orbitbeacon-agent start'
+    fi
+elif [ "$service" = none ]; then
+    say '未安装服务。以 Agent 用户前台执行：'
     if [ "$use_runuser" = 1 ]; then
         say "runuser -u $account -- $binary run --install-policy $policy --config $runtime_config"
     else

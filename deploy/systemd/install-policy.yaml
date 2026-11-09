@@ -12,5 +12,5 @@ expected_uid: 1000
 expected_gid: 1000
 # 运行账户名；空则只校验 UID/GID。
 expected_account: "orbitbeacon-agent"
-# native：systemd；docker：容器；foreground：前台。此项不安装服务。
+# native：系统服务；docker：容器；foreground：前台。此项不安装服务。
 install_mode: "native"
