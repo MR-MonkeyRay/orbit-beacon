@@ -42,6 +42,8 @@
   --shadow-control:0 1px 3px rgba(10,20,40,.15);
   --backdrop:rgba(8,14,28,.5);
   --control-knob:#fff;
+  /* shortcut: 组件样式在档位之间还用了 6/10/14/18/22px 等 2px 网格字面量；
+     归并进本刻度是一次全局视觉重排，需设计师复核后再做。 */
   --sp-tight:4px;
   --sp-inline:8px;
   --sp-control:12px;
