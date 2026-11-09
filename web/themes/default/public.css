@@ -1,12 +1,12 @@
 @import "../../src/shared/tokens.css";
 @import "../../src/shared/availability.css";
 
-/* 横屏刘海屏手机将内容保持在安全区域内。 */
+/* 横屏刘海屏手机将内容保持在安全区域内；顶栏另加顶部切口留白。 */
 .page {
   --gutter:clamp(16px,4vw,40px);
   max-width: 1180px;
   margin: 0 auto;
-  padding: 0 max(var(--gutter),env(safe-area-inset-right)) 0 max(var(--gutter),env(safe-area-inset-left));
+  padding: env(safe-area-inset-top) max(var(--gutter),env(safe-area-inset-right)) 0 max(var(--gutter),env(safe-area-inset-left));
 }
 
 .top {
