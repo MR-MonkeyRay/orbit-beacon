@@ -227,14 +227,10 @@ func TestPublicLiveOrdinaryChangesAreThrottledAndQuietPagesAreNotRepeated(t *tes
 	cancel, done := startPublicStream(t, f.h, w)
 	defer func() { cancel(); waitStreamDone(t, done) }()
 	_ = nextFlush(t, w)
+	// 配置落库可能耗完整个节流窗口，从写入前计时，不另要求落库后静默。
 	changed := time.Now()
 	setStreamPublicSettings(t, f.db, true, "New public text")
 	seconds.Store(10)
-	select {
-	case frame := <-w.flushed:
-		t.Fatalf("ordinary update bypassed the configured interval: %s", frame)
-	case <-time.After(25 * time.Millisecond):
-	}
 	frame := nextFlush(t, w)
 	if time.Since(changed) < 50*time.Millisecond || !strings.Contains(frame, "New public text") || string(lastLiveTestFrame(t, frame)["type"]) != `"snapshot"` {
 		t.Fatalf("ordinary change did not coalesce: %s", frame)
