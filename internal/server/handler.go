@@ -143,7 +143,7 @@ func NewHandler(opts Options) (*handler, error) {
 		return nil, fmt.Errorf("UI assets: %w", err)
 	}
 	if opts.Availability == nil {
-		opts.Availability = availability.NewService(opts.Nodes.Database(), opts.Now, opts.Logger)
+		opts.Availability = availability.NewService(opts.Nodes.Database(), opts.Now, opts.Logger, opts.Ingest.LiveReceivedAt)
 	}
 	h := &handler{notifications: opts.Notifications, alerts: opts.Alerts, history: opts.History, staticAssets: staticAssets, accessLog: opts.AccessLog, metrics: newHTTPMetrics(opts.BuildVersion), trustedProxies: append([]netip.Prefix(nil), opts.TrustedProxies...), htmlPolicies: policies, auth: opts.Auth, nodes: opts.Nodes, management: opts.Management, enrollments: opts.Enrollments, ingest: opts.Ingest, traffic: opts.Traffic, availability: opts.Availability, origin: origin, logger: opts.Logger, now: opts.Now, ready: true}
 	h.backups, h.inbox = opts.Backups, opts.Inbox

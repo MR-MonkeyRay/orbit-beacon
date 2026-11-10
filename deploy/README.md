@@ -112,6 +112,10 @@ docker build -f build/server.Dockerfile -t orbitbeacon-server:local .
 
 CI 使用同一 Dockerfile 的 `precompiled` target，通过 `release-binaries` named context 复制本次发布的对应架构 Server；镜像和 Release 共用版本、提交与构建时间，不再编译第二遍。默认 target 仍从源码构建。
 
+发布先构建六个 Linux amd64／arm64 二进制和 `SHA256SUMS`，镜像仅推送提交 SHA 暂存标签；确认 Git tag、公开 Release 和全部资产可下载且一致后，再将同一不可变多架构 manifest 提升为 `latest`、最后提升为版本标签（完成标记）。GitHub 与 GHCR 不能原子提交，提升两个镜像标签也可能中断；此时 Release 已完整，可从原提交重跑完成提升。完整版本重跑不移动 `latest`，避免回退到旧版本。
+
+完整且内部一致的既有版本会跳过发布，即使当前 main 已前进。部分发布仅允许原提交续传：核对 Git tag（含 annotated tag）、两架构镜像 revision、二进制构建信息和校验和，复用暂存镜像与已上传资产，不覆盖现有文件。若已有 tag／镜像／资产属于其他提交或彼此不一致，必须从原提交恢复或提升 `VERSION`，不能用新提交覆盖同版本。
+
 ## HTTPS 与反向代理
 
 - 服务器仅提供 HTTP，不生成或加载入站 TLS 证书。HTTP 不加密密码、会话、节点凭据或上报；仅用于本机或受控网络，公网由外置代理提供可信 HTTPS。

@@ -8,6 +8,12 @@ import (
 	"orbitbeacon/internal/server/nodes"
 )
 
+// LiveReceivedAt 复用实时投影的身份和存储世代围栏，不复制或解码报告。
+func (s *Service) LiveReceivedAt(id string, identity *nodes.LiveIdentity) (time.Time, bool) {
+	_, received, ok := s.liveSampleSnapshot(id, identity)
+	return received, ok
+}
+
 // ProjectLiveRecord 在身份围栏内读取服务端接收时间和写入时计算的指标摘要。
 // 计算节点列表的在线状态无需分配报告副本或解码报告。
 func (s *Service) ProjectLiveRecord(record *nodes.LiveRecord, now time.Time) nodes.LiveNode {

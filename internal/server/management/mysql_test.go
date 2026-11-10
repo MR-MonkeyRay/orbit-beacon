@@ -50,7 +50,7 @@ func TestMySQLManagementAvailabilityAnnouncementsAndTraffic(t *testing.T) {
 	if _, err := raw.Exec(`UPDATE nodes SET status='unknown',token_hash=?,last_seen=?,first_enrolled_at=?,quota_bytes='18446744073709551615',billing_day=1,billing_mode='total' WHERE id=?`, []byte("01234567890123456789012345678901"), timekey.Format(now), timekey.Format(now), n.ID); err != nil {
 		t.Fatal(err)
 	}
-	av := availability.NewService(db, func() time.Time { return now }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	av := availability.NewService(db, func() time.Time { return now }, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err := av.Tick(ctx); err != nil {
 		t.Fatal(err)
 	}

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	"orbitbeacon/internal/logging"
@@ -21,18 +23,19 @@ type Service struct {
 	db                *storage.Database
 	now               func() time.Time
 	logger            *slog.Logger
+	receivedAt        func(string, *nodes.LiveIdentity) (time.Time, bool)
 	started, previous time.Time
 	storageGeneration uint64
 }
 
-func NewService(db *storage.Database, clock func() time.Time, logger *slog.Logger) *Service {
+func NewService(db *storage.Database, clock func() time.Time, logger *slog.Logger, receivedAt func(string, *nodes.LiveIdentity) (time.Time, bool)) *Service {
 	if clock == nil {
 		clock = time.Now
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{db: db, now: clock, logger: logger}
+	return &Service{db: db, now: clock, logger: logger, receivedAt: receivedAt}
 }
 
 // Tick 只能串行调用。基线只存内存，停机时长才会成为未知。
@@ -66,23 +69,68 @@ func (s *Service) Tick(ctx context.Context) error {
 		return txErr
 	}
 	defer tx.Rollback()
-	query := `INSERT INTO node_availability_daily(node_id,day,online_seconds,offline_seconds)
- SELECT id,?,CASE WHEN last_seen>=? THEN ? ELSE 0 END,CASE WHEN last_seen<? THEN ? ELSE 0 END
- FROM nodes WHERE status!='disabled' AND length(token_hash)>0 AND last_seen IS NOT NULL
- AND NOT ` + commands.StoppedSQL + ` AND (last_seen>=? OR ?)`
-	if tx.Dialect() == storage.MySQL {
-		query += ` ON DUPLICATE KEY UPDATE
- online_seconds=LEAST(86400-node_availability_daily.offline_seconds,node_availability_daily.online_seconds+VALUES(online_seconds)),
- offline_seconds=LEAST(86400-node_availability_daily.online_seconds,node_availability_daily.offline_seconds+VALUES(offline_seconds))`
-	} else {
-		query += ` ON CONFLICT(node_id,day) DO UPDATE SET
- online_seconds=MIN(86400-node_availability_daily.offline_seconds,node_availability_daily.online_seconds+excluded.online_seconds),
- offline_seconds=MIN(86400-node_availability_daily.online_seconds,node_availability_daily.offline_seconds+excluded.offline_seconds)`
-	}
-	_, err := tx.ExecContext(ctx, query,
-		now.Format(time.DateOnly), timekey.Format(now.Add(-nodes.OnlineWindow)), seconds, timekey.Format(now.Add(-nodes.OnlineWindow)), seconds, timekey.Format(now.Add(-nodes.OnlineWindow)), now.Sub(s.started) >= nodes.OnlineWindow)
+	rows, err := tx.QueryContext(ctx, `SELECT id,last_seen,token_hash,credential_epoch,run_generation,report_session_id
+ FROM nodes WHERE status!='disabled' AND length(token_hash)>0 AND last_seen IS NOT NULL AND NOT `+commands.StoppedSQL)
 	if err != nil {
 		return err
+	}
+	var args []any
+	day := now.Format(time.DateOnly)
+	cutoff := now.Add(-nodes.OnlineWindow)
+	for rows.Next() {
+		var id, rawSeen, generation string
+		var credential []byte
+		var identity nodes.LiveIdentity
+		if err := rows.Scan(&id, &rawSeen, &credential, &identity.CredentialEpoch, &generation, &identity.Session); err != nil {
+			rows.Close()
+			return err
+		}
+		seen, err := timekey.Parse(rawSeen)
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		if s.receivedAt != nil && len(credential) == len(identity.Credential) {
+			identity.Generation, err = strconv.ParseUint(generation, 10, 64)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			copy(identity.Credential[:], credential)
+			identity.HasCredential = true
+			if received, ok := s.receivedAt(id, &identity); ok && received.After(seen) && !received.After(now) {
+				seen = received
+			}
+		}
+		online, offline := int64(0), int64(0)
+		if !seen.Before(cutoff) {
+			online = seconds
+		} else if now.Sub(s.started) >= nodes.OnlineWindow {
+			offline = seconds
+		} else {
+			continue
+		}
+		args = append(args, id, day, online, offline)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	update := ` ON CONFLICT(node_id,day) DO UPDATE SET
+ online_seconds=MIN(86400-node_availability_daily.offline_seconds,node_availability_daily.online_seconds+excluded.online_seconds),
+ offline_seconds=MIN(86400-node_availability_daily.online_seconds,node_availability_daily.offline_seconds+excluded.offline_seconds)`
+	if tx.Dialect() == storage.MySQL {
+		update = ` ON DUPLICATE KEY UPDATE
+ online_seconds=LEAST(86400-node_availability_daily.offline_seconds,node_availability_daily.online_seconds+VALUES(online_seconds)),
+ offline_seconds=LEAST(86400-node_availability_daily.online_seconds,node_availability_daily.offline_seconds+VALUES(offline_seconds))`
+	}
+	// 有界参数批次共享同一事务，身份读取和累计之间不能插入身份变更。
+	for start := 0; start < len(args); start += 2000 {
+		end := min(start+2000, len(args))
+		query := `INSERT INTO node_availability_daily(node_id,day,online_seconds,offline_seconds) VALUES ` +
+			strings.TrimSuffix(strings.Repeat("(?,?,?,?),", (end-start)/4), ",") + update
+		if _, err = tx.ExecContext(ctx, query, args[start:end]...); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

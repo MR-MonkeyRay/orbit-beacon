@@ -13,7 +13,7 @@ func TestAvailabilityNewDatabaseTimelineDoesNotBackfillFailureGap(t *testing.T) 
 	*now = now.Add(time.Minute)
 	tick(t, s)
 	want(t, db, "online", 60, 0)
-	replacement := NewService(s.db, s.now, nil)
+	replacement := NewService(s.db, s.now, nil, s.receivedAt)
 	replacement.started = s.started
 	replacement.previous = s.previous
 	*now = now.Add(time.Hour)

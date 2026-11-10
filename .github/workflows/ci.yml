@@ -287,6 +287,12 @@ jobs:
       - name: Run installer regression tests
         run: sh deploy/install-agent.test.sh
 
+      - name: Lint publication script
+        run: shellcheck .github/scripts/release.sh
+
+      - name: Run offline publication transition tests
+        run: python3 .github/scripts/release.test.py
+
   release:
     name: Release
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

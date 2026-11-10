@@ -27,7 +27,7 @@ func fixture(t *testing.T) (*Service, *sql.DB, *time.Time) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return NewService(mainHandle(t, db), func() time.Time { return now }, nil), db, &now
+	return NewService(mainHandle(t, db), func() time.Time { return now }, nil, nil), db, &now
 }
 func exec(t *testing.T, db *sql.DB, query string, args ...any) {
 	t.Helper()
@@ -222,5 +222,48 @@ func TestCalculationWithoutDatabase(t *testing.T) {
 	}
 	if _, err := Project("broken", now); err == nil {
 		t.Fatal("invalid JSON accepted")
+	}
+}
+
+func TestTickBatchesRemainAtomic(t *testing.T) {
+	for _, failSecondBatch := range []bool{false, true} {
+		t.Run(fmt.Sprint(failSecondBatch), func(t *testing.T) {
+			s, db, now := fixture(t)
+			tx, err := db.Begin()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			for i := range 501 {
+				id := fmt.Sprintf("node-%04d", i)
+				if _, err := tx.Exec(`INSERT INTO nodes(id,name,status,token_hash,last_seen,created_at) VALUES(?,?,'unknown',?,?,?)`, id, id, []byte(id), timekey.Format(*now), timekey.Format(*now)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+			if failSecondBatch {
+				exec(t, db, `CREATE TRIGGER fail_availability_batch BEFORE INSERT ON node_availability_daily
+ WHEN (SELECT count(*) FROM node_availability_daily)>=500 BEGIN SELECT RAISE(ABORT,'second batch failed'); END`)
+			}
+			tick(t, s)
+			*now = now.Add(time.Minute)
+			err = s.Tick(t.Context())
+			if (err != nil) != failSecondBatch {
+				t.Fatalf("tick error=%v, fail second batch=%v", err, failSecondBatch)
+			}
+			var rows, online, offline int64
+			if err := db.QueryRow(`SELECT count(*),COALESCE(sum(online_seconds),0),COALESCE(sum(offline_seconds),0) FROM node_availability_daily`).Scan(&rows, &online, &offline); err != nil {
+				t.Fatal(err)
+			}
+			if failSecondBatch {
+				if rows != 0 || online != 0 || offline != 0 {
+					t.Fatalf("failed tick retained an earlier batch: rows=%d online=%d offline=%d", rows, online, offline)
+				}
+			} else if rows != 501 || online != 501*60 || offline != 0 {
+				t.Fatalf("incomplete observation batches: rows=%d online=%d offline=%d", rows, online, offline)
+			}
+		})
 	}
 }

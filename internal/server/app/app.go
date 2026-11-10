@@ -172,7 +172,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 	notifications := notify.New(db, box, notificationOptions)
 	alertService := alerts.NewService(db, nil)
 	trafficService := traffic.NewService(db)
-	availabilityService := availability.NewService(db, nil, logger)
+	availabilityService := availability.NewService(db, nil, logger, ingestService.LiveReceivedAt)
 	evaluator := alerts.NewEvaluator(alertService, ingestService, alerts.EvaluatorOptions{Logger: logger, Notifier: notifications, Quota: trafficService.Quota})
 	enrollments := enrollment.NewService(db, enrollment.Options{MaxNodes: cfg.MaxNodes})
 	enrollments.OnIdentityChange(func(replaced bool) {

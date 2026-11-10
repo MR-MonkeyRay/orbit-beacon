@@ -197,6 +197,27 @@ func (s *Service) claim(ctx context.Context) (Task, error) {
 		return Task{}, sql.ErrNoRows
 	}
 	if err = tx.Commit(); err != nil {
+		if !errors.Is(err, storage.ErrCommitUnknown) {
+			return Task{}, err
+		}
+		// 保留本次认领的收据，确认提交后才派发；未知时不认领别的任务。
+		for {
+			if err := ctx.Err(); err != nil {
+				return Task{}, err
+			}
+			committed, resolveErr := tx.ResolveCommit(ctx)
+			if resolveErr == nil {
+				if !committed {
+					return Task{}, err
+				}
+				break
+			}
+			if !workerDelay(ctx) {
+				return Task{}, ctx.Err()
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
 		return Task{}, err
 	}
 	task.State = "running"
