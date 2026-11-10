@@ -12,10 +12,16 @@
 
 登录控制台，打开 **数据管理 / Data management**（`/data`）：
 
-1. 查看当前活动业务库、历史库的分配空间、可复用空间和各类记录数；统计不含备库、控制库、SQLite WAL 或备份文件。MySQL 大小为引擎估计值。
+1. 查看当前活动业务库、历史库的分配空间、可复用空间和各类记录数；统计不含备库、控制库、SQLite WAL 或备份文件。MySQL 大小为引擎估计值，可复用空间未知；SQLite 和 MySQL 均支持空间整理。
 2. 选择保留天数（默认 30 天），勾选需要清理的历史类别，核对截止时间后输入 `CLEAN` 确认。只清理截止时间之前的数据，不删除账户、节点、配置、流量、活动告警、待投递通知或备份。
 3. 每次每类别最多删除 5000 条；仍有剩余时，刷新后重新勾选确认。清理分批提交，中断或失败可能已完成部分删除，先刷新核实，不要盲目重发。
-4. SQLite 删除后空闲页先供后续写入复用；需要缩小文件时，另选对应数据库的空间整理并输入 `COMPACT`。整理可能暂时阻塞写入，并需要额外磁盘空间，宜在低峰且空间充足时执行。MySQL 不提供此操作，删除后的空间由数据库复用。
+4. 删除后空间可先由数据库复用；需要整理时，另选对应数据库的空间整理并精确输入 `COMPACT`。手动清理本身不执行整理。整理只作用于所选当前活动逻辑域，不删除业务行，应用也不直接操作备库：SQLite 执行 `VACUUM` 与 WAL checkpoint；MySQL 对所选当前活动逻辑域的 InnoDB 实体表逐表执行 `OPTIMIZE TABLE`，包含该域内部元数据，不遍历其他 schema，不操作视图或非 InnoDB 表。物理维护不通过应用行复制同步备库；若配置 MySQL 原生 binlog 复制，语句按既有原生复制规则传播。
+
+整理会阻塞应用写入，MySQL 还可能等待或持有元数据锁，并需要额外磁盘空间，宜在低峰且空间充足时执行。整理不保证归还操作系统空间：MySQL 独立 `.ibd` 表空间可能释放文件空间，共享表空间通常只供内部复用，不承诺缩小系统表空间 `ibdata1`。整理请求最长执行 30 分钟。MySQL 逐表完成后不可整体回滚，失败、取消或超时不能撤销已完成的表整理；失败、超时或响应中断后先刷新核实，不要自动重试。
+
+请使用仓库更新后的反向代理模板；自定义代理也需将 `/api/v1/data-management/compact` 路径的上游响应超时放宽至 31 分钟，避免最长 30 分钟的整理被代理提前取消。
+
+MySQL 整理需具备所整理表的 `SELECT`、`INSERT` 权限。
 
 公告不在手动清理类别中；已结束公告按[保留规则](../docs/architecture.md#保留)自动清理。
 
@@ -181,7 +187,7 @@ database:
 - 私有 CA 示例：在 endpoint 中加入 `tls: {server_name: db.example, ca_file: /etc/orbitbeacon/mysql-ca.pem}`，并把 CA 文件只读挂载到同一路径。
 - `network` 默认 `tcp`。database 名以 ASCII 字母或下划线开头，后续只能是字母、数字、下划线，最长 64 字节，两个名称不能相同。SQLite endpoint 不接受 MySQL 字段或自定义路径。
 - 应用账户只需两个 database 内的 `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER`，不需要 SUPER 或全局 `CREATE DATABASE`。只允许这个 Server 写应用 schema；不要跑第二个使用不同 `data_dir` 的 Server，也不要让 DBA 直接改业务行。
-- MySQL 必须可写，使用事务型 InnoDB，并设置 `innodb_flush_log_at_trx_commit=1`；启用 binlog 时还要 `sync_binlog=1` 和 `log_bin_trust_function_creators=1`。Server 只校验条件，不改全局变量。所有连接固定 5 秒连接、读、写超时。
+- MySQL 必须可写，使用事务型 InnoDB，并设置 `innodb_flush_log_at_trx_commit=1`；启用 binlog 时还要 `sync_binlog=1` 和 `log_bin_trust_function_creators=1`。Server 只校验条件，不改全局变量。普通业务连接固定 5 秒连接、读、写超时；空间整理维护连接保留连接和写超时，不套用普通 5 秒读超时，按维护请求最长 30 分钟及取消控制。
 - COMMIT 结果未知会返回 `503 storage_commit_unknown`；先查当前状态，不要直接重发。主库故障不会拿旧缓存假装成功；历史库读不了时，包含 Monitoring 的归档会失败。
 - 保留并备份与数据库匹配的 `data_dir/secrets.key`。HA 集群完成初始化后缺 key 一律拒绝启动，不生成替代；只有控制记录还允许首次初始化，且确认业务库没有加密数据时，才可首次生成。其他部署如果已有 TOTP、通知或备份加密数据，key 缺失也会拒绝；恢复原 key 或用完整可验证的配置归档恢复。
 - systemd 沿用 `/etc/orbitbeacon/server.yaml`，secret 放在 `ProtectHome` 之外的 `/etc/orbitbeacon` 或 `/run`。Docker 的配置、secret 和 CA 只读挂载，secret 属主 `65532:65532`、`0600`；不要因为容器读不到就放宽权限。默认 Compose 不添加 MySQL 服务。

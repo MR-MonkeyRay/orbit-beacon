@@ -159,10 +159,10 @@ export function setNavigationSignal(signal) {
   for (const [key, entry] of cache) if (!entry.settled) cache.delete(key);
 }
 
-function requestSignal(callerSignal, navigation = true) {
+function requestSignal(callerSignal, navigation = true, timeout = 15000) {
   const controller = new AbortController();
   const signals = [callerSignal, navigation ? navigationSignal : null, sessionController.signal].filter(Boolean);
-  const timer = setTimeout(() => { cleanup(); controller.abort(new DOMException('Request timed out.', 'TimeoutError')); }, 15000);
+  const timer = setTimeout(() => { cleanup(); controller.abort(new DOMException('Request timed out.', 'TimeoutError')); }, timeout);
   const cleanup = () => {
     clearTimeout(timer);
     for (const signal of signals) signal.removeEventListener('abort', abort);
@@ -195,7 +195,7 @@ export async function api(path, options = {}) {
   const pageSignal = options.navigation === false ? null : navigationSignal;
   const headers = {'Content-Type': 'application/json'};
   if (method !== 'GET') headers['X-CSRF-Token'] = session.csrf;
-  const request = requestSignal(options.signal, options.navigation !== false);
+  const request = requestSignal(options.signal, options.navigation !== false, options.timeout);
   try {
     assertActive(request.signal);
     const response = await fetch(`/api/v1${path}`, {

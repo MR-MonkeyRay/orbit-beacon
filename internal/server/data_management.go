@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -197,7 +198,7 @@ func (h *handler) dataManagementStats(w http.ResponseWriter, r *http.Request, re
 		if lease.Dialect() == storage.MySQL {
 			driver = "mysql"
 		}
-		result.Databases = append(result.Databases, dataDatabaseStats{domain, driver, size, free, lease.Dialect() == storage.SQLite})
+		result.Databases = append(result.Databases, dataDatabaseStats{domain, driver, size, free, true})
 		if err = func() error {
 			tx, err := lease.BeginRead(ctx)
 			if err != nil {
@@ -300,6 +301,13 @@ func (h *handler) dataManagementCompact(w http.ResponseWriter, r *http.Request, 
 		h.serviceError(w, validation.Invalid("compact", "select an available domain and confirm COMPACT"), requestID)
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
+	defer cancel()
+	r = r.WithContext(ctx)
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(31 * time.Minute)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		h.serviceError(w, err, requestID)
+		return
+	}
 	main, err := h.storage.Main.Acquire(r.Context(), storage.Writer)
 	if err != nil {
 		h.serviceError(w, err, requestID)
@@ -314,10 +322,6 @@ func (h *handler) dataManagementCompact(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		defer lease.Close()
-	}
-	if lease.Dialect() != storage.SQLite {
-		h.serviceError(w, validation.Invalid("domain", "only SQLite supports compaction"), requestID)
-		return
 	}
 	if err = h.dataAudit(lease.Context(), main, "data.compact_intent", string(input.Domain), nil); err == nil {
 		err = lease.Compact(lease.Context())

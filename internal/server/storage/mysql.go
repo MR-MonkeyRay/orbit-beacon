@@ -177,6 +177,13 @@ func openMySQL(ctx context.Context, endpoint config.DatabaseEndpoint, domain Dom
 	if err != nil {
 		return nil, mysqlStartupFailure(domain, "connector", 0, err)
 	}
+	maintenanceConfig := cfg.Clone()
+	// Table rebuilds may outlast the ordinary query read timeout; context still cancels them.
+	maintenanceConfig.ReadTimeout = 0
+	maintenanceConnector, err := mysql.NewConnector(maintenanceConfig)
+	if err != nil {
+		return nil, mysqlStartupFailure(domain, "maintenance_connector", 0, err)
+	}
 	writer := sql.OpenDB(connector)
 	writer.SetMaxOpenConns(3)
 	writer.SetMaxIdleConns(3)
@@ -199,6 +206,7 @@ func openMySQL(ctx context.Context, endpoint config.DatabaseEndpoint, domain Dom
 	}
 	db := newDatabase(domain, writer, reader)
 	db.current.dialect = MySQL
+	db.current.maintenanceConnector = maintenanceConnector
 	return db, nil
 }
 

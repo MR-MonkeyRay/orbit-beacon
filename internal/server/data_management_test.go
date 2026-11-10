@@ -285,7 +285,7 @@ func TestMySQLDataManagementHistoryAndMySQLParity(t *testing.T) {
 				t.Fatalf("missing databases: %s", response.Body)
 			}
 			for _, db := range stats.Databases {
-				if db.Driver != driver || db.Compact != (driver == "sqlite") || (db.Reusable == nil) != (driver == "mysql") {
+				if db.Driver != driver || !db.Compact || (db.Reusable == nil) != (driver == "mysql") {
 					t.Fatalf("incorrect database capabilities: %+v", db)
 				}
 			}
@@ -323,13 +323,17 @@ func TestMySQLDataManagementHistoryAndMySQLParity(t *testing.T) {
 				t.Fatalf("history audit missing: %d %v", count, err)
 			}
 			main.Close()
-			if driver == "mysql" {
-				response = request(t, f.handler, "POST", "/api/v1/data-management/compact", `{"domain":"main","confirmation":"COMPACT"}`, cookie, csrf, publicURL)
-				apiError(t, response, 400, "validation_failed")
-			}
-			if driver == "sqlite" {
-				response = request(t, f.handler, "POST", "/api/v1/data-management/compact", `{"domain":"history","confirmation":"COMPACT"}`, cookie, csrf, publicURL)
+			for _, domain := range []string{"main", "history"} {
+				response = request(t, f.handler, "POST", "/api/v1/data-management/compact", `{"domain":"`+domain+`","confirmation":"COMPACT"}`, cookie, csrf, publicURL)
 				assertHTTPStatus(t, response, 200)
+			}
+			reader, err = dbs.History.Acquire(t.Context(), storage.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reader.Close()
+			if err = reader.QueryRowContext(reader.Context(), "SELECT COUNT(*) FROM buckets WHERE t=4102444800").Scan(&count); err != nil || count != 1 {
+				t.Fatalf("compaction changed live history: %d %v", count, err)
 			}
 		})
 	}

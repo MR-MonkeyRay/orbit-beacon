@@ -66,7 +66,7 @@ export function dataManagementPage() {
   function render() {
     compactButtons.length = 0;
     usage.replaceChildren(...snapshot.databases.map((database) => {
-      const compact = database.driver === 'sqlite' && database.compact_supported
+      const compact = database.compact_supported
         ? button(t('data.management.compact'), {variant: 'danger', onClick: () => openCompact(database)}) : null;
       if (compact) {
         compact.setAttribute('aria-label', `${t('data.management.compact')}: ${domainLabel(database.domain)}`);
@@ -153,7 +153,8 @@ export function dataManagementPage() {
   function openCompact(database) {
     if (!fresh || loading || dialog || !controller || controller.signal.aborted) return;
     openOperation('compact', {domain: database.domain, confirmation: 'COMPACT'}, h('div', {class: 'stack'},
-      callout(t('data.management.compactWarning')), facts([[t('data.management.database'), domainLabel(database.domain)]])));
+      callout(t(database.driver === 'mysql' ? 'data.management.mysqlCompactWarning' : 'data.management.compactWarning')),
+      facts([[t('data.management.database'), domainLabel(database.domain)]])));
   }
 
   function openOperation(kind, body, summary) {
@@ -179,7 +180,7 @@ export function dataManagementPage() {
         busy(submit, true);
         const signal = AbortSignal.any([current.signal, dialogSignal]);
         try {
-          const result = await api(`/data-management/${kind}`, {method: 'POST', body, signal});
+          const result = await api(`/data-management/${kind}`, {method: 'POST', body, signal, timeout: kind === 'compact' ? 31 * 60 * 1000 : undefined});
           if (signal.aborted) return;
           const rows = kind === 'cleanup' ? result.results.map((item) => h('li', null,
             t('data.management.deleted', {category: label(item.id), count: item.deleted_rows, rows: number(item.deleted_rows)}),

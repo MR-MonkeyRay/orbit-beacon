@@ -50,7 +50,7 @@ paths:
                         driver: {type: string, enum: [sqlite, mysql]}
                         size_bytes: {type: integer, minimum: 0, description: SQLite page_count × page_size；MySQL DATA_LENGTH + INDEX_LENGTH 估计值。}
                         reusable_bytes: {type: [integer, 'null'], minimum: 0, description: SQLite 空闲页大小；MySQL 为 null，不保证等于操作系统可回收空间。}
-                        compact_supported: {type: boolean}
+                        compact_supported: {type: boolean, description: SQLite 与 MySQL 均为 true；仅针对当前活动域。}
                   categories:
                     type: array
                     items:
@@ -71,7 +71,7 @@ paths:
         指标按桶时间、探测按小时、可用率按完整 UTC 日、告警按恢复时间、站内通知及审计按创建时间、终态投递按更新时间判断。
         保留触发中告警、pending 投递、账户、节点、设置、会话、流量及备份。站内通知同时级联删除已读关系，不重置通知序号。
         每类别最多删除 5000 行，分短事务提交；has_more=true 时需刷新后由管理员再次确认。类别间及批次间不承诺原子性，失败可能已有部分提交，必须刷新核实，禁止自动重发未知提交。
-        逻辑删除不承诺立即缩小数据库文件；SQLite 整理为独立操作，MySQL 不执行 OPTIMIZE 或 TRUNCATE。
+        逻辑删除不承诺立即缩小数据库文件；本接口不执行 VACUUM、OPTIMIZE 或 TRUNCATE，空间整理须另行调用 compact 接口。
       parameters:
         - {$ref: '#/components/parameters/Origin'}
         - {$ref: '#/components/parameters/CSRF'}
@@ -118,7 +118,12 @@ paths:
   /api/v1/data-management/compact:
     post:
       operationId: compactManagedDatabase
-      description: 管理员会话、Origin 与 CSRF 校验。只整理当前活动 SQLite 域；写 gate 内执行 VACUUM 与 WAL checkpoint，不改变逻辑行。可能暂时阻塞写入并需要额外磁盘空间。MySQL 拒绝，不能整理备库。失败或响应中断后先刷新核实，禁止自动重发。
+      description: |
+        管理员会话、Origin 与 CSRF 校验。只整理所选当前活动逻辑域，应用不直接操作备库，不删除业务行。
+        稳定租约和写 gate 内、事务外执行：SQLite 使用 VACUUM 与 WAL checkpoint；MySQL 对所选当前活动逻辑域的 InnoDB 实体表逐表执行 OPTIMIZE TABLE，包含该域内部元数据，不遍历其他 schema，不操作视图或非 InnoDB 表。
+        MySQL 需具备所整理表的 SELECT、INSERT 权限。物理维护不通过应用行复制同步备库；若配置 MySQL 原生 binlog 复制，语句按既有原生复制规则传播。
+        整理会阻塞应用写入，MySQL 还可能等待或持有元数据锁，并需要额外磁盘空间；应在低峰且空间充足时执行。不保证归还操作系统空间，MySQL 取决于独立 .ibd 或共享表空间等配置，不承诺缩小系统表空间 ibdata1。
+        整理请求最长执行 30 分钟。MySQL 逐表完成后不可整体回滚，失败、取消或超时不能撤销已完成的表整理。失败、超时或响应中断后先刷新核实，禁止自动重发。
       parameters:
         - {$ref: '#/components/parameters/Origin'}
         - {$ref: '#/components/parameters/CSRF'}

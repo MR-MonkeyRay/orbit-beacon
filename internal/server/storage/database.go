@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"github.com/google/uuid"
 	"sync"
@@ -37,13 +38,14 @@ type Databases struct {
 }
 
 type generation struct {
-	id             uint64
-	dialect        Dialect
-	writer, reader *sql.DB
-	ctx            context.Context
-	cancel         context.CancelFunc
-	refs           int
-	idle           chan struct{}
+	id                   uint64
+	dialect              Dialect
+	writer, reader       *sql.DB
+	maintenanceConnector driver.Connector
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	refs                 int
+	idle                 chan struct{}
 }
 
 type Database struct {
@@ -302,7 +304,7 @@ func (db *Database) publishGeneration(ctx context.Context, candidate *generation
 	genCtx, cancel := context.WithCancel(context.Background())
 	idle := make(chan struct{})
 	close(idle)
-	db.current = &generation{id: old.id + 1, dialect: candidate.dialect, writer: candidate.writer, reader: candidate.reader, ctx: genCtx, cancel: cancel, idle: idle}
+	db.current = &generation{id: old.id + 1, dialect: candidate.dialect, writer: candidate.writer, reader: candidate.reader, maintenanceConnector: candidate.maintenanceConnector, ctx: genCtx, cancel: cancel, idle: idle}
 	db.admitting = true
 	db.mu.Unlock()
 	return errors.Join(old.reader.Close(), old.writer.Close())

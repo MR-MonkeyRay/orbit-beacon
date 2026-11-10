@@ -33,6 +33,49 @@ test('API client classifies network and unreadable failures without exposing tra
   } finally { env.clean(); }
 });
 
+test('API requests retain the default deadline while extended requests wait until their own deadline', async (t) => {
+  const env = setup(t, (request) => new Promise((_resolve, reject) => {
+    request.signal.addEventListener('abort', () => reject(request.signal.reason), {once: true});
+  }));
+  try {
+    client.setSession(proof());
+    const ordinary = assert.rejects(client.api('/nodes'), (error) => error.code === 'timeout');
+    const extended = assert.rejects(client.api('/maintenance', {timeout: 60000}), (error) => error.code === 'timeout');
+    await env.advance(14999);
+    assert.equal(env.requests[0].signal.aborted, false);
+    assert.equal(env.requests[1].signal.aborted, false);
+    await env.advance(1);
+    await ordinary;
+    assert.equal(env.requests[1].signal.aborted, false);
+    await env.advance(44999);
+    assert.equal(env.requests[1].signal.aborted, false);
+    await env.advance(1);
+    await extended;
+    assert.equal(client.session.user.id, user.id);
+  } finally { env.clean(); }
+});
+
+for (const boundary of ['caller', 'navigation', 'session']) {
+  test(`extended API requests still stop at the ${boundary} boundary`, async (t) => {
+    const env = setup(t, (request) => new Promise((_resolve, reject) => {
+      request.signal.addEventListener('abort', () => reject(request.signal.reason), {once: true});
+    }));
+    const caller = new AbortController();
+    try {
+      client.setSession(proof());
+      const stopped = assert.rejects(client.api('/maintenance', {timeout: 31 * 60 * 1000, signal: caller.signal}),
+        (error) => error.name === 'AbortError');
+      await env.advance(15000);
+      assert.equal(env.requests[0].signal.aborted, false);
+      if (boundary === 'caller') caller.abort();
+      else if (boundary === 'navigation') env.page.abort();
+      else client.setSession({user: null, csrf_token: '', expires_at: ''});
+      await stopped;
+      assert.equal(env.requests[0].signal.aborted, true);
+    } finally { env.clean(); }
+  });
+}
+
 test('session replacement aborts old requests and fences late paginated cache results', async (t) => {
   let release;
   const env = setup(t, () => new Promise((resolve) => { release = resolve; }));

@@ -68,7 +68,9 @@ func TestMySQLDataManagementHACleanupReplicates(t *testing.T) {
 	}
 	await(false)
 	cookie, csrf := login(t, f, "admin")
-	response := request(t, f.handler, "POST", "/api/v1/data-management/cleanup", `{"categories":["audit_events"],"keep_days":30,"confirmation":"CLEAN","before":"2026-01-01T00:00:00Z"}`, cookie, csrf, publicURL)
+	response := request(t, f.handler, "POST", "/api/v1/data-management/compact", `{"domain":"main","confirmation":"COMPACT"}`, cookie, csrf, publicURL)
+	assertHTTPStatus(t, response, 200)
+	response = request(t, f.handler, "POST", "/api/v1/data-management/cleanup", `{"categories":["audit_events"],"keep_days":30,"confirmation":"CLEAN","before":"2026-01-01T00:00:00Z"}`, cookie, csrf, publicURL)
 	assertHTTPStatus(t, response, 200)
 	await(true)
 }

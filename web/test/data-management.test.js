@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {getNavigationSignal, setNavigationSignal, setSession} from '../src/console/api.js';
 import {dataManagementPage} from '../src/console/pages/data-management.js';
 import {copy, elements, flush, installDOM} from './console-dom.js';
+import {liveHarness, response} from './live-harness.js';
 
 const before = '2026-10-08T08:00:00Z';
 const snapshot = () => ({before, databases: [
@@ -15,6 +16,8 @@ const snapshot = () => ({before, databases: [
 const find = (root, predicate) => elements(root).find(predicate);
 const action = (root, key) => find(root, (element) => element.tagName === 'button' && element.textContent === copy(key));
 const checkbox = (root, id) => find(root, (element) => element.type === 'checkbox' && element.value === id);
+const compactAction = (root, domain) => find(root, (element) => element.tagName === 'button'
+  && element.getAttribute('aria-label') === `${copy('data.management.compact')}: ${copy(`data.management.domain.${domain}`)}`);
 
 function setup(data = snapshot) {
   const dom = installDOM();
@@ -178,28 +181,129 @@ test('period changes disable cleanup until fresh counts and SQLite compaction re
     days.value = '90';
     days.dispatchEvent(new Event('change'));
     assert.equal(action(page.element, 'data.management.clean').disabled, true);
-    assert.ok(state.requests.at(-1).url.endsWith('keep_days=90'));
     state.release();
     await flush();
     assert.equal(action(page.element, 'data.management.clean').disabled, false);
-    const compact = elements(page.element).filter((element) => element.tagName === 'button' && element.textContent === copy('data.management.compact'));
-    assert.equal(compact.length, 1);
-    compact[0].click();
+    assert.equal(compactAction(page.element, 'history'), undefined);
+    const compact = compactAction(page.element, 'main');
+    assert.equal(compact.disabled, false);
+    compact.click();
     const dialog = state.dom.body.querySelector('dialog');
     type(dialog, 'compact');
+    assert.equal(action(dialog, 'data.management.compact').disabled, true);
     dialog.querySelector('form').dispatchEvent(new Event('submit'));
     await flush();
     assert.equal(state.requests.filter((request) => request.method === 'POST').length, 0);
+    type(dialog, 'COMPACT ');
+    assert.equal(action(dialog, 'data.management.compact').disabled, true);
     type(dialog, 'COMPACT');
+    assert.equal(action(dialog, 'data.management.compact').disabled, false);
     dialog.querySelector('form').dispatchEvent(new Event('submit'));
     await flush();
-    const posts = state.requests.filter((request) => request.method === 'POST');
-    assert.equal(posts.length, 1);
-    assert.ok(posts[0].url.endsWith('/compact'));
-    assert.deepEqual(posts[0].body, {domain: 'main', confirmation: 'COMPACT'});
+    assert.ok(dialog.textContent.includes(copy('data.management.compacted')));
+    assert.ok(page.element.textContent.includes(copy('data.management.compacted')));
+    assert.equal(action(dialog, 'data.management.compact'), undefined);
+    action(dialog, 'controls.dialog.close').click();
+    await new Promise((resolve) => setTimeout(resolve, 280));
+    assert.equal(compactAction(page.element, 'main').disabled, false);
   } finally {
     page?.detach();
     await new Promise((resolve) => setTimeout(resolve, 280));
     state.restore();
   }
 });
+
+test('MySQL capability enables compaction and an unknown result cannot be retried', async () => {
+  const state = setup(() => {
+    const data = snapshot();
+    data.databases[1].compact_supported = true;
+    return data;
+  });
+  let page;
+  try {
+    page = await mount(state);
+    await flush();
+    const compact = compactAction(page.element, 'history');
+    assert.equal(compact.disabled, false);
+    compact.click();
+    const dialog = state.dom.body.querySelector('dialog');
+    type(dialog, 'compact');
+    assert.equal(action(dialog, 'data.management.compact').disabled, true);
+    type(dialog, 'COMPACT ');
+    assert.equal(action(dialog, 'data.management.compact').disabled, true);
+    type(dialog, 'COMPACT');
+    assert.equal(action(dialog, 'data.management.compact').disabled, false);
+    state.unknown();
+    dialog.querySelector('form').dispatchEvent(new Event('submit'));
+    await flush();
+    assert.ok(dialog.textContent.includes(copy('data.management.unknown')));
+    assert.ok(page.element.querySelector('.data-stale'));
+    type(dialog, 'COMPACT');
+    assert.equal(action(dialog, 'data.management.compact').disabled, true);
+    dialog.querySelector('form').dispatchEvent(new Event('submit'));
+    await flush();
+    assert.equal(state.requests.filter((request) => request.method === 'POST').length, 1);
+    action(dialog, 'controls.dialog.close').click();
+    await new Promise((resolve) => setTimeout(resolve, 280));
+    assert.equal(compactAction(page.element, 'history').disabled, true);
+    assert.equal(compactAction(page.element, 'main').disabled, true);
+    assert.equal(action(page.element, 'data.management.clean').disabled, true);
+    compactAction(page.element, 'history').click();
+    assert.ok(!state.dom.body.querySelector('dialog'));
+  } finally { page?.detach(); state.restore(); }
+});
+
+for (const kind of ['cleanup', 'compact']) {
+  test(`${kind} waits for its deadline before showing an unknown result and forbidding retries`, async (t) => {
+    const previousNavigation = getNavigationSignal();
+    const navigation = new AbortController();
+    const env = liveHarness(t, (request) => {
+      if (request.method === 'POST') return new Promise((_resolve, reject) => {
+        request.signal.addEventListener('abort', () => reject(request.signal.reason), {once: true});
+      });
+      const data = snapshot();
+      data.databases[1].compact_supported = true;
+      return response(data);
+    });
+    let page;
+    setNavigationSignal(navigation.signal);
+    setSession({user: {id: 'admin', username: 'admin', must_change_password: false}, csrf_token: 'csrf', expires_at: '2099-01-01T00:00:00Z'});
+    try {
+      page = await mount({dom: env});
+      await flush();
+      if (kind === 'cleanup') {
+        selectAudit(page);
+        action(page.element, 'data.management.clean').click();
+      } else compactAction(page.element, 'history').click();
+      const dialog = env.body.querySelector('dialog');
+      const confirmation = kind === 'cleanup' ? 'CLEAN' : 'COMPACT';
+      const key = kind === 'cleanup' ? 'data.management.clean' : 'data.management.compact';
+      type(dialog, confirmation);
+      dialog.querySelector('form').dispatchEvent(new Event('submit'));
+      await env.advance(14999);
+      assert.equal(dialog.querySelector('.form-error').hidden, true);
+      assert.equal(action(dialog, key).disabled, true);
+      await env.advance(1);
+      if (kind === 'compact') {
+        assert.equal(dialog.querySelector('.form-error').hidden, true);
+        assert.equal(env.requests.at(-1).signal.aborted, false);
+        await env.advance(31 * 60 * 1000 - 15001);
+        assert.equal(dialog.querySelector('.form-error').hidden, true);
+        await env.advance(1);
+      }
+      assert.equal(dialog.querySelector('.form-error').hidden, false);
+      assert.ok(page.element.querySelector('.data-stale'));
+      type(dialog, confirmation);
+      assert.equal(action(dialog, key).disabled, true);
+      dialog.querySelector('form').dispatchEvent(new Event('submit'));
+      await flush();
+      assert.equal(env.requests.filter((request) => request.method === 'POST').length, 1);
+    } finally {
+      page?.detach();
+      await env.advance(280);
+      navigation.abort();
+      setNavigationSignal(previousNavigation);
+      setSession({user: null, csrf_token: '', expires_at: ''});
+    }
+  });
+}

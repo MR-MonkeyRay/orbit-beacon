@@ -169,7 +169,7 @@ func (db *Database) privateLease(ctx context.Context, pool Pool) (*Lease, error)
 	gc, cancel := context.WithCancel(ctx)
 	idle := make(chan struct{})
 	close(idle)
-	g := &generation{id: db.current.id, dialect: db.current.dialect, writer: db.current.writer, reader: db.current.reader, ctx: gc, cancel: cancel, idle: idle}
+	g := &generation{id: db.current.id, dialect: db.current.dialect, writer: db.current.writer, reader: db.current.reader, maintenanceConnector: db.current.maintenanceConnector, ctx: gc, cancel: cancel, idle: idle}
 	lc, stopCancel := context.WithCancel(gc)
 	l := &Lease{db: db, gen: g, pool: pool, cancel: func() { stopCancel(); cancel() }, stop: func() bool { return true }, refs: 1}
 	l.ctx = context.WithValue(lc, leaseKey{}, &leaseBinding{lease: l})
@@ -541,7 +541,7 @@ func freshGeneration(candidate *generation, id uint64) *generation {
 	ctx, cancel := context.WithCancel(context.Background())
 	idle := make(chan struct{})
 	close(idle)
-	return &generation{id: id, dialect: candidate.dialect, writer: candidate.writer, reader: candidate.reader, ctx: ctx, cancel: cancel, idle: idle}
+	return &generation{id: id, dialect: candidate.dialect, writer: candidate.writer, reader: candidate.reader, maintenanceConnector: candidate.maintenanceConnector, ctx: ctx, cancel: cancel, idle: idle}
 }
 
 func (d *replicaDomain) drainForSwitch(ctx context.Context) error {
