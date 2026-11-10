@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"net/http"
+	"orbitbeacon/internal/agent/service"
 	v1 "orbitbeacon/internal/protocol/v1"
 	"os"
 	"path/filepath"
@@ -35,7 +37,7 @@ func TestEnrollmentCommandRecoversWithoutReadingTicketFile(t *testing.T) {
 }
 
 func TestEnrollmentCommandRemovesTokenOnlyAfterConfirmedSuccess(t *testing.T) {
-	for _, outcome := range []string{"success", "network failure", "credential rejection", "cancellation"} {
+	for _, outcome := range []string{"success", "network failure", "credential rejection", "cancellation", "explicit forbidden"} {
 		t.Run(outcome, func(t *testing.T) {
 			path := filepath.Join(privateTicketTempDir(t), "enrollment.token")
 			const secret = "private-enrollment-ticket"
@@ -49,6 +51,9 @@ func TestEnrollmentCommandRemovesTokenOnlyAfterConfirmedSuccess(t *testing.T) {
 			var wantErr error
 			if outcome != "success" {
 				wantErr = errors.New(outcome)
+			}
+			if outcome == "explicit forbidden" {
+				wantErr = &service.HTTPError{StatusCode: http.StatusForbidden, Code: "forbidden"}
 			}
 			_, err = runEnrollment(context.Background(), path, func(_ context.Context, token string) (v1.EnrollmentResponse, error) {
 				if token != secret {

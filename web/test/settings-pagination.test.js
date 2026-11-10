@@ -447,3 +447,44 @@ test('self deletion clears the session without fetching the administrator list a
     for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
   }
 });
+
+test('group deployment issues one node credential without a mode field', async () => {
+  const dom = installDOM();
+  const originals = new Map(['fetch', 'window', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
+  Object.assign(globalThis, {window: new EventTarget(), history: {state: null, replaceState() {}}, requestAnimationFrame: () => 0});
+  Object.assign(location, {pathname: '/settings', search: '', hash: '#groups', origin: 'https://example.test'});
+  setNavigationSignal(null); invalidate('nodes', 'groups');
+  setSession({user: {id: 'group-admin', username: 'admin', must_change_password: false}, csrf_token: 'csrf', expires_at: ''});
+  const writes = [];
+  globalThis.fetch = async (path, options) => {
+    if (options.method === 'POST') {
+      writes.push({path, body: JSON.parse(options.body)});
+      return new Response(JSON.stringify({token: 'fake-group-secret', server_version: '1.2.3', expires_at: new Date(Date.now() + 1800000).toISOString()}));
+    }
+    return new Response(JSON.stringify(path === '/api/v1/groups' ? {groups: [{id: 'group-one', name: 'Production'}]} : {nodes: [], has_more: false}));
+  };
+  const {closeDialogs} = await import('../src/console/ui/dialogs.js');
+  try {
+    const {settingsPage} = await import('../src/console/pages/settings.js');
+    const page = await settingsPage(); dom.body.append(page); dom.mutations(); await flush();
+    const deploy = elements(page).find((element) => element.tagName === 'button' && element.textContent === copy('settings.deployAgent'));
+    assert.ok(deploy);
+    for (const boundary of ['close', 'navigation', 'session']) {
+      const navigation = new AbortController(); setNavigationSignal(navigation.signal);
+      setSession({user: {id: 'group-admin', username: 'admin', must_change_password: false}, csrf_token: 'csrf', expires_at: ''});
+      deploy.focus(); deploy.click(); document.body.focus(); await flush();
+      assert.deepEqual(writes.at(-1), {path: '/api/v1/enrollments', body: {group_id: 'group-one'}});
+      assert.equal(dom.body.querySelector('dialog').querySelector('h2').textContent, copy('settings.deployAgentFor', {name: 'Production'}));
+      assert.equal(dom.body.querySelector('dialog').querySelectorAll('code').length, 2);
+      if (boundary === 'navigation') { navigation.abort(); setNavigationSignal(new AbortController().signal); }
+      if (boundary === 'session') setSession({user: {id: 'other-admin', username: 'Other', must_change_password: false}, csrf_token: 'changed', expires_at: ''});
+      closeDialogs(); document.body.focus(); await flush();
+      assert.equal(deploy.disabled, false);
+      assert.equal(document.activeElement, boundary === 'close' ? deploy : document.body);
+    }
+  } finally {
+    closeDialogs(); invalidate('nodes', 'groups'); setNavigationSignal(null); setSession({user: null, csrf_token: '', expires_at: ''});
+    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+    dom.restore();
+  }
+});

@@ -148,6 +148,9 @@ func TestErrorMappersPreserveContext(t *testing.T) {
 		status      int
 		code, retry string
 	}{
+		{"enrollment invalid", h.agentError, enrollment.ErrInvalidTicket, 403, "forbidden", ""},
+		{"enrollment rate", h.agentError, errors.Join(enrollment.ErrRateLimited, auth.ErrRateLimited), 403, "forbidden", "1"},
+		{"enrollment recovery", h.agentError, enrollment.ErrUnauthenticated, 401, "unauthenticated", ""},
 		{"agent rate", h.agentError, errors.Join(ingest.ErrRateLimited, auth.ErrRateLimited), 429, "rate_limited", "1"},
 		{"service rate", h.serviceError, errors.Join(ingest.ErrRateLimited, auth.ErrRateLimited), 429, "rate_limited", "1"},
 		{"agent missing", h.agentError, errors.Join(enrollment.ErrNotFound, nodes.ErrNotFound), 404, "enrollment_not_found", ""},
@@ -163,6 +166,9 @@ func TestErrorMappersPreserveContext(t *testing.T) {
 			}
 			if w.Code != test.status || response.Code != test.code || response.RequestID != "request" || w.Header().Get("Retry-After") != test.retry {
 				t.Fatalf("status %d response %+v headers %v", w.Code, response, w.Header())
+			}
+			if test.code == "forbidden" && response.Message != "Enrollment ticket is unavailable" {
+				t.Fatalf("enrollment error message = %q", response.Message)
 			}
 		})
 	}

@@ -2640,7 +2640,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createEnrollment
-      description: 仅限管理员。节点绑定票据 15 分钟过期且仅一次使用；批量票据 30 分钟过期，最多 100 次使用，受全局节点容量约束。仅此响应暴露原始令牌。
+      description: 仅限管理员。节点及分组部署票据均在 30 分钟后过期，仅可成功激活一次，受全局节点容量约束。仅此响应暴露原始令牌和服务端构建版本。
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -2651,20 +2651,15 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              description: 须恰好提供一个 UUID 目标。省略 mode 时从目标推断；显式 mode 须与目标一致。
+              description: 须恰好提供 node_id 或 group_id，未知字段会被拒绝。
               properties:
                 node_id: {type: string, format: uuid}
                 group_id: {type: string, format: uuid}
-                mode: {type: string, enum: [single, batch]}
               oneOf:
                 - required: [node_id]
                   not: {required: [group_id]}
-                  properties:
-                    mode: {const: single}
                 - required: [group_id]
                   not: {required: [node_id]}
-                  properties:
-                    mode: {const: batch}
       responses:
         '201':
           description: 票据及一次性明文令牌。
@@ -2673,7 +2668,7 @@ paths:
               schema:
                 allOf:
                   - {$ref: '#/components/schemas/Enrollment'}
-                  - {type: object, required: [token], properties: {token: {type: string, writeOnly: false}}}
+                  - {type: object, required: [token, server_version], properties: {token: {type: string, writeOnly: false}, server_version: {type: string, description: 服务端构建版本；仅签发响应提供。}}}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/enrollments/{id}:
     parameters:
@@ -2690,7 +2685,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     delete:
       operationId: revokeEnrollment
-      description: 仅限管理员。立即阻止所有使用及原本有效的精确重试。
+      description: 仅限管理员。立即阻止尚未消费票据的激活。
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -2702,19 +2697,20 @@ paths:
       operationId: enrollAgent
       security: [{enrollmentBearer: []}]
       description: |
-        发送前须先保存身份。成功请求可在票据领取后 24 小时内原样重试，
-        即使票据自然过期也可，但领取时绑定的凭据必须仍有效；吊销或后续凭据替换会阻止重试。
-        安装/令牌绑定不同返回 enrollment_conflict。新的节点绑定票据可原子地轮换
-        同一安装的凭据并使旧凭据失效。替换已有凭据时，previous_node_token 须在
-        领取事务内与当前凭据完全匹配；证明已失效或缺失返回 enrollment_conflict，
-        不更改凭据、所有权隔离标记（fence）、使用次数或回执。候选凭据已是当前凭据时保持幂等。
-        客户端重新加载持久化身份，将新的 256-bit 候选令牌与当前令牌分别持久化暂存，
-        以当前令牌作为 CAS 证明，保留候选令牌以支持跨重启/失败的原样重试，
-        仅在确认接受后才将候选令牌设为当前令牌。须先升级服务器，再升级发送轮换证明的 Agent。
-        无票据恢复使用 POST /api/agent/v1/recover，包括 run_generation 为 0 的身份。
+        发送前须先保存身份。票据仅允许一次成功激活，以完整事务提交为准；同一请求重放也会失败。
+        缺失、过长、未知、过期、吊销或已消费的票据统一返回 403 forbidden，
+        消息固定为 Enrollment ticket is unavailable。旧多次票据只要 uses 大于 0 也立即失效。
+        有效且未消费票据的安装/令牌绑定冲突返回 409 enrollment_conflict。
+        新的节点绑定票据可原子地轮换同一安装的凭据并使旧凭据失效。
+        替换已有凭据时，previous_node_token 须在领取事务内与当前凭据完全匹配；
+        证明已失效或缺失返回 enrollment_conflict，不更改凭据、所有权隔离标记（fence）、使用次数或认领记录。
+        客户端将新的 256-bit 候选令牌与当前令牌分别持久化暂存，以当前令牌作为 CAS 证明，
+        仅在确认接受后才将候选令牌设为当前令牌。响应丢失时可单独使用 POST /api/agent/v1/recover
+        确认已保存的凭据，包括 run_generation 为 0 的身份；显式票据的 403 不自动转为恢复。
         只读票据查找先于请求体读取与写事务，领取时会在事务中重新执行全部授权校验。
-        无效/缺失凭据使用有界的直连对端 IP 令牌桶与全局令牌桶
-        （突发容量分别为 32 与 256，均每秒补充一个令牌）；转发头与源端口不参与选择桶。
+        无效/缺失凭据使用有界的客户端 IP 令牌桶与全局令牌桶
+        （突发容量分别为 32 与 256，均每秒补充一个令牌）；客户端 IP 遵循可信代理配置，源端口不参与选择桶。
+        耗尽无效凭据预算仍返回相同的 403 forbidden，并附 Retry-After。
         初步判定可用的票据绕过这些无效凭据限流桶。对端状态最多 1024 条，超出时逐出最旧条目。
       requestBody:
         required: true
@@ -2749,12 +2745,24 @@ paths:
                 properties:
                   node_id: {type: string, format: uuid}
                   server_time: {type: string, format: date-time}
+        '403':
+          description: forbidden；票据不可用，消息固定为 Enrollment ticket is unavailable。无效凭据预算耗尽时附 Retry-After。
+          headers:
+            Retry-After: {schema: {type: integer, minimum: 1}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '409':
+          description: 有效且未消费票据的身份或当前凭据证明冲突，或节点容量不足。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/agent/v1/enroll/check:
     post:
       operationId: checkAgentEnrollmentClaim
       security: [{enrollmentBearer: []}]
-      description: 针对本地票据关联缺失的只读回执检查。在读取请求体前执行与注册相同的票据准入检查。在一个 SQLite 读取快照中检查吊销状态；对未领取票据检查自然过期与配额，对已领取回执检查 24 小时重试窗口（含边界）及完全匹配的当前有效凭据。不创建节点、不消耗票据、不轮换凭据、不重置隔离标记（fence）、不刷新在线状态、不产生成功审计。新票据返回 claimed 为 false 且无 node_id；完全匹配的有效回执返回 claimed 为 true 及其 node_id。错误、已删除或已被取代的回执返回冲突。请求体上限 64 KiB。
+      description: 只读票据预检，用于识别本地 NodeID 丢失但凭据已绑定的情况。在读取请求体前执行与注册相同的票据准入检查；在一个读取快照中验证票据未消费、未吊销且未过期，并检查精确的凭据/安装绑定。不创建节点、不消耗票据、不轮换凭据、不重置隔离标记（fence）、不刷新在线状态、不产生成功审计。成功仅返回 claimed 为 false、credential_state 为 active 或 unbound 及 server_time，不返回 node_id。失效票据与注册相同，统一返回 403 forbidden 及固定消息 Enrollment ticket is unavailable；无效凭据预算耗尽时仍为 403 并附 Retry-After。预检成功不保证稍后的激活成功，激活事务会重新授权。请求体上限 64 KiB。
       requestBody:
         required: true
         content:
@@ -2764,12 +2772,12 @@ paths:
               additionalProperties: false
               required: [protocol_version, installation_id, node_token]
               properties:
-                protocol_version: {const: 2, description: 回执检查版本；注册与上报仍为版本 1。版本 1 的检查在任何领取前以 426 拒绝。}
+                protocol_version: {const: 2, description: 票据预检版本；注册与上报仍为版本 1。版本 1 的检查在任何领取前以 426 拒绝。}
                 installation_id: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
                 node_token: {type: string, minLength: 43, maxLength: 43, writeOnly: true}
       responses:
         '200':
-          description: 回执状态；从不返回会话/节点凭据。
+          description: 可用票据及凭据绑定状态；从不返回节点 ID、会话或节点凭据。
           content:
             application/json:
               schema:
@@ -2777,18 +2785,19 @@ paths:
                 additionalProperties: false
                 required: [claimed, credential_state, server_time]
                 properties:
-                  claimed: {type: boolean}
+                  claimed: {type: boolean, const: false}
                   credential_state:
                     type: string
                     enum: [active, unbound]
                     description: 同一读取快照中精确的凭据/安装绑定。缺失/未知状态由客户端在暂存前拒绝。
-                  node_id: {type: string, format: uuid}
                   server_time: {type: string, format: date-time}
-                oneOf:
-                  - properties: {claimed: {const: true}, credential_state: {const: active}}
-                    required: [node_id]
-                  - properties: {claimed: {const: false}}
-                    not: {required: [node_id]}
+        '403':
+          description: forbidden；票据不可用，消息固定为 Enrollment ticket is unavailable。无效凭据预算耗尽时附 Retry-After。
+          headers:
+            Retry-After: {schema: {type: integer, minimum: 1}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/agent/v1/recover:
     post:
@@ -2816,6 +2825,11 @@ paths:
                 properties:
                   node_id: {type: string, format: uuid}
                   server_time: {type: string, format: date-time}
+        '401':
+          description: unauthenticated；已保存的节点凭据或安装绑定无效。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/agent/v1/report:
     post:
@@ -4265,7 +4279,7 @@ components:
         node_id: {type: [string, 'null'], format: uuid}
         group_id: {type: [string, 'null'], format: uuid}
         expires_at: {type: string, format: date-time}
-        max_uses: {type: integer, minimum: 1, maximum: 100}
+        max_uses: {type: integer, const: 1, description: 当前有效上限；uses 保留历史实际使用次数。}
         uses: {type: integer, minimum: 0}
         revoked_at: {type: [string, 'null'], format: date-time}
     System:

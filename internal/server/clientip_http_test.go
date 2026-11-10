@@ -116,29 +116,31 @@ func TestEnrollmentAdmissionUsesTrustedClientIP(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		attempt := func(ip string) int {
+		attempt := func(ip string) *httptest.ResponseRecorder {
 			r := httptest.NewRequest(http.MethodPost, publicURL+"/api/agent/v1/enroll/check", strings.NewReader("{}"))
 			r.RemoteAddr = "10.0.0.1:1234"
 			r.Header.Set("X-Forwarded-For", ip)
 			r.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, r)
-			return w.Code
+			return w
 		}
 		for range 32 {
-			if status := attempt("192.0.2.1"); status != http.StatusUnauthorized {
-				t.Fatalf("trusted=%v: initial status %d", trust, status)
+			response := attempt("192.0.2.1")
+			assertHTTPStatus(t, response, http.StatusForbidden)
+			if response.Header().Get("Retry-After") != "" {
+				t.Fatalf("trusted=%v: initial request unexpectedly rate limited", trust)
 			}
 		}
-		if status := attempt("192.0.2.1"); status != http.StatusTooManyRequests {
-			t.Fatalf("trusted=%v: exhausted status %d", trust, status)
+		response := attempt("192.0.2.1")
+		assertHTTPStatus(t, response, http.StatusForbidden)
+		if response.Header().Get("Retry-After") == "" {
+			t.Fatalf("trusted=%v: exhausted bucket lacks Retry-After", trust)
 		}
-		want := http.StatusTooManyRequests
-		if trust {
-			want = http.StatusUnauthorized
-		}
-		if status := attempt("192.0.2.2"); status != want {
-			t.Errorf("trusted=%v: different client status %d, want %d", trust, status, want)
+		response = attempt("192.0.2.2")
+		assertHTTPStatus(t, response, http.StatusForbidden)
+		if limited := response.Header().Get("Retry-After") != ""; limited == trust {
+			t.Errorf("trusted=%v: different client rate limited=%v", trust, limited)
 		}
 	}
 }

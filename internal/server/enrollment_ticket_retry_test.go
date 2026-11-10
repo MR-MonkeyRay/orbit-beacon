@@ -3,9 +3,11 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 
 	"orbitbeacon/internal/agent/identity"
@@ -13,8 +15,8 @@ import (
 	"orbitbeacon/internal/server/nodes"
 )
 
-func TestOriginalTicketRetryAfterReportPromotionKeepsExactCredential(t *testing.T) {
-	for _, name := range []string{"durable association", "legacy identity without association", "legacy active receipt with unrelated pending"} {
+func TestOriginalTicketRetryAfterReportPromotionIsForbidden(t *testing.T) {
+	for _, name := range []string{"durable association", "legacy identity without association", "legacy identity with unrelated pending"} {
 		legacy := name != "durable association"
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
@@ -28,7 +30,13 @@ func TestOriginalTicketRetryAfterReportPromotionKeepsExactCredential(t *testing.
 				t.Fatal(err)
 			}
 			state, path := clientState(t)
-			https := httptest.NewTLSServer(f.handler)
+			var recoveries atomic.Int64
+			https := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/agent/v1/recover" {
+					recoveries.Add(1)
+				}
+				f.handler.ServeHTTP(w, r)
+			}))
 			defer https.Close()
 			dropper := &enrollmentResponseDropper{base: https.Client().Transport}
 			client, err := service.NewClient(service.ClientOptions{ServerURL: https.URL, HTTPClient: &http.Client{Transport: dropper}, Identity: state})
@@ -59,7 +67,7 @@ func TestOriginalTicketRetryAfterReportPromotionKeepsExactCredential(t *testing.
 			if promoted.NodeToken != candidate || promoted.PendingNodeToken != "" {
 				t.Fatal("report did not promote the committed candidate")
 			}
-			if name == "legacy active receipt with unrelated pending" {
+			if name == "legacy identity with unrelated pending" {
 				promoted, _, err = state.StageEnrollment(t.Context(), [32]byte{99}, true)
 				if err != nil {
 					t.Fatal(err)
@@ -92,8 +100,13 @@ func TestOriginalTicketRetryAfterReportPromotionKeepsExactCredential(t *testing.
 				t.Fatal(err)
 			}
 			defer retry.Close()
-			if _, err := retry.Enroll(ctx, ticket.Token); err != nil {
-				t.Fatalf("original ticket could not confirm its report-promoted credential: %v", err)
+			_, err = retry.Enroll(ctx, ticket.Token)
+			var rejected *service.HTTPError
+			if !errors.As(err, &rejected) || rejected.StatusCode != http.StatusForbidden {
+				t.Fatalf("original spent ticket did not return 403: %v", err)
+			}
+			if recoveries.Load() != 0 {
+				t.Fatal("explicit retry invoked independent credential recovery")
 			}
 			if reopened.Current() != promoted {
 				t.Fatal("exact retry invented a candidate or changed the durable run")
@@ -114,7 +127,7 @@ func TestOriginalTicketRetryAfterReportPromotionKeepsExactCredential(t *testing.
 				t.Fatal("fresh ticket did not rotate to a new credential")
 			}
 			if _, err := retry.Enroll(ctx, ticket.Token); err == nil {
-				t.Fatal("superseded receipt unexpectedly succeeded")
+				t.Fatal("superseded spent ticket unexpectedly succeeded")
 			}
 			if reopened.Current() != newest {
 				t.Fatal("superseded ticket staged a spurious candidate")

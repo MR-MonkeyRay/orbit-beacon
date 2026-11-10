@@ -12,7 +12,7 @@ import (
 	"orbitbeacon/internal/server/ingest"
 )
 
-func TestCredentialRotationReleasesPoisonedFenceWithoutResettingExactRetries(t *testing.T) {
+func TestCredentialRotationReleasesPoisonedFenceWithoutResettingOnRejectedReplay(t *testing.T) {
 	for _, generation := range []uint64{1, math.MaxUint64} {
 		t.Run(reportGenerationName(generation), func(t *testing.T) {
 			f := newAgentHTTP(t, 1)
@@ -38,10 +38,10 @@ func TestCredentialRotationReleasesPoisonedFenceWithoutResettingExactRetries(t *
 			if err != nil || latest.SessionID != "new-session" || latest.Seq != 1 || *latest.Metrics.CPUPercent != 25 {
 				t.Fatalf("rotation retained revoked snapshot: %+v, %v", latest, err)
 			}
-			assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, claim), http.StatusOK)
+			apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, claim), http.StatusForbidden, "forbidden")
 			restarted := ingest.NewService(f.nodes.Database(), ingest.Options{Now: func() time.Time { return f.now }})
 			if _, err := acceptReport(context.Background(), restarted, newToken, mustReport(t, reportBody(1, 2, "clone", 50))); err == nil {
-				t.Fatal("exact enrollment retry reset established session fence")
+				t.Fatal("rejected enrollment replay reset established session fence")
 			}
 			if _, err := acceptReport(context.Background(), restarted, newToken, mustReport(t, reportBody(1, 2, "new-session", 30))); err != nil {
 				t.Fatalf("rotated reporting failed after restart: %v", err)

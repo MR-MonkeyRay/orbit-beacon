@@ -571,9 +571,11 @@ if [ -s "$tmp/token" ]; then
         fi
     fi
     if [ "$enrolled" != 1 ]; then
-        say "注册失败。请保留 $token_file；重试前不要删除。"
-        say "以 $account 身份重试：$binary enroll --install-policy $policy --config $runtime_config --token-file $token_file"
-        die '请检查服务器 URL、CA、网络和票据有效期。服务未启用。'
+        say "注册失败。请保留 $token_file；服务未启用。"
+        say "尚未提交且票据仍有效时，以 $account 身份重试：$binary enroll --install-policy $policy --config $runtime_config --token-file $token_file"
+        say "可能已提交但响应丢失时，以 $account 身份确认已有凭据：$binary enroll --install-policy $policy --config $runtime_config"
+        say '确认成功后，不再传入字符串或票据文件，使用原安装参数加 < /dev/null 重新运行安装器以补装并启动服务。恢复不会删除残留票据。'
+        die '请检查服务器 URL、CA、网络；票据只能在 30 分钟内首次成功激活，重复使用返回 403。'
     fi
     say '注册成功（Agent 在成功后自行删除票据）。'
 elif has_identity; then

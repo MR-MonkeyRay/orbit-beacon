@@ -3,12 +3,14 @@ package service_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"orbitbeacon/internal/agent/identity"
@@ -16,7 +18,7 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
-func TestEnrollmentPersistsIdentityBeforeRequestAndReusesItAfterLostResponse(t *testing.T) {
+func TestEnrollmentPersistsCandidateAndRequiresSeparateRecoveryAfterLostResponse(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "identity.json")
 	state, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
@@ -25,9 +27,20 @@ func TestEnrollmentPersistsIdentityBeforeRequestAndReusesItAfterLostResponse(t *
 	const shortLivedToken = "short-lived-enrollment-token-never-saved"
 	var mu sync.Mutex
 	var requests []v1.EnrollmentRequest
+	var recoveries atomic.Int64
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/agent/v1/enroll/check" {
 			_, _ = w.Write([]byte(`{"claimed":false,"credential_state":"unbound","server_time":"2026-10-26T12:00:00Z"}`))
+			return
+		}
+		if r.URL.Path == "/api/agent/v1/recover" {
+			mu.Lock()
+			recoveries.Add(1)
+			if len(requests) == 0 || r.Header.Get("Authorization") != "Bearer "+requests[0].NodeToken {
+				t.Error("recovery did not use the durable candidate")
+			}
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"node_id":"bound-node","server_time":"2026-10-26T12:00:00Z"}`))
 			return
 		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/agent/v1/enroll" || r.URL.RawQuery != "" {
@@ -69,8 +82,8 @@ func TestEnrollmentPersistsIdentityBeforeRequestAndReusesItAfterLostResponse(t *
 			_ = connection.Close()
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"node_id":"bound-node","server_time":"2026-10-26T12:00:00Z"}`))
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"code":"forbidden","message":"Enrollment ticket is unavailable"}`))
 	}))
 	defer server.Close()
 	client, err := service.NewClient(service.ClientOptions{ServerURL: server.URL, HTTPClient: server.Client(), Identity: state})
@@ -88,13 +101,25 @@ func TestEnrollmentPersistsIdentityBeforeRequestAndReusesItAfterLostResponse(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Enroll(context.Background(), shortLivedToken); err != nil {
-		t.Fatal(err)
+	before := reopened.Current()
+	_, err = client.Enroll(context.Background(), shortLivedToken)
+	var rejected *service.HTTPError
+	if !errors.As(err, &rejected) || rejected.StatusCode != http.StatusForbidden {
+		t.Fatalf("explicit retry did not preserve ticket rejection: %v", err)
+	}
+	if reopened.Current() != before || recoveries.Load() != 0 {
+		t.Fatal("explicit ticket rejection changed identity or invoked recovery")
+	}
+	if _, err := client.Enroll(context.Background(), ""); err != nil {
+		t.Fatalf("independent candidate recovery failed: %v", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(requests) != 2 || requests[0].InstallationID != requests[1].InstallationID || requests[0].NodeToken != requests[1].NodeToken || requests[0].ProtocolVersion != 1 {
-		t.Fatal("retry changed claim identity")
+		t.Fatal("explicit retry changed the durable candidate")
+	}
+	if recoveries.Load() != 1 || reopened.Current().NodeID != "bound-node" {
+		t.Fatal("ticketless recovery did not confirm the durable candidate exactly once")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

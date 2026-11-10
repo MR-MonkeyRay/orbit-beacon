@@ -217,7 +217,7 @@ func runAgent(args []string, logger *slog.Logger) error {
 func runEnroll(args []string, logger *slog.Logger) error {
 	var tokenFile string
 	command, err := prepareRuntimeCommand("enroll", args, func(fs *flag.FlagSet) error {
-		fs.StringVar(&tokenFile, "token-file", "", "可选的注册票据文件；省略则找回已保存的节点凭据")
+		fs.StringVar(&tokenFile, "token-file", "", "用于首次激活的注册票据文件；省略仅恢复已保存凭据")
 		return nil
 	})
 	if err != nil || command == nil {

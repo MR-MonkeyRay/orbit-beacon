@@ -58,22 +58,63 @@ func TestRotationStagingFailureDoesNotSendRequestOrReplaceActiveToken(t *testing
 	}
 }
 
-func TestMissingReceiptCredentialStateFailsBeforeClaimOrStaging(t *testing.T) {
+func TestInvalidEnrollmentCheckFailsBeforeClaimOrStaging(t *testing.T) {
+	for _, response := range []string{
+		`{"claimed":true,"node_id":"already-active-node","credential_state":"active","server_time":"2026-10-26T12:00:00Z"}`,
+		`{"claimed":false,"node_id":"already-active-node","credential_state":"active","server_time":"2026-10-26T12:00:00Z"}`,
+		`{"claimed":false,"server_time":"2026-10-26T12:00:00Z"}`,
+		`{"claimed":false,"credential_state":"unknown","server_time":"2026-10-26T12:00:00Z"}`,
+		`{"claimed":false,"credential_state":"unbound"}`,
+	} {
+		t.Run(response, func(t *testing.T) {
+			state, err := identity.Open(t.Context(), filepath.Join(t.TempDir(), "identity.json"), identity.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := state.Current()
+			var claims atomic.Int64
+			https := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/agent/v1/enroll/check" {
+					_, _ = w.Write([]byte(response))
+					return
+				}
+				claims.Add(1)
+				_, _ = w.Write([]byte(`{"node_id":"already-active-node","server_time":"2026-10-26T12:00:00Z"}`))
+			}))
+			defer https.Close()
+			client, err := service.NewClient(service.ClientOptions{ServerURL: https.URL, HTTPClient: https.Client(), Identity: state})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			if _, err := client.Enroll(context.Background(), "fresh-ticket"); err == nil {
+				t.Fatal("invalid or legacy claimed check response was accepted")
+			}
+			if claims.Load() != 0 || state.Current() != before {
+				t.Fatal("invalid check response allowed credential staging or ticket consumption")
+			}
+		})
+	}
+}
+
+func TestEnrollmentCheckConflictDoesNotRetryWithAnotherCredential(t *testing.T) {
 	state, err := identity.Open(t.Context(), filepath.Join(t.TempDir(), "identity.json"), identity.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := state.StageEnrollment(t.Context(), [32]byte{1}, true); err != nil {
+		t.Fatal(err)
+	}
 	before := state.Current()
-	var claims atomic.Int64
+	var checks, claims atomic.Int64
 	https := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/agent/v1/enroll/check" {
-			// 更旧或不完整的响应无法区分已提交但本地节点绑定丢失的凭据
-			// 与一个新身份。
-			_, _ = w.Write([]byte(`{"claimed":false,"server_time":"2026-10-26T12:00:00Z"}`))
+			checks.Add(1)
+			w.WriteHeader(http.StatusConflict)
 			return
 		}
 		claims.Add(1)
-		_, _ = w.Write([]byte(`{"node_id":"already-active-node","server_time":"2026-10-26T12:00:00Z"}`))
+		w.WriteHeader(http.StatusForbidden)
 	}))
 	defer https.Close()
 	client, err := service.NewClient(service.ClientOptions{ServerURL: https.URL, HTTPClient: https.Client(), Identity: state})
@@ -81,10 +122,10 @@ func TestMissingReceiptCredentialStateFailsBeforeClaimOrStaging(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	if _, err := client.Enroll(context.Background(), "fresh-ticket"); err == nil {
-		t.Fatal("missing credential state was silently treated as inactive")
+	if _, err := client.Enroll(t.Context(), "fresh-ticket"); err == nil {
+		t.Fatal("conflicting enrollment preflight succeeded")
 	}
-	if claims.Load() != 0 || state.Current() != before {
-		t.Fatal("ambiguous old response allowed credential staging or ticket consumption")
+	if checks.Load() != 1 || claims.Load() != 0 || state.Current() != before {
+		t.Fatal("conflicting preflight changed credentials, retried, or consumed its ticket")
 	}
 }

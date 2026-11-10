@@ -42,6 +42,7 @@ async function setup(t, {fail = false, pending = false, nodes = [{id, name: '<Ho
     requests.push({url, ...options});
     if (url === '/api/v1/me') return new Response(JSON.stringify(account));
     if (url === '/api/v1/nodes' && options.method === 'POST') return new Response(JSON.stringify({id, name: 'New Host'}));
+    if (url === '/api/v1/enrollments') return new Response(JSON.stringify({token: 'test-deployment-secret', server_version: '1.2.3', expires_at: new Date(Date.now() + 1800000).toISOString()}));
     if (url.startsWith('/api/v1/nodes?')) {
       if (pending) return new Promise(() => {});
       if (fail) return new Response('{}', {status: 503});
@@ -161,18 +162,25 @@ test('command palette close, navigation and Escape abort pending node reads with
   assert.equal(read().signal.aborted, true); assert.equal(document.querySelector('dialog'), null);
 });
 
-test('command palette add-node action opens the existing dialog and creation links directly to enrollment', async (t) => {
+test('command palette add-node creates once, deploys in a second dialog, then navigates to enrollment', async (t) => {
   const env = await setup(t); env.openCommandPalette(); await flush();
   type(copy('nodes.add')); assert.equal(options().length, 1);
   press(entry(), 'Enter'); await flush();
   const dialog = document.querySelector('dialog');
   assert.equal(dialog.querySelector('h2').textContent, copy('nodes.add'));
   const name = dialog.querySelector('input'); name.value = 'New Host';
-  dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+  const form = dialog.querySelector('form');
+  form.dispatchEvent(new Event('submit', {cancelable: true}));
+  form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+  const deployment = document.querySelector('dialog');
+  assert.notEqual(deployment, dialog); assert.equal(deployment.querySelectorAll('code').length, 2);
+  assert.equal(location.pathname, pagePath('overview'));
+  const posts = env.requests.filter((request) => request.url === '/api/v1/nodes' && request.method === 'POST');
+  assert.equal(posts.length, 1); assert.deepEqual(JSON.parse(posts[0].body), {name: 'New Host'});
+  assert.deepEqual(JSON.parse(env.requests.find((request) => request.url === '/api/v1/enrollments').body), {node_id: id});
+  deployment.querySelectorAll('button').find((button) => button.textContent === copy('nodes.close')).click(); await flush();
   assert.equal(location.pathname, nodePath); assert.equal(location.hash, '#enrollment');
   assert.equal(document.querySelector('dialog'), null);
-  const post = env.requests.find((request) => request.url === '/api/v1/nodes' && request.method === 'POST');
-  assert.deepEqual(JSON.parse(post.body), {name: 'New Host'});
 });
 
 test('command palette retains typed filtering when node reads finish and paginates the existing inventory API', async (t) => {
@@ -193,3 +201,55 @@ test('command palette retains typed filtering when node reads finish and paginat
   assert.deepEqual(options().map((option) => option.textContent), ['Beta node']);
   assert.equal(entry().value, 'bet');
 });
+
+test('creation failure never issues a deployment credential', async (t) => {
+  const env = await setup(t); const original = globalThis.fetch;
+  globalThis.fetch = async (url, options) => url === '/api/v1/nodes' && options.method === 'POST'
+    ? new Response(JSON.stringify({message: 'Create failed'}), {status: 500}) : original(url, options);
+  const {createNodeDialog} = await import('../src/console/lib/add-node-dialog.js');
+  createNodeDialog(); const dialog = document.querySelector('dialog'); dialog.querySelector('input').value = 'New Host';
+  dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+  assert.equal(document.querySelector('dialog'), dialog);
+  const error = dialog.querySelector('.form-error');
+  assert.equal(error.hidden, false); assert.ok(error.textContent);
+  assert.equal(env.requests.some((request) => request.url === '/api/v1/enrollments'), false);
+});
+
+test('failed issuance preserves the new node and navigates to its enrollment page', async (t) => {
+  const env = await setup(t); const original = globalThis.fetch;
+  globalThis.fetch = async (url, options) => url === '/api/v1/enrollments'
+    ? new Response(JSON.stringify({message: 'Issue failed'}), {status: 500}) : original(url, options);
+  const {createNodeDialog} = await import('../src/console/lib/add-node-dialog.js');
+  createNodeDialog(); const dialog = document.querySelector('dialog'); dialog.querySelector('input').value = 'New Host';
+  dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush(); await flush();
+  assert.equal(location.pathname, nodePath); assert.equal(location.hash, '#enrollment');
+  assert.ok(document.querySelector('#toasts').textContent.includes(copy('nodes.enrollment.issueFailedAfterCreate')));
+  assert.equal(env.requests.filter((request) => request.url === '/api/v1/nodes' && request.method === 'POST').length, 1);
+  assert.equal(env.requests.some((request) => request.method === 'DELETE'), false);
+});
+
+for (const phase of ['create', 'issue']) for (const boundary of ['close', 'navigation', 'session']) {
+  if (phase === 'issue' && boundary === 'close') continue;
+  test(`node deployment ignores late ${phase} response after ${boundary}`, async (t) => {
+    const env = await setup(t); const original = globalThis.fetch; let release;
+    globalThis.fetch = async (url, options) => {
+      if ((phase === 'create' && url === '/api/v1/nodes' && options.method === 'POST') || (phase === 'issue' && url === '/api/v1/enrollments')) {
+        return new Promise((resolve) => { release = () => resolve(new Response(JSON.stringify(phase === 'create' ? {id, name: 'New Host'} : {token: 'late-fake-secret', server_version: '1.2.3', expires_at: new Date(Date.now() + 1800000).toISOString()}))); });
+      }
+      return original(url, options);
+    };
+    const {createNodeDialog} = await import('../src/console/lib/add-node-dialog.js');
+    createNodeDialog(); const dialog = document.querySelector('dialog'); dialog.querySelector('input').value = 'New Host';
+    dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+    assert.equal(typeof release, 'function');
+    if (boundary === 'close') closeDialogs();
+    if (boundary === 'navigation') await env.go(pagePath('settings'), {force: true});
+    if (boundary === 'session') setSession({user: {id: 'other-admin', username: 'Other', must_change_password: false}, csrf_token: 'changed', expires_at: ''});
+    const expectedPath = location.pathname;
+    release(); await flush(); await flush();
+    assert.equal(document.querySelector('dialog'), null);
+    assert.equal(document.body.textContent.includes('late-fake-secret'), false);
+    assert.equal(document.querySelector('#toasts').textContent.includes(copy('nodes.enrollment.issueFailedAfterCreate')), false);
+    assert.equal(location.pathname, expectedPath);
+  });
+}

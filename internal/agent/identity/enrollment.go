@@ -48,22 +48,8 @@ func (s *Store) LookupEnrollment(ctx context.Context, ticket [32]byte) (Identity
 	return current.Identity, operation, exists, nil
 }
 
-// StageEnrollment 在向服务器申请注册前，先持久保存票据与候选凭据的关联。
-// 即使尚未收到响应中的节点绑定信息，也可申请轮换凭据。
+// StageEnrollment 在向服务器申请注册前，先持久保存票据、候选凭据与 CAS 父凭据。
 func (s *Store) StageEnrollment(ctx context.Context, ticket [32]byte, rotate bool) (Identity, Enrollment, error) {
-	return s.prepareEnrollment(ctx, ticket, rotate, "")
-}
-
-// RememberEnrollment 仅在只读查询确认服务器回执后，修复票据与凭据的关联；
-// 该凭据必须仍保存在持久化的身份中。
-func (s *Store) RememberEnrollment(ctx context.Context, ticket [32]byte, accepted string) (Identity, Enrollment, error) {
-	if accepted == "" {
-		return Identity{}, Enrollment{}, errors.New("confirmed enrollment credential is missing")
-	}
-	return s.prepareEnrollment(ctx, ticket, false, accepted)
-}
-
-func (s *Store) prepareEnrollment(ctx context.Context, ticket [32]byte, rotate bool, accepted string) (Identity, Enrollment, error) {
 	unlock, err := filelock.Acquire(ctx, s.path+".lock")
 	if err != nil {
 		return Identity{}, Enrollment{}, err
@@ -80,9 +66,6 @@ func (s *Store) prepareEnrollment(ctx context.Context, ticket [32]byte, rotate b
 	}
 	hash := hex.EncodeToString(ticket[:])
 	if operation, exists := current.EnrollmentAttempts[hash]; exists {
-		if accepted != "" && operation.NodeToken != accepted {
-			return Identity{}, Enrollment{}, errors.New("confirmed enrollment differs from its durable operation")
-		}
 		if err := s.syncDirectory(filepath.Dir(s.path)); err != nil {
 			return Identity{}, Enrollment{}, err
 		}
@@ -90,15 +73,7 @@ func (s *Store) prepareEnrollment(ctx context.Context, ticket [32]byte, rotate b
 		return current.Identity, operation, nil
 	}
 	operation := Enrollment{}
-	if accepted != "" {
-		if accepted != current.NodeToken && accepted != current.PendingNodeToken {
-			return Identity{}, Enrollment{}, errors.New("confirmed enrollment was superseded locally")
-		}
-		operation.NodeToken = accepted
-		if accepted == current.PendingNodeToken {
-			operation.PreviousNodeToken = current.NodeToken
-		}
-	} else if current.PendingNodeToken != "" {
+	if current.PendingNodeToken != "" {
 		operation = Enrollment{NodeToken: current.PendingNodeToken, PreviousNodeToken: current.NodeToken}
 	} else if rotate || current.NodeID != "" {
 		current.PendingNodeToken, err = randomID(s.random, 32)

@@ -4,15 +4,25 @@ import {nextOffset} from '../api.js';
 // 将 Origin 作为单个字面量 shell 参数引用。
 export const shellQuote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 
-export function enrollmentCommand() {
-  const path = '/opt/orbit-beacon/state/enrollment.token';
-  // 子 shell 隔离变量和 trap；失败或收到信号时也恢复回显。
-  return `(\n  set +x\n  set -e\n  unset token\n  trap 'stty echo' 0\n  trap 'exit 1' HUP INT TERM\n  install -m 0600 /dev/null ${path}\n  stty -echo\n  IFS= read -r token\n  stty echo\n  printf '%s\\n' "$token" > ${path}\n  unset token\n  /opt/orbit-beacon/bin/orbitbeacon-agent enroll --install-policy /opt/orbit-beacon/etc/install-policy.yaml --config /opt/orbit-beacon/etc/agent.yaml --token-file ${path}\n)`;
-}
-
-// 安装脚本在终端隐藏读取票据，命令文本不包含票据。
-export function installerCommand(origin) {
-  return `sudo sh ./install-agent.sh --server ${shellQuote(origin)} --version "$VERSION"`;
+export function installerCommand(origin, version, token) {
+  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z.-]+)?$/.test(version || '')) return '';
+  const url = `https://raw.githubusercontent.com/mr-monkeyray/orbit-beacon/v${version}/deploy/install-agent.sh`;
+  return `(
+  set +x
+  set -eu
+  umask 077
+  work=$(mktemp -d)
+  trap 'rm -rf -- "$work"' 0
+  trap 'exit 1' HUP INT TERM
+  curl --fail --silent --show-error --location --proto '=https' \\
+    --proto-redir '=https' --tlsv1.2 --output "$work/install-agent.sh" ${shellQuote(url)}
+  if [ "$(id -u)" -eq 0 ]; then
+    printf '%s\\n' ${shellQuote(token)} | sh "$work/install-agent.sh" --server ${shellQuote(origin)} --version ${shellQuote(version)}
+  else
+    sudo -v
+    printf '%s\\n' ${shellQuote(token)} | sudo -n sh "$work/install-agent.sh" --server ${shellQuote(origin)} --version ${shellQuote(version)}
+  fi
+)`;
 }
 
 export function enrollmentCountdown(expiresAt, now = Date.now()) {
@@ -23,8 +33,8 @@ export function enrollmentCountdown(expiresAt, now = Date.now()) {
 
 export function enrollmentState(ticket, now = Date.now()) {
   if (ticket.revoked_at) return t('nodes.enrollment.revoked');
+  if (ticket.uses > 0) return t('nodes.enrollment.used');
   if (Date.parse(ticket.expires_at) <= now) return t('nodes.enrollment.expired');
-  if (ticket.uses >= ticket.max_uses) return t('nodes.enrollment.used');
   return t('nodes.enrollment.active');
 }
 

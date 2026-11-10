@@ -3,8 +3,10 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"orbitbeacon/internal/agent/service"
@@ -36,7 +38,13 @@ func TestExplicitTicketIsNeverReplacedByCredentialRecovery(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			https := httptest.NewTLSServer(f.handler)
+			var recoveries atomic.Int64
+			https := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/agent/v1/recover" {
+					recoveries.Add(1)
+				}
+				f.handler.ServeHTTP(w, r)
+			}))
 			defer https.Close()
 			client, err := service.NewClient(service.ClientOptions{ServerURL: https.URL, HTTPClient: https.Client(), Identity: state})
 			if err != nil {
@@ -44,12 +52,22 @@ func TestExplicitTicketIsNeverReplacedByCredentialRecovery(t *testing.T) {
 			}
 			defer client.Close()
 			for _, invalid := range []string{"invalid-explicit-ticket", "invalid\nexplicit-ticket"} {
-				if _, err := client.Enroll(ctx, invalid); err == nil {
+				_, err := client.Enroll(ctx, invalid)
+				if err == nil {
 					t.Fatal("invalid explicit ticket was silently replaced by node recovery")
+				}
+				if invalid == "invalid-explicit-ticket" {
+					var rejected *service.HTTPError
+					if !errors.As(err, &rejected) || rejected.StatusCode != http.StatusForbidden {
+						t.Fatalf("invalid explicit ticket did not preserve 403: %v", err)
+					}
 				}
 				if state.Current().NodeID != "" || state.Current().NodeToken != before.NodeToken {
 					t.Fatal("rejected explicit ticket changed the saved identity")
 				}
+			}
+			if recoveries.Load() != 0 {
+				t.Fatal("invalid explicit ticket invoked credential recovery")
 			}
 			fresh, err := f.enrollments.CreateSingle(ctx, node.ID)
 			if err != nil {

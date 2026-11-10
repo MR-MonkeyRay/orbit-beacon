@@ -14,7 +14,7 @@ import (
 )
 
 func TestEnrollmentRetryRequiresDirectorySyncBeforePublishing(t *testing.T) {
-	for _, first := range []string{"stage", "remember"} {
+	for _, first := range []string{"initial", "rotation"} {
 		t.Run(first, func(t *testing.T) {
 			ctx := context.Background()
 			path := filepath.Join(t.TempDir(), "identity.json")
@@ -34,13 +34,7 @@ func TestEnrollmentRetryRequiresDirectorySyncBeforePublishing(t *testing.T) {
 				}
 				return syscall.EIO
 			}
-			var got Identity
-			var operation Enrollment
-			if first == "stage" {
-				got, operation, err = store.StageEnrollment(ctx, ticket, true)
-			} else {
-				got, operation, err = store.RememberEnrollment(ctx, ticket, before.NodeToken)
-			}
+			got, operation, err := store.StageEnrollment(ctx, ticket, first == "rotation")
 			if !errors.Is(err, syscall.EIO) || got != (Identity{}) || operation != (Enrollment{}) {
 				t.Fatalf("failed publication exposed state: identity=%+v operation=%+v err=%v", got, operation, err)
 			}
@@ -52,7 +46,7 @@ func TestEnrollmentRetryRequiresDirectorySyncBeforePublishing(t *testing.T) {
 			if !exists || candidate.NodeToken == "" {
 				t.Fatal("rename did not publish the attempted operation")
 			}
-			if first == "stage" && (candidate.NodeToken == before.NodeToken || visible.PendingNodeToken != candidate.NodeToken) {
+			if first == "rotation" && (candidate.NodeToken == before.NodeToken || visible.PendingNodeToken != candidate.NodeToken) {
 				t.Fatal("rename did not publish the rotation candidate")
 			}
 			// 另一个 Store 实例必须读取实际文件并确认其已持久化；
@@ -72,10 +66,6 @@ func TestEnrollmentRetryRequiresDirectorySyncBeforePublishing(t *testing.T) {
 					if !errors.Is(err, syscall.EIO) || got != (Identity{}) || operation != (Enrollment{}) {
 						t.Fatalf("stage retry bypassed sync: identity=%+v operation=%+v err=%v", got, operation, err)
 					}
-					got, operation, err = reader.RememberEnrollment(ctx, ticket, candidate.NodeToken)
-					if !errors.Is(err, syscall.EIO) || got != (Identity{}) || operation != (Enrollment{}) {
-						t.Fatalf("remember retry bypassed sync: identity=%+v operation=%+v err=%v", got, operation, err)
-					}
 					if got, err = reader.Reload(ctx); !errors.Is(err, syscall.EIO) || got != (Identity{}) {
 						t.Fatalf("reload published uncertain identity: identity=%+v err=%v", got, err)
 					}
@@ -92,10 +82,6 @@ func TestEnrollmentRetryRequiresDirectorySyncBeforePublishing(t *testing.T) {
 				got, operation, err = reader.StageEnrollment(ctx, ticket, true)
 				if err != nil || got != visible.Identity || operation != candidate || reader.Current() != visible.Identity {
 					t.Fatalf("stage did not recover exact visible operation: identity=%+v operation=%+v err=%v", got, operation, err)
-				}
-				got, operation, err = reader.RememberEnrollment(ctx, ticket, candidate.NodeToken)
-				if err != nil || got != visible.Identity || operation != candidate {
-					t.Fatalf("remember did not recover exact operation: %v", err)
 				}
 				got, operation, exists, err = reader.LookupEnrollment(ctx, ticket)
 				if err != nil || !exists || got != visible.Identity || operation != candidate {

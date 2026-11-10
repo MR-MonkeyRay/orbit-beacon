@@ -139,8 +139,7 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 		return v1.EnrollmentResponse{}, err
 	}
 	if !exists {
-		// 旧身份可能在此票据的响应到达前，就已通过上报提升了已提交的候选项。
-		// 只检查其回执，不消费新票据，也不暂存另一个候选项。
+		// 预检只判断现有凭据是否已绑定；可用新票据仍须实际激活。
 		credential := state.NodeToken
 		if state.PendingNodeToken != "" {
 			credential = state.PendingNodeToken
@@ -148,32 +147,11 @@ func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentRespons
 		var checked v1.EnrollmentCheckResponse
 		check := v1.EnrollmentCheckRequest{ProtocolVersion: v1.EnrollmentCheckVersion, InstallationID: state.InstallationID, NodeToken: credential}
 		err := c.post(ctx, "/api/agent/v1/enroll/check", token, check, &checked)
-		var conflict *HTTPError
-		if credential != state.NodeToken && errors.As(err, &conflict) && conflict.StatusCode == http.StatusConflict {
-			// 另一个未提交的待定候选项不得遮蔽遗留文件中的有效回执。
-			// 两次读取都没有副作用。
-			credential = state.NodeToken
-			check.NodeToken = credential
-			checked = v1.EnrollmentCheckResponse{}
-			err = c.post(ctx, "/api/agent/v1/enroll/check", token, check, &checked)
-		}
 		if err != nil {
 			return v1.EnrollmentResponse{}, err
 		}
-		if checked.ServerTime.IsZero() || (checked.CredentialState != "active" && checked.CredentialState != "unbound") || (checked.Claimed && (checked.NodeID == "" || checked.CredentialState != "active")) || (!checked.Claimed && checked.NodeID != "") {
-			return v1.EnrollmentResponse{}, errors.New("invalid enrollment receipt response")
-		}
-		if checked.Claimed {
-			if state.NodeID != "" && state.NodeID != checked.NodeID {
-				return v1.EnrollmentResponse{}, errors.New("enrollment receipt does not match durable node")
-			}
-			if _, _, err := c.identity.RememberEnrollment(ctx, ticket, credential); err != nil {
-				return v1.EnrollmentResponse{}, err
-			}
-			if err := c.identity.ConfirmEnrollment(ctx, credential, checked.NodeID); err != nil {
-				return v1.EnrollmentResponse{}, err
-			}
-			return v1.EnrollmentResponse{NodeID: checked.NodeID, ServerTime: checked.ServerTime}, nil
+		if checked.Claimed || checked.NodeID != "" || checked.ServerTime.IsZero() || (checked.CredentialState != "active" && checked.CredentialState != "unbound") {
+			return v1.EnrollmentResponse{}, errors.New("invalid enrollment check response")
 		}
 		state, operation, err = c.identity.StageEnrollment(ctx, ticket, state.NodeID != "" || checked.CredentialState == "active")
 		if err != nil {

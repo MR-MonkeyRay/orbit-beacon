@@ -110,7 +110,7 @@ func TestObservedRuntimeCannotRollbackOnDuplicateAndRevokeClearsIdentity(t *test
 	}
 }
 
-func TestCredentialReplacementClearsObservedIdentityButIdempotentEnrollPreservesIt(t *testing.T) {
+func TestCredentialReplacementClearsObservedIdentityButFreshSameCredentialClaimPreservesIt(t *testing.T) {
 	f := newAgentHTTP(t, 1)
 	id, token, _ := enrollHTTP(t, f, "replace-runtime", 1)
 	body := strings.Replace(reportBody(4, 1, "old-session", 25), `"traffic":[]`, `"traffic":[],"system":{"hostname":"old-host","os":"linux","arch":"amd64","agent_version":"old-version"}`, 1)
@@ -161,6 +161,7 @@ func TestCredentialReplacementClearsObservedIdentityButIdempotentEnrollPreserves
 		t.Fatal(err)
 	}
 	assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, enrollBody("installation-replace-runtime", token)), http.StatusOK)
+	apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, enrollBody("installation-replace-runtime", token)), http.StatusForbidden, "forbidden")
 	same, err := f.nodes.Get(context.Background(), id)
 	if err != nil || same.LastSeen == nil || !same.LastSeen.Equal(*first.LastSeen) || same.AgentVersion != "old-version" || settings() != before {
 		t.Fatalf("same credential erased observations: %+v err=%v", same, err)
@@ -192,6 +193,17 @@ func TestCredentialReplacementClearsObservedIdentityButIdempotentEnrollPreserves
 	if err := f.db.QueryRow(`SELECT credential_epoch FROM nodes WHERE id=?`, id).Scan(&epochFailed); err != nil || epochFailed != epochBefore {
 		t.Fatalf("failed replacement changed epoch: before=%d after=%d err=%v", epochBefore, epochFailed, err)
 	}
+	unused, err := f.enrollments.Get(context.Background(), ticket.ID)
+	if err != nil || unused.Uses != 0 {
+		t.Fatalf("failed replacement consumed ticket: uses=%d err=%v", unused.Uses, err)
+	}
+	var failedClaims int
+	if err := f.db.QueryRow("SELECT count(*) FROM enrollment_claims WHERE enrollment_id=?", ticket.ID).Scan(&failedClaims); err != nil || failedClaims != 0 {
+		t.Fatalf("failed replacement left a claim: count=%d err=%v", failedClaims, err)
+	}
+	if active, err := f.nodes.AuthenticateToken(context.Background(), token); err != nil || active.ID != id {
+		t.Fatal("failed replacement revoked the old credential")
+	}
 	for _, table := range []string{"probe_latest", "probe_hourly"} {
 		var count int
 		if err := f.db.QueryRow("SELECT count(*) FROM "+table+" WHERE node_id=?", id).Scan(&count); err != nil || count != 1 {
@@ -202,6 +214,7 @@ func TestCredentialReplacementClearsObservedIdentityButIdempotentEnrollPreserves
 		t.Fatal(err)
 	}
 	assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, claim), http.StatusOK)
+	apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, claim), http.StatusForbidden, "forbidden")
 	var epochReplacement int64
 	if err := f.db.QueryRow(`SELECT credential_epoch FROM nodes WHERE id=?`, id).Scan(&epochReplacement); err != nil || epochReplacement != epochBefore+1 {
 		t.Fatalf("replacement epoch: before=%d after=%d err=%v", epochBefore, epochReplacement, err)

@@ -2,9 +2,12 @@ package server_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"orbitbeacon/internal/agent/identity"
@@ -33,7 +36,11 @@ func TestLostEnrollmentResponseRecoversByNodeCredentialWithoutTicket(t *testing.
 			var mu sync.Mutex
 			var recovery bool
 			var recoveryPaths []string
+			var recoveryCalls atomic.Int64
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/agent/v1/recover" {
+					recoveryCalls.Add(1)
+				}
 				mu.Lock()
 				if recovery {
 					recoveryPaths = append(recoveryPaths, r.URL.Path)
@@ -60,6 +67,15 @@ func TestLostEnrollmentResponseRecoversByNodeCredentialWithoutTicket(t *testing.
 			if got, err := f.nodes.AuthenticateToken(ctx, run.NodeToken); err != nil || got.ID != node.ID {
 				t.Fatalf("claim did not commit before response loss: %v", err)
 			}
+			staged := state.Current()
+			_, err = client.Enroll(ctx, ticket.Token)
+			var rejected *service.HTTPError
+			if !errors.As(err, &rejected) || rejected.StatusCode != http.StatusForbidden {
+				t.Fatalf("spent explicit ticket did not return 403: %v", err)
+			}
+			if recoveryCalls.Load() != 0 || state.Current() != staged {
+				t.Fatal("explicit rejection invoked recovery or changed the durable candidate")
+			}
 			if disposition == "revoked" {
 				if err := f.enrollments.Revoke(ctx, ticket.ID); err != nil {
 					t.Fatal(err)
@@ -78,6 +94,12 @@ func TestLostEnrollmentResponseRecoversByNodeCredentialWithoutTicket(t *testing.
 				t.Fatal(err)
 			}
 			defer retry.Close()
+			var epochBefore, epochAfter int64
+			var generationBefore, generationAfter, sessionBefore, sessionAfter string
+			var seenBefore, seenAfter sql.NullString
+			if err := f.db.QueryRow("SELECT credential_epoch, run_generation, report_session_id, last_seen FROM nodes WHERE id=?", node.ID).Scan(&epochBefore, &generationBefore, &sessionBefore, &seenBefore); err != nil {
+				t.Fatal(err)
+			}
 			mu.Lock()
 			recovery = true
 			mu.Unlock()
@@ -93,9 +115,18 @@ func TestLostEnrollmentResponseRecoversByNodeCredentialWithoutTicket(t *testing.
 			if reopened.Current().RunGeneration != run.RunGeneration || reopened.Current().SessionID != run.SessionID {
 				t.Fatal("recovery began a second runtime generation")
 			}
+			if err := f.db.QueryRow("SELECT credential_epoch, run_generation, report_session_id, last_seen FROM nodes WHERE id=?", node.ID).Scan(&epochAfter, &generationAfter, &sessionAfter, &seenAfter); err != nil {
+				t.Fatal(err)
+			}
+			if epochAfter != epochBefore || generationAfter != generationBefore || sessionAfter != sessionBefore || seenAfter != seenBefore {
+				t.Fatal("independent recovery changed server ownership or liveness")
+			}
 			var count int
 			if err := f.db.QueryRow("SELECT count(*) FROM nodes").Scan(&count); err != nil || count != 1 {
 				t.Fatalf("recovery duplicated node: count=%d err=%v", count, err)
+			}
+			if _, err := retry.Report(ctx, mustReport(t, reportBody(run.RunGeneration, 1, run.SessionID, 10))); err != nil {
+				t.Fatalf("normal report after independent recovery failed: %v", err)
 			}
 		})
 	}

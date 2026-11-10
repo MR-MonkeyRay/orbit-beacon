@@ -14,8 +14,7 @@ const (
 	// 审计保留期特意设置得足够长，以便运维调查；
 	// 增量清理避免长期占用 SQLite 写锁。
 	auditRetentionPeriod = 90 * 24 * time.Hour
-	// 票据过期后 24 小时内仍接受注册重试。在该宽限期结束前保留令牌及其回执，
-	// 然后再级联清理。
+	// 票据过期后额外保留 24 小时的票据与认领记录；保留不延长授权。
 	enrollmentRetentionPeriod = 24 * time.Hour
 	RetentionInterval         = time.Hour
 	retentionBatchSize        = 128

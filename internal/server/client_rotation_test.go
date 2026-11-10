@@ -45,7 +45,7 @@ func clientState(t *testing.T) (*identity.Store, string) {
 	return state, path
 }
 
-func TestClientRotationStagesFreshCredentialBeforeRequestAndPromotesAfterExactRetry(t *testing.T) {
+func TestClientRotationStagesFreshCredentialBeforeRequestAndRequiresIndependentRecovery(t *testing.T) {
 	f := newAgentHTTP(t, 1)
 	ctx := context.Background()
 	node, err := f.nodes.CreatePending(ctx, nodes.CreateRequest{Name: "rotating client"})
@@ -60,7 +60,13 @@ func TestClientRotationStagesFreshCredentialBeforeRequestAndPromotesAfterExactRe
 	var mu sync.Mutex
 	var staged []string
 	var oldToken string
+	var recoveries int
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/agent/v1/recover" {
+			mu.Lock()
+			recoveries++
+			mu.Unlock()
+		}
 		if r.URL.Path == "/api/agent/v1/enroll" && oldToken != "" {
 			var request v1.EnrollmentRequest
 			data, err := io.ReadAll(r.Body)
@@ -78,6 +84,9 @@ func TestClientRotationStagesFreshCredentialBeforeRequestAndPromotesAfterExactRe
 			decoded, err := base64.RawURLEncoding.DecodeString(request.NodeToken)
 			if err != nil || len(decoded) != 32 || request.NodeToken == oldToken {
 				t.Error("rotation did not generate a fresh 256-bit token")
+			}
+			if request.PreviousNodeToken != oldToken || request.InstallationID != state.Current().InstallationID {
+				t.Error("rotation changed its durable installation or CAS parent credential")
 			}
 			persisted, err := os.ReadFile(path)
 			if err != nil {
@@ -130,17 +139,29 @@ func TestClientRotationStagesFreshCredentialBeforeRequestAndPromotesAfterExactRe
 	}
 	retry := newClient(reopened)
 	defer retry.Close()
-	if _, err := retry.Enroll(ctx, rotation.Token); err != nil {
-		t.Fatal(err)
+	pending := reopened.Current()
+	_, err = retry.Enroll(ctx, rotation.Token)
+	var rejected *service.HTTPError
+	if !errors.As(err, &rejected) || rejected.StatusCode != http.StatusForbidden {
+		t.Fatalf("spent explicit ticket did not return 403: %v", err)
+	}
+	if reopened.Current() != pending {
+		t.Fatal("explicit retry changed the durable candidate")
 	}
 	mu.Lock()
 	if len(staged) != 2 || staged[0] != staged[1] {
 		t.Fatalf("rotation retry changed candidate: %v", staged)
 	}
+	if recoveries != 0 {
+		t.Fatal("explicit ticket rejection invoked credential recovery")
+	}
 	candidate := staged[0]
 	mu.Unlock()
+	if _, err := retry.Enroll(ctx, ""); err != nil {
+		t.Fatalf("independent recovery failed: %v", err)
+	}
 	if reopened.Current().NodeToken != candidate || candidate == oldToken {
-		t.Fatal("acknowledged fresh credential not promoted")
+		t.Fatal("recovered fresh credential not promoted")
 	}
 	durable, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil || durable.Current().NodeToken != candidate {

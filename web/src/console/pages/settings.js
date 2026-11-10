@@ -2,7 +2,7 @@ import {settingsTabs} from '../routes.js';
 import {t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h, icon} from '../../shared/dom.js';
-import {allNodes, api, getNavigationSignal, groupsList, invalidate, invalidateSession, nameLookup, session, updateUser, usersList} from '../api.js';
+import {allNodes, api, getNavigationSignal, getSessionEpoch, groupsList, invalidate, invalidateSession, nameLookup, session, updateUser, usersList} from '../api.js';
 import {when} from '../format.js';
 import {ignoreNavigationCancellation, refresh} from '../router.js';
 import {busy, button, emptyState, facts, iconButton, link, pageHead, panel} from '../ui/components.js';
@@ -242,12 +242,17 @@ function administratorsTab(users) {
 }
 
 function groupsTab(groups, nodes) {
-  const batchEnrollment = async (item, trigger) => {
+  const deployAgent = async (item, trigger) => {
+    const navigation = getNavigationSignal();
+    const epoch = getSessionEpoch();
     busy(trigger, true);
     try {
-      await issueEnrollment({group_id: item.id, mode: 'batch'}, t('settings.batchEnrollmentFor', {name: item.name}));
+      await issueEnrollment({group_id: item.id}, t('settings.deployAgentFor', {name: item.name}));
     } catch (error) { toastError(error); }
-    finally { busy(trigger, false); }
+    finally {
+      busy(trigger, false);
+      if (trigger.isConnected && !trigger.disabled && !navigation?.aborted && navigation === getNavigationSignal() && epoch === getSessionEpoch()) trigger.focus({preventScroll: true});
+    }
   };
   const groupForm = (item) => {
     let name;
@@ -288,8 +293,8 @@ function groupsTab(groups, nodes) {
   return panel(null, {action: addButton},
     h('ul', {class: 'rows'}, groups.map((item) => {
       const size = nodes.filter((node) => node.group_id === item.id).length;
-      const enrollment = button(t('settings.batchEnrollment'), {small: true});
-      enrollment.addEventListener('click', () => batchEnrollment(item, enrollment));
+      const enrollment = button(t('settings.deployAgent'), {small: true});
+      enrollment.addEventListener('click', () => deployAgent(item, enrollment));
       return h('li', null, icon('folder', 'muted'),
         h('div', {class: 'grow'}, h('div', {class: 'title'}, item.name), h('div', {class: 'sub'}, link(`/nodes?group=${item.id}`, t('settings.nodeCount', {count: size})))),
         [enrollment, ...groupCommandActions(item), iconButton('edit', t('settings.renameName', {name: item.name}), () => groupForm(item)), iconButton('trash', t('settings.deleteName', {name: item.name}), () => deleteGroup(item, size))]);

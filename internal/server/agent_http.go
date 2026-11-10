@@ -136,7 +136,6 @@ func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, reques
 	var input struct {
 		NodeID  string `json:"node_id"`
 		GroupID string `json:"group_id"`
-		Mode    string `json:"mode"`
 	}
 	if !decode(w, r, &input, requestID) {
 		return
@@ -144,10 +143,10 @@ func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, reques
 	var result enrollment.CreatedTicket
 	var err error
 	switch {
-	case input.NodeID != "" && input.GroupID == "" && (input.Mode == "" || input.Mode == "single"):
+	case input.NodeID != "" && input.GroupID == "":
 		result, err = h.enrollments.CreateSingle(r.Context(), input.NodeID)
-	case input.NodeID == "" && (input.Mode == "batch" || input.GroupID != "") && (input.Mode == "" || input.Mode == "batch"):
-		result, err = h.enrollments.CreateBatch(r.Context(), input.GroupID)
+	case input.NodeID == "" && input.GroupID != "":
+		result, err = h.enrollments.CreateGroup(r.Context(), input.GroupID)
 	default:
 		err = enrollment.ErrInvalidInput
 	}
@@ -155,5 +154,8 @@ func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, reques
 		h.agentError(w, err, requestID)
 		return
 	}
-	writeJSON(w, http.StatusCreated, result)
+	writeJSON(w, http.StatusCreated, struct {
+		enrollment.CreatedTicket
+		ServerVersion string `json:"server_version"`
+	}{result, h.buildVersion})
 }

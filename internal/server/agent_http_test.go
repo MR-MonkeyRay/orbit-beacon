@@ -57,7 +57,7 @@ func newAgentHTTP(t *testing.T, capacity int) *agentFixture {
 	f.enrollments = enrollment.NewService(stable, enrollment.Options{MaxNodes: capacity, Now: clock, Random: rand.NewChaCha8([32]byte{22})})
 	f.ingest = ingest.NewService(stable, ingest.Options{Now: clock, DisablePersistOffset: true})
 	f.auth = auth.NewService(stable, auth.Options{Now: clock})
-	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: clock, WebUpdateIntervalSeconds: 2}))
+	f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: clock, WebUpdateIntervalSeconds: 2, BuildVersion: "1.2.3"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func lastSeen(t *testing.T, f *agentFixture, id string) sql.NullString {
 	return value
 }
 
-func TestAgentEnrollmentRouteExactRetryExpiryAndConflicts(t *testing.T) {
+func TestAgentEnrollmentRouteSingleUseExpiryAndConflicts(t *testing.T) {
 	f := newAgentHTTP(t, 4)
 	pending, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: "prebuilt"})
 	if err != nil {
@@ -145,20 +145,11 @@ func TestAgentEnrollmentRouteExactRetryExpiryAndConflicts(t *testing.T) {
 	body := enrollBody("installation-a", agentSecret(1))
 	first := agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, body)
 	assertHTTPStatus(t, first, http.StatusOK)
+	for _, replay := range []string{body, enrollBody("installation-a", agentSecret(2)), enrollBody("installation-b", agentSecret(1))} {
+		apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, replay), http.StatusForbidden, "forbidden")
+	}
 	f.now = f.now.Add(24 * time.Hour)
-	retry := agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, body)
-	assertHTTPStatus(t, retry, http.StatusOK)
-	var result v1.EnrollmentResponse
-	if err := json.Unmarshal(retry.Body.Bytes(), &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.NodeID != pending.ID {
-		t.Fatal("retry created a different asset")
-	}
-	f.now = f.now.Add(-23 * time.Hour)
-	for _, conflict := range []string{enrollBody("installation-a", agentSecret(2)), enrollBody("installation-b", agentSecret(1))} {
-		apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, conflict), http.StatusConflict, "enrollment_conflict")
-	}
+	apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, body), http.StatusForbidden, "forbidden")
 	secondTicket, err := f.enrollments.CreateSingle(context.Background(), pending.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -167,12 +158,33 @@ func TestAgentEnrollmentRouteExactRetryExpiryAndConflicts(t *testing.T) {
 	if err := f.enrollments.Revoke(context.Background(), ticket.ID); err != nil {
 		t.Fatal(err)
 	}
-	assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, body), http.StatusUnauthorized)
-	assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", "", body), http.StatusUnauthorized)
+	apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, body), http.StatusForbidden, "forbidden")
+	apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", "", body), http.StatusForbidden, "forbidden")
 	var count int
 	if err := f.db.QueryRow("SELECT count(*) FROM nodes").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("retry assets=%d err=%v", count, err)
 	}
+	var uses, claims, audits int
+	if err := f.db.QueryRow("SELECT uses FROM enrollment_tokens WHERE id=?", ticket.ID).Scan(&uses); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.QueryRow("SELECT count(*) FROM enrollment_claims WHERE enrollment_id=?", ticket.ID).Scan(&claims); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.QueryRow("SELECT count(*) FROM audit_events WHERE action='enrollment.claim' AND target_id=?", pending.ID).Scan(&audits); err != nil {
+		t.Fatal(err)
+	}
+	if uses != 1 || claims != 1 || audits != 1 {
+		t.Fatalf("replay altered claim state: uses=%d claims=%d audits=%d", uses, claims, audits)
+	}
+	if _, err := f.db.Exec("DELETE FROM enrollment_tokens WHERE id=?", ticket.ID); err != nil {
+		t.Fatal(err)
+	}
+	apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, body), http.StatusForbidden, "forbidden")
+	if err := f.nodes.Delete(context.Background(), pending.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, body), http.StatusForbidden, "forbidden")
 }
 
 func TestReportUsesBearerNodeAndNeverClientTargetOrHostname(t *testing.T) {
@@ -393,5 +405,109 @@ func TestSecondAdministratorCanIssueReadAndRevokeEnrollment(t *testing.T) {
 	first, _ := loginAgent(t, f, "admin")
 	assertHTTPStatus(t, agentHTTPCall(t, f, http.MethodGet, path, "", first, "", ""), http.StatusOK)
 	assertHTTPStatus(t, agentHTTPCall(t, f, http.MethodDelete, path, "", second, csrf, publicURL), http.StatusNoContent)
-	apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, enrollBody("revoked-installation", agentSecret(90))), http.StatusUnauthorized, "unauthenticated")
+	apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, enrollBody("revoked-installation", agentSecret(90))), http.StatusForbidden, "forbidden")
+}
+
+func TestEnrollmentCreationContract(t *testing.T) {
+	f := newAgentHTTP(t, 2)
+	cookie, csrf := loginAgent(t, f, "admin")
+	node, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: "deploy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec("INSERT INTO groups(id,name) VALUES('deploy-group','deploy')"); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{`{}`, `{"node_id":"` + node.ID + `","group_id":"deploy-group"}`, `{"node_id":"` + node.ID + `","mode":"single"}`, `{"group_id":"deploy-group","mode":"batch"}`} {
+		assertHTTPStatus(t, agentHTTPCall(t, f, http.MethodPost, "/api/v1/enrollments", body, cookie, csrf, publicURL), http.StatusBadRequest)
+	}
+	var previous string
+	for _, body := range []string{`{"node_id":"` + node.ID + `"}`, `{"group_id":"deploy-group"}`} {
+		response := agentHTTPCall(t, f, http.MethodPost, "/api/v1/enrollments", body, cookie, csrf, publicURL)
+		assertHTTPStatus(t, response, http.StatusCreated)
+		var result struct {
+			enrollment.CreatedTicket
+			ServerVersion string `json:"server_version"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.ServerVersion != "1.2.3" || result.MaxUses != 1 || !result.ExpiresAt.Equal(f.now.Add(30*time.Minute)) || result.Token == "" || result.Token == previous {
+			t.Fatal("invalid deployment issuance metadata")
+		}
+		previous = result.Token
+		for _, path := range []string{"/api/v1/enrollments", "/api/v1/enrollments/" + result.ID} {
+			read := agentHTTPCall(t, f, http.MethodGet, path, "", cookie, "", "")
+			assertHTTPStatus(t, read, http.StatusOK)
+			if strings.Contains(read.Body.String(), result.Token) || strings.Contains(read.Body.String(), "server_version") || strings.Contains(read.Body.String(), "token_hash") {
+				t.Fatal("enrollment metadata exposes creation-only information")
+			}
+		}
+	}
+}
+
+func TestEnrollmentActivationExpiryBoundary(t *testing.T) {
+	f := newAgentHTTP(t, 2)
+	for _, beforeExpiry := range []bool{true, false} {
+		f.now = time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+		node, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: fmt.Sprintf("expiry-%v", beforeExpiry)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ticket, err := f.enrollments.CreateSingle(context.Background(), node.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.now = ticket.ExpiresAt
+		if beforeExpiry {
+			f.now = f.now.Add(-time.Nanosecond)
+			assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, enrollBody("expiry-installation", agentSecret(1))), http.StatusOK)
+		} else {
+			apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, enrollBody("late-installation", agentSecret(2))), http.StatusForbidden, "forbidden")
+		}
+	}
+}
+
+func TestEnrollmentCheckOnlyPreviewsUnusedTicket(t *testing.T) {
+	f := newAgentHTTP(t, 1)
+	node, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: "check"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := agentSecret(1)
+	checkBody := `{"protocol_version":2,"installation_id":"check-installation","node_token":"` + token + `"}`
+	for _, state := range []string{"unbound", "active"} {
+		ticket, err := f.enrollments.CreateSingle(context.Background(), node.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := lastSeen(t, f, node.ID)
+		response := agentRequest(t, f, "/api/agent/v1/enroll/check", ticket.Token, checkBody)
+		assertHTTPStatus(t, response, http.StatusOK)
+		var checked map[string]json.RawMessage
+		if err := json.Unmarshal(response.Body.Bytes(), &checked); err != nil {
+			t.Fatal(err)
+		}
+		if len(checked) != 3 || string(checked["claimed"]) != "false" || string(checked["credential_state"]) != fmt.Sprintf("%q", state) || string(checked["server_time"]) != fmt.Sprintf("%q", f.now.Format(time.RFC3339Nano)) {
+			t.Fatalf("unexpected ticket preview: %s", response.Body)
+		}
+		stored, err := f.enrollments.Get(context.Background(), ticket.ID)
+		if err != nil || stored.Uses != 0 || lastSeen(t, f, node.ID) != seen {
+			t.Fatalf("check mutated ticket or online status: uses=%d err=%v", stored.Uses, err)
+		}
+		var audits int
+		if err := f.db.QueryRow("SELECT count(*) FROM audit_events WHERE action='enrollment.claim' AND target_id=?", node.ID).Scan(&audits); err != nil {
+			t.Fatal(err)
+		}
+		if state == "unbound" {
+			if audits != 0 {
+				t.Fatal("check wrote a successful claim audit")
+			}
+			assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, enrollBody("check-installation", token)), http.StatusOK)
+			apiError(t, agentRequest(t, f, "/api/agent/v1/enroll/check", ticket.Token, checkBody), http.StatusForbidden, "forbidden")
+			apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, enrollBody("check-installation", token)), http.StatusForbidden, "forbidden")
+		} else if audits != 1 {
+			t.Fatal("active credential check wrote a successful claim audit")
+		}
+	}
 }

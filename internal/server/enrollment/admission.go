@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"orbitbeacon/internal/server/storage"
-	"orbitbeacon/internal/timekey"
 )
 
 const maxInvalidPeers = 1024
@@ -26,7 +25,7 @@ func (s *Service) AdmitToken(ctx context.Context, token, directPeer string) erro
 	if err == nil {
 		return nil
 	}
-	if !errors.Is(err, ErrUnauthenticated) && !errors.Is(err, ErrRevoked) && !errors.Is(err, ErrExpired) {
+	if !errors.Is(err, ErrInvalidTicket) {
 		return err
 	}
 	if !s.chargeInvalid(directPeer) {
@@ -37,7 +36,7 @@ func (s *Service) AdmitToken(ctx context.Context, token, directPeer string) erro
 
 func (s *Service) usableTicket(ctx context.Context, token string) error {
 	if token == "" || len(token) > 256 {
-		return ErrUnauthenticated
+		return ErrInvalidTicket
 	}
 	digest := sha256.Sum256([]byte(token))
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
@@ -48,43 +47,15 @@ func (s *Service) usableTicket(ctx context.Context, token string) error {
 	ctx = lease.Context()
 	ticket, err := scanTicket(lease.QueryRowContext(ctx, "SELECT "+ticketColumns+" FROM enrollment_tokens WHERE token_hash = ?", digest[:]))
 	if errors.Is(err, ErrNotFound) {
-		return ErrUnauthenticated
+		return ErrInvalidTicket
 	}
 	if err != nil {
 		return err
 	}
-	if ticket.RevokedAt != nil {
-		return ErrRevoked
+	if ticket.RevokedAt != nil || ticket.Uses != 0 || !s.now().UTC().Before(ticket.ExpiresAt) {
+		return ErrInvalidTicket
 	}
-	now := s.now().UTC()
-	if now.Before(ticket.ExpiresAt) {
-		return nil
-	}
-	// 过期票据仍可能认证一次精确重试。不读取请求体就无法选择回执，
-	// 因此仅在存在活跃回执时才准入；
-	// 事务会验证安装实例、凭据、配额和过期时间。
-	rows, err := lease.QueryContext(ctx, "SELECT claimed_at FROM enrollment_claims WHERE enrollment_id = ?", ticket.ID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var claimed string
-		if err := rows.Scan(&claimed); err != nil {
-			return err
-		}
-		claimedAt, err := timekey.Parse(claimed)
-		if err != nil {
-			return err
-		}
-		if !now.After(claimedAt.Add(24 * time.Hour)) {
-			return nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	return ErrExpired
+	return nil
 }
 
 func refillInvalid(bucket invalidBucket, now time.Time, burst float64) invalidBucket {

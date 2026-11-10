@@ -12,17 +12,19 @@
 
 ## 注册票据
 
-在节点详情“注册 Agent / Enroll Agent”选择“签发注册票据 / Issue enrollment ticket”；已有节点直接签发，不重复创建。注册票据只显示一次，关闭前复制。
+新增节点后自动显示一次性部署字符串和完整命令；已有节点在详情“注册 Agent / Enroll Agent”签发，不重复创建。关闭弹窗会清空明文，到期后须重新签发。
 
-- 单节点注册票据：有效 15 分钟，仅可认领一次。
-- 批量注册票据：在“设置 → 分组 / Settings → Groups”签发，有效 30 分钟、最多 100 次认领，仍受服务器节点容量限制。
-- 吊销注册票据只阻止后续认领与该票据的重试；已注册 Agent 保留节点凭据。
+- 新签发票据统一有效 30 分钟，完整激活事务首次提交成功后立即失效；再次激活返回 `403 forbidden`，包括同安装、同凭据的重试。
+- “设置 → 分组 / Settings → Groups”的“部署 Agent / Deploy Agent”每次为该组部署一个 Agent，不再提供多次使用票据。历史票据保留原期限与使用计数，但只要已使用就不能再次激活。
+- 重新签发或吊销票据不撤销已部署 Agent 的节点凭据，也不影响其他独立票据。
 
-通过已核验主机身份的 SSH/SCP 等安全通道，把注册票据交给 Agent 主机。不要写入命令参数、shell 历史、公共日志或仓库。
+完整部署命令含明文凭据，会进入 shell 历史、终端记录和剪贴板；不要公开分享。若需避免命令历史暴露，可用下方隐藏输入或 `--token-file`，通过已核验主机身份的 SSH/SCP 等安全通道传递票据。不要开 `set -x`，也不要把秘密放进公共日志或仓库。
 
 ## 安装与启动
 
-使用与服务器匹配、已发布且包含脚本的固定版本；检查后运行，不要把网络脚本管道给 root shell。源码部署可读取 `VERSION`，否则手动设置版本：
+优先复制控制台的完整部署命令；它固定服务端构建版本，先通过 HTTPS 完整下载安装器，再以 root 或 sudo 执行，并经 stdin 传入票据。版本无效时只提供字符串；固定版本的 Git tag、架构二进制和 `SHA256SUMS` 必须已发布，下载失败不会改用 latest 或跳过校验。私有 CA 使用下面的手动方式。
+
+手动安装使用与服务器匹配、已发布且包含脚本的固定版本；检查后运行，不要把网络脚本直接管道给 root shell。源码部署可读取 `VERSION`，否则手动设置版本：
 
 ```sh
 VERSION="$(cat VERSION)"
@@ -34,12 +36,12 @@ sudo sh ./install-agent.sh \
   --server https://beacon.your-domain.com --version "$VERSION"
 ```
 
-终端运行时隐藏输入注册票据；先复制并运行安装命令，等提示出现后再粘贴票据。也可使用 `--token-file /安全路径/enrollment.token`；自动化通过标准输入传入，不启用 `set -x`，并提前完成 sudo 认证：
+上述手动命令会在终端隐藏读取注册票据；等提示出现后再粘贴。也可使用 `--token-file /安全路径/enrollment.token`；自动化通过标准输入传入，不启用 `set -x`，并提前完成 sudo 认证：
 
 ```sh
 sudo -v
 # TOKEN 已从安全来源读入当前 shell；printf 使用 shell 内建命令。
-printf '%s\n' "$TOKEN" | sudo sh ./install-agent.sh \
+printf '%s\n' "$TOKEN" | sudo -n sh ./install-agent.sh \
   --server https://beacon.your-domain.com --version "$VERSION"
 unset TOKEN
 ```
@@ -99,7 +101,9 @@ sudo sh ./install-agent.sh --server https://beacon.your-domain.com \
 
 不要以 root 运行 `orbitbeacon-agent`；需要切换用户时用 `sudo -u orbitbeacon-agent`。
 
-脚本以 Agent 账号注册，成功后按所选服务管理器启用并启动（`--no-start` 除外）；`none` 不安装服务，仅打印前台启动命令。OpenRC 服务在每次启动前以 Agent 用户检查升级回滚，正常退出或身份冲突退出码 3 不重启，其他退出延迟 10 秒重启；日志送往系统 syslog，标签 `orbitbeacon-agent`，需主机运行 syslog 服务。注册失败保留 state 中的 `enrollment.token`，不启用服务。修复 URL、CA、网络或票据问题后重试：
+脚本以 Agent 账号注册，成功后按所选服务管理器启用并启动（`--no-start` 除外）；`none` 不安装服务，仅打印前台启动命令。OpenRC 服务在每次启动前以 Agent 用户检查升级回滚，正常退出或身份冲突退出码 3 不重启，其他退出延迟 10 秒重启；日志送往系统 syslog，标签 `orbitbeacon-agent`，需主机运行 syslog 服务。注册失败保留 state 中的 `enrollment.token`，不启用服务。
+
+只有确认尚未提交、票据仍有效时，才带票据重试：
 
 ```sh
 sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent enroll \
@@ -108,7 +112,15 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent enroll \
   --token-file /opt/orbit-beacon/state/enrollment.token
 ```
 
-重试成功后，用原来的 `--server`、版本和 CA 参数重跑安装脚本，并加 `< /dev/null`，让脚本补装并启动服务，不再提供注册票据。要换票据，用下方[手动前台安装](#手动前台安装)里的隐藏读取命令；不要把新票据写进命令或 `printf` 字面量。成功后删除 state 里的票据文件，源文件和管理机副本自行清理；如果提示清理失败，先核对注册结果，不能假定认领已回滚。
+可能已提交但响应丢失时，不再重放原票据；以 Agent 用户确认已保存的节点凭据：
+
+```sh
+sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent enroll \
+  --install-policy /opt/orbit-beacon/etc/install-policy.yaml \
+  --config /opt/orbit-beacon/etc/agent.yaml
+```
+
+恢复成功后，用原来的 `--server`、版本和 CA 参数重跑安装脚本，加 `< /dev/null` 补装并启动服务，不再传字符串或票据文件。空票据恢复不会删除残留 `enrollment.token`；确认恢复成功后自行清理。显式激活只有成功才安全删除票据；清理失败不代表认领已回滚。原命令含旧字符串时重复执行仍返回 403，不会因本地已有身份而假装成功。
 
 更换服务管理器前，先停止、禁用旧服务并删除对应 unit/init 文件，保留整个 `/opt/orbit-beacon` 后重装；安装器拒绝同时留下两种服务。systemd 可用 `systemctl disable --now orbitbeacon-agent` 后删除 unit 并 `systemctl daemon-reload`；OpenRC 用 `rc-service orbitbeacon-agent stop`、`rc-update del orbitbeacon-agent default` 后删除 init 文件。`--no-start` 不会自动迁移或停止旧服务。
 
@@ -283,8 +295,8 @@ Ctrl+C 或 SIGTERM 停止。不传 `--config` 时使用默认运行参数。若�
 ## API 签发
 
 - 在可信管理机登录，取得会话与 CSRF，按[接口契约（OpenAPI）](../api/openapi.yaml) 调用 `POST /api/v1/enrollments`。
-- 单节点请求为 `{"node_id":"节点 UUID","mode":"single"}`；批量为 `{"group_id":"分组 UUID","mode":"batch"}`，不能同时提供两个 ID。
-- `token` 字段通过安全通道传给安装步骤；妥善清理临时 Cookie 与票据副本，结束后注销会话。Origin 规则见[配置参考](../deploy/README.md#配置参考)。
+- 单节点请求为 `{"node_id":"节点 UUID"}`；分组请求为 `{"group_id":"分组 UUID"}`，恰好提供一个目标；旧 `mode` 字段会被严格解码拒绝为 400。
+- 签发响应中的 `token` 仅显示一次，`server_version` 用于固定安装版本；列表与详情均不含这两个字段。妥善清理临时 Cookie 与票据副本，结束后注销会话。Origin 规则见[配置参考](../deploy/README.md#配置参考)。
 
 ## 流量累计
 

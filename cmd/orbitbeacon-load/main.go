@@ -86,7 +86,7 @@ func run() error {
 	flag.IntVar(&o.disks, "disks", 1, "每节点磁盘数，0–8")
 	flag.IntVar(&o.networks, "networks", 1, "每节点网卡数，0–8")
 	flag.IntVar(&o.probes, "probes", 0, "每节点合成探测目标数，0–5；不会实际访问目标")
-	flag.Var(&o.tickets, "ticket", "批量注册票据，可重复指定，每张最多注册 100 个节点")
+	flag.Var(&o.tickets, "ticket", "一次性注册票据，可重复指定，一张对应一个节点")
 	flag.StringVar(&o.ticketFile, "tickets-file", "", "票据文件，每行一张")
 	flag.Parse()
 	if flag.NArg() != 0 {
@@ -122,8 +122,8 @@ func run() error {
 		}
 	}
 	o.tickets = unique
-	if len(o.tickets) < (o.nodes-1)/100+1 {
-		return fmt.Errorf("%d 个节点至少需要 %d 张不同的批量票据", o.nodes, (o.nodes-1)/100+1)
+	if len(o.tickets) < o.nodes {
+		return fmt.Errorf("%d 个节点至少需要 %d 张不同的一次性票据", o.nodes, o.nodes)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -132,7 +132,6 @@ func run() error {
 	stats := &summary{outcomes: make(map[string]int)}
 	defer stats.print()
 	nodes := make([]node, 0, o.nodes)
-	ticketIndex, uses := 0, 0
 	for i := range o.nodes {
 		if ctx.Err() != nil {
 			return nil
@@ -142,37 +141,21 @@ func run() error {
 			return err
 		}
 		input := v1.EnrollmentRequest{ProtocolVersion: v1.ProtocolVersion, InstallationID: n.installation, NodeToken: n.token, System: n.system}
-		for {
-			if ticketIndex >= len(o.tickets) {
-				return fmt.Errorf("批量票据剩余配额不足，已注册 %d 个节点", len(nodes))
-			}
-			result, body, err := post(ctx, client, o.baseURL+"/api/agent/v1/enroll", o.tickets[ticketIndex], input)
-			if ctx.Err() != nil {
-				return nil
-			}
-			if err != nil {
-				return fmt.Errorf("节点 %d 注册传输失败，已注册 %d 个节点", i+1, len(nodes))
-			}
-			if result.status == http.StatusConflict && result.code == "enrollment_conflict" {
-				ticketIndex++
-				uses = 0
-				continue
-			}
-			if result.status != http.StatusOK {
-				return fmt.Errorf("节点 %d 注册失败：HTTP %d（已注册 %d 个节点）", i+1, result.status, len(nodes))
-			}
-			var enrolled v1.EnrollmentResponse
-			if json.Unmarshal(body, &enrolled) != nil || enrolled.NodeID == "" {
-				return errors.New("注册响应无效")
-			}
-			nodes = append(nodes, n)
-			uses++
-			if uses == 100 {
-				ticketIndex++
-				uses = 0
-			}
-			break
+		result, body, err := post(ctx, client, o.baseURL+"/api/agent/v1/enroll", o.tickets[i], input)
+		if ctx.Err() != nil {
+			return nil
 		}
+		if err != nil {
+			return fmt.Errorf("节点 %d 注册传输失败，已注册 %d 个节点", i+1, len(nodes))
+		}
+		if result.status != http.StatusOK {
+			return fmt.Errorf("节点 %d 注册失败：HTTP %d（已注册 %d 个节点）", i+1, result.status, len(nodes))
+		}
+		var enrolled v1.EnrollmentResponse
+		if json.Unmarshal(body, &enrolled) != nil || enrolled.NodeID == "" {
+			return errors.New("注册响应无效")
+		}
+		nodes = append(nodes, n)
 	}
 	fmt.Fprintf(os.Stderr, "已注册 %d 个模拟节点，开始施压 %s；退出后节点保留在服务器。\n", len(nodes), o.duration)
 	loadCtx, cancel := context.WithTimeout(ctx, o.duration)
@@ -276,10 +259,6 @@ func post(ctx context.Context, client *http.Client, target, token string, input 
 		Code string `json:"code"`
 	}
 	if response.StatusCode >= 400 && json.Unmarshal(data, &failure) == nil && failure.Code == "report_busy" {
-		result.code = failure.Code
-	}
-	// 注册冲突仅用于尝试下一张票据；汇总不接收任意服务端标签。
-	if response.StatusCode == 409 && failure.Code == "enrollment_conflict" {
 		result.code = failure.Code
 	}
 	return result, data, nil

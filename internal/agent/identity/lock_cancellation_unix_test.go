@@ -55,10 +55,6 @@ func TestIdentityLockWaitCancellationKeepsCurrentReadableAndStateUnchanged(t *te
 			_, _, err := store.StageEnrollment(ctx, ticket, true)
 			return err
 		}},
-		{"remember", func(ctx context.Context, store *identity.Store) error {
-			_, _, err := store.RememberEnrollment(ctx, ticket, store.Current().NodeToken)
-			return err
-		}},
 	}
 	for _, operation := range operations {
 		t.Run(operation.name, func(t *testing.T) {

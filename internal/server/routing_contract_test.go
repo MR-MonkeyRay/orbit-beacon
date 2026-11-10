@@ -135,6 +135,8 @@ func TestRoutingContractWithDatabase(t *testing.T) {
 					status, code = 200, ""
 				case "/api/public/v1/ws":
 					status, code = 403, "forbidden" // Missing trusted Origin, before upgrade.
+				case "/api/agent/v1/enroll", "/api/agent/v1/enroll/check":
+					status, code = 403, "forbidden"
 				case "/api/v1/session":
 					if method == http.MethodPost {
 						status, code = 403, "forbidden"

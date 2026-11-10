@@ -78,6 +78,7 @@ type handler struct {
 	htmlPolicies             map[string]string
 	staticAssets             map[string]staticAsset
 	accessLog                bool
+	buildVersion             string
 	metrics                  *httpMetrics
 	saturation               *SaturationMetrics
 	origin                   string
@@ -146,6 +147,7 @@ func NewHandler(opts Options) (*handler, error) {
 	}
 	h := &handler{notifications: opts.Notifications, alerts: opts.Alerts, history: opts.History, staticAssets: staticAssets, accessLog: opts.AccessLog, metrics: newHTTPMetrics(opts.BuildVersion), trustedProxies: append([]netip.Prefix(nil), opts.TrustedProxies...), htmlPolicies: policies, auth: opts.Auth, nodes: opts.Nodes, management: opts.Management, enrollments: opts.Enrollments, ingest: opts.Ingest, traffic: opts.Traffic, availability: opts.Availability, origin: origin, logger: opts.Logger, now: opts.Now, ready: true}
 	h.backups, h.inbox = opts.Backups, opts.Inbox
+	h.buildVersion = opts.BuildVersion
 	h.storage = opts.Storage
 	if h.storage == nil {
 		h.storage = &storage.Databases{Main: opts.Nodes.Database()}

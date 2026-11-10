@@ -118,7 +118,7 @@ func TestLateConcurrentRotationCannotRollBackNewCredential(t *testing.T) {
 	if _, err := clientOne.Report(ctx, mustReport(t, reportBody(7, 2, "new-owner", 30))); err != nil {
 		t.Fatalf("stale process could not reload the winning credential: %v", err)
 	}
-	apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", first.Token, enrollBody(latest.InstallationID, oldCandidate)), http.StatusConflict, "enrollment_conflict")
+	apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", first.Token, enrollBody(latest.InstallationID, oldCandidate)), http.StatusForbidden, "forbidden")
 }
 
 func TestRotationRequiresCurrentCredentialProofBeforeConsumingTicket(t *testing.T) {

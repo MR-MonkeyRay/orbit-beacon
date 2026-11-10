@@ -540,6 +540,21 @@ test('detail deletion fences an already open enrollment revocation confirmation'
   assert.equal(button(env.root, copy('nodes.enrollment.issue')).disabled, true);
 });
 
+test('detail deletion suppresses a delayed deployment secret and sends no mode field', async (t) => {
+  let release;
+  const env = await setup(t, {page: 'node', hash: '#enrollment', mutate: (request) => {
+    assert.equal(request.url, '/api/v1/enrollments');
+    assert.deepEqual(JSON.parse(request.body), {node_id: id(1)});
+    return new Promise((resolve) => { release = () => resolve(response({token: 'late-fake-secret', server_version: '1.2.3', expires_at: '2026-10-28T00:30:00Z'})); });
+  }});
+  const issue = button(env.root, copy('nodes.enrollment.issue')); issue.click(); await flush();
+  assert.equal(typeof release, 'function');
+  env.send({node: null, latest: null, runtime: null}); release(); await flush();
+  assert.equal(env.body.querySelector('dialog'), null);
+  assert.equal(env.body.textContent.includes('late-fake-secret'), false);
+  assert.equal(issue.disabled, true);
+});
+
 test('detail live capability arrays reject unknown, repeated, missing and null values', async (t) => {
   for (const [field, values] of [
     ['remote_commands', ['shell']], ['remote_commands', ['restart', 'restart']],

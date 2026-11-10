@@ -1,15 +1,18 @@
 import {t} from '../i18n.js';
-import {h} from '../../shared/dom.js';
-import {api, invalidate} from '../api.js';
+import {api, getNavigationSignal, getSessionEpoch, invalidate} from '../api.js';
 import {go, ignoreNavigationCancellation} from '../router.js';
 import {button} from '../ui/components.js';
 import {formDialog} from '../ui/dialogs.js';
 import {toast} from '../ui/feedback.js';
 import {field, input, validateBytes} from '../ui/forms.js';
+import {issueEnrollment} from '../pages/enrollments.js';
 
 export function createNodeDialog() {
   let name;
-  let target = '';
+  let node;
+  const navigation = getNavigationSignal();
+  const epoch = getSessionEpoch();
+  const active = () => !navigation?.aborted && navigation === getNavigationSignal() && epoch === getSessionEpoch();
   const dialog = formDialog({
     title: t('nodes.add'),
     submit: t('nodes.add'),
@@ -19,14 +22,20 @@ export function createNodeDialog() {
       form.append(field(t('nodes.name'), name));
     },
     action: async () => {
-      const node = await api('/nodes', {method: 'POST', body: {name: name.value}});
+      node = await api('/nodes', {method: 'POST', body: {name: name.value}});
       invalidate('nodes');
-      toast(t('nodes.addedDone', {name: node.name}));
-      target = `/nodes/${encodeURIComponent(node.id)}#enrollment`;
+      if (active() && !dialog.signal.aborted) toast(t('nodes.addedDone', {name: node.name}));
     }
   });
-  // 导航等对话框关闭后再发起：打开中的草稿表单会让 go() 按未保存更改取消。
-  void dialog.closed.then((value) => { if (value === 'done' && target) go(target).catch(ignoreNavigationCancellation); });
+  void dialog.closed.then(async (value) => {
+    if (value !== 'done' || !node || !active()) return;
+    try { await issueEnrollment({node_id: node.id}, t('nodes.enrollment.title', {name: node.name})); }
+    catch (error) {
+      if (!active() || error.name === 'AbortError') return;
+      toast(t('nodes.enrollment.issueFailedAfterCreate'), {error: true});
+    }
+    if (active()) await go(`/nodes/${encodeURIComponent(node.id)}#enrollment`);
+  }).catch(ignoreNavigationCancellation);
   return dialog;
 }
 

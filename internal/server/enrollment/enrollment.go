@@ -30,8 +30,7 @@ func (err serviceError) Error() string { return string(err) }
 const (
 	ErrUnauthenticated serviceError = "enrollment authentication required"
 	ErrConflict        serviceError = "enrollment identity conflict"
-	ErrRevoked         serviceError = "enrollment ticket revoked"
-	ErrExpired         serviceError = "enrollment ticket expired"
+	ErrInvalidTicket   serviceError = "enrollment ticket invalid"
 	ErrNotFound        serviceError = "enrollment ticket not found"
 	ErrInvalidInput    serviceError = "invalid enrollment request"
 	ErrRateLimited     serviceError = "enrollment rate limited"
@@ -101,17 +100,17 @@ func (s *Service) CreateSingle(ctx context.Context, nodeID string) (CreatedTicke
 	if !uuid.ValidUUID(nodeID) {
 		return CreatedTicket{}, ErrInvalidInput
 	}
-	return s.create(ctx, &nodeID, nil, 15*time.Minute, 1)
+	return s.create(ctx, &nodeID, nil)
 }
 
-func (s *Service) CreateBatch(ctx context.Context, groupID string) (CreatedTicket, error) {
+func (s *Service) CreateGroup(ctx context.Context, groupID string) (CreatedTicket, error) {
 	if strings.TrimSpace(groupID) == "" || len(groupID) > 255 {
 		return CreatedTicket{}, ErrInvalidInput
 	}
-	return s.create(ctx, nil, &groupID, 30*time.Minute, 100)
+	return s.create(ctx, nil, &groupID)
 }
 
-func (s *Service) create(ctx context.Context, nodeID, groupID *string, lifetime time.Duration, maxUses int) (CreatedTicket, error) {
+func (s *Service) create(ctx context.Context, nodeID, groupID *string) (CreatedTicket, error) {
 	s.randomMu.Lock()
 	id, err := uuid.UUID(s.random)
 	var secret [32]byte
@@ -123,7 +122,7 @@ func (s *Service) create(ctx context.Context, nodeID, groupID *string, lifetime 
 		return CreatedTicket{}, err
 	}
 	now := s.now().UTC()
-	created := CreatedTicket{Ticket: Ticket{ID: id, NodeID: nodeID, GroupID: groupID, ExpiresAt: now.Add(lifetime), MaxUses: maxUses}, Token: base64.RawURLEncoding.EncodeToString(secret[:])}
+	created := CreatedTicket{Ticket: Ticket{ID: id, NodeID: nodeID, GroupID: groupID, ExpiresAt: now.Add(30 * time.Minute), MaxUses: 1}, Token: base64.RawURLEncoding.EncodeToString(secret[:])}
 	digest := sha256.Sum256([]byte(created.Token))
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -148,7 +147,7 @@ func (s *Service) create(ctx context.Context, nodeID, groupID *string, lifetime 
 	if exists == 0 {
 		return CreatedTicket{}, ErrNotFound
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO enrollment_tokens(id, token_hash, node_id, group_id, expires_at, max_uses) VALUES (?, ?, ?, ?, ?, ?)`, id, digest[:], nodeID, groupID, timekey.Format(created.ExpiresAt), maxUses); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO enrollment_tokens(id, token_hash, node_id, group_id, expires_at, max_uses) VALUES (?, ?, ?, ?, ?, ?)`, id, digest[:], nodeID, groupID, timekey.Format(created.ExpiresAt), 1); err != nil {
 		return CreatedTicket{}, err
 	}
 	if err := audit.Insert(ctx, tx, "enrollment.create", id, now); err != nil {
@@ -174,6 +173,7 @@ func scanTicket(row scanner) (Ticket, error) {
 		}
 		return Ticket{}, err
 	}
+	ticket.MaxUses = 1
 	var err error
 	ticket.ExpiresAt, err = timekey.Parse(expires)
 	if err != nil {
@@ -226,9 +226,8 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]Ticket, error)
 	return tickets, rows.Err()
 }
 
-// CleanupExpiredTickets 最多删除 limit 张过期时间早于 before 的票据。
-// 外键级联在同一条语句中删除其注册回执，因此在配置的回执宽限期结束之前，
-// 精确重试所需的回执仍然保留。
+// CleanupExpiredTickets 最多删除 limit 张过期时间早于 before 的票据，
+// 外键级联在同一条语句中删除其认领记录。
 func (s *Service) CleanupExpiredTickets(ctx context.Context, before time.Time, limit int) (int64, error) {
 	if limit < 1 {
 		return 0, ErrInvalidInput
@@ -310,7 +309,7 @@ func (s *Service) Recover(ctx context.Context, token string, req v1.RecoveryRequ
 	return v1.EnrollmentResponse{NodeID: nodeID, ServerTime: s.now().UTC()}, nil
 }
 
-// Enroll 在一个 BEGIN IMMEDIATE 事务中串行化身份绑定、容量、配额和重试回执，
+// Enroll 在写事务中串行化身份绑定、容量、票据消费和认领记录，
 // 对独立的服务实例同样有效。
 func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentRequest) (v1.EnrollmentResponse, error) {
 	if err := req.Validate(); err != nil {
@@ -320,7 +319,7 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 		return v1.EnrollmentResponse{}, ErrInvalidInput
 	}
 	if token == "" || len(token) > 256 {
-		return v1.EnrollmentResponse{}, ErrUnauthenticated
+		return v1.EnrollmentResponse{}, ErrInvalidTicket
 	}
 	ticketHash := sha256.Sum256([]byte(token))
 	nodeHash := sha256.Sum256([]byte(req.NodeToken))
@@ -338,45 +337,13 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 	now := s.now().UTC()
 	ticket, err := scanTicket(tx.QueryRowContext(ctx, "SELECT "+ticketColumns+" FROM enrollment_tokens WHERE token_hash = ?", ticketHash[:]))
 	if errors.Is(err, ErrNotFound) {
-		return v1.EnrollmentResponse{}, ErrUnauthenticated
+		return v1.EnrollmentResponse{}, ErrInvalidTicket
 	}
 	if err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
-	if ticket.RevokedAt != nil {
-		return v1.EnrollmentResponse{}, ErrRevoked
-	}
-
-	// 先检查重试回执，再检查票据过期和使用配额。只有仍有效的凭据能在认领后
-	// 24 小时内（含边界）重试，已被替换的认领不能重新激活旧凭据。
-	var claimNodeID, claimed string
-	var claimHash []byte
-	var claimActive bool
-	err = tx.QueryRowContext(ctx, `SELECT node_id, token_hash, claimed_at, EXISTS(SELECT 1 FROM nodes WHERE id = enrollment_claims.node_id AND token_hash = enrollment_claims.token_hash) FROM enrollment_claims WHERE enrollment_id = ? AND installation_id = ?`, ticket.ID, req.InstallationID).Scan(&claimNodeID, &claimHash, &claimed, &claimActive)
-	if err == nil {
-		if !claimActive || subtle.ConstantTimeCompare(claimHash, nodeHash[:]) != 1 {
-			return v1.EnrollmentResponse{}, ErrConflict
-		}
-		claimedAt, err := timekey.Parse(claimed)
-		if err != nil {
-			return v1.EnrollmentResponse{}, err
-		}
-		if now.After(claimedAt.Add(24 * time.Hour)) {
-			return v1.EnrollmentResponse{}, ErrExpired
-		}
-		if err := tx.Commit(); err != nil {
-			return v1.EnrollmentResponse{}, err
-		}
-		return v1.EnrollmentResponse{NodeID: claimNodeID, ServerTime: now}, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return v1.EnrollmentResponse{}, err
-	}
-	if ticket.Uses >= ticket.MaxUses {
-		return v1.EnrollmentResponse{}, ErrConflict
-	}
-	if !now.Before(ticket.ExpiresAt) {
-		return v1.EnrollmentResponse{}, ErrExpired
+	if ticket.RevokedAt != nil || ticket.Uses != 0 || !now.Before(ticket.ExpiresAt) {
+		return v1.EnrollmentResponse{}, ErrInvalidTicket
 	}
 
 	var nodeID string
@@ -409,7 +376,7 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 			}
 		}
 	} else if ticket.GroupID == nil {
-		// 已删除的批量分组绝不能悄悄变成无分组准入。
+		// 已删除的分组绝不能悄悄变成无分组准入。
 		return v1.EnrollmentResponse{}, ErrConflict
 	}
 
@@ -463,8 +430,16 @@ func (s *Service) Enroll(ctx context.Context, token string, req v1.EnrollmentReq
 	if _, err := tx.ExecContext(ctx, `INSERT INTO enrollment_claims(enrollment_id, installation_id, node_id, token_hash, claimed_at) VALUES (?, ?, ?, ?, ?)`, ticket.ID, req.InstallationID, nodeID, nodeHash[:], timekey.Format(now)); err != nil {
 		return v1.EnrollmentResponse{}, err
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE enrollment_tokens SET uses = uses + 1 WHERE id = ?", ticket.ID); err != nil {
+	consumed, err := tx.ExecContext(ctx, "UPDATE enrollment_tokens SET uses=1 WHERE id=? AND uses=0 AND revoked_at IS NULL AND expires_at>?", ticket.ID, timekey.Format(now))
+	if err != nil {
 		return v1.EnrollmentResponse{}, err
+	}
+	count, err := consumed.RowsAffected()
+	if err != nil {
+		return v1.EnrollmentResponse{}, err
+	}
+	if count != 1 {
+		return v1.EnrollmentResponse{}, ErrInvalidTicket
 	}
 	// Agent 没有会话，因此认领归属于票据。
 	details := audit.Details{"enrollment_id": ticket.ID, "new_node": ticket.NodeID == nil, "rotation": rotation}
