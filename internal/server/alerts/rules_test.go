@@ -79,6 +79,16 @@ func TestRuleAuditAtomicityAndCapacity(t *testing.T) {
 	if err = f.db.QueryRow("SELECT count(*) FROM audit_events WHERE target_id=? AND action IN ('alert_rule.create','alert_rule.update','alert_rule.delete')", r.ID).Scan(&count); err != nil || count != 3 {
 		t.Fatalf("audit count=%d err=%v", count, err)
 	}
+	for action, want := range map[string]string{"alert_rule.create": "audited", "alert_rule.update": "updated", "alert_rule.delete": "updated"} {
+		var raw string
+		if err := f.db.QueryRow("SELECT details FROM audit_events WHERE target_id=? AND action=?", r.ID, action).Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		var details audit.Details
+		if err := json.Unmarshal([]byte(raw), &details); err != nil || details["name"] != want {
+			t.Fatalf("%s details=%s want name=%q err=%v", action, raw, want, err)
+		}
+	}
 	f.exec(t, `CREATE TRIGGER fail_alert_audit BEFORE INSERT ON audit_events BEGIN SELECT RAISE(ABORT,'audit failure'); END`)
 	if _, err = f.s.Save(ctx, f.rule.ID, patch(t, `{"name":"must roll back"}`)); err == nil {
 		t.Fatal("failed audit committed")

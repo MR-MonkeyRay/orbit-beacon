@@ -370,7 +370,7 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Rule, error) {
 	if create {
 		action = "alert_rule.create"
 	}
-	if err = audit.Insert(ctx, tx, action, r.ID, r.UpdatedAt); err != nil {
+	if err = audit.InsertDetails(ctx, tx, action, r.ID, r.UpdatedAt, audit.Details{"name": r.Name}); err != nil {
 		return Rule{}, err
 	}
 	return r, tx.Commit()
@@ -387,6 +387,14 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
+	var name string
+	err = tx.QueryRowContext(ctx, "SELECT name FROM alert_rules WHERE id=?", id).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, "DELETE FROM alert_rules WHERE id=?", id)
 	if err != nil {
 		return err
@@ -398,7 +406,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if n == 0 {
 		return ErrNotFound
 	}
-	if err = audit.Insert(ctx, tx, "alert_rule.delete", id, s.now()); err != nil {
+	if err = audit.InsertDetails(ctx, tx, "alert_rule.delete", id, s.now(), audit.Details{"name": name}); err != nil {
 		return err
 	}
 	return tx.Commit()

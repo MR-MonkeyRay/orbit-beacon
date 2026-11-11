@@ -1,4 +1,5 @@
 export default {
+  "account.apiTokensEmpty": "No API tokens",
   "account.apiTokenGlobalRate": "Global limit (requests per minute)",
   "account.apiTokenRate": "Limit (requests per minute)",
   "account.apiTokenDefaultRate": "Default ({limit})",

@@ -1,4 +1,6 @@
 export default {
+  "audit.targetRule": "告警规则",
+  "audit.targetAnnouncement": "公告",
   "audit.apiTokenRateUpdate": "修改 API 令牌限额",
   "audit.apiTokenGlobalRateUpdate": "修改 API 令牌全局限额",
   "audit.apiTokenRevoke": "撤销 API 令牌",

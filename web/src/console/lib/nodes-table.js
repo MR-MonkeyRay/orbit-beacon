@@ -41,6 +41,7 @@ export function createNodeRow({node, query, selected, deleted, groupNames, rowRe
       onSelectionChange();
     }});
   const name = link(`/nodes/${node.id}`, highlightNodeMatch(node.name, query));
+  name.setAttribute('title', node.name);
   const badge = statusBadge(displayStatus(node));
   const lastSeen = h('td', {class: 'hide-compact muted'}, node.last_seen ? absoluteWhen(node.last_seen) : t('nodes.never'));
   const cpu = h('td', {class: 'num'}, metricText(node.cpu_percent));
@@ -49,10 +50,10 @@ export function createNodeRow({node, query, selected, deleted, groupNames, rowRe
   const element = h('tr', null, h('td', {class: 'selection-cell'}, h('label', {class: 'selection-hit'}, checkbox)), h('td', {class: 'name'}, name),
     h('td', null, badge), cpu, memory, version, lastSeen,
     h('td', {class: 'hide-compact'}, node.group_id ? groupNames.get(node.group_id) || h('span', {class: 'muted'}, t('common.status.unknown')) : h('span', {class: 'muted'}, t('nodes.none'))),
-    h('td', {class: 'hide-compact'}, formatList([node.region, node.provider].filter(Boolean)) || h('span', {class: 'muted'}, t('nodes.none'))),
+    h('td', {class: 'hide-compact'}, [node.region, node.provider].filter(Boolean).join(' · ') || h('span', {class: 'muted'}, t('nodes.none'))),
     h('td', {class: 'hide-compact'}, (() => {
-      const extra = node.tags.slice(3);
-      return h('div', {class: 'cell-tags'}, node.tags.slice(0, 3).map((tag) => h('span', {class: 'tag static'}, tag)),
+      const extra = node.tags.slice(2);
+      return h('div', {class: 'cell-tags'}, node.tags.slice(0, 2).map((tag) => h('span', {class: 'tag static', title: tag}, tag)),
         extra.length ? h('span', {class: 'muted', title: formatList(extra), 'aria-label': `${t('nodes.tagsMore', {count: extra.length})}: ${formatList(extra)}`}, `+${extra.length}`) : null);
     })()),
     h('td', {class: 'hide-compact muted'}, when(node.created_at)));

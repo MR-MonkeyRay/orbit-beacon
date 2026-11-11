@@ -8,6 +8,13 @@ const dialogs = new Set();
 let dialogEpoch = 0;
 const activeActions = [];
 
+// 同一个 live region 随最上层 modal 移动，保持提示可交互、可被辅助技术读取。
+function hostToasts() {
+  const toasts = document.getElementById('toasts');
+  const host = [...dialogs].findLast((entry) => entry.dialog.open)?.dialog || document.body;
+  if (toasts && toasts.parentElement !== host) host.append(toasts);
+}
+
 // body 级的秘密信息遵守同一边界，即使路由正在等待数据。
 onSession((_session, detail) => { if (detail.boundary && detail.previousUser) closeDialogs(); });
 
@@ -44,6 +51,7 @@ export function modal(title, build) {
     controller.abort();
     clearTimeout(timer);
     dialogs.delete(entry);
+    hostToasts();
     if (dialog.open) dialog.close(value);
     dialog.remove();
     // 视口跨越 767px 时抽屉会把入口所在容器置为 inert，焦点必须改落到页面标题。
@@ -57,10 +65,10 @@ export function modal(title, build) {
     controller.abort();
     if (reducedMotion.matches) { finish(value); return; }
     dialog.classList.add('closing');
-    dialog.addEventListener('animationend', () => finish(value), {once: true});
+    dialog.addEventListener('animationend', (event) => { if (event.target === dialog) finish(value); });
     timer = setTimeout(() => finish(value), 260);
   };
-  const entry = {opener, cancel: () => finish('cancel'), dirty: () => snapshot() !== initial};
+  const entry = {dialog, opener, cancel: () => finish('cancel'), dirty: () => snapshot() !== initial};
   let initial;
   // 确认输入不是用户的工作成果，取消时无需再次确认。
   const snapshot = () => JSON.stringify([...dialog.querySelectorAll('input:not([data-transient]),select,textarea,[data-tags]')]
@@ -87,6 +95,7 @@ export function modal(title, build) {
   dialogs.add(entry);
   document.body.append(dialog);
   dialog.showModal();
+  hostToasts();
   const preferred = dialog.querySelector('[data-autofocus]');
   if (preferred) preferred.focus();
   return {close, closed, signal: controller.signal};

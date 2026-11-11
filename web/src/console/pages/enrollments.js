@@ -49,9 +49,9 @@ export async function issueEnrollment(target, title, isDeleted = () => false) {
       h('div', null, tParts('nodes.enrollment.expiry', {countdown, time: when(ticket.expires_at)})),
       h('p', {class: 'text-note'}, t('nodes.enrollment.issueIntro')),
       h('pre', {class: 'code enrollment-token'}, token), copyToken,
-      h('p', {class: 'text-note'}, t('nodes.enrollment.secretWarning')),
-      h('pre', {class: 'code', tabindex: '0'}, installer), copyInstall,
-      !installer.textContent ? callout(t('nodes.enrollment.unreleased')) : null,
+      ...(installer.textContent
+        ? [h('p', {class: 'text-note'}, t('nodes.enrollment.secretWarning')), h('pre', {class: 'code', tabindex: '0'}, installer), copyInstall]
+        : [callout(t('nodes.enrollment.unreleased'))]),
       expiry, status),
     h('div', {class: 'dialog-foot'}, button(t('nodes.close'), {onClick: () => close('done')}))));
   const cancel = () => dialog.close('cancel');
@@ -83,11 +83,13 @@ export function enrollmentTab(node) {
       if (node.deleted) return;
       list.replaceChildren(tickets.length ? dataTable({caption: t('nodes.enrollment.caption'),
         columns: [t('nodes.enrollment.ticket'), t('nodes.enrollment.expiresHeader'), t('nodes.enrollment.state'), t('nodes.enrollment.actions')],
-        body: h('tbody', null, tickets.map((ticket) => h('tr', null,
+        body: h('tbody', null, tickets.map((ticket) => {
+          const active = !ticket.revoked_at && ticket.uses === 0 && Date.parse(ticket.expires_at) > Date.now();
+          return h('tr', null,
             h('td', {class: 'mono', title: ticket.id}, shortID(ticket.id)),
-            h('td', null, when(ticket.expires_at)),
+            h('td', null, active ? when(ticket.expires_at) : '—'),
             h('td', null, enrollmentState(ticket), ticket.revoked_at ? h('div', {class: 'muted'}, when(ticket.revoked_at)) : null),
-            h('td', {class: 'actions'}, ticket.revoked_at ? null : button(t('nodes.enrollment.revoke'), {small: true, variant: 'danger', onClick: async (event) => {
+            h('td', {class: 'actions'}, !active ? null : button(t('nodes.enrollment.revoke'), {small: true, variant: 'danger', onClick: async (event) => {
               const control = event.currentTarget;
               if (node.deleted) return;
               if (!(await confirmDialog({title: t('nodes.enrollment.revokeTitle'), message: t('nodes.enrollment.revokeIntro'), confirm: t('nodes.enrollment.revokeConfirm'), danger: true})) || node.deleted) return;
@@ -97,7 +99,8 @@ export function enrollmentTab(node) {
                 if (!node.deleted) await reload();
               } catch (failure) { toastError(failure); }
               finally { busy(control, false); control.disabled = Boolean(node.deleted); }
-            }})))))}) : emptyState(t('nodes.enrollment.empty'), null));
+            }})));
+        }))}) : emptyState(t('nodes.enrollment.empty'), null));
     } catch (failure) {
       if (failure.name !== 'AbortError') { error.textContent = errorText(failure); error.hidden = false; }
     } finally { loading = false; busy(retry, false); retry.disabled = Boolean(node.deleted); }

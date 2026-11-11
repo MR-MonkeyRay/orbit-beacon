@@ -3874,7 +3874,11 @@ components:
         created_at: {type: string, format: date-time, description: UTC RFC3339.}
         details:
           type: object
+          description: 变更时的少量事实快照；alert_rule.create/update/delete 的 name 为规则名称，announcement.create/update/delete 的 title 为公告标题。历史事件可能缺少这些字段。
           additionalProperties: true
+          properties:
+            name: {type: string, description: 告警规则名称（alert_rule.*）。}
+            title: {type: string, description: 公告标题（announcement.*）。}
           example: {}
     Node:
       type: object

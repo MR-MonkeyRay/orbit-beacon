@@ -179,8 +179,10 @@ test('invalid release keeps ticket copying and clipboard manual fallback availab
     const pending = issueEnrollment({node_id: 'node'}, 'Deploy'); await flush();
     const dialog = dom.body.querySelector('dialog');
     const buttons = dialog.querySelectorAll('button');
-    assert.equal(buttons.find((button) => button.textContent === copy('nodes.enrollment.copyInstall')).disabled, true);
+    assert.equal(buttons.find((button) => button.textContent === copy('nodes.enrollment.copyInstall')), undefined);
+    assert.deepEqual(dialog.querySelectorAll('pre').map((block) => block.textContent), ['fake-ticket']);
     assert.ok(dialog.textContent.includes(copy('nodes.enrollment.unreleased')));
+    assert.ok(!dialog.textContent.includes(copy('nodes.enrollment.secretWarning')));
     buttons.find((button) => button.textContent === copy('nodes.enrollment.copyToken')).click(); await flush();
     assert.equal(selected.textContent, 'fake-ticket');
     assert.ok(dialog.textContent.includes(copy('nodes.enrollment.copyManual')));
@@ -249,4 +251,34 @@ test('detail deployment restores its enabled trigger only within the same live n
       tab.remove();
     }
   } finally { closeDialogs(); setNavigationSignal(null); setSession({user: null, csrf_token: '', expires_at: ''}); globalThis.fetch = originalFetch; dom.restore(); }
+});
+
+
+test('only active unused tickets show expiry and revoke controls', async () => {
+  const dom = installDOM(); const originalFetch = globalThis.fetch; const originalNow = Date.now;
+  const now = Date.parse('2026-11-09T12:00:00Z'); Date.now = () => now;
+  setNavigationSignal(null);
+  const ticket = {node_id: 'node', uses: 0, max_uses: 1, revoked_at: null, expires_at: '2026-11-09T12:30:00Z'};
+  const tickets = [
+    {...ticket, id: 'active'},
+    {...ticket, id: 'claimed', uses: 1},
+    {...ticket, id: 'historical', uses: 7, max_uses: 100},
+    {...ticket, id: 'expired', expires_at: new Date(now).toISOString()},
+    {...ticket, id: 'revoked', revoked_at: '2026-11-09T11:59:00Z'}
+  ];
+  globalThis.fetch = async () => Response.json({enrollments: tickets, has_more: false});
+  try {
+    const tab = enrollmentTab({id: 'node', name: 'Node'}); dom.body.append(tab); await flush();
+    const rows = tab.querySelector('tbody').children;
+    assert.equal(rows.length, 5);
+    assert.notEqual(rows[0].children[1].textContent, '—');
+    assert.equal(rows[0].querySelector('button').textContent, copy('nodes.enrollment.revoke'));
+    for (const row of rows.slice(1)) {
+      assert.equal(row.children[1].textContent, '—');
+      assert.equal(row.querySelector('button'), null);
+    }
+    assert.equal(rows[1].children[2].textContent, copy('nodes.enrollment.used'));
+    assert.equal(rows[2].children[2].textContent, copy('nodes.enrollment.used'));
+    assert.equal(rows[3].children[2].textContent, copy('nodes.enrollment.expired'));
+  } finally { globalThis.fetch = originalFetch; Date.now = originalNow; dom.restore(); }
 });

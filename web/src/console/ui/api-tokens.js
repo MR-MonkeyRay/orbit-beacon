@@ -4,7 +4,7 @@ import {errorText} from '../../shared/errors.js';
 import {t} from '../i18n.js';
 import {api, getNavigationSignal, session} from '../api.js';
 import {when} from '../format.js';
-import {button, dataTable, panel} from './components.js';
+import {button, dataTable, emptyState, panel} from './components.js';
 import {confirmDialog, formDialog, modal} from './dialogs.js';
 import {field, input, passwordInput, select, validateBytes, onSubmit} from './forms.js';
 import {toastError} from './feedback.js';
@@ -33,7 +33,7 @@ export function apiTokensPanel() {
       await api('/settings/api-tokens', {method: 'PATCH', body: {rate_limit_per_minute: Number(globalLimit.value)}});
       if (alive()) await load();
     }, error);
-    body.replaceChildren(form, dataTable({columns: ['apiTokenName', 'apiTokenCreator', 'apiTokenCreated', 'apiTokenLastUsed', 'apiTokenExpires', 'apiTokenRate', 'apiTokenActions'].map((key) => t(`account.${key}`)),
+    body.replaceChildren(form, tokens.length ? dataTable({columns: ['apiTokenName', 'apiTokenCreator', 'apiTokenCreated', 'apiTokenLastUsed', 'apiTokenExpires', 'apiTokenRate', 'apiTokenActions'].map((key) => t(`account.${key}`)),
       body: h('tbody', null, tokens.map((token) => h('tr', null,
         h('td', null, token.name), h('td', null, token.created_by_username), h('td', null, when(token.created_at)),
         h('td', null, token.last_used_at ? when(token.last_used_at) : '—'), h('td', null, token.expires_at ? when(token.expires_at) : t('account.apiTokenNever')),
@@ -52,7 +52,7 @@ export function apiTokensPanel() {
           try { await api(`/api-tokens/${encodeURIComponent(token.id)}`, {method: 'DELETE'}); await load(); }
           catch (error) { if (alive()) toastError(error); }
         }})))))
-    }));
+    }) : emptyState(t('account.apiTokensEmpty')));
   };
   const create = () => {
     let name; let days; let password; let token = '';

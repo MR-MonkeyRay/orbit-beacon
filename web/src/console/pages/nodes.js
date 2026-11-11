@@ -232,7 +232,7 @@ export async function nodesPage() {
       h('div', {class: 'search'}, icon('search'), search, h('kbd', null, '/')),
       h('div', {class: 'segmented', role: 'group', 'aria-label': t('nodes.filterPresence')}, [...statusButtons.values()]),
       groupSelect),
-    h('div', {class: 'table-wrap'}, h('table', {class: 'table'}, h('caption', {class: 'sr'}, t('nodes.listTitle')), h('thead', null, h('tr', null, headers)), body)),
+    h('div', {class: 'table-wrap'}, h('table', {class: 'table nodes-table'}, h('caption', {class: 'sr'}, t('nodes.listTitle')), h('thead', null, h('tr', null, headers)), body)),
     h('div', {class: 'table-foot'}, summary, pager, changes), actionBar);
   update();
   function patchFleet(data) {

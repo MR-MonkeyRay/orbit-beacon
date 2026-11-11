@@ -46,6 +46,7 @@ test('light focus and normal text colors meet WCAG contrast thresholds', () => {
   assert.ok(contrast(token(light, 'focus'), bg) >= 3);
   assert.ok(contrast(token(light, 'focus'), panel) >= 3);
   assert.ok(contrast(token(light, 'ink-muted'), bg) >= 4.5);
+  for (const theme of [light, dark]) assert.ok(contrast(token(theme, 'ink-subtle'), token(theme, 'panel')) >= 4.5);
   assert.ok(contrast(token(light, 'ok'), token(light, 'ok-bg')) >= 4.5);
   assert.ok(contrast(token(light, 'bad'), token(light, 'bad-bg')) >= 4.5);
   assert.ok(contrast(token(light, 'off'), token(light, 'off-bg')) >= 4.5);

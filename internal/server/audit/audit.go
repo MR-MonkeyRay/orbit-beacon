@@ -64,18 +64,18 @@ func InsertDetails(ctx context.Context, tx *storage.Tx, action, targetID string,
 
 // ScopedAlertRuleDeletes 将清单作用域级联删除的规则归属于同一主体和事务。
 func ScopedAlertRuleDeletes(ctx context.Context, tx *storage.Tx, kind, scopeID string, now time.Time) error {
-	rows, err := tx.QueryContext(ctx, "SELECT id FROM alert_rules WHERE scope_kind=? AND scope_id=?", kind, scopeID)
+	rows, err := tx.QueryContext(ctx, "SELECT id,name FROM alert_rules WHERE scope_kind=? AND scope_id=?", kind, scopeID)
 	if err != nil {
 		return err
 	}
-	var ids []string
+	var rules []struct{ id, name string }
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var rule struct{ id, name string }
+		if err := rows.Scan(&rule.id, &rule.name); err != nil {
 			rows.Close()
 			return err
 		}
-		ids = append(ids, id)
+		rules = append(rules, rule)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -84,8 +84,8 @@ func ScopedAlertRuleDeletes(ctx context.Context, tx *storage.Tx, kind, scopeID s
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	for _, id := range ids {
-		if err := InsertDetails(ctx, tx, "alert_rule.delete", id, now, Details{"scope_kind": kind, "scope_id": scopeID}); err != nil {
+	for _, rule := range rules {
+		if err := InsertDetails(ctx, tx, "alert_rule.delete", rule.id, now, Details{"name": rule.name, "scope_kind": kind, "scope_id": scopeID}); err != nil {
 			return err
 		}
 	}

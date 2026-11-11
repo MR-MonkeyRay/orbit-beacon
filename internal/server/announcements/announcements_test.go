@@ -162,6 +162,34 @@ func TestCRUDPatchAuditAtomicityAndCapacity(t *testing.T) {
 	if calls != 4 {
 		t.Fatalf("delete invalidations=%d", calls)
 	}
+	rows, err := db.Query("SELECT action,details FROM audit_events WHERE target_id=? ORDER BY created_at,id", a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	seen := map[string]int{}
+	for rows.Next() {
+		var action, raw string
+		if err := rows.Scan(&action, &raw); err != nil {
+			t.Fatal(err)
+		}
+		want := "Changed"
+		if action == "announcement.create" {
+			want = "Title"
+		}
+		var details audit.Details
+		if err := json.Unmarshal([]byte(raw), &details); err != nil || details["title"] != want || details["actor_kind"] != "test" {
+			t.Fatalf("%s details=%s want title=%q err=%v", action, raw, want, err)
+		}
+		seen[action]++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	rows.Close()
+	if seen["announcement.create"] != 1 || seen["announcement.update"] != 2 || seen["announcement.delete"] != 1 {
+		t.Fatalf("audit actions=%v", seen)
+	}
 	s.invalidate = nil
 	for i := 0; i < 100; i++ {
 		_, err = s.Save(context.Background(), "", patch(t, `{"level":"info","title":"T","body":"B"}`))

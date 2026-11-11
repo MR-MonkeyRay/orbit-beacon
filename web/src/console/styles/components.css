@@ -484,7 +484,7 @@
   text-align: left;
   font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
-  color: var(--ink-muted);
+  color: var(--ink-subtle);
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
@@ -540,6 +540,31 @@
   vertical-align: middle;
 }
 
+.table td.num {
+  white-space: nowrap;
+}
+
+.nodes-table td {
+  white-space: nowrap;
+}
+
+.nodes-table .name {
+  min-width: 160px;
+}
+
+.nodes-table .name a {
+  display: block;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nodes-table td.hide-compact {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .table tbody tr {
   transition: background-color var(--motion-instant);
 }
@@ -564,6 +589,13 @@
   text-decoration: none;
 }
 
+@media (hover:hover) {
+  .table tbody tr:hover .name a {
+    color: var(--orbit);
+  }
+}
+
+/* 名称链接铺满整行，整行可点；复选框在 .selection-hit 中抬高层级。 */
 .table .name a::after {
   content: "";
   position: absolute;
@@ -574,12 +606,7 @@
   position: relative;
 }
 
-@media (hover:hover) {
-  .table .name a:hover {
-    color: var(--orbit);
-  }
-}
-
+/* 焦点由整行左侧的指示条表达。 */
 .table .name a:focus-visible {
   outline: none;
 }
@@ -591,7 +618,26 @@
 .cell-tags {
   display: flex;
   gap: var(--sp-tight);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.cell-tags > * {
+  flex: none;
+}
+
+.nodes-table .cell-tags {
+  width: max-content;
+  max-width: 240px;
+}
+
+.nodes-table .cell-tags .tag {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cell-tags .tag {
@@ -761,17 +807,16 @@ dialog.closing::backdrop {
   animation: fade-only var(--motion-fast) var(--ease-default) reverse forwards;
 }
 
+/* 不在 dialog 上使用 transform：固定定位的 toast 必须以视口为包含块。 */
 @keyframes dialog-in {
   from {
     opacity: 0;
-    transform: translateY(12px) scale(.97);
   }
 }
 
 @keyframes dialog-out {
   to {
     opacity: 0;
-    transform: translateY(8px) scale(.98);
   }
 }
 

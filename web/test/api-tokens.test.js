@@ -150,3 +150,14 @@ test('API token limit errors remain visible in the panel and modal', async (t) =
   assert.equal(describeAction('api_token.rate_limit.update'), copy('audit.apiTokenRateUpdate'));
   assert.equal(describeAction('settings.api_token_rate_limit.update'), copy('audit.apiTokenGlobalRateUpdate'));
 });
+
+
+test('zero API tokens show the shared empty state without a header-only table', async (t) => {
+  const env = setup(t, () => response({api_tokens: []}));
+  const panel = apiTokensPanel(); env.body.append(panel); await flush();
+  assert.equal(panel.querySelector('table'), null);
+  assert.equal(panel.querySelector('.empty').querySelector('h2').textContent, copy('account.apiTokensEmpty'));
+  assert.equal(panel.querySelector('.empty').querySelector('p'), null);
+  assert.ok(label(panel, copy('account.createAPIToken')));
+  assert.ok(named(panel, 'rate_limit_per_minute'));
+});

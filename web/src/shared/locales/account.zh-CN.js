@@ -1,4 +1,5 @@
 export default {
+  "account.apiTokensEmpty": "暂无 API 令牌",
   "account.apiTokenGlobalRate": "全局限额（请求/分钟）",
   "account.apiTokenRate": "限额（请求/分钟）",
   "account.apiTokenDefaultRate": "默认（{limit}）",

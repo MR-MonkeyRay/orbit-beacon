@@ -77,3 +77,22 @@ test('node metric cells patch in place without reload flags, selection or sort c
     assert.ok(refs.checkbox.disabled);
   } finally { dom.restore(); }
 });
+
+
+test('node rows preserve full linked names, dot-separated location and two inline tags', () => {
+  const dom = installDOM();
+  try {
+    const item = {...node(), name: 'ams-proxy-01-with-a-long-name', region: 'New York', provider: 'Linode', tags: ['one', 'two', 'three', 'four']};
+    const refs = new Map();
+    const row = createNodeRow({node: item, query: 'proxy', selected: new Set(), deleted: new Set(), groupNames: new Map(), rowRefs: refs, onSelectionChange() {}, tween: createNumberTween()});
+    assert.equal(refs.get(item.id).name.getAttribute('title'), item.name);
+    assert.equal(refs.get(item.id).name.textContent, item.name);
+    assert.equal(refs.get(item.id).name.getAttribute('href'), `/nodes/${item.id}`);
+    assert.equal(row.children[8].textContent, 'New York · Linode');
+    const tags = row.querySelector('.cell-tags');
+    assert.deepEqual(tags.querySelectorAll('.tag').map((tag) => tag.textContent), ['one', 'two']);
+    assert.equal(tags.lastElementChild.textContent, '+2');
+    assert.ok(tags.lastElementChild.getAttribute('title').includes('three'));
+    assert.ok(tags.lastElementChild.getAttribute('aria-label').includes('four'));
+  } finally { dom.restore(); }
+});

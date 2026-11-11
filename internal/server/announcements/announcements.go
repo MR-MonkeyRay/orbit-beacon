@@ -252,7 +252,7 @@ func (s *Service) Save(ctx context.Context, id string, patch Patch) (Announcemen
 	if err != nil {
 		return Announcement{}, err
 	}
-	if err = audit.Insert(ctx, tx, action, id, now); err != nil {
+	if err = audit.InsertDetails(ctx, tx, action, id, now, audit.Details{"title": a.Title}); err != nil {
 		return Announcement{}, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -275,6 +275,14 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
+	var title string
+	err = tx.QueryRowContext(ctx, "SELECT title FROM announcements WHERE id=?", id).Scan(&title)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, "DELETE FROM announcements WHERE id=?", id)
 	if err != nil {
 		return err
@@ -286,7 +294,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if count == 0 {
 		return ErrNotFound
 	}
-	if err = audit.Insert(ctx, tx, "announcement.delete", id, s.now()); err != nil {
+	if err = audit.InsertDetails(ctx, tx, "announcement.delete", id, s.now(), audit.Details{"title": title}); err != nil {
 		return err
 	}
 	if err = tx.Commit(); err != nil {

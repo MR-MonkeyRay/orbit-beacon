@@ -160,6 +160,14 @@ func TestAlertScopedCascadeAuditRollsBackWithParent(t *testing.T) {
 			if err := f.db.QueryRow("SELECT count(*) FROM audit_events WHERE action='alert_rule.delete' AND target_id=?", ruleID).Scan(&count); err != nil || count != 1 {
 				t.Fatalf("cascade audit=%d %v", count, err)
 			}
+			var raw string
+			if err := f.db.QueryRow("SELECT details FROM audit_events WHERE action='alert_rule.delete' AND target_id=?", ruleID).Scan(&raw); err != nil {
+				t.Fatal(err)
+			}
+			var details map[string]any
+			if err := json.Unmarshal([]byte(raw), &details); err != nil || details["name"] != "CPU hot" || details["scope_kind"] != kind || details["scope_id"] != scopeID {
+				t.Fatalf("cascade details=%s err=%v", raw, err)
+			}
 		})
 	}
 }

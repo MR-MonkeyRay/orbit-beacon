@@ -191,6 +191,14 @@
 
 /* 手机：同一份导航作为抽屉，宽屏规则保持原样。 */
 @media (max-width:767px) {
+  .nodes-table .name {
+    min-width: 0;
+  }
+
+  .nodes-table .name a {
+    max-width: 132px;
+  }
+
   .shell {
     grid-template-columns: minmax(0,1fr);
     min-height: calc(100dvh - 64px - env(safe-area-inset-top));
