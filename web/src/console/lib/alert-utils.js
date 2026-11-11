@@ -41,10 +41,21 @@ export function formatRuleDuration(seconds) {
   const remainder = seconds % 60;
   return minutes ? remainder ? t('alerts.duration.minutesSeconds', {minutes, seconds: remainder}) : t('alerts.duration.minutes', {minutes}) : t('alerts.duration.seconds', {seconds: remainder});
 }
-export function durationSeconds(minutes, seconds) {
-  if (String(minutes).trim() === '' || String(seconds).trim() === '') return NaN;
-  const m = Number(minutes), s = Number(seconds);
-  return Number.isInteger(m) && m >= 0 && Number.isInteger(s) && s >= 0 && s <= 59 ? m * 60 + s : NaN;
+export function durationParts(seconds) {
+  const unit = seconds % 3600 === 0 ? 3600 : seconds % 60 === 0 ? 60 : 1;
+  return {value: seconds / unit, unit};
+}
+export function durationSeconds(value, unit) {
+  if (String(value).trim() === '' || ![1, 60, 3600].includes(Number(unit))) return NaN;
+  const seconds = Number(value) * Number(unit);
+  return Number.isInteger(seconds) && seconds >= 0 ? seconds : NaN;
+}
+export function sortActiveEvents(events) {
+  const rank = (severity) => {
+    const index = ['critical', 'warning', 'info'].indexOf(severity);
+    return index < 0 ? 3 : index;
+  };
+  return [...events].sort((a, b) => rank(a.severity) - rank(b.severity) || (Date.parse(b.started_at) || 0) - (Date.parse(a.started_at) || 0));
 }
 export function scopeLabel(rule, groups = [], nodes = []) {
   if (rule.scope_kind === 'all') return t('alerts.scope.all');

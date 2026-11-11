@@ -44,3 +44,35 @@ select.alert-multiselect {
   padding: var(--sp-inline) var(--sp-control);
   min-height: 90px;
 }
+
+.alert-toolbar,
+.alert-segments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-inline);
+}
+
+.panel-body > .alert-toolbar {
+  justify-content: space-between;
+  gap: var(--sp-control);
+  margin-bottom: var(--sp-control);
+}
+
+.alert-segments .btn[aria-pressed="true"] {
+  color: var(--orbit);
+  background: var(--orbit-soft);
+}
+
+.alert-group th {
+  background: var(--orbit-soft);
+  text-align: left;
+}
+
+.alert-updated {
+  font-size: var(--fs-sm);
+}
+
+.alert-rule-preview {
+  margin: 0;
+}

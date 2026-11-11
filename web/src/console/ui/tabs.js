@@ -59,6 +59,10 @@ export function tabSet(tabs, label) {
   };
   requestAnimationFrame(() => revealInitial(120));
   const root = h('div', null, list, holder);
+  root.selectTab = (id) => {
+    const index = tabs.findIndex((tab) => tab.id === id);
+    if (index >= 0) return show(index, true);
+  };
   const signal = getNavigationSignal();
   let mounted = false;
   let disposed = false;

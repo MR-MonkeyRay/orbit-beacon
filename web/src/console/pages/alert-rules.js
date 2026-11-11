@@ -2,19 +2,20 @@ import {h} from '../../shared/dom.js';
 import {formatList, t} from '../i18n.js';
 import {api, session} from '../api.js';
 import {button, dataTable, iconButton, panel} from '../ui/components.js';
-import {confirmDialog, formDialog} from '../ui/dialogs.js';
+import {confirmDialog, confirmDiscard, formDialog, hasUnsavedDialogChanges} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, select, validateBytes} from '../ui/forms.js';
-import {durationSeconds, formatMetricValue, formatRuleDuration, isProbeMetric, METRICS, metricLabel, metricMax, scopeLabel, SEVERITIES, validateRule, validationError} from '../lib/alert-utils.js';
+import {durationParts, durationSeconds, formatMetricValue, formatRuleDuration, isProbeMetric, METRICS, metricLabel, metricMax, scopeLabel, severityLabel, SEVERITIES, validateRule, validationError} from '../lib/alert-utils.js';
 import {alertScope} from '../ui/alert-scope.js';
 import {severityPill} from './alert-events.js';
 
-export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
+export function ruleEditor(item, {groups, nodes, channels, signal, saved, openChannels}) {
   if (!session.user || !session.csrf || signal?.aborted) return;
   const controls = {};
-  return formDialog({
+  const dialog = formDialog({
     title: item ? t('alerts.editNamed', {name: item.name}) : t('alerts.rules.addTitle'), submit: t('alerts.rules.save'),
     build: (form) => {
+      form.noValidate = true;
       const name = controls.name = input({name: 'name', required: true, value: item?.name || '', autocomplete: 'off'});
       validateBytes(name, 1, 100, t('alerts.rules.name'));
       const enabled = controls.enabled = input({type: 'checkbox', name: 'enabled', checked: item?.enabled ?? true});
@@ -27,8 +28,13 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
       const condition = h('div', {class: 'form-row'}, comparatorField, thresholdField);
       const target = controls.target = input({name: 'target', value: item?.target || '', autocomplete: 'off', class: 'input mono'});
       const targetField = field(t('nodes.audit.target'), target);
-      const minutes = controls.minutes = input({name: 'for_seconds', type: 'number', min: 0, max: 1440, step: 1, required: true, value: Math.floor((item?.for_seconds ?? 180) / 60)});
-      const seconds = controls.seconds = input({name: 'duration_seconds', type: 'number', min: 0, max: 59, step: 1, required: true, value: (item?.for_seconds ?? 180) % 60});
+      const initialDuration = durationParts(item?.for_seconds ?? 180);
+      const duration = controls.duration = input({name: 'for_seconds', type: 'number', step: 'any', required: true, value: initialDuration.value});
+      const unit = controls.unit = select([[1, t('alerts.rules.unit.seconds')], [60, t('alerts.rules.unit.minutes')], [3600, t('alerts.rules.unit.hours')]], String(initialDuration.unit), {name: 'duration_unit'});
+      const syncDuration = () => {
+        duration.min = (metric.value === 'offline' ? 180 : 0) / Number(unit.value);
+        duration.max = 86400 / Number(unit.value);
+      };
       let previousMetric = metric.value;
       let previousComparator = item?.comparator || '>';
       const validateThreshold = () => {
@@ -66,7 +72,7 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
         if (!failed && Number(threshold.value) > threshold.max) threshold.value = metric.value === 'probes_down' ? '0' : String(threshold.max);
         validateThreshold();
         thresholdLabel.textContent = t(expiry ? 'alerts.rules.thresholdDays' : metric.value === 'probe_latency_ms' ? 'alerts.rules.thresholdMilliseconds' : metric.value === 'load1' ? 'alerts.rules.thresholdLoad' : metric.value === 'probes_down' ? 'alerts.rules.thresholdProbes' : 'alerts.rules.thresholdPercent');
-        minutes.min = offline ? 3 : 0;
+        syncDuration();
       };
       metric.addEventListener('change', syncMetric);
       syncMetric();
@@ -76,12 +82,56 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
       const severity = controls.severity = select(SEVERITIES, item?.severity || 'warning', {name: 'severity'});
       const routing = controls.channel_ids = select(channels.map((entry) => [entry.id, entry.enabled ? entry.name : t('alerts.disabledName', {name: entry.name})]), '', {name: 'channel_ids', multiple: true, size: Math.min(6, Math.max(2, channels.length)), class: 'input alert-multiselect'});
       for (const option of routing.options) option.selected = Boolean(item?.channel_ids.includes(option.value));
-      // 没有频道时不渲染空列表，只保留说明；提交仍携带空数组。
+      // 没有通道时以添加入口替代空列表。
       routing.hidden = channels.length === 0;
-      form.append(field(t('alerts.column.name'), name), field(t('alerts.state.enabled'), enabled), field(t('alerts.column.metric'), metric), targetField, condition,
-        h('div', {class: 'form-row'}, field(t('alerts.rules.durationMinutes'), minutes), field(t('alerts.rules.additionalSeconds'), seconds)),
+      const preview = h('p', {class: 'alert-rule-preview', role: 'status'});
+      const syncPreview = () => {
+        const seconds = durationSeconds(duration.value, unit.value);
+        if (!Number.isFinite(seconds) || threshold.value.trim() === '' && !threshold.disabled) { preview.textContent = ''; return; }
+        const part = durationParts(seconds);
+        const condition = ['offline', 'probe_failed'].includes(metric.value) ? metricLabel(metric.value) : t('alerts.rules.metricCondition', {
+          metric: metricLabel(metric.value), comparator: comparator.value, value: formatMetricValue(metric.value, Number(threshold.value))});
+        preview.textContent = t('alerts.rules.preview', {condition,
+          duration: t(`alerts.rules.previewDuration.${part.unit}`, {count: part.value}),
+          severity: severityLabel(severity.value), scope: scopeLabel({scope_kind: scope.value, scope_id: scopeID.value}, groups, nodes)});
+      };
+      for (const control of [metric, comparator, threshold, duration, unit, scope, scopeID, severity]) {
+        control.addEventListener('input', syncPreview);
+        control.addEventListener('change', syncPreview);
+      }
+      unit.addEventListener('change', syncDuration);
+      const presets = !item ? h('div', {class: 'alert-toolbar'}, [
+        ['offline', 'alerts.rules.preset.offline', 180, 'critical'],
+        ['cpu_percent', 'alerts.rules.preset.cpu', 300, 'warning'],
+        ['memory_used_percent', 'alerts.rules.preset.memory', 300, 'warning'],
+        ['disk_used_percent', 'alerts.rules.preset.disk', 600, 'critical']
+      ].map(([value, label, seconds, level]) => button(t(label), {small: true, onClick: () => {
+        metric.value = value;
+        syncMetric();
+        comparator.value = '>';
+        threshold.value = '90';
+        const part = durationParts(seconds);
+        duration.value = part.value;
+        unit.value = String(part.unit);
+        severity.value = level;
+        if (!name.value.trim()) name.value = t(label);
+        name.dispatchEvent(new Event('input', {bubbles: true}));
+        syncDuration(); syncPreview();
+      }}))) : null;
+      const addChannel = button(t('alerts.channels.add'), {small: true, onClick: async () => {
+        if (hasUnsavedDialogChanges() && !(await confirmDiscard())) return;
+        dialog.close('navigate');
+        await dialog.closed;
+        if (!signal?.aborted) openChannels?.();
+      }});
+      form.append(field(t('alerts.column.name'), name), field(t('alerts.state.enabled'), enabled), presets, field(t('alerts.column.metric'), metric), targetField, condition,
+        h('div', {class: 'form-row'}, field(t('alerts.column.duration'), duration), field(t('alerts.rules.durationUnit'), unit)),
         ...scopeFields, field(t('alerts.column.severity'), severity),
-        field(t('alerts.channels.title'), routing, {hint: t(channels.length ? 'alerts.rules.routingHint' : 'alerts.rules.noChannelsHint')}));
+        channels.length ? field(t('alerts.channels.title'), routing, {hint: t('alerts.rules.routingHint')}) : h('div', {class: 'field', role: 'group', 'aria-labelledby': 'rule-channels-label'}, h('span', {class: 'field-label', id: 'rule-channels-label'}, t('alerts.channels.title')), h('div', null, addChannel)),
+        preview);
+      // 空通道仍提交空数组，不展示空列表。
+      if (!channels.length) form.append(routing);
+      syncPreview();
     },
     action: async () => {
       if (!session.user || !session.csrf || signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
@@ -90,7 +140,7 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
       const body = {name: c.name.value, enabled: c.enabled.checked, metric: c.metric.value,
         target: isProbeMetric(c.metric.value) ? c.target.value.trim() : null,
         comparator: offline ? null : c.metric.value === 'probe_failed' ? '>' : ['node_expiry_days', 'probe_tls_expiry_days'].includes(c.metric.value) ? '<' : c.comparator.value, threshold: offline ? null : c.metric.value === 'probe_failed' ? 0 : c.threshold.value.trim() === '' ? NaN : Number(c.threshold.value),
-        for_seconds: durationSeconds(c.minutes.value, c.seconds.value), scope_kind: c.scope_kind.value,
+        for_seconds: durationSeconds(c.duration.value, c.unit.value), scope_kind: c.scope_kind.value,
         scope_id: c.scope_kind.value === 'all' ? null : c.scope_id.value, severity: c.severity.value,
         channel_ids: [...c.channel_ids.selectedOptions].map((option) => option.value)};
       const errors = validateRule(body);
@@ -100,10 +150,11 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved}) {
       toast(t('alerts.rules.saved'));
     }
   });
+  return dialog;
 }
 
-export function rulesPanel({rules, groups, nodes, channels, signal, saved}) {
-  const edit = (rule) => ruleEditor(rule, {groups, nodes, channels, signal, saved});
+export function rulesPanel({rules, groups, nodes, channels, signal, saved, openChannels}) {
+  const edit = (rule) => ruleEditor(rule, {groups, nodes, channels, signal, saved, openChannels});
   const remove = async (rule) => {
     if (!session.user || !session.csrf || signal?.aborted) return;
     if (!(await confirmDialog({title: t('alerts.deleteNamed', {name: rule.name}), message: t('alerts.rules.deleteHint'), confirm: t('alerts.rules.delete'), danger: true}))) return;
@@ -114,7 +165,7 @@ export function rulesPanel({rules, groups, nodes, channels, signal, saved}) {
       toast(t('alerts.rules.deleted'));
     } catch (error) { if (!signal?.aborted) toastError(error); }
   };
-  return panel(null, {action: button(t('alerts.rules.add'), {small: true, variant: 'primary', onClick: () => edit(null)})},
+  return panel(null, {action: h('div', {class: 'alert-toolbar'}, !channels.length ? button(t('alerts.channels.add'), {small: true, onClick: openChannels}) : null, button(t('alerts.rules.add'), {small: true, variant: 'primary', onClick: () => edit(null)}))},
     rules.length ? dataTable({caption: t('alerts.rules.caption'),
       columns: ['name', 'condition', 'scope', 'severity', 'state', 'channels', 'actions'].map((key) => t(`alerts.column.${key}`)),
       body: h('tbody', null, rules.map((rule) => h('tr', null,

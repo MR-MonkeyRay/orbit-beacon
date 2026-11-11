@@ -75,7 +75,7 @@ test('expiry rule editor hides and restores comparator, defaults days and saves 
     assert.equal(control(root, 'comparator').parentElement.hidden, true);
     assert.equal(control(root, 'threshold').value, '17');
     assert.equal(Number(control(root, 'for_seconds').value), 1);
-    assert.equal(Number(control(root, 'duration_seconds').value), 0);
+    assert.equal(control(root, 'duration_unit').value, '60');
     edited.close('done'); await edited.closed;
   } finally {
     globalThis.fetch = originalFetch;

@@ -24,8 +24,9 @@ test('rule editor toggles offline fields, scopes and channel routing for every a
       assert.equal(check.parentElement.className, 'check-row');
       assert.equal(check.parentElement.children[0], check);
     }
-    assert.equal(control(root, 'for_seconds').getAttribute('max'), '1440');
-    assert.equal(control(root, 'duration_seconds').getAttribute('max'), '59');
+    assert.equal(control(root, 'for_seconds').max, 1440);
+    assert.equal(control(root, 'duration_unit').value, '60');
+    assert.equal(control(root, 'duration_seconds'), undefined);
     assert.equal(control(root, 'channel_ids').getAttribute('multiple'), '');
     assert.ok(root.textContent.includes(copy('alerts.rules.routingHint')));
     const metric = control(root, 'metric');
@@ -57,7 +58,7 @@ test('rule editor toggles offline fields, scopes and channel routing for every a
     assert.equal(control(root, 'enabled').checked, false);
     existing.close('done'); await existing.closed;
     const withoutChannels = ruleEditor(null, {...context, channels: []});
-    assert.ok(root.textContent.includes(copy('alerts.rules.noChannelsHint')));
+    assert.ok(root.textContent.includes(copy('alerts.channels.add')));
     assert.equal(control(root, 'channel_ids').options.length, 0);
     withoutChannels.close('done'); await withoutChannels.closed;
     setSession({user: null, csrf_token: '', expires_at: ''});
@@ -293,4 +294,66 @@ test('new channel editors switch URL and secret requirements and submit URL temp
       assert.ok(panel.textContent.includes(item.config.url_redacted));
     }
   } finally { globalThis.fetch = originalFetch; dom.restore(); }
+});
+
+test('rule presets preserve routing and scope, preview updates, and duration units validate and round-trip', async () => {
+  const dom = installDOM();
+  const original = globalThis.fetch;
+  setNavigationSignal(null); admin();
+  const payloads = [];
+  globalThis.fetch = async (_path, options) => { payloads.push(JSON.parse(options.body)); return new Response('{}'); };
+  const toasts = document.createElement('div'); toasts.id = 'toasts'; dom.body.append(toasts);
+  try {
+    const {ruleEditor} = await import('../src/console/pages/alert-rules.js');
+    const context = {groups: [{id, name: 'Production'}], nodes: [{id, name: 'Edge'}], channels: [{id, name: 'Hook', enabled: true}], signal: new AbortController().signal, saved: async () => {}};
+    const dialog = ruleEditor(null, context);
+    const root = dom.body;
+    const preview = () => elements(root).find((e) => e.classList.contains('alert-rule-preview')).textContent;
+    assert.equal(preview(), copy('alerts.rules.preview', {condition: copy('alerts.rules.metricCondition', {metric: copy('alerts.metric.cpu'), comparator: '>', value: '80%'}), duration: copy('alerts.rules.previewDuration.60', {count: 3}), scope: copy('alerts.scope.all'), severity: copy('alerts.severity.warning')}));
+    control(root, 'threshold').value = '70'; control(root, 'threshold').dispatchEvent(new Event('input'));
+    assert.match(preview(), /70%/);
+    change(control(root, 'scope_kind'), 'group'); change(control(root, 'scope_id'), id);
+    control(root, 'channel_ids').options[0].selected = true;
+    for (const [label, metric, duration, severity] of [['offline', 'offline', 3, 'critical'], ['cpu', 'cpu_percent', 5, 'warning'], ['memory', 'memory_used_percent', 5, 'warning'], ['disk', 'disk_used_percent', 10, 'critical']]) {
+      elements(root).find((e) => e.tagName === 'button' && e.textContent === copy(`alerts.rules.preset.${label}`)).click();
+      assert.equal(control(root, 'metric').value, metric);
+      assert.equal(Number(control(root, 'for_seconds').value), duration);
+      assert.equal(control(root, 'duration_unit').value, '60');
+      assert.equal(control(root, 'severity').value, severity);
+      assert.equal(control(root, 'threshold').value, '90');
+      assert.equal(control(root, 'comparator').value, '>');
+      assert.equal(control(root, 'scope_kind').value, 'group'); assert.equal(control(root, 'scope_id').value, id);
+      assert.equal(control(root, 'channel_ids').selectedOptions.length, 1);
+      assert.equal(control(root, 'name').value, copy('alerts.rules.preset.offline'));
+      assert.match(preview(), /Production/);
+    }
+    dialog.close('done'); await dialog.closed;
+    const item = {id, name: 'Existing', enabled: true, metric: 'cpu_percent', comparator: '>', threshold: 80, for_seconds: 60, scope_kind: 'all', scope_id: null, severity: 'warning', channel_ids: []};
+    for (const [seconds, unit, value] of [[0, '3600', 0], [65, '1', 65], [180, '60', 3], [3600, '3600', 1], [86400, '3600', 24]]) {
+      const edited = ruleEditor({...item, for_seconds: seconds}, context);
+      assert.equal(control(root, 'duration_unit').value, unit);
+      assert.equal(Number(control(root, 'for_seconds').value), value);
+      assert.equal(elements(root).filter((e) => e.tagName === 'button' && e.textContent === copy('alerts.rules.preset.cpu')).length, 0);
+      elements(root).find((e) => e.tagName === 'form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+      assert.equal(payloads.at(-1).for_seconds, seconds, root.textContent);
+      await edited.closed;
+    }
+    const offline = ruleEditor({...item, metric: 'offline', comparator: null, threshold: null, for_seconds: 180}, context);
+    change(control(root, 'duration_unit'), '1');
+    change(control(root, 'for_seconds'), '179');
+    assert.equal(control(root, 'for_seconds').min, 180);
+    const form = elements(root).find((e) => e.tagName === 'form');
+    form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+    assert.equal(payloads.length, 5);
+    assert.ok(root.textContent.includes(copy('alerts.validation.offlineDuration')));
+    change(control(root, 'duration_unit'), '3600');
+    assert.equal(control(root, 'for_seconds').min, 0.05);
+    control(root, 'for_seconds').value = '25';
+    form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+    assert.equal(payloads.length, 5);
+    control(root, 'for_seconds').value = '0.05';
+    form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+    assert.equal(payloads.at(-1).for_seconds, 180);
+    await offline.closed;
+  } finally { globalThis.fetch = original; dom.restore(); }
 });

@@ -23,6 +23,8 @@ test('event rows use stored metric/severity snapshots, including unknown metadat
     assert.match(summary.textContent, /6999/);
     assert.equal(elements(activeAlertsSummary({firing: {total: 0}, newest: []})).filter((element) => element.tagName === 'li').length, 0);
     assert.equal(elements(summary).filter((element) => element.tagName === 'li').length, 5);
+    const ordered = activeAlertsSummary({firing: {total: 2}, newest: [event('warning', {rule_name: 'Warning', severity: 'warning'}), event('critical', {rule_name: 'Critical', started_at: '2020-01-01'})]});
+    assert.match(elements(ordered).find((e) => e.tagName === 'li').textContent, /^Critical/);
   } finally { dom.restore(); }
 });
 test('overview requests one alert summary and uses aggregate counts with only the newest events', async () => {
@@ -105,4 +107,114 @@ test('detaching an alert history tab aborts in-flight loads and ignores late res
     await flush();
     assert.doesNotMatch(root.textContent, /High CPU/);
   } finally { page.abort(); globalThis.fetch = originalFetch; dom.restore(); }
+});
+
+test('active table loads all pages, sorts, filters and groups with remembered controls and duration columns', async () => {
+  const dom = installDOM();
+  const original = globalThis.fetch;
+  const page = new AbortController();
+  let requests = 0, stored;
+  localStorage.getItem = () => stored;
+  localStorage.setItem = (_key, value) => { stored = value; };
+  globalThis.fetch = async () => respond(++requests % 2 ? {events: [event('warning', {severity: 'warning', rule_id: 'a'}), event('info', {severity: 'info', rule_id: 'b'})], has_more: true, next_cursor: 'older'} :
+    {events: [event('critical', {rule_id: 'a', silenced: true, started_at: '2020-01-01T00:00:00Z'})], has_more: false});
+  try {
+    const root = eventsPanel('firing', page.signal, {getRules: () => [{id: 'a', metric: 'cpu_percent', comparator: '>', threshold: 80}]});
+    dom.body.append(root); dom.mutations(); await flush();
+    const headers = elements(root).filter((e) => e.getAttribute('scope') === 'col').map((e) => e.textContent);
+    assert.ok(headers.includes(copy('alerts.column.duration')));
+    assert.ok(!headers.includes(copy('alerts.column.state')));
+    assert.ok(!headers.includes(copy('alerts.column.resolved')));
+    const dataRows = () => elements(root).filter((e) => e.dataset.eventId);
+    assert.deepEqual(dataRows().map((e) => e.dataset.eventId), ['critical', 'warning', 'info']);
+    assert.ok(dataRows()[0].textContent.includes(copy('alerts.silences.silenced')));
+    assert.match(dataRows()[0].textContent, /90.1% > 80%/);
+    assert.ok(dataRows()[0].children[5].textContent);
+    const updated = elements(root).find((e) => e.classList.contains('alert-updated'));
+    assert.equal(updated.children[0].tagName, 'time');
+    assert.ok(updated.children[0].getAttribute('datetime'));
+    assert.doesNotMatch(updated.textContent, /object Object/);
+    const critical = elements(root).find((e) => e.dataset.severity === 'critical');
+    assert.match(critical.textContent, /\(1\)/);
+    critical.click();
+    assert.equal(critical.getAttribute('aria-pressed'), 'true');
+    assert.deepEqual(dataRows().map((e) => e.dataset.eventId), ['critical']);
+    elements(root).find((e) => e.dataset.severity === 'all').click();
+    elements(root).find((e) => e.dataset.grouping === 'rule').click();
+    const groups = elements(root).filter((e) => e.getAttribute('scope') === 'rowgroup');
+    assert.equal(groups.length, 2);
+    assert.match(groups[0].textContent, /\(2\)/);
+    assert.equal(groups[0].getAttribute('colspan'), '7');
+    assert.ok(elements(groups[0]).some((e) => e.classList.contains('alert-critical')));
+    assert.equal(elements(root).filter((e) => e.tagName === 'table').length, 1);
+    assert.equal(elements(root).filter((e) => e.tagName === 'tbody').length, 2);
+    elements(root).find((e) => e.dataset.grouping === 'node').click();
+    assert.equal(elements(root).filter((e) => e.getAttribute('scope') === 'rowgroup').length, 1);
+    assert.deepEqual(JSON.parse(stored), {severity: 'all', grouping: 'node'});
+    root.remove(); dom.mutations();
+    const remembered = eventsPanel('firing', page.signal); dom.body.append(remembered); dom.mutations(); await flush();
+    assert.equal(elements(remembered).find((e) => e.dataset.grouping === 'node').getAttribute('aria-pressed'), 'true');
+  } finally { page.abort(); globalThis.fetch = original; dom.restore(); }
+});
+
+test('active polling pauses hidden requests, ignores cancelled results and stops on navigation or tab detach', async () => {
+  const dom = installDOM();
+  const original = globalThis.fetch;
+  const page = new AbortController();
+  const requests = [];
+  globalThis.fetch = (_path, options) => new Promise((resolve) => requests.push({resolve, signal: options.signal}));
+  try {
+    const root = eventsPanel('firing', page.signal); dom.body.append(root); dom.mutations();
+    assert.equal(dom.timers.size, 1);
+    requests[0].resolve(respond({events: [event('first')], has_more: false})); await flush();
+    [...dom.timers.values()].forEach((tick) => tick());
+    assert.equal(requests.length, 2);
+    document.hidden = true; document.dispatchEvent(new Event('visibilitychange'));
+    assert.equal(requests[1].signal.aborted, true);
+    [...dom.timers.values()].forEach((tick) => tick()); assert.equal(requests.length, 2);
+    document.hidden = false; document.dispatchEvent(new Event('visibilitychange'));
+    assert.equal(requests.length, 3);
+    requests[1].resolve(respond({events: [event('late')], has_more: false})); await flush();
+    assert.ok(!elements(root).some((e) => e.dataset.eventId === 'late'));
+    page.abort();
+    assert.equal(requests[2].signal.aborted, true);
+    assert.equal(dom.timers.size, 0);
+    requests[2].resolve(respond({events: [event('late-again')], has_more: false})); await flush();
+    assert.ok(!elements(root).some((e) => e.dataset.eventId === 'late-again'));
+    const other = new AbortController();
+    const detached = eventsPanel('firing', other.signal); dom.body.append(detached); dom.mutations();
+    detached.remove(); dom.mutations();
+    assert.equal(dom.timers.size, 0); assert.equal(requests.at(-1).signal.aborted, true);
+    requests.at(-1).resolve(respond({events: [], has_more: false})); other.abort(); await flush();
+  } finally { page.abort(); globalThis.fetch = original; dom.restore(); }
+});
+
+test('active row silence opens the shared editor with node prefill and refreshes badges after save', async () => {
+  const dom = installDOM();
+  const original = globalThis.fetch;
+  const page = new AbortController();
+  const id = '00000000-0000-4000-8000-000000000001';
+  setNavigationSignal(page.signal);
+  setSession({user: {id: 'admin', username: 'admin', must_change_password: false}, csrf_token: 'csrf', expires_at: ''});
+  invalidate('groups', 'nodes');
+  let created = false, alertRequests = 0, payload;
+  globalThis.fetch = async (path, options) => {
+    if (path.startsWith('/api/v1/alerts?')) { ++alertRequests; return respond({events: [event('one', {node_id: id, silenced: created})], has_more: false}); }
+    if (path === '/api/v1/groups') return respond({groups: []});
+    if (path.startsWith('/api/v1/nodes?')) return respond({nodes: [{id, name: 'Edge'}], has_more: false});
+    if (path === '/api/v1/alert-silences') { payload = JSON.parse(options.body); created = true; return respond({}); }
+    assert.fail(path);
+  };
+  try {
+    const root = eventsPanel('firing', page.signal); dom.body.append(root); dom.mutations(); await flush();
+    elements(root).find((e) => e.tagName === 'button' && e.textContent === copy('alerts.events.silence')).click(); await flush();
+    const control = (name) => elements(dom.body).find((e) => e.name === name);
+    assert.equal(control('scope_kind').value, 'node'); assert.equal(control('scope_id').value, id);
+    control('reason').value = 'Maintenance';
+    elements(dom.body).find((e) => e.tagName === 'form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+    assert.equal(payload.scope_kind, 'node'); assert.equal(payload.scope_id, id);
+    assert.equal(alertRequests, 2);
+    assert.ok(root.textContent.includes(copy('alerts.silences.silenced')));
+    const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs();
+  } finally { page.abort(); setNavigationSignal(null); invalidate('groups', 'nodes'); setSession({user: null, csrf_token: '', expires_at: ''}); globalThis.fetch = original; dom.restore(); }
 });

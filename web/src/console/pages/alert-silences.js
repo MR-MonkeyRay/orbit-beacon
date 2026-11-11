@@ -14,7 +14,7 @@ export const localDateTime = (date) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 };
 
-export function silenceEditor({groups, nodes, signal, saved}) {
+export function silenceEditor({groups, nodes, signal, saved, scope_kind, scope_id}) {
   if (!session.user || !session.csrf || signal?.aborted) return;
   const now = new Date();
   let reason, starts, ends, scope, scopeID;
@@ -24,7 +24,7 @@ export function silenceEditor({groups, nodes, signal, saved}) {
       validateBytes(reason, 1, 255, t('alerts.silences.reason'));
       starts = input({name: 'starts_at', type: 'datetime-local', step: 1, required: true, value: localDateTime(now)});
       ends = input({name: 'ends_at', type: 'datetime-local', step: 1, required: true, value: localDateTime(new Date(now.getTime() + 2 * 3600000))});
-      const selection = alertScope(null, {groups, nodes});
+      const selection = alertScope({scope_kind, scope_id}, {groups, nodes});
       ({scope, scopeID} = selection);
       form.append(field(t('alerts.silences.reason'), reason), ...selection.fields,
         field(t('alerts.silences.starts'), starts), field(t('alerts.silences.ends'), ends));

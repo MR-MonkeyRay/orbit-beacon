@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {copy} from './console-dom.js';
-import {buildChannelPayload, durationSeconds, formatMetricValue, formatRuleDuration, metricUnit, scopeLabel, validateChannel, validateRule, validHost, errorCodeMessage} from '../src/console/lib/alert-utils.js';
+import {buildChannelPayload, durationParts, durationSeconds, sortActiveEvents, formatMetricValue, formatRuleDuration, metricUnit, scopeLabel, validateChannel, validateRule, validHost, errorCodeMessage} from '../src/console/lib/alert-utils.js';
 
 const id = '00000000-0000-4000-8000-000000000001';
 const valid = () => ({name: 'High CPU', enabled: true, scope_kind: 'all', scope_id: null, metric: 'cpu_percent', comparator: '>', threshold: 80, for_seconds: 60, severity: 'warning', channel_ids: []});
@@ -45,9 +45,9 @@ test('metric values preserve precision, durations preserve components and scope 
   assert.deepEqual(formatRuleDuration(65).match(/\d+/g), ['1', '5']);
   assert.deepEqual(formatRuleDuration(180).match(/\d+/g), ['3']);
   assert.deepEqual(formatRuleDuration(86400).match(/\d+/g), ['1440']);
-  assert.equal(durationSeconds('2', '59'), 179);
-  assert.equal(durationSeconds('1440', '0'), 86400);
-  for (const parts of [['', '0'], ['1', ''], ['0.5', '0'], ['0', '60'], ['-1', '0']]) assert.ok(Number.isNaN(durationSeconds(...parts)));
+  assert.equal(durationSeconds('179', '1'), 179);
+  assert.equal(durationSeconds('24', '3600'), 86400);
+  for (const parts of [['', '1'], ['1', ''], ['0.5', '1'], ['0', '59'], ['-1', '60']]) assert.ok(Number.isNaN(durationSeconds(...parts)));
   assert.ok(scopeLabel({scope_kind: 'group', scope_id: id}, [{id, name: 'Production'}]).includes('Production'));
   assert.ok(scopeLabel({scope_kind: 'node', scope_id: id}, [], [{id, name: 'Edge'}]).includes('Edge'));
   assert.ok(scopeLabel({scope_kind: 'group', scope_id: id}).includes(id));
@@ -153,4 +153,20 @@ test('URL channels reject common mistakes before the server does', async () => {
   assert.equal(fieldErrorText('channel URL cannot be empty'), copy('alerts.validation.channelURL'));
   assert.equal(fieldErrorText('invalid channel secret'), copy('alerts.validation.channelSecret'));
   assert.equal(fieldErrorText('must be webhook, telegram, email, feishu, dingtalk, wecom, bark or ntfy'), copy('fields.channelKind'));
+});
+
+test('duration units round-trip exactly and active ordering is severity then time without mutation', () => {
+  for (const [seconds, unit] of [[0, 3600], [65, 1], [180, 60], [300, 60], [3600, 3600], [7200, 3600], [86400, 3600]]) {
+    const part = durationParts(seconds);
+    assert.equal(part.unit, unit);
+    assert.equal(durationSeconds(String(part.value), String(part.unit)), seconds);
+  }
+  assert.equal(durationSeconds('0.05', '3600'), 180);
+  const events = [{id: 'unknown', severity: 'other', started_at: '2030-01-01'},
+    {id: 'warn', severity: 'warning', started_at: '2030-01-01'},
+    {id: 'older', severity: 'critical', started_at: '2020-01-01'},
+    {id: 'info', severity: 'info', started_at: '2030-01-01'},
+    {id: 'newer', severity: 'critical', started_at: '2025-01-01'}];
+  assert.deepEqual(sortActiveEvents(events).map(({id}) => id), ['newer', 'older', 'warn', 'info', 'unknown']);
+  assert.equal(events[0].id, 'unknown');
 });

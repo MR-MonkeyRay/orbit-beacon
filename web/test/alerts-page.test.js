@@ -8,7 +8,7 @@ test('alerts tabs load independently: one failed resource keeps the others and o
   const originals = new Map(['fetch', 'window', 'matchMedia', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
   let ruleRequests = 0;
   Object.assign(globalThis, {window: new EventTarget(), matchMedia: () => ({matches: true, addEventListener() {}}),
-    history: {state: null, replaceState() {}}, requestAnimationFrame: (callback) => callback()});
+    history: {state: null, replaceState(_state, _title, url) { location.hash = new URL(url, 'https://console.test').hash; }}, requestAnimationFrame: (callback) => callback()});
   Object.assign(location, {pathname: '/alerts', search: '', hash: ''});
   setNavigationSignal(null);
   setSession({csrf_token: 'csrf', user: {id: 'user', username: 'admin', must_change_password: false, created_at: '2026-10-27T12:00:00Z'}, expires_at: ''});
@@ -16,13 +16,16 @@ test('alerts tabs load independently: one failed resource keeps the others and o
     const url = String(path);
     if (url.startsWith('/api/v1/alert-rules')) {
       ruleRequests += 1;
-      if (ruleRequests === 1) return new Response(JSON.stringify({message: 'Rules could not be loaded.'}), {status: 500});
+      // 第一次来自当前告警页签补阈值，第二次是规则页签。
+      if (ruleRequests === 2) return new Response(JSON.stringify({message: 'Rules could not be loaded.'}), {status: 500});
       return new Response(JSON.stringify({rules: []}));
     }
     if (url.startsWith('/api/v1/alert-silences')) return new Response(JSON.stringify({silences: []}));
     if (url.startsWith('/api/v1/notification-channels')) return new Response(JSON.stringify({channels: []}));
     if (url.startsWith('/api/v1/nodes?')) return new Response(JSON.stringify({nodes: [], has_more: false}));
     if (url === '/api/v1/groups') return new Response(JSON.stringify({groups: []}));
+    if (url.startsWith('/api/v1/alerts?')) return new Response(JSON.stringify({events: [], has_more: false}));
+    if (url.startsWith('/api/v1/notification-deliveries')) return new Response(JSON.stringify({deliveries: [], has_more: false}));
     if (url === '/api/v1/alerts/summary') return new Response(JSON.stringify({firing: {total: 0}, newest: []}));
     return assert.fail(`Unexpected request ${url}`);
   };
@@ -38,8 +41,21 @@ test('alerts tabs load independently: one failed resource keeps the others and o
     // 原地重试恢复。
     elements(page).find((element) => element.tagName === 'button' && element.textContent === copy('common.retry')).click();
     await flush();
-    assert.equal(ruleRequests, 2);
+    assert.equal(ruleRequests, 3);
     assert.ok(elements(page).some((element) => element.tagName === 'button' && element.textContent === copy('alerts.rules.add')));
+    // 空通道操作沿用 tabs 的 hash 与焦点。
+    const addChannels = () => elements(page).find((e) => e.tagName === 'button' && e.textContent === copy('alerts.channels.add'));
+    addChannels().click(); await flush();
+    assert.equal(location.hash, '#channels');
+    assert.equal(document.activeElement.id, 'tab-channels');
+    tabs.find((e) => e.id === 'tab-rules').click(); await flush();
+    elements(page).find((e) => e.tagName === 'button' && e.textContent === copy('alerts.rules.add')).click();
+    const dialog = elements(dom.body).find((e) => e.tagName === 'dialog');
+    elements(dialog).find((e) => e.tagName === 'button' && e.textContent === copy('alerts.channels.add')).click();
+    await flush();
+    assert.equal(location.hash, '#channels');
+    assert.equal(document.activeElement.id, 'tab-channels');
+    assert.equal(dialog.isConnected, false);
     // 静默标签不受规则加载失败影响。
     tabs.find((element) => element.id === 'tab-silences').click();
     await flush();
