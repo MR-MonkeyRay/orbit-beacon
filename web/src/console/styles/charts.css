@@ -3,7 +3,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fit,minmax(min(100%,420px),1fr));
   gap: var(--sp-group) 20px;
-  margin-top: 18px;
+  margin-top: var(--sp-content);
 }
 
 .history-grid {
@@ -28,9 +28,9 @@
 }
 
 .history-metric h3 {
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   font-weight: var(--fw-heading);
-  margin-bottom: 10px;
+  margin-bottom: var(--sp-inline);
 }
 
 .history-metric>.text-note {
@@ -40,24 +40,24 @@
 .history-error {
   display: grid;
   justify-items: start;
-  gap: 10px;
-  padding: 18px 0;
+  gap: var(--sp-inline);
+  padding: var(--sp-content) 0;
   overflow-wrap: anywhere;
 }
 
 .chart-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px var(--sp-content);
+  gap: var(--sp-tight) var(--sp-content);
   font-size: var(--fs-xs);
   color: var(--ink-subtle);
-  margin-bottom: 6px;
+  margin-bottom: var(--sp-tight);
 }
 
 .chart-key {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-tight);
 }
 
 .chart-key i {
@@ -166,7 +166,7 @@
   z-index: 2;
   width: max-content;
   max-width: min(280px,calc(100% - 8px));
-  padding: var(--sp-inline) 10px;
+  padding: var(--sp-inline);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--panel);
@@ -181,7 +181,7 @@
 .chart-tooltip strong {
   display: block;
   color: var(--ink-subtle);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-xs);
   font-weight: var(--fw-medium);
   margin-bottom: var(--sp-tight);
 }

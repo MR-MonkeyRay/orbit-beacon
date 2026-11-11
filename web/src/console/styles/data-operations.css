@@ -49,7 +49,7 @@
 
 .data-plan-list {
   display: grid;
-  gap: 14px;
+  gap: var(--sp-control);
   min-width: 0;
 }
 
@@ -184,7 +184,7 @@
 }
 
 .data-plan-form .data-destination legend {
-  padding: 0 6px;
+  padding: 0 var(--sp-tight);
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
   color: var(--ink-subtle);
@@ -205,11 +205,11 @@
 
 .data-cron-preview ol {
   margin: var(--sp-inline) 0 0;
-  padding-left: 22px;
+  padding-left: var(--sp-group);
 }
 
 .data-cron-preview li+li {
-  margin-top: 6px;
+  margin-top: var(--sp-tight);
 }
 
 .data-endpoint-help {

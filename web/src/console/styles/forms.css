@@ -31,7 +31,7 @@
 
 .check-row strong {
   display: block;
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
 }
 
@@ -65,7 +65,7 @@
 
 .field {
   display: grid;
-  gap: 6px;
+  gap: var(--sp-tight);
   min-width: 0;
 }
 
@@ -89,7 +89,7 @@
 .field-label-row {
   display: flex;
   align-items: baseline;
-  gap: 4px;
+  gap: var(--sp-tight);
   min-width: 0;
 }
 
@@ -182,7 +182,7 @@ select.input {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-inline);
   padding-top: var(--sp-tight);
 }
 
@@ -262,7 +262,7 @@ select.input {
 .callout {
   display: flex;
   gap: var(--sp-control);
-  padding: var(--sp-control) 14px;
+  padding: var(--sp-control);
   border-radius: var(--r-md);
   background: var(--warn-bg);
   color: var(--ink);

@@ -17,7 +17,7 @@
 }
 
 .page-head p {
-  margin-top: 6px;
+  margin-top: var(--sp-tight);
   color: var(--ink-subtle);
   max-width: 62ch;
 }
@@ -64,7 +64,7 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  gap: var(--sp-inline);
 }
 
 .back {
@@ -73,7 +73,7 @@
   gap: var(--sp-tight);
   margin-bottom: var(--sp-control);
   color: var(--ink-muted);
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   text-decoration: none;
 }
 
@@ -90,10 +90,10 @@
 
 /* 面板 */
 .panel {
+  --panel-padding: var(--sp-group);
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
-  box-shadow: var(--shadow);
 }
 
 .panel-head {
@@ -101,7 +101,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-control);
-  padding: 18px 22px 0;
+  padding: var(--sp-content) var(--panel-padding) 0;
 }
 
 .panel-head-end {
@@ -115,7 +115,7 @@
 }
 
 .panel-head a {
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   text-decoration: none;
   font-weight: var(--fw-medium);
 }
@@ -127,18 +127,22 @@
 }
 
 .panel-body {
-  padding: 18px 22px 22px;
+  padding: var(--sp-content) var(--panel-padding) var(--panel-padding);
+}
+
+small {
+  font-size: var(--fs-xs);
 }
 
 .panel+.panel,.grid-2~.panel,.stack>*+* {
-  margin-top: 18px;
+  margin-top: var(--sp-content);
 }
 
 .grid-2 {
   display: grid;
   grid-template-columns: repeat(auto-fit,minmax(min(100%,380px),1fr));
-  gap: 18px;
-  margin-top: 18px;
+  gap: var(--sp-content);
+  margin-top: var(--sp-content);
 }
 
 .grid-2>.panel {
@@ -169,7 +173,7 @@
 }
 
 .text-note+form {
-  margin-top: 14px;
+  margin-top: var(--sp-control);
 }
 
 .text-note .btn {
@@ -179,7 +183,7 @@
 .status-message {
   font-size: var(--fs-sm);
   overflow-wrap: anywhere;
-  padding: 10px var(--sp-control);
+  padding: var(--sp-inline) var(--sp-control);
   border-radius: var(--r-md);
   color: var(--warn);
   background: var(--warn-bg);
@@ -194,7 +198,7 @@
   display: inline-flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--sp-tight);
 }
 
 .sample-series {
@@ -207,13 +211,13 @@
 }
 
 .sample-state {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
   color: var(--warn);
 }
 
 .last-report {
-  margin-top: 14px;
+  margin-top: var(--sp-control);
   font-size: var(--fs-xs);
   line-height: var(--lh-relaxed);
   color: var(--ink-subtle);
@@ -233,7 +237,7 @@
   background: var(--panel);
   color: var(--ink);
   font-weight: var(--fw-semibold);
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   line-height: var(--lh-solid);
   white-space: nowrap;
   text-decoration: none;
@@ -378,8 +382,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  padding: 14px var(--sp-content);
+  gap: var(--sp-inline);
+  padding: var(--sp-control) var(--sp-content);
   border-bottom: 1px solid var(--line);
 }
 
@@ -473,10 +477,50 @@
   overflow-x: auto;
 }
 
+/* 表格铺满面板；兼容异步列表的中间容器。 */
+.panel-body .table-wrap {
+  margin-inline: calc(0px - var(--panel-padding));
+}
+
+.panel-body :has(> .table-wrap) {
+  min-width: 0;
+}
+
+.panel-body:has(> .table-wrap:last-child:not([hidden]), > :last-child .table-wrap:last-child:not([hidden])) {
+  padding-bottom: 0;
+}
+
+.panel-body .table-wrap:last-child {
+  border-end-start-radius: var(--r-lg);
+  border-end-end-radius: var(--r-lg);
+}
+
+.panel .table-wrap:not(.nodes-table-wrap) > .table > :is(thead,tbody,tfoot) > tr > :first-child {
+  padding-left: var(--panel-padding);
+}
+
+.panel .table-wrap:not(.nodes-table-wrap) > .table > :is(thead,tbody,tfoot) > tr > :last-child {
+  padding-right: var(--panel-padding);
+}
+
+@media (min-width:768px) {
+  .panel > .toolbar,.panel > .table-foot {
+    padding-inline: var(--panel-padding);
+  }
+
+  .panel .nodes-table > :is(thead,tbody,tfoot) > tr > :first-child {
+    padding-left: var(--panel-padding);
+  }
+
+  .panel .nodes-table > :is(thead,tbody,tfoot) > tr > :last-child {
+    padding-right: var(--panel-padding);
+  }
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
 }
 
 .table th {
@@ -651,7 +695,7 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--sp-inline);
   padding: var(--sp-control) var(--sp-content);
   border-top: 1px solid var(--line);
   font-size: var(--fs-sm);
@@ -661,7 +705,7 @@
 .pager {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-tight);
 }
 
 .live-changes {
@@ -677,7 +721,7 @@
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-tight);
 }
 
 .node-deleted .name a {
@@ -704,7 +748,7 @@ mark {
 .empty {
   display: grid;
   justify-items: center;
-  gap: 10px;
+  gap: var(--sp-inline);
   padding: 56px var(--sp-group);
   text-align: center;
   color: var(--ink-subtle);
@@ -715,13 +759,13 @@ p.empty {
   justify-items: start;
   padding: 20px 0;
   text-align: left;
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
 }
 
 .empty svg.art {
   width: 120px;
   height: 72px;
-  margin-bottom: 6px;
+  margin-bottom: var(--sp-tight);
 }
 
 .empty h2,.empty h3 {
@@ -731,7 +775,7 @@ p.empty {
 
 .empty p {
   max-width: 44ch;
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
 }
 
 .empty .btn {
@@ -763,7 +807,7 @@ p.empty {
 
 .sk-line {
   height: 12px;
-  margin: 10px 0;
+  margin: var(--sp-inline) 0;
 }
 
 .sk-title {
@@ -824,7 +868,7 @@ dialog.closing::backdrop {
   display: flex;
   align-items: flex-start;
   gap: var(--sp-control);
-  padding: 20px 22px 0;
+  padding: 20px var(--sp-group) 0;
 }
 
 .dialog-head h2 {
@@ -834,7 +878,7 @@ dialog.closing::backdrop {
 }
 
 .dialog-body {
-  padding: 14px 22px 0;
+  padding: var(--sp-control) var(--sp-group) 0;
   color: var(--ink-subtle);
 }
 
@@ -845,18 +889,18 @@ dialog.closing::backdrop {
 .dialog-foot {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
-  padding: 22px;
+  gap: var(--sp-inline);
+  padding: var(--sp-group);
 }
 
 .dialog-body .form .dialog-foot {
-  padding: var(--sp-inline) 0 22px;
+  padding: var(--sp-inline) 0 var(--sp-group);
 }
 
 .form-error {
   display: flex;
-  gap: 10px;
-  padding: 10px var(--sp-control);
+  gap: var(--sp-inline);
+  padding: var(--sp-inline) var(--sp-control);
   border-radius: var(--r-md);
   background: var(--bad-bg);
   color: var(--bad);
@@ -888,7 +932,7 @@ dialog.closing::backdrop {
   bottom: 20px;
   z-index: var(--z-toast);
   display: grid;
-  gap: 10px;
+  gap: var(--sp-inline);
   width: min(380px,calc(100vw - 40px));
   pointer-events: none;
 }
@@ -896,13 +940,13 @@ dialog.closing::backdrop {
 .toast {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: var(--sp-control) var(--sp-control) var(--sp-control) 14px;
+  gap: var(--sp-inline);
+  padding: var(--sp-control);
   border-radius: var(--r-md);
   background: var(--ink);
   color: var(--bg);
   box-shadow: var(--shadow-lg);
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   pointer-events: auto;
   animation: toast-in var(--motion-slow) var(--ease);
 }
@@ -965,12 +1009,17 @@ dialog.closing::backdrop {
   white-space: nowrap;
 }
 
+/* 操作列表头与按钮同为右对齐。 */
+.table:has(> tbody > tr > td.actions:last-child) > thead > tr > th:last-child {
+  text-align: right;
+}
+
 .table td.actions>button+button {
   margin-left: var(--sp-inline);
 }
 
 .panel-body.flush {
-  padding-bottom: 6px;
+  padding-bottom: var(--sp-tight);
 }
 
 .last-seen-offline {

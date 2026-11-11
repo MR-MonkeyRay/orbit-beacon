@@ -45,7 +45,7 @@
   background: var(--panel);
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
 }
 
 .top-actions .icon-button,.login {
@@ -67,7 +67,7 @@
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--ink);
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
   text-decoration: none;
   white-space: nowrap;
@@ -128,7 +128,7 @@
   display: flex;
   flex-wrap: wrap;
   column-gap: .3em;
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
   font-variant-numeric: tabular-nums;
 }
@@ -224,7 +224,7 @@
   border-radius: 999px;
   background: var(--surface);
   color: var(--ink);
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
   cursor: pointer;
   transition: background-color var(--motion-fast),border-color var(--motion-fast),color var(--motion-fast),opacity var(--motion-fast),transform var(--motion-instant);

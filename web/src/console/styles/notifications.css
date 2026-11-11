@@ -47,7 +47,7 @@
 .notification-inbox {
   display: grid;
   gap: var(--sp-content);
-  padding-bottom: 22px;
+  padding-bottom: var(--sp-group);
   min-width: 0;
 }
 
@@ -90,7 +90,7 @@
 .notification-row-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px var(--sp-control);
+  gap: var(--sp-tight) var(--sp-control);
   font-size: var(--fs-xs);
   color: var(--ink-muted);
 }
@@ -118,7 +118,7 @@
 
 .notification-detail,.notification-detail-content,.notification-snapshot,.notification-source {
   display: grid;
-  gap: 14px;
+  gap: var(--sp-control);
   min-width: 0;
 }
 

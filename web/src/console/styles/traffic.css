@@ -9,7 +9,7 @@
 }
 
 .traffic-content h3 {
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   font-weight: var(--fw-heading);
   margin-bottom: var(--sp-inline);
 }
@@ -37,7 +37,7 @@
 .traffic-quota {
   --traffic-meter:var(--orbit);
   display: grid;
-  gap: 6px;
+  gap: var(--sp-tight);
 }
 
 .traffic-quota.warning {
@@ -78,7 +78,7 @@
 
 .traffic-chart>.text-note {
   font-size: var(--fs-sm);
-  margin-bottom: 10px;
+  margin-bottom: var(--sp-inline);
 }
 
 .traffic-plot {

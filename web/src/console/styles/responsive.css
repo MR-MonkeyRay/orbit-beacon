@@ -52,13 +52,13 @@
   }
 
   .sidebar {
-    padding: var(--sp-content) 10px;
+    padding: var(--sp-content) var(--sp-inline);
     overflow: visible;
   }
 
   .sidebar .brand {
     justify-content: center;
-    padding: var(--sp-tight) 0 18px;
+    padding: var(--sp-tight) 0 var(--sp-content);
   }
 
   .nav a,.nav-public,.nav .notification-entry,.nav .command-entry {
@@ -81,7 +81,7 @@
     left: calc(100% + 12px);
     top: 50%;
     z-index: var(--z-toast);
-    padding: var(--sp-tight) 10px;
+    padding: var(--sp-tight) var(--sp-inline);
     border-radius: var(--r-sm);
     background: var(--ink);
     color: var(--bg);
@@ -127,7 +127,7 @@
     min-width: 18px;
     margin: 0;
     padding: 0 var(--sp-tight);
-    font-size: var(--fs-micro);
+    font-size: var(--fs-xs);
     line-height: var(--line-height-badge);
   }
 
@@ -153,6 +153,10 @@
 
 /* 手机：同一份导航作为抽屉，宽屏规则保持原样。 */
 @media (max-width:767px) {
+  .panel {
+    --panel-padding: var(--sp-content);
+  }
+
   /* 手机卡片固定显示名称、状态、用量与最后上报，列选择不适用。 */
   .column-picker {
     display: none;
@@ -466,5 +470,5 @@
   .nav [role="group"] + .nav-heading + [role="group"] { margin-top: var(--sp-control); }
   .user-menu > .btn { justify-content: center; padding: 0; }
   .user-menu .menu-options { left: calc(100% + 10px); bottom: 0; }
-  .nav .alert-count { position: absolute; top: 0; right: 0; font-size: var(--fs-micro); }
+  .nav .alert-count { position: absolute; top: 0; right: 0; font-size: var(--fs-xs); }
 }

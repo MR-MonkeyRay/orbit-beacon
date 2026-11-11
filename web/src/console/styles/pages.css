@@ -2,7 +2,7 @@
 .fleet-total {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--sp-inline);
   flex-wrap: wrap;
 }
 
@@ -20,7 +20,7 @@
 .fleet-bar {
   display: flex;
   height: 12px;
-  margin: 18px 0 var(--sp-content);
+  margin: var(--sp-content) 0 var(--sp-content);
   border-radius: 999px;
   overflow: hidden;
   background: var(--line);
@@ -261,9 +261,9 @@
 .ev-details dl {
   display: grid;
   grid-template-columns: max-content minmax(0,1fr);
-  gap: var(--sp-tight) 14px;
+  gap: var(--sp-tight) var(--sp-control);
   margin-top: var(--sp-inline);
-  padding: 10px var(--sp-control);
+  padding: var(--sp-inline) var(--sp-control);
   border-radius: var(--r-md);
   background: var(--surface);
   font-size: var(--fs-sm);
@@ -279,7 +279,7 @@
 
 .code {
   margin: 0;
-  padding: var(--sp-control) 14px;
+  padding: var(--sp-control);
   border-radius: var(--r-md);
   background: var(--surface);
   border: 1px solid var(--line);
@@ -293,7 +293,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px 14px;
+  gap: var(--sp-inline) var(--sp-control);
 }
 
 .id-chip {
@@ -301,7 +301,7 @@
   align-items: center;
   gap: var(--sp-tight);
   max-width: 100%;
-  margin-top: 10px;
+  margin-top: var(--sp-inline);
   padding: 2px 2px 2px 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -321,7 +321,7 @@
 .facts {
   display: grid;
   grid-template-columns: repeat(auto-fit,minmax(min(100%,180px),1fr));
-  gap: 18px var(--sp-group);
+  gap: var(--sp-content) var(--sp-group);
 }
 
 .facts dt {
@@ -361,7 +361,7 @@
   background: none;
   color: var(--ink-muted);
   font-weight: var(--fw-semibold);
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   white-space: nowrap;
   cursor: pointer;
   transition: color var(--motion-fast);
@@ -423,7 +423,7 @@
 .split {
   display: grid;
   grid-template-columns: minmax(0,1fr) minmax(0,1.25fr);
-  gap: 18px;
+  gap: var(--sp-content);
   align-items: start;
 }
 
@@ -449,14 +449,13 @@
   border-radius: var(--r-md);
   background: var(--panel);
   border: 1px solid var(--line);
-  box-shadow: var(--shadow);
 }
 
 .preview-card .top {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--sp-inline);
 }
 
 .preview-card h3 {
@@ -467,8 +466,8 @@
 .preview-card .where {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 14px;
-  margin-top: 6px;
+  gap: var(--sp-tight) var(--sp-control);
+  margin-top: var(--sp-tight);
   font-size: var(--fs-sm);
   color: var(--ink-muted);
 }
@@ -492,7 +491,7 @@
 .preview-label {
   font-size: var(--fs-xs);
   color: var(--ink-muted);
-  margin-bottom: 10px;
+  margin-bottom: var(--sp-inline);
 }
 
 .revision {
@@ -508,7 +507,7 @@
 }
 
 .text-note+.rows,.text-note+.timeline,.text-note+.empty {
-  margin-top: 14px;
+  margin-top: var(--sp-control);
 }
 
 .timeline+.btn {
@@ -525,7 +524,7 @@
   align-items: center;
   gap: var(--sp-inline);
   margin: var(--sp-control) var(--sp-content);
-  padding: 10px var(--sp-control);
+  padding: var(--sp-inline) var(--sp-control);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--panel);
@@ -566,7 +565,7 @@
 
 .rows>li:has(.btn) {
   flex-wrap: wrap;
-  padding: 10px 0;
+  padding: var(--sp-inline) 0;
 }
 
 /* 探测目标是不可信文本，可能包含长 URL。 */

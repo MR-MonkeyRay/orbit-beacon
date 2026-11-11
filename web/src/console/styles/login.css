@@ -21,7 +21,7 @@
   display: grid;
   place-items: center;
   min-height: 100dvh;
-  padding: var(--sp-section) 18px;
+  padding: var(--sp-section) var(--sp-content);
   overflow: hidden;
   isolation: isolate;
 }
@@ -78,7 +78,6 @@
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 20px;
-  box-shadow: var(--shadow-lg);
   animation: dialog-in 0.5s var(--ease);
 }
 
@@ -86,8 +85,8 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 22px;
+  gap: var(--sp-control);
+  margin-bottom: var(--sp-group);
 }
 
 .login-card .brand {
@@ -116,24 +115,24 @@
 }
 
 .login-card>p {
-  margin: 6px 0 22px;
+  margin: var(--sp-tight) 0 var(--sp-group);
   color: var(--ink-subtle);
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
 }
 
 .login-card .form {
-  gap: 14px;
+  gap: var(--sp-control);
 }
 
 .login-card .btn-primary {
   width: 100%;
   min-height: var(--control-h-lg);
   font-size: var(--fs-base);
-  margin-top: 6px;
+  margin-top: var(--sp-tight);
 }
 
 .login-foot {
-  margin-top: 18px;
+  margin-top: var(--sp-content);
   text-align: center;
   font-size: var(--fs-sm);
 }
