@@ -72,7 +72,7 @@ HTML 中保留以下占位符，各一次：
 | `top-actions` | 语言选择器插入的容器，保留其他操作 |
 | `theme` | `button type="button"`，明暗切换 |
 | `locale-error` | 初始 `hidden` 的错误区域，保留 `role="alert"` |
-| `headline`、`summary` | 主标题使用 `h1`；摘要仅显示本页范围或临时连接状态，完整集合正常时为空，不重复统计 |
+| `headline`、`summary` | 主标题使用 `h1`；摘要显示节点状态、本页范围或临时连接状态。正常快照带 `data-tone="ok|warn|bad|neutral"` 的状态摘要；运行时添加礼貌 live region，仅在摘要变化时更新文字 |
 | `updated` | 更新时间与连接状态文字；其子节点由运行时创建 |
 | `countdown` | 装饰性刷新指示器，保留 `aria-hidden="true"` |
 | `refresh` | `button type="button"`，刷新当前页 |
@@ -106,6 +106,7 @@ mountPublicPage({createCard, skeletonCards, createConstellation, announcementRen
 需要替换组件时，函数契约如下：
 
 - `createCard()` 返回一个 `li` DOM 节点，提供 `update(node)` 和 `setStale()` 方法。`update` 接收已校验的公开节点并清除连接过期标记；`setStale` 只表达“数据可能过期”，不能把节点改为离线或清空已有指标。运行时控制该节点的筛选隐藏与入场类。
+- `createRegionHeading(region)`（可选）：返回地区标题的 `li`；默认是 `.region-heading` 包含 `h2`，CSS 应让它跨满网格列。当前页加载超过 12 个节点时，运行时按地区插入标题，并添加搜索框 `.node-search`；搜索仅匹配当前页的名称、地区与提供商，与状态筛选叠加，翻页清空。12 个及以下保持平铺。未提供此钩子的主题沿用默认标题，`example` 无需改入口。
 - `skeletonCards(count)` 返回占位 `li` 数组，使用 `.placeholder` 以便加载结束清除；占位内容对辅助技术隐藏。
 - `createConstellation(container)` 返回 `{update(nodes), clear()}`。图形只反映当前页已校验的集合；`clear()` 必须撤下全部节点相关信息。
 - `announcementRenderer(container)` 返回 `render(items)`。空数组必须清除所有公告并隐藏区域；重复快照尽量保留相同内容的 DOM。标题和正文只能作为纯文本呈现。

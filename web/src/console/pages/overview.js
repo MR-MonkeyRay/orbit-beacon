@@ -1,11 +1,12 @@
-import {formatList, t, tParts} from '../i18n.js';
+import {formatList, t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h, icon} from '../../shared/dom.js';
+import {usageMeter} from '../../shared/usage.js';
 import {createNumberTween} from '../../shared/tween.js';
 import {allNodes, api, getNavigationSignal, groupsList, invalidate, nameLookup, usersList} from '../api.js';
-import {displayStatus, absoluteWhen, STATUS, STATUS_ORDER} from '../format.js';
+import {displayStatus, STATUS, STATUS_ORDER} from '../format.js';
 import {connectConsoleLive, readConsoleFleet} from '../live.js';
-import {busy, button, emptyState, link, liveStatus, pageHead, panel, patchStatusBadge, statusBadge} from '../ui/components.js';
+import {busy, button, emptyState, link, liveStatus, pageHead, panel, statusBadge} from '../ui/components.js';
 import {addNodeButton} from '../lib/add-node-dialog.js';
 import {auditItem} from '../lib/audit-item.js';
 import {activeAlertsSummary} from './alert-events.js';
@@ -52,62 +53,125 @@ function fleetPanel(nodes, signal) {
   return element;
 }
 
-function newestPanel(nodes, groupNames) {
-  const list = h('ul', {class: 'rows'});
-  const empty = h('p', {class: 'text-note'}, t('nodes.empty'));
-  const refs = new Map();
-  const element = panel(t('nodes.newest'), {action: link('/nodes', t('nodes.allNodes'))}, list, empty);
-  element.reload = (current, snapshot = current) => {
-    refs.clear();
-    const newest = [...current].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 6);
-    list.replaceChildren(...newest.map((node) => {
-      const name = link(`/nodes/${node.id}`, node.name);
-      const seen = h('span');
-      const badge = statusBadge(displayStatus(node));
-      refs.set(node.id, {name, seen, badge, groupID: node.group_id});
-      return h('li', null,
-        h('div', {class: 'grow'}, h('div', {class: 'title'}, name), h('div', {class: 'sub'},
-          seen)), badge);
-    }));
-    list.hidden = newest.length === 0;
-    empty.hidden = newest.length !== 0;
-    element.snapshot(snapshot);
-  };
+// 只移动排序变化的行；相同节点的链接和用量条保持原 DOM。
+function patchRows(list, rows) {
+  const retained = new Set(rows);
+  for (const row of [...list.children]) if (!retained.has(row)) row.remove();
+  rows.forEach((row, index) => { if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null); });
+}
+
+export function resourcesPanel(nodes) {
+  const columns = ['cpu_percent', 'memory_used_percent'].map((metric, index) => {
+    const list = h('ul', {class: 'rows resource-rows'});
+    const empty = h('p', {class: 'text-note'}, '—');
+    return {metric, list, empty, refs: new Map(), element: h('div', null, h('h3', null, t(index ? 'nodes.memory' : 'nodes.cpu')), list, empty)};
+  });
+  const element = panel(t('nodes.topUsage'), {}, h('div', {class: 'resource-columns'}, columns.map((column) => column.element)));
   element.snapshot = (current) => {
-    const byID = new Map(current.map((node) => [node.id, node]));
-    for (const [id, {name, seen, badge, groupID}] of refs) {
-      const node = byID.get(id);
-      patchStatusBadge(badge, node ? displayStatus(node) : 'deleted');
-      if (!node) {
-        name.removeAttribute('href');
-        delete name.dataset.link;
-        name.setAttribute('aria-disabled', 'true');
-        name.setAttribute('tabindex', '-1');
-      } else {
-        const group = groupID ? groupNames.get(groupID) || t('nodes.unknownGroup') : t('nodes.ungrouped');
-        seen.replaceChildren(...tParts(node.last_seen ? 'nodes.lastSeenPrefix' : 'nodes.neverSeenSuffix',
-          {group, time: node.last_seen ? absoluteWhen(node.last_seen) : ''}));
-      }
+    for (const {metric, list, empty, refs} of columns) {
+      const top = current.filter((node) => displayStatus(node) === 'online' && Number.isFinite(node[metric]))
+        .sort((a, b) => b[metric] - a[metric] || a.name.localeCompare(b.name) || a.id.localeCompare(b.id)).slice(0, 5);
+      const ids = new Set(top.map((node) => node.id));
+      for (const id of refs.keys()) if (!ids.has(id)) refs.delete(id);
+      const rows = top.map((node) => {
+        if (!refs.has(node.id)) {
+          const name = link(`/nodes/${node.id}`, node.name);
+          const meter = usageMeter(node[metric]);
+          refs.set(node.id, {name, meter, row: h('li', null, name, meter)});
+        }
+        const {name, meter, row} = refs.get(node.id);
+        if (name.textContent !== node.name) name.textContent = node.name;
+        meter.update(node[metric]);
+        return row;
+      });
+      patchRows(list, rows);
+      list.hidden = !top.length;
+      empty.hidden = Boolean(top.length);
     }
   };
-  element.reload(nodes);
+  element.snapshot(nodes);
   return element;
 }
 
-function groupsPanel(nodes, groups) {
-  if (!groups.length) return null;
-  const sizes = groups.map((group) => [group, nodes.filter((node) => node.group_id === group.id).length]).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  const ungrouped = nodes.filter((node) => !node.group_id).length;
-  const max = Math.max(1, ungrouped, ...sizes.map(([, size]) => size));
-  const row = (label, size, href, index) => {
-    const fill = h('i');
-    fill.style.width = `${size / max * 100}%`;
-    fill.style.animationDelay = `${index * 50}ms`;
-    return h('div', {class: 'meter-row'}, link(href, label), h('span', {class: 'num muted'}, size), h('div', {class: 'bar'}, fill));
+const DAY = 86400000;
+export function attentionPanel(nodes) {
+  const list = h('ul', {class: 'rows'});
+  const refs = new Map();
+  const element = panel(t('nodes.needsAttention'), {action: link('/nodes', t('nodes.allNodes'))}, list);
+  // 无需关注时不占面板，只在节点总览里留一行状态。
+  element.healthy = h('p', {class: 'overview-status-line', hidden: true}, link('/nodes', icon('check'), t('nodes.allHealthy')));
+  element.snapshot = (current, now = Date.now()) => {
+    const rows = current.map((node) => {
+      const status = displayStatus(node);
+      // 到期日包含当天，与 node_expiry_days 的次日 UTC 零点边界一致。
+      const remaining = node.expires_on ? (Date.parse(`${node.expires_on}T00:00:00Z`) + DAY - now) / DAY : Infinity;
+      const state = ['offline', 'never', 'unknown', 'deleted'].includes(status) ? status : null;
+      if (!state && remaining > 7) return null;
+      if (!state && !Number.isFinite(remaining)) return null;
+      if (!refs.has(node.id)) {
+        const name = link(`/nodes/${node.id}`, node.name);
+        const reason = h('span', {class: 'attention-reasons'});
+        refs.set(node.id, {name, reason, signature: '', row: h('li', null, h('div', {class: 'grow title'}, name), reason)});
+      }
+      const {name, reason, row} = refs.get(node.id);
+      if (name.textContent !== node.name) name.textContent = node.name;
+      if (status === 'deleted') {
+        name.removeAttribute('href'); delete name.dataset.link;
+        name.setAttribute('aria-disabled', 'true'); name.setAttribute('tabindex', '-1');
+      } else {
+        name.setAttribute('href', `/nodes/${node.id}`); name.dataset.link = '';
+        name.removeAttribute('aria-disabled'); name.removeAttribute('tabindex');
+      }
+      const expiry = Number.isFinite(remaining) && remaining <= 7
+        ? t(remaining <= 0 ? 'nodes.expired' : 'nodes.expiresIn', {count: Math.ceil(remaining)}) : '';
+      const signature = `${state}|${expiry}`;
+      const ref = refs.get(node.id);
+      if (ref.signature !== signature) {
+        reason.replaceChildren(...[state ? statusBadge(state) : null, expiry ? h('span', {class: 'text-note'}, expiry) : null].filter(Boolean));
+        ref.signature = signature;
+      }
+      return row;
+    }).filter(Boolean).slice(0, 8);
+    const retained = new Set(rows);
+    for (const [id, {row}] of refs) if (!retained.has(row)) refs.delete(id);
+    patchRows(list, rows);
+    element.hidden = !rows.length;
+    element.healthy.hidden = Boolean(rows.length);
+    element.parentElement?.classList.toggle('single', element.hidden);
   };
-  return panel(t('nodes.groups'), {action: link('/settings#groups', t('nodes.manageGroups'))},
-    sizes.map(([group, size], index) => row(group.name, size, `/nodes?group=${group.id}`, index)),
-    row(t('nodes.ungrouped'), ungrouped, '/nodes?group=none', sizes.length));
+  element.snapshot(nodes);
+  return element;
+}
+
+export function groupsPanel(nodes, groups) {
+  const content = h('div');
+  const element = panel(t('nodes.groups'), {action: link('/settings#groups', t('nodes.manageGroups'))}, content);
+  element.snapshot = (current) => {
+    const sizes = groups.map((group) => ({label: group.name, href: `/nodes?group=${group.id}`, nodes: current.filter((node) => node.group_id === group.id)}))
+      .filter((group) => group.nodes.length).sort((a, b) => b.nodes.length - a.nodes.length).slice(0, 8);
+    const ungrouped = current.filter((node) => !node.group_id);
+    if (ungrouped.length) sizes.push({label: t('nodes.ungrouped'), href: '/nodes?group=none', nodes: ungrouped});
+    content.replaceChildren(...sizes.map((group) => {
+      const counts = {online: 0, offline: 0, unknown: 0};
+      const statuses = new Map();
+      for (const node of group.nodes) {
+        const state = displayStatus(node);
+        counts[state === 'online' || state === 'offline' ? state : 'unknown']++;
+        statuses.set(state, (statuses.get(state) || 0) + 1);
+      }
+      const description = formatList([...statuses].map(([state, count]) => `${STATUS[state]}: ${count}`));
+      return h('div', {class: 'meter-row'}, link(group.href, group.label),
+        h('span', {class: 'num muted'}, group.nodes.length, h('span', {class: 'sr'}, ` · ${description}`)),
+        h('div', {class: 'bar group-bar', 'aria-hidden': 'true'}, Object.entries(counts).filter(([, count]) => count).map(([state, count]) => {
+          const segment = h('i', {class: `c-${state}`});
+          segment.style.flex = String(count);
+          return segment;
+        })));
+    }));
+    element.hidden = !sizes.length;
+  };
+  element.snapshot(nodes);
+  return element;
 }
 
 export async function overviewPage() {
@@ -119,15 +183,28 @@ export async function overviewPage() {
     })]);
   const names = nameLookup(nodes, users, groups);
   const activity = panel(t('nodes.recentActivity'), {action: link('/settings#audit', t('nodes.auditLog'))},
-    audit.events.length ? h('ol', {class: 'timeline'}, audit.events.map((event) => auditItem(event, names, false)))
+    audit.events.length ? h('ol', {class: 'timeline'}, audit.events.slice(0, 8).map((event) => auditItem(event, names, false)))
       : h('p', {class: 'text-note'}, t('nodes.activityEmpty')));
   const connection = liveStatus();
   const fleet = fleetPanel(nodes, signal);
-  const newest = newestPanel(nodes, new Map(groups.map((group) => [group.id, group.name])));
+  const attention = attentionPanel(nodes);
+  const resources = resourcesPanel(nodes);
+  const distribution = groupsPanel(nodes, groups);
+  const statusLines = h('div', {class: 'overview-status'}, attention.healthy);
+  if (!alerts.error && alerts.summary.firing.total === 0) statusLines.prepend(h('p', {class: 'overview-status-line'}, link('/alerts', icon('check'), t('nodes.noAlerts'))));
+  fleet.querySelector('.panel-body').append(statusLines);
   let known = new Set(nodes.map((node) => node.id));
   let metadata = nodes;
   let currentFleet = nodes;
   let live;
+  const patchPanels = (current) => {
+    const byID = new Map(current.map((node) => [node.id, node]));
+    const merged = metadata.map((node) => byID.has(node.id) ? {...node, ...byID.get(node.id)} : {...node, presence: 'deleted', stopped: false});
+    attention.snapshot(merged);
+    const present = merged.filter((node) => node.presence !== 'deleted');
+    resources.snapshot(present);
+    distribution.snapshot(present);
+  };
   const patchInventoryNotice = (current) => {
     const ids = new Set(current.map((node) => node.id));
     inventoryNotice.hidden = ids.size === known.size && [...ids].every((id) => known.has(id));
@@ -151,7 +228,7 @@ export async function overviewPage() {
       known = new Set(metadata.map((node) => node.id));
       currentFleet = current;
       fleet.snapshot(current);
-      newest.reload(metadata, current);
+      patchPanels(current);
       patchInventoryNotice(current);
     } catch (error) { if (!signal?.aborted) toastError(error); }
     finally {
@@ -163,13 +240,14 @@ export async function overviewPage() {
   const root = h('div', null,
     pageHead(t('nodes.overview'), connection.element, addNodeButton(), h('a', {class: 'btn', href: '/'}, icon('external'), t('nodes.openPublic'))),
     fleet,
-    alerts.error ? panel(t('nodes.activeAlerts'), {action: link('/alerts', t('nodes.viewAlerts'))}, h('p', {role: 'status', class: 'text-note'}, t('nodes.alertsLoadError', {error: errorText(alerts.error)}))) : activeAlertsSummary(alerts.summary),
-    h('div', {class: 'grid-2'}, newest, activity), inventoryNotice,
-    groupsPanel(nodes, groups));
+    alerts.error ? panel(t('nodes.activeAlerts'), {action: link('/alerts', t('nodes.viewAlerts'))}, h('p', {role: 'status', class: 'text-note'}, t('nodes.alertsLoadError', {error: errorText(alerts.error)}))) : alerts.summary.firing.total ? activeAlertsSummary(alerts.summary) : null,
+    resources,
+    h('div', {class: `grid-2 overview-bottom${attention.hidden ? ' single' : ''}`}, attention, activity), inventoryNotice,
+    distribution);
   const subscribe = () => connectConsoleLive({signal, onState: connection.update, onSnapshot(data) {
     currentFleet = data.nodes;
     fleet.snapshot(currentFleet);
-    newest.snapshot(currentFleet);
+    patchPanels(currentFleet);
     patchInventoryNotice(currentFleet);
   }});
   live = subscribe();

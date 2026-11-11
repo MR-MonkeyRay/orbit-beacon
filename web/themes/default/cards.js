@@ -1,3 +1,4 @@
+import {usageLevel} from '../../src/shared/usage.js';
 import {availabilityBar} from '../../src/shared/availability.js';
 import {h, icon} from '../../src/shared/dom.js';
 import {statusLabels} from '../../src/shared/status.js';
@@ -5,7 +6,7 @@ import {timestampMillis} from '../../src/shared/freshness.js';
 import {getLocale, t, tParts} from '../../src/shared/i18n.js';
 import {formatDuration, formatLoadNumber, formatTimestamp} from '../../src/shared/format.js';
 
-const percentFormat = new Intl.NumberFormat(getLocale(), {style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1});
+const percentFormat = new Intl.NumberFormat(getLocale(), {style: 'percent', maximumFractionDigits: 0});
 
 const STATUS = statusLabels({unknown: 'public.status.unknown'});
 
@@ -20,7 +21,10 @@ function gauge(label) {
   element.set = (percent) => {
     const missing = percent === null;
     element.classList.toggle('missing', missing);
-    const display = missing ? '—' : percentFormat.format(Number(percent.toFixed(1)) / 100);
+    const display = missing ? '—' : percentFormat.format(percent / 100);
+    const level = usageLevel(percent);
+    element.classList.toggle('usage-warn', level === 'warn');
+    element.classList.toggle('usage-bad', level === 'bad');
     value.textContent = display;
     if (missing) {
       baseText = '';
@@ -31,7 +35,6 @@ function gauge(label) {
     track.setAttribute('aria-valuenow', percent.toFixed(1));
     baseText = display;
     publish();
-    element.dataset.level = percent >= 90 ? 'critical' : percent >= 75 ? 'high' : 'normal';
     fill.style.setProperty('--v', String(percent / 100));
   };
   element.setStale = (next) => {

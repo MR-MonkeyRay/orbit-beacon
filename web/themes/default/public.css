@@ -80,11 +80,12 @@
   grid-template-columns: minmax(0,1.1fr) minmax(0,.9fr);
   align-items: center;
   gap: var(--sp-group) 40px;
-  padding: 44px 0 var(--sp-section);
+  min-height: 160px;
+  padding: 12px 0;
 }
 
 .hero h1 {
-  font-size: clamp(30px,5vw,52px);
+  font-size: clamp(30px,3vw,36px);
   line-height: var(--lh-display);
   font-weight: var(--fw-display);
   letter-spacing: -.035em;
@@ -97,7 +98,7 @@
 }
 
 .summary {
-  margin-top: 14px;
+  margin-top: 8px;
   max-width: 46ch;
   color: var(--ink-subtle);
   font-size: var(--fs-lg);
@@ -107,7 +108,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sp-control);
-  margin-top: 28px;
+  margin-top: 8px;
   padding: var(--sp-inline) var(--sp-inline) var(--sp-inline) 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -267,7 +268,7 @@ a,button {
 /* 星座图 */
 .constellation {
   justify-self: end;
-  width: min(100%,460px);
+  width: min(100%,136px);
 }
 
 .orbits {
@@ -537,11 +538,11 @@ a,button {
   transition: transform 0.8s var(--ease),background-color var(--motion-slow);
 }
 
-.gauge[data-level="high"] .fill {
-  background: var(--beacon);
+.gauge.usage-warn .fill {
+  background: var(--warn);
 }
 
-.gauge[data-level="critical"] .fill {
+.gauge.usage-bad .fill {
   background: var(--bad);
 }
 
@@ -687,11 +688,11 @@ footer {
   }
 
   .hero h1 {
-    font-size: clamp(52px,3.4vw,64px);
+    font-size: clamp(36px,2.4vw,44px);
   }
 
   .constellation {
-    width: min(100%,520px);
+    width: min(100%,136px);
   }
 }
 
@@ -705,11 +706,11 @@ footer {
 @media (max-width:1023px) {
   .hero {
     gap: var(--sp-group) 28px;
-    padding-top: 36px;
+    padding-top: 12px;
   }
 
   .constellation {
-    width: min(100%,340px);
+    width: min(100%,136px);
   }
 }
 
@@ -734,7 +735,7 @@ footer {
   /* 不加 order：星座图是装饰，标题和摘要必须先出现在首屏。 */
   .constellation {
     justify-self: center;
-    width: min(70%,260px);
+    width: min(70%,140px);
   }
 
   .live {
@@ -863,3 +864,13 @@ footer {
     opacity: 0;
   }
 }
+
+/* 在线结论与连接状态共用摘要区域，正常快照仅在结论改变时播报。 */
+.summary[data-tone] {padding:6px 12px;border-radius:var(--r-md);font-size:var(--fs-base);width:fit-content;}
+.summary[data-tone="ok"] {color:var(--ok);background:var(--ok-bg);}
+.summary[data-tone="warn"] {color:var(--warn);background:var(--warn-bg);}
+.summary[data-tone="bad"] {color:var(--bad);background:var(--bad-bg);}
+.summary[data-tone="neutral"] {color:var(--ink-subtle);background:var(--surface);}
+.node-search {display:block;width:min(100%,360px);min-height:var(--control-h);padding:0 12px;margin-bottom:var(--sp-control);border:1px solid var(--border);border-radius:var(--r-md);background:var(--panel);color:var(--ink);font:inherit;}
+.region-heading {grid-column:1/-1;margin-top:var(--sp-control);}
+.region-heading h2 {font-size:var(--fs-lg);font-weight:var(--fw-heading);}

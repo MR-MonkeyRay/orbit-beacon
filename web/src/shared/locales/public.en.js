@@ -1,4 +1,12 @@
 export default {
+  'public.summary.offline': {one: '{count} node offline', other: '{count} nodes offline'},
+  'public.summary.unknown': {one: '{count} node unknown', other: '{count} nodes unknown'},
+  'public.search': 'Search this page',
+  'public.searchEmpty': 'No matching nodes.',
+  'public.regionUnknown': 'Unknown region',
+  'public.availabilityRange': {one: '{count} day ago', other: '{count} days ago'},
+  'public.today': 'Today',
+
   'public.announcements': 'Announcements',
   'alerts.severity.info': 'Info',
   'alerts.severity.warning': 'Warning',
@@ -28,7 +36,6 @@ export default {
   'public.poweredBy': 'Powered by OrbitBeacon',
   'public.empty.all': 'No public nodes yet.',
   'public.summary.allOnline': {one: '{count} node online', other: 'All {count} nodes online'},
-  'public.summary.online': {one: '{online} / {count} node online', other: '{online} / {count} nodes online'},
   'public.summary.page': {one: '{count} node on this page.', other: '{count} nodes on this page.'},
   'public.summary.joined': '{status} · {page}',
   'public.updatedAt': 'Updated at {time}',
@@ -39,7 +46,6 @@ export default {
   'public.reconnecting': 'Reconnecting…',
   'public.stale': 'Data may be out of date',
   'public.loadFailed': 'Could not load nodes. Try refreshing; if it keeps failing, the server may be down.',
-  'public.announce.updated': 'Node data updated.',
   'public.announce.stale': 'Connection lost. Showing the last received data.',
   'public.duration.daysHours': '{days}d {hours}h',
   'public.duration.hoursMinutes': '{hours}h {minutes}m',

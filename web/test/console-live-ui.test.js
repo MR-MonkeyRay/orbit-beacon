@@ -173,7 +173,7 @@ test('nodes refresh overlays the newest complete fleet after a deferred metadata
   assert.equal(location.search, '?q=Node');
   await env.advance(10000); env.socket.message(frame('heartbeat', {server_time: '2026-10-28T00:00:20Z'}));
   assert.equal(deletedBox.disabled, true, 'a quiet stream cannot leave a resurrected actionable row');
-  env.replaceInventory([survivor, node(4)]); button(env.root, copy('nodes.refreshList')).click(); await flush();
+  env.replaceInventory([survivor, {...node(4), presence: 'offline'}]); button(env.root, copy('nodes.refreshList')).click(); await flush();
   assert.equal(env.root.querySelectorAll('input[data-node-id]').some((box) => box.dataset.nodeId === id(1)), false);
   assert.match(env.root.querySelector('tbody').textContent, /Node 004/);
   assert.equal(button(env.root, copy('nodes.refreshList')).parentElement.hidden, true);
@@ -322,6 +322,7 @@ for (const page of ['nodes', 'overview']) {
       assert.equal(addition.disabled, false);
       assert.doesNotMatch(addition.parentElement.parentElement.parentElement.textContent, copyPattern('controls.deleted'));
     } else {
+      env.send({nodes: [compact(node(2)), compact(node(3)), compact({...node(4), presence: 'offline'})]}, 20);
       const addition = env.root.querySelectorAll('li').find((item) => item.textContent.includes('Node 004'));
       assert.equal(addition.querySelector('a').getAttribute('href'), `/nodes/${id(4)}`);
       assert.doesNotMatch(addition.textContent, copyPattern('controls.deleted'));
@@ -364,12 +365,12 @@ for (const page of ['nodes', 'overview']) {
   });
 }
 
-for (const page of ['nodes', 'overview']) {
+for (const page of ['nodes']) {
   test(`${page} last-seen timestamps remain absolute through quiet heartbeats`, async (t) => {
     const env = await setup(t, {page});
     const times = () => page === 'nodes'
       ? env.root.querySelectorAll('tbody').flatMap((body) => body.querySelectorAll('tr').map((row) => row.children[6].querySelector('time')))
-      : env.root.querySelectorAll('section').find((item) => item.querySelector('h2')?.textContent === copy('nodes.newest')).querySelectorAll('time');
+      : [];
     assert.equal(times().length, env.inventory.length);
     const assertObservedTime = (time, iso) => {
       assert.equal(time.textContent, formatTimestamp(new Date(iso)));
@@ -454,39 +455,50 @@ test('detail heartbeat changes only freshness and navigation closes the one live
   env.scope.abort(); assert.equal(env.socket.closed, true);
 });
 
-test('overview patches only fleet and existing newest readonly fields until explicit inventory refresh', async (t) => {
+test('overview updates attention membership while preserving existing rows, activity and the live subscription', async (t) => {
   const env = await setup(t, {page: 'overview'});
   const section = (title) => env.root.querySelectorAll('section').find((item) => item.querySelector('h2')?.textContent === title);
-  const activity = section(copy('nodes.recentActivity')); const newest = section(copy('nodes.newest')); const rows = [...newest.querySelector('ul').children];
-  const groups = section(copy('nodes.groups'));
-  env.send({nodes: [compact({...env.inventory[0], presence: 'offline'}), compact(env.inventory[1])]});
-  assert.equal(section(copy('nodes.recentActivity')), activity); assert.equal(section(copy('nodes.newest')), newest); assert.deepEqual(newest.querySelector('ul').children, rows);
-  assert.match(rows[0].textContent, copyPattern('common.status.offline')); assert.match(section(copy('nodes.fleet')).textContent, copyPattern('common.status.offline'));
-  env.send({nodes: [compact(env.inventory[1]), compact(node(3))]});
-  assert.match(env.root.textContent, new RegExp(`${copyPattern('nodes.inventoryChanged').source}${copyPattern('nodes.refreshList').source}`)); assert.equal(section(copy('nodes.recentActivity')), activity);
+  const activity = section(copy('nodes.recentActivity')); const attention = section(copy('nodes.needsAttention'));
+  assert.equal(attention.hidden, true);
+  const statusLines = section(copy('nodes.fleet')).querySelectorAll('.overview-status-line');
+  assert.deepEqual(statusLines.map((line) => line.textContent), [copy('nodes.noAlerts'), copy('nodes.allHealthy')]);
+  assert.ok(attention.parentElement.classList.contains('single'));
+  assert.equal(section(copy('alerts.events.activeTitle')), undefined);
+  const offline = compact({...env.inventory[0], presence: 'offline'});
+  env.send({nodes: [offline, compact(env.inventory[1])]});
+  const row = attention.querySelector('li');
+  assert.equal(attention.hidden, false);
+  assert.equal(attention.parentElement.classList.contains('single'), false);
+  assert.equal(section(copy('nodes.recentActivity')), activity);
+  env.send({nodes: [offline, compact(env.inventory[1])]}, 10);
+  assert.equal(attention.querySelector('li'), row);
+  env.send({nodes: [compact(env.inventory[1]), compact(node(3))]}, 20);
+  assert.equal(row.querySelector('a').hasAttribute('href'), false);
+  assert.match(row.textContent, copyPattern('controls.deleted'));
   assert.equal(button(env.root, copy('nodes.refreshList')).parentElement.hidden, false);
-  env.replaceInventory([node(2), node(3)]); button(env.root, copy('nodes.refreshList')).click(); await flush();
-  assert.equal(section(copy('nodes.recentActivity')), activity); assert.equal(section(copy('nodes.groups')), groups);
-  assert.equal(section(copy('nodes.newest')), newest); assert.match(newest.textContent, /Node 003/);
+  env.replaceInventory([node(2), {...node(3), presence: 'offline'}]); button(env.root, copy('nodes.refreshList')).click(); await flush();
+  assert.equal(section(copy('nodes.needsAttention')), attention); assert.match(attention.textContent, /Node 003/);
   assert.equal(button(env.root, copy('nodes.refreshList')).parentElement.hidden, true);
   assert.equal(env.sockets.filter((socket) => !socket.closed).length, 1);
 });
 
-test('overview keeps the group name when live frames omit it', async (t) => {
+test('overview live group segments retain metadata when fleet frames omit group IDs', async (t) => {
   const env = await setup(t, {page: 'overview'});
-  env.send({nodes: [compact(env.inventory[0]), compact(env.inventory[1]), compact(node(3))]});
   const grouped = {...node(3), group_id: id(700)};
-  env.replaceInventory([node(1), node(2), grouped]); button(env.root, copy('nodes.refreshList')).click(); await flush();
-  env.send({nodes: [compact(node(1)), compact(node(2)), compact(grouped)]}, 10);
-  const newest = env.root.querySelectorAll('section').find((item) => item.querySelector('h2')?.textContent === copy('nodes.newest'));
-  const row = newest.querySelectorAll('li').find((item) => item.textContent.includes('Node 003'));
-  assert.match(row.textContent, /Production/);
+  env.replaceInventory([node(1), node(2), grouped]);
+  env.send({nodes: [compact(node(1)), compact(node(2)), compact(grouped)]});
+  button(env.root, copy('nodes.refreshList')).click(); await flush();
+  env.send({nodes: [compact(node(1)), compact(node(2)), compact({...grouped, presence: 'offline'})]}, 10);
+  const groups = env.root.querySelectorAll('section').find((item) => item.querySelector('h2')?.textContent === copy('nodes.groups'));
+  const row = groups.querySelectorAll('.meter-row').find((row) => row.textContent.includes('Production'));
+  assert.ok(row.querySelector('.c-offline'));
+  assert.equal(row.querySelector('.c-online'), null);
 });
 
 test('overview deferred refresh keeps newer fleet status, deleted links and unknown-inventory notice', async (t) => {
   const env = await setup(t, {page: 'overview'});
   const section = (title) => env.root.querySelectorAll('section').find((item) => item.querySelector('h2')?.textContent === title);
-  const activity = section(copy('nodes.recentActivity')); const groups = section(copy('nodes.groups')); const newest = section(copy('nodes.newest'));
+  const activity = section(copy('nodes.recentActivity')); const groups = section(copy('nodes.groups')); const newest = section(copy('nodes.needsAttention'));
   env.send({nodes: [...env.inventory, node(3)].map(compact)});
   const pending = env.deferInventory(); button(env.root, copy('nodes.refreshList')).click(); await flush();
   assert.equal(typeof pending.release, 'function');
@@ -500,8 +512,8 @@ test('overview deferred refresh keeps newer fleet status, deleted links and unkn
   assert.equal(section(copy('nodes.fleet')).querySelector('.fleet-bar').getAttribute('aria-label'), new Intl.ListFormat('en').format([`1 ${copy('common.status.online').toLowerCase()}`, `1 ${copy('common.status.offline').toLowerCase()}`]));
   assert.equal(button(env.root, copy('nodes.refreshList')).parentElement.hidden, false);
   assert.equal(section(copy('nodes.recentActivity')), activity); assert.equal(section(copy('nodes.groups')), groups);
-  env.replaceInventory([survivor, node(4)]); button(env.root, copy('nodes.refreshList')).click(); await flush();
-  assert.equal(section(copy('nodes.newest')), newest); assert.match(newest.textContent, /Node 004/); assert.doesNotMatch(newest.textContent, /Node 001/);
+  env.replaceInventory([survivor, {...node(4), presence: 'offline'}]); button(env.root, copy('nodes.refreshList')).click(); await flush();
+  assert.equal(section(copy('nodes.needsAttention')), newest); assert.match(newest.textContent, /Node 004/); assert.doesNotMatch(newest.textContent, /Node 001/);
   assert.equal(button(env.root, copy('nodes.refreshList')).parentElement.hidden, true);
 });
 
@@ -587,7 +599,7 @@ for (const page of ['nodes', 'overview', 'node']) test(`${page} uses Stopped bad
   env.send(page === 'node' ? {node: stopped, latest: null, runtime} : {nodes: [compact(stopped), compact(offline)]});
   const badges = env.root.querySelectorAll('.badge');
   const stoppedBadge = badges.find((badge) => badge.textContent === copy('common.status.stopped'));
-  assert.ok(stoppedBadge); assert.ok(stoppedBadge.classList.contains('disabled'));
+  if (page !== 'overview') { assert.ok(stoppedBadge); assert.ok(stoppedBadge.classList.contains('disabled')); }
   if (page === 'nodes') {
     const filters = env.root.querySelector('.segmented').querySelectorAll('button');
     const stoppedFilter = filters.find((item) => item.textContent.startsWith(copy('common.status.stopped')));
@@ -735,7 +747,7 @@ test('overview total retargets its displayed count and navigation abort clears i
   const env = await setup(t, {page: 'overview'});
   const groupFills = env.root.querySelectorAll('.meter-row').map((row) => row.querySelector('i'));
   assert.ok(groupFills.length > 0);
-  assert.ok(groupFills.every((fill) => !fill.hasAttribute('style') && fill.style.width.endsWith('%') && fill.style.animationDelay.endsWith('ms')));
+  assert.ok(groupFills.every((fill) => !fill.hasAttribute('style') && Number(fill.style.flex) > 0));
   const total = env.root.querySelector('.fleet-total').querySelector('strong');
   assert.equal(total.textContent, '2');
   env.send({nodes: [1, 2, 3, 4, 5, 6].map((id) => compact(node(id)))});
@@ -1050,4 +1062,25 @@ test('detail live primary tiles retain their values and bar DOM while tweening',
   assert.equal(meter.classList.contains('usage-bad'), true);
   assert.equal(primary.children.length, 4);
   assert.equal(env.requests.filter((request) => request.url.includes('/history?')).length, 5);
+});
+
+
+test('overview top usage uses live values and preserves rows/meters across reordering', async (t) => {
+  const env = await setup(t, {page: 'overview', count: 8});
+  const resources = env.root.querySelector('.resource-columns');
+  assert.equal(resources.querySelectorAll('li').length, 0);
+  const values = env.inventory.map((item, index) => ({...compact(item), cpu_percent: index * 10, memory_used_percent: 95 - index}));
+  values[7].presence = 'offline'; values[6].memory_used_percent = null;
+  env.send({nodes: values});
+  const [cpu, memory] = resources.querySelectorAll('ul');
+  assert.deepEqual(cpu.querySelectorAll('a').map((a) => a.textContent), ['Node 007', 'Node 006', 'Node 005', 'Node 004', 'Node 003']);
+  assert.equal(memory.children.length, 5);
+  assert.equal(memory.querySelector('a').textContent, 'Node 001');
+  assert.ok(memory.querySelector('.usage-bad'));
+  const row = cpu.children[0]; const meter = row.querySelector('.usage-meter'); const fill = meter.querySelector('i');
+  values[6].cpu_percent = 35; env.send({nodes: values}, 10);
+  assert.equal(cpu.children[2], row); assert.equal(row.querySelector('.usage-meter'), meter); assert.equal(meter.querySelector('i'), fill);
+  assert.equal(fill.style.width, '35%');
+  values[6].cpu_percent = null; env.send({nodes: values}, 20);
+  assert.equal(cpu.children.includes(row), false);
 });

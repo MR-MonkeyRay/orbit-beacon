@@ -233,9 +233,9 @@
 .nav-tools { margin-top: auto; padding-top: var(--sp-content); }
 .nav-tools .nav-public { margin: 0; border: 0; padding-top: 0; min-height: var(--control-h-lg); }
 .command-shortcut { margin-left: auto; font: var(--fs-sm) var(--mono); color: var(--ink-muted); }
-.alert-count { margin-left: auto; color: var(--warn); font-size: var(--fs-sm); font-weight: var(--fw-bold); }
-.alert-count.critical { color: var(--bad); }
-.alert-entry.stale .alert-count { text-decoration: underline dotted; }
+.nav .alert-count { margin-left: auto; color: var(--warn); font-size: var(--fs-sm); font-weight: var(--fw-bold); }
+.nav .alert-count.critical { color: var(--bad); }
+.nav .alert-entry.stale .alert-count { text-decoration: underline dotted; }
 .user-menu > .btn { width: 100%; justify-content: flex-start; padding: var(--sp-tight); }
 .user-menu .menu-options { top: auto; bottom: calc(100% + 6px); left: 0; right: auto; min-width: max(100%, 180px); max-height: min(70dvh, 540px); overflow-y: auto; }
 /* 退出登录与偏好选项分开。 */

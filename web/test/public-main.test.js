@@ -97,7 +97,7 @@ test('public broken channel retains values and online presence until the next va
   const uptime = card.querySelectorAll('dd')[1].textContent;
   ui.sockets[0].end(); await flush();
   assert.equal(ui.elements.nodes.children[0], card);
-  assert.equal(cpu.textContent, '25.0%'); assert.equal(card.dataset.status, 'online');
+  assert.equal(cpu.textContent, '25%'); assert.equal(card.dataset.status, 'online');
   assert.equal(card.querySelectorAll('dd')[1].textContent, uptime);
   assert.equal(card.querySelector('.gauge').classList.contains('metric-stale'), true);
   assert.equal(card.querySelector('.last-report').hidden, false);
@@ -117,7 +117,7 @@ test('public invalid snapshot cannot clear an accepted collection or change its 
   ui.sockets[0].open(); ui.sockets[0].message(snapshot(payload('accepted')));
   ui.sockets[0].message(snapshot(payload('invalid', {has_more: true, next_offset: 0}))); await flush();
   assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'accepted');
-  assert.equal(ui.elements.nodes.querySelector('.gauge-value').textContent, '25.0%');
+  assert.equal(ui.elements.nodes.querySelector('.gauge-value').textContent, '25%');
   assert.equal(ui.elements.nodes.children[0].dataset.status, 'online');
 });
 
@@ -197,7 +197,7 @@ test('public stale/offline cards retain last values and null last_seen hides the
   data.nodes[0].metric_status.cpu_percent = 'stale'; data.nodes[0].metric_status.uptime_seconds = 'stale';
   socket.message(snapshot(data));
   const card = ui.elements.nodes.children[0];
-  assert.equal(card.hidden, false); assert.equal(card.querySelector('.gauge-value').textContent, '25.0%');
+  assert.equal(card.hidden, false); assert.equal(card.querySelector('.gauge-value').textContent, '25%');
   assert.notEqual(card.querySelectorAll('dd')[1].textContent, '—');
   assert.equal(card.querySelector('.gauge').classList.contains('metric-stale'), true);
   assert.equal(card.querySelector('.last-report').hidden, false);
@@ -232,10 +232,10 @@ test('public gauges clear both ARIA values when a metric becomes missing', async
   socket.message(snapshot(data));
   const meter = ui.elements.nodes.querySelector('.track');
   assert.equal(meter.getAttribute('aria-valuenow'), '80.0');
-  assert.equal(meter.getAttribute('aria-valuetext'), '80.0%');
+  assert.equal(meter.getAttribute('aria-valuetext'), '80%');
   data.nodes[0].metric_status.cpu_percent = 'stale';
   socket.message(snapshot(data));
-  assert.equal(meter.getAttribute('aria-valuetext'), copy('public.metric.staleValue', {value: '80.0%', note: copy('public.metric.staleNote')}));
+  assert.equal(meter.getAttribute('aria-valuetext'), copy('public.metric.staleValue', {value: '80%', note: copy('public.metric.staleNote')}));
   data.nodes[0].cpu_percent = null;
   data.nodes[0].metric_status.cpu_percent = 'unavailable';
   socket.message(snapshot(data));
@@ -304,4 +304,100 @@ test('theme renderers receive validated snapshots, stale state and terminal with
   next.message(frame('error', {code: 'public_page_disabled'}));
   await flush();
   assert.deepEqual(events.slice(-3), [['announcements', 0], ['clear'], ['redirect', '/']]);
+});
+
+
+test('public summary banner reports offline and unknown counts and only writes when its summary changes', async (t) => {
+  const ui = await setup(t); const socket = ui.sockets[0]; socket.open();
+  const summary = ui.elements.summary;
+  const descriptor = Object.getOwnPropertyDescriptor(TestElement.prototype, 'textContent');
+  let writes = 0;
+  Object.defineProperty(summary, 'textContent', {get() { return descriptor.get.call(this); }, set(value) { writes++; descriptor.set.call(this, value); }});
+  const data = payload();
+  socket.message(snapshot(data));
+  assert.equal(summary.dataset.tone, 'ok');
+  assert.equal(summary.getAttribute('aria-live'), 'polite');
+  assert.equal(summary.getAttribute('role'), 'status');
+  assert.equal(summary.textContent, copy('public.summary.allOnline', {count: 1}));
+  const before = writes;
+  data.nodes[0].cpu_percent = 95;
+  socket.message(snapshot(data));
+  socket.message(frame('heartbeat'));
+  assert.equal(writes, before);
+  data.nodes.push({...data.nodes[0], name: 'down', status: 'offline'});
+  socket.message(snapshot(data));
+  assert.equal(summary.dataset.tone, 'warn');
+  assert.equal(summary.textContent, copy('public.summary.offline', {count: 1}));
+  data.nodes[0].status = 'offline'; socket.message(snapshot(data));
+  assert.equal(summary.dataset.tone, 'bad');
+  assert.equal(summary.textContent, copy('public.summary.offline', {count: 2}));
+  data.nodes[0].status = 'unknown'; socket.message(snapshot(data));
+  assert.equal(summary.dataset.tone, 'warn');
+  assert.match(summary.textContent, /1 node offline · 1 node unknown/);
+  socket.message(snapshot(payload('', {nodes: []})));
+  assert.equal(summary.dataset.tone, 'neutral');
+});
+
+test('public card percentages round while threshold classes use shared strict boundaries and keep exact ARIA values', async (t) => {
+  const ui = await setup(t); const socket = ui.sockets[0]; socket.open();
+  const data = payload(); socket.message(snapshot(data));
+  const card = ui.elements.nodes.children[0];
+  const gauge = card.querySelector('.gauge'); const track = card.querySelector('.track');
+  for (const [value, text, warn, bad] of [[44.4, '44%', false, false], [80, '80%', false, false], [80.1, '80%', true, false], [90, '90%', true, false], [90.1, '90%', false, true], [95.8, '96%', false, true]]) {
+    data.nodes[0].cpu_percent = value; data.nodes[0].memory_percent = value;
+    data.nodes[0].metric_status.memory_percent = 'ok'; socket.message(snapshot(data));
+    assert.equal(gauge.querySelector('.gauge-value').textContent, text);
+    assert.equal(track.getAttribute('aria-valuenow'), value.toFixed(1));
+    assert.equal(track.getAttribute('aria-valuetext'), text);
+    for (const meter of card.querySelectorAll('.gauge')) {
+      assert.equal(meter.classList.contains('usage-warn'), warn);
+      assert.equal(meter.classList.contains('usage-bad'), bad);
+    }
+  }
+  data.nodes[0].cpu_percent = null; data.nodes[0].metric_status.cpu_percent = 'unavailable'; socket.message(snapshot(data));
+  assert.equal(track.getAttribute('aria-valuenow'), null);
+  assert.equal(track.getAttribute('aria-valuetext'), null);
+  assert.equal(gauge.classList.contains('usage-bad'), false);
+});
+
+test('public search and region headings start above twelve, filter only loaded nodes, survive updates and reset on page turn', async (t) => {
+  const ui = await setup(t); const socket = ui.sockets[0]; socket.open();
+  const base = payload().nodes[0];
+  const nodes = Array.from({length: 13}, (_, i) => ({...base, name: `node ${i}`, region: i % 2 ? 'West' : 'East', provider: i === 12 ? 'Unique Cloud' : 'Provider', status: i === 12 ? 'offline' : 'online'}));
+  const search = ui.body.querySelector('.node-search');
+  socket.message(snapshot(payload('', {nodes: nodes.slice(0, 12)})));
+  assert.equal(search.hidden, true); assert.equal(ui.elements.nodes.querySelectorAll('.region-heading').length, 0);
+  socket.message(snapshot(payload('', {nodes, has_more: true, next_offset: 50})));
+  assert.equal(search.hidden, false); assert.equal(ui.elements.nodes.querySelectorAll('.region-heading').length, 2);
+  const original = ui.elements.nodes.querySelectorAll('.node');
+  const shown = () => ui.elements.nodes.querySelectorAll('.node').filter((card) => !card.hidden);
+  const input = (value) => { search.value = value; search.dispatchEvent(new Event('input')); };
+  input('uNiQuE'); assert.equal(shown().length, 1); assert.equal(shown()[0].querySelector('h2').textContent, 'node 12');
+  assert.equal(ui.elements.nodes.querySelectorAll('.region-heading').filter((heading) => !heading.hidden).length, 1);
+  input('West'); assert.equal(shown().length, 6);
+  input('node 12'); assert.equal(shown().length, 1);
+  ui.elements.filters.children[1].click(); assert.equal(shown().length, 0);
+  assert.equal(ui.elements['empty-text'].textContent, copy('public.searchEmpty'));
+  ui.elements.filters.children[0].click();
+  socket.message(snapshot(payload('', {nodes, has_more: true, next_offset: 50})));
+  assert.equal(search.value, 'node 12'); assert.equal(shown().length, 1);
+  assert.deepEqual(ui.elements.nodes.querySelectorAll('.node'), original);
+  ui.elements.next.click(); assert.equal(search.value, ''); assert.equal(search.hidden, true);
+  assert.match(ui.sockets.at(-1).url, /offset=50/);
+  ui.sockets.at(-1).open(); ui.sockets.at(-1).message(snapshot(payload('other page')));
+  assert.equal(ui.elements.nodes.querySelectorAll('.region-heading').length, 0);
+  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'other page');
+});
+
+test('optional region heading renderer receives names; absent hooks retain the built-in themes contract', async (t) => {
+  const received = [];
+  const ui = await setup(t, undefined, (renderers) => ({...renderers, createRegionHeading(region) {
+    received.push(region); const li = new PublicElement('li'); li.className = 'region-heading'; li.textContent = region; return li;
+  }}));
+  const base = payload().nodes[0]; ui.sockets[0].open();
+  const nodes = Array.from({length: 13}, (_, i) => ({...base, name: `n${i}`, region: i % 2 ? 'West' : ''}));
+  ui.sockets[0].message(snapshot(payload('', {nodes})));
+  assert.deepEqual(received, [copy('public.regionUnknown'), 'West']);
+  ui.sockets[0].message(snapshot(payload('', {nodes})));
+  assert.equal(received.length, 2);
 });

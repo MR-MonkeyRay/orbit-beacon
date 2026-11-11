@@ -466,5 +466,5 @@
   .nav [role="group"] + .nav-heading + [role="group"] { margin-top: var(--sp-control); }
   .user-menu > .btn { justify-content: center; padding: 0; }
   .user-menu .menu-options { left: calc(100% + 10px); bottom: 0; }
-  .alert-count { position: absolute; top: 0; right: 0; font-size: var(--fs-micro); }
+  .nav .alert-count { position: absolute; top: 0; right: 0; font-size: var(--fs-micro); }
 }

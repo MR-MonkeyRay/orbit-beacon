@@ -1,4 +1,12 @@
 export default {
+  'public.summary.offline': '{count} 个节点离线',
+  'public.summary.unknown': '{count} 个节点状态未知',
+  'public.search': '搜索本页节点',
+  'public.searchEmpty': '无匹配节点',
+  'public.regionUnknown': '未知地区',
+  'public.availabilityRange': '{count} 天前',
+  'public.today': '今天',
+
   'public.announcements': '公告',
   'alerts.severity.info': '提示',
   'alerts.severity.warning': '警告',
@@ -28,7 +36,6 @@ export default {
   'public.poweredBy': '由 OrbitBeacon 提供',
   'public.empty.all': '暂无公开的节点。',
   'public.summary.allOnline': {other: '{count} 个节点全部在线'},
-  'public.summary.online': '{online} / {count} 个节点在线',
   'public.summary.page': {other: '本页 {count} 个节点。'},
   'public.summary.joined': '{status}，{page}',
   'public.updatedAt': '更新于 {time}',
@@ -39,7 +46,6 @@ export default {
   'public.reconnecting': '正在重连…',
   'public.stale': '数据可能已过期',
   'public.loadFailed': '加载失败。请刷新重试；若持续失败，服务可能不可用。',
-  'public.announce.updated': '节点数据已更新。',
   'public.announce.stale': '连接中断，当前显示最后一次数据。',
   'public.duration.daysHours': '{days}天 {hours}小时',
   'public.duration.hoursMinutes': '{hours}小时 {minutes}分钟',

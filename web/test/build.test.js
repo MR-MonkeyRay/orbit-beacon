@@ -153,3 +153,28 @@ test('invalid theme paths and unsafe CDN bases fail before replacing existing ou
     assert.deepEqual(await readFile(path.join(outDir, 'public.html')), original);
   }
 });
+
+
+for (const theme of ['default', 'example']) test(`${theme} actual theme builds compact banner, shared threshold colors and regional search styles`, async (t) => {
+  const root = path.resolve(new URL('..', import.meta.url).pathname);
+  const out = await mkdtemp(path.join(tmpdir(), 'orbitbeacon-theme-ux-'));
+  t.after(() => rm(out, {recursive: true, force: true}));
+  // Override only the config read; source files and all renderer imports remain real.
+  const original = fs.readFile;
+  fs.readFile = async (name, ...args) => String(name) === path.join(root, 'build.config.json')
+    ? JSON.stringify({publicTheme: theme, assetBase: ''}) : original(name, ...args);
+  syncBuiltinESMExports();
+  try { await buildWeb(out, root); }
+  finally { fs.readFile = original; syncBuiltinESMExports(); }
+  const css = await readFile(path.join(out, '_app/assets/public.css'), 'utf8');
+  const js = await readFile(path.join(out, '_app/assets/public.js'), 'utf8');
+  assert.match(css, /min-height:160px/);
+  assert.match(css, /summary\[data-tone=ok\]/);
+  assert.match(css, /\.gauge\.usage-warn \.fill/);
+  assert.match(css, /\.gauge\.usage-bad \.fill/);
+  assert.match(css, /\.region-heading/);
+  assert.match(css, /\.node-search/);
+  assert.match(css, /safe-area-inset-top/);
+  assert.match(js, /Search this page/);
+  assert.doesNotMatch(js, /Top resource usage/);
+});

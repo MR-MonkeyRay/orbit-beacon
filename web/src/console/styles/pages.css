@@ -683,3 +683,23 @@
 .sample-table .table { font-size: var(--fs-sm); }
 @media (max-width:1100px) { .sample-primary { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (max-width:480px) { .sample-primary,.sample-rates { grid-template-columns: minmax(0,1fr); } }
+
+/* 概览：两列同高，列表只显示相同的最多八行。 */
+.overview-bottom {align-items:stretch;}
+.overview-bottom>.panel {display:flex;flex-direction:column;}
+.overview-bottom .panel-body {flex:1;min-width:0;}
+.resource-columns {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:var(--sp-group);}
+.resource-columns h3 {font-size:var(--fs-base);font-weight:var(--fw-semibold);}
+.resource-rows>li>a {flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.resource-rows .usage-meter {flex:none;}
+.attention-reasons {display:flex;flex-wrap:wrap;justify-content:flex-end;gap:var(--sp-inline);align-items:center;}
+.overview-bottom.single {grid-template-columns:minmax(0,1fr);}
+.overview-status {display:flex;flex-wrap:wrap;gap:var(--sp-inline) var(--sp-content);margin-top:var(--sp-content);}
+.overview-status:empty {display:none;}
+.overview-status-line {font-size:var(--fs-sm);}
+.overview-status-line a {display:inline-flex;gap:var(--sp-inline);align-items:center;color:var(--ok);}
+.meter-row .group-bar {display:flex;}
+.meter-row .group-bar i {border-radius:0;animation:none;}
+.meter-row .group-bar .c-online {background:var(--ok);}
+.meter-row .group-bar .c-offline {background:var(--bad);}
+.meter-row .group-bar .c-unknown {background:var(--idle);}

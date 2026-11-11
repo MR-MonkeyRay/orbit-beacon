@@ -1,8 +1,10 @@
 .availability {display:flex;align-items:center;gap:8px;min-width:0;width:100%;margin-top:12px;flex-wrap:wrap;}
+.availability-window {flex:1;min-width:0;}
+.availability-range {display:flex;justify-content:space-between;gap:8px;margin-top:4px;font-size:12px;color:var(--ink-subtle);}
 .availability-days {display:grid;grid-template-columns:repeat(30,minmax(0,1fr));gap:2px;flex:1;min-width:0;}
 .availability-day {display:block;height:18px;border-radius:2px;background:var(--idle-bg);}
 .availability-normal {background:var(--ok);}
 .availability-warning {background:var(--warn);}
 .availability-critical {background:var(--bad);}
-.availability-total {font-size:12px;white-space:nowrap;flex-shrink:0;}
+.availability-total {font-size:12px;white-space:nowrap;flex-shrink:0;align-self:flex-start;line-height:18px;}
 .availability-detail {flex-basis:100%;font-size:12px;color:var(--ink-subtle);}

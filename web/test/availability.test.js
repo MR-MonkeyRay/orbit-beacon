@@ -14,6 +14,7 @@ test('availability boundaries, accessible titles, stable bars and CSP', () => {
     const bar = availabilityBar(); bar.update(data());
     const bars = bar.querySelectorAll('.availability-day');
     assert.equal(bars.length, 30);
+    assert.equal(bar.querySelector('.availability-range').textContent, `${copy('public.availabilityRange', {count: 30})}${copy('public.today')}`);
     assert.equal(bar.getAttribute('role'), 'img');
     assert.equal(bar.getAttribute('aria-label'), `${copy('public.availability')}: 2026-10-07 – 2026-11-05, 99.99%`);
     assert.equal(bars[0].getAttribute('title'), `2026-10-07: ${copy('public.availabilityNoData')}`);
@@ -79,4 +80,15 @@ test('console availability renders thirty detailed days on success', async () =>
     assert.equal(bars[0].getAttribute('title'), `2026-10-07: 99.99%; ${copy('public.availabilityDuration', {offline: copy('public.duration.minutes', {minutes: 1}), unknown: copy('public.duration.minutes', {minutes: 2})})}`);
     assert.equal(panel.querySelector('.history-error'), null);
   } finally { navigation.abort(); setNavigationSignal(null); globalThis.fetch = originalFetch; dom.restore(); }
+});
+
+
+test('availability range labels derive from the supplied day count', () => {
+  const dom = installDOM();
+  try {
+    const bar = availabilityBar(); const data = {start_day: '2026-10-28', days: Array(7).fill(100), percent: 100};
+    bar.update(data);
+    assert.equal(bar.querySelector('.availability-range').textContent, `${copy('public.availabilityRange', {count: 7})}${copy('public.today')}`);
+    assert.match(bar.getAttribute('aria-label'), /2026-10-28 – 2026-11-03/);
+  } finally { dom.restore(); }
 });
