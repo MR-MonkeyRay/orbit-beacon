@@ -215,3 +215,18 @@ test('theme control stays out of the drawer close path', async (t) => {
   env.sidebar.dispatchEvent(click);
   state(env, true);
 });
+
+test('pageHead keeps primary action separate from live status for the mobile title row', async () => {
+  const dom = installDOM();
+  try {
+    const {button, liveStatus, pageHead} = await import('../src/console/ui/components.js');
+    const status = liveStatus();
+    const action = button(copy('nodes.add'), {variant: 'primary'});
+    const header = pageHead(copy('nodes.listTitle'), status.element, action);
+    assert.equal(header.querySelector('.page-title').querySelector('h1').textContent, copy('nodes.listTitle'));
+    assert.equal(header.querySelector('.head-actions').firstElementChild, action);
+    assert.equal(header.querySelector('.head-status').firstElementChild, status.element);
+    status.update({state: 'live'});
+    assert.equal(header.querySelector('.head-status').textContent, copy('controls.live.live'));
+  } finally { dom.restore(); }
+});

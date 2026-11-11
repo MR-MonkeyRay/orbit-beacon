@@ -191,6 +191,11 @@
 
 /* 手机：同一份导航作为抽屉，宽屏规则保持原样。 */
 @media (max-width:767px) {
+  /* 手机卡片固定显示名称、状态、用量与最后上报，列选择不适用。 */
+  .column-picker {
+    display: none;
+  }
+
   .nodes-table .name {
     min-width: 0;
   }
@@ -396,4 +401,100 @@
     min-width: 0;
     max-width: 100%;
   }
+}
+
+@media (pointer:coarse) {
+  kbd { display: none; }
+  .search .input { padding-right: var(--sp-control); }
+}
+
+@media (max-width:767px) {
+  .page-head {
+    display: grid;
+    grid-template-columns: minmax(0,1fr) auto;
+    align-items: start;
+    gap: var(--sp-inline);
+  }
+  .page-head>.page-title { width: auto; }
+  .page-head>.head-actions {
+    width: auto;
+    justify-content: flex-end;
+    order: 0;
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .page-head>.head-status {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: auto;
+    margin: 0;
+  }
+  .head-status .live-status {
+    min-height: 0;
+    padding: 0;
+    border: 0;
+  }
+  .nodes-mobile-sort { display: block; }
+  .nodes-table .column-hidden[data-column="last_seen"] { display: block; }
+  .nodes-table-wrap { overflow-x: visible; }
+  .nodes-table { display: block; }
+  .nodes-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .nodes-table thead:focus-within {
+    position: static;
+    width: auto;
+    height: auto;
+    clip-path: none;
+    white-space: normal;
+  }
+  .nodes-table thead:focus-within tr { display: flex; flex-wrap: wrap; }
+  .nodes-table tbody { display: block; }
+  .nodes-table tbody tr {
+    display: grid;
+    grid-template-columns: 44px minmax(0,1fr) minmax(0,1fr);
+    grid-template-rows: auto auto auto;
+    align-items: center;
+    gap: var(--sp-tight) 0;
+    padding: var(--sp-control) var(--sp-content) var(--sp-control) 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .nodes-table tbody td {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+  }
+  .nodes-table .selection-cell { grid-column: 1; grid-row: 1 / 4; }
+  .nodes-table .name { grid-column: 2; grid-row: 1; }
+  .nodes-table .name a { max-width: 100%; }
+  .nodes-table .node-status { grid-column: 3; grid-row: 1; justify-self: end; }
+  .nodes-table .node-cpu { grid-column: 2; grid-row: 2; }
+  .nodes-table .node-memory { grid-column: 3; grid-row: 2; }
+  .nodes-table .node-cpu,.nodes-table .node-memory { text-align: left; }
+  .nodes-table .node-cpu::before,.nodes-table .node-memory::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--ink-subtle);
+    font-size: var(--fs-xs);
+  }
+  /* 手机上固定卡片信息；桌面的列偏好不影响最后上报。 */
+  .nodes-table td[data-column] { display: none; }
+  .nodes-table td[data-column="last_seen"] {
+    display: block;
+    grid-column: 2 / 4;
+    grid-row: 3;
+    max-width: 100%;
+    font-size: var(--fs-xs);
+  }
+  .nodes-table td[colspan] { grid-column: 1 / -1; white-space: normal; }
+}
+
+@media (min-width:768px) and (max-width:1023px) {
+  .nodes-table .hide-compact:not(.column-hidden) { display: table-cell; }
 }

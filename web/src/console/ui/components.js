@@ -40,8 +40,11 @@ export function panel(title, options = {}, ...body) {
 
 export function pageHead(title, ...actions) {
   actions = actions.filter(Boolean);
+  const status = actions.filter((action) => action.classList?.contains('live-status'));
+  actions = actions.filter((action) => !status.includes(action));
   return h('header', {class: 'page-head'},
-    h('div', null, h('h1', {tabindex: '-1'}, title)),
+    h('div', {class: 'page-title'}, h('h1', {tabindex: '-1'}, title)),
+    status.length ? h('div', {class: 'head-status'}, status) : null,
     actions.length ? h('div', {class: 'head-actions'}, actions) : null);
 }
 

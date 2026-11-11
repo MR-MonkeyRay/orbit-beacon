@@ -4,6 +4,7 @@ import {readConsoleFleet} from '../src/console/live.js';
 import {setSession} from '../src/console/api.js';
 import {createNodeRow} from '../src/console/lib/nodes-table.js';
 import {patchNodesFromFleet} from '../src/console/lib/nodes-live.js';
+import {reducedMotion} from '../src/shared/dom.js';
 import {createNumberTween} from '../src/shared/tween.js';
 import {formatPercent} from '../src/console/format.js';
 import {copy, installDOM} from './console-dom.js';
@@ -127,4 +128,34 @@ test('last-seen cells share compact time and offline color through live presence
     assert.equal(cell.textContent, copy('nodes.never'));
     assert.equal(cell.classList.contains('muted'), true);
   } finally { dom.restore(); }
+});
+
+test('usage bars follow the displayed tween through both threshold crossings and missing values', () => {
+  const dom = installDOM();
+  const descriptor = Object.getOwnPropertyDescriptor(reducedMotion, 'matches');
+  Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => false});
+  const oldWindow = globalThis.window;
+  globalThis.window = new EventTarget();
+  try {
+    let tick;
+    const tween = createNumberTween({now: () => 0, requestFrame: (callback) => { tick = callback; return 1; }, cancelFrame() {}, timing: () => ({duration: 100})});
+    const item = {...node(), cpu_percent: 70, memory_used_percent: 70};
+    const state = {nodes: [item], filter: {sort: 'cpu'}, rowRefs: new Map(), deleted: new Set(), selected: new Set(), visibleIDs: new Set([item.id]), tween};
+    const row = createNodeRow({node: item, query: '', selected: state.selected, deleted: state.deleted, groupNames: new Map(), rowRefs: state.rowRefs, onSelectionChange() {}, tween});
+    dom.body.append(row);
+    patchNodesFromFleet({nodes: [{...item, cpu_percent: 100, memory_used_percent: 100}]}, state);
+    for (const [time, percent, level] of [[0, 70, ''], [50, 85, 'warn'], [75, 92.5, 'bad'], [100, 100, 'bad']]) {
+      tick(time);
+      for (const index of [3, 4]) {
+        const cell = row.children[index];
+        assert.equal(cell.textContent, `${percent}%`);
+        const meter = cell.firstElementChild;
+        assert.equal(meter.className, `usage-meter${level ? ` usage-${level}` : ''}`);
+        assert.equal(meter.firstElementChild.firstElementChild.style.width, `${percent}%`);
+      }
+    }
+    patchNodesFromFleet({nodes: [{...item, cpu_percent: null, memory_used_percent: null}]}, state);
+    assert.equal(row.children[3].textContent, '—');
+    assert.equal(row.children[3].querySelector('.usage-track').firstElementChild.style.width, '0%');
+  } finally { Object.defineProperty(reducedMotion, 'matches', descriptor); globalThis.window = oldWindow; dom.restore(); }
 });

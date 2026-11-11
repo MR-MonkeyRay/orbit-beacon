@@ -170,7 +170,7 @@ test('nodes refresh overlays the newest complete fleet after a deferred metadata
   assert.equal(elements(env.root).find((item) => item.textContent === copy('nodes.selectionRemoved')).hidden, false);
   assert.equal(env.document.activeElement, search); assert.equal(search.value, 'Node');
   assert.equal(search.selectionStart, 1); assert.equal(search.selectionEnd, 3);
-  assert.equal(location.search, '?q=Node&sort=status');
+  assert.equal(location.search, '?q=Node');
   await env.advance(10000); env.socket.message(frame('heartbeat', {server_time: '2026-10-28T00:00:20Z'}));
   assert.equal(deletedBox.disabled, true, 'a quiet stream cannot leave a resurrected actionable row');
   env.replaceInventory([survivor, node(4)]); button(env.root, copy('nodes.refreshList')).click(); await flush();
@@ -304,7 +304,7 @@ test('nodes live presence counts patch text without hiding focused segments or r
   assert.equal(offline.hidden, false); assert.equal(env.document.activeElement, offline);
   assert.deepEqual(env.root.querySelector('tbody').children, rows);
   assert.equal(button(env.root, copy('nodes.applyFilters')).parentElement.hidden, false);
-  assert.equal(location.search, '?q=Node&status=online&sort=status');
+  assert.equal(location.search, '?q=Node&status=online');
 });
 
 for (const page of ['nodes', 'overview']) {
@@ -838,5 +838,184 @@ for (const hidden of [false, true]) test(`list fades respect ${hidden ? 'hidden 
     const scrolls = []; env.window.scrollTo = (value) => scrolls.push(value);
     button(env.root, copy('nodes.next')).click();
     assert.deepEqual(scrolls, [{top: 0, behavior: 'instant'}]);
+  }
+});
+
+for (const sort of ['cpu', 'memory']) test(`${sort} sorting waits for explicit apply, preserving live row order and bar tween state`, async (t) => {
+  const env = await setup(t, {search: `?sort=${sort}&dir=desc`});
+  const key = sort === 'cpu' ? 'cpu_percent' : 'memory_used_percent';
+  const index = sort === 'cpu' ? 3 : 4;
+  assert.equal(env.root.querySelectorAll('th').find((header) => header.dataset.sort === sort).getAttribute('aria-sort'), 'descending');
+  // 列表接口不含用量；首帧带来指标时直接重排，否则按用量排序在首屏无效。
+  env.send({nodes: env.inventory.map((item, i) => ({...compact(item), [key]: i}))});
+  assert.equal(env.root.querySelector('tbody').firstElementChild.querySelector('input').dataset.nodeId, id(env.inventory.length));
+  assert.equal(button(env.root, copy('nodes.applyFilters')).parentElement.hidden, true);
+  const rows = [...env.root.querySelector('tbody').children];
+  // 数值变化但顺序不变时不提示。
+  env.send({nodes: env.inventory.map((item, i) => ({...compact(item), [key]: i * 2 + 1}))});
+  assert.equal(button(env.root, copy('nodes.applyFilters')).parentElement.hidden, true);
+  env.send({nodes: env.inventory.map((item, i) => ({...compact(item), [key]: i ? 10 : 95}))});
+  env.renderFrame(performance.now() + 250);
+  assert.deepEqual(env.root.querySelector('tbody').children, rows);
+  const raised = rows.find((row) => row.querySelector('input').dataset.nodeId === id(1));
+  assert.equal(raised.children[index].querySelector('.usage-track').firstElementChild.style.width, '95%');
+  assert.ok(raised.children[index].querySelector('.usage-meter').classList.contains('usage-bad'));
+  const apply = button(env.root, copy('nodes.applyFilters'));
+  assert.equal(apply.parentElement.hidden, false);
+  apply.click();
+  const first = env.root.querySelector('tbody').firstElementChild;
+  assert.equal(first.querySelector('input').dataset.nodeId, id(1));
+  assert.equal(apply.parentElement.hidden, true);
+  assert.equal(location.search, `?sort=${sort}&dir=desc`);
+});
+
+test('column preferences survive filtering and live updates without showing default-hidden columns', async (t) => {
+  const env = await setup(t);
+  const rows = () => env.root.querySelector('tbody').querySelectorAll('tr');
+  assert.equal(rows()[0].children[5].classList.contains('column-hidden'), true);
+  assert.equal(rows()[0].children[10].classList.contains('column-hidden'), true);
+  const picker = env.root.querySelector('.column-picker');
+  const checkbox = picker.querySelectorAll('input').find((control) => control.dataset.column === 'last_seen');
+  checkbox.checked = false; checkbox.dispatchEvent(new Event('change'));
+  assert.equal(rows()[0].children[6].classList.contains('column-hidden'), true);
+  env.send({nodes: env.inventory.map(compact)});
+  assert.equal(rows()[0].children[6].classList.contains('column-hidden'), true);
+  const nameHeader = env.root.querySelectorAll('th').find((header) => header.dataset.sort === 'name');
+  nameHeader.querySelector('button').click();
+  assert.equal(rows()[0].children[6].classList.contains('column-hidden'), true);
+});
+
+test('cancel selection clears all pages and restores the visible select-all control', async (t) => {
+  const env = await setup(t, {count: 55});
+  const all = env.root.querySelectorAll('input').find((control) => control.getAttribute('aria-label') === copy('nodes.selectAll'));
+  all.checked = true; all.dispatchEvent(new Event('change'));
+  button(env.root, copy('nodes.next')).click();
+  const box = env.root.querySelector('input[data-node-id]');
+  box.checked = true; box.dispatchEvent(new Event('change'));
+  assert.equal(env.root.querySelector('.selection-count').textContent, copy('nodes.selected', {count: 51}));
+  button(env.root, copy('nodes.cancelSelection')).click();
+  assert.equal(env.root.querySelector('.bulk-actions').hidden, true);
+  assert.equal(all.checked, false); assert.equal(all.indeterminate, false);
+  assert.equal(document.activeElement, all);
+  button(env.root, copy('nodes.previous')).click();
+  assert.ok(env.root.querySelector('tbody').querySelectorAll('input').every((control) => !control.checked));
+});
+
+const selectNodes = (env) => {
+  const boxes = env.root.querySelectorAll('input[data-node-id]');
+  for (const box of boxes) { box.checked = true; box.dispatchEvent(new Event('change')); }
+};
+const submitMetadata = async (env, value) => {
+  const dialog = env.body.querySelector('dialog');
+  const form = dialog.querySelector('form');
+  const control = form.querySelector('input,select');
+  control.value = value; control.dispatchEvent(new Event('input'));
+  form.dispatchEvent(new Event('submit', {cancelable: true}));
+  await flush();
+  if (dialog.classList.contains('closing')) dialog.dispatchEvent(new Event('animationend'));
+  await flush();
+  return dialog;
+};
+
+for (const value of ['', id(700)]) test(`bulk group PATCH ${value ? 'sets group' : 'clears group'} and reports partial failures`, async (t) => {
+  const env = await setup(t, {mutate: (request) => request.url.endsWith(id(2))
+    ? response({code: 'node_not_found'}, {status: 404}) : response({...node(1), group_id: value || null})});
+  selectNodes(env);
+  button(env.root, copy('nodes.setGroup')).click(); await flush();
+  const dialog = env.body.querySelector('dialog');
+  assert.deepEqual(dialog.querySelector('select').options.map((option) => option.value), ['', id(700)]);
+  await submitMetadata(env, value);
+  const patches = env.requests.filter((request) => request.method === 'PATCH');
+  assert.deepEqual(patches.map((request) => [request.url, JSON.parse(request.body)]), [1, 2].map((n) => [`/api/v1/nodes/${id(n)}`, {group_id: value || null}]));
+  const results = env.body.querySelector('dialog');
+  assert.equal(results.querySelector('h2').textContent, copy('nodes.batchResults', {action: copy('nodes.setGroup')}));
+  assert.ok(results.textContent.includes(copy('nodes.resultCounts', {count: 1, failed: 1})));
+  assert.ok(results.textContent.includes(copy('nodes.result.failed')));
+  assert.equal(env.root.querySelector('.bulk-actions').hidden, true);
+  button(results, copy('nodes.close')).click(); results.dispatchEvent(new Event('animationend')); await flush();
+});
+
+test('bulk tag preserves each node tags and exact strings, without duplicates', async (t) => {
+  const env = await setup(t, {mutate: () => response(node(1))});
+  const inventory = [{...node(1), tags: ['existing', ' new ']}, {...node(2), tags: ['other']}];
+  env.replaceInventory(inventory);
+  env.send({nodes: inventory.map(compact)});
+  button(env.root, copy('nodes.refreshList')).click(); await flush();
+  selectNodes(env);
+  button(env.root, copy('nodes.addTag')).click(); await flush();
+  await submitMetadata(env, ' new ');
+  const patches = env.requests.filter((request) => request.method === 'PATCH');
+  assert.deepEqual(patches.map((request) => JSON.parse(request.body)), [{tags: ['existing', ' new ']}, {tags: ['other', ' new ']}]);
+  const results = env.body.querySelector('dialog');
+  assert.ok(results.textContent.includes(copy('nodes.resultCounts', {count: 2, failed: 0})));
+  button(results, copy('nodes.close')).click(); results.dispatchEvent(new Event('animationend')); await flush();
+});
+
+test('bulk tag rejects blank and more than 255 UTF-8 bytes before sending, accepts the boundary', async (t) => {
+  const env = await setup(t, {mutate: () => response(node(1))});
+  selectNodes(env);
+  button(env.root, copy('nodes.addTag')).click(); await flush();
+  for (const value of ['', '  ', '界'.repeat(86)]) {
+    const dialog = await submitMetadata(env, value);
+    assert.ok(dialog.open);
+    assert.ok(dialog.querySelector('input').validationMessage);
+    assert.equal(env.requests.some((request) => request.method === 'PATCH'), false);
+  }
+  const boundary = '界'.repeat(85);
+  await submitMetadata(env, boundary);
+  const patches = env.requests.filter((request) => request.method === 'PATCH');
+  assert.equal(patches.length, 2);
+  assert.deepEqual(JSON.parse(patches[0].body), {tags: [boundary]});
+  const results = env.body.querySelector('dialog');
+  button(results, copy('nodes.close')).click(); results.dispatchEvent(new Event('animationend')); await flush();
+});
+
+for (const action of ['group', 'tag']) test(`bulk ${action} navigation abort cancels the in-flight PATCH and stops subsequent nodes and results`, async (t) => {
+  let release;
+  const env = await setup(t, {mutate: () => new Promise((resolve) => { release = () => resolve(response(node(1))); })});
+  selectNodes(env);
+  button(env.root, copy(action === 'group' ? 'nodes.setGroup' : 'nodes.addTag')).click(); await flush();
+  await submitMetadata(env, action === 'group' ? id(700) : 'new');
+  assert.equal(typeof release, 'function');
+  const patch = env.requests.find((request) => request.method === 'PATCH');
+  env.scope.abort();
+  assert.ok(patch.signal.aborted);
+  release(); await flush(); await flush();
+  assert.equal(env.requests.filter((request) => request.method === 'PATCH').length, 1);
+  assert.equal(env.body.querySelector('dialog'), null);
+  assert.equal(env.root.querySelector('.bulk-actions').hidden, false);
+});
+
+
+test('bulk tag keeps frozen targets through selection changes and reports partial failure', async (t) => {
+  const env = await setup(t, {mutate: (request) => request.url.endsWith(id(1))
+    ? response({code: 'storage_busy'}, {status: 503}) : response(node(2))});
+  selectNodes(env);
+  button(env.root, copy('nodes.addTag')).click(); await flush();
+  const box = env.root.querySelector('input[data-node-id]');
+  box.checked = false; box.dispatchEvent(new Event('change'));
+  await submitMetadata(env, 'new');
+  const patches = env.requests.filter((request) => request.method === 'PATCH');
+  assert.deepEqual(patches.map((request) => [request.url, JSON.parse(request.body)]), [1, 2].map((n) => [`/api/v1/nodes/${id(n)}`, {tags: ['new']}]));
+  const results = env.body.querySelector('dialog');
+  assert.ok(results.textContent.includes(copy('nodes.resultCounts', {count: 1, failed: 1})));
+  assert.ok(results.textContent.includes(copy('errors.storage_busy')));
+  button(results, copy('nodes.close')).click(); results.dispatchEvent(new Event('animationend')); await flush();
+});
+
+test('mobile sort control uses the same URL-backed order and default status pagination', async (t) => {
+  const env = await setup(t, {count: 55});
+  assert.equal(location.search, '');
+  assert.equal(env.root.querySelector('tbody').firstElementChild.querySelector('a').textContent, 'Node 001');
+  button(env.root, copy('nodes.next')).click();
+  assert.equal(location.search, '?page=1');
+  assert.equal(env.root.querySelector('tbody').firstElementChild.querySelector('a').textContent, 'Node 051');
+  const sort = env.root.querySelector('.nodes-mobile-sort');
+  sort.value = 'name:desc'; sort.dispatchEvent(new Event('change'));
+  assert.equal(location.search, '?sort=name&dir=desc&page=1');
+  assert.equal(env.root.querySelector('tbody').firstElementChild.querySelector('a').textContent, 'Node 005');
+  const table = env.root.querySelector('table');
+  for (const element of [table, table.querySelector('thead'), table.querySelector('tbody'), table.querySelector('tr')]) {
+    assert.equal(element.getAttribute('role'), null);
   }
 });

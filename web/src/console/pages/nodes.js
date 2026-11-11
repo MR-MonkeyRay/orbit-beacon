@@ -8,9 +8,10 @@ import {busy, button, emptyState, liveStatus, pageHead} from '../ui/components.j
 import {toastError} from '../ui/feedback.js';
 import {input, select} from '../ui/forms.js';
 import {runNodeBatch} from '../lib/nodes-bulk.js';
-import {NODE_PAGE_SIZE, nodeSortDirection, readNodeFilter, scopedNodes, sortedNodes, writeNodeFilter} from '../lib/nodes-filters.js';
+import {NODE_PAGE_SIZE, SORTS, nodeSortDirection, readNodeFilter, scopedNodes, sortedNodes, writeNodeFilter} from '../lib/nodes-filters.js';
 import {patchNodesFromFleet} from '../lib/nodes-live.js';
 import {createNodeRow, fadeNodeRow, patchNodeSortHeaders} from '../lib/nodes-table.js';
+import {nodeColumnPicker, patchNodeColumns, readNodeColumns} from '../lib/nodes-columns.js';
 import {addNodeButton} from '../lib/add-node-dialog.js';
 
 export async function nodesPage() {
@@ -47,6 +48,11 @@ export async function nodesPage() {
   groupSelect.addEventListener('change', () => { filter.group = groupSelect.value; filter.page = 0; update(); });
 
   const direction = () => nodeSortDirection(filter);
+  const sortLabels = {name: t('nodes.column.name'), status: t('nodes.presence'), cpu: t('nodes.cpu'), memory: t('nodes.memory'), agent_version: t('nodes.agentVersion'), created: t('nodes.added')};
+  const mobileSort = select(SORTS.flatMap((key) => ['asc', 'desc'].map((dir) => [`${key}:${dir}`, `${sortLabels[key]} ${dir === 'asc' ? '↑' : '↓'}`])), `${filter.sort}:${direction()}`, {class: 'input nodes-mobile-sort', 'aria-label': t('nodes.sort')});
+  mobileSort.addEventListener('change', () => { [filter.sort, filter.dir] = mobileSort.value.split(':'); update(); });
+  const columns = readNodeColumns();
+  const columnPicker = nodeColumnPicker({columns, signal, onChange: () => patchNodeColumns(table, columns)});
   const sortable = (key, label) => h('th', {scope: 'col', dataset: {sort: key}}, h('button', {type: 'button', onclick: () => {
     filter.dir = filter.sort === key ? (direction() === 'asc' ? 'desc' : 'asc') : key === 'created' ? 'desc' : 'asc';
     filter.sort = key;
@@ -55,11 +61,15 @@ export async function nodesPage() {
   const selectAll = h('input', {type: 'checkbox', 'aria-label': t('nodes.selectAll')});
   const headers = [h('th', {scope: 'col', class: 'selection-cell'}, h('label', {class: 'selection-hit'}, selectAll)),
     sortable('name', t('nodes.column.name')), sortable('status', t('nodes.presence')),
-    h('th', {scope: 'col', class: 'num'}, t('nodes.cpu')), h('th', {scope: 'col', class: 'num'}, t('nodes.memory')),
+    sortable('cpu', t('nodes.cpu')), sortable('memory', t('nodes.memory')),
     sortable('agent_version', t('nodes.agentVersion')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.lastSeen')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.group')),
     h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.location')), h('th', {scope: 'col', class: 'hide-compact'}, t('nodes.tags')), sortable('created', t('nodes.added'))];
 
-  for (const header of headers) if (['agent_version', 'created'].includes(header.dataset.sort)) header.className = 'hide-compact';
+  for (const [index, key] of [[5, 'agent_version'], [6, 'last_seen'], [7, 'group'], [8, 'location'], [9, 'tags'], [10, 'created']]) {
+    headers[index].dataset.column = key;
+    headers[index].className = 'hide-compact';
+  }
+  headers[3].className = headers[4].className = 'num';
 
   const body = h('tbody');
   const summary = h('span', {'aria-live': 'polite'});
@@ -90,7 +100,15 @@ export async function nodesPage() {
   const disableSelected = button(t('nodes.disable'), {small: true, onClick: () => runBatch('disable')});
   const enableSelected = button(t('nodes.enable'), {small: true, onClick: () => runBatch('enable')});
   const deleteSelected = button(t('nodes.delete'), {small: true, variant: 'danger', onClick: () => runBatch('delete')});
-  const actionBar = h('div', {class: 'bulk-actions', hidden: true}, selectionCount, disableSelected, enableSelected, deleteSelected);
+  const cancelSelected = button(t('nodes.cancelSelection'), {small: true, onClick: () => {
+    selected.clear();
+    for (const refs of rowRefs.values()) refs.checkbox.checked = false;
+    updateSelection();
+    selectAll.focus();
+  }});
+  const groupSelected = button(t('nodes.setGroup'), {small: true, onClick: () => runBatch('group')});
+  const tagSelected = button(t('nodes.addTag'), {small: true, onClick: () => runBatch('tag')});
+  const actionBar = h('div', {class: 'bulk-actions', hidden: true}, selectionCount, cancelSelected, groupSelected, tagSelected, disableSelected, enableSelected, deleteSelected);
 
   const updateSelection = () => {
     const count = selected.size;
@@ -137,6 +155,7 @@ export async function nodesPage() {
     }
     const rows = sortedNodes(scoped, filter);
     patchNodeSortHeaders(headers, filter, direction());
+    mobileSort.value = `${filter.sort}:${direction()}`;
     const pages = Math.max(1, Math.ceil(rows.length / NODE_PAGE_SIZE));
     filter.page = Math.min(filter.page, pages - 1);
     const start = filter.page * NODE_PAGE_SIZE;
@@ -152,6 +171,7 @@ export async function nodesPage() {
         : emptyState(t('nodes.empty'), null, addNodeButton())))]));
     // 搜索和排序会重建表格；只有新进入的行淡入，留在表里的行不闪。
     if (shown.size) for (const [id, refs] of rowRefs) if (!shown.has(id)) fadeNodeRow(refs);
+    patchNodeColumns(table, columns);
     updateSelection();
     const summaryText = rows.length === 0 ? t('nodes.noMatching')
       : t(rows.length !== nodes.length ? 'nodes.showingFiltered' : 'nodes.showing', {start: start + 1, end: start + visible.length, count: rows.length, total: nodes.length});
@@ -200,9 +220,9 @@ export async function nodesPage() {
   async function runBatch(action) {
     if (batchBusy || selected.size === 0) return;
     batchBusy = true;
-    const controls = [disableSelected, enableSelected, deleteSelected];
+    const controls = [disableSelected, enableSelected, deleteSelected, cancelSelected, groupSelected, tagSelected];
     try {
-      await runNodeBatch({action, selected, nodes, signal, controls, reloadNodes,
+      await runNodeBatch({action, selected, nodes, groups, signal, controls, reloadNodes,
         onCompleted: () => { selected.clear(); update(); }});
     } finally { batchBusy = false; }
   }
@@ -231,12 +251,13 @@ export async function nodesPage() {
     h('div', {class: 'toolbar'},
       h('div', {class: 'search'}, icon('search'), search, h('kbd', null, '/')),
       h('div', {class: 'segmented', role: 'group', 'aria-label': t('nodes.filterPresence')}, [...statusButtons.values()]),
-      groupSelect),
-    h('div', {class: 'table-wrap'}, h('table', {class: 'table nodes-table'}, h('caption', {class: 'sr'}, t('nodes.listTitle')), h('thead', null, h('tr', null, headers)), body)),
+      groupSelect, mobileSort, columnPicker),
+    h('div', {class: 'table-wrap nodes-table-wrap'}, h('table', {class: 'table nodes-table'}, h('caption', {class: 'sr'}, t('nodes.listTitle')), h('thead', null, h('tr', null, headers)), body)),
     h('div', {class: 'table-foot'}, summary, pager, changes), actionBar);
   update();
   function patchFleet(data) {
     const changes = patchNodesFromFleet(data, {nodes, filter, rowRefs, deleted, selected, visibleIDs, tween});
+    if (changes.resort) update();
     inventoryChanged ||= changes.inventoryChanged;
     statusChanged ||= changes.statusChanged;
     selectionRemoved ||= changes.selectionRemoved;

@@ -113,7 +113,7 @@ export async function nodePage() {
   ], t('nodes.sections'));
   const head = pageHead(node.name, connection.element, actions);
   const title = head.querySelector('h1');
-  head.lastElementChild.className = 'detail-actions';
+  head.querySelector('.head-actions').classList.add('detail-actions');
   head.firstElementChild.replaceChildren(back,
     h('div', {class: 'detail-head'}, title, badge), h('div', {class: 'id-chip'}, idText, copy));
   const root = h('div', null, head,

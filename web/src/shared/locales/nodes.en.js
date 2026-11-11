@@ -1,4 +1,10 @@
 export default {
+  'nodes.columns': 'Columns',
+  'nodes.sort': 'Sort nodes',
+  'nodes.cancelSelection': 'Clear selection',
+  'nodes.setGroup': 'Set group',
+  'nodes.addTag': 'Add tag',
+
   'nodes.diskIO': 'Disk IO',
   'nodes.diskIOSummary': 'Read {read} · Write {write} · Busy {busy}',
   'nodes.pressureSummary': 'CPU {cpu} · Memory {memory} · IO {io}',

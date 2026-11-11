@@ -976,3 +976,23 @@ dialog.closing::backdrop {
 .last-seen-offline {
   color: var(--warn);
 }
+
+.head-actions { order: 2; }
+.head-status { margin-left: auto; }
+.nodes-table .column-hidden { display: none; }
+.nodes-mobile-sort { display: none; }
+.column-picker { position: relative; flex: none; }
+.column-options {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--sp-tight));
+  z-index: var(--z-sticky);
+  min-width: 180px;
+  background: var(--panel);
+}
+.column-options .choice-option {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-inline);
+  cursor: pointer;
+}

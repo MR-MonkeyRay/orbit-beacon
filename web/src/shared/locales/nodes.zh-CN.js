@@ -1,4 +1,10 @@
 export default {
+  'nodes.columns': '选择列',
+  'nodes.sort': '节点排序',
+  'nodes.cancelSelection': '取消选择',
+  'nodes.setGroup': '设置分组',
+  'nodes.addTag': '添加标签',
+
   'nodes.diskIO': '磁盘 IO',
   'nodes.diskIOSummary': '读取 {read} · 写入 {write} · 忙碌 {busy}',
   'nodes.pressureSummary': 'CPU {cpu} · 内存 {memory} · IO {io}',

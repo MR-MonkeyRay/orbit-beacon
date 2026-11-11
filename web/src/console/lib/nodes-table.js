@@ -1,5 +1,6 @@
 import {formatList, t} from '../i18n.js';
 import {h, reducedMotion} from '../../shared/dom.js';
+import {usageMeter} from '../../shared/usage.js';
 import {motionTiming} from '../../shared/motion.js';
 import {displayStatus, absoluteWhen, when, formatPercent} from '../format.js';
 import {link, patchStatusBadge, statusBadge} from '../ui/components.js';
@@ -12,6 +13,14 @@ export function highlightNodeMatch(value, query) {
 
 // 离线节点很多时，整列“不可用”比占位符更吵。
 export const metricText = (value) => Number.isFinite(value) ? formatPercent(value) : '—';
+
+export function patchNodeUsage(cell, percent, tween) {
+  const meter = cell.firstElementChild;
+  tween.set(meter.lastElementChild, percent, (value) => {
+    meter.update(value);
+    return meter.lastElementChild.textContent;
+  });
+}
 
 export function fadeNodeRow(refs) {
   refs.animation?.cancel();
@@ -33,7 +42,9 @@ export function tombstoneNodeRow(refs) {
 }
 
 export function patchNodeLastSeen(cell, node) {
-  cell.className = `hide-compact ${node.presence === 'offline' ? 'last-seen-offline' : 'muted'}`;
+  cell.classList.toggle('last-seen-offline', node.presence === 'offline');
+  cell.classList.toggle('muted', node.presence !== 'offline');
+  cell.classList.add('hide-compact');
   cell.replaceChildren(node.last_seen ? absoluteWhen(node.last_seen) : t('nodes.never'));
 }
 
@@ -48,23 +59,23 @@ export function createNodeRow({node, query, selected, deleted, groupNames, rowRe
   const name = link(`/nodes/${node.id}`, highlightNodeMatch(node.name, query));
   name.setAttribute('title', node.name);
   const badge = statusBadge(displayStatus(node));
-  const lastSeen = h('td');
+  const lastSeen = h('td', {dataset: {column: 'last_seen'}});
   patchNodeLastSeen(lastSeen, node);
-  const cpu = h('td', {class: 'num'}, metricText(node.cpu_percent));
-  const memory = h('td', {class: 'num'}, metricText(node.memory_used_percent));
-  const version = h('td', {class: 'hide-compact'}, node.agent_version);
+  const cpu = h('td', {class: 'num node-cpu', dataset: {label: t('nodes.cpu')}}, usageMeter(node.cpu_percent));
+  const memory = h('td', {class: 'num node-memory', dataset: {label: t('nodes.memory')}}, usageMeter(node.memory_used_percent));
+  const version = h('td', {class: 'hide-compact', dataset: {column: 'agent_version'}}, node.agent_version);
   const element = h('tr', null, h('td', {class: 'selection-cell'}, h('label', {class: 'selection-hit'}, checkbox)), h('td', {class: 'name'}, name),
-    h('td', null, badge), cpu, memory, version, lastSeen,
-    h('td', {class: 'hide-compact'}, node.group_id ? groupNames.get(node.group_id) || h('span', {class: 'muted'}, t('common.status.unknown')) : h('span', {class: 'muted'}, t('nodes.none'))),
-    h('td', {class: 'hide-compact'}, [node.region, node.provider].filter(Boolean).join(' · ') || h('span', {class: 'muted'}, t('nodes.none'))),
-    h('td', {class: 'hide-compact'}, (() => {
+    h('td', {class: 'node-status'}, badge), cpu, memory, version, lastSeen,
+    h('td', {class: 'hide-compact', dataset: {column: 'group'}}, node.group_id ? groupNames.get(node.group_id) || h('span', {class: 'muted'}, t('common.status.unknown')) : h('span', {class: 'muted'}, t('nodes.none'))),
+    h('td', {class: 'hide-compact', dataset: {column: 'location'}}, [node.region, node.provider].filter(Boolean).join(' · ') || h('span', {class: 'muted'}, t('nodes.none'))),
+    h('td', {class: 'hide-compact', dataset: {column: 'tags'}}, (() => {
       const extra = node.tags.slice(2);
       return h('div', {class: 'cell-tags'}, node.tags.slice(0, 2).map((tag) => h('span', {class: 'tag static', title: tag}, tag)),
         extra.length ? h('span', {class: 'muted', title: formatList(extra), 'aria-label': `${t('nodes.tagsMore', {count: extra.length})}: ${formatList(extra)}`}, `+${extra.length}`) : null);
     })()),
-    h('td', {class: 'hide-compact muted'}, when(node.created_at)));
-  tween.set(cpu, node.cpu_percent, metricText);
-  tween.set(memory, node.memory_used_percent, metricText);
+    h('td', {class: 'hide-compact muted', dataset: {column: 'created'}}, when(node.created_at)));
+  patchNodeUsage(cpu, node.cpu_percent, tween);
+  patchNodeUsage(memory, node.memory_used_percent, tween);
   const refs = {element, checkbox, name, badge, lastSeen, cpu, memory, version};
   rowRefs.set(node.id, refs);
   if (deleted.has(node.id)) tombstoneNodeRow(refs);
