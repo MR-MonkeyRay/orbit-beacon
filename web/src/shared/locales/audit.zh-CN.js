@@ -1,4 +1,11 @@
 export default {
+  'audit.filterAction': '操作类型',
+  'audit.time': '时间',
+  'audit.category.enrollment': '注册',
+  'audit.category.command': '指令',
+  'audit.category.notification': '通知',
+  'audit.category.token': '令牌',
+
   "audit.targetRule": "告警规则",
   "audit.targetAnnouncement": "公告",
   "audit.apiTokenRateUpdate": "修改 API 令牌限额",

@@ -703,3 +703,23 @@
 .meter-row .group-bar .c-online {background:var(--ok);}
 .meter-row .group-bar .c-offline {background:var(--bad);}
 .meter-row .group-bar .c-unknown {background:var(--idle);}
+
+/* 账户按任务顺序分段，不留瀑布布局空洞。 */
+.settings-account {max-width:720px;}
+.audit-filters {display:flex;flex-wrap:wrap;gap:var(--sp-content);margin-bottom:var(--sp-control);}
+.audit-filters .field {flex:1;min-width:160px;max-width:280px;}
+.audit-table th,.audit-table td {padding:var(--sp-control);vertical-align:top;}
+.audit-table {font-size:var(--fs-sm);}
+.audit-table td:first-child {white-space:nowrap;}
+.audit-table .ev-details {margin:0;}
+.audit-table .ev-details[open] {min-width:240px;max-width:480px;}
+.enrollment-steps {display:grid;grid-template-columns:minmax(0,1fr);gap:var(--sp-content);padding-left:0;list-style:none;counter-reset:step;}
+.enrollment-steps>li {counter-increment:step;}
+.enrollment-steps h3 {display:flex;align-items:center;gap:var(--sp-inline);font-size:var(--fs-base);margin-bottom:var(--sp-control);}
+/* 步骤序号由计数器绘制；列表语义已表达顺序。 */
+.enrollment-steps h3::before {content:counter(step);display:inline-grid;place-items:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--orbit-soft);color:var(--orbit);font-size:var(--fs-sm);font-weight:var(--fw-semibold);}
+.enrollment-progress {display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-control);}
+.enrollment-spinner {width:16px;height:16px;border:2px solid var(--ink-muted);border-top-color:transparent;border-radius:50%;animation:spin .7s var(--ease-linear) infinite;}
+.enrollment-success {color:var(--ok);}
+.enrollment-manual summary {cursor:pointer;}
+@media (prefers-reduced-motion:reduce) {.enrollment-spinner {animation:none;}}

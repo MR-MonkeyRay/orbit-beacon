@@ -30,7 +30,7 @@ export async function loginPage() {
   validateBytes(password, 8, 1024, t('account.password'));
   const otp = input({name: 'otp', autocomplete: 'one-time-code', autocapitalize: 'none', disabled: true});
   validateBytes(otp, 1, 64, t('account.otp'));
-  const otpField = field(t('account.otp'), otp);
+  const otpField = field(t('account.otp'), otp, {requiredMarker: false});
   otpField.hidden = true;
   let factorRequired = false;
   const clearFactor = () => {
@@ -39,7 +39,7 @@ export async function loginPage() {
   username.addEventListener('input', clearFactor);
   password.addEventListener('input', clearFactor);
   const submit = button(t('shell.signIn'), {type: 'submit', variant: 'primary'});
-  const form = h('form', {class: 'form'}, errorBox, field(t('account.username'), username), field(t('account.password'), password, {inner: password.wrapper}), otpField, submit);
+  const form = h('form', {class: 'form'}, errorBox, field(t('account.username'), username, {requiredMarker: false}), field(t('account.password'), password, {inner: password.wrapper, requiredMarker: false}), otpField, submit);
   // 登录凭据不是可保存的工作成果：不纳入未保存更改守卫，避免误报放弃提示。
   getNavigationSignal()?.addEventListener('abort', () => { password.value = ''; otp.value = ''; }, {once: true});
   window.addEventListener('pagehide', () => { password.value = ''; otp.value = ''; }, {once: true, signal: getNavigationSignal() || undefined});

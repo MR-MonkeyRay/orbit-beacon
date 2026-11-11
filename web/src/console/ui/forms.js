@@ -167,7 +167,7 @@ export function field(label, control, options = {}) {
   // aria-required 已表达必填；星号只做视觉提示，对读屏隐藏。
   // 星号放在 label 旁边而不是内部：运行期 required 会切换（通道类型、
   // 告警指标等），且部分标签整体重写 textContent，放在内部会被擦掉。
-  const marker = check ? null : h('span', {class: 'field-required', 'aria-hidden': 'true'}, '*');
+  const marker = check || options.requiredMarker === false ? null : h('span', {class: 'field-required', 'aria-hidden': 'true'}, '*');
   const syncMarker = () => { if (marker) marker.hidden = !control.required; };
   if (marker) {
     let owner = control;

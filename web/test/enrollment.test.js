@@ -4,11 +4,22 @@ import {mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync} from 'node
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {copy, flush, installDOM} from './console-dom.js';
+import {copy, flush, installDOM as installConsoleDOM} from './console-dom.js';
 import {enrollmentCountdown, enrollmentState, installerCommand, nodeEnrollments, shellQuote} from '../src/console/lib/enrollment-utils.js';
 import {setNavigationSignal, setSession} from '../src/console/api.js';
 import {enrollmentTab, issueEnrollment} from '../src/console/pages/enrollments.js';
 import {closeDialogs} from '../src/console/ui/dialogs.js';
+
+// Enrollment now owns a private live channel, which listens for window lifecycle events.
+function installDOM() {
+  const dom = installConsoleDOM();
+  const previous = globalThis.window;
+  globalThis.window = new EventTarget();
+  return {...dom, restore() {
+    if (previous === undefined) delete globalThis.window; else globalThis.window = previous;
+    dom.restore();
+  }};
+}
 
 test('deployment command passes literal data over stdin and authenticates sudo outside the pipeline', () => {
   assert.equal(shellQuote("a'b"), "'a'\\''b'");
@@ -94,13 +105,19 @@ test('ticket dialog copies two secrets, expires both controls and clears DOM and
     return new Response(JSON.stringify({token: secret, server_version: version, expires_at: '2026-11-09T12:30:00Z'}));
   };
   try {
-    for (expected of [{node_id: 'node'}, {group_id: 'group'}]) {
+    for (expected of [{node_id: '00000000-0000-4000-8000-000000000001'}, {group_id: 'group'}]) {
       now = Date.parse('2026-11-09T12:00:00Z');
       const pending = issueEnrollment(expected, copy('nodes.enrollAgent'));
       await flush();
       const dialog = dom.body.querySelector('dialog');
       const blocks = dialog.querySelectorAll('code');
-      assert.deepEqual(blocks.map((block) => block.textContent), [secret, installerCommand(location.origin, version, secret)]);
+      assert.deepEqual(blocks.map((block) => block.textContent), [installerCommand(location.origin, version, secret), secret]);
+      assert.equal(dialog.querySelector('details').open, false);
+      assert.equal(dialog.querySelector('summary').textContent, copy('nodes.enrollment.manual'));
+      assert.equal(dialog.querySelector('ol').children.length, expected.node_id ? 3 : 2);
+      const primary = dialog.querySelector('.btn-primary');
+      assert.equal(primary.textContent, copy('nodes.enrollment.copyInstall'));
+      assert.equal(dialog.querySelector('ol').querySelector('button'), primary);
       assert.ok(dialog.textContent.includes(copy('nodes.enrollment.issueIntro')));
       assert.ok(dialog.textContent.includes(copy('nodes.enrollment.secretWarning')));
       const timer = dialog.querySelector('[role="timer"]');
@@ -108,7 +125,7 @@ test('ticket dialog copies two secrets, expires both controls and clears DOM and
       const buttons = ['copyToken', 'copyInstall'].map((key) => dialog.querySelectorAll('button').find((button) => button.textContent === copy(`nodes.enrollment.${key}`)));
       assert.equal(dialog.querySelectorAll('button').filter((button) => button.textContent.startsWith('Copy')).length, 2);
       for (const button of buttons) { assert.equal(button.disabled, false); button.click(); await flush(); }
-      assert.deepEqual(copied.splice(0), blocks.map((block) => block.textContent));
+      assert.deepEqual(copied.splice(0), [secret, installerCommand(location.origin, version, secret)]);
       assert.ok(dialog.textContent.includes(copy('nodes.enrollment.copied')));
       now += 1799001;
       for (const tick of dom.timers.values()) tick();
@@ -176,12 +193,13 @@ test('invalid release keeps ticket copying and clipboard manual fallback availab
   Object.defineProperty(globalThis, 'navigator', {configurable: true, value: {clipboard: {writeText: async () => { throw new Error('denied'); }}}});
   globalThis.fetch = async () => new Response(JSON.stringify({token: 'fake-ticket', server_version: 'dev', expires_at: new Date(Date.now() + 1800000).toISOString()}));
   try {
-    const pending = issueEnrollment({node_id: 'node'}, 'Deploy'); await flush();
+    const pending = issueEnrollment({node_id: '00000000-0000-4000-8000-000000000001'}, 'Deploy'); await flush();
     const dialog = dom.body.querySelector('dialog');
     const buttons = dialog.querySelectorAll('button');
     assert.equal(buttons.find((button) => button.textContent === copy('nodes.enrollment.copyInstall')), undefined);
     assert.deepEqual(dialog.querySelectorAll('pre').map((block) => block.textContent), ['fake-ticket']);
     assert.ok(dialog.textContent.includes(copy('nodes.enrollment.unreleased')));
+    assert.equal(dialog.querySelector('details').open, true);
     assert.ok(!dialog.textContent.includes(copy('nodes.enrollment.secretWarning')));
     buttons.find((button) => button.textContent === copy('nodes.enrollment.copyToken')).click(); await flush();
     assert.equal(selected.textContent, 'fake-ticket');
@@ -204,7 +222,7 @@ for (const boundary of ['delete', 'navigation', 'session']) test(`pending ticket
   let deleted = false; let resolve;
   globalThis.fetch = async () => new Promise((done) => { resolve = done; });
   try {
-    const pending = issueEnrollment({node_id: 'node'}, 'Deploy', () => deleted);
+    const pending = issueEnrollment({node_id: '00000000-0000-4000-8000-000000000001'}, 'Deploy', () => deleted);
     const observed = pending.catch((error) => { assert.equal(error.name, 'AbortError'); });
     await flush();
     if (boundary === 'delete') deleted = true;
@@ -237,7 +255,7 @@ test('detail deployment restores its enabled trigger only within the same live n
     for (const boundary of ['close', 'navigation', 'session', 'delete']) {
       const navigation = new AbortController(); setNavigationSignal(navigation.signal);
       setSession({user: {id: 'focus-admin', username: 'Admin', must_change_password: false}, csrf_token: 'csrf', expires_at: ''});
-      const node = {id: 'node', name: 'Node'};
+      const node = {id: '00000000-0000-4000-8000-000000000001', name: 'Node'};
       const tab = enrollmentTab(node); dom.body.append(tab); await flush();
       const issue = tab.querySelectorAll('button').find((button) => button.textContent === copy('nodes.enrollment.issue'));
       issue.focus(); issue.click(); document.body.focus(); await flush();
@@ -281,4 +299,87 @@ test('only active unused tickets show expiry and revoke controls', async () => {
     assert.equal(rows[2].children[2].textContent, copy('nodes.enrollment.used'));
     assert.equal(rows[3].children[2].textContent, copy('nodes.enrollment.expired'));
   } finally { globalThis.fetch = originalFetch; Date.now = originalNow; dom.restore(); }
+});
+
+for (const boundary of ['close', 'navigation', 'session', 'view']) test(`node enrollment observes a live report and closes its channel on ${boundary}`, async (t) => {
+  const {liveHarness, frame, response} = await import('./live-harness.js');
+  const nodeID = '00000000-0000-4000-8000-000000000009';
+  const user = {id: '00000000-0000-4000-8000-000000000001', username: 'Admin', must_change_password: false};
+  const proof = {user, csrf_token: 'enrollment-live', expires_at: '2026-10-28T01:00:00Z'};
+  const env = liveHarness(t, ({url}) => {
+    if (url === '/api/v1/me') return response(proof);
+    assert.equal(url, '/api/v1/enrollments');
+    return response({token: 'live-secret', server_version: '1.2.3', expires_at: '2026-10-28T00:30:00Z'});
+  });
+  const navigation = new AbortController();
+  setNavigationSignal(navigation.signal); setSession(proof);
+  location.origin = 'https://example.test';
+  const sessionTimers = env.timers.size;
+  try {
+    const pending = issueEnrollment({node_id: nodeID}, 'Deploy'); await flush();
+    const dialog = env.body.querySelector('dialog');
+    const progress = dialog.querySelector('.enrollment-progress');
+    assert.equal(progress.textContent, copy('nodes.enrollment.waiting'));
+    assert.ok(progress.querySelector('.enrollment-spinner'));
+    assert.equal(env.sockets.length, 1);
+    const socket = env.sockets[0];
+    assert.ok(socket.url.endsWith(`/api/v1/live/ws?node_id=${nodeID}`));
+    const node = {id: nodeID, name: 'Node', notes: '', region: '', provider: '', group_id: null, tags: [],
+      created_at: '2026-10-27T00:00:00Z', status: 'pending', presence: 'pending', stopped: false, last_seen: null, agent_version: ''};
+    socket.open();
+    socket.message(frame('snapshot', {data: {node, latest: null, runtime: null}})); await flush();
+    assert.equal(progress.textContent, copy('nodes.enrollment.waiting'));
+    socket.message(frame('snapshot', {data: {node: {...node, status: 'online', presence: 'online', last_seen: '2026-10-28T00:00:00Z'}, latest: null, runtime: null}})); await flush();
+    assert.equal(progress.querySelector('.enrollment-spinner'), null);
+    assert.ok(progress.textContent.includes(copy('nodes.enrollment.reported')));
+    const view = progress.querySelector('a');
+    assert.equal(view.textContent, copy('nodes.enrollment.viewNode'));
+    assert.equal(view.getAttribute('href'), `/nodes/${nodeID}`);
+    assert.equal(view.dataset.link, '');
+    assert.equal(dialog.querySelector('[role="timer"]').parentElement.parentElement.hidden, true);
+    // Subsequent frames do not replace the focused success action.
+    socket.message(frame('snapshot', {data: {node: {...node, status: 'online', presence: 'online'}, latest: null, runtime: null}})); await flush();
+    assert.equal(progress.querySelector('a'), view);
+    const secrets = dialog.querySelectorAll('code');
+    if (boundary === 'navigation') navigation.abort();
+    else if (boundary === 'session') setSession({user: null, csrf_token: '', expires_at: ''});
+    else if (boundary === 'view') view.click();
+    else closeDialogs();
+    assert.equal(socket.closed, true);
+    await env.advance(300); await pending;
+    assert.equal(env.body.querySelector('dialog'), null);
+    assert.deepEqual(secrets.map((element) => element.textContent), ['', '']);
+    assert.equal(env.intervals.size, 0);
+    assert.equal(env.timers.size, boundary === 'session' ? 0 : sessionTimers);
+  } finally { closeDialogs(); navigation.abort(); setNavigationSignal(null); setSession({user: null, csrf_token: '', expires_at: ''}); }
+});
+
+test('node enrollment skips the wait step when the node already reported before the ticket', async (t) => {
+  const {liveHarness, frame, response} = await import('./live-harness.js');
+  const nodeID = '00000000-0000-4000-8000-000000000010';
+  const user = {id: '00000000-0000-4000-8000-000000000001', username: 'Admin', must_change_password: false};
+  const proof = {user, csrf_token: 'enrollment-reissue', expires_at: '2026-10-28T01:00:00Z'};
+  const env = liveHarness(t, ({url}) => {
+    if (url === '/api/v1/me') return response(proof);
+    return response({token: 'reissue-secret', server_version: '1.2.3', expires_at: '2026-10-28T00:30:00Z'});
+  });
+  const navigation = new AbortController();
+  setNavigationSignal(navigation.signal); setSession(proof);
+  location.origin = 'https://example.test';
+  try {
+    const pending = issueEnrollment({node_id: nodeID}, 'Reissue'); await flush();
+    const dialog = env.body.querySelector('dialog');
+    const socket = env.sockets[0];
+    socket.open();
+    const node = {id: nodeID, name: 'Node', notes: '', region: '', provider: '', group_id: null, tags: [],
+      created_at: '2026-10-27T00:00:00Z', status: 'online', presence: 'online', stopped: false, last_seen: '2026-10-28T00:00:00Z', agent_version: '1.2.3'};
+    socket.message(frame('snapshot', {data: {node, latest: null, runtime: null}})); await flush();
+    // 旧 Agent 仍在上报，不能当作新安装成功。
+    assert.equal(dialog.querySelector('.enrollment-progress'), null);
+    assert.equal(dialog.querySelector('.enrollment-steps').children.length, 2);
+    assert.equal(dialog.textContent.includes(copy('nodes.enrollment.reported')), false);
+    assert.equal(dialog.querySelector('[role="timer"]').parentElement.parentElement.hidden, false);
+    assert.equal(socket.closed, true);
+    closeDialogs(); await env.advance(300); await pending;
+  } finally { closeDialogs(); navigation.abort(); setNavigationSignal(null); setSession({user: null, csrf_token: '', expires_at: ''}); }
 });

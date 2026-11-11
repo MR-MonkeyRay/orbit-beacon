@@ -56,7 +56,7 @@ export function dataManagementPage({embedded = false} = {}) {
     days.disabled = Boolean(dialog);
     for (const [id, checkbox] of checkboxes) {
       checkbox.checked = selected.has(id);
-      checkbox.disabled = !available;
+      checkbox.disabled = !available || !snapshot.categories.find((item) => item.id === id)?.eligible_rows;
     }
     for (const control of compactButtons) control.disabled = !available;
     // count 传原始数值用于复数选择，rows 复用格式化数值展示。
@@ -67,7 +67,7 @@ export function dataManagementPage({embedded = false} = {}) {
     compactButtons.length = 0;
     usage.replaceChildren(...snapshot.databases.map((database) => {
       const compact = database.compact_supported
-        ? button(t('data.management.compact'), {variant: 'danger', onClick: () => openCompact(database)}) : null;
+        ? button(t('data.management.compact'), {onClick: () => openCompact(database)}) : null;
       if (compact) {
         compact.setAttribute('aria-label', `${t('data.management.compact')}: ${domainLabel(database.domain)}`);
         compactButtons.push(compact);
@@ -81,7 +81,9 @@ export function dataManagementPage({embedded = false} = {}) {
     storageNotes.replaceChildren(...[...new Set(snapshot.databases.map((database) => database.driver))]
       .map((driver) => h('p', {class: 'text-note'}, t(driver === 'mysql' ? 'data.management.mysqlNote' : 'data.management.sqliteNote'))));
     checkboxes.clear();
-    choices.replaceChildren(...snapshot.categories.filter((item) => categories.includes(item.id)).map((item) => {
+    choices.replaceChildren(...snapshot.categories.filter((item) => categories.includes(item.id))
+      .sort((a, b) => Number(!a.eligible_rows) - Number(!b.eligible_rows)).map((item) => {
+      if (!item.eligible_rows) selected.delete(item.id);
       const checkbox = input({type: 'checkbox', name: 'categories', value: item.id, checked: selected.has(item.id)});
       checkbox.addEventListener('change', () => {
         if (checkbox.disabled) { checkbox.checked = selected.has(item.id); return; }
@@ -166,7 +168,7 @@ export function dataManagementPage({embedded = false} = {}) {
     const opened = modal(title, (close, dialogSignal) => {
       const content = h('div', {class: 'data-management-dialog'});
       const entry = input({name: 'confirmation', required: true, autocomplete: 'off', spellcheck: false, dataset: {transient: '', autofocus: ''}});
-      const submit = button(title, {type: 'submit', variant: 'danger', className: 'solid', disabled: true});
+      const submit = button(title, {type: 'submit', variant: kind === 'cleanup' ? 'danger' : 'primary', className: kind === 'cleanup' ? 'solid' : '', disabled: true});
       const errorBox = h('div', {class: 'form-error', role: 'alert', hidden: true});
       const cancel = button(t('controls.cancel'), {onClick: () => close()});
       const update = () => { submit.disabled = submitted || posting || !matchesConfirmation(entry.value, expected); };

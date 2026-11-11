@@ -284,3 +284,45 @@ test('legacy /data replaces its history entry with the storage section without c
   assert.equal(location.hash, '#data-storage');
   assert.ok(writes.includes('/settings#data-storage'));
 });
+
+
+test('new-node View node link navigates to the overview without the post-dialog enrollment redirect', async (t) => {
+  const env = await setup(t);
+  const originalFetch = globalThis.fetch;
+  const account = {user: {id, username: 'Admin', must_change_password: false}, csrf_token: 'csrf', expires_at: '2099-01-01T00:00:00Z'};
+  globalThis.fetch = (url, options) => url === '/api/v1/me' ? Promise.resolve(Response.json(account)) : originalFetch(url, options);
+  setSession(account); await flush();
+  const previousSocket = globalThis.WebSocket;
+  const sockets = [];
+  globalThis.WebSocket = class extends EventTarget {
+    constructor() { super(); sockets.push(this); }
+    close() { this.closed = true; }
+  };
+  t.after(() => { if (previousSocket === undefined) delete globalThis.WebSocket; else globalThis.WebSocket = previousSocket; });
+  const {createNodeDialog} = await import('../src/console/lib/add-node-dialog.js');
+  createNodeDialog();
+  const create = document.querySelector('dialog'); create.querySelector('input').value = 'New Host';
+  create.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+  const deployment = document.querySelector('dialog');
+  const socket = sockets[0]; assert.ok(socket);
+  socket.dispatchEvent(new Event('open'));
+  const node = {id, name: 'New Host', notes: '', region: '', provider: '', group_id: null, tags: [], created_at: '2026-11-09T00:00:00Z',
+    status: 'online', presence: 'online', stopped: false, last_seen: '2026-11-09T00:00:00Z', agent_version: '1.2.3'};
+  const snapshot = (data) => socket.dispatchEvent(Object.assign(new Event('message'), {data: JSON.stringify({type: 'snapshot', server_time: '2026-11-09T00:00:00Z', update_interval_seconds: 10,
+    data: {node: data, latest: null, runtime: null}})}));
+  // 新建节点先以 pending 出现，Agent 上报后才视为成功。
+  snapshot({...node, status: 'pending', presence: 'pending', last_seen: null, agent_version: ''}); await flush();
+  snapshot(node); await flush();
+  const view = deployment.querySelector('a'); assert.ok(view);
+  assert.equal(view.getAttribute('href'), nodePath);
+  // The tiny DOM does not bubble. Dispatch the same activation to the document router.
+  view.href = `${location.origin}${view.getAttribute('href')}`;
+  view.closest = (selector) => selector === 'a[data-link]' ? view : null;
+  view.click();
+  const click = new Event('click', {cancelable: true});
+  Object.defineProperties(click, {target: {value: view}, button: {value: 0}});
+  document.dispatchEvent(click); await flush(); await flush();
+  assert.equal(click.defaultPrevented, true);
+  assert.equal(location.pathname, nodePath); assert.equal(location.hash, '');
+  assert.equal(document.querySelector('dialog'), null); assert.equal(socket.closed, true);
+});

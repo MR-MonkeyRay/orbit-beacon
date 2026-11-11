@@ -2,7 +2,6 @@
 // 使内置运行器在执行前注册所有测试。
 import './build.test.js';
 import './i18n.test.js';
-import './copy-templates.test.js';
 import './navigation-icons.test.js';
 import './catalogs.test.js';
 import './translate-html.test.js';
@@ -18,6 +17,8 @@ import './controls-i18n.test.js';
 import './format.test.js';
 import './shared-reuse.test.js';
 import './theme.test.js';
+// Console page imports belong after the theme lifecycle tests.
+import './copy-templates.test.js';
 import './theme-bootstrap.test.js';
 import './validate.test.js';
 import './stream.test.js';

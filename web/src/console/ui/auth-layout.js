@@ -17,8 +17,9 @@ export function authLayout({title, description, content, footer}) {
   return h('section', {class: 'login'}, orbits(),
     h('div', null,
       h('div', {class: 'login-card'},
-        h('div', {class: 'brand'}, brandMark(), h('span', null, 'OrbitBeacon')),
-        h('label', {class: 'console-locale auth-locale'}, h('span', null, t('common.language')), consoleLocaleSelect({navigation: true})),
+        h('div', {class: 'auth-card-head'},
+          h('div', {class: 'brand'}, brandMark(), h('span', null, 'OrbitBeacon')),
+          h('label', {class: 'console-locale auth-locale'}, h('span', {class: 'sr'}, t('common.language')), consoleLocaleSelect({navigation: true}))),
         h('h1', {tabindex: '-1'}, title),
         description ? h('p', null, description) : null, content),
       footer ? h('p', {class: 'login-foot'}, footer) : null));

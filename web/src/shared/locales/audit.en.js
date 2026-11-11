@@ -1,4 +1,11 @@
 export default {
+  'audit.filterAction': 'Action type',
+  'audit.time': 'Time',
+  'audit.category.enrollment': 'Enrollment',
+  'audit.category.command': 'Commands',
+  'audit.category.notification': 'Notifications',
+  'audit.category.token': 'Tokens',
+
   "audit.targetRule": "Alert rule",
   "audit.targetAnnouncement": "Announcement",
   "audit.apiTokenRateUpdate": "Update API token limit",

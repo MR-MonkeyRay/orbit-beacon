@@ -1,8 +1,9 @@
-import {t, tParts} from '../i18n.js';
+import {t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h} from '../../shared/dom.js';
 import {copyElementText} from '../../shared/clipboard.js';
 import {api, getNavigationSignal, getSessionEpoch, getSessionSignal} from '../api.js';
+import {connectConsoleLive} from '../live.js';
 import {shortID, when} from '../format.js';
 import {busy, button, callout, dataTable, emptyState, panel} from '../ui/components.js';
 import {confirmDialog, modal} from '../ui/dialogs.js';
@@ -35,7 +36,8 @@ export async function issueEnrollment(target, title, isDeleted = () => false) {
   const status = h('p', {class: 'text-note', role: 'status'});
   const expiry = h('p', {class: 'text-note', role: 'status', hidden: true}, t('nodes.enrollment.expiredReissue'));
   const copyToken = button(t('nodes.enrollment.copyToken'), {icon: 'copy', onClick: () => { if (!copyToken.disabled) void copyText(token, status); }});
-  const copyInstall = button(t('nodes.enrollment.copyInstall'), {icon: 'copy', onClick: () => { if (!copyInstall.disabled) void copyText(installer, status); }});
+  const copyInstall = button(t('nodes.enrollment.copyInstall'), {variant: 'primary', icon: 'copy', onClick: () => { if (!copyInstall.disabled) void copyText(installer, status); }});
+  (installer.textContent ? copyInstall : copyToken).dataset.autofocus = '';
   const tick = () => {
     countdown.textContent = enrollmentCountdown(ticket.expires_at);
     const expired = !(Date.parse(ticket.expires_at) > Date.now());
@@ -44,22 +46,51 @@ export async function issueEnrollment(target, title, isDeleted = () => false) {
     expiry.hidden = !expired;
   };
   tick();
+  const waiting = target.node_id ? h('div', {class: 'enrollment-progress', role: 'status'},
+    h('span', {class: 'enrollment-spinner', 'aria-hidden': 'true'}), t('nodes.enrollment.waiting')) : null;
+  const waitStep = waiting ? h('li', null, h('h3', null, t('nodes.enrollment.waitStep')), waiting) : null;
+  const ticketNotes = h('div', null, h('div', {class: 'text-note'}, countdown), h('p', {class: 'text-note'}, t('nodes.enrollment.issueIntro')));
   const dialog = modal(title, (close) => h('div', null,
     h('div', {class: 'dialog-body stack'},
-      h('div', null, tParts('nodes.enrollment.expiry', {countdown, time: when(ticket.expires_at)})),
-      h('p', {class: 'text-note'}, t('nodes.enrollment.issueIntro')),
-      h('pre', {class: 'code enrollment-token'}, token), copyToken,
-      ...(installer.textContent
-        ? [h('p', {class: 'text-note'}, t('nodes.enrollment.secretWarning')), h('pre', {class: 'code', tabindex: '0'}, installer), copyInstall]
-        : [callout(t('nodes.enrollment.unreleased'))]),
+      h('ol', {class: 'enrollment-steps'},
+        h('li', null, h('h3', null, t('nodes.enrollment.copyStep')),
+          ...(installer.textContent
+            ? [h('pre', {class: 'code', tabindex: '0'}, installer),
+              h('p', {class: 'text-note'}, t('nodes.enrollment.secretWarning')), copyInstall]
+            : [callout(t('nodes.enrollment.unreleased'))])),
+        h('li', null, h('h3', null, t('nodes.enrollment.runStep'))),
+        waitStep),
+      ticketNotes,
+      h('details', {class: 'enrollment-manual', open: !installer.textContent},
+        h('summary', null, t('nodes.enrollment.manual')),
+        h('pre', {class: 'code enrollment-token'}, token), copyToken),
       expiry, status),
     h('div', {class: 'dialog-foot'}, button(t('nodes.close'), {onClick: () => close('done')}))));
+  let reported = false;
+  let baseline;
+  const live = target.node_id ? connectConsoleLive({nodeID: target.node_id, signal: dialog.signal,
+    onSnapshot({node}) {
+      if (reported || !active() || dialog.signal.aborted || !node) return;
+      // 已注册过的节点重新签发时旧 Agent 仍在上报，无法区分新安装，不显示等待步骤。
+      baseline ??= node.presence;
+      if (!['pending', 'never'].includes(baseline)) { waitStep.remove(); queueMicrotask(() => live?.close()); return; }
+      if (node.presence !== 'online') return;
+      reported = true;
+      // 票据已用掉，倒计时与使用说明不再有意义。
+      ticketNotes.hidden = true;
+      const view = h('a', {class: 'btn', href: `/nodes/${encodeURIComponent(target.node_id)}`,
+        dataset: {link: ''}, onclick: () => dialog.close('view')}, t('nodes.enrollment.viewNode'));
+      waiting.classList.add('enrollment-success');
+      waiting.replaceChildren(t('nodes.enrollment.reported'), view);
+    }
+  }) : null;
   const cancel = () => dialog.close('cancel');
   navigation?.addEventListener('abort', cancel, {once: true});
   sessionSignal.addEventListener('abort', cancel, {once: true});
   const timer = setInterval(tick, 1000);
-  try { await dialog.closed; }
+  try { return await dialog.closed; }
   finally {
+    live?.close();
     clearInterval(timer);
     navigation?.removeEventListener('abort', cancel);
     sessionSignal.removeEventListener('abort', cancel);

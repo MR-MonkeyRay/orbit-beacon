@@ -114,11 +114,13 @@ test('pending cancellation, requester and all short status and result labels', a
   }
 });
 
-for (const kind of ['restart', 'stop']) test(`group ${kind} requires its name and reports created and skipped`, async (t) => {
+for (const kind of ['restart', 'stop']) for (const menu of [false, true]) test(`group ${kind} ${menu ? "menu" : "buttons"} requires its name and reports created and skipped`, async (t) => {
   const env = await setup(t);
-  const controls = groupCommandActions({id, name: 'Production'}, env.scope.signal);
+  const controls = groupCommandActions({id, name: 'Production'}, env.scope.signal, {menu});
   env.body.append(...controls);
-  controls[kind === 'restart' ? 1 : 2].click(); await flush();
+  if (menu) controls[0].querySelector('button').click();
+  button(env.body, `nodes.command.${kind}All`).click(); await flush();
+  if (menu) assert.equal(controls[0].querySelector('[role="menu"]').hidden, true);
   const dialog = env.body.querySelector('dialog');
   assert.equal(dialog.querySelector('h2').textContent, copy(`nodes.command.${kind}All`));
   if (kind === 'restart') assert.equal(dialog.querySelector('p'), null);
@@ -201,10 +203,11 @@ test('cancelling a typed confirmation closes without a discard prompt', async (t
   assert.equal(env.requests.some((item) => item.options.method === 'POST'), false);
 });
 
-test('group upgrade requires both target version and group name', async (t) => {
+for (const menu of [false, true]) test(`group upgrade ${menu ? 'menu' : 'buttons'} requires both target version and group name`, async (t) => {
   const env = await setup(t);
-  const controls = groupCommandActions({id, name: 'Production'}, env.scope.signal);
+  const controls = groupCommandActions({id, name: 'Production'}, env.scope.signal, {menu});
   env.body.append(...controls);
+  if (menu) controls[0].querySelector('button').click();
   button(env.body, 'nodes.command.upgradeAll').click(); await flush();
   const dialog = env.body.querySelector('dialog');
   assert.equal(dialog.querySelector('h2').textContent, copy('nodes.command.upgradeAll'));

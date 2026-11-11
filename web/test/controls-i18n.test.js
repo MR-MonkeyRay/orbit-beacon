@@ -124,3 +124,23 @@ test('shared menu/select locale change path confirms before writing and reloads 
     assert.deepEqual(events, ['confirm', ['orbitbeacon-locale', 'en'], 'reload']);
   } finally { dom.restore(); }
 });
+
+test('password forms use the short hint without changing UTF-8 byte validation', async () => {
+  const dom = installDOM();
+  const previousWindow = globalThis.window;
+  globalThis.window = new EventTarget();
+  try {
+    const {t} = await import('../src/console/i18n.js');
+    const {passwordChangeForm} = await import('../src/console/ui/password-form.js');
+    const {form} = passwordChangeForm({hint: t('account.passwordBytes')});
+    dom.body.append(form);
+    assert.ok(form.textContent.includes('At least 8 characters'));
+    const password = form.querySelectorAll('input').find((input) => input.name === 'new_password');
+    password.value = 'short'; password.dispatchEvent(new Event('input'));
+    assert.equal(password.validationMessage, t('controls.validation.bytesMinimum', {label: t('account.newPassword'), min: 8}));
+    password.value = '密码字'; password.dispatchEvent(new Event('input'));
+    assert.equal(password.validationMessage, '', 'three three-byte characters retain the existing byte contract');
+    password.value = 'x'.repeat(1025); password.dispatchEvent(new Event('input'));
+    assert.equal(password.validationMessage, t('controls.validation.bytesMaximum', {label: t('account.newPassword'), max: 1024, size: 1025}));
+  } finally { if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow; dom.restore(); }
+});

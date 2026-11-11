@@ -187,8 +187,11 @@ test('period changes disable cleanup until fresh counts and SQLite compaction re
     assert.equal(compactAction(page.element, 'history'), undefined);
     const compact = compactAction(page.element, 'main');
     assert.equal(compact.disabled, false);
+    assert.equal(compact.classList.contains('btn-danger'), false);
     compact.click();
     const dialog = state.dom.body.querySelector('dialog');
+    assert.equal(action(dialog, 'data.management.compact').classList.contains('btn-danger'), false);
+    assert.equal(dialog.textContent.split(copy('data.management.compactWarning')).length - 1, 1);
     type(dialog, 'compact');
     assert.equal(action(dialog, 'data.management.compact').disabled, true);
     dialog.querySelector('form').dispatchEvent(new Event('submit'));
@@ -225,8 +228,11 @@ test('MySQL capability enables compaction and an unknown result cannot be retrie
     await flush();
     const compact = compactAction(page.element, 'history');
     assert.equal(compact.disabled, false);
+    assert.equal(compact.classList.contains('btn-danger'), false);
     compact.click();
     const dialog = state.dom.body.querySelector('dialog');
+    assert.equal(action(dialog, 'data.management.compact').classList.contains('btn-danger'), false);
+    assert.equal(dialog.textContent.split(copy('data.management.mysqlCompactWarning')).length - 1, 1);
     type(dialog, 'compact');
     assert.equal(action(dialog, 'data.management.compact').disabled, true);
     type(dialog, 'COMPACT ');
@@ -318,5 +324,36 @@ test('embedded storage cleanup retains its controls without a second page headin
     assert.ok(action(page.element, 'data.management.refresh'));
     assert.ok(compactAction(page.element, 'main'));
     assert.ok(action(page.element, 'data.management.clean'));
+  } finally { page?.detach(); state.restore(); }
+});
+
+
+test('zero-row cleanup categories are disabled, sorted last and deselected after refresh', async () => {
+  let emptyAudit = false;
+  const state = setup(() => {
+    const data = snapshot();
+    data.categories.unshift({id: 'probe_history', domain: 'history', rows: 10, eligible_rows: 0});
+    if (emptyAudit) data.categories.find((item) => item.id === 'audit_events').eligible_rows = 0;
+    return data;
+  });
+  let page;
+  try {
+    page = await mount(state); await flush();
+    const controls = () => elements(page.element).filter((item) => item.name === 'categories');
+    assert.deepEqual(controls().map((item) => item.value), ['metric_history', 'audit_events', 'probe_history']);
+    const zero = checkbox(page.element, 'probe_history');
+    assert.equal(zero.disabled, true);
+    zero.checked = true; zero.dispatchEvent(new Event('change'));
+    assert.equal(zero.checked, false);
+    assert.equal(action(page.element, 'data.management.clean').disabled, true);
+    selectAudit(page);
+    assert.equal(action(page.element, 'data.management.clean').disabled, false);
+    emptyAudit = true;
+    action(page.element, 'data.management.refresh').click(); await flush();
+    const audit = checkbox(page.element, 'audit_events');
+    assert.equal(audit.disabled, true); assert.equal(audit.checked, false);
+    assert.equal(controls()[0].value, 'metric_history');
+    assert.ok(controls().slice(1).every((item) => item.disabled));
+    assert.equal(action(page.element, 'data.management.clean').disabled, true);
   } finally { page?.detach(); state.restore(); }
 });

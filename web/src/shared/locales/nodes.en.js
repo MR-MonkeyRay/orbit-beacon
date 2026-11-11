@@ -1,4 +1,12 @@
 export default {
+  'nodes.enrollment.copyStep': 'Copy command',
+  'nodes.enrollment.runStep': 'Run on the host',
+  'nodes.enrollment.waitStep': 'Wait for report',
+  'nodes.enrollment.manual': 'Manual installation',
+  'nodes.enrollment.waiting': 'Waiting for Agent report…',
+  'nodes.enrollment.reported': 'Agent reported',
+  'nodes.enrollment.viewNode': 'View node',
+
   'nodes.topUsage': 'Top resource usage',
   'nodes.needsAttention': 'Needs attention',
   'nodes.allHealthy': 'All healthy',
@@ -81,7 +89,6 @@ export default {
   'nodes.feature.traffic': 'Traffic',
   'nodes.feature.probes': 'Probes',
 
-  'nodes.enrollment.expiry': '{countdown} · Expires {time}',
   'nodes.audit.agent': 'Agent',
   'nodes.cpu': 'CPU',
   'nodes.deletePhrase': {one: 'delete {count} node', other: 'delete {count} nodes'},
@@ -269,7 +276,7 @@ export default {
   'nodes.enrollment.copied': 'Copied.',
   'nodes.enrollment.copiedFallback': 'Copied.',
   'nodes.enrollment.copyManual': 'The text is selected. Press Ctrl+C or Command+C to copy it.',
-  'nodes.enrollment.copyToken': 'Copy string',
+  'nodes.enrollment.copyToken': 'Copy ticket',
   'nodes.enrollment.copyInstall': 'Copy deployment command',
   'nodes.enrollment.caption': 'Enrollment tickets for this node',
   'nodes.enrollment.ticket': 'Ticket',
@@ -283,7 +290,7 @@ export default {
   'nodes.enrollment.empty': 'No enrollment tickets',
   'nodes.enrollment.refresh': 'Refresh tickets',
   'nodes.enrollment.issue': 'Issue enrollment ticket',
-  'nodes.enrollment.issueIntro': 'Activate once within 30 minutes. Further activation attempts return 403 after the first success.',
+  'nodes.enrollment.issueIntro': 'Single use',
   'nodes.enrollment.secretWarning': 'This command contains your deployment credential. Do not share it publicly.',
   'nodes.enrollment.unreleased': 'No release installation package is available for this version.',
   'nodes.enrollment.expiredReissue': 'Expired. Issue a new deployment credential.',

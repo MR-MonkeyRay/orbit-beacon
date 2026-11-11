@@ -82,16 +82,27 @@
   animation: dialog-in 0.5s var(--ease);
 }
 
+.auth-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
 .login-card .brand {
-  padding: 0 0 22px;
+  padding: 0;
 }
 
 .auth-locale {
-  display: grid;
-  gap: 6px;
-  margin-bottom: 20px;
+  flex: 0 1 130px;
+  min-width: 0;
+}
+
+.auth-locale select {
+  width: 100%;
+  min-height: var(--control-h-sm);
   font-size: var(--fs-sm);
-  color: var(--ink-subtle);
 }
 
 .login-card .btn {

@@ -29,6 +29,7 @@ test('task and plan pagers retain independent cursors and terminal-button behavi
     dom.body.append(tab.element);
     const categories = elements(tab.element).filter((element) => element.name === 'categories');
     assert.equal(categories.length, 3);
+    assert.equal(elements(tab.element).some((element) => element.textContent === copy('data.management.compact')), false, 'compaction belongs to storage, not backup operations');
     assert.deepEqual(categories.map((element) => element.value), ['configuration', 'monitoring', 'events']);
     for (const category of categories) {
       assert.equal(category.classList.contains('input'), false);

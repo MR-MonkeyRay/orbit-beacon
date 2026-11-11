@@ -255,7 +255,7 @@ test('audit load more rejects a cursor that does not advance', async () => {
     const more = findButton(page, copy('settings.olderEvents'));
     await more.click();
     assert.equal(calls.at(-1), '/api/v1/audit?limit=50&before=stuck-cursor');
-    assert.equal(findTag(page, 'ol').children.length, 1);
+    assert.equal(findTag(page, 'tbody').children.length, 1);
     assert.equal(more.hidden, false);
   } finally {
     invalidate('nodes', 'groups', 'users');
@@ -469,6 +469,14 @@ test('group deployment issues one node credential without a mode field', async (
     const page = await settingsPage(); dom.body.append(page); dom.mutations(); await flush();
     const deploy = elements(page).find((element) => element.tagName === 'button' && element.textContent === copy('settings.deployAgent'));
     assert.ok(deploy);
+    const menu = page.querySelector('[role="menu"]');
+    assert.equal(menu.hidden, true);
+    const menuItems = menu.querySelectorAll('[role="menuitem"]');
+    assert.deepEqual(menuItems.map((control) => control.textContent), ['upgrade', 'restart', 'stop'].map((kind) => copy(`nodes.command.${kind}All`)));
+    assert.equal(menuItems[2].classList.contains('menu-danger'), true);
+    page.querySelector('.menu-button').querySelector('button').click();
+    assert.equal(menu.hidden, false);
+    page.querySelector('.menu-button').querySelector('button').click();
     for (const boundary of ['close', 'navigation', 'session']) {
       const navigation = new AbortController(); setNavigationSignal(navigation.signal);
       setSession({user: {id: 'group-admin', username: 'admin', must_change_password: false}, csrf_token: 'csrf', expires_at: ''});
@@ -476,6 +484,8 @@ test('group deployment issues one node credential without a mode field', async (
       assert.deepEqual(writes.at(-1), {path: '/api/v1/enrollments', body: {group_id: 'group-one'}});
       assert.equal(dom.body.querySelector('dialog').querySelector('h2').textContent, copy('settings.deployAgentFor', {name: 'Production'}));
       assert.equal(dom.body.querySelector('dialog').querySelectorAll('code').length, 2);
+      assert.equal(dom.body.querySelector('dialog').querySelector('ol').children.length, 2);
+      assert.equal(dom.body.querySelector('dialog').querySelector('.enrollment-progress'), null);
       if (boundary === 'navigation') { navigation.abort(); setNavigationSignal(new AbortController().signal); }
       if (boundary === 'session') setSession({user: {id: 'other-admin', username: 'Other', must_change_password: false}, csrf_token: 'changed', expires_at: ''});
       closeDialogs(); document.body.focus(); await flush();
@@ -512,6 +522,8 @@ test('settings keeps tokens out of account and merges both data section lifecycl
     let page = await settingsPage(); dom.body.append(page); dom.mutations(); await flush();
     assert.deepEqual(calls.map((item) => item.url), ['/api/v1/account/totp']);
     assert.equal(elements(page).some((item) => item.textContent === copy('account.createAPIToken')), false);
+    assert.ok(page.querySelector('.settings-account'));
+    assert.equal(page.querySelector('.settings-account').classList.contains('split'), false);
     assert.equal(settingsTabs[2].id, 'api-tokens');
     page.querySelector('#tab-api-tokens').click(); dom.mutations(); await flush();
     assert.ok(page.textContent.includes(copy('account.createAPIToken')));
@@ -537,5 +549,61 @@ test('settings keeps tokens out of account and merges both data section lifecycl
   } finally {
     scope.abort(); setNavigationSignal(null); setSession({user: null, csrf_token: '', expires_at: ''});
     dom.restore(); for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+  }
+});
+
+test('audit filters compact rows across loaded pages and retains load more when no rows match', async () => {
+  const dom = installDOM();
+  const originals = new Map(['fetch', 'window', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
+  Object.assign(globalThis, {window: new EventTarget(), history: {state: null, replaceState() {}}, requestAnimationFrame: () => 0});
+  Object.assign(location, {pathname: '/settings', search: '', hash: '#audit'});
+  const scope = new AbortController(); setNavigationSignal(scope.signal);
+  setSession({user: {id: 'admin', username: 'Admin', must_change_password: false}, csrf_token: 'csrf', expires_at: ''});
+  invalidate('users', 'nodes', 'groups');
+  const calls = [];
+  const event = (id, action, actor_id) => ({id, action, actor_id, target_id: 'node', details: {note: 'Details preserved'}, created_at: '2026-11-09T12:00:00Z'});
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    const value = url.endsWith('/users') ? {users: [{id: 'alice', username: 'Alice'}, {id: 'bob', username: 'Bob'}]}
+      : url.endsWith('/groups') ? {groups: []} : url.includes('/nodes?') ? {nodes: [{id: 'node', name: 'My node'}], has_more: false}
+        : url.includes('&before=') ? {events: [event('three', 'node.delete', 'bob')], has_more: false}
+          : {events: [event('one', 'node.create', 'alice'), event('two', 'user.password.change', 'bob')], has_more: true, next_cursor: 'older'};
+    return Response.json(value);
+  };
+  try {
+    const {settingsPage} = await import('../src/console/pages/settings.js');
+    const {ACTIONS} = await import('../src/console/format.js');
+    const page = await settingsPage(); dom.body.append(page); dom.mutations(); await flush();
+    assert.equal(page.querySelector('.timeline'), null);
+    const table = page.querySelector('.audit-table');
+    assert.deepEqual(table.querySelectorAll('th').map((cell) => cell.textContent), ['audit.time', 'nodes.audit.actor', 'nodes.audit.action', 'nodes.audit.target', 'nodes.audit.details'].map((key) => copy(key)));
+    assert.equal(table.querySelector('tbody').children.length, 2);
+    assert.ok(table.querySelector('details').textContent.includes('Details preserved'));
+    const filters = page.querySelectorAll('select');
+    const category = filters.find((item) => item.name === 'audit_category');
+    const actor = filters.find((item) => item.name === 'audit_actor');
+    assert.deepEqual(actor.options.map((option) => option.textContent), [copy('nodes.all'), 'Alice', 'Bob']);
+    assert.ok(Object.keys(ACTIONS).length > category.options.length);
+    assert.ok(category.options.some((option) => option.value === 'shell.nodes'));
+    const more = page.querySelectorAll('button').find((control) => control.textContent === copy('settings.olderEvents'));
+    category.value = 'shell.nodes'; category.dispatchEvent(new Event('change'));
+    assert.equal(table.querySelector('tbody').children.length, 1);
+    assert.ok(table.querySelector('tbody').textContent.includes('Alice'));
+    actor.value = 'bob'; actor.dispatchEvent(new Event('change'));
+    assert.ok(table.querySelector('.empty'));
+    assert.equal(more.hidden, false);
+    const previous = calls.length;
+    more.click(); await flush();
+    assert.equal(calls.length, previous + 1);
+    assert.equal(calls.at(-1), '/api/v1/audit?limit=50&before=older');
+    assert.equal(more.hidden, true);
+    assert.ok(table.querySelector('tbody').textContent.includes('Bob'));
+    assert.equal(table.querySelector('.empty'), null);
+    category.value = ''; actor.value = ''; category.dispatchEvent(new Event('change'));
+    assert.equal(table.querySelector('tbody').children.length, 3);
+  } finally {
+    scope.abort(); invalidate('users', 'nodes', 'groups'); setNavigationSignal(null); setSession({user: null, csrf_token: '', expires_at: ''});
+    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+    dom.restore();
   }
 });

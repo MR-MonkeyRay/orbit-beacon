@@ -310,3 +310,6 @@
     flex-basis: 100%;
   }
 }
+
+.data-management-category:has(input:disabled) {color:var(--ink-muted);background:var(--bg);cursor:default;}
+.data-management-category input:disabled {cursor:default;}

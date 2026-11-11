@@ -29,12 +29,13 @@ export function createNodeDialog() {
   });
   void dialog.closed.then(async (value) => {
     if (value !== 'done' || !node || !active()) return;
-    try { await issueEnrollment({node_id: node.id}, t('nodes.enrollment.title', {name: node.name})); }
+    let outcome;
+    try { outcome = await issueEnrollment({node_id: node.id}, t('nodes.enrollment.title', {name: node.name})); }
     catch (error) {
       if (!active() || error.name === 'AbortError') return;
       toast(t('nodes.enrollment.issueFailedAfterCreate'), {error: true});
     }
-    if (active()) await go(`/nodes/${encodeURIComponent(node.id)}#settings-enrollment`);
+    if (active() && outcome !== 'view') await go(`/nodes/${encodeURIComponent(node.id)}#settings-enrollment`);
   }).catch(ignoreNavigationCancellation);
   return dialog;
 }

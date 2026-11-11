@@ -3,13 +3,13 @@ import {t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h, icon} from '../../shared/dom.js';
 import {allNodes, api, getNavigationSignal, getSessionEpoch, groupsList, invalidate, invalidateSession, nameLookup, session, updateUser, usersList} from '../api.js';
-import {when} from '../format.js';
+import {ACTIONS, when} from '../format.js';
 import {ignoreNavigationCancellation, refresh} from '../router.js';
-import {busy, button, emptyState, facts, iconButton, link, pageHead, panel} from '../ui/components.js';
+import {busy, button, dataTable, emptyState, facts, iconButton, link, pageHead, panel} from '../ui/components.js';
 import {lazyTab} from '../ui/lazy-tab.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
-import {field, input, onSubmit, passwordInput, validateBytes} from '../ui/forms.js';
+import {field, input, onSubmit, passwordInput, select, validateBytes} from '../ui/forms.js';
 import {apiTokensPanel} from '../ui/api-tokens.js';
 import {totpPanel, totpCredentials} from '../ui/totp.js';
 import {passwordChangeForm} from '../ui/password-form.js';
@@ -39,7 +39,7 @@ export async function settingsPage() {
     ),
     'audit': lazyTab(
       () => Promise.all([api('/audit?limit=50&offset=0'), allNodes(), usersList(), groupsList()]),
-      ([audit, nodes, users, groups]) => auditTab(audit, nameLookup(nodes, users, groups))
+      ([audit, nodes, users, groups]) => auditTab(audit, nameLookup(nodes, users, groups), users)
     ),
     'data': dataTab,
     'public-page': publicPageTab
@@ -141,7 +141,7 @@ function accountTab() {
   const disabled = !session.csrf;
   const {form} = passwordChangeForm({disabled, hint: t('account.passwordBytes'),
     ids: {old: 'pw-old', new: 'pw-new', confirm: 'pw-confirm', submit: 'pw-save'}, wrapActions: true});
-  return h('div', {class: 'split'},
+  return h('div', {class: 'stack settings-account'},
     panel(t('account.yourAccount'), {}, facts([
       [t('account.username'), user.username],
       [t('account.accountCreated'), when(user.created_at)], [t('account.sessionExpires'), session.expires ? when(session.expires) : null]
@@ -309,15 +309,34 @@ function groupsTab(groups, nodes) {
       enrollment.addEventListener('click', () => deployAgent(item, enrollment));
       return h('li', null, icon('folder', 'muted'),
         h('div', {class: 'grow'}, h('div', {class: 'title'}, item.name), h('div', {class: 'sub'}, link(`/nodes?group=${item.id}`, t('settings.nodeCount', {count: size})))),
-        [enrollment, ...groupCommandActions(item), iconButton('edit', t('settings.renameName', {name: item.name}), () => groupForm(item)), iconButton('trash', t('settings.deleteName', {name: item.name}), () => deleteGroup(item, size))]);
+        [enrollment, ...groupCommandActions(item, getNavigationSignal(), {menu: true}), iconButton('edit', t('settings.renameName', {name: item.name}), () => groupForm(item)), iconButton('trash', t('settings.deleteName', {name: item.name}), () => deleteGroup(item, size))]);
     })));
 }
 
-function auditTab(page, names) {
+function auditTab(page, names, users) {
   const {events} = page;
   let cursor = page.next_cursor;
   const eventIDs = new Set(events.map((event) => event.id));
-  const list = h('ol', {class: 'timeline'}, events.map((event) => auditItem(event, names, true)));
+  const resources = {
+    node: 'shell.nodes', enrollment: 'audit.category.enrollment', command: 'audit.category.command',
+    group: 'settings.groups', user: 'settings.account', session: 'settings.account',
+    alert_rule: 'shell.alerts', alert_silence: 'shell.alerts', notification_channel: 'audit.category.notification',
+    announcement: 'announcements.title', backup: 'settings.data', api_token: 'audit.category.token',
+    settings: 'audit.category.token', public_page: 'settings.publicPage'
+  };
+  const categories = [...new Set(Object.keys(ACTIONS).map((action) => resources[action.split('.')[0]]))];
+  const category = select([['', t('nodes.all')], ...categories.map((key) => [key, t(key)])], '', {name: 'audit_category'});
+  const actor = select([['', t('nodes.all')], ...users.map((user) => [user.id, user.username])], '', {name: 'audit_actor'});
+  const list = h('tbody');
+  const render = () => {
+    const filtered = events.filter((event) => (!category.value || resources[event.action.split('.')[0]] === category.value)
+      && (!actor.value || event.actor_id === actor.value));
+    list.replaceChildren(...(filtered.length ? filtered.map((event) => auditItem(event, names, true, {compact: true}))
+      : [h('tr', null, h('td', {colspan: 5}, emptyState(t('settings.noAudit'))))]));
+  };
+  category.addEventListener('change', render);
+  actor.addEventListener('change', render);
+  render();
   const more = button(t('settings.olderEvents'), {onClick: async () => {
     busy(more, true);
     try {
@@ -328,12 +347,15 @@ function auditTab(page, names) {
         eventIDs.add(event.id);
         return true;
       });
-      list.append(...newEvents.map((event) => auditItem(event, names, true)));
+      events.push(...newEvents);
+      render();
       more.hidden = !nextPage.has_more;
     } catch (error) { toastError(error); }
     finally { busy(more, false); }
   }});
   more.hidden = !page.has_more;
   return panel(null, {},
-    events.length ? [list, more] : emptyState(t('settings.noAudit')));
+    h('div', {class: 'audit-filters'}, field(t('audit.filterAction'), category), field(t('nodes.audit.actor'), actor)),
+    dataTable({caption: t('settings.audit'), className: 'audit-table',
+      columns: [t('audit.time'), t('nodes.audit.actor'), t('nodes.audit.action'), t('nodes.audit.target'), t('nodes.audit.details')], body: list}), more);
 }

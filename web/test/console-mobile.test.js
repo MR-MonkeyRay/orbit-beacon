@@ -289,3 +289,37 @@ test('user-menu language follows draft confirmation, cancellation, busy guard, s
   assert.equal(radios[2].getAttribute('aria-checked'), 'true');
   assert.equal(location.pathname, '/overview');
 });
+
+test('login keeps language in the card header and required validation without visual asterisks', async (t) => {
+  const env = await setup(t);
+  await env.route();
+  const {h} = await import('../src/shared/dom.js');
+  const mark = h('span', {class: 'mark'}); mark.cloneNode = () => h('span', {class: 'mark'});
+  env.sidebar.append(mark);
+  globalThis.fetch = async () => Response.json({code: 'unauthenticated'}, {status: 401});
+  setSession({user: null, csrf_token: '', expires_at: ''}); await flush(); location.pathname = '/login';
+  const {loginPage} = await import('../src/console/pages/login.js');
+  const page = await loginPage(); env.body.append(page);
+  const card = page.querySelector('.login-card');
+  const head = card.querySelector('.auth-card-head');
+  assert.equal(card.firstElementChild, head);
+  assert.equal(head.lastElementChild.className, 'console-locale auth-locale');
+  const language = head.querySelector('select');
+  assert.ok(language.getAttribute('aria-label'));
+  assert.equal(head.querySelector('label').querySelector('.sr').textContent, copy('common.language'));
+  assert.ok(card.querySelector('h1'));
+  const form = card.querySelector('form');
+  assert.equal(form.querySelectorAll('.field-required').length, 0);
+  for (const name of ['username', 'password']) {
+    const input = form.querySelectorAll('input').find((item) => item.name === name);
+    assert.equal(input.required, true);
+    input.value = ''; input.dispatchEvent(new Event('input'));
+    assert.ok(input.validationMessage);
+  }
+  let stored = 'system'; let reloads = 0;
+  localStorage.getItem = () => stored;
+  localStorage.setItem = (_key, value) => { stored = value; };
+  location.reload = () => reloads++;
+  language.value = 'en'; language.dispatchEvent(new Event('change')); await flush();
+  assert.equal(stored, 'en'); assert.equal(reloads, 1);
+});

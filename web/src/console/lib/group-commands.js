@@ -1,13 +1,15 @@
 import {t} from '../i18n.js';
 import {api, getNavigationSignal} from '../api.js';
 import {busy, button} from '../ui/components.js';
+import {menuButton} from '../ui/menu.js';
 import {typedConfirmation, upgradeConfirmation} from '../ui/typed-confirmation.js';
 import {toast, toastError} from '../ui/feedback.js';
 
-export function groupCommandActions(group, signal = getNavigationSignal()) {
+export function groupCommandActions(group, signal = getNavigationSignal(), {menu = false} = {}) {
   let running = false;
-  const controls = ['upgrade', 'restart', 'stop'].map((kind) => button(t(`nodes.command.${kind}All`), {
-    small: true, variant: kind === 'stop' ? 'danger' : undefined, onClick: async () => {
+  let controls;
+  const items = ['upgrade', 'restart', 'stop'].map((kind) => ({
+    label: t(`nodes.command.${kind}All`), danger: kind === 'stop', onSelect: async () => {
       if (running || signal?.aborted) return;
       running = true;
       controls.forEach((control) => busy(control, true));
@@ -24,5 +26,11 @@ export function groupCommandActions(group, signal = getNavigationSignal()) {
       finally { running = false; controls.forEach((control) => busy(control, false)); }
     }
   }));
+  if (menu) {
+    const root = menuButton({label: t('nodes.more'), items, signal});
+    controls = root.querySelectorAll('button');
+    return [root];
+  }
+  controls = items.map((item) => button(item.label, {small: true, variant: item.danger ? 'danger' : undefined, onClick: item.onSelect}));
   return controls;
 }

@@ -1,4 +1,12 @@
 export default {
+  'nodes.enrollment.copyStep': '复制命令',
+  'nodes.enrollment.runStep': '在主机上执行',
+  'nodes.enrollment.waitStep': '等待上报',
+  'nodes.enrollment.manual': '手动安装',
+  'nodes.enrollment.waiting': '等待 Agent 上报…',
+  'nodes.enrollment.reported': 'Agent 已上报',
+  'nodes.enrollment.viewNode': '查看节点',
+
   'nodes.topUsage': '资源占用最高',
   'nodes.needsAttention': '需要关注',
   'nodes.allHealthy': '全部正常',
@@ -81,7 +89,6 @@ export default {
   'nodes.feature.traffic': '流量',
   'nodes.feature.probes': '探测',
 
-  'nodes.enrollment.expiry': '{countdown} · {time}过期',
   'nodes.audit.agent': 'Agent',
   'nodes.cpu': 'CPU',
   'nodes.deletePhrase': '删除 {count} 个节点',
@@ -269,7 +276,7 @@ export default {
   'nodes.enrollment.copied': '已复制。',
   'nodes.enrollment.copiedFallback': '已复制。',
   'nodes.enrollment.copyManual': '已选中文本，请按 Ctrl+C 或 Command+C 复制。',
-  'nodes.enrollment.copyToken': '复制字符串',
+  'nodes.enrollment.copyToken': '复制票据',
   'nodes.enrollment.copyInstall': '复制部署命令',
   'nodes.enrollment.caption': '此节点的注册票据',
   'nodes.enrollment.ticket': '票据',
@@ -283,7 +290,7 @@ export default {
   'nodes.enrollment.empty': '暂无注册票据',
   'nodes.enrollment.refresh': '刷新票据',
   'nodes.enrollment.issue': '签发注册票据',
-  'nodes.enrollment.issueIntro': '30 分钟内仅可激活一次，首次成功后再次激活返回 403。',
+  'nodes.enrollment.issueIntro': '只能使用一次',
   'nodes.enrollment.secretWarning': '命令含部署凭据，请勿公开分享。',
   'nodes.enrollment.unreleased': '当前版本无对应发布安装包。',
   'nodes.enrollment.expiredReissue': '已过期，请重新签发部署凭据。',
