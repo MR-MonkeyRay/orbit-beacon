@@ -51,6 +51,7 @@ import './polling-panel.test.js';
 import './alert-events.test.js';
 import './alert-editors.test.js';
 import './notifications-lifecycle.test.js';
+import './notification-grouping.test.js';
 import './console-session-live.test.js';
 import './console-router-transitions.test.js';
 import './console-observation-time.test.js';

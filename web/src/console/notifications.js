@@ -14,6 +14,8 @@ let resumeRequest;
 let refreshAgain = false;
 let pageActive = true;
 let summary = null;
+let alertSummary = null;
+let alertsStale = false;
 let stale = false;
 let inbox = null;
 
@@ -28,6 +30,19 @@ const requestOptions = (signal, extra = {}) => ({navigation: false, signal, ...e
 const failureText = () => navigator.onLine === false ? t('notifications.notificationOffline') : t('notifications.notificationStale');
 
 function renderEntries() {
+  for (const entry of document.querySelectorAll('.alert-entry')) {
+    const total = alertSummary?.firing.total || 0;
+    const badge = entry.querySelector('.alert-count');
+    if (badge) {
+      badge.hidden = !total || !session.user || session.user.must_change_password;
+      badge.textContent = new Intl.NumberFormat(getLocale()).format(total);
+      badge.classList.toggle('critical', Boolean(alertSummary?.firing.critical > 0));
+    }
+    const description = alertSummary ? t('shell.firingCount', {count: total}) : t('shell.alerts');
+    entry.setAttribute('aria-label', alertsStale ? t('shell.alertEntryStale', {description}) : description);
+    entry.classList.toggle('stale', alertsStale);
+    entry.title = alertsStale ? failureText() : description;
+  }
   for (const entry of document.querySelectorAll('.notification-entry')) {
     entry.hidden = !session.user || session.user.must_change_password;
     const count = entry.querySelector('.notification-count');
@@ -72,6 +87,7 @@ export function syncNotifications() {
 function resumeNotifications() {
   if (!visibleSession() || resumeRequest) return;
   stale = true;
+  alertsStale = true;
   renderEntries();
   inbox?.setStale(true);
   // 前台鉴权检查离线期间，保持同一个 15 秒控制器。
@@ -94,21 +110,28 @@ export async function refreshNotifications() {
   const controller = new AbortController();
   request = controller;
   try {
-    const value = await api('/notifications/summary', requestOptions(controller.signal));
+    const results = await Promise.allSettled([
+      api('/notifications/summary', requestOptions(controller.signal)),
+      api('/alerts/summary', requestOptions(controller.signal))
+    ]);
     if (request !== controller || epoch !== currentEpoch || !foreground()) return;
-    const changed = summary && (summary.latest_id !== value.latest_id || summary.unread_count !== value.unread_count);
-    summary = value;
-    stale = false;
+    const [notifications, alerts] = results;
+    if (alerts.status === 'fulfilled') { alertSummary = alerts.value; alertsStale = false; }
+    else alertsStale = true;
+    if (notifications.status === 'fulfilled') {
+      const value = notifications.value;
+      const changed = summary && (summary.latest_id !== value.latest_id || summary.unread_count !== value.unread_count);
+      summary = value;
+      stale = false;
+      inbox?.setStale(false);
+      if (changed) inbox?.refresh();
+      for (const listener of tickListeners) listener({stale: false, summary: value});
+    } else {
+      stale = true;
+      inbox?.setStale(true);
+      for (const listener of tickListeners) listener({stale: true, error: notifications.reason, summary});
+    }
     renderEntries();
-    inbox?.setStale(false);
-    if (changed) inbox?.refresh();
-    for (const listener of tickListeners) listener({stale: false, summary: value});
-  } catch (error) {
-    if (request !== controller || epoch !== currentEpoch || !foreground() || error.name === 'AbortError') return;
-    stale = true;
-    renderEntries();
-    inbox?.setStale(true);
-    for (const listener of tickListeners) listener({stale: true, error, summary});
   } finally {
     if (request === controller) {
       request = null;
@@ -130,6 +153,8 @@ export function initNotifications() {
       inbox?.close();
       identity = next;
       summary = null;
+      alertSummary = null;
+      alertsStale = false;
       stale = false;
       renderEntries();
     }
@@ -143,7 +168,7 @@ export function initNotifications() {
   listen(window, 'pagehide', () => { pageActive = false; pauseSessionVerification(); stopPolling(); });
   listen(window, 'pageshow', () => { pageActive = true; resume(); });
   listen(window, 'online', () => { if (!sessionIsVerified()) resume(); else if (foreground()) refreshNotifications(); });
-  listen(window, 'offline', () => { if (foreground()) { stale = true; renderEntries(); inbox?.setStale(true); } });
+  listen(window, 'offline', () => { if (foreground()) { stale = true; alertsStale = true; renderEntries(); inbox?.setStale(true); } });
   pageActive = true;
   identity = session.user ? `${getSessionEpoch()}` : '';
   renderEntries();
@@ -156,6 +181,8 @@ export function initNotifications() {
     inbox?.close();
     identity = '';
     summary = null;
+    alertSummary = null;
+    alertsStale = false;
     stale = false;
     if (disposeNotifications === dispose) disposeNotifications = undefined;
   };

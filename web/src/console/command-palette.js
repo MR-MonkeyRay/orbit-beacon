@@ -21,26 +21,27 @@ export function openCommandPalette() {
   const choices = [];
   for (const route of consoleRoutes.filter((route) => route.label)) {
     commands.set(route.path, () => go(route.path).catch(ignoreNavigationCancellation));
-    choices.push([route.path, t(route.label)]);
+    choices.push([route.path, t(route.label), {group: 'pages', icon: route.icon}]);
     const tabs = route.page === 'alerts' ? alertTabs : route.page === 'settings' ? settingsTabs : [];
     for (const tab of tabs) {
       const path = `${route.path}#${tab.id}`;
       commands.set(path, () => go(path).catch(ignoreNavigationCancellation));
-      choices.push([path, `${t(route.label)} · ${t(tab.label)}`]);
+      choices.push([path, `${t(route.label)} · ${t(tab.label)}`, {group: 'pages', icon: tab.icon}]);
     }
   }
   commands.set('add-node', createNodeDialog);
-  choices.push(['add-node', t('nodes.add')]);
+  choices.push(['add-node', t('nodes.add'), {group: 'actions', icon: 'plus'}]);
   let execute;
+  let body;
   const dialog = modal(t('shell.commandPalette'), (close, signal) => {
     const controller = new AbortController();
     const abort = () => controller.abort();
     signal.addEventListener('abort', abort, {once: true});
     navigation?.addEventListener('abort', abort, {once: true});
     controller.signal.addEventListener('abort', () => navigation?.removeEventListener('abort', abort), {once: true});
-    const entry = input({'aria-label': t('shell.commandPalette'), dataset: {autofocus: '', transient: ''}});
+    const entry = input({placeholder: t('shell.searchPlaceholder'), 'aria-label': t('shell.commandPalette'), dataset: {autofocus: '', transient: ''}});
     const error = h('div', {class: 'form-error', role: 'alert', hidden: true});
-    const list = listbox(entry, {choices, emptyText: t('nodes.noMatching'), persistent: true, onChoose: ([id]) => {
+    const list = listbox(entry, {choices, groups: [{id: 'pages', label: t('shell.pages')}, {id: 'nodes', label: t('shell.nodes')}, {id: 'actions', label: t('shell.actions')}], emptyText: t('nodes.noMatching'), persistent: true, onChoose: ([id]) => {
       execute = commands.get(id);
       close('done');
     }});
@@ -52,7 +53,7 @@ export function openCommandPalette() {
       for (const node of nodes) {
         const path = route.path.replace('{id}', encodeURIComponent(node.id));
         commands.set(path, () => go(path).catch(ignoreNavigationCancellation));
-        choices.push([path, node.name]);
+        choices.push([path, node.name, {group: 'nodes', icon: 'server'}]);
       }
       list.setChoices(choices);
     }).catch((failure) => {
@@ -60,8 +61,10 @@ export function openCommandPalette() {
       error.textContent = errorText(failure);
       error.hidden = false;
     });
-    return h('div', {class: 'dialog-body notification-inbox'}, entry, error, list.element);
+    body = h('div', {class: 'dialog-body notification-inbox'}, entry, error, list.element);
+    return body;
   });
+  body.parentElement.classList.add('command-dialog');
   void dialog.closed.then((value) => { if (value === 'done' && available()) return execute?.(); });
   return dialog;
 }

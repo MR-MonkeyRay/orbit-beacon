@@ -17,6 +17,7 @@ import {nextCursor} from '../ui/pager.js';
 import {tabSet} from '../ui/tabs.js';
 import {issueEnrollment} from './enrollments.js';
 import {auditItem} from '../lib/audit-item.js';
+import {dataManagementPage} from './data-management.js';
 import {dataOperationsTab} from './data-operations.js';
 import {groupCommandActions} from '../lib/group-commands.js';
 import {showTask} from './backup-task.js';
@@ -30,6 +31,7 @@ export async function settingsPage() {
   }
   const builds = {
     'account': accountTab,
+    'api-tokens': apiTokensPanel,
     'administrators': lazyTab(usersList, administratorsTab),
     'groups': lazyTab(
       () => Promise.all([groupsList(), allNodes()]),
@@ -39,12 +41,22 @@ export async function settingsPage() {
       () => Promise.all([api('/audit?limit=50&offset=0'), allNodes(), usersList(), groupsList()]),
       ([audit, nodes, users, groups]) => auditTab(audit, nameLookup(nodes, users, groups))
     ),
-    'data': dataOperationsTab,
+    'data': dataTab,
     'public-page': publicPageTab
   };
   return h('div', null,
     pageHead(t('shell.settings')),
     tabSet(settingsTabs.map((tab) => ({...tab, label: t(tab.label), build: builds[tab.id]})), t('settings.settingsSections')));
+}
+
+function dataTab() {
+  const backups = dataOperationsTab();
+  const storage = dataManagementPage({embedded: true});
+  return {element: h('div', {class: 'stack'},
+    h('section', {class: 'stack', 'aria-labelledby': 'data-backups-title'}, h('h2', {id: 'data-backups-title'}, t('settings.backupsExport')), backups.element),
+    h('section', {class: 'stack', 'aria-labelledby': 'data-storage'}, h('h2', {id: 'data-storage', tabindex: '-1'}, t('data.management.title')), storage.element)),
+    attach() { backups.attach(); storage.attach(); },
+    detach() { backups.detach(); storage.detach(); }};
 }
 
 function publicPageTab() {
@@ -134,7 +146,7 @@ function accountTab() {
       [t('account.username'), user.username],
       [t('account.accountCreated'), when(user.created_at)], [t('account.sessionExpires'), session.expires ? when(session.expires) : null]
     ])),
-    panel(t('account.changePassword'), {}, h('p', {class: 'text-note'}, t('account.passwordSignOutHint')), form), totpPanel(), apiTokensPanel());
+    panel(t('account.changePassword'), {}, h('p', {class: 'text-note'}, t('account.passwordSignOutHint')), form), totpPanel());
 }
 
 function administratorsTab(users) {

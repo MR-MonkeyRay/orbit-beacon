@@ -1,4 +1,5 @@
 export default {
+  'controls.theme': '主题',
   'controls.live.reconnecting': '重新连接中…',
   'controls.language': '语言',
   'controls.language.preference': '语言：{preference}',

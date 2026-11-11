@@ -86,3 +86,14 @@ test('an active document retains one locale until its explicit change and reload
     }
   }
 });
+
+test('navigation and data terminology is paired in Chinese and English without the retired data page name', async () => {
+  const {default: en} = await import('../src/shared/locales/en.js');
+  const {default: zh} = await import('../src/shared/locales/zh-CN.js');
+  for (const [key, chinese, english] of [
+    ['shell.commandPalette', '搜索', 'Search'], ['settings.data', '数据', 'Data'],
+    ['settings.backupsExport', '备份与导出', 'Backups & export'], ['data.management.title', '存储与清理', 'Storage & cleanup'],
+    ['settings.apiTokens', 'API 令牌', 'API tokens'], ['shell.searchPlaceholder', '搜索页面、节点…', 'Search pages, nodes…']
+  ]) { assert.equal(zh[key], chinese); assert.equal(en[key], english); }
+  assert.equal(en['shell.dataManagement'], undefined); assert.equal(zh['shell.dataManagement'], undefined);
+});

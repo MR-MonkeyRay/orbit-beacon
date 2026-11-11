@@ -24,7 +24,7 @@
 | 只读 API 令牌 | Read-only API token |
 | 导出 / 备份 / 恢复 | Export / Backup / Restore |
 | 流量计费 | Traffic billing |
-| 数据管理 | Data management |
+| 存储与清理 | Storage & cleanup |
 
 状态页指匿名页面，其 H1 使用“节点状态 / Node status”。
 

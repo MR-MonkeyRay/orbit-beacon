@@ -1,9 +1,9 @@
-import {h} from '../../shared/dom.js';
+import {h, icon} from '../../shared/dom.js';
 import {uid} from './components.js';
 
 // 保持 DOM 焦点在输入框；选择框和命令面板共享过滤与键盘行为。
 // persistent 列表始终可见，Esc 交给外层对话框。
-export function listbox(entry, {choices = [], emptyText, onChoose, persistent = false}) {
+export function listbox(entry, {choices = [], emptyText, onChoose, persistent = false, groups}) {
   const list = h('div', {class: 'choice-list', id: uid('listbox'), role: 'listbox', hidden: true});
   const empty = h('div', {class: 'text-note', role: 'status'}, emptyText);
   let items = choices;
@@ -35,12 +35,26 @@ export function listbox(entry, {choices = [], emptyText, onChoose, persistent = 
     onChoose(item);
   };
   const render = () => {
-    filtered = items.filter(([, label]) => label.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+    const ordered = groups ? groups.flatMap((group) => items.filter((item) => item[2]?.group === group.id)) : items;
+    filtered = ordered.filter(([, label]) => label.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
     active = filtered.length ? 0 : -1;
-    list.replaceChildren(...filtered.map(([id, label], index) => h('div', {
-      class: 'choice-option', id: `${list.id}-${index}`, role: 'option', 'aria-selected': 'false',
-      onmousedown: (event) => event.preventDefault(), onclick: () => choose(index)
-    }, label)));
+    list.replaceChildren();
+    const holders = new Map();
+    filtered.forEach(([id, label, meta], index) => {
+      let holder = list;
+      if (groups && meta?.group) {
+        if (!holders.has(meta.group)) {
+          const heading = h('div', {class: 'choice-heading', id: uid('choice-heading')}, groups.find((group) => group.id === meta.group).label);
+          const group = h('div', {role: 'group', 'aria-labelledby': heading.id}, heading);
+          holders.set(meta.group, group); list.append(group);
+        }
+        holder = holders.get(meta.group);
+      }
+      holder.append(h('div', {
+        class: 'choice-option', id: `${list.id}-${index}`, role: 'option', 'aria-selected': 'false',
+        onmousedown: (event) => event.preventDefault(), onclick: () => choose(index)
+      }, meta?.icon ? icon(meta.icon) : null, label));
+    });
     if (!filtered.length) list.append(empty);
     highlight();
   };

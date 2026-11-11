@@ -67,6 +67,7 @@
 
 .notification-list .notification-row {
   display: grid;
+  justify-content: stretch;
   justify-items: start;
   gap: var(--sp-tight);
   width: 100%;
@@ -144,3 +145,8 @@
 .notification-source>.btn {
   justify-self: start;
 }
+
+.notification-group { display: grid; gap: var(--sp-tight); }
+.notification-group > [id^="notification-group-"] { padding-left: var(--sp-content); }
+.notification-group > .btn-sm { justify-self: end; }
+.notification-expander { display: inline-flex; vertical-align: middle; margin-right: var(--sp-tight); }

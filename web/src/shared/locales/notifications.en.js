@@ -1,4 +1,6 @@
 export default {
+  'notifications.nodeCount': {one: '{count} node', other: '{count} nodes'},
+  'notifications.markGroupRead': 'Mark read',
   'notifications.firing': 'Firing',
   'notifications.resolved': 'Resolved',
   'notifications.manualExport': 'Manual export',

@@ -11,8 +11,8 @@
 | Agent 注册、运行设置与远程升级 | 节点详情 → 更多 → 注册 Agent / More → Enroll Agent；节点详情 → 设置 → Agent / Settings → Agent；设置 → 分组 / Groups |
 | 状态页、公告、公开字段与主题 | 设置 → 状态页 / Status page；节点详情 → 设置 → 状态页展示 / Settings → Status page listing；构建时选择 `web/themes/<name>` |
 | 告警、静默与通知 | 告警 / Alerts；站内通知 / Notifications |
-| 管理员、两步验证与只读 API 令牌 | 设置 → 管理员 / Administrators、账户 / Account |
-| 加密导出、备份计划、恢复与数据清理 | 设置 → 数据操作 / Data operations；数据管理 / Data management |
+| 管理员、两步验证与只读 API 令牌 | 设置 → 管理员 / Administrators、账户 / Account、API 令牌 / API tokens |
+| 加密导出、备份计划、恢复与数据清理 | 设置 → 数据 / Settings → Data（备份与导出、存储与清理） |
 
 ## 重要限制
 

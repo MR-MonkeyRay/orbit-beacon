@@ -8,6 +8,12 @@ const ORDER = ['system', 'light', 'dark'];
 const ICON = {system: 'monitor', light: 'sun', dark: 'moon'};
 const listeners = new Set();
 
+export function onThemeChange(listener, signal) {
+  listeners.add(listener);
+  signal?.addEventListener('abort', () => listeners.delete(listener), {once: true});
+  return () => listeners.delete(listener);
+}
+
 export function currentTheme() { return document.documentElement.dataset.theme || 'system'; }
 
 function applyTheme(theme) {

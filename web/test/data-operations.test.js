@@ -81,3 +81,37 @@ test('task and plan pagers retain independent cursors and terminal-button behavi
     dom.restore();
   }
 });
+
+test('settings task deep link still opens the requested task independently of the task list', async () => {
+  const dom = installDOM();
+  const originals = new Map(['window', 'fetch', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
+  globalThis.window = new EventTarget();
+  const frames = []; globalThis.requestAnimationFrame = (callback) => { frames.push(callback); };
+  const {reducedMotion} = await import('../src/shared/dom.js');
+  const motion = Object.getOwnPropertyDescriptor(reducedMotion, 'matches');
+  Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => true});
+  const scope = new AbortController(); setNavigationSignal(scope.signal);
+  const id = '00000000-0000-4000-8000-000000000099';
+  Object.assign(location, {pathname: '/settings', search: `?task=${id}`, hash: '#data'});
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    if (url === `/api/v1/tasks/${id}`) return Response.json({id, kind: 'backup_export', categories: ['configuration'], state: 'failed', error_code: 'interrupted', destination: {}, created_at: '2026-01-01T00:00:00Z'});
+    if (url.includes('/tasks?')) return Response.json({tasks: [], has_more: false});
+    if (url.includes('/backup-plans?')) return Response.json({plans: [], has_more: false});
+    return Response.json({before: '2026-01-01T00:00:00Z', databases: [], categories: []});
+  };
+  try {
+    const {settingsPage} = await import('../src/console/pages/settings.js');
+    const page = await settingsPage(); dom.body.append(page); dom.mutations();
+    frames.shift()(); await flush();
+    assert.equal(page.querySelector('#tab-data').getAttribute('aria-selected'), 'true');
+    assert.ok(calls.includes(`/api/v1/tasks/${id}`));
+    assert.ok(document.querySelector('dialog').textContent.includes(id));
+    assert.equal(location.hash, '#data');
+  } finally {
+    scope.abort(); setNavigationSignal(null); await flush();
+    Object.defineProperty(reducedMotion, 'matches', motion); dom.restore();
+    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+  }
+});

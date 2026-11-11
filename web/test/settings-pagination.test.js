@@ -83,7 +83,7 @@ test('settings loads each tab data only when first shown', async () => {
     const {settingsPage} = await import('../src/console/pages/settings.js');
     const page = await settingsPage();
     dom.body.append(page); dom.mutations(); await flush();
-    assert.deepEqual(calls, ['/api/v1/account/totp', '/api/v1/api-tokens', '/api/v1/settings/api-tokens']);
+    assert.deepEqual(calls, ['/api/v1/account/totp']);
     calls.length = 0;
 
     const tabs = elements(page).filter((element) => element.getAttribute('role') === 'tab');
@@ -91,7 +91,7 @@ test('settings loads each tab data only when first shown', async () => {
     assert.deepEqual(calls, ['/api/v1/users']);
     tabs.find((element) => element.id === 'tab-account').click(); dom.mutations(); await flush();
     tabs.find((element) => element.id === 'tab-administrators').click(); dom.mutations(); await flush();
-    assert.deepEqual(calls, ['/api/v1/users', '/api/v1/account/totp', '/api/v1/api-tokens', '/api/v1/settings/api-tokens']);
+    assert.deepEqual(calls, ['/api/v1/users', '/api/v1/account/totp']);
     calls.splice(1);
 
     tabs.find((element) => element.id === 'tab-groups').click(); dom.mutations(); await flush();
@@ -486,5 +486,56 @@ test('group deployment issues one node credential without a mode field', async (
     closeDialogs(); invalidate('nodes', 'groups'); setNavigationSignal(null); setSession({user: null, csrf_token: '', expires_at: ''});
     for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
     dom.restore();
+  }
+});
+
+test('settings keeps tokens out of account and merges both data section lifecycles with section hash focus', async () => {
+  const dom = installDOM();
+  const originals = new Map(['fetch', 'window', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
+  globalThis.window = new EventTarget();
+  globalThis.requestAnimationFrame = () => 0;
+  globalThis.history = {state: null, replaceState(_state, _unused, url) { location.hash = new URL(url, 'https://example.test').hash; }};
+  const scope = new AbortController(); setNavigationSignal(scope.signal);
+  setSession({user: {id: 'settings-admin', username: 'Admin', must_change_password: false, created_at: '2026-01-01T00:00:00Z'}, csrf_token: 'csrf', expires_at: ''});
+  Object.assign(location, {pathname: '/settings', search: '', hash: '#account'});
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({url, signal: options.signal});
+    const value = url.endsWith('/account/totp') ? {enabled: false} : url.endsWith('/api-tokens') ? (url.includes('/settings/') ? {rate_limit_per_minute: 600} : {api_tokens: []})
+      : url.includes('/tasks?') ? {tasks: [], has_more: false} : url.includes('/backup-plans?') ? {plans: [], has_more: false, timezone_name: 'UTC', utc_offset_seconds: 0}
+        : {before: '2026-01-01T00:00:00Z', databases: [], categories: []};
+    return Response.json(value);
+  };
+  try {
+    const {settingsPage} = await import('../src/console/pages/settings.js');
+    const {settingsTabs, consoleRoutes} = await import('../src/console/routes.js');
+    let page = await settingsPage(); dom.body.append(page); dom.mutations(); await flush();
+    assert.deepEqual(calls.map((item) => item.url), ['/api/v1/account/totp']);
+    assert.equal(elements(page).some((item) => item.textContent === copy('account.createAPIToken')), false);
+    assert.equal(settingsTabs[2].id, 'api-tokens');
+    page.querySelector('#tab-api-tokens').click(); dom.mutations(); await flush();
+    assert.ok(page.textContent.includes(copy('account.createAPIToken')));
+    assert.deepEqual(calls.slice(1).map((item) => item.url), ['/api/v1/api-tokens', '/api/v1/settings/api-tokens']);
+    page.remove(); dom.mutations(); calls.length = 0;
+    location.hash = '#data-storage';
+    page = await settingsPage(); dom.body.append(page); dom.mutations(); await flush();
+    assert.equal(page.querySelector('#tab-data').getAttribute('aria-selected'), 'true');
+    assert.equal(page.querySelector('#data-backups-title').textContent, copy('settings.backupsExport'));
+    assert.equal(page.querySelector('#data-storage').textContent, copy('data.management.title'));
+    assert.equal(page.querySelector('#data-storage').dataset.sectionLink, '');
+    assert.deepEqual(calls.map((item) => item.url).sort(), ['/api/v1/backup-plans?limit=20', '/api/v1/tasks?limit=20', '/api/v1/data-management?keep_days=30'].sort());
+    page.querySelector('#tab-account').click(); dom.mutations(); await flush();
+    assert.equal(page.querySelector('#data-storage'), null);
+    const afterDetach = calls.length;
+    for (const tick of dom.timers.values()) tick();
+    await flush();
+    assert.equal(calls.length, afterDetach);
+    const legacy = consoleRoutes.find((route) => route.path === '/data');
+    assert.equal(legacy.redirect, '/settings#data-storage');
+    assert.equal(legacy.label, undefined);
+    assert.equal(legacy.nav, '/settings');
+  } finally {
+    scope.abort(); setNavigationSignal(null); setSession({user: null, csrf_token: '', expires_at: ''});
+    dom.restore(); for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
   }
 });

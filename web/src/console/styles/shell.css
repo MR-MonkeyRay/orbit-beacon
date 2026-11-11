@@ -159,7 +159,6 @@
 }
 
 .account {
-  margin-top: auto;
   display: grid;
   gap: 10px;
   padding: 14px var(--sp-inline) var(--sp-tight);
@@ -186,24 +185,11 @@
   text-transform: uppercase;
 }
 
-.who-text {
-  min-width: 0;
-}
-
 .who-name {
   font-weight: var(--fw-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.account-actions {
-  display: flex;
-  gap: 6px;
-}
-
-.account-actions .btn {
-  flex: 1;
 }
 
 .console-locale {
@@ -214,10 +200,6 @@
   width: 100%;
   min-width: 0;
   text-overflow: ellipsis;
-}
-
-.account-locale {
-  width: 100%;
 }
 
 .main {
@@ -240,3 +222,28 @@
 .mobile-bar,.drawer-backdrop {
   display: none;
 }
+
+.nav-heading {
+  margin: var(--sp-control) var(--sp-control) var(--sp-tight);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--ink-muted);
+}
+.nav [role="group"] { display: grid; gap: 2px; }
+.nav-tools { margin-top: auto; padding-top: var(--sp-content); }
+.nav-tools .nav-public { margin: 0; border: 0; padding-top: 0; min-height: var(--control-h-lg); }
+.command-shortcut { margin-left: auto; font: var(--fs-sm) var(--mono); color: var(--ink-muted); }
+.alert-count { margin-left: auto; color: var(--warn); font-size: var(--fs-sm); font-weight: var(--fw-bold); }
+.alert-count.critical { color: var(--bad); }
+.alert-entry.stale .alert-count { text-decoration: underline dotted; }
+.user-menu > .btn { width: 100%; justify-content: flex-start; padding: var(--sp-tight); }
+.user-menu .menu-options { top: auto; bottom: calc(100% + 6px); left: 0; right: auto; min-width: max(100%, 180px); max-height: min(70dvh, 540px); overflow-y: auto; }
+/* 退出登录与偏好选项分开。 */
+.user-menu .menu-options > .menu-item:last-child { border-top: 1px solid var(--line); margin-top: var(--sp-tight); }
+.menu-heading { padding: var(--sp-tight) var(--sp-control); color: var(--ink-muted); font-size: var(--fs-sm); }
+.menu-item[role="menuitemradio"]::after { content: ''; margin-left: auto; width: 1em; }
+.menu-item[aria-checked="true"]::after { content: '✓'; }
+dialog.command-dialog { margin: 15vh auto auto; max-height: 80dvh; }
+.command-dialog .choice-heading { padding: var(--sp-tight) var(--sp-control); color: var(--ink-muted); font-size: var(--fs-sm); }
+.command-dialog .choice-option { display: flex; align-items: center; gap: var(--sp-control); }
+@media (pointer: coarse) { .command-shortcut { display: none; } }

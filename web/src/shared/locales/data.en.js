@@ -1,5 +1,5 @@
 export default {
-  'data.management.title': 'Data management',
+  'data.management.title': 'Storage & cleanup',
   'data.management.refresh': 'Refresh statistics',
   'data.management.usage': 'Active database storage',
   'data.management.scope': 'Excludes standby and control databases, WAL and backup files.',

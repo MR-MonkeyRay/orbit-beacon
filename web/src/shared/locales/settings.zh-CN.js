@@ -1,4 +1,6 @@
 export default {
+  'settings.apiTokens': 'API 令牌',
+  'settings.backupsExport': '备份与导出',
   'announcements.title': '公告',
   'announcements.add': '添加公告',
   'announcements.edit': '编辑公告',
@@ -16,7 +18,7 @@ export default {
   'settings.administrators': '管理员',
   'settings.groups': '分组',
   'settings.audit': '审计日志',
-  'settings.data': '数据操作',
+  'settings.data': '数据',
   'settings.publicPage': '状态页',
   'settings.settingsSections': '设置分类',
   'settings.publicLoading': '正在加载状态页设置…',

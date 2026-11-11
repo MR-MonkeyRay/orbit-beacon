@@ -54,7 +54,7 @@ async function setup(t, {fail = false, pending = false, nodes = [{id, name: '<Ho
   const router = await import('../src/console/router.js');
   const stop = router.startRouter(consoleRoutes.map((route) => ({...route,
     match: (path) => route.path === '/nodes/{id}' ? path === nodePath : path === route.path,
-    page: async () => h('div', null, h('h1', null, location.pathname))
+    page: async () => route.redirect || h('div', null, h('h1', null, location.pathname))
   })));
   await flush();
   const palette = await import('../src/console/command-palette.js');
@@ -253,3 +253,34 @@ for (const phase of ['create', 'issue']) for (const boundary of ['close', 'navig
     assert.equal(location.pathname, expectedPath);
   });
 }
+
+test('search stays top-anchored, provides a placeholder and labelled icon groups with continuous keyboard navigation', async (t) => {
+  const env = await setup(t); env.openCommandPalette(); await flush();
+  const dialog = document.querySelector('dialog');
+  assert.equal(dialog.classList.contains('command-dialog'), true);
+  assert.equal(entry().getAttribute('placeholder'), copy('shell.searchPlaceholder'));
+  const groups = dialog.querySelectorAll('[role="group"]');
+  assert.deepEqual(groups.map((group) => document.getElementById(group.getAttribute('aria-labelledby')).textContent),
+    [copy('shell.pages'), copy('shell.nodes'), copy('shell.actions')]);
+  for (const option of options()) assert.ok(option.querySelector('svg'));
+  const all = options();
+  const pageCount = groups[0].querySelectorAll('[role="option"]').length;
+  for (let index = 0; index < pageCount; index++) press(entry(), 'ArrowDown');
+  assert.equal(entry().getAttribute('aria-activedescendant'), all[pageCount].id);
+  press(entry(), 'ArrowDown');
+  assert.equal(entry().getAttribute('aria-activedescendant'), all[pageCount + 1].id);
+  press(entry(), 'ArrowUp');
+  assert.equal(entry().getAttribute('aria-activedescendant'), all[pageCount].id);
+});
+
+
+test('legacy /data replaces its history entry with the storage section without creating a data page', async (t) => {
+  const env = await setup(t);
+  const replace = history.replaceState;
+  const writes = [];
+  history.replaceState = (...args) => { writes.push(args[2]); replace(...args); };
+  await env.go('/data');
+  assert.equal(location.pathname, '/settings');
+  assert.equal(location.hash, '#data-storage');
+  assert.ok(writes.includes('/settings#data-storage'));
+});

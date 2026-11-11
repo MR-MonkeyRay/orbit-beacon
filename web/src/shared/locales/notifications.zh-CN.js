@@ -1,4 +1,6 @@
 export default {
+  'notifications.nodeCount': '{count} 个节点',
+  'notifications.markGroupRead': '标为已读',
   'notifications.firing': '触发中',
   'notifications.resolved': '已恢复',
   'notifications.manualExport': '手动导出',

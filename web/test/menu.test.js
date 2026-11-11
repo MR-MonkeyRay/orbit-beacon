@@ -65,3 +65,25 @@ for (const status of ['pending', 'unknown', 'disabled']) test(`node header keeps
     assert.equal(root.querySelectorAll('button').every((control) => control.disabled), true);
   } finally { scope.abort(); setNavigationSignal(null); dom.restore(); }
 });
+
+test('radio menu groups have independent checked state and stable namespaced IDs across page ID resets', async () => {
+  const dom = installDOM();
+  try {
+    const {resetIDs, button} = await import('../src/console/ui/components.js');
+    let theme = 'system';
+    const root = menuButton({id: 'profile', label: 'Admin', items: [
+      {group: 'Theme', label: 'System', checked: () => theme === 'system', onSelect: () => { theme = 'system'; }},
+      {group: 'Theme', label: 'Dark', checked: () => theme === 'dark', onSelect: () => { theme = 'dark'; }}
+    ]});
+    dom.body.append(root); resetIDs(); dom.body.append(button('Page action'));
+    const radios = root.querySelectorAll('[role="menuitemradio"]');
+    assert.deepEqual(radios.map((radio) => radio.getAttribute('aria-checked')), ['true', 'false']);
+    assert.equal(radios[0].id, 'profile-item-0');
+    const group = root.querySelector('[role="group"]');
+    assert.equal(document.getElementById(group.getAttribute('aria-labelledby')).textContent, 'Theme');
+    root.querySelector('button').click(); radios[1].click();
+    assert.deepEqual(radios.map((radio) => radio.getAttribute('aria-checked')), ['false', 'true']);
+    const ids = [root, ...root.querySelectorAll('button'), root.querySelector('[role="menu"]')].map((element) => element.id).filter(Boolean);
+    assert.equal(new Set(ids).size, ids.length);
+  } finally { dom.restore(); }
+});

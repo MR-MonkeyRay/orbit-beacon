@@ -96,12 +96,8 @@
     transition: opacity var(--motion-fast),transform var(--motion-fast) var(--ease);
   }
 
-  .sidebar .brand,.account-actions .btn {
+  .sidebar .brand {
     position: relative;
-  }
-
-  .nav-public .nav-label {
-    top: calc(50% + 7px);
   }
 
   .sidebar :focus-visible>.nav-label {
@@ -142,40 +138,6 @@
   .account {
     justify-items: center;
     padding: var(--sp-control) 0 var(--sp-tight);
-  }
-
-  .account .who-text {
-    display: none;
-  }
-
-  .account-locale {
-    width: 100%;
-    max-width: 100%;
-  }
-
-  /* 72px 栏内文字只剩几个像素，直接隐藏文字，
-     以下拉箭头作为控件外观；完整语言名在 aria-label 和 title。 */
-  .account-locale select {
-    padding: 0;
-    color: transparent;
-    background-position: 50% 50%;
-  }
-
-  /* 收起时隐藏文字，但展开后的选项要可读。 */
-  .account-locale select option {
-    color: var(--ink);
-  }
-
-  .account-actions {
-    flex-direction: column;
-    align-items: center;
-  }
-
-  .account-actions .btn {
-    flex: none;
-    width: var(--control-h);
-    min-height: var(--control-h);
-    padding: 0;
   }
 }
 
@@ -497,4 +459,12 @@
 
 @media (min-width:768px) and (max-width:1023px) {
   .nodes-table .hide-compact:not(.column-hidden) { display: table-cell; }
+}
+
+@media (min-width:768px) and (max-width:1199px) {
+  .nav-heading,.command-shortcut,.user-menu .who-name { display: none; }
+  .nav [role="group"] + .nav-heading + [role="group"] { margin-top: var(--sp-control); }
+  .user-menu > .btn { justify-content: center; padding: 0; }
+  .user-menu .menu-options { left: calc(100% + 10px); bottom: 0; }
+  .alert-count { position: absolute; top: 0; right: 0; font-size: var(--fs-micro); }
 }

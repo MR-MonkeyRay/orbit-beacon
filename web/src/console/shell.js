@@ -1,11 +1,13 @@
 import {t} from './i18n.js';
 import {initCommandPalette} from './command-palette.js';
-import {localeSelect} from '../shared/locale-select.js';
+import {getLocalePreference} from '../shared/i18n.js';
+import {menuButton} from './ui/menu.js';
+import {localeSelect, changeLocalePreference} from '../shared/locale-select.js';
 import {confirmLocaleChange, reloadAfterConfirmation} from './router.js';
 import {h} from '../shared/dom.js';
-import {themeButton} from '../shared/theme.js';
+import {currentTheme, onThemeChange, setTheme} from '../shared/theme.js';
 import {getNavigationSignal, onSession, session, signOut} from './api.js';
-import {busy, button} from './ui/components.js';
+import {busy} from './ui/components.js';
 import {toastError} from './ui/feedback.js';
 import {initNotifications, syncNotifications} from './notifications.js';
 
@@ -14,6 +16,7 @@ import {initNotifications, syncNotifications} from './notifications.js';
 let sidebar;
 let account;
 let drawer;
+let accountLifetime;
 function shellElements() {
   sidebar = document.getElementById('sidebar');
   account = document.getElementById('account');
@@ -22,20 +25,40 @@ function shellElements() {
 
 function renderAccount() {
   shellElements();
+  accountLifetime?.abort();
+  accountLifetime = new AbortController();
   drawer?.sync();
   if (session.user?.must_change_password) document.documentElement.classList.add('route-login');
   if (!session.user || session.user.must_change_password) { account.replaceChildren(); return; }
-  // 图标栏中，标签 span 充当按钮的工具提示。
-  const exit = button(h('span', {class: 'nav-label'}, t('common.signOut')), {id: 'sign-out', icon: 'logout', small: true, onClick: async () => {
-    busy(exit, true);
-    try { await signOut(); } catch (error) { busy(exit, false); toastError(error); }
-  }});
   const {username} = session.user;
-  account.replaceChildren(
-    h('div', {class: 'who'}, h('span', {class: 'avatar', 'aria-hidden': 'true', title: username}, username.slice(0, 1)),
-      h('div', {class: 'who-text'}, h('div', {class: 'who-name', title: username}, username))),
-    h('div', {class: 'console-locale account-locale'}, consoleLocaleSelect()),
-    h('div', {class: 'account-actions'}, themeButton(), exit));
+  let changingLocale = false;
+  const userMenu = menuButton({id: 'user-menu', signal: accountLifetime.signal,
+    label: h('span', {class: 'who'}, h('span', {class: 'avatar', 'aria-hidden': 'true'}, username.slice(0, 1)),
+      h('span', {class: 'who-name'}, username)),
+    items: [
+      ...['system', 'zh-CN', 'en'].map((value) => ({group: t('controls.language'),
+        label: value === 'system' ? t('controls.followSystem') : value === 'en' ? 'English' : '中文',
+        checked: () => getLocalePreference() === value, onSelect: async () => {
+          if (changingLocale || value === getLocalePreference()) return;
+          changingLocale = true;
+          await changeLocalePreference(value, {beforeChange: confirmLocaleChange, reload: reloadAfterConfirmation, onError: toastError});
+          changingLocale = false;
+          if (!accountLifetime.signal.aborted) userMenu.syncChecks();
+        }})),
+      ...['system', 'light', 'dark'].map((value) => ({group: t('controls.theme'),
+        label: value === 'system' ? t('controls.followSystem') : t(`controls.theme.${value}`),
+        checked: () => currentTheme() === value, onSelect: () => setTheme(value)})),
+      {id: 'sign-out', label: t('common.signOut'), onSelect: async () => {
+        busy(trigger, true);
+        try { await signOut(); } catch (error) { busy(trigger, false); toastError(error); }
+      }}
+    ]});
+  userMenu.classList.add('user-menu');
+  const trigger = userMenu.querySelector('button');
+  onThemeChange(userMenu.syncChecks, accountLifetime.signal);
+  trigger.setAttribute('aria-label', username);
+  trigger.title = username;
+  account.replaceChildren(userMenu);
 }
 
 export function consoleLocaleSelect({navigation = false} = {}) {
@@ -65,12 +88,15 @@ export function brandMark() { shellElements(); return sidebar.querySelector('.ma
 export function initShell() {
   shellElements();
   drawer = mobileNavigation();
+  const shortcut = sidebar.querySelector('.command-shortcut');
+  if (shortcut) shortcut.textContent = /Mac|iPhone|iPad|iPod/.test(navigator.userAgentData?.platform || navigator.platform || '') ? '⌘K' : 'Ctrl K';
   const unsubscribe = onSession(renderAccount);
   renderAccount();
   const stopNotifications = initNotifications();
   const stopCommands = initCommandPalette();
   return () => {
     unsubscribe();
+    accountLifetime?.abort();
     drawer.dispose();
     drawer = undefined;
     stopNotifications();
@@ -110,8 +136,12 @@ function mobileNavigation() {
     if (!phone.matches || bar.hidden) close(false);
     rail.inert = phone.matches && !opened;
   };
+  const hiddenAncestor = (element) => {
+    for (let parent = element.parentElement; parent && parent !== rail; parent = parent.parentElement) if (parent.hidden) return true;
+    return false;
+  };
   const controls = () => [...rail.querySelectorAll('a,button,select,input,textarea,[tabindex]')]
-    .filter((element) => !element.disabled && !element.hidden && !element.classList.contains('brand') && element.getAttribute('tabindex') !== '-1');
+    .filter((element) => !element.disabled && !element.hidden && !hiddenAncestor(element) && !element.classList.contains('brand') && element.getAttribute('tabindex') !== '-1');
   listen(menu, 'click', () => {
     if (opened) { close(); return; }
     if (!phone.matches || !available()) return;
@@ -133,7 +163,7 @@ function mobileNavigation() {
   }, {capture: true});
   listen(document, 'keydown', (event) => {
     if (!opened || [...document.querySelectorAll('dialog')].some((dialog) => dialog.open)) return;
-    if (event.key === 'Escape') { event.preventDefault(); close(); }
+    if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); close(); }
     if (event.key !== 'Tab') return;
     const items = [menu, ...controls()];
     const index = items.indexOf(document.activeElement);

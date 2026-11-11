@@ -7,7 +7,7 @@ export const consoleRoutes = [
   {path: '/nodes', page: 'nodes', label: 'shell.nodes', icon: 'server', nav: '/nodes'},
   {path: '/nodes/{id}', page: 'node', nav: '/nodes'},
   {path: '/settings', page: 'settings', label: 'shell.settings', icon: 'sliders', nav: '/settings'},
-  {path: '/data', page: 'dataManagement', label: 'shell.dataManagement', icon: 'cloud', nav: '/data'},
+  {path: '/data', page: 'dataManagement', redirect: '/settings#data-storage', nav: '/settings'},
   {path: '/alerts', page: 'alerts', label: 'shell.alerts', icon: 'bell', nav: '/alerts'}
 ];
 
@@ -26,8 +26,9 @@ export const alertTabs = [
 export const settingsTabs = [
   {id: 'account', label: 'settings.account', icon: 'user'},
   {id: 'administrators', label: 'settings.administrators', icon: 'users'},
+  {id: 'api-tokens', label: 'settings.apiTokens', icon: 'key'},
   {id: 'groups', label: 'settings.groups', icon: 'folder'},
   {id: 'audit', label: 'settings.audit', icon: 'list'},
-  {id: 'data', label: 'settings.data', icon: 'cloud'},
+  {id: 'data', label: 'settings.data', icon: 'cloud', hashes: {'data-storage': 'data-storage'}},
   {id: 'public-page', label: 'settings.publicPage', icon: 'globe'}
 ];

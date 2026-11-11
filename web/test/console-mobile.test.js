@@ -28,6 +28,7 @@ async function setup(t, {mobile = true} = {}) {
     requests.push(url);
     if (url === '/api/v1/session') return new Response(null, {status: 204});
     if (url === '/api/v1/me') return Response.json(account);
+    if (url === '/api/v1/alerts/summary') return Response.json({firing: {total: 0, critical: 0}});
     if (url === '/api/v1/notifications/summary') return Response.json({unread_count: 0});
     if (url.startsWith('/api/v1/nodes?')) return Response.json({nodes: [], has_more: false});
     throw new Error(`Unexpected request ${url}`);
@@ -142,6 +143,7 @@ test('desktop shell starts without inert navigation or an active drawer', async 
 
 test('sign-out hides the mobile bar and closes the drawer synchronously with session loss', async (t) => {
   const env = await setup(t); env.menu.click();
+  document.getElementById('user-menu').click();
   document.getElementById('sign-out').click(); await flush();
   assert.ok(env.requests.includes('/api/v1/session'));
   assert.equal(env.bar.hidden, true); state(env, false);
@@ -162,7 +164,7 @@ test('forced-password and bare routes hide the mobile bar and cannot open naviga
 test('drawer traps keyboard focus but leaves an open dialog to its native focus and Escape handling', async (t) => {
   const env = await setup(t); env.menu.click();
   env.menu.focus(); assert.equal(press('Tab', {shiftKey: true}).defaultPrevented, true);
-  assert.equal(document.activeElement, document.getElementById('sign-out'));
+  assert.equal(document.activeElement, document.getElementById('user-menu'));
   assert.equal(press('Tab').defaultPrevented, true); assert.equal(document.activeElement, env.menu);
   const {modal} = await import('../src/console/ui/dialogs.js');
   const dialog = modal(copy('shell.commandPalette'), () => h('input'));
@@ -229,4 +231,61 @@ test('pageHead keeps primary action separate from live status for the mobile tit
     status.update({state: 'live'});
     assert.equal(header.querySelector('.head-status').textContent, copy('controls.live.live'));
   } finally { dom.restore(); }
+});
+
+test('user menu exposes language/theme radios, persists explicit themes and preserves the drawer', async (t) => {
+  const env = await setup(t); env.menu.click();
+  const root = document.querySelector('.user-menu');
+  const trigger = document.getElementById('user-menu');
+  const menu = root.querySelector('[role="menu"]');
+  const radios = root.querySelectorAll('[role="menuitemradio"]');
+  assert.equal(trigger.getAttribute('aria-label'), 'Admin');
+  assert.equal(root.querySelector('.avatar').textContent, 'A');
+  assert.equal(radios.length, 6);
+  assert.deepEqual(radios.map((radio) => radio.getAttribute('aria-checked')), ['true', 'false', 'false', 'true', 'false', 'false']);
+  trigger.click(); state(env, true);
+  assert.equal(menu.hidden, false);
+  const writes = [];
+  localStorage.setItem = (key, value) => writes.push([key, value]);
+  localStorage.removeItem = (key) => writes.push([key, null]);
+  radios[5].click();
+  assert.equal(document.documentElement.dataset.theme, 'dark');
+  assert.equal(radios[5].getAttribute('aria-checked'), 'true');
+  assert.equal(radios[3].getAttribute('aria-checked'), 'false');
+  assert.deepEqual(writes, [['orbitbeacon-theme', 'dark']]);
+  assert.equal(menu.hidden, true); state(env, true);
+  trigger.click(); radios[3].click();
+  assert.equal(document.documentElement.dataset.theme, undefined);
+  assert.deepEqual(writes.at(-1), ['orbitbeacon-theme', null]);
+  await env.route(); trigger.click();
+  assert.equal(menu.hidden, false, 'route navigation must not dispose the persistent account menu');
+});
+
+test('user-menu language follows draft confirmation, cancellation, busy guard, storage and full reload', async (t) => {
+  const env = await setup(t); await env.route();
+  let preference = 'system';
+  const writes = [];
+  let reloads = 0;
+  localStorage.getItem = () => preference;
+  localStorage.setItem = (key, value) => { writes.push([key, value]); preference = value; };
+  location.reload = () => reloads++;
+  const dirty = h('form', {dataset: {dirty: 'true'}}, h('input', {value: 'draft'})); env.view.append(dirty);
+  const root = document.querySelector('.user-menu');
+  const trigger = root.querySelector('button');
+  const radios = root.querySelectorAll('[role="menuitemradio"]');
+  trigger.click(); radios[2].click(); await flush();
+  assert.ok(document.querySelector('dialog'));
+  assert.deepEqual(writes, []);
+  document.querySelector('dialog').querySelector('button').click(); await flush();
+  assert.equal(dirty.querySelector('input').value, 'draft'); assert.equal(reloads, 0);
+  assert.equal(radios[0].getAttribute('aria-checked'), 'true');
+  dirty.dataset.busy = 'true'; trigger.click(); radios[2].click(); await flush();
+  assert.equal(document.querySelector('dialog'), null); assert.deepEqual(writes, []);
+  delete dirty.dataset.busy;
+  trigger.click(); radios[2].click(); await flush();
+  const dialog = document.querySelector('dialog');
+  dialog.querySelectorAll('button').find((button) => button.textContent === copy('controls.discard')).click(); await flush();
+  assert.deepEqual(writes, [['orbitbeacon-locale', 'en']]); assert.equal(reloads, 1);
+  assert.equal(radios[2].getAttribute('aria-checked'), 'true');
+  assert.equal(location.pathname, '/overview');
 });

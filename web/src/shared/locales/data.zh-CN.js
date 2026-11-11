@@ -1,5 +1,5 @@
 export default {
-  'data.management.title': '数据管理',
+  'data.management.title': '存储与清理',
   'data.management.refresh': '刷新统计',
   'data.management.usage': '活动数据库存储',
   'data.management.scope': '不含备库、控制库、WAL 和备份文件。',

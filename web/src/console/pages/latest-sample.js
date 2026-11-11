@@ -11,7 +11,7 @@ const usableStatus = (value) => value === 'ok' || value === 'stale';
 const percent = (value) => number(value) && value <= 100;
 const setText = (element, text) => { if (element.textContent !== text) element.textContent = text; };
 
-// Keep tiles, meters and keyed table rows in place across live snapshots.
+// 实时快照之间原地更新磁贴、用量条和按键匹配的表格行。
 export function latestSamplePanel(node, initial, {signal} = {}) {
   const body = h('div');
   const element = panel(t('nodes.sample'), {}, body);
@@ -151,7 +151,7 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
     for (const item of disks.length > 1 ? disks : []) {
       const key = `disk:${item.path}`;
       const valid = usedPercent(item.used_bytes, item.total_bytes) !== null;
-      // Capacity is a pair, so only its used value is tweened.
+      // 容量是“已用/总量”对，只对已用值做补间。
       update(`disk-capacity:${item.path}`, valid ? item.used_bytes : null, (used) => `${formatBytes(used)} / ${formatBytes(item.total_bytes)}`, [key], [key], item.total_bytes);
       update(`disk-usage:${item.path}`, usedPercent(item.used_bytes, item.total_bytes), formatPercent, [key], [key]);
       update(`disk-inodes:${item.path}`, item.inodes_total > 0 ? usedPercent(item.inodes_used, item.inodes_total) : null, formatPercent, [key], [key]);

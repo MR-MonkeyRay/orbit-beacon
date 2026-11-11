@@ -16,7 +16,7 @@ const number = (value) => new Intl.NumberFormat(getLocale()).format(value);
 // 文案承诺展示 UTC，时间必须按 UTC 格式化（node-traffic 同样先例）。
 const cutoffFormat = new Intl.DateTimeFormat(getLocale(), {dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC'});
 
-export function dataManagementPage() {
+export function dataManagementPage({embedded = false} = {}) {
   const navigation = getNavigationSignal();
   const selected = new Set();
   let controller = null;
@@ -39,7 +39,7 @@ export function dataManagementPage() {
   const refresh = button(t('data.management.refresh'), {icon: 'refresh', onClick: () => load()});
   const clean = button(t('data.management.clean'), {variant: 'danger', disabled: true, onClick: () => openCleanup()});
   const element = h('div', {class: 'data-operations data-management'},
-    pageHead(t('data.management.title'), refresh),
+    embedded ? h('div', {class: 'data-actions'}, refresh) : pageHead(t('data.management.title'), refresh),
     status,
     panel(t('data.management.usage'), {}, usage, h('p', {class: 'text-note'}, t('data.management.scope')), storageNotes),
     panel(t('data.management.cleanup'), {},

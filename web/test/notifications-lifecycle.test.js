@@ -31,7 +31,8 @@ test('notifications activate after SPA login, survive rename, and reset on accou
   setSession({user: null, csrf_token: '', expires_at: ''});
   let requests = 0;
   let resolveSecond;
-  globalThis.fetch = async () => {
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/alerts/summary')) return Response.json({firing: {total: 0, critical: 0}});
     requests += 1;
     if (requests === 2) return new Promise((resolve) => { resolveSecond = resolve; });
     return new Response(JSON.stringify({unread_count: 2, latest_id: 'first'}));
@@ -174,4 +175,55 @@ test('notification inbox shares segmented filters, empty state and warning/error
       assert.equal(dialog.querySelector('.status-message').hidden, true);
     } finally { closeDialogs(); await inbox.closed; }
   } finally { dom.restore(); }
+});
+
+test('alert badge shares summary cadence, colors critical, hides zero, retains stale values and stops across session boundaries', async () => {
+  const dom = installDOM();
+  const originals = new Map(['window', 'fetch', 'setTimeout', 'clearTimeout'].map((key) => [key, globalThis[key]]));
+  globalThis.window = new EventTarget();
+  globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};
+  const entry = document.createElement('a'); entry.className = 'alert-entry';
+  const badge = document.createElement('span'); badge.className = 'alert-count'; entry.append(badge); dom.body.append(entry);
+  location.pathname = '/overview';
+  let firing = {total: 24, critical: 1};
+  let fail = false;
+  let release;
+  let pending = false;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({url, signal: options.signal});
+    if (url.endsWith('/notifications/summary')) return Response.json({unread_count: 3, latest_id: 'one'});
+    if (pending) return new Promise((resolve) => { release = () => resolve(Response.json({firing: {total: 99, critical: 99}})); });
+    return fail ? new Response('{}', {status: 503}) : Response.json({firing});
+  };
+  const account = {user: {id: 'alert-admin', username: 'Admin', must_change_password: false}, csrf_token: 'csrf', expires_at: ''};
+  setSession({user: null, csrf_token: '', expires_at: ''});
+  const {initNotifications, refreshNotifications} = await import('../src/console/notifications.js');
+  const stop = initNotifications();
+  try {
+    await refreshNotifications(); assert.equal(calls.length, 0);
+    setSession(account); await flush();
+    assert.equal(dom.timers.size, 1);
+    assert.equal(badge.hidden, false); assert.equal(badge.textContent, '24');
+    assert.equal(badge.classList.contains('critical'), true);
+    assert.equal(entry.getAttribute('aria-label'), 'Alerts, 24 firing');
+    firing = {total: 4, critical: 0}; await refreshNotifications();
+    assert.equal(badge.classList.contains('critical'), false);
+    fail = true; await refreshNotifications();
+    assert.equal(badge.textContent, '4'); assert.equal(entry.classList.contains('stale'), true);
+    assert.equal(entry.getAttribute('aria-label'), 'Alerts, 4 firing, stale');
+    fail = false; firing = {total: 0, critical: 0}; await refreshNotifications();
+    assert.equal(badge.hidden, true); assert.equal(entry.classList.contains('stale'), false);
+    pending = true; const work = refreshNotifications(); await flush();
+    const inflight = calls.at(-1);
+    setSession({user: null, csrf_token: '', expires_at: ''});
+    assert.equal(inflight.signal.aborted, true); assert.equal(dom.timers.size, 0);
+    release(); await work; assert.equal(badge.hidden, true); assert.equal(badge.textContent, '0');
+    const count = calls.length; await refreshNotifications(); assert.equal(calls.length, count);
+    setSession({...account, user: {...account.user, must_change_password: true}}); await flush();
+    assert.equal(calls.length, count); assert.equal(dom.timers.size, 0);
+  } finally {
+    stop(); setSession({user: null, csrf_token: '', expires_at: ''}); dom.restore();
+    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+  }
 });

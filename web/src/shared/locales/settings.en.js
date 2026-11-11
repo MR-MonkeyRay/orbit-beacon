@@ -1,4 +1,6 @@
 export default {
+  'settings.apiTokens': 'API tokens',
+  'settings.backupsExport': 'Backups & export',
   'announcements.title': 'Announcements',
   'announcements.add': 'Add announcement',
   'announcements.edit': 'Edit announcement',
@@ -16,7 +18,7 @@ export default {
   'settings.administrators': 'Administrators',
   'settings.groups': 'Groups',
   'settings.audit': 'Audit log',
-  'settings.data': 'Data operations',
+  'settings.data': 'Data',
   'settings.publicPage': 'Status page',
   'settings.settingsSections': 'Settings sections',
   'settings.publicLoading': 'Loading status page settings…',

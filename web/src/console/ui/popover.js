@@ -1,4 +1,4 @@
-// Shared dismissal for non-modal popovers. Owners keep their own opening and focus rules.
+// 非模态浮层共用的关闭逻辑；打开与焦点规则由各自调用方负责。
 export function dismissPopover(root, {trigger, panel, signal, closeOnTab = false}) {
   const close = () => {
     panel.hidden = true;

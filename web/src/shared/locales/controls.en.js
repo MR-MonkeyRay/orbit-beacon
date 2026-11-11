@@ -1,4 +1,5 @@
 export default {
+  'controls.theme': 'Theme',
   'controls.live.reconnecting': 'Reconnecting…',
   'controls.language': 'Language',
   'controls.language.preference': 'Language: {preference}',

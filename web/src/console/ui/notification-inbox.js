@@ -1,6 +1,6 @@
 import {errorText} from '../../shared/errors.js';
 import {formatList, t, getLocale} from '../i18n.js';
-import {h} from '../../shared/dom.js';
+import {h, icon} from '../../shared/dom.js';
 import {formatBytes, when} from '../format.js';
 import {formatMetricValue, metricLabel, severityLabel} from '../lib/alert-utils.js';
 import {taskCategoryKey, taskStateKey} from '../lib/task-labels.js';
@@ -9,6 +9,23 @@ import {modal} from './dialogs.js';
 import {nextCursor as pageCursor} from './pager.js';
 
 const requestOptions = (signal, extra = {}) => ({navigation: false, signal, ...extra});
+
+// 接口快照在规则或节点删除后仍保留其 ID。
+// 同一规则、同一状态、距组内第一条不超过十分钟的告警通知合并；组位置取第一条出现处。
+// 同一时刻多条规则会交替出现，因此不要求相邻。
+export function groupNotifications(entries) {
+  const groups = [];
+  const open = new Map();
+  for (const entry of entries) {
+    const key = entry.kind === 'alert' && entry.details?.rule_id ? `${entry.details.rule_id}\n${entry.transition}` : null;
+    const group = key && open.get(key);
+    if (group && Math.abs(Date.parse(group[0].created_at) - Date.parse(entry.created_at)) <= 600000) { group.push(entry); continue; }
+    const created = [entry];
+    groups.push(created);
+    if (key) open.set(key, created);
+  }
+  return groups;
+}
 
 export function createNotificationInbox({api, isActive, isStale, failureText, refreshSummary, openTaskDetails}) {
   let closed = false;
@@ -20,6 +37,8 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
   let listRequest;
   let detailRequest;
   let readAllRequest;
+  const groupRequests = new Map();
+  const expanded = new Set();
   let selected = null;
   let component;
   let loaded = false;
@@ -69,6 +88,8 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
   function stopRequests() {
     listRequest?.abort(); listRequest = null;
     detailRequest?.abort(); detailRequest = null;
+    for (const controller of groupRequests.values()) controller.abort();
+    groupRequests.clear();
     readAllRequest?.abort(); readAllRequest = null;
     markAllButton.disabled = false;
     clearComponent();
@@ -77,7 +98,7 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
     close: () => { stopRequests(); dialog.close('session'); },
     pause: stopRequests,
     resume: () => { if (selected) showDetail(selected); else loadList(); },
-    refresh: () => { if (selected || readAllRequest) refreshPending = true; else loadList(); },
+    refresh: () => { if (selected || readAllRequest || groupRequests.size) refreshPending = true; else loadList(); },
     setStale: (value) => { status.hidden = !value; status.textContent = value ? failureText() : ''; }
   };
   handle.closed = dialog.closed;
@@ -87,6 +108,8 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
   function changeFilter(value) {
     if (unread === value && !selected) return;
     unread = value; entries = []; nextCursor = null; hasMore = false; readThrough = null; loaded = false; selected = null;
+    for (const controller of groupRequests.values()) controller.abort();
+    groupRequests.clear();
     detailRequest?.abort(); detailRequest = null; clearComponent(); detail.hidden = true; toolbar.hidden = false; list.hidden = false; loadList();
   }
   function renderList() {
@@ -95,15 +118,67 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
     markAllButton.disabled = !readThrough || Boolean(readAllRequest);
     moreButton.hidden = !hasMore || Boolean(selected);
     moreButton.disabled = Boolean(listRequest);
-    list.replaceChildren(...entries.map((notification) => button('', {className: 'notification-row', onClick: () => showDetail(notification.id)})));
-    for (let index = 0; index < entries.length; index += 1) {
-      const notification = entries[index];
-      list.children[index].append(h('span', {class: 'notification-row-title'}, notificationTitle(notification)),
+    const row = (notification) => {
+      const control = button('', {className: 'notification-row', onClick: () => showDetail(notification.id)});
+      control.append(h('span', {class: 'notification-row-title'}, notificationTitle(notification)),
         h('span', {class: 'notification-row-meta'}, h('span', {class: notification.read ? 'notification-read' : 'notification-unread'}, notification.read ? t('notifications.read') : t('notifications.unread')), when(notification.created_at)),
         notification.kind === 'alert' ? h('span', {class: 'notification-row-subject'}, notification.details?.node_name || notification.details?.node_id || t('notifications.unknownNode')) : h('span', {class: 'notification-row-subject'}, categories(notification.details?.categories)));
-    }
+      return control;
+    };
+    list.replaceChildren(...groupNotifications(entries).map((group) => {
+      if (group.length === 1) return row(group[0]);
+      const first = group[0];
+      const nodes = new Set(group.map((item) => item.details.node_id));
+      const isRead = group.every((item) => item.read);
+      const members = h('div', {id: `notification-group-${first.id}`, hidden: !expanded.has(first.id)}, group.map(row));
+      const toggle = button('', {id: `notification-toggle-${first.id}`, className: 'notification-row', onClick: () => {
+        members.hidden = !members.hidden;
+        toggle.setAttribute('aria-expanded', String(!members.hidden));
+        chevron.replaceChildren(icon(members.hidden ? 'right' : 'up'));
+        if (members.hidden) expanded.delete(first.id);
+        else { expanded.add(first.id); void markGroup(group, readState); }
+      }});
+      const chevron = h('span', {class: 'notification-expander', 'aria-hidden': 'true'}, icon(members.hidden ? 'right' : 'up'));
+      const readState = h('span', {class: isRead ? 'notification-read' : 'notification-unread', role: 'status'}, t(isRead ? 'notifications.read' : 'notifications.unread'));
+      toggle.setAttribute('aria-expanded', String(!members.hidden));
+      toggle.setAttribute('aria-controls', members.id);
+      toggle.append(h('span', {class: 'notification-row-title'}, chevron, `${notificationTitle(first)} · ${t('notifications.nodeCount', {count: nodes.size})}`),
+        h('span', {class: 'notification-row-meta'}, readState, when(first.created_at)));
+      const mark = button(t('notifications.markGroupRead'), {id: `notification-read-${first.id}`, small: true, disabled: isRead, onClick: () => markGroup(group, readState)});
+      return h('section', {class: 'notification-group'}, toggle, mark, members);
+    }));
     if (!entries.length) list.append(h('p', {class: 'empty'}, loaded ? (unread ? t('notifications.noUnread') : t('notifications.noNotifications')) : t('notifications.notificationsLoading')));
   }
+  async function markGroup(group, status) {
+    if (!alive() || groupRequests.has(group[0].id) || group.every((item) => item.read)) return;
+    const controller = new AbortController();
+    const id = group[0].id;
+    groupRequests.set(id, controller);
+    try {
+      // A group is a presentation of individual notifications; persist every member's read flag.
+      for (const item of group.filter((item) => !item.read)) {
+        await api(`/notifications/${encodeURIComponent(item.id)}/read`, requestOptions(controller.signal, {method: 'PATCH', body: {read: true}}));
+        if (!alive() || groupRequests.get(id) !== controller) return;
+        item.read = true;
+      }
+      const focus = list.contains(document.activeElement) ? document.activeElement?.id : null;
+      renderList();
+      if (focus) {
+        const target = document.getElementById(focus);
+        (target?.disabled ? document.getElementById(`notification-toggle-${id}`) : target)?.focus();
+      }
+      refreshSummary();
+    } catch (error) {
+      if (alive() && groupRequests.get(id) === controller && error.name !== 'AbortError') {
+        status.textContent = t('notifications.readSaveFailed', {error: errorText(error)});
+        refreshSummary();
+      }
+    } finally {
+      if (groupRequests.get(id) === controller) groupRequests.delete(id);
+      if (alive() && !selected && !groupRequests.size && refreshPending) loadList();
+    }
+  }
+
   async function loadList(append = false) {
     if (!alive() || selected || append && (!hasMore || !nextCursor || listRequest)) return;
     listRequest?.abort();

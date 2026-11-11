@@ -110,3 +110,17 @@ test('dialog dirty state detects routing changes beyond the first selected chann
     await dialog.closed;
   } finally { dom.restore(); }
 });
+
+test('shared menu/select locale change path confirms before writing and reloads only on success', async () => {
+  const dom = installDOM();
+  try {
+    const {changeLocalePreference} = await import('../src/shared/locale-select.js');
+    const events = [];
+    localStorage.setItem = (key, value) => events.push([key, value]);
+    const hooks = {beforeChange: async () => { events.push('confirm'); return true; }, reload: () => events.push('reload')};
+    assert.equal(await changeLocalePreference('en', {...hooks, beforeChange: async () => false}), false);
+    assert.deepEqual(events, []);
+    assert.equal(await changeLocalePreference('en', hooks), true);
+    assert.deepEqual(events, ['confirm', ['orbitbeacon-locale', 'en'], 'reload']);
+  } finally { dom.restore(); }
+});

@@ -307,3 +307,16 @@ for (const kind of ['cleanup', 'compact']) {
     }
   });
 }
+
+test('embedded storage cleanup retains its controls without a second page heading', async () => {
+  const state = setup();
+  let page;
+  try {
+    page = dataManagementPage({embedded: true});
+    state.dom.body.append(page.element); page.attach(); await flush();
+    assert.equal(page.element.querySelector('h1'), null);
+    assert.ok(action(page.element, 'data.management.refresh'));
+    assert.ok(compactAction(page.element, 'main'));
+    assert.ok(action(page.element, 'data.management.clean'));
+  } finally { page?.detach(); state.restore(); }
+});

@@ -29,7 +29,7 @@ npm test
 | `src/console/pages/` | 页面及分区 |
 | `src/console/ui/` | 表单、对话框、图表等复用组件 |
 | `src/console/lib/` | 节点列表、批量操作、告警与注册等辅助逻辑 |
-| `src/console/api.js`、`live.js`、`notifications.js` | 会话/CSRF、私有实时订阅、站内通知 controller |
+| `src/console/api.js`、`live.js`、`notifications.js` | 会话/CSRF、私有实时订阅、站内通知与告警摘要 controller |
 | `src/shared/` | 实时传输、SSE 解析、新鲜度、DOM、明暗模式与设计 token |
 | `src/shared/locales/` | `zh-CN` / `en` 语言目录，控制台与状态页共用 |
 | `src/public/` | 公开数据校验、状态页生命周期与实时更新 |
@@ -66,8 +66,11 @@ CDN 上传 `internal/server/webui/dist/_app/assets/`，保持目录层级，并�
 - 可见文案、校验、日期与数字使用应用语言，不依赖浏览器原生校验文本。语言选择按浏览器偏好，其他语言回退英文；同源 `orbitbeacon-locale` 保存“跟随系统 / 中文 / English”，不写入账户。
 - 切换语言确认草稿后整页重载并保留 URL；取消、保存失败或操作进行中不切换。其他标签页修改偏好不自动重载当前页。主题使用 `orbitbeacon-theme`。
 - 页面复用 `shared/live.js`，私有订阅通过 `console/live.js`；实时回退、状态和会话边界见[实时传输](../docs/architecture.md#实时传输)、[安全](../docs/architecture.md#安全)，不在页面各自实现。
-- 取消导航、隐藏或退出时停止请求与计时器；阻止迟到响应回写。通知摘要共用单个 controller，失败保留旧数并标记已过期。
+- 取消导航、隐藏或退出时停止请求与计时器；阻止迟到响应回写。通知与告警摘要共用单个 15 秒 controller，失败保留旧数并标记已过期。
 - 节点详情设置页签的分段直达为 `#settings-details`、`#settings-public`、`#settings-agent`、`#settings-enrollment`，旧哈希 `#details`、`#public`、`#agent`、`#enrollment` 仍然有效。
+- 侧栏分监控、管理和底部工具；搜索保留 Ctrl/⌘K。用户菜单收纳语言、主题和退出登录。
+- 设置“数据”分“备份与导出”“存储与清理”；`/data` 替换跳转到 `/settings#data-storage`，路由清单仍保留 `/data`。API 令牌与全局限额位于 `/settings#api-tokens`。
+- 通知列表仅合并已加载列表中连续、同一 `details.rule_id` 与 `transition`、首尾不超过 10 分钟的告警通知；展开或标为已读会逐项持久化组内已读状态。节点数按 `details.node_id` 去重，详情保留每条通知。
 - 保留页签哈希与详情直达：任务 `/settings?task=<uuid>#data`，告警 `/alerts?event=<uuid>#history`；详情不依赖列表当前页。
 - 下载用普通同源附件链接。恢复密码仅主动请求，30 秒无交互遮罩，关闭或导航时清除，不放入列表、日志或初始 HTML；归档操作见[部署指南](../deploy/README.md#导出与备份)。
 - 字段、认证、错误码与实时帧格式见[接口契约（OpenAPI）](../api/openapi.yaml)，此处不重复。

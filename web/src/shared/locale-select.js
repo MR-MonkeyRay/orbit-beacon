@@ -26,17 +26,10 @@ export function localeSelect({beforeChange = async () => true, onError = () => {
     pending = true;
     syncBusy();
     try {
-      if (!(await beforeChange())) { select.value = preference; return; }
-      try { setLocalePreference(next); }
-      catch {
-        select.value = preference;
-        onError(Object.assign(new Error('Could not save language preference'), {code: 'locale_storage_failed'}));
-        return;
-      }
+      if (!(await changeLocalePreference(next, {beforeChange, reload, onError}))) { select.value = preference; return; }
       preference = next;
       select.title = t('controls.language.preference', {preference: preferenceNames[next]});
       select.setAttribute('aria-label', select.title);
-      reload();
     } catch (error) {
       select.value = preference;
       onError(error);
@@ -47,4 +40,18 @@ export function localeSelect({beforeChange = async () => true, onError = () => {
   });
   syncBusy();
   return select;
+}
+
+// 公开页下拉与控制台用户菜单共用同一确认、存储与重载流程。
+export async function changeLocalePreference(next, {beforeChange = async () => true, reload = () => location.reload(), onError = () => {}} = {}) {
+  try {
+    if (!(await beforeChange())) return false;
+    try { setLocalePreference(next); }
+    catch {
+      onError(Object.assign(new Error('Could not save language preference'), {code: 'locale_storage_failed'}));
+      return false;
+    }
+    reload();
+    return true;
+  } catch (error) { onError(error); return false; }
 }
