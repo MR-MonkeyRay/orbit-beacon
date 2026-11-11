@@ -647,3 +647,7 @@
   padding: var(--sp-control) var(--sp-content);
   border-top: 1px solid var(--line);
 }
+
+.node-summary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-tight); margin-top: var(--sp-inline); color: var(--ink-muted); font-size: var(--fs-sm); }
+.node-summary .cell-tags { display: inline-flex; flex-wrap: wrap; gap: var(--sp-tight); }
+.node-settings-section>h2,.node-enrollments>h3 { margin: 0; scroll-margin-top: var(--sp-section); }

@@ -2,10 +2,9 @@ import {t} from '../i18n.js';
 import {h, icon} from '../../shared/dom.js';
 import {copyElementText} from '../../shared/clipboard.js';
 import {api, getNavigationSignal, groupsList, invalidate, onSession, session} from '../api.js';
-import {displayStatus, absoluteWhen, shortID, when} from '../format.js';
+import {displayStatus, absoluteWhen, shortID} from '../format.js';
 import {connectConsoleLive} from '../live.js';
-import {ignoreNavigationCancellation, refresh} from '../router.js';
-import {callout, iconButton, link, liveStatus, pageHead, panel, patchStatusBadge, readonlyFacts, statusBadge} from '../ui/components.js';
+import {callout, iconButton, link, liveStatus, pageHead, panel, patchStatusBadge, statusBadge} from '../ui/components.js';
 import {toast} from '../ui/feedback.js';
 import {field, input, onSubmit, saveBar, select, tagEditor, textarea, trackDirty, validateBytes} from '../ui/forms.js';
 import {tabSet} from '../ui/tabs.js';
@@ -59,12 +58,22 @@ export async function nodePage() {
   let billingSettings = trafficSettings;
   let probes;
   let observedRuntime = runtime.runtime;
-  let detailsView;
+  let tickets;
   let agent;
   let commands;
   const badge = statusBadge(displayStatus(node));
   const connection = liveStatus();
-  const actions = lifecycleActions(node);
+  const actions = lifecycleActions(node, () => tickets?.reload());
+  const summary = h('div', {class: 'node-summary'});
+  const updateSummary = () => {
+    const group = groups.find((item) => item.id === node.group_id);
+    const parts = [group?.name || (node.group_id ? t('nodes.unknownID', {id: shortID(node.group_id)}) : null), node.region, node.provider,
+      node.tags?.length ? h('span', {class: 'cell-tags'}, node.tags.map((tag) => h('span', {class: 'tag static'}, tag))) : null,
+      node.created_at ? h('span', null, t('nodes.added'), ' ', absoluteWhen(node.created_at)) : null,
+      node.last_seen ? h('span', null, t('nodes.lastSeen'), ' ', absoluteWhen(node.last_seen)) : null].filter(Boolean);
+    summary.replaceChildren(...parts.flatMap((part, index) => index ? [h('span', {'aria-hidden': 'true'}, '·'), part] : [part]));
+  };
+  updateSummary();
   const deletedNotice = h('div', {class: 'node-deleted-notice', hidden: true}, callout(t('nodes.deletedNotice')));
   const userID = session.user?.id;
   const unsubscribe = onSession((current) => {
@@ -84,7 +93,7 @@ export async function nodePage() {
         if (node.deleted) sample.close();
       }
       return {element: h('div', {class: 'stack'}, sample.element,
-        history ||= historyPanel(id, signal, currentLatest), availability ||= availabilityPanel(id, signal)),
+        availability ||= availabilityPanel(id, signal), history ||= historyPanel(id, signal, currentLatest)),
       attach: sample.attach, detach: sample.detach};
     }},
     {id: 'traffic', label: t('nodes.traffic'), icon: 'cloud', build: () => {
@@ -97,25 +106,36 @@ export async function nodePage() {
       return h('div', {class: 'stack'}, traffic, billing);
     }},
     {id: 'probes', label: t('nodes.probes'), icon: 'check', build: () => probes ||= probesPanel(id, signal)},
-    {id: 'details', label: t('nodes.details'), icon: 'info', build: () => {
-      detailsView = detailsTab(node, groups);
-      return detailsView.element;
-    }},
-    {id: 'public', label: t('nodes.publicPage'), icon: 'globe', build: () => publicTab(node, publicSettings)},
-    {id: 'agent', label: t('nodes.agentSettings'), icon: 'sliders', build: () => {
+    {id: 'settings', label: t('shell.settings'), icon: 'sliders', hashes: {
+      'settings-details': 'node-details', details: 'node-details',
+      'settings-public': 'node-public', public: 'node-public',
+      'settings-agent': 'node-agent', agent: 'node-agent',
+      'settings-enrollment': 'node-enrollment', enrollment: 'node-enrollment'
+    }, build: () => {
       agent ||= agentSettingsTab(node, observedRuntime);
       agent.snapshot(node, observedRuntime);
-      commands ||= nodeCommandsPanel(node, observedRuntime, signal);
+      commands ||= nodeCommandsPanel(node, observedRuntime, signal, {heading: 'h3'});
       commands.snapshot(node, observedRuntime);
-      return {element: h('div', {class: 'stack'}, agent, commands.element), attach: commands.attach, detach: commands.detach};
-    }},
-    {id: 'enrollment', label: t('nodes.enrollAgent'), icon: 'key', build: () => enrollmentTab(node)}
+      tickets ||= enrollmentTab(node, {listOnly: true});
+      const section = (id, label, ...content) => h('section', {class: 'stack node-settings-section'},
+        h('h2', {id, tabindex: '-1'}, label), content);
+      return {element: h('div', {class: 'stack node-settings'},
+        section('node-details', t('nodes.details'), detailsTab(node, groups, () => {
+          title.textContent = node.name;
+          updateSummary();
+          actions.snapshot();
+        })),
+        section('node-public', t('nodes.publicPage'), publicTab(node, publicSettings)),
+        section('node-agent', 'Agent', agent, commands.element,
+          h('section', {class: 'stack node-enrollments'}, h('h3', {id: 'node-enrollment', tabindex: '-1'}, t('nodes.enrollment.caption')), tickets))),
+        attach: commands.attach, detach: commands.detach};
+    }}
   ], t('nodes.sections'));
   const head = pageHead(node.name, connection.element, actions);
   const title = head.querySelector('h1');
   head.querySelector('.head-actions').classList.add('detail-actions');
   head.firstElementChild.replaceChildren(back,
-    h('div', {class: 'detail-head'}, title, badge), h('div', {class: 'id-chip'}, idText, copy));
+    h('div', {class: 'detail-head'}, title, badge), summary, h('div', {class: 'id-chip'}, idText, copy));
   const root = h('div', null, head,
     deletedNotice, tabs);
   const lockDeleted = () => {
@@ -127,9 +147,8 @@ export async function nodePage() {
       }
     }
     for (const control of actions.querySelectorAll('button')) control.disabled = true;
-    const enrollment = root.querySelector('#panel-enrollment');
+    const enrollment = root.querySelector('.node-enrollments');
     for (const control of enrollment?.querySelectorAll('button') || []) control.disabled = true;
-    root.querySelector('#tab-enrollment').disabled = true;
   };
   root.addEventListener('submit', (event) => {
     if (node.deleted) { event.preventDefault(); event.stopImmediatePropagation(); }
@@ -148,7 +167,6 @@ export async function nodePage() {
         deletionObserver.observe(root, {childList: true, subtree: true});
         deletedNotice.hidden = false;
         patchStatusBadge(badge, 'deleted');
-        detailsView?.snapshot(node);
         currentLatest = null;
         sample?.snapshot(null);
         sample?.close();
@@ -161,7 +179,7 @@ export async function nodePage() {
       if (title.textContent !== node.name) title.textContent = node.name;
       patchStatusBadge(badge, displayStatus(node));
       actions.snapshot();
-      detailsView?.snapshot(node);
+      updateSummary();
       currentLatest = data.latest;
       history?.snapshot(currentLatest);
       currentServerTime = frame.server_time;
@@ -174,44 +192,25 @@ export async function nodePage() {
 }
 
 // 接入可编辑区块共享的保存/放弃行为。
-function editableForm(form, controls, save, node) {
+function editableForm(form, controls, save, node, discard) {
   trackDirty(form, controls);
   const syncDirty = form.syncDirty;
   form.syncDirty = () => {
     syncDirty();
     if (node.deleted) for (const control of form.querySelectorAll('button')) control.disabled = true;
   };
-  controls.discard.addEventListener('click', () => { if (!node.deleted) void refresh().catch(ignoreNavigationCancellation); });
+  controls.discard.addEventListener('click', () => { if (!node.deleted) discard(); });
   onSubmit(form, controls.save, async () => {
     if (node.deleted) return;
     const message = await save();
     if (node.deleted) return;
     form.markClean();
-    await refresh();
     toast(message);
   });
 }
 
-function detailsTab(node, groups) {
+function detailsTab(node, groups, onSaved) {
   const group = groups.find((item) => item.id === node.group_id);
-  const summaryValues = readonlyFacts();
-  const summaryBadge = statusBadge(displayStatus(node));
-  const snapshot = (current) => {
-    const currentGroup = groups.find((item) => item.id === current.group_id);
-    patchStatusBadge(summaryBadge, current.deleted ? 'deleted' : displayStatus(current));
-    summaryValues.update([
-      [t('nodes.presence'), summaryBadge],
-      [t('nodes.lastSeen'), current.last_seen ? absoluteWhen(current.last_seen) : t('nodes.never')],
-      [t('nodes.group'), currentGroup ? currentGroup.name : current.group_id ? t('nodes.unknownID', {id: shortID(current.group_id)}) : t('nodes.ungrouped')],
-      [t('nodes.region'), current.region], [t('nodes.provider'), current.provider],
-      [t('nodes.tags'), current.tags.length ? h('div', {class: 'cell-tags'}, current.tags.map((tag) => h('span', {class: 'tag static'}, tag))) : null],
-      [t('nodes.added'), when(current.created_at)], [t('nodes.expiresOn'), current.expires_on], [t('nodes.notes'), current.notes]
-    ]);
-  };
-  snapshot(node);
-  const summary = panel(t('nodes.summary'), {}, summaryValues.element);
-  summary.classList.add('split-aside');
-
   const name = input({name: 'name', required: true, value: node.name, id: 'node-name'});
   validateBytes(name, 1, 255, t('nodes.name'));
   const region = input({name: 'region', value: node.region, id: 'node-region'});
@@ -233,10 +232,18 @@ function detailsTab(node, groups) {
     const result = await api(`/nodes/${encodeURIComponent(node.id)}`, {method: 'PATCH', body: {
       name: name.value, expires_on: expiresOn.value || null, notes: notes.value, region: region.value, provider: provider.value, group_id: groupID.value || null, tags: tagBox.getValue()
     }});
+    if (node.deleted) return;
+    Object.assign(node, result);
     invalidate('nodes');
+    onSaved();
     return t('nodes.saved', {name: result.name});
-  }, node);
-  return {element: h('div', {class: 'stack'}, h('div', {class: 'split'}, summary, panel(t('nodes.editDetails'), {}, form))), snapshot};
+  }, node, () => {
+    name.value = node.name; region.value = node.region; provider.value = node.provider; groupID.value = node.group_id || '';
+    expiresOn.value = node.expires_on || ''; notes.value = node.notes;
+    tagBox.setValue(node.tags);
+    form.markClean();
+  });
+  return panel(null, {}, form);
 }
 
 function publicPreview() {
@@ -259,7 +266,7 @@ function publicTab(node, settings) {
     ? callout(t('nodes.publicUnavailable', {status: t(`common.status.${node.status}`)})) : null;
   const privacy = callout(t('nodes.privacy'), 'info');
   const preview = publicPreview();
-  const previewPanel = panel(t('nodes.preview'), {action: h('a', {class: 'btn btn-sm', href: '/'}, icon('external'), t('nodes.viewPublic'))}, preview);
+  const previewPanel = panel(t('nodes.preview'), {heading: 'h3', action: h('a', {class: 'btn btn-sm', href: '/'}, icon('external'), t('nodes.viewPublic'))}, preview);
   previewPanel.classList.add('split-aside');
 
 
@@ -288,9 +295,15 @@ function publicTab(node, settings) {
     h('div', {class: 'form-row'}, field(t('nodes.publicRegion'), region), field(t('nodes.publicProvider'), provider)),
     controls.bar);
   editableForm(form, controls, async () => {
-    await api(`/nodes/${encodeURIComponent(node.id)}/public-settings`, {method: 'PATCH', body: {enabled: enabled.checked, name: name.value, region: region.value, provider: provider.value}});
+    const result = await api(`/nodes/${encodeURIComponent(node.id)}/public-settings`, {method: 'PATCH', body: {enabled: enabled.checked, name: name.value, region: region.value, provider: provider.value}});
+    if (node.deleted) return;
+    Object.assign(settings, result);
     return enabled.checked ? t('nodes.publicSaved') : t('nodes.publicHidden');
-  }, node);
-  // 左侧面板标题与“公开页”标签页同名，省略；预览面板保留自己的标题。
+  }, node, () => {
+    enabled.checked = settings.enabled; name.value = settings.name; region.value = settings.region; provider.value = settings.provider;
+    sync();
+    form.markClean();
+  });
+  // 分段标题已标识状态页设置，预览保留自己的标题。
   return h('div', {class: 'split'}, panel(null, {}, h('div', {class: 'stack'}, hidden, privacy, form)), previewPanel);
 }

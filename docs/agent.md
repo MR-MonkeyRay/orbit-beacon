@@ -12,7 +12,7 @@
 
 ## 注册票据
 
-新增节点后自动显示一次性部署字符串和完整命令；已有节点在详情“注册 Agent / Enroll Agent”签发，不重复创建。关闭弹窗会清空明文，到期后须重新签发。
+新增节点后自动显示一次性部署字符串和完整命令；已有节点在详情“更多 → 注册 Agent / More → Enroll Agent”签发，不重复创建。关闭弹窗会清空明文，到期后须重新签发。
 
 - 新签发票据统一有效 30 分钟，完整激活事务首次提交成功后立即失效；再次激活返回 `403 forbidden`，包括同安装、同凭据的重试。
 - “设置 → 分组 / Settings → Groups”的“部署 Agent / Deploy Agent”每次为该组部署一个 Agent，不再提供多次使用票据。历史票据保留原期限与使用计数，但只要已使用就不能再次激活。
@@ -137,7 +137,7 @@ Alpine/OpenRC 用 `sudo rc-service orbitbeacon-agent status`；手动启用并�
 
 `doctor` 检查配置、身份文件、HTTP/HTTPS 连通性和采集（HTTPS 同时验证证书），**不注册、不上报、不验证节点凭据**；`authentication: "not_checked"` 是预期结果。
 
-在控制台查看最近上报与样本，“Agent 设置 / Agent settings”查看实际运行参数；状态含义见[状态与历史](architecture.md#状态与历史)，公开节点步骤见[快速开始](../README.md#6-公开节点)。
+在控制台查看最近上报与样本，节点详情“设置 → Agent / Settings → Agent”查看实际运行参数；状态含义见[状态与历史](architecture.md#状态与历史)，公开节点步骤见[快速开始](../README.md#6-公开节点)。
 
 常见问题：
 

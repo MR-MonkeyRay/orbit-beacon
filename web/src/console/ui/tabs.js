@@ -14,7 +14,8 @@ function reveal(button) {
 }
 
 export function tabSet(tabs, label) {
-  const initial = Math.max(0, tabs.findIndex((tab) => `#${tab.id}` === location.hash));
+  const hash = location.hash.slice(1);
+  const initial = Math.max(0, tabs.findIndex((tab) => tab.id === hash || tab.hashes?.[hash]));
   const holder = h('div');
   const buttons = tabs.map((tab) => h('button', {type: 'button', role: 'tab', id: `tab-${tab.id}`, 'aria-controls': `panel-${tab.id}`}, icon(tab.icon), tab.label));
   let lifecycle;
@@ -50,6 +51,9 @@ export function tabSet(tabs, label) {
   });
   select(initial);
   holder.append(panelFor(tabs[initial], false));
+  const section = tabs[initial].hashes?.[hash];
+  const target = section && holder.querySelector(`#${section}`);
+  if (target) { target.dataset.autofocus = ''; target.dataset.sectionLink = ''; }
   // 窄屏下标签条可滚动；保持深链接的标签页可见。
   const list = h('div', {class: 'tabs', role: 'tablist', 'aria-label': label}, buttons);
   // 页面在路由器挂载前就已构建，因此须等待布局完成。
@@ -60,8 +64,17 @@ export function tabSet(tabs, label) {
   requestAnimationFrame(() => revealInitial(120));
   const root = h('div', null, list, holder);
   root.selectTab = (id) => {
-    const index = tabs.findIndex((tab) => tab.id === id);
-    if (index >= 0) return show(index, true);
+    const index = tabs.findIndex((tab) => tab.id === id || tab.hashes?.[id]);
+    if (index < 0) return;
+    return show(index, true).then(() => {
+      if (buttons[index].getAttribute('aria-selected') !== 'true') return;
+      const section = tabs[index].hashes?.[id];
+      const target = section && holder.querySelector(`#${section}`);
+      if (!target) return;
+      history.replaceState(history.state, '', `${location.pathname}${location.search}#${id}`);
+      target.focus({preventScroll: true});
+      target.scrollIntoView({block: 'start', behavior: 'instant'});
+    });
   };
   const signal = getNavigationSignal();
   let mounted = false;

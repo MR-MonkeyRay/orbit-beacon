@@ -34,7 +34,7 @@ export function createNodeDialog() {
       if (!active() || error.name === 'AbortError') return;
       toast(t('nodes.enrollment.issueFailedAfterCreate'), {error: true});
     }
-    if (active()) await go(`/nodes/${encodeURIComponent(node.id)}#enrollment`);
+    if (active()) await go(`/nodes/${encodeURIComponent(node.id)}#settings-enrollment`);
   }).catch(ignoreNavigationCancellation);
   return dialog;
 }

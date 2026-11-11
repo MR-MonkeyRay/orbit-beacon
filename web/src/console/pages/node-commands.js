@@ -12,7 +12,7 @@ const kinds = ['upgrade', 'restart', 'stop'];
 const activeCommand = (command) => ['pending', 'delivered'].includes(command.state);
 const resultCodes = ['disabled_locally', 'unsupported', 'interrupted', 'failed', 'download', 'checksum', 'self_check', 'downgrade', 'rolled_back'];
 
-export function nodeCommandsPanel(node, runtime, signal = getNavigationSignal()) {
+export function nodeCommandsPanel(node, runtime, signal = getNavigationSignal(), {heading = 'h2'} = {}) {
   const path = `/nodes/${encodeURIComponent(node.id)}/commands`;
   const sessionSignal = getSessionSignal();
   let records = [];
@@ -27,7 +27,7 @@ export function nodeCommandsPanel(node, runtime, signal = getNavigationSignal())
   }));
   const body = h('tbody');
   const table = dataTable({columns: [t('nodes.command.kind'), t('nodes.command.status'), t('nodes.command.requestedBy'), t('settings.created'), h('span', {class: 'sr'}, t('settings.actions'))], body, hidden: true});
-  const element = panel(t('nodes.remoteCommands'), {}, h('div', {class: 'head-actions'}, controls), table);
+  const element = panel(t('nodes.remoteCommands'), {heading}, h('div', {class: 'head-actions'}, controls), table);
   const patch = () => {
     controls.forEach((control, index) => {
       const kind = kinds[index];

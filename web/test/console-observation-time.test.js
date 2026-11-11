@@ -17,7 +17,7 @@ test('quiet offline Agent observations retain unambiguous reception time after t
     dom.body.append(view);
     Date.now = () => Date.parse(received) + 86400000;
     const times = view.querySelectorAll('time');
-    assert.equal(times.length, 2, 'offline explanation and Last reported identify the same observation');
+    assert.equal(times.length, 1, 'offline explanation retains its observation time; last report is in the node header');
     for (const time of times) {
       assert.equal(time.textContent, formatTimestamp(new Date(received)));
       assert.equal(time.getAttribute('title'), `${formatFullTimestamp(new Date(received))} (UTC ${new Date(received).toISOString()})`);

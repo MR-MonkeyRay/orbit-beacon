@@ -298,3 +298,27 @@ test('reduced motion navigates without view transitions and restores scroll inst
     assert.deepEqual(scrolls, [{top: 0, behavior: 'instant'}]);
   } finally { env.clean(); }
 });
+
+test('section hash routes focus and scroll the section, while quiet refresh restores the control', async (t) => {
+  const {h} = await import('../src/shared/dom.js');
+  const {tabSet} = await import('../src/console/ui/tabs.js');
+  const env = await routing(t, {hidden: true, routes: [{match: () => true, page: async () => h('div', null,
+    h('h1', {tabindex: '-1'}, 'Node'), tabSet([
+      {id: 'monitor', label: 'Monitor', icon: 'monitor', build: () => h('div')},
+      {id: 'settings', label: 'Settings', icon: 'sliders', hashes: {agent: 'agent-section', 'settings-agent': 'agent-section'}, build: () => h('section', null,
+        h('h2', {id: 'agent-section', tabindex: '-1'}, 'Agent'), h('button', {id: 'agent-control'}, 'Action'))}
+    ], 'Sections'))}]});
+  try {
+    for (const hash of ['agent', 'settings-agent']) {
+      await env.go(`/node#${hash}`);
+      const target = document.getElementById('agent-section');
+      assert.equal(document.activeElement, target);
+      assert.equal(target.scrolledIntoView.block, 'start');
+      const control = document.getElementById('agent-control'); control.focus();
+      await env.refresh();
+      assert.equal(document.activeElement.id, 'agent-control');
+      assert.equal(location.hash, `#${hash}`);
+      assert.equal(document.getElementById('agent-section').scrolledIntoView, undefined);
+    }
+  } finally { env.clean(); }
+});

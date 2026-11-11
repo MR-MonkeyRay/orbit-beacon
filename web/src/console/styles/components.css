@@ -996,3 +996,19 @@ dialog.closing::backdrop {
   gap: var(--sp-inline);
   cursor: pointer;
 }
+
+.menu-button { position: relative; flex: none; }
+.menu-options {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--sp-tight));
+  z-index: var(--z-sticky);
+  min-width: max-content;
+  padding: var(--sp-tight);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.menu-options .menu-item { display: flex; width: 100%; justify-content: flex-start; border: 0; }
+.menu-options .menu-danger { color: var(--bad); }

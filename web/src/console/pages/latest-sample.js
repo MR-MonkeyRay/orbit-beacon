@@ -12,9 +12,8 @@ const bytes = (value) => Number.isSafeInteger(value) && value >= 0;
 // 此视图只更新只读的采样信息。时钟回调只更新过期标记，
 // 不重建采样信息，也不改动数值、输入框或标签页。
 export function latestSamplePanel(node, initial, {signal} = {}) {
-  const sequence = h('span', {class: 'revision'});
   const body = h('div');
-  const element = panel(t('nodes.sample'), {action: sequence}, body);
+  const element = panel(t('nodes.sample'), {}, body);
   let records = [];
   let metricRecords = new Map();
   const values = readonlyFacts();
@@ -45,8 +44,6 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
     if (closed || signal?.aborted) return;
     records = [];
     const nextRecords = new Map();
-    sequence.hidden = !latest;
-    sequence.textContent = latest ? t('nodes.sequence', {value: latest.seq}) : '';
     if (!latest) {
       metricRecords.clear();
       lastReport.replaceChildren();
@@ -85,6 +82,8 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
       [`network:${network.name}`], `network:${network.name}`, number(network.rx_bytes_per_sec) && number(network.tx_bytes_per_sec),
       networkSummary([network])))) : '—';
     const sampled = timestampMillis(latest.sampled_at);
+    const sampledTime = Number.isFinite(sampled) ? absoluteWhen(latest.sampled_at) : null;
+    if (sampledTime) sampledTime.title = `${sampledTime.getAttribute('title')} · ${t('nodes.sequence', {value: latest.seq})}`;
     const entries = [
       [t('nodes.cpu'), metric(['cpu_percent'], 'cpu', number(metrics.cpu_percent) && metrics.cpu_percent <= 100, formatPercent(metrics.cpu_percent))],
       [t('nodes.memory'), metric(['memory_total_bytes', 'memory_available_bytes'], 'memory', memoryValid, memorySummary(metrics))],
@@ -92,7 +91,7 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
       [t('nodes.disk'), disks], [t('nodes.network'), networks],
       [t('nodes.uptime'), metric(['uptime_seconds'], 'uptime', number(metrics.uptime_seconds), formatDuration(metrics.uptime_seconds))],
       [t('nodes.agentVersion'), latest.system?.agent_version || node.agent_version || '—'],
-      [t('nodes.sampled'), Number.isFinite(sampled) ? absoluteWhen(latest.sampled_at) : '—'],
+      [t('nodes.sampled'), sampledTime || '—'],
     ];
     const percent = (value) => number(value) && value <= 100;
     const disk = metrics.disk_io;

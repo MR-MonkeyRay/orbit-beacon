@@ -9,7 +9,7 @@ export function agentSettingsTab(node, runtime) {
   const body = h('div');
   const values = readonlyFacts();
   const empty = h('p', {class: 'text-note'}, t('nodes.agentEmpty'));
-  // 面板标题与“Agent 设置”标签页同名，省略。
+  // Agent 分段已有标题。
   const element = panel(null, {}, guidance, offline, body);
   element.snapshot = (current, observed) => {
     offline.hidden = !observed || current.presence !== 'offline';
@@ -27,8 +27,7 @@ export function agentSettingsTab(node, runtime) {
       [t('nodes.probes'), observed.probe_targets.length ? observed.probe_targets.join('\n') : t('nodes.noneConfigured')],
       [t('nodes.remoteCommands'), observed.remote_commands.length ? observed.remote_commands.map((name) => t(`nodes.command.${name}`)).join(' · ') : t('nodes.none')],
       [t('nodes.disabledFeatures'), observed.disabled_features.length ? observed.disabled_features.map((name) => t(`nodes.feature.${name}`)).join(' · ') : t('nodes.none')],
-      [t('nodes.agentVersion'), current.agent_version],
-      [t('nodes.lastReported'), current.last_seen ? absoluteWhen(current.last_seen) : t('nodes.never')]
+      [t('nodes.agentVersion'), current.agent_version]
     ]);
     if (!body.contains(values.element)) body.replaceChildren(values.element);
   };

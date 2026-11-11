@@ -1,6 +1,7 @@
 import {h} from '../../shared/dom.js';
 import {t} from '../i18n.js';
 import {button, uid} from '../ui/components.js';
+import {dismissPopover} from '../ui/popover.js';
 
 export const NODE_COLUMNS = [
   ['agent_version', 'nodes.agentVersion'], ['last_seen', 'nodes.lastSeen'], ['group', 'nodes.group'],
@@ -31,14 +32,7 @@ export function nodeColumnPicker({columns, onChange, signal}) {
   trigger.setAttribute('aria-controls', panel.id);
   trigger.setAttribute('aria-expanded', 'false');
   const root = h('div', {class: 'column-picker'}, trigger, panel);
-  const close = () => { panel.hidden = true; trigger.setAttribute('aria-expanded', 'false'); };
-  const outside = (event) => { if (!root.contains(event.target)) close(); };
-  root.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !panel.hidden) { event.preventDefault(); event.stopPropagation(); close(); trigger.focus(); }
-  });
-  root.addEventListener('focusout', (event) => { if (!root.contains(event.relatedTarget)) close(); });
-  document.addEventListener('pointerdown', outside);
-  signal?.addEventListener('abort', () => { close(); document.removeEventListener('pointerdown', outside); }, {once: true});
+  dismissPopover(root, {trigger, panel, signal});
   return root;
 }
 

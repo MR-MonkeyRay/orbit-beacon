@@ -310,6 +310,7 @@ export function tagEditor(values) {
     return true;
   };
   box.getValue = () => tags;
+  box.setValue = (values) => { tags = [...values]; entry.value = ''; box.showError(''); render(); };
   box.showError = (message) => {
     error.textContent = message;
     error.hidden = !message;

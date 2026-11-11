@@ -8,8 +8,8 @@
 | --- | --- |
 | 节点指标、历史、探测与可用率 | 节点 / Nodes；节点详情 → 监控 / Monitoring、服务探测 / Service probes |
 | 流量计费与配额告警 | 节点详情 → 流量 / Traffic；告警 / Alerts（配额规则） |
-| Agent 注册、运行设置与远程升级 | 节点详情 → 注册 Agent / Enroll Agent、Agent 设置 / Agent settings；设置 → 分组 / Groups |
-| 状态页、公告、公开字段与主题 | 设置 → 状态页 / Status page；节点详情 → 状态页展示 / Status page listing；构建时选择 `web/themes/<name>` |
+| Agent 注册、运行设置与远程升级 | 节点详情 → 更多 → 注册 Agent / More → Enroll Agent；节点详情 → 设置 → Agent / Settings → Agent；设置 → 分组 / Groups |
+| 状态页、公告、公开字段与主题 | 设置 → 状态页 / Status page；节点详情 → 设置 → 状态页展示 / Settings → Status page listing；构建时选择 `web/themes/<name>` |
 | 告警、静默与通知 | 告警 / Alerts；站内通知 / Notifications |
 | 管理员、两步验证与只读 API 令牌 | 设置 → 管理员 / Administrators、账户 / Account |
 | 加密导出、备份计划、恢复与数据清理 | 设置 → 数据操作 / Data operations；数据管理 / Data management |
@@ -60,11 +60,11 @@ build/orbitbeacon-server health --url http://localhost:8080
 
 ### 5. 注册 Agent
 
-在“节点 / Nodes”添加节点后，复制弹窗中的完整部署命令，在 Agent 主机执行；票据 30 分钟内仅可成功激活一次。已有节点从详情“注册 Agent / Enroll Agent”重新签发，分组入口为该组部署一个 Agent。安装与恢复见 [Agent 指南](docs/agent.md#注册票据)。回到节点详情确认最近上报与样本；注册成功不等于已上报。
+在“节点 / Nodes”添加节点后，复制弹窗中的完整部署命令，在 Agent 主机执行；票据 30 分钟内仅可成功激活一次。已有节点从详情“更多 → 注册 Agent / More → Enroll Agent”重新签发，分组入口为该组部署一个 Agent。安装与恢复见 [Agent 指南](docs/agent.md#注册票据)。回到节点详情确认最近上报与样本；注册成功不等于已上报。
 
 ### 6. 公开节点
 
-在“状态页展示 / Status page listing”填写公开信息，勾选“公开此节点 / Publish this node”。展示资格、公开范围及全站开关规则见[安全](docs/architecture.md#安全)、[实时传输](docs/architecture.md#实时传输)。全站公告在“设置 → 状态页 / Settings → Status page”添加，只在开始时间后显示；设置结束时间后到点隐藏。
+在节点详情“设置 → 状态页展示 / Settings → Status page listing”填写公开信息，勾选“公开此节点 / Publish this node”。展示资格、公开范围及全站开关规则见[安全](docs/architecture.md#安全)、[实时传输](docs/architecture.md#实时传输)。全站公告在“设置 → 状态页 / Settings → Status page”添加，只在开始时间后显示；设置结束时间后到点隐藏。
 
 ## 文档
 

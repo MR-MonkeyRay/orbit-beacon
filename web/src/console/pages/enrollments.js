@@ -68,7 +68,7 @@ export async function issueEnrollment(target, title, isDeleted = () => false) {
   }
 }
 
-export function enrollmentTab(node) {
+export function enrollmentTab(node, {listOnly = false} = {}) {
 
   const list = h('div', {'aria-live': 'polite'});
   const error = h('div', {class: 'callout', role: 'alert', hidden: true});
@@ -118,10 +118,11 @@ export function enrollmentTab(node) {
       if (issue.isConnected && !issue.disabled && !navigation?.aborted && navigation === getNavigationSignal() && epoch === getSessionEpoch()) issue.focus({preventScroll: true});
     }
   }});
-  const content = panel(null, {action: issue}, h('div', {class: 'stack'},
-    h('p', {class: 'text-note'}, t('nodes.enrollment.issueIntro')),
+  const content = panel(null, {action: listOnly ? null : issue}, h('div', {class: 'stack'},
+    listOnly ? null : h('p', {class: 'text-note'}, t('nodes.enrollment.issueIntro')),
     node.status === 'disabled' ? callout(t('nodes.enrollment.disabled')) : null,
     retry, error, list));
+  content.reload = reload;
   reload();
   return content;
 }

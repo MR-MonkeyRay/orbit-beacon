@@ -179,7 +179,7 @@ test('command palette add-node creates once, deploys in a second dialog, then na
   assert.equal(posts.length, 1); assert.deepEqual(JSON.parse(posts[0].body), {name: 'New Host'});
   assert.deepEqual(JSON.parse(env.requests.find((request) => request.url === '/api/v1/enrollments').body), {node_id: id});
   deployment.querySelectorAll('button').find((button) => button.textContent === copy('nodes.close')).click(); await flush();
-  assert.equal(location.pathname, nodePath); assert.equal(location.hash, '#enrollment');
+  assert.equal(location.pathname, nodePath); assert.equal(location.hash, '#settings-enrollment');
   assert.equal(document.querySelector('dialog'), null);
 });
 
@@ -222,7 +222,7 @@ test('failed issuance preserves the new node and navigates to its enrollment pag
   const {createNodeDialog} = await import('../src/console/lib/add-node-dialog.js');
   createNodeDialog(); const dialog = document.querySelector('dialog'); dialog.querySelector('input').value = 'New Host';
   dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush(); await flush();
-  assert.equal(location.pathname, nodePath); assert.equal(location.hash, '#enrollment');
+  assert.equal(location.pathname, nodePath); assert.equal(location.hash, '#settings-enrollment');
   assert.ok(document.querySelector('#toasts').textContent.includes(copy('nodes.enrollment.issueFailedAfterCreate')));
   assert.equal(env.requests.filter((request) => request.url === '/api/v1/nodes' && request.method === 'POST').length, 1);
   assert.equal(env.requests.some((request) => request.method === 'DELETE'), false);

@@ -111,6 +111,7 @@ export class TestElement extends EventTarget {
   showModal() { this.open = true; }
   close(value) { this.open = false; this.returnValue = value; this.dispatchEvent(new Event('close')); }
   select() { this.selected = true; }
+  scrollIntoView(options) { this.scrolledIntoView = options; }
   focus() { globalThis.document.activeElement = this; }
   click() { this.dispatchEvent(new Event('click')); }
 }

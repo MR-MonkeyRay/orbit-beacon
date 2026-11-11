@@ -41,6 +41,9 @@ test('billing mode select submits and discard restores the saved mode', async (t
   const toasts = dom.document.createElement('div');
   toasts.id = 'toasts';
   dom.body.append(toasts, root);
+  const units = elements(root).find((element) => element.name === 'quota_unit');
+  assert.deepEqual(units.options.map((option) => option.textContent), [copy('nodes.bytes'), 'KB', 'MB', 'GB', 'TB']);
+  assert.equal(root.textContent.split(copy('nodes.quotaHint')).length, 2);
   const form = root.querySelector('form');
   const mode = elements(root).find((element) => element.name === 'billing_mode');
   assert.deepEqual(mode.options.map((option) => option.value), ['total', 'max', 'rx', 'tx']);

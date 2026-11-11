@@ -132,7 +132,10 @@ async function render(options = {}) {
   }
   if (options.scroll !== undefined) window.scrollTo({top: options.scroll, behavior: 'instant'});
   const target = view.querySelector('[data-autofocus]') || view.querySelector('h1');
-  if (target) target.focus({preventScroll: true});
+  if (target) {
+    target.focus({preventScroll: true});
+    if (target.dataset.sectionLink !== undefined) target.scrollIntoView({block: 'start', behavior: 'instant'});
+  }
 }
 
 function swap(content, route, mode, token) {

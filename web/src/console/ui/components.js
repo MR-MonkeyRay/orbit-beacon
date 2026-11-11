@@ -34,7 +34,7 @@ export function busy(element, on) {
 export function panel(title, options = {}, ...body) {
   const titleID = title ? uid('panel') : null;
   return h('section', {class: 'panel', 'aria-labelledby': titleID},
-    title || options.action ? h('div', {class: title ? 'panel-head' : 'panel-head panel-head-end'}, title ? h('h2', {id: titleID}, title) : null, options.action) : null,
+    title || options.action ? h('div', {class: title ? 'panel-head' : 'panel-head panel-head-end'}, title ? h(options.heading || 'h2', {id: titleID}, title) : null, options.action) : null,
     h('div', {class: 'panel-body'}, body));
 }
 

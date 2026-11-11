@@ -67,6 +67,7 @@ CDN 上传 `internal/server/webui/dist/_app/assets/`，保持目录层级，并�
 - 切换语言确认草稿后整页重载并保留 URL；取消、保存失败或操作进行中不切换。其他标签页修改偏好不自动重载当前页。主题使用 `orbitbeacon-theme`。
 - 页面复用 `shared/live.js`，私有订阅通过 `console/live.js`；实时回退、状态和会话边界见[实时传输](../docs/architecture.md#实时传输)、[安全](../docs/architecture.md#安全)，不在页面各自实现。
 - 取消导航、隐藏或退出时停止请求与计时器；阻止迟到响应回写。通知摘要共用单个 controller，失败保留旧数并标记已过期。
+- 节点详情设置页签的分段直达为 `#settings-details`、`#settings-public`、`#settings-agent`、`#settings-enrollment`，旧哈希 `#details`、`#public`、`#agent`、`#enrollment` 仍然有效。
 - 保留页签哈希与详情直达：任务 `/settings?task=<uuid>#data`，告警 `/alerts?event=<uuid>#history`；详情不依赖列表当前页。
 - 下载用普通同源附件链接。恢复密码仅主动请求，30 秒无交互遮罩，关闭或导航时清除，不放入列表、日志或初始 HTML；归档操作见[部署指南](../deploy/README.md#导出与备份)。
 - 字段、认证、错误码与实时帧格式见[接口契约（OpenAPI）](../api/openapi.yaml)，此处不重复。
