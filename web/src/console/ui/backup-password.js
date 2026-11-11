@@ -1,6 +1,7 @@
 import {h} from '../../shared/dom.js';
-import {t, getLocale} from '../i18n.js';
+import {t, tParts} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
+import {absoluteWhen} from '../format.js';
 import {api} from '../api.js';
 import {busy, button} from './components.js';
 
@@ -41,7 +42,7 @@ export function backupPassword(task, {signal} = {}) {
       const result = await api(`/tasks/${encodeURIComponent(task.id)}/password`, {method: 'POST', body: {}, signal: current.signal});
       if (disposed || signal?.aborted || epoch !== generation || request !== current) return null;
       secret = result;
-      status.textContent = t('data.password.availableUntil', {time: new Date(result.password_expires_at).toLocaleString(getLocale())});
+      status.replaceChildren(...tParts('data.password.availableUntil', {time: absoluteWhen(result.password_expires_at)}));
       touch();
       return result;
     } catch (error) {

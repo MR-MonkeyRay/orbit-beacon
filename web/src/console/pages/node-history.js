@@ -3,13 +3,14 @@ import {errorText} from '../../shared/errors.js';
 import {h} from '../../shared/dom.js';
 import {api} from '../api.js';
 import {chart} from '../ui/chart.js';
-import {link, panel} from '../ui/components.js';
+import {button, link, panel} from '../ui/components.js';
 import {select} from '../ui/forms.js';
 import {historyError} from '../ui/history-error.js';
 import {panelLifecycle} from '../ui/polling-panel.js';
 
 const STORAGE_KEY = 'orbitbeacon.history.range';
 const RANGES = ['1h', '6h', '24h', '7d', '30d', '90d'];
+const RANGE_MS = Object.fromEntries(RANGES.map((range) => [range, Number.parseInt(range, 10) * (range.endsWith('h') ? 3600000 : 86400000)]));
 const CHARTS = [
   {title: t('nodes.cpu'), unit: 'percent', metrics: [['cpu_percent', t('nodes.cpu')]]},
   {title: t('nodes.memory'), unit: 'percent', metrics: [['memory_used_percent', t('nodes.memory')]]},
@@ -50,6 +51,12 @@ export function historyPanel(id, signal, latest) {
       for (const control of controls) control.setAttribute('aria-pressed', String(control.dataset.range === range));
       load();
     }}, t(value.endsWith('h') ? 'nodes.range.hours' : 'nodes.range.days', {count: Number.parseInt(value, 10)})));
+  const shortSpan = h('div', {class: 'history-short-span text-note', hidden: true},
+    h('span', null, t('nodes.historyShortSpan')),
+    button(t('nodes.historyShowHour'), {small: true, onClick: () => {
+      controls[0].focus();
+      controls[0].click();
+    }}));
   const selector = h('div', {class: 'segmented', role: 'group', 'aria-label': t('nodes.historyRange')}, controls);
   const loadControls = ['load1', 'load5', 'load15'].map((value) => h('button', {type: 'button', id: `history-load-${value}`, dataset: {metric: value},
     'aria-pressed': String(value === loadMetric), onclick: () => {
@@ -68,7 +75,7 @@ export function historyPanel(id, signal, latest) {
   const metricSection = (item, content) => h('section', {class: 'history-metric', 'aria-label': t('nodes.historyAria', {title: item.title})},
     item.unit === 'load' ? h('div', {class: 'head-actions'}, h('h3', null, item.title), loadSelector) : h('h3', null, item.title), content);
 
-  const root = panel(t('nodes.history'), {action: selector}, diskSelector, status, charts);
+  const root = panel(t('nodes.history'), {action: selector}, diskSelector, status, shortSpan, charts);
   // Paths follow the current sample, including updates from the node live stream.
   root.snapshot = (sample) => {
     const next = [...new Set((sample?.metrics?.disks || []).map((item) => item.path))];
@@ -92,6 +99,7 @@ export function historyPanel(id, signal, latest) {
     const requestedDisk = disk;
     const requestedCharts = CHARTS.map((item) => item.unit === 'load'
       ? {...item, metrics: [[loadMetric, t('nodes.load')]]} : item);
+    shortSpan.hidden = true;
     status.textContent = t('nodes.historyLoading');
     charts.setAttribute('aria-busy', 'true');
     // Keep rendered charts and their controls until the replacement data arrives.
@@ -112,6 +120,7 @@ export function historyPanel(id, signal, latest) {
         if (error.status === 404 && !request.signal.aborted && !signal?.aborted && controller === request) {
           lifecycle.dispose();
           selector.hidden = true;
+          shortSpan.hidden = true;
           diskSelector.hidden = true;
           charts.replaceChildren();
           charts.setAttribute('aria-busy', 'false');
@@ -123,6 +132,7 @@ export function historyPanel(id, signal, latest) {
     // 请求完成后再读取焦点，因为用户可能已在等待期间聚焦某个图表。
     const focusedID = charts.contains(document.activeElement) ? document.activeElement.id : null;
     const selectedTime = Number(document.activeElement?.dataset?.selectedTime) || undefined;
+    let firstTime = Infinity, lastTime = -Infinity;
     charts.replaceChildren(...requestedCharts.flatMap((item) => {
       const error = item.metrics.map(([metric]) => results.get(metric).error).find(Boolean);
       const series = error ? [] : item.metrics.map(([metric, label]) => {
@@ -132,6 +142,11 @@ export function historyPanel(id, signal, latest) {
         return {label, points, stepSeconds: Number.isFinite(data.step_seconds) && data.step_seconds > 0 ? data.step_seconds : 60};
       });
       if (!error && item.optional && series.every((item) => !item.points.length)) return [];
+      for (const {points} of series) for (const point of points) {
+        const time = Date.parse(point.t);
+        firstTime = Math.min(firstTime, time);
+        lastTime = Math.max(lastTime, time);
+      }
       const content = error
         ? historyError(t('nodes.historyLoadError', {error: errorText(error)}),
           {retryID: `history-retry-${item.metrics[0][0]}`, onRetry: load})
@@ -139,6 +154,7 @@ export function historyPanel(id, signal, latest) {
           selectedTime: focusedID === `history-chart-${item.metrics[0][0]}` ? selectedTime : undefined, series});
       return [metricSection(item, content)];
     }));
+    shortSpan.hidden = requestedRange === '1h' || !Number.isFinite(firstTime) || lastTime - firstTime >= RANGE_MS[requestedRange] * 0.05;
     charts.setAttribute('aria-busy', 'false');
     const failures = [...results.values()].filter((result) => result.error).length;
     status.textContent = failures ? t('nodes.historyPartial') : '';

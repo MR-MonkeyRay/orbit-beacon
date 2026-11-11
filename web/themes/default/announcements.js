@@ -1,9 +1,9 @@
 import {h} from '../../src/shared/dom.js';
-import {t, tParts, getLocale} from '../../src/shared/i18n.js';
+import {t, tParts} from '../../src/shared/i18n.js';
 
-const windowFormat = new Intl.DateTimeFormat(getLocale(), {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false});
+import {formatTimestamp} from '../../src/shared/format.js';
 
-const time = (iso) => h('time', {datetime: iso, title: iso}, windowFormat.format(new Date(iso)));
+const time = (iso) => h('time', {datetime: iso, title: iso}, formatTimestamp(new Date(iso)));
 
 export function announcementRenderer(container) {
   let previous = [];

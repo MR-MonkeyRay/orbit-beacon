@@ -3,9 +3,8 @@ import {h, icon} from '../../src/shared/dom.js';
 import {statusLabels} from '../../src/shared/status.js';
 import {timestampMillis} from '../../src/shared/freshness.js';
 import {getLocale, t, tParts} from '../../src/shared/i18n.js';
-import {formatDuration, formatLoadNumber} from '../../src/shared/format.js';
+import {formatDuration, formatLoadNumber, formatTimestamp} from '../../src/shared/format.js';
 
-const reportFormat = new Intl.DateTimeFormat(getLocale(), {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
 const percentFormat = new Intl.NumberFormat(getLocale(), {style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1});
 
 const STATUS = statusLabels({unknown: 'public.status.unknown'});
@@ -107,7 +106,7 @@ export function createCard() {
     uptime.textContent = formatDuration(node.uptime_seconds);
     const received = timestampMillis(node.last_seen);
     lastReport.replaceChildren(...(Number.isFinite(received)
-      ? tParts('public.lastReport', {time: h('time', {datetime: node.last_seen, title: node.last_seen}, reportFormat.format(new Date(received)))}) : []));
+      ? tParts('public.lastReport', {time: h('time', {datetime: node.last_seen, title: node.last_seen}, formatTimestamp(new Date(received)))}) : []));
     paintFreshness();
   };
   item.setStale = (stale = true) => { connectionStale = stale; paintFreshness(); };

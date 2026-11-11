@@ -224,6 +224,8 @@ export default {
   'nodes.historyRange': 'History range',
   'nodes.history': 'History',
   'nodes.historyLoading': 'Loading history…',
+  'nodes.historyShortSpan': 'Limited data',
+  'nodes.historyShowHour': 'Show 1 hour',
   'nodes.historyPartial': 'Some history could not load. Retry below.',
   'nodes.goNodes': 'Go to nodes',
   'nodes.probe.timeout': 'Timed out',

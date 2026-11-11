@@ -1,7 +1,7 @@
 import {getLocale, t} from './i18n.js';
 import {statusLabels} from '../shared/status.js';
 import {h} from '../shared/dom.js';
-import {formatLoadNumber} from '../shared/format.js';
+import {formatLoadNumber, formatTimestamp, formatFullTimestamp} from '../shared/format.js';
 
 export const STATUS = {...statusLabels(), stopped: t('common.status.stopped')};
 export const displayStatus = (node) => node.stopped ? 'stopped' : node.presence;
@@ -41,7 +41,6 @@ export function describeAction(action) {
 
 const dateFormat = new Intl.DateTimeFormat(getLocale(), {dateStyle: 'medium', timeStyle: 'short'});
 const relativeFormat = new Intl.RelativeTimeFormat(getLocale(), {numeric: 'auto'});
-const observationFormat = new Intl.DateTimeFormat(getLocale(), {dateStyle: 'medium', timeStyle: 'medium'});
 const integerFormat = new Intl.NumberFormat(getLocale(), {useGrouping: false, maximumFractionDigits: 0});
 const percentFormat = new Intl.NumberFormat(getLocale(), {useGrouping: false, maximumFractionDigits: 1});
 const decimalSeparator = percentFormat.formatToParts(1.1).find((part) => part.type === 'decimal').value;
@@ -60,14 +59,14 @@ export function relative(date) {
 export function when(iso) {
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return h('span', null, iso);
-  return h('time', {datetime: iso, title: `${dateFormat.format(date)} (UTC ${iso})`}, relative(date));
+  return h('time', {datetime: iso, title: `${formatFullTimestamp(date)} (UTC ${date.toISOString()})`}, relative(date));
 }
 
 // 实时流没有新数据时不会重绘；使用绝对时间，避免“刚刚”一直停留而误导用户。
 export function absoluteWhen(iso) {
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return h('span', null, iso);
-  return h('time', {datetime: iso, title: `UTC ${iso}`}, observationFormat.format(date));
+  return h('time', {datetime: iso, title: `${formatFullTimestamp(date)} (UTC ${date.toISOString()})`}, formatTimestamp(date));
 }
 
 export const shortID = (id) => (id ? id.slice(0, 8) : '');

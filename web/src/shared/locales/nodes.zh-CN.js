@@ -224,6 +224,8 @@ export default {
   'nodes.historyRange': '历史时间范围',
   'nodes.history': '历史',
   'nodes.historyLoading': '正在加载历史…',
+  'nodes.historyShortSpan': '数据较少',
+  'nodes.historyShowHour': '查看 1 小时',
   'nodes.historyPartial': '部分历史记录加载失败，请在下方重试。',
   'nodes.goNodes': '前往节点列表',
   'nodes.probe.timeout': '超时',

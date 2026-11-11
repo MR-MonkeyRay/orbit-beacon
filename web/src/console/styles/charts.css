@@ -185,3 +185,14 @@
   font-weight: var(--fw-medium);
   margin-bottom: var(--sp-tight);
 }
+
+.chart-dot {
+  fill: currentColor;
+}
+
+.history-short-span {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-inline);
+}

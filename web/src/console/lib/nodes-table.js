@@ -32,6 +32,11 @@ export function tombstoneNodeRow(refs) {
   if (changed && refs.element.isConnected) fadeNodeRow(refs);
 }
 
+export function patchNodeLastSeen(cell, node) {
+  cell.className = `hide-compact ${node.presence === 'offline' ? 'last-seen-offline' : 'muted'}`;
+  cell.replaceChildren(node.last_seen ? absoluteWhen(node.last_seen) : t('nodes.never'));
+}
+
 export function createNodeRow({node, query, selected, deleted, groupNames, rowRefs, onSelectionChange, tween}) {
   const checkbox = h('input', {type: 'checkbox', checked: selected.has(node.id), disabled: deleted.has(node.id),
     dataset: {nodeId: node.id}, 'aria-label': t('nodes.selectNode', {name: node.name}), onchange: (event) => {
@@ -43,7 +48,8 @@ export function createNodeRow({node, query, selected, deleted, groupNames, rowRe
   const name = link(`/nodes/${node.id}`, highlightNodeMatch(node.name, query));
   name.setAttribute('title', node.name);
   const badge = statusBadge(displayStatus(node));
-  const lastSeen = h('td', {class: 'hide-compact muted'}, node.last_seen ? absoluteWhen(node.last_seen) : t('nodes.never'));
+  const lastSeen = h('td');
+  patchNodeLastSeen(lastSeen, node);
   const cpu = h('td', {class: 'num'}, metricText(node.cpu_percent));
   const memory = h('td', {class: 'num'}, metricText(node.memory_used_percent));
   const version = h('td', {class: 'hide-compact'}, node.agent_version);

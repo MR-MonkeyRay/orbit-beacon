@@ -1,3 +1,4 @@
+import {formatTimestamp} from '../src/shared/format.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {copy, copyPattern, installDOM, elements} from './console-dom.js';
@@ -61,7 +62,7 @@ test('latest sample expires just after the 45-second boundary without changing n
   assert.equal(uptime.textContent, originalUptime);
   const last = ui.view.element.querySelector('.last-report');
   assert.equal(last.hidden, false);
-  assert.match(last.textContent, copyPattern('nodes.lastReport', {time: 'Oct 28, 2026'}));
+  assert.equal(last.textContent, copy('nodes.lastReport', {time: formatTimestamp(new Date(received))}));
   assert.equal(last.querySelector('time').getAttribute('datetime'), received);
   assert.equal(ui.timers.size, 0);
 });

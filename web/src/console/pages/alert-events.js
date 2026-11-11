@@ -1,8 +1,8 @@
 import {h} from '../../shared/dom.js';
-import {getLocale, t, tParts} from '../i18n.js';
+import {t, tParts} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {api} from '../api.js';
-import {when} from '../format.js';
+import {absoluteWhen, when} from '../format.js';
 import {busy, button, dataTable, link, panel, statusBadge} from '../ui/components.js';
 import {nextCursor} from '../ui/pager.js';
 import {formatMetricValue, severityLabel} from '../lib/alert-utils.js';
@@ -14,7 +14,7 @@ export const silencedBadge = () => {
   return badge;
 };
 export const severityPill = (severity) => h('span', {class: `badge alert-${['info', 'warning', 'critical'].includes(severity) ? severity : 'unknown'}`}, severityLabel(severity));
-export const eventTime = (iso) => h('div', {class: 'alert-time'}, when(iso), h('small', {class: 'muted'}, Number.isFinite(Date.parse(iso)) ? new Date(iso).toLocaleString(getLocale()) : t('alerts.unknownTime')));
+export const eventTime = (iso) => h('div', {class: 'alert-time'}, when(iso), h('small', {class: 'muted'}, Number.isFinite(Date.parse(iso)) ? absoluteWhen(iso) : t('alerts.unknownTime')));
 const eventSummary = (event) => {
   return tParts('alerts.events.summary', {
     node: link(`/nodes/${encodeURIComponent(event.node_id)}`, event.node_name || event.node_id),

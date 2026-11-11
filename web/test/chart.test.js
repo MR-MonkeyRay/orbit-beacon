@@ -117,7 +117,7 @@ test('keyboard tooltip renders actual values and keeps missing network buckets u
     const image = nodes.find((element) => element.getAttribute('role') === 'img');
     const summary = (label, minute, avg, max) => copy('nodes.chart.summary', {
       label: copy(label), avg, max, min: avg, peak: max, count: 1,
-      time: new Intl.DateTimeFormat('en', {dateStyle: 'medium', timeStyle: 'long'}).format(new Date(point(minute).t))
+      time: new Intl.DateTimeFormat('en', {year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'}).format(new Date(point(minute).t))
     });
     const receiveSummary = summary('nodes.receiveRx', 0, '10 B/s', '20 B/s');
     const sendSummary = summary('nodes.sendTx', 1, '100 B/s', '200 B/s');
@@ -168,4 +168,36 @@ test('millisecond chart units format axes and values with the probe latency unit
   assert.equal(formatAxisValue(20, 'ms', 60), copy('nodes.probe.latencyValue', {value: '20'}));
   assert.equal(formatChartValue(0, 'ms'), copy('nodes.probe.latencyValue', {value: '0'}));
   assert.equal(formatChartValue(null, 'ms'), copy('common.unavailable'));
+});
+
+test('single and isolated samples render radius-three dots; adjacent samples stay lines', async () => {
+  const {elements, installDOM} = await import('./console-dom.js');
+  const dom = installDOM();
+  try {
+    for (const [points, dots] of [[[point(0)], 1], [[point(0), point(1), point(10)], 1], [[point(0), point(10)], 2], [[point(0), point(1)], 0]]) {
+      const root = chart({title: 'CPU', unit: 'percent', id: 'dots', series: [{label: 'CPU', points, stepSeconds: 60}]});
+      assert.equal(elements(root).filter((element) => element.getAttribute('class') === 'chart-dot').length, dots);
+      for (const dot of elements(root).filter((element) => element.getAttribute('class') === 'chart-dot')) {
+        assert.equal(dot.getAttribute('r'), '3');
+        assert.ok(dot.parentElement.getAttribute('class').includes('chart-series-0'));
+      }
+    }
+  } finally { dom.restore(); }
+});
+
+test('time ticks use the visible span and omit duplicate adjacent labels', async () => {
+  const {chartTimeTicks} = await import('../src/console/ui/chart.js');
+  const {elements, installDOM} = await import('./console-dom.js');
+  const dom = installDOM();
+  try {
+    const start = new Date(2026, 10, 11, 0, 1).getTime();
+    assert.deepEqual(chartTimeTicks(start, start), ['00:01']);
+    assert.deepEqual(chartTimeTicks(start, start + 1000), ['00:01']);
+    assert.deepEqual(chartTimeTicks(start, start + 60000), ['00:01', '00:02']);
+    assert.deepEqual(chartTimeTicks(start, new Date(2026, 10, 12, 0, 1).getTime()), ['Nov 11, 00:01', 'Nov 12, 00:01']);
+    for (const points of [[point(0)], [point(0), {...point(0), t: new Date(Date.parse(point(0).t) + 1000).toISOString()}]]) {
+      const root = chart({title: 'CPU', unit: 'percent', id: 'ticks', series: [{label: 'CPU', points, stepSeconds: 60}]});
+      assert.equal(elements(root).filter((element) => element.getAttribute('class')?.includes('chart-time-axis')).length, 1);
+    }
+  } finally { dom.restore(); }
 });

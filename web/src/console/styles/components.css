@@ -972,3 +972,7 @@ dialog.closing::backdrop {
 .panel-body.flush {
   padding-bottom: 6px;
 }
+
+.last-seen-offline {
+  color: var(--warn);
+}

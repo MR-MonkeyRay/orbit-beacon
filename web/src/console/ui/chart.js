@@ -1,6 +1,7 @@
 import {getLocale, t} from '../i18n.js';
+import {formatFullTimestamp} from '../../shared/format.js';
 import {h, svg} from '../../shared/dom.js';
-import {formatCelsius, formatMilliseconds, formatLoad, formatPercent, formatRate} from '../format.js';
+import {absoluteWhen, formatCelsius, formatMilliseconds, formatLoad, formatPercent, formatRate} from '../format.js';
 
 const WIDTH = 640;
 const HEIGHT = 240;
@@ -113,8 +114,16 @@ export function pointIndexAtX(points, x, scales) {
   return Math.abs(scales.x(timestamp(points[low - 1])) - x) <= Math.abs(scales.x(timestamp(points[low])) - x) ? low - 1 : low;
 }
 
-const timeFormat = new Intl.DateTimeFormat(getLocale(), {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
-const fullTimeFormat = new Intl.DateTimeFormat(getLocale(), {dateStyle: 'medium', timeStyle: 'long'});
+export function chartTimeTicks(start, end) {
+  const first = new Date(start), last = new Date(end);
+  const sameDay = first.getFullYear() === last.getFullYear() && first.getMonth() === last.getMonth() && first.getDate() === last.getDate();
+  const format = new Intl.DateTimeFormat(getLocale(), {
+    ...(end - start <= 86400000 && sameDay ? {} : {month: 'short', day: 'numeric'}),
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  });
+  const labels = [format.format(first), format.format(last)];
+  return labels[0] === labels[1] ? [labels[0]] : labels;
+}
 
 function seriesSummary(series, unit) {
   if (!series.points.length) return t('nodes.chart.noSamples', {label: series.label});
@@ -126,7 +135,7 @@ function seriesSummary(series, unit) {
   }
   const latest = series.points.at(-1);
   const format = (value) => formatChartValue(value, unit);
-  return t('nodes.chart.summary', {label: series.label, avg: format(latest.avg), max: format(latest.max), time: fullTimeFormat.format(new Date(latest.t)), min: format(min), peak: format(max), count: series.points.length});
+  return t('nodes.chart.summary', {label: series.label, avg: format(latest.avg), max: format(latest.max), time: formatFullTimestamp(new Date(latest.t)), min: format(min), peak: format(max), count: series.points.length});
 }
 
 function legendKey(label, classes) {
@@ -158,8 +167,12 @@ export function chart({title, unit, series, id, selectedTime}) {
     drawing.append(svg('line', {class: 'chart-gridline', x1: LEFT, x2: WIDTH - RIGHT, y1: y, y2: y}),
       text(formatAxisValue(value, unit, scales.max), {class: 'chart-axis', x: LEFT - 10, y: y + 4, 'text-anchor': 'end'}));
   }
-  drawing.append(text(timeFormat.format(scales.start), {class: 'chart-axis', x: LEFT, y: HEIGHT - 10}),
-    text(timeFormat.format(scales.end), {class: 'chart-axis', x: WIDTH - RIGHT, y: HEIGHT - 10, 'text-anchor': 'end'}));
+  const timeTicks = chartTimeTicks(scales.start, scales.end);
+  timeTicks.forEach((label, index) => drawing.append(text(label, {
+    class: 'chart-axis chart-time-axis', y: HEIGHT - 10,
+    x: timeTicks.length === 1 ? (LEFT + WIDTH - RIGHT) / 2 : index === 0 ? LEFT : WIDTH - RIGHT,
+    'text-anchor': timeTicks.length === 1 ? 'middle' : index === 0 ? 'start' : 'end'
+  })));
   series.forEach((item, index) => {
     const average = chartPaths(item.points, scales, item.stepSeconds);
     const maximum = chartPaths(item.points, scales, item.stepSeconds, 'max');
@@ -167,6 +180,12 @@ export function chart({title, unit, series, id, selectedTime}) {
     group.append(svg('path', {class: 'chart-area', d: average.area}),
       svg('path', {class: 'chart-max', d: maximum.line}),
       svg('path', {class: 'chart-average', d: average.line}));
+    item.points.forEach((point, position) => {
+      const gap = 1.5 * item.stepSeconds * 1000;
+      const isolated = (position === 0 || timestamp(point) - timestamp(item.points[position - 1]) > gap)
+        && (position === item.points.length - 1 || timestamp(item.points[position + 1]) - timestamp(point) > gap);
+      if (isolated) group.append(svg('circle', {class: 'chart-dot', cx: coordinate(scales.x(timestamp(point))), cy: coordinate(scales.y(point.avg)), r: 3}));
+    });
     drawing.append(group);
   });
   const crosshair = svg('line', {class: 'chart-crosshair', y1: TOP, y2: HEIGHT - BOTTOM, visibility: 'hidden', 'aria-hidden': 'true'});
@@ -187,7 +206,7 @@ export function chart({title, unit, series, id, selectedTime}) {
     crosshair.setAttribute('x2', x);
     crosshair.setAttribute('visibility', 'visible');
     tooltip.hidden = false;
-    tooltip.replaceChildren(h('strong', null, fullTimeFormat.format(time)), ...series.map((item, position) => {
+    tooltip.replaceChildren(h('strong', null, absoluteWhen(new Date(time).toISOString())), ...series.map((item, position) => {
       const point = byTime[position].get(time);
       return h('div', null, t('nodes.chart.tooltip', {label: item.label, avg: formatChartValue(point?.avg, unit), max: formatChartValue(point?.max, unit)}));
     }));

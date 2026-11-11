@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {agentSettingsTab} from '../src/console/pages/node-agent-settings.js';
+import {formatTimestamp, formatFullTimestamp} from '../src/shared/format.js';
 import {installDOM} from './console-dom.js';
 
 test('quiet offline Agent observations retain unambiguous reception time after the browser clock advances', () => {
@@ -18,7 +19,8 @@ test('quiet offline Agent observations retain unambiguous reception time after t
     const times = view.querySelectorAll('time');
     assert.equal(times.length, 2, 'offline explanation and Last reported identify the same observation');
     for (const time of times) {
-      assert.equal(Date.parse(time.textContent), Date.parse(received));
+      assert.equal(time.textContent, formatTimestamp(new Date(received)));
+      assert.equal(time.getAttribute('title'), `${formatFullTimestamp(new Date(received))} (UTC ${new Date(received).toISOString()})`);
       assert.equal(time.getAttribute('datetime'), received);
     }
   } finally { Date.now = originalNow; dom.restore(); }

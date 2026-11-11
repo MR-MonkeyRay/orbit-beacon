@@ -3,7 +3,8 @@ import {h} from '../shared/dom.js';
 import {themeButton} from '../shared/theme.js';
 import {validResponse} from './validate.js';
 import {connectLive} from '../shared/live.js';
-import {getLocale, t} from '../shared/i18n.js';
+import {t} from '../shared/i18n.js';
+import {formatTimestamp, formatFullTimestamp} from '../shared/format.js';
 import {localeSelect} from '../shared/locale-select.js';
 import {errorText} from '../shared/errors.js';
 import {statusLabels} from '../shared/status.js';
@@ -37,8 +38,6 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
   const previous = $('previous');
   const next = $('next');
   const page = $('page');
-  const timeFormat = new Intl.DateTimeFormat(getLocale(), {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
-  const fullFormat = new Intl.DateTimeFormat(getLocale(), {year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZoneName: 'short'});
   const constellation = createConstellation($('constellation'));
 
   let offset = 0;
@@ -123,8 +122,8 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
       summary.textContent = partial ? t('public.summary.joined', {status, page: t('public.summary.page', {count: nodes.length})}) : status;
     }
     lastGenerated = new Date(result.generated_at);
-    updateText(t('public.updatedAt', {time: timeFormat.format(lastGenerated)}), t('public.autoUpdate'));
-    updated.title = t('public.localTime', {time: fullFormat.format(lastGenerated)});
+    updateText(t('public.updatedAt', {time: formatTimestamp(lastGenerated)}), t('public.autoUpdate'));
+    updated.title = t('public.localTime', {time: formatFullTimestamp(lastGenerated)});
     nextOffset = result.next_offset;
     next.disabled = nextOffset === null;
     pagination.hidden = offset === 0 && nextOffset === null;
@@ -198,7 +197,7 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
       const paint = () => {
         const remaining = deadline === null ? 0 : Math.max(0, deadline - performance.now());
         const seconds = Math.ceil(remaining / 1000);
-        updateText(t('public.updatedAt', {time: timeFormat.format(lastGenerated)}), state.transport === 'http' && state.retryAt !== null ? t('public.refreshIn', {count: seconds}) : t('public.autoUpdate'));
+        updateText(t('public.updatedAt', {time: formatTimestamp(lastGenerated)}), state.transport === 'http' && state.retryAt !== null ? t('public.refreshIn', {count: seconds}) : t('public.autoUpdate'));
         if (seconds > 0) displayTimer = setTimeout(paint, Math.min(1000, remaining));
       };
       paint();
@@ -209,7 +208,7 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
       if (hasSnapshot) {
         cards.forEach((card) => card.setStale());
         summary.textContent = t(document.hidden ? 'public.paused' : 'public.reconnecting');
-        updateText(t('public.updatedAt', {time: timeFormat.format(lastGenerated)}), t('public.stale'));
+        updateText(t('public.updatedAt', {time: formatTimestamp(lastGenerated)}), t('public.stale'));
       } else {
         list.replaceChildren();
         summary.textContent = t('public.loadFailed');

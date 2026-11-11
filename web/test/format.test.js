@@ -83,3 +83,31 @@ test('relative chooses seconds, minutes, hours, days, and absolute dates', () =>
     Date.now = originalNow;
   }
 });
+
+// Local calendar dates keep these assertions independent of the machine timezone.
+test('formatTimestamp uses the app locale, local calendar day and 24-hour time', async () => {
+  const {formatTimestamp} = await import('../src/shared/format.js');
+  const {setLocalePreference} = await import('../src/shared/i18n.js');
+  const originalStorage = globalThis.localStorage;
+  let preference = 'en';
+  globalThis.localStorage = {getItem: () => preference, setItem: (_key, value) => { preference = value; }};
+  try {
+    const now = new Date(2026, 10, 11, 18);
+    for (const [locale, otherDay, otherYear] of [
+      ['zh-CN', '11月10日 23:54', '2025年11月10日 23:54'],
+      ['en', 'Nov 10, 23:54', 'Nov 10, 2025, 23:54']
+    ]) {
+      setLocalePreference(locale);
+      assert.equal(formatTimestamp(new Date(2026, 10, 11, 23, 54, 24), now), '23:54:24');
+      assert.equal(formatTimestamp(new Date(2026, 10, 11, 0, 4, 2), now), '00:04:02');
+      assert.equal(formatTimestamp(new Date(2026, 10, 10, 23, 54, 24), now), otherDay);
+      assert.equal(formatTimestamp(new Date(2025, 10, 10, 23, 54, 24), now), otherYear);
+      assert.equal(formatTimestamp(new Date(2026, 10, 12, 0, 1), new Date(2026, 10, 11, 23, 59)),
+        locale === 'en' ? 'Nov 12, 00:01' : '11月12日 00:01');
+    }
+  } finally {
+    setLocalePreference('en');
+    if (originalStorage === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = originalStorage;
+  }
+});

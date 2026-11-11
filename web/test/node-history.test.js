@@ -322,3 +322,44 @@ test('range switch retains the exact old charts and focus while busy, then repla
     assert.match(env.root.textContent, copyPattern('nodes.historyPartial'));
   } finally { env.cleanup(); }
 });
+
+test('short-span notice reuses the one-hour range control and persistence', async () => {
+  const env = setup();
+  const stored = [];
+  globalThis.localStorage.setItem = (...args) => stored.push(args);
+  try {
+    const notice = env.root.querySelector('.history-short-span');
+    assert.equal(notice.hidden, true);
+    const sample = {t: '2026-11-05T12:00:00Z', avg: 25, max: 50};
+    env.requests.forEach((request) => env.respond(request, 200, [sample]));
+    await flush();
+    assert.equal(notice.hidden, false);
+    assert.equal(notice.querySelector('span').textContent, copy('nodes.historyShortSpan'));
+    assert.equal(notice.querySelectorAll('button').length, 1);
+    const action = notice.querySelector('button');
+    assert.equal(action.textContent, copy('nodes.historyShowHour'));
+    action.click();
+    assert.equal(env.root.querySelector('#history-range-1h').getAttribute('aria-pressed'), 'true');
+    assert.equal(env.document.activeElement, env.root.querySelector('#history-range-1h'));
+    assert.deepEqual(stored, [['orbitbeacon.history.range', '1h']]);
+    assert.ok(env.requests.slice(14).every((request) => request.path.endsWith('range=1h')));
+    env.requests.slice(14).forEach((request) => env.respond(request, 200, [sample]));
+    await flush();
+    assert.equal(notice.hidden, true);
+  } finally { env.cleanup(); }
+});
+
+test('short-span threshold uses valid data across metrics; empty and broad spans hide it', async () => {
+  for (const [minutes, visible] of [[null, false], [71, true], [72, false], [120, false]]) {
+    const env = setup();
+    try {
+      const start = Date.parse('2026-11-05T12:00:00Z');
+      env.requests.forEach((request, index) => env.respond(request, 200, minutes === null ? [] : [
+        {t: new Date(start + (index === 1 ? minutes * 60000 : 0)).toISOString(), avg: 25, max: 50},
+        {t: 'invalid', avg: 25, max: 50}
+      ]));
+      await flush();
+      assert.equal(env.root.querySelector('.history-short-span').hidden, !visible, String(minutes));
+    } finally { env.cleanup(); }
+  }
+});

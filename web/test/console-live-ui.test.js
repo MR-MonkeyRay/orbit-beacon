@@ -1,3 +1,4 @@
+import {formatTimestamp, formatFullTimestamp} from '../src/shared/format.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {reducedMotion} from '../src/shared/dom.js';
@@ -371,7 +372,8 @@ for (const page of ['nodes', 'overview']) {
       : env.root.querySelectorAll('section').find((item) => item.querySelector('h2')?.textContent === copy('nodes.newest')).querySelectorAll('time');
     assert.equal(times().length, env.inventory.length);
     const assertObservedTime = (time, iso) => {
-      assert.ok(Math.abs(Date.parse(time.textContent) - Date.parse(iso)) < 1000, 'visible last-seen text identifies the observation time');
+      assert.equal(time.textContent, formatTimestamp(new Date(iso)));
+      assert.equal(time.getAttribute('title'), `${formatFullTimestamp(new Date(iso))} (UTC ${new Date(iso).toISOString()})`);
       assert.equal(time.getAttribute('datetime'), iso);
     };
     for (const time of times()) assertObservedTime(time, reported);
@@ -383,7 +385,7 @@ for (const page of ['nodes', 'overview']) {
       await env.advance(10000); env.socket.message(frame('heartbeat', {server_time: new Date(Date.parse(reported) + (5 + index * 10) * 1000).toISOString()}));
     }
     assert.deepEqual(times().map((time) => time.textContent), before);
-    assert.equal(times().every((time) => time.getAttribute('datetime') === seen && time.getAttribute('title').includes(seen)), true);
+    assert.equal(times().every((time) => time.getAttribute('datetime') === seen && time.getAttribute('title').includes(new Date(seen).toISOString())), true);
     assert.equal(env.root.querySelector('.live-status').textContent, copy('controls.live.live')); assert.equal(env.sockets.length, 1);
   });
 }

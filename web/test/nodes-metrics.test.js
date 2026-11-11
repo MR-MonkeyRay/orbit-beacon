@@ -96,3 +96,35 @@ test('node rows preserve full linked names, dot-separated location and two inlin
     assert.ok(tags.lastElementChild.getAttribute('aria-label').includes('four'));
   } finally { dom.restore(); }
 });
+
+test('last-seen cells share compact time and offline color through live presence changes', async () => {
+  const {formatTimestamp, formatFullTimestamp} = await import('../src/shared/format.js');
+  const dom = installDOM();
+  try {
+    const item = {...node(), presence: 'offline', last_seen: new Date().toISOString()};
+    const state = {nodes: [item], filter: {}, rowRefs: new Map(), deleted: new Set(), selected: new Set(), visibleIDs: new Set([item.id]), tween: createNumberTween()};
+    createNodeRow({node: item, query: '', selected: state.selected, deleted: state.deleted, groupNames: new Map(), rowRefs: state.rowRefs, onSelectionChange() {}, tween: state.tween});
+    const cell = state.rowRefs.get(item.id).lastSeen;
+    const check = (offline, iso) => {
+      assert.equal(cell.classList.contains('last-seen-offline'), offline);
+      assert.equal(cell.classList.contains('muted'), !offline);
+      assert.equal(cell.textContent, formatTimestamp(new Date(iso)));
+      assert.match(cell.textContent, /^\d{2}:\d{2}:\d{2}$/);
+      const time = cell.querySelector('time');
+      assert.equal(time.getAttribute('datetime'), iso);
+      assert.equal(time.getAttribute('title'), `${formatFullTimestamp(new Date(iso))} (UTC ${iso})`);
+    };
+    check(true, item.last_seen);
+    const iso = item.last_seen;
+    patchNodesFromFleet({nodes: [{...item, presence: 'online'}]}, state);
+    check(false, iso); // presence can change without last_seen changing.
+    patchNodesFromFleet({nodes: [{...item, presence: 'offline', last_seen: iso}]}, state);
+    check(true, iso);
+    const next = new Date(Date.now() + 1000).toISOString();
+    patchNodesFromFleet({nodes: [{...item, last_seen: next}]}, state);
+    check(true, next);
+    patchNodesFromFleet({nodes: [{...item, presence: 'never', last_seen: null}]}, state);
+    assert.equal(cell.textContent, copy('nodes.never'));
+    assert.equal(cell.classList.contains('muted'), true);
+  } finally { dom.restore(); }
+});
