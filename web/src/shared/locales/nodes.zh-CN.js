@@ -1,4 +1,12 @@
 export default {
+  'nodes.loadMinute': '负载 · 1 分钟',
+  'nodes.loadSecondary': '5 分钟 {five} · 15 分钟 {fifteen}',
+  'nodes.diskPath': '路径',
+  'nodes.usedTotal': '已用 / 总量',
+  'nodes.usagePercent': '使用率',
+  'nodes.interface': '接口',
+  'nodes.moreMetrics': '更多指标',
+
   'nodes.columns': '选择列',
   'nodes.sort': '节点排序',
   'nodes.cancelSelection': '取消选择',
@@ -6,7 +14,6 @@ export default {
   'nodes.addTag': '添加标签',
 
   'nodes.diskIO': '磁盘 IO',
-  'nodes.diskIOSummary': '读取 {read} · 写入 {write} · 忙碌 {busy}',
   'nodes.pressureSummary': 'CPU {cpu} · 内存 {memory} · IO {io}',
   'nodes.diskRead': '磁盘读取',
   'nodes.diskWrite': '磁盘写入',
@@ -23,7 +30,6 @@ export default {
 
   'nodes.inode': 'inode',
   'nodes.allDisks': '全部',
-  'nodes.diskInodeSummary': '{disk} · inode {percent}',
 
   'nodes.expiresOn': '到期日',
   'nodes.command.upgradeAll': '升级全部',
@@ -252,8 +258,6 @@ export default {
   'nodes.sample': '最新样本',
   'nodes.stale': '已过期',
   'nodes.sampleEmpty': '暂无当前样本。',
-  'nodes.loadSeries': '负载（1 / 5 / 15 分钟）',
-  'nodes.loadValues': '{one} / {five} / {fifteen}',
   'nodes.uptime': '运行时间',
   'nodes.sampled': '采样时间',
   'nodes.lastReport': '最后上报 {time}',
@@ -328,7 +332,6 @@ export default {
   'nodes.probe.checks': {other: '{percent} · {count} 次检测'},
   'nodes.probe.loadError': '无法加载服务探测：{error}',
   'nodes.sequence': '序号 {value}',
-  'nodes.networkSummary': '{name}：接收 {rx}，发送 {tx}',
   'nodes.enrollment.title': '注册 {name}',
   'nodes.enrollment.remaining': '剩余 {time}',
   'nodes.addedDone': '已添加 {name}。',

@@ -579,7 +579,7 @@
   background: var(--orbit-soft);
 }
 
-.table tbody tr:last-child td {
+.table tbody tr:last-child > * {
   border-bottom: 0;
 }
 

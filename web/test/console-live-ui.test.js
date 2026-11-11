@@ -1029,3 +1029,25 @@ test('header enrollment issues through More and reloads the built ticket list, t
   assert.equal(document.activeElement, more); assert.equal(more.disabled, false);
   assert.equal(more.getAttribute('aria-expanded'), 'false');
 });
+
+test('detail live primary tiles retain their values and bar DOM while tweening', async (t) => {
+  const env = await setup(t, {page: 'node'});
+  const cpu = sampleFact(env.root, copy('nodes.cpu'));
+  const meter = cpu.querySelector('.usage-meter');
+  const value = cpu.querySelector('.sample-value');
+  const track = meter.querySelector('i');
+  const primary = env.root.querySelector('.sample-primary');
+  const tiles = [...primary.children];
+  env.send({node: env.inventory[0], latest: latest(95), runtime});
+  assert.equal(sampleFact(env.root, copy('nodes.cpu')), cpu);
+  assert.equal(cpu.querySelector('.usage-meter'), meter);
+  assert.equal(cpu.querySelector('.sample-value'), value);
+  assert.equal(meter.querySelector('i'), track);
+  assert.deepEqual(primary.children, tiles);
+  env.renderFrame(performance.now() + 1000);
+  assert.equal(value.textContent, '95%');
+  assert.equal(track.style.width, '95%');
+  assert.equal(meter.classList.contains('usage-bad'), true);
+  assert.equal(primary.children.length, 4);
+  assert.equal(env.requests.filter((request) => request.url.includes('/history?')).length, 5);
+});

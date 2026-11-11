@@ -1,4 +1,12 @@
 export default {
+  'nodes.loadMinute': 'Load · 1 min',
+  'nodes.loadSecondary': '5 min {five} · 15 min {fifteen}',
+  'nodes.diskPath': 'Path',
+  'nodes.usedTotal': 'Used / Total',
+  'nodes.usagePercent': 'Used %',
+  'nodes.interface': 'Interface',
+  'nodes.moreMetrics': 'More metrics',
+
   'nodes.columns': 'Columns',
   'nodes.sort': 'Sort nodes',
   'nodes.cancelSelection': 'Clear selection',
@@ -6,7 +14,6 @@ export default {
   'nodes.addTag': 'Add tag',
 
   'nodes.diskIO': 'Disk IO',
-  'nodes.diskIOSummary': 'Read {read} · Write {write} · Busy {busy}',
   'nodes.pressureSummary': 'CPU {cpu} · Memory {memory} · IO {io}',
   'nodes.diskRead': 'Disk read',
   'nodes.diskWrite': 'Disk write',
@@ -23,7 +30,6 @@ export default {
 
   'nodes.inode': 'Inodes',
   'nodes.allDisks': 'All',
-  'nodes.diskInodeSummary': '{disk} · Inodes {percent}',
 
   'nodes.expiresOn': 'Expiry date',
   'nodes.command.upgradeAll': 'Upgrade all',
@@ -252,8 +258,6 @@ export default {
   'nodes.sample': 'Latest sample',
   'nodes.stale': 'Stale',
   'nodes.sampleEmpty': 'No current sample.',
-  'nodes.loadSeries': 'Load (1 / 5 / 15 min)',
-  'nodes.loadValues': '{one} / {five} / {fifteen}',
   'nodes.uptime': 'Uptime',
   'nodes.sampled': 'Sampled',
   'nodes.lastReport': 'Last report {time}',
@@ -328,7 +332,6 @@ export default {
   'nodes.probe.checks': {one: '{percent} · {count} check', other: '{percent} · {count} checks'},
   'nodes.probe.loadError': 'Could not load service probes: {error}',
   'nodes.sequence': 'Sequence {value}',
-  'nodes.networkSummary': '{name}: receive {rx}, send {tx}',
   'nodes.enrollment.title': 'Enroll {name}',
   'nodes.enrollment.remaining': '{time} remaining',
   'nodes.addedDone': 'Added {name}.',

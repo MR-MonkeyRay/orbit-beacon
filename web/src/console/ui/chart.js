@@ -144,10 +144,10 @@ function legendKey(label, classes) {
 
 // series: [{label, points, stepSeconds}]，按 history 返回的 t 排序。
 // 全部 DOM 不使用 HTML 字符串构建。
-export function chart({title, unit, series, id, selectedTime}) {
+export function chart({title, unit, series, id, selectedTime, hover, visible = () => true, maximumLegend = true}) {
   const timeline = [...new Map(series.flatMap((item) => item.points).map((point) => [timestamp(point), point])).values()]
     .sort((a, b) => timestamp(a) - timestamp(b));
-  if (!timeline.length) return h('p', {class: 'text-note'}, t('nodes.chart.empty'));
+  if (!timeline.length) return Object.assign(h('p', {class: 'text-note'}, t('nodes.chart.empty')), {showAt() {}, hide() {}});
   // 时间戳重叠时也包含两个网络序列各自的峰值。
   const scales = chartScales(series.flatMap((item) => item.points), unit);
   const descriptionID = `${id}-description`;
@@ -197,17 +197,24 @@ export function chart({title, unit, series, id, selectedTime}) {
   const kept = timeline.findIndex((point) => timestamp(point) === selectedTime);
   let selected = kept >= 0 ? kept : timeline.length - 1;
   const byTime = series.map((item) => new Map(item.points.map((point) => [timestamp(point), point])));
-  const show = (index) => {
-    selected = index;
-    plot.dataset.selectedTime = String(timestamp(timeline[index]));
+  const show = (index, mirrored = false, requestedTime) => {
+    if (!mirrored) {
+      selected = index;
+      plot.dataset.selectedTime = String(timestamp(timeline[index]));
+    }
+    tooltip.setAttribute('aria-hidden', String(mirrored));
+    tooltip.setAttribute('aria-live', mirrored ? 'off' : 'polite');
+    if (mirrored) tooltip.removeAttribute('role');
+    else tooltip.setAttribute('role', 'status');
     const time = timestamp(timeline[index]);
-    const x = scales.x(time);
+    const x = scales.x(mirrored ? Math.max(scales.start, Math.min(scales.end, requestedTime)) : time);
     crosshair.setAttribute('x1', x);
     crosshair.setAttribute('x2', x);
     crosshair.setAttribute('visibility', 'visible');
     tooltip.hidden = false;
     tooltip.replaceChildren(h('strong', null, absoluteWhen(new Date(time).toISOString())), ...series.map((item, position) => {
-      const point = byTime[position].get(time);
+      const nearest = mirrored && item.points.length ? item.points[pointIndexAtX(item.points, scales.x(requestedTime), scales)] : null;
+      const point = mirrored ? (nearest && Math.abs(timestamp(nearest) - requestedTime) <= item.stepSeconds * 1000 ? nearest : null) : byTime[position].get(time);
       return h('div', null, t('nodes.chart.tooltip', {label: item.label, avg: formatChartValue(point?.avg, unit), max: formatChartValue(point?.max, unit)}));
     }));
     // 放在十字线旁，按实测尺寸翻转并钳制，保证提示始终留在绘图区内。
@@ -221,24 +228,40 @@ export function chart({title, unit, series, id, selectedTime}) {
     tooltip.hidden = true;
     crosshair.setAttribute('visibility', 'hidden');
   };
+  const view = {visible, hide, showAt(time, mirrored = true) {
+    const index = pointIndexAtX(timeline, scales.x(time), scales);
+    const step = Math.max(...series.filter((item) => item.points.some((point) => timestamp(point) === timestamp(timeline[index]))).map((item) => item.stepSeconds)) * 1000;
+    if (mirrored && Math.abs(timestamp(timeline[index]) - time) > step) { hide(); return; }
+    show(index, mirrored, time);
+  }};
+  hover?.add(view);
+  const select = (index) => {
+    const time = timestamp(timeline[index]);
+    if (hover) hover.show(time, view);
+    else show(index);
+  };
+  const hideAll = () => hover ? hover.hide() : hide();
   plot.addEventListener('pointermove', (event) => {
     const bounds = drawing.getBoundingClientRect();
     if (!bounds.width) return;
-    show(pointIndexAtX(timeline, (event.clientX - bounds.left) / bounds.width * WIDTH, scales));
+    select(pointIndexAtX(timeline, (event.clientX - bounds.left) / bounds.width * WIDTH, scales));
   });
-  plot.addEventListener('pointerleave', () => { if (document.activeElement !== plot) hide(); });
-  plot.addEventListener('focus', () => show(selected));
-  plot.addEventListener('blur', hide);
+  plot.addEventListener('pointerleave', hideAll);
+  plot.addEventListener('focus', () => select(selected));
+  plot.addEventListener('blur', hideAll);
   plot.addEventListener('keydown', (event) => {
     const index = {ArrowLeft: selected - 1, ArrowRight: selected + 1, Home: 0, End: timeline.length - 1}[event.key];
-    if (index === undefined) { if (event.key === 'Escape') hide(); return; }
+    if (index === undefined) { if (event.key === 'Escape') hideAll(); return; }
     event.preventDefault();
-    show(Math.max(0, Math.min(timeline.length - 1, index)));
+    select(Math.max(0, Math.min(timeline.length - 1, index)));
   });
   fitChartText(drawing, WIDTH);
-  return h('div', {class: 'history-chart'},
-    h('div', {class: 'chart-legend', 'aria-label': t('nodes.chartLegend')},
+  const root = h('div', {class: 'history-chart'},
+    (maximumLegend || series.length > 1) && h('div', {class: 'chart-legend', 'aria-label': t('nodes.chartLegend')},
       series.map((item, index) => legendKey(item.label, `chart-series chart-series-${index} chart-average`)),
-      legendKey(t('nodes.chart.maximum'), 'chart-series chart-maximum-key')),
+      maximumLegend && legendKey(t('nodes.chart.maximum'), 'chart-series chart-maximum-key')),
     plot, description);
+  root.showAt = view.showAt;
+  root.hide = hide;
+  return root;
 }

@@ -196,3 +196,8 @@
   align-items: center;
   gap: var(--sp-inline);
 }
+
+.history-legend { margin-top: var(--sp-content); }
+.history-more { margin-top: var(--sp-content); border-top: 1px solid var(--line); padding-top: var(--sp-content); }
+.history-more>summary { cursor: pointer; font-weight: var(--fw-medium); }
+.history-more>.history-disk { margin-top: var(--sp-content); }

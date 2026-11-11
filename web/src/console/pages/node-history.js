@@ -9,6 +9,8 @@ import {historyError} from '../ui/history-error.js';
 import {panelLifecycle} from '../ui/polling-panel.js';
 
 const STORAGE_KEY = 'orbitbeacon.history.range';
+const MORE_STORAGE_KEY = 'orbitbeacon.history.more';
+const PRIMARY = new Set(['cpu_percent', 'memory_used_percent', 'load1', 'net_rx_bytes_per_second']);
 const RANGES = ['1h', '6h', '24h', '7d', '30d', '90d'];
 const RANGE_MS = Object.fromEntries(RANGES.map((range) => [range, Number.parseInt(range, 10) * (range.endsWith('h') ? 3600000 : 86400000)]));
 const CHARTS = [
@@ -36,13 +38,35 @@ function savedRange() {
 // 路由器的中止信号在刷新/导航时也会销毁计时器。
 export function historyPanel(id, signal, latest) {
   let range = savedRange();
+  const hover = {
+    views: new Set(),
+    add(view) { this.views.add(view); },
+    show(time, source) { for (const view of this.views) { if (view.visible()) view.showAt(time, view !== source); else view.hide(); } },
+    hide() { for (const view of this.views) view.hide(); },
+    reset() { this.hide(); this.views.clear(); }
+  };
   let loadMetric = 'load1';
   let disk = '';
   let diskPaths = [];
   let controller;
+  let expanded;
+  let extraLoaded = false;
+  let cachedResults;
+  let cachedConfig;
   let lifecycle;
   const status = h('p', {class: 'text-note', role: 'status'});
   const charts = h('div', {class: 'history-grid'});
+  const extraCharts = h('div', {class: 'history-grid history-extra-grid'});
+  const more = h('details', {class: 'history-more'}, h('summary', null, t('nodes.moreMetrics')), extraCharts);
+  try { more.open = localStorage.getItem(MORE_STORAGE_KEY) === 'true'; } catch {}
+  expanded = more.open;
+  more.addEventListener('toggle', () => {
+    if (expanded === more.open) return;
+    expanded = more.open;
+    try { localStorage.setItem(MORE_STORAGE_KEY, String(more.open)); } catch {}
+    hover.hide();
+    if (more.open && !extraLoaded) load(true);
+  });
   const controls = RANGES.map((value) => h('button', {type: 'button', id: `history-range-${value}`, dataset: {range: value},
     'aria-pressed': String(value === range), onclick: () => {
       if (range === value) return;
@@ -75,7 +99,10 @@ export function historyPanel(id, signal, latest) {
   const metricSection = (item, content) => h('section', {class: 'history-metric', 'aria-label': t('nodes.historyAria', {title: item.title})},
     item.unit === 'load' ? h('div', {class: 'head-actions'}, h('h3', null, item.title), loadSelector) : h('h3', null, item.title), content);
 
-  const root = panel(t('nodes.history'), {action: selector}, diskSelector, status, shortSpan, charts);
+  const maximumNote = h('p', {class: 'chart-legend history-legend'}, h('span', {class: 'chart-key'},
+    h('i', {class: 'chart-maximum-key', 'aria-hidden': 'true'}), t('nodes.chart.maximum')));
+  const root = panel(t('nodes.history'), {action: selector}, status, shortSpan, maximumNote, charts, more);
+  more.insertBefore(diskSelector, extraCharts);
   // Paths follow the current sample, including updates from the node live stream.
   root.snapshot = (sample) => {
     const next = [...new Set((sample?.metrics?.disks || []).map((item) => item.path))];
@@ -90,25 +117,30 @@ export function historyPanel(id, signal, latest) {
     if (changed && lifecycle) load();
   };
   root.snapshot(latest);
-  async function load() {
+  async function load(reuse = false) {
     if (lifecycle?.disposed || signal?.aborted) return;
     controller?.abort();
     const request = new AbortController();
     controller = request;
     const requestedRange = range;
     const requestedDisk = disk;
-    const requestedCharts = CHARTS.map((item) => item.unit === 'load'
+    const config = JSON.stringify([range, loadMetric, disk]);
+    const previous = reuse === true && cachedConfig === config ? cachedResults : null;
+    if (!more.open) extraLoaded = false;
+    const requestedCharts = CHARTS.filter((item) => more.open || PRIMARY.has(item.metrics[0][0])).map((item) => item.unit === 'load'
       ? {...item, metrics: [[loadMetric, t('nodes.load')]]} : item);
     shortSpan.hidden = true;
     status.textContent = t('nodes.historyLoading');
     charts.setAttribute('aria-busy', 'true');
+    extraCharts.setAttribute('aria-busy', 'true');
     // Keep rendered charts and their controls until the replacement data arrives.
-    if (!charts.children.length) charts.replaceChildren(...requestedCharts.filter((item) => !item.optional).map((item) => metricSection(item)));
+    if (!charts.children.length) charts.replaceChildren(...requestedCharts.filter((item) => PRIMARY.has(item.metrics[0][0]) || item.unit === 'load').map((item) => metricSection(item)));
     charts.dataset.range = range;
     charts.dataset.loadMetric = loadMetric;
     const metrics = requestedCharts.flatMap((item) => item.metrics.map(([metric]) => metric));
     const results = new Map();
     await Promise.all(metrics.map(async (metric) => {
+      if (previous?.has(metric)) { results.set(metric, previous.get(metric)); return; }
       try {
         const diskQuery = requestedDisk && ['disk_used_percent', 'inode_used_percent'].includes(metric)
           ? `&disk=${encodeURIComponent(requestedDisk)}` : '';
@@ -122,18 +154,27 @@ export function historyPanel(id, signal, latest) {
           selector.hidden = true;
           shortSpan.hidden = true;
           diskSelector.hidden = true;
+          hover.reset();
           charts.replaceChildren();
+          extraCharts.replaceChildren();
+          more.hidden = true;
+          maximumNote.hidden = true;
           charts.setAttribute('aria-busy', 'false');
           status.replaceChildren(...tParts('nodes.nodeMissingPrefix', {link: link('/nodes', t('nodes.goNodes'))}));
         }
       }
     }));
     if (request.signal.aborted || signal?.aborted || controller !== request) return;
+    cachedConfig = config;
+    cachedResults = results;
+    extraLoaded = requestedCharts.some((item) => item.metrics[0][0] === 'disk_used_percent');
     // 请求完成后再读取焦点，因为用户可能已在等待期间聚焦某个图表。
-    const focusedID = charts.contains(document.activeElement) ? document.activeElement.id : null;
+    const focusedID = root.contains(document.activeElement) ? document.activeElement.id : null;
     const selectedTime = Number(document.activeElement?.dataset?.selectedTime) || undefined;
     let firstTime = Infinity, lastTime = -Infinity;
-    charts.replaceChildren(...requestedCharts.flatMap((item) => {
+    hover.reset();
+    const primarySections = [], extraSections = [];
+    requestedCharts.forEach((item) => {
       const error = item.metrics.map(([metric]) => results.get(metric).error).find(Boolean);
       const series = error ? [] : item.metrics.map(([metric, label]) => {
         const data = results.get(metric).data;
@@ -141,7 +182,7 @@ export function historyPanel(id, signal, latest) {
           && Number.isFinite(point.avg) && Number.isFinite(point.max)) : [];
         return {label, points, stepSeconds: Number.isFinite(data.step_seconds) && data.step_seconds > 0 ? data.step_seconds : 60};
       });
-      if (!error && item.optional && series.every((item) => !item.points.length)) return [];
+      if (!error && item.optional && series.every((item) => !item.points.length)) return;
       for (const {points} of series) for (const point of points) {
         const time = Date.parse(point.t);
         firstTime = Math.min(firstTime, time);
@@ -151,11 +192,15 @@ export function historyPanel(id, signal, latest) {
         ? historyError(t('nodes.historyLoadError', {error: errorText(error)}),
           {retryID: `history-retry-${item.metrics[0][0]}`, onRetry: load})
         : chart({title: item.title, unit: item.unit, id: `history-chart-${item.metrics[0][0]}`,
+          hover, maximumLegend: false, visible: () => root.isConnected && (PRIMARY.has(item.metrics[0][0]) || item.unit === 'load' || more.open),
           selectedTime: focusedID === `history-chart-${item.metrics[0][0]}` ? selectedTime : undefined, series});
-      return [metricSection(item, content)];
-    }));
+      (PRIMARY.has(item.metrics[0][0]) || item.unit === 'load' ? primarySections : extraSections).push(metricSection(item, content));
+    });
+    charts.replaceChildren(...primarySections);
+    extraCharts.replaceChildren(...extraSections);
     shortSpan.hidden = requestedRange === '1h' || !Number.isFinite(firstTime) || lastTime - firstTime >= RANGE_MS[requestedRange] * 0.05;
     charts.setAttribute('aria-busy', 'false');
+    extraCharts.setAttribute('aria-busy', 'false');
     const failures = [...results.values()].filter((result) => result.error).length;
     status.textContent = failures ? t('nodes.historyPartial') : '';
     if (focusedID) {
@@ -164,6 +209,6 @@ export function historyPanel(id, signal, latest) {
     }
   }
 
-  lifecycle = panelLifecycle({root, signal, load, cancel: () => controller?.abort(), loadWhenHidden: true});
+  lifecycle = panelLifecycle({root, signal, load, cancel: () => { controller?.abort(); hover.hide(); }, loadWhenHidden: true});
   return root;
 }

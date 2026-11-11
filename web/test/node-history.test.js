@@ -4,8 +4,10 @@ import {historyPanel} from '../src/console/pages/node-history.js';
 import {setNavigationSignal} from '../src/console/api.js';
 import {copy, copyPattern, elements, flush, installDOM} from './console-dom.js';
 
-function setup(disks = []) {
+function setup(disks = [], more = true, storageFails = false) {
   const dom = installDOM();
+  const writes = [];
+  globalThis.localStorage = {getItem: (key) => { if (storageFails) throw new Error('blocked'); return key === 'orbitbeacon.history.more' ? String(more) : '24h'; }, setItem: (...args) => { if (storageFails) throw new Error('blocked'); writes.push(args); }};
   const originalFetch = globalThis.fetch;
   const requests = [];
   globalThis.fetch = (path, options) => new Promise((resolve) => requests.push({path, signal: options.signal, resolve}));
@@ -23,7 +25,7 @@ function setup(disks = []) {
     request.resolve(new Response(JSON.stringify(status >= 400 ? {code: status === 404 ? 'node_not_found' : 'internal_error'}
       : {metric, range, unit, points, step_seconds: step}), {status}));
   };
-  return {...dom, page, root, requests, respond, cleanup: () => { page.abort(); globalThis.fetch = originalFetch; dom.restore(); }};
+  return {...dom, writes, page, root, requests, respond, cleanup: () => { page.abort(); globalThis.fetch = originalFetch; dom.restore(); }};
 }
 
 test('history range changes abort stale requests and late responses cannot repaint', async () => {
@@ -40,7 +42,7 @@ test('history range changes abort stale requests and late responses cannot repai
     await flush();
     const charts = env.root.querySelector('.history-grid');
     assert.equal(charts.dataset.range, '1h');
-    assert.equal(charts.children.length, 5);
+    assert.equal(charts.children.length, 4);
     const content = charts.children[0];
     initial.forEach((request) => env.respond(request));
     await flush();
@@ -109,7 +111,7 @@ test('history offers ninety days and requests the selected range', async () => {
     assert.ok(current.every((request) => new URL(request.path, 'https://example.com').searchParams.get('range') === '90d'));
     current.forEach((request) => env.respond(request));
     await flush();
-    assert.equal(env.root.querySelector('.history-grid').children.length, 5);
+    assert.equal(env.root.querySelector('.history-grid').children.length, 4);
     assert.doesNotMatch(env.root.textContent, copyPattern('nodes.historyPartial'));
   } finally { env.cleanup(); }
 });
@@ -136,7 +138,7 @@ test('load selector stays in one chart header and requests each selected metric'
       assert.deepEqual(metrics, ['cpu_percent', 'memory_used_percent', `load${minutes}`, 'disk_used_percent', 'inode_used_percent', 'disk_read_bytes_per_second', 'disk_write_bytes_per_second', 'disk_busy_percent', 'pressure_cpu_percent', 'pressure_memory_percent', 'pressure_io_percent', 'temperature_celsius', 'net_rx_bytes_per_second', 'net_tx_bytes_per_second']);
       current.forEach((request) => env.respond(request));
       await flush();
-      assert.equal(env.root.querySelector('.history-grid').children.length, 5);
+      assert.equal(env.root.querySelector('.history-grid').children.length, 4);
       assert.equal(env.root.querySelectorAll('.segmented').length, 2);
       assert.equal(env.document.activeElement, button);
       button.click();
@@ -166,7 +168,7 @@ test('rapid load and range changes abort old requests and ignore late success an
     const loadChart = charts.querySelector('#history-chart-load15');
     assert.ok(loadChart);
     assert.equal(charts.dataset.range, '90d');
-    assert.equal(charts.children.length, 10);
+    assert.equal(env.root.querySelectorAll('.history-metric').length, 10);
     const rendered = [...charts.children];
     initial.forEach((request) => env.respond(request));
     five.forEach((request) => env.respond(request, 404));
@@ -237,7 +239,7 @@ test('disk selection shares disk and inode queries, aborts old requests and keep
     await flush();
     currentCharts.forEach((section, i) => assert.equal(charts.children[i], section));
     assert.equal(selector.value, '/');
-    assert.ok(charts.querySelector('#history-chart-inode_used_percent'));
+    assert.ok(env.root.querySelector('#history-chart-inode_used_percent'));
     selector.value = '';
     selector.dispatchEvent(new Event('change'));
     assert.ok(env.requests.slice(42).every((request) => !new URL(request.path, 'https://example.com').searchParams.has('disk')));
@@ -280,20 +282,20 @@ test('optional host charts hide empty data, keep rendered charts while loading, 
     env.requests.forEach((request) => env.respond(request));
     await flush();
     const charts = env.root.querySelector('.history-grid');
-    for (const id of ids) assert.equal(charts.querySelector(`#history-chart-${id}`), null);
+    for (const id of ids) assert.equal(env.root.querySelector(`#history-chart-${id}`), null);
     env.root.querySelector('#history-range-1h').click();
     env.requests.slice(14).forEach((request) => env.respond(request, 200, [{t: '2026-11-05T12:00:00Z', avg: 25, max: 50}]));
     await flush();
-    for (const id of ids) assert.ok(charts.querySelector(`#history-chart-${id}`));
-    assert.match(charts.querySelector('#history-chart-temperature_celsius').textContent, copyPattern('nodes.celsius', {value: '20'}));
+    for (const id of ids) assert.ok(env.root.querySelector(`#history-chart-${id}`));
+    assert.match(env.root.querySelector('#history-chart-temperature_celsius').textContent, copyPattern('nodes.celsius', {value: '20'}));
     const rendered = [...charts.children];
     env.root.querySelector('#history-range-6h').click();
     rendered.forEach((section, i) => assert.equal(charts.children[i], section));
     env.requests.slice(28).forEach((request) => env.respond(request, request.path.includes('metric=temperature_celsius&') ? 503 : 200));
     await flush();
-    assert.ok(charts.querySelector('#history-retry-temperature_celsius'));
-    assert.match(charts.textContent, copyPattern('nodes.historyLoadError', {error: copy('errors.internal_error')}));
-    for (const id of ids.filter((id) => id !== 'temperature_celsius')) assert.equal(charts.querySelector(`#history-chart-${id}`), null);
+    assert.ok(env.root.querySelector('#history-retry-temperature_celsius'));
+    assert.match(env.root.textContent, copyPattern('nodes.historyLoadError', {error: copy('errors.internal_error')}));
+    for (const id of ids.filter((id) => id !== 'temperature_celsius')) assert.equal(env.root.querySelector(`#history-chart-${id}`), null);
   } finally { env.cleanup(); }
 });
 
@@ -362,4 +364,90 @@ test('short-span threshold uses valid data across metrics; empty and broad spans
       assert.equal(env.root.querySelector('.history-short-span').hidden, !visible, String(minutes));
     } finally { env.cleanup(); }
   }
+});
+
+test('four default charts, one max note, and lazy persisted disclosure', async () => {
+  const env = setup([], false);
+  try {
+    const metrics = (requests) => requests.map((request) => new URL(request.path, 'https://example.com').searchParams.get('metric'));
+    assert.deepEqual(metrics(env.requests), ['cpu_percent', 'memory_used_percent', 'load1', 'net_rx_bytes_per_second', 'net_tx_bytes_per_second']);
+    const points = [{t: '2026-11-05T12:00:00Z', avg: 25, max: 50}];
+    env.requests.forEach((request) => env.respond(request, 200, points));
+    await flush();
+    assert.deepEqual(env.root.querySelector('.history-grid').querySelectorAll('h3').map((heading) => heading.textContent), ['CPU', 'Memory', 'Load', 'Network']);
+    assert.equal(env.root.querySelector('.history-extra-grid').children.length, 0);
+    const noteCount = () => env.root.textContent.split(copy('nodes.chart.maximum')).length - 1;
+    assert.equal(noteCount(), 1);
+    assert.equal(env.root.querySelectorAll('.chart-legend').length, 2, 'one explanation and one multi-series network legend');
+    const more = env.root.querySelector('details');
+    assert.equal(more.querySelector('summary').textContent, copy('nodes.moreMetrics'));
+    more.open = true; more.dispatchEvent(new Event('toggle'));
+    assert.deepEqual(env.writes.at(-1), ['orbitbeacon.history.more', 'true']);
+    const extras = env.requests.slice(5);
+    assert.equal(extras.length, 9, 'opening does not refetch primary metrics');
+    assert.equal(metrics(extras).some((metric) => metric === 'cpu_percent'), false);
+    extras.forEach((request) => env.respond(request, 200, points));
+    await flush();
+    assert.equal(env.root.querySelector('.history-extra-grid').children.length, 6);
+    assert.equal(noteCount(), 1);
+    const disk = env.root.querySelector('#history-chart-disk_used_percent');
+    more.open = false; more.dispatchEvent(new Event('toggle'));
+    more.open = true; more.dispatchEvent(new Event('toggle'));
+    assert.equal(env.requests.length, 14);
+    assert.equal(env.root.querySelector('#history-chart-disk_used_percent'), disk);
+  } finally { env.cleanup(); }
+  const restored = setup([], true);
+  try { assert.equal(restored.root.querySelector('details').open, true); assert.equal(restored.requests.length, 14); }
+  finally { restored.cleanup(); }
+  const blocked = setup([], false, true);
+  try {
+    assert.equal(blocked.requests.length, 5);
+    blocked.root.querySelector('details').open = true;
+    assert.doesNotThrow(() => blocked.root.querySelector('details').dispatchEvent(new Event('toggle')));
+    assert.equal(blocked.requests.length, 19, 'opening while initial reads are pending restarts them with extra metrics');
+  } finally { blocked.cleanup(); }
+});
+
+test('history hover and keyboard synchronize visible charts, preserve selection, and hide together', async () => {
+  const env = setup();
+  try {
+    const points = [0, 5, 10].map((minute) => ({t: new Date(Date.UTC(2026, 10, 5, 12, minute)).toISOString(), avg: minute + 10, max: minute + 20}));
+    env.requests.forEach((request) => env.respond(request, 200, points));
+    await flush();
+    const cpu = env.root.querySelector('#history-chart-cpu_percent');
+    const memory = env.root.querySelector('#history-chart-memory_used_percent');
+    const crosshairs = () => elements(env.root).filter((element) => element.getAttribute('class') === 'chart-crosshair');
+    const svg = elements(cpu).find((element) => element.tagName === 'svg');
+    svg.getBoundingClientRect = () => ({left: 0, width: 640});
+    cpu.focus(); cpu.dispatchEvent(new Event('focus'));
+    cpu.dispatchEvent(Object.assign(new Event('keydown', {cancelable: true}), {key: 'Home'}));
+    assert.equal(env.document.activeElement, cpu);
+    assert.equal(cpu.dataset.selectedTime, String(Date.parse(points[0].t)));
+    assert.equal(memory.dataset.selectedTime, undefined, 'mirrors do not change keyboard selection');
+    assert.equal(crosshairs().every((line) => line.getAttribute('visibility') === 'visible'), true);
+    assert.equal(crosshairs().every((line) => line.getAttribute('x1') === '100'), true);
+    assert.equal(memory.querySelector('.chart-tooltip').getAttribute('aria-hidden'), 'true');
+    assert.equal(memory.querySelector('.chart-tooltip').getAttribute('aria-live'), 'off');
+    assert.equal(memory.querySelector('.chart-tooltip').getAttribute('role'), null);
+    assert.equal(cpu.querySelector('.chart-tooltip').getAttribute('aria-hidden'), 'false');
+    cpu.dispatchEvent(Object.assign(new Event('pointermove'), {clientX: 362}));
+    assert.equal(crosshairs().every((line) => line.getAttribute('x1') === '362'), true);
+    cpu.dispatchEvent(new Event('pointerleave'));
+    assert.equal(crosshairs().every((line) => line.getAttribute('visibility') === 'hidden'), true);
+    assert.equal(env.root.querySelectorAll('.chart-tooltip').every((tooltip) => tooltip.hidden), true);
+    const more = env.root.querySelector('details'); more.open = false; more.dispatchEvent(new Event('toggle'));
+    cpu.dispatchEvent(Object.assign(new Event('keydown', {cancelable: true}), {key: 'End'}));
+    assert.equal(env.root.querySelector('#history-chart-disk_used_percent').querySelector('.chart-tooltip').hidden, true);
+    assert.equal(memory.querySelector('.chart-tooltip').hidden, false);
+    cpu.dispatchEvent(Object.assign(new Event('keydown', {cancelable: true}), {key: 'Home'}));
+    const before = env.requests.length;
+    env.root.querySelector('#history-range-1h').click();
+    env.requests.slice(before).forEach((request) => env.respond(request, 200, points));
+    await flush();
+    const restored = env.root.querySelector('#history-chart-cpu_percent');
+    assert.equal(env.document.activeElement, restored);
+    restored.dispatchEvent(new Event('focus'));
+    assert.equal(restored.dataset.selectedTime, String(Date.parse(points[0].t)));
+    assert.equal(env.root.querySelector('#history-chart-memory_used_percent').querySelector('.chart-tooltip').hidden, false);
+  } finally { env.cleanup(); }
 });

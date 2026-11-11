@@ -1,17 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {copy} from './console-dom.js';
+import {highestDisk, networkRate, usedPercent} from '../src/console/lib/latest-sample-helpers.js';
 
-import {diskSummary, memorySummary, networkSummary} from '../src/console/lib/latest-sample-helpers.js';
-
-test('latest sample summaries format complete metric families', () => {
-  assert.equal(memorySummary({memory_total_bytes: 4096, memory_available_bytes: 1024}), '3 KiB / 4 KiB (75%)');
-  assert.equal(diskSummary([{path: '/', total_bytes: 4096, used_bytes: 1024}]), '/: 1 KiB / 4 KiB (25%)');
-  assert.equal(networkSummary([{name: 'eth0', rx_bytes_per_sec: 1536, tx_bytes_per_sec: 1024}]), copy('nodes.networkSummary', {name: 'eth0', rx: '1.5 KiB/s', tx: '1 KiB/s'}));
+test('highest disk selects usage, not capacity, with stable ties', () => {
+  const disks = [{path: '/', used_bytes: 50, total_bytes: 100}, {path: '/data', used_bytes: 9, total_bytes: 10}, {path: '/tie', used_bytes: 90, total_bytes: 100}];
+  assert.equal(highestDisk(disks), disks[1]);
+  assert.equal(highestDisk([{used_bytes: null, total_bytes: 100}]), null);
+  assert.equal(highestDisk([]), null);
+  assert.equal(usedPercent(0, 0), 0);
+  assert.equal(usedPercent(101, 100), null);
 });
-
-test('latest sample summaries handle missing metrics gracefully', () => {
-  assert.equal(memorySummary({memory_total_bytes: null, memory_available_bytes: null}), copy('common.unavailable'));
-  assert.equal(diskSummary([]), copy('common.unavailable'));
-  assert.equal(networkSummary(null), copy('common.unavailable'));
+test('network rates total each direction and keep missing fields unavailable', () => {
+  const networks = [{rx_bytes_per_sec: 1024, tx_bytes_per_sec: 512}, {rx_bytes_per_sec: 2048, tx_bytes_per_sec: 256}];
+  assert.equal(networkRate(networks, 'rx_bytes_per_sec'), 3072);
+  assert.equal(networkRate(networks, 'tx_bytes_per_sec'), 768);
+  assert.equal(networkRate([], 'rx_bytes_per_sec'), null);
+  networks[1].rx_bytes_per_sec = null;
+  assert.equal(networkRate(networks, 'rx_bytes_per_sec'), null);
+  assert.equal(networkRate(networks, 'tx_bytes_per_sec'), 768);
 });

@@ -1,3 +1,4 @@
+import {reducedMotion} from '../src/shared/dom.js';
 import {formatTimestamp} from '../src/shared/format.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,6 +18,8 @@ const snapshot = (extra = {}) => ({
 
 async function setup(t, latest = snapshot()) {
   const dom = installDOM();
+  const motion = Object.getOwnPropertyDescriptor(reducedMotion, 'matches');
+  Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => true});
   const originals = new Map(['window', 'performance', 'setTimeout', 'clearTimeout'].map((key) => [key, globalThis[key]]));
   const window = globalThis.window = new EventTarget();
   let now = 0;
@@ -29,6 +32,7 @@ async function setup(t, latest = snapshot()) {
   t.after(() => {
     page.abort();
     for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
+    Object.defineProperty(reducedMotion, 'matches', motion);
     dom.restore();
   });
   const {latestSamplePanel} = await import('../src/console/pages/latest-sample.js');
@@ -76,7 +80,7 @@ test('latest sample honors original error and stale statuses without using earli
   assert.equal(ui.row(copy('nodes.cpu')).querySelector('.sample-value').textContent, '—');
   assert.equal(ui.row(copy('nodes.uptime')).querySelector('.sample-value').textContent, copy('nodes.duration.hours', {hours: 1, minutes: 0}));
   assert.equal(ui.row(copy('nodes.uptime')).querySelector('.sample-value').classList.contains('metric-stale'), true);
-  assert.doesNotMatch(ui.row(copy('nodes.loadSeries')).textContent, /2\.00/);
+  assert.doesNotMatch(ui.row(copy('nodes.loadMinute')).textContent, /2\.00/);
   const next = snapshot();
   next.metrics.cpu_percent = null;
   next.metrics.metric_status.cpu_percent = 'error';
@@ -150,7 +154,7 @@ test('latest per-series status masks nonnull failures and respects the disk sour
   latest.metrics.sources['disk:/'] = source(0, 60000);
   latest.metrics.sources['network:eth0'] = source();
   const ui = await setup(t, latest);
-  assert.equal(ui.row(copy('nodes.disk')).querySelector('.sample-value').textContent, '/: 1 KiB / 4 KiB (25%)');
+  assert.equal(ui.row(copy('nodes.disk')).querySelector('.sample-value').textContent, '25%');
   assert.equal(ui.row(copy('nodes.network')).querySelector('.sample-value').textContent, '—');
   ui.advance(45001);
   assert.equal(ui.row(copy('nodes.cpu')).querySelector('.sample-value').classList.contains('metric-stale'), true);
@@ -160,38 +164,145 @@ test('latest per-series status masks nonnull failures and respects the disk sour
   assert.equal(ui.row(copy('nodes.disk')).querySelector('.sample-value').classList.contains('metric-stale'), false);
   ui.advance(1);
   assert.equal(ui.row(copy('nodes.disk')).querySelector('.sample-value').classList.contains('metric-stale'), true);
-  assert.equal(ui.row(copy('nodes.disk')).querySelector('.sample-value').textContent, '/: 1 KiB / 4 KiB (25%)');
+  assert.equal(ui.row(copy('nodes.disk')).querySelector('.sample-value').textContent, '25%');
 });
 
-test('latest disk row shows inode percent and omits it when inode counts are null', async (t) => {
+test('single disk folds capacity and inode percent into the tile', async (t) => {
   const latest = snapshot();
   latest.metrics.disks = [{path: '/', total_bytes: 4096, used_bytes: 1024, inodes_total: 100, inodes_used: 25}];
   latest.metrics.metric_status['disk:/'] = 'ok';
   latest.metrics.sources['disk:/'] = source(0, 60000);
   const ui = await setup(t, latest);
   const value = () => ui.row(copy('nodes.disk')).querySelector('.sample-value').textContent;
-  assert.equal(value(), copy('nodes.diskInodeSummary', {disk: '/: 1 KiB / 4 KiB (25%)', percent: '25%'}));
+  assert.equal(value(), '25%');
+  assert.match(ui.row(copy('nodes.disk')).querySelector('.sample-detail').textContent, /Inodes 25%/);
   latest.metrics.disks[0].inodes_total = null;
   latest.metrics.disks[0].inodes_used = null;
   ui.view.snapshot(latest);
-  assert.equal(value(), '/: 1 KiB / 4 KiB (25%)');
+  assert.equal(value(), '25%');
 });
 
-test('optional host sample rows appear only for available values', async (t) => {
+test('optional host sample fields keep their place and show missing values as dashes', async (t) => {
   const latest = snapshot();
   const ui = await setup(t, latest);
   const keys = ['nodes.diskIO', 'nodes.pressure', 'nodes.temperature'];
-  for (const key of keys) assert.equal(ui.row(copy(key)), undefined);
+  for (const key of keys) assert.match(ui.row(copy(key)).textContent, /—/);
   Object.assign(latest.metrics, {disk_io: {read_bytes_per_sec: 1024, write_bytes_per_sec: 2048, busy_percent: 25},
     pressure: {cpu: 1, memory: null, io: 3}, temperature_celsius: 48.5});
   ui.view.snapshot(latest);
-  assert.match(ui.row(copy('nodes.diskIO')).textContent, copyPattern('nodes.diskIOSummary', {read: '1 KiB/s', write: '2 KiB/s', busy: '25%'}));
+  assert.deepEqual(ui.row(copy('nodes.diskIO')).querySelectorAll('.sample-value').map((element) => element.textContent), ['1 KiB/s', '2 KiB/s', '25%']);
   assert.match(ui.row(copy('nodes.pressure')).textContent, copyPattern('nodes.pressureSummary', {cpu: '1%', memory: '—', io: '3%'}));
   assert.match(ui.row(copy('nodes.temperature')).textContent, copyPattern('nodes.celsius', {value: '48.5'}));
   Object.assign(latest.metrics, {pressure: {cpu: null, memory: null, io: null}});
   ui.view.snapshot(latest);
-  assert.equal(ui.row(copy('nodes.pressure')), undefined);
+  assert.match(ui.row(copy('nodes.pressure')).textContent, /—/);
   Object.assign(latest.metrics, {disk_io: null, pressure: null, temperature_celsius: null});
   ui.view.snapshot(latest);
-  for (const key of keys) assert.equal(ui.row(copy(key)), undefined);
+  for (const key of keys) assert.match(ui.row(copy(key)).textContent, /—/);
+});
+
+test('tiles choose highest disk, sum interfaces, and keep keyed table nodes across updates', async (t) => {
+  const latest = snapshot();
+  latest.metrics.disks = [
+    {path: '/', total_bytes: 4096, used_bytes: 1024, inodes_total: 100, inodes_used: 25},
+    {path: '/data', total_bytes: 1024, used_bytes: 900, inodes_total: 100, inodes_used: 90}
+  ];
+  latest.metrics.networks = [
+    {name: 'eth0', rx_bytes_per_sec: 1024, tx_bytes_per_sec: 512},
+    {name: 'eth1', rx_bytes_per_sec: 2048, tx_bytes_per_sec: 256}
+  ];
+  for (const key of ['disk:/', 'disk:/data', 'network:eth0', 'network:eth1']) {
+    latest.metrics.metric_status[key] = 'ok'; latest.metrics.sources[key] = source();
+  }
+  const ui = await setup(t, latest);
+  const primary = ui.view.element.querySelector('.sample-primary');
+  assert.equal(primary.children.length, 4);
+  assert.equal(primary.querySelectorAll('.usage-meter').length, 3, 'load has no CPU-count denominator');
+  assert.equal(ui.row(copy('nodes.cpu')).querySelector('.sample-value').textContent, '25%');
+  assert.equal(ui.row(copy('nodes.memory')).querySelector('.sample-value').textContent, '75%');
+  assert.equal(ui.row(copy('nodes.memory')).querySelector('.sample-detail').textContent, '3 KiB / 4 KiB');
+  const diskRow = ui.row(copy('nodes.disk'));
+  assert.equal(diskRow.querySelector('.sample-value').textContent, '87.9%');
+  assert.match(diskRow.querySelector('.sample-detail').textContent, /^\/data/);
+  assert.deepEqual(ui.row(copy('nodes.network')).querySelectorAll('.sample-value').map((value) => value.textContent), ['3 KiB/s', '768 B/s']);
+  const disksTable = ui.view.element.querySelector('.sample-disks');
+  const networksTable = ui.view.element.querySelector('.sample-networks');
+  assert.equal(disksTable.hidden, false);
+  assert.equal(networksTable.hidden, false);
+  assert.deepEqual(disksTable.querySelectorAll('tbody')[0].children[0].querySelectorAll('.sample-value').map((value) => value.textContent), ['1 KiB / 4 KiB', '25%', '25%']);
+  const originalNodes = elements(primary);
+  const originalDiskRow = disksTable.querySelector('tbody').children[0];
+  const originalNetworkRow = networksTable.querySelector('tbody').children[0];
+  latest.metrics.cpu_percent = 95;
+  latest.metrics.disks[0].used_bytes = 4096;
+  latest.metrics.networks[0].rx_bytes_per_sec = 3072;
+  ui.view.snapshot(latest);
+  assert.deepEqual(elements(primary), originalNodes);
+  assert.equal(disksTable.querySelector('tbody').children[0], originalDiskRow);
+  assert.equal(networksTable.querySelector('tbody').children[0], originalNetworkRow);
+  assert.equal(diskRow.querySelector('.sample-value').textContent, '100%');
+  assert.match(diskRow.querySelector('.sample-detail').textContent, /^\//);
+  assert.equal(ui.row(copy('nodes.cpu')).querySelector('.usage-meter').classList.contains('usage-bad'), true);
+  assert.equal(ui.row(copy('nodes.network')).querySelector('.sample-value').textContent, '5 KiB/s');
+  latest.metrics.disks[0].total_bytes = 8192;
+  ui.view.snapshot(latest);
+  assert.equal(originalDiskRow.querySelector('.sample-value').textContent, '4 KiB / 8 KiB', 'unchanged used bytes still update total');
+  latest.metrics.disks = latest.metrics.disks.slice(0, 1);
+  latest.metrics.networks = latest.metrics.networks.slice(0, 1);
+  ui.view.snapshot(latest);
+  assert.equal(disksTable.hidden, true);
+  assert.equal(networksTable.hidden, true);
+  assert.equal(ui.row(copy('nodes.network')).querySelector('.sample-detail').textContent, 'eth0');
+  latest.metrics = {};
+  ui.view.snapshot(latest);
+  assert.equal(primary.querySelectorAll('.sample-value').every((value) => value.textContent === '—'), true);
+  assert.equal(ui.row(copy('nodes.network')).querySelectorAll('.sample-value').every((value) => value.textContent === '—'), true);
+});
+
+test('usage values and bars share a tween and detach finishes it', async (t) => {
+  const ui = await setup(t);
+  const motion = Object.getOwnPropertyDescriptor(reducedMotion, 'matches');
+  Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => false});
+  const originals = new Map(['requestAnimationFrame', 'cancelAnimationFrame'].map((key) => [key, globalThis[key]]));
+  const frames = new Map();
+  let id = 0;
+  globalThis.requestAnimationFrame = (callback) => { frames.set(++id, callback); return id; };
+  globalThis.cancelAnimationFrame = (id) => frames.delete(id);
+  t.after(() => { Object.defineProperty(reducedMotion, 'matches', motion); for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; } });
+  const cpu = ui.row(copy('nodes.cpu'));
+  const meter = cpu.querySelector('.usage-meter');
+  const value = cpu.querySelector('.sample-value');
+  const next = snapshot(); next.metrics.cpu_percent = 95;
+  ui.view.snapshot(next);
+  assert.equal(value.textContent, '25%');
+  assert.equal(frames.size, 1);
+  const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach((callback) => callback(125));
+  assert.equal(value.textContent, '60%');
+  assert.equal(meter.querySelector('i').style.width, '60%');
+  ui.view.detach();
+  assert.equal(value.textContent, '95%');
+  assert.equal(meter.querySelector('i').style.width, '95%');
+  assert.equal(frames.size, 0);
+});
+
+test('highest disk errors stay unavailable and one missing network direction does not invent a total', async (t) => {
+  const latest = snapshot();
+  latest.metrics.disks = [{path: '/', total_bytes: 100, used_bytes: 50}, {path: '/data', total_bytes: 100, used_bytes: 95}];
+  latest.metrics.networks = [{name: 'eth0', rx_bytes_per_sec: 100, tx_bytes_per_sec: 50}, {name: 'eth1', rx_bytes_per_sec: null, tx_bytes_per_sec: 50}];
+  for (const key of ['disk:/', 'disk:/data', 'network:eth0', 'network:eth1']) {
+    latest.metrics.metric_status[key] = 'ok'; latest.metrics.sources[key] = source();
+  }
+  latest.metrics.metric_status['disk:/data'] = 'error';
+  const ui = await setup(t, latest);
+  assert.equal(ui.row(copy('nodes.disk')).querySelector('.sample-value').textContent, '—');
+  assert.deepEqual(ui.row(copy('nodes.network')).querySelectorAll('.sample-value').map((value) => value.textContent), ['—', '100 B/s']);
+  const sampled = ui.row(copy('nodes.sampled')).querySelector('time');
+  latest.seq = 5; latest.sampled_at = '2026-10-28T10:00:10.000Z';
+  ui.view.snapshot(latest);
+  assert.equal(ui.row(copy('nodes.sampled')).querySelector('time'), sampled);
+  assert.equal(sampled.getAttribute('datetime'), latest.sampled_at);
+  assert.match(sampled.title, copyPattern('nodes.sequence', {value: 5}));
+  latest.metrics.metric_status['network:eth1'] = 'error';
+  ui.view.snapshot(latest);
+  assert.deepEqual(ui.row(copy('nodes.network')).querySelectorAll('.sample-value').map((value) => value.textContent), ['—', '—']);
 });

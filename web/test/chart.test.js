@@ -201,3 +201,30 @@ test('time ticks use the visible span and omit duplicate adjacent labels', async
     }
   } finally { dom.restore(); }
 });
+
+test('showAt mirrors the nearest bucket within its own step without changing keyboard selection', async () => {
+  const {elements, installDOM} = await import('./console-dom.js');
+  const dom = installDOM();
+  try {
+    const root = chart({title: 'CPU', unit: 'percent', id: 'mirror', maximumLegend: false,
+      selectedTime: Date.parse(point(5).t), series: [{label: 'CPU', points: [point(0, 10), point(5, 50), point(10, 90)], stepSeconds: 60}]});
+    const plot = root.querySelector('.chart-plot');
+    const tooltip = root.querySelector('.chart-tooltip');
+    const crosshair = elements(root).find((element) => element.getAttribute('class') === 'chart-crosshair');
+    const request = Date.parse(point(5).t) + 30000;
+    root.showAt(request);
+    assert.equal(tooltip.hidden, false);
+    assert.match(tooltip.textContent, /50%/);
+    assert.equal(tooltip.getAttribute('aria-hidden'), 'true');
+    assert.equal(plot.dataset.selectedTime, undefined);
+    assert.ok(Math.abs(Number(crosshair.getAttribute('x1')) - 388.2) < 0.001);
+    root.showAt(Date.parse(point(5).t) + 61000);
+    assert.equal(tooltip.hidden, true, 'do not span a gap beyond a step');
+    plot.dispatchEvent(new Event('focus'));
+    assert.equal(plot.dataset.selectedTime, String(Date.parse(point(5).t)));
+    assert.equal(tooltip.getAttribute('aria-hidden'), 'false');
+    assert.equal(tooltip.getAttribute('aria-live'), 'polite');
+    root.hide(); assert.equal(tooltip.hidden, true);
+    assert.doesNotMatch(root.textContent, copyPattern('nodes.chart.maximum'));
+  } finally { dom.restore(); }
+});
