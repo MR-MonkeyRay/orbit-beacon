@@ -4,7 +4,8 @@ import {getNavigationSignal} from '../api.js';
 
 // ARIA 标签页（方向键、Home、End），选中状态同步到 URL hash，
 // 因此刷新、/settings#audit 之类的链接和静默刷新都能保持标签页。
-// 只滚动标签条，不滚动页面。
+// 只滚动标签条，不滚动页面。选中下划线是标签条里唯一的指示条，切换时滑到新标签；
+// 面板切换期间暂时保留原高度，再平滑收回，避免懒加载骨架让页面先塌后涨。
 function reveal(button) {
   const strip = button.parentElement;
   if (!strip) return;
@@ -16,7 +17,24 @@ function reveal(button) {
 export function tabSet(tabs, label) {
   const hash = location.hash.slice(1);
   const initial = Math.max(0, tabs.findIndex((tab) => tab.id === hash || tab.hashes?.[hash]));
-  const holder = h('div');
+  const holder = h('div', {class: 'tab-holder'});
+  const indicator = h('span', {class: 'tab-indicator', 'aria-hidden': 'true'});
+  const placeIndicator = (animate) => {
+    const selected = buttons.find((element) => element.getAttribute('aria-selected') === 'true');
+    if (!selected?.isConnected || !Number.isFinite(selected.offsetLeft) || !selected.offsetWidth) return;
+    indicator.classList.toggle('instant', !animate);
+    indicator.style.width = `${Math.max(0, selected.offsetWidth - 20)}px`;
+    indicator.style.transform = `translateX(${selected.offsetLeft + 10}px)`;
+  };
+  let releaseTimer;
+  const holdHeight = () => {
+    const height = holder.offsetHeight;
+    if (!Number.isFinite(height) || height <= 0) return;
+    clearTimeout(releaseTimer);
+    holder.style.transition = 'none';
+    holder.style.minHeight = `${height}px`;
+    releaseTimer = setTimeout(() => { holder.style.transition = ''; holder.style.minHeight = '0px'; }, 400);
+  };
   const buttons = tabs.map((tab) => h('button', {type: 'button', role: 'tab', id: `tab-${tab.id}`, 'aria-controls': `panel-${tab.id}`}, icon(tab.icon), tab.label));
   let lifecycle;
   let attached = false;
@@ -35,7 +53,9 @@ export function tabSet(tabs, label) {
     if (buttons[index].getAttribute('aria-selected') === 'true') return;
     if (holder.querySelector('form[data-dirty="true"]') && !(await confirmDiscard())) return;
     select(index);
+    holdHeight();
     holder.replaceChildren(panelFor(tabs[index], true));
+    placeIndicator(true);
     history.replaceState(history.state, '', `${location.pathname}${location.search}#${tabs[index].id}`);
     reveal(buttons[index]);
     if (focus) buttons[index].focus();
@@ -55,10 +75,10 @@ export function tabSet(tabs, label) {
   const target = section && holder.querySelector(`#${section}`);
   if (target) { target.dataset.autofocus = ''; target.dataset.sectionLink = ''; }
   // 窄屏下标签条可滚动；保持深链接的标签页可见。
-  const list = h('div', {class: 'tabs', role: 'tablist', 'aria-label': label}, buttons);
+  const list = h('div', {class: 'tabs', role: 'tablist', 'aria-label': label}, buttons, indicator);
   // 页面在路由器挂载前就已构建，因此须等待布局完成。
   const revealInitial = (frames) => {
-    if (buttons[initial].isConnected) reveal(buttons[initial]);
+    if (buttons[initial].isConnected) { reveal(buttons[initial]); placeIndicator(false); }
     else if (frames > 0) requestAnimationFrame(() => revealInitial(frames - 1));
   };
   requestAnimationFrame(() => revealInitial(120));
@@ -81,7 +101,7 @@ export function tabSet(tabs, label) {
   let disposed = false;
   const revealSelected = () => {
     const selected = buttons.find((element) => element.getAttribute('aria-selected') === 'true');
-    if (root.isConnected && selected) reveal(selected);
+    if (root.isConnected && selected) { reveal(selected); placeIndicator(false); }
   };
   const sync = () => {
     if (disposed) return;
@@ -99,6 +119,7 @@ export function tabSet(tabs, label) {
     if (attached) lifecycle?.detach?.();
     attached = false;
     observer.disconnect();
+    clearTimeout(releaseTimer);
     window.removeEventListener('resize', revealSelected);
     signal?.removeEventListener('abort', dispose);
   };

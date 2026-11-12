@@ -353,15 +353,38 @@ test('desktop collapse persists, repaints its icon and survives account re-rende
   assert.equal(document.querySelector('.who-name'), null);
 });
 
-test('tablet rail and mobile drawer hide collapse without losing the stored desktop choice', async (t) => {
+test('tablet rail expands as a temporary overlay without touching the stored desktop choice', async (t) => {
   const env = await setup(t, {mobile: false, tablet: true, nav: 'collapsed'});
+  const root = document.documentElement;
   const toggle = document.querySelector('.nav-toggle');
-  assert.equal(toggle.hidden, true);
-  assert.equal(document.documentElement.classList.contains('nav-compact'), true);
+  const writes = [];
+  localStorage.setItem = (key, value) => writes.push([key, value]);
+  assert.equal(toggle.hidden, false);
+  assert.equal(root.classList.contains('nav-compact'), true);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  toggle.click();
+  assert.equal(root.classList.contains('nav-peek'), true);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(toggle.title, copy('shell.collapseNav'));
+  assert.equal(press('Escape').defaultPrevented, true);
+  assert.equal(root.classList.contains('nav-peek'), false);
+  assert.equal(document.activeElement, toggle, 'Escape returns focus to the toggle');
+  toggle.click();
+  env.setActiveNav('/nodes');
+  assert.equal(root.classList.contains('nav-peek'), false, 'navigation closes the overlay');
+  toggle.click();
+  const outside = new Event('pointerdown');
+  Object.defineProperty(outside, 'target', {value: env.view});
+  document.dispatchEvent(outside);
+  assert.equal(root.classList.contains('nav-peek'), false, 'a press outside the sidebar closes the overlay');
+  assert.deepEqual(writes, [], 'the overlay is never persisted');
+  assert.equal(root.classList.contains('nav-collapsed'), true);
+  toggle.click();
   env.compact.matches = false; env.compact.dispatchEvent(new Event('change'));
   env.resize(true);
-  assert.equal(toggle.hidden, true);
-  assert.equal(document.documentElement.classList.contains('nav-compact'), false);
+  assert.equal(root.classList.contains('nav-peek'), false);
+  assert.equal(toggle.hidden, true, 'phones use the drawer instead');
+  assert.equal(root.classList.contains('nav-compact'), false);
   env.resize(false); env.desktop.matches = true; env.desktop.dispatchEvent(new Event('change'));
   assert.equal(toggle.hidden, false);
   assert.equal(toggle.getAttribute('aria-expanded'), 'false');

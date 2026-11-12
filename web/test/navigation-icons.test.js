@@ -33,15 +33,19 @@ test('command palette sidebar button is not treated as a notification counter', 
   assert.match(button, /aria-haspopup="dialog"/);
 });
 
-test('sidebar responsive rules hide headings and shortcuts in the rail, touch hides shortcuts, and search anchors at 15vh', async () => {
+test('sidebar rail keeps item geometry, clips labels instead of moving them, and keeps only the expand button', async () => {
   const shell = await source('../src/console/styles/shell.css');
   const responsive = await source('../src/console/styles/responsive.css');
   assert.match(shell, /\.alert-count\s*\{[^}]*color: var\(--warn\)/);
   assert.match(shell, /\.alert-count\.critical\s*\{[^}]*color: var\(--bad\)/);
   assert.match(shell, /dialog\.command-dialog\s*\{[^}]*margin: 15vh auto auto/);
   assert.match(shell, /@media \(pointer: coarse\)\s*\{\s*\.command-shortcut\s*\{ display: none/);
-  assert.match(responsive, /:where\(html\.nav-compact, html\.nav-collapsed\)/);
-  assert.match(responsive, /\.nav-heading,\.command-shortcut\s*\{ display: none/);
-  assert.match(responsive, /grid-template-columns: 72px minmax\(0,1fr\)/);
-  assert.match(responsive, /\.account\s*\{[^}]*flex-direction: column/);
+  assert.match(responsive, /html:is\(\.nav-compact, \.nav-collapsed\):not\(\.nav-peek\)/);
+  assert.match(responsive, /grid-template-columns: var\(--rail-w\) minmax\(0,1fr\)/);
+  assert.match(shell, /--rail-w:72px/);
+  assert.match(shell, /\.shell\s*\{[^}]*transition: grid-template-columns/);
+  assert.match(shell, /\.sidebar\s*\{[^}]*overflow-x: hidden/);
+  assert.doesNotMatch(responsive, /\.nav-label\s*\{[^}]*position: absolute/, 'labels never leave the rail as positioned tooltips');
+  assert.match(responsive, /\.account > \.user-menu,\.account > \.locale-toggle\s*\{[^}]*visibility: hidden/);
+  assert.doesNotMatch(shell + responsive, /view-transition/);
 });

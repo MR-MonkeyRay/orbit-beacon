@@ -3,7 +3,8 @@ import {initCommandPalette} from './command-palette.js';
 import {menuButton} from './ui/menu.js';
 import {localeToggle} from '../shared/locale-select.js';
 import {confirmLocaleChange, reloadAfterConfirmation} from './router.js';
-import {h, icon} from '../shared/dom.js';
+import {h, icon, reducedMotion} from '../shared/dom.js';
+import {motionTiming} from '../shared/motion.js';
 import {currentTheme, onThemeChange, setTheme} from '../shared/theme.js';
 import {getNavigationSignal, onSession, session, signOut} from './api.js';
 import {busy} from './ui/components.js';
@@ -11,12 +12,14 @@ import {toastError} from './ui/feedback.js';
 import {initNotifications, syncNotifications} from './notifications.js';
 
 // 侧边栏导航与账户区块。标记是 index.html 中的静态内容，
-// 导航在脚本加载前即可呈现。768–1199px 为图标栏，手机复用为抽屉。
+// 导航在脚本加载前即可呈现。768–1199px 为图标栏（可临时浮出展开），手机复用为抽屉。
 let sidebar;
 let account;
 let drawer;
 let accountLifetime;
-let syncNavigation;
+let syncNavigation = () => {};
+let closePeek = () => {};
+let railTip;
 function shellElements() {
   sidebar = document.getElementById('sidebar');
   account = document.getElementById('account');
@@ -47,13 +50,10 @@ function renderAccount() {
   onThemeChange(userMenu.syncChecks, accountLifetime.signal);
   trigger.setAttribute('aria-label', username);
   trigger.title = username;
-  const collapse = h('button', {type: 'button', class: 'icon-button nav-toggle', 'aria-controls': 'sidebar', onclick: () => {
-    const collapsed = !document.documentElement.classList.contains('nav-collapsed');
-    document.documentElement.classList.toggle('nav-collapsed', collapsed);
-    try { localStorage.setItem('orbitbeacon.nav', collapsed ? 'collapsed' : 'expanded'); } catch {}
-    syncNavigation();
-  }});
-  account.replaceChildren(userMenu, consoleLocaleToggle({signal: accountLifetime.signal}), collapse);
+  const locale = consoleLocaleToggle({signal: accountLifetime.signal});
+  locale.classList.add('locale-toggle');
+  const collapse = h('button', {type: 'button', class: 'icon-button nav-toggle', 'aria-controls': 'sidebar', onclick: toggleNavigation});
+  account.replaceChildren(userMenu, locale, collapse);
   syncNavigation();
 }
 
@@ -62,44 +62,113 @@ export function consoleLocaleToggle({navigation = false, signal} = {}) {
     signal: navigation ? getNavigationSignal() : signal});
 }
 
-// 标记当前激活区块；pill 元素带有 view-transition-name，
-// 页面过渡时在各条目间平滑滑动。
+// 标记当前激活区块。只有一个 pill：移到新条目后用 FLIP 从旧位置滑过来；
+// 它位于 .nav 的层叠上下文底层，滑动时不会盖住任何条目文字。
 export function setActiveNav(nav) {
   shellElements();
   drawer?.route();
+  closePeek();
+  railTip?.hide();
   let pill = sidebar.querySelector('.nav-pill');
+  const from = pill?.parentElement ? measure(pill) : null;
+  let moved = false;
   for (const anchor of sidebar.querySelectorAll('[data-nav]')) {
     if (anchor.dataset.nav === nav) {
       anchor.setAttribute('aria-current', 'page');
       pill = pill || h('span', {class: 'nav-pill', 'aria-hidden': 'true'});
-      anchor.prepend(pill);
+      if (pill.parentElement !== anchor) { anchor.prepend(pill); moved = true; }
     } else anchor.removeAttribute('aria-current');
   }
   if (!nav && pill) pill.remove();
+  else if (moved && from) slide(pill, from);
   syncNotifications();
 }
 
+const measure = (element) => typeof element.getBoundingClientRect === 'function' ? element.getBoundingClientRect() : null;
+
+function slide(element, from) {
+  if (reducedMotion.matches || document.hidden || typeof element.animate !== 'function' || !from.height) return;
+  const to = measure(element);
+  if (!to?.height) return;
+  const dx = from.left - to.left;
+  const dy = from.top - to.top;
+  if (!dx && !dy) return;
+  element.animate([{transform: `translate(${dx}px,${dy}px)`}, {transform: 'none'}], motionTiming('--motion-slow', '--ease'));
+}
+
+// 登录后侧栏首次出现时从左侧滑入，内容区自己淡入，二者互不覆盖。
+export function revealNavigation() {
+  shellElements();
+  if (reducedMotion.matches || document.hidden || typeof sidebar.animate !== 'function') return;
+  sidebar.animate([{opacity: 0, transform: 'translateX(-12px)'}, {opacity: 1, transform: 'none'}], motionTiming('--motion-slow', '--ease'));
+}
+
 export function brandMark() { shellElements(); return sidebar.querySelector('.mark').cloneNode(true); }
+
+let desktop;
+let tablet;
+
+// 图标栏状态：平板未浮出、或桌面已收起。手机使用抽屉，没有图标栏。
+const railActive = () => {
+  const root = document.documentElement;
+  return Boolean(tablet?.matches && !root.classList.contains('nav-peek')
+    || desktop?.matches && root.classList.contains('nav-collapsed'));
+};
+
+function toggleNavigation() {
+  const root = document.documentElement;
+  railTip?.hide();
+  if (tablet?.matches) {
+    root.classList.toggle('nav-peek', !root.classList.contains('nav-peek'));
+    syncNavigation();
+    return;
+  }
+  const collapsed = !root.classList.contains('nav-collapsed');
+  root.classList.toggle('nav-collapsed', collapsed);
+  try { localStorage.setItem('orbitbeacon.nav', collapsed ? 'collapsed' : 'expanded'); } catch {}
+  syncNavigation();
+}
 
 export function initShell() {
   shellElements();
   const root = document.documentElement;
   try { root.classList.toggle('nav-collapsed', localStorage.getItem('orbitbeacon.nav') === 'collapsed'); } catch {}
-  const desktop = matchMedia('(min-width: 1200px)');
-  const tablet = matchMedia('(min-width: 768px) and (max-width: 1199px)');
+  desktop = matchMedia('(min-width: 1200px)');
+  tablet = matchMedia('(min-width: 768px) and (max-width: 1199px)');
+  const lifetime = new AbortController();
+  const listen = (target, type, listener, options) => target.addEventListener(type, listener, {...options, signal: lifetime.signal});
   syncNavigation = () => {
     root.classList.toggle('nav-compact', tablet.matches);
+    if (!tablet.matches) root.classList.remove('nav-peek');
+    railTip?.hide();
     const toggle = account.querySelector('.nav-toggle');
     if (!toggle) return;
-    const collapsed = root.classList.contains('nav-collapsed');
-    toggle.hidden = !desktop.matches;
-    toggle.replaceChildren(icon(collapsed ? 'sidebar-expand' : 'sidebar-collapse'));
-    toggle.setAttribute('aria-expanded', String(!collapsed));
-    toggle.title = t(collapsed ? 'shell.expandNav' : 'shell.collapseNav');
+    const rail = railActive();
+    toggle.hidden = !desktop.matches && !tablet.matches;
+    toggle.replaceChildren(icon(rail ? 'sidebar-expand' : 'sidebar-collapse'));
+    toggle.setAttribute('aria-expanded', String(!rail));
+    toggle.title = t(rail ? 'shell.expandNav' : 'shell.collapseNav');
     toggle.setAttribute('aria-label', toggle.title);
   };
-  desktop.addEventListener('change', syncNavigation);
-  tablet.addEventListener('change', syncNavigation);
+  // 平板浮出的侧栏是临时的：导航、Esc、点击侧栏之外或断点变化都会收回，不写入偏好。
+  closePeek = ({restoreFocus = false} = {}) => {
+    if (!root.classList.contains('nav-peek')) return;
+    root.classList.remove('nav-peek');
+    syncNavigation();
+    if (restoreFocus) account.querySelector('.nav-toggle')?.focus({preventScroll: true});
+  };
+  listen(document, 'keydown', (event) => {
+    if (event.key !== 'Escape' || event.defaultPrevented || !root.classList.contains('nav-peek')) return;
+    if ([...document.querySelectorAll('dialog')].some((dialog) => dialog.open)) return;
+    event.preventDefault();
+    closePeek({restoreFocus: true});
+  });
+  listen(document, 'pointerdown', (event) => {
+    if (root.classList.contains('nav-peek') && !sidebar.contains(event.target)) closePeek();
+  });
+  listen(desktop, 'change', syncNavigation);
+  listen(tablet, 'change', syncNavigation);
+  railTip = railTooltip(lifetime.signal, railActive);
   drawer = mobileNavigation();
   const shortcut = sidebar.querySelector('.command-shortcut');
   if (shortcut) shortcut.textContent = /Mac|iPhone|iPad|iPod/.test(navigator.userAgentData?.platform || navigator.platform || '') ? '⌘K' : 'Ctrl K';
@@ -109,14 +178,51 @@ export function initShell() {
   const stopCommands = initCommandPalette();
   return () => {
     unsubscribe();
-    desktop.removeEventListener('change', syncNavigation);
-    tablet.removeEventListener('change', syncNavigation);
+    lifetime.abort();
+    railTip?.remove();
+    railTip = undefined;
+    closePeek = () => {};
     accountLifetime?.abort();
     drawer.dispose();
     drawer = undefined;
     stopNotifications();
     stopCommands();
   };
+}
+
+// 图标栏的悬停与键盘聚焦提示。标签仍留在条目内作为可访问名称（只是被裁剪、淡出），
+// 提示是 body 下的装饰副本，固定定位在条目右侧，不会被侧栏裁剪，也不影响布局。
+function railTooltip(signal, active) {
+  const tip = h('div', {class: 'rail-tip', 'aria-hidden': 'true'});
+  document.body.append(tip);
+  let owner = null;
+  const item = (target) => {
+    for (let element = target; element && element !== sidebar; element = element.parentElement) {
+      if (element.querySelector?.(':scope > .nav-label') && !element.classList.contains('brand')) return element;
+    }
+    return null;
+  };
+  const hide = () => { owner = null; tip.classList.remove('show'); };
+  const show = (element) => {
+    if (!element || !active()) { hide(); return; }
+    const rect = measure(element);
+    const label = element.querySelector(':scope > .nav-label')?.textContent.trim();
+    if (!rect || !label) { hide(); return; }
+    owner = element;
+    tip.textContent = label;
+    tip.style.left = `${Math.round(rect.right + 10)}px`;
+    tip.style.top = `${Math.round(rect.top + rect.height / 2)}px`;
+    tip.classList.add('show');
+  };
+  const listen = (target, type, listener, options) => target.addEventListener(type, listener, {...options, signal});
+  listen(sidebar, 'pointerover', (event) => { if (event.pointerType === 'mouse') show(item(event.target)); });
+  listen(sidebar, 'pointerout', (event) => { if (owner && !owner.contains(event.relatedTarget)) hide(); });
+  listen(sidebar, 'focusin', (event) => { const element = item(event.target); if (element?.matches?.(':focus-visible')) show(element); });
+  listen(sidebar, 'focusout', hide);
+  listen(sidebar, 'click', hide, {capture: true});
+  listen(sidebar, 'scroll', hide);
+  listen(window, 'scroll', hide, {passive: true});
+  return {hide, remove() { hide(); tip.remove(); }};
 }
 
 

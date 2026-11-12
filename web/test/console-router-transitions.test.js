@@ -3,18 +3,8 @@ import assert from 'node:assert/strict';
 import {setImmediate as nextTurn} from 'node:timers/promises';
 import * as client from '../src/console/api.js';
 import {reducedMotion} from '../src/shared/dom.js';
-import {flush, TestElement} from './console-dom.js';
+import {copy, flush, TestElement} from './console-dom.js';
 import {liveHarness, response} from './live-harness.js';
-
-function deferred() {
-  let resolve;
-  let reject;
-  const promise = new Promise((accept, fail) => { resolve = accept; reject = fail; });
-  // 防止失败实现中被忽略的浏览器 promise 泄漏到
-  // 其他测试；导航自身的结果仍须暴露意外错误。
-  promise.catch(() => {});
-  return {promise, resolve, reject};
-}
 
 async function routing(t, {hidden = false, routes} = {}) {
 	const env = liveHarness(t, () => response({user: {id: 'routing-user', username: 'administrator', must_change_password: false},
@@ -34,17 +24,8 @@ async function routing(t, {hidden = false, routes} = {}) {
     const element = new TestElement('div'); element.id = id; env.body.append(element);
   }
   const transitions = [];
-  env.document.startViewTransition = (update) => {
-    if (env.document.hidden) throw new DOMException('Transition was aborted because of invalid state.', 'InvalidStateError');
-    const ready = deferred();
-    const done = deferred();
-    const entry = {ready: ready.promise, updateCallbackDone: done.promise,
-      skipTransition() { ready.reject(new DOMException('Transition skipped.', 'AbortError')); },
-      begin() { ready.resolve(); }, fail(error) { ready.reject(error); }};
-    Promise.resolve().then(update).then(done.resolve, (error) => { done.reject(error); ready.reject(error); });
-    transitions.push(entry);
-    return entry;
-  };
+  // 控制台不再使用视图过渡；保留探针以断言它从未被调用。
+  env.document.startViewTransition = (update) => { transitions.push(update); update(); return {ready: Promise.resolve(), updateCallbackDone: Promise.resolve()}; };
   client.setNavigationSignal(null);
   client.setSession({user: {id: 'routing-user', username: 'administrator', must_change_password: false}, csrf_token: 'routing-proof', expires_at: '2026-10-28T00:10:00Z'});
   const router = await import(`../src/console/router.js?transition-${encodeURIComponent(t.name)}`);
@@ -52,8 +33,6 @@ async function routing(t, {hidden = false, routes} = {}) {
     const heading = new TestElement('h1'); heading.append(location.pathname);
     const content = new TestElement('section'); content.append(heading); return content;
   }}]);
-  await flush();
-  transitions[0]?.begin();
   await flush();
   return {...env, ...router, transitions, clean() {
     stop();
@@ -109,49 +88,85 @@ test('hidden initial routing and hidden navigation update content without starti
 });
 
 test('rapid routing rejects the superseded navigation without masking the newest content', async (t) => {
-  const env = await routing(t);
+  let release;
+  const page = async () => {
+    const path = location.pathname;
+    if (path === '/first') await new Promise((resolve) => { release = resolve; });
+    const heading = new TestElement('h1'); heading.append(path);
+    const content = new TestElement('section'); content.append(heading); return content;
+  };
+  const env = await routing(t, {routes: [{match: () => true, page}]});
   try {
     const first = env.go('/first'); await flush();
     const cancelled = assert.rejects(first, (error) => error.name === 'AbortError');
-    const firstTransition = env.transitions.at(-1);
-    const second = env.go('/second'); await flush();
-    env.transitions.at(-1).begin();
-    await Promise.all([cancelled, second]);
-    firstTransition.begin(); await flush();
+    await env.go('/second');
+    release(); await cancelled;
     assert.equal(location.pathname, '/second');
     assert.equal(document.getElementById('view').textContent, '/second');
+    assert.equal(env.transitions.length, 0, 'navigation never starts a view transition');
   } finally { env.clean(); }
 });
 
-test('hiding during an unfinished transition accepts the browser visibility cancellation and still commits content', async (t) => {
+test('navigation fades the view in with one WAAPI animation and no view transition', async (t) => {
   const env = await routing(t);
+  const view = document.getElementById('view');
   try {
-    const pending = env.go('/before-hide'); await flush();
-    env.document.hidden = true;
-    env.transitions.at(-1).fail(new DOMException('Transition was aborted because of invalid state.', 'InvalidStateError'));
-    env.document.dispatchEvent(new Event('visibilitychange'));
-    await pending;
-    assert.equal(document.getElementById('view').textContent, '/before-hide');
-    await env.go('/while-hidden');
-    assert.equal(document.getElementById('view').textContent, '/while-hidden');
+    const before = view.animations.length;
+    await env.go('/animated');
+    assert.equal(view.textContent, '/animated');
+    assert.equal(env.transitions.length, 0);
+    assert.equal(view.animations.length, before + 1);
+    const animation = view.animations.at(-1);
+    assert.deepEqual(animation.keyframes.map((frame) => frame.opacity), [0, 1]);
+    await env.go('/next');
+    assert.equal(animation.cancelled, true, 'a newer navigation cancels the running fade');
+    await env.refresh();
+    assert.equal(view.animations.length, before + 2, 'quiet refresh replaces content without animating');
   } finally { env.clean(); }
 });
 
-for (const name of ['InvalidStateError', 'AbortError']) {
-  test(`visible routing exposes an unexpected ${name} instead of treating it as intentional cancellation`, async (t) => {
-    const env = await routing(t);
-    try {
-      const error = new DOMException('Unexpected animation configuration failure.', name);
-      const pending = env.go('/broken-animation');
-      const rejected = assert.rejects(pending, (value) => value === error);
-      await flush(); env.transitions.at(-1).fail(error);
-      await rejected;
-      assert.equal(document.getElementById('view').textContent, '/broken-animation');
-    } finally { env.clean(); }
-  });
-}
+test('a route placeholder renders at once and the loaded page fills in without a second animation', async (t) => {
+  let release = () => {};
+  let fail = () => {};
+  let calls = 0;
+  const placeholder = () => { const element = new TestElement('div'); element.append('placeholder'); return element; };
+  const page = () => {
+    calls += 1;
+    if (calls === 1) return Promise.resolve(Object.assign(new TestElement('section'), {}));
+    return new Promise((resolve, reject) => {
+      release = () => { const heading = new TestElement('h1'); heading.append('loaded'); const content = new TestElement('section'); content.append(heading); resolve(content); };
+      fail = reject;
+    });
+  };
+  const env = await routing(t, {routes: [{match: () => true, placeholder, page}]});
+  const view = document.getElementById('view');
+  const scrolls = [];
+  env.window.scrollTo = (options) => scrolls.push(options);
+  try {
+    const before = view.animations.length;
+    const pending = env.go('/metrics'); await flush();
+    assert.equal(view.textContent, 'placeholder', 'the placeholder replaces the old page before data arrives');
+    assert.equal(view.animations.length, before + 1);
+    assert.deepEqual(scrolls, [{top: 0, behavior: 'instant'}]);
+    release(); await pending;
+    assert.equal(view.textContent, 'loaded');
+    assert.equal(view.animations.length, before + 1, 'filling in data does not replay the entrance');
+    assert.deepEqual(scrolls, [{top: 0, behavior: 'instant'}], 'filling in data keeps the scroll position');
+    assert.equal(document.activeElement, view.querySelector('h1'));
+    assert.equal(document.title, 'loaded – OrbitBeacon');
 
-test('routing exposes a genuine transition DOM-update failure', async (t) => {
+    const quiet = env.refresh(); await flush();
+    assert.equal(view.textContent, 'loaded', 'quiet refresh never shows the placeholder');
+    release(); await quiet;
+
+    const broken = env.go('/broken'); await flush();
+    assert.equal(view.textContent, 'placeholder');
+    fail(Object.assign(new Error('Server unavailable'), {status: 503})); await broken;
+    assert.equal(view.querySelector('h1').textContent, copy('shell.pageLoadFailed'));
+  } finally { env.clean(); }
+});
+
+test('routing exposes a genuine DOM-update failure', async (t) => {
   const env = await routing(t);
   const view = document.getElementById('view');
   const replace = view.replaceChildren;
@@ -173,12 +188,10 @@ test('rapid link and popstate navigation consume only their expected cancellatio
     };
     follow('/first-link'); await flush();
     follow('/second-link'); await flush();
-    env.transitions.at(-1).begin(); await flush();
     location.pathname = '/first-popstate';
     env.window.dispatchEvent(Object.assign(new Event('popstate'), {state: {scroll: 0}})); await flush();
     location.pathname = '/second-popstate';
     env.window.dispatchEvent(Object.assign(new Event('popstate'), {state: {scroll: 0}})); await flush();
-    env.transitions.at(-1).begin(); await flush();
     await nextTurn();
     assert.equal(document.getElementById('view').textContent, '/second-popstate');
   } finally { env.clean(); }
@@ -285,15 +298,17 @@ test('dialog drafts block go and popstate with the same discard confirmation as 
   } finally { env.clean(); }
 });
 
-test('reduced motion navigates without view transitions and restores scroll instantly', async (t) => {
+test('reduced motion navigates without animation and restores scroll instantly', async (t) => {
   const env = await routing(t);
   try {
     Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => true});
-    const count = env.transitions.length;
+    const view = document.getElementById('view');
+    const count = view.animations.length;
     const scrolls = [];
     env.window.scrollTo = (options) => scrolls.push(options);
     await env.go('/reduced');
-    assert.equal(env.transitions.length, count);
+    assert.equal(view.animations.length, count);
+    assert.equal(env.transitions.length, 0);
     assert.equal(document.getElementById('view').textContent, '/reduced');
     assert.deepEqual(scrolls, [{top: 0, behavior: 'instant'}]);
   } finally { env.clean(); }

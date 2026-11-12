@@ -1,37 +1,5 @@
-/* 视图过渡：外壳保持不动，只移动页面和激活的 pill。 */
-::view-transition-old(root),::view-transition-new(root) {
-  animation: none;
-}
-
-::view-transition-old(main-view) {
-  animation: vt-out var(--motion-fast) var(--ease-in) both;
-}
-
-::view-transition-new(main-view) {
-  animation: vt-in var(--motion-slow) var(--ease) both;
-}
-
-::view-transition-group(nav-pill) {
-  animation-duration: var(--motion-slow);
-  animation-timing-function: var(--ease);
-}
-
-@keyframes vt-out {
-  to {
-    opacity: 0;
-  }
-}
-
-@keyframes vt-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-}
-
-.enter {
-  animation: vt-in var(--motion-slow) var(--ease);
-}
+/* 页面切换由路由器在 #view 上用 WAAPI 淡入；不使用视图过渡，
+   避免快照绘制在顶层、跨过侧栏或遮住导航文字。 */
 
 /* 响应式内容布局。 */
 @media (max-width:1100px) {
@@ -44,111 +12,103 @@
   }
 }
 
-/* nav-compact 在启动脚本与断点监听中同步；手动收起复用同一套图标栏。
-   图标栏：每个标签变为工具提示，悬停或键盘聚焦时显示。
-   标签保持为真实元素（非生成内容），确保它仍是控件唯一的可访问名称。 */
-
+/* 图标栏：平板（nav-compact）固定为图标栏，桌面手动收起（nav-collapsed）复用同一套规则；
+   平板临时展开（nav-peek）时侧栏浮在内容上，主区域仍占图标栏之后的列。
+   条目几何与展开时相同，只淡出并裁剪文字；标签保持为真实元素，仍是控件的可访问名称，
+   悬停提示由 shell.js 的 .rail-tip 绘制在侧栏之外。 */
 @media (min-width:768px) {
-  :where(html.nav-compact, html.nav-collapsed) {
+  html:is(.nav-compact, .nav-collapsed):not(.nav-peek) {
     .shell {
-      grid-template-columns: 72px minmax(0,1fr);
+      grid-template-columns: var(--rail-w) minmax(0,1fr);
     }
 
-    .sidebar {
-      padding: var(--sp-content) var(--sp-inline);
-      overflow: visible;
-    }
-
-    .sidebar .brand {
-      justify-content: center;
-      padding: var(--sp-tight) 0 var(--sp-content);
-    }
-
-    .nav a,.nav-public,.nav .notification-entry,.nav .command-entry {
-      justify-content: center;
-      gap: 0;
-      padding: 0;
-    }
-
-    .nav .notification-entry,.nav .command-entry {
-      flex-wrap: nowrap;
-      padding-block: 0;
-    }
-
-    .nav-public {
-      padding-top: 14px;
-    }
-
-    .sidebar .nav-label {
-      position: absolute;
-      left: calc(100% + 12px);
-      top: 50%;
-      z-index: var(--z-toast);
-      padding: var(--sp-tight) var(--sp-inline);
-      border-radius: var(--r-sm);
-      background: var(--ink);
-      color: var(--bg);
-      font-size: var(--fs-sm);
-      font-weight: var(--fw-semibold);
-      line-height: var(--lh-compact);
-      white-space: nowrap;
-      box-shadow: var(--shadow);
+    .sidebar .nav-label,.command-shortcut {
       opacity: 0;
-      transform: translate(-4px,-50%);
-      pointer-events: none;
-      transition: opacity var(--motion-fast),transform var(--motion-fast) var(--ease);
+      transition: opacity var(--motion-instant) var(--ease);
     }
 
-    .sidebar .brand {
-      position: relative;
+    .nav-heading {
+      color: transparent;
+      transition: color var(--motion-instant) var(--ease);
     }
 
-    .sidebar :focus-visible>.nav-label {
+    .nav-heading::after {
       opacity: 1;
-      transform: translate(0,-50%);
+      transition: opacity var(--motion-normal) var(--ease) var(--motion-fast);
     }
 
-    @media (hover:hover) {
-      .sidebar :hover>.nav-label {
-        opacity: 1;
-        transform: translate(0,-50%);
-      }
-    }
-
-    /* 触屏没有 hover，点按产生的是 :focus 而非 :focus-visible。 */
-    @media (pointer:coarse) {
-      .sidebar :focus>.nav-label {
-        opacity: 1;
-        transform: translate(0,-50%);
-      }
-    }
-
-    .notification-entry .notification-count {
-      position: absolute;
-      top: 3px;
-      right: 4px;
-      min-width: 18px;
-      margin: 0;
-      padding: 0 var(--sp-tight);
-      font-size: var(--fs-xs);
-      line-height: var(--line-height-badge);
+    .nav .notification-entry {
+      flex-wrap: nowrap;
     }
 
     .notification-entry .notification-freshness {
       display: none;
     }
 
-    .account {
-      flex-direction: column;
-      align-items: center;
-      padding: var(--sp-control) 0 var(--sp-tight);
+    .notification-entry .notification-count,.nav .alert-count {
+      position: absolute;
+      top: 3px;
+      left: 26px;
+      min-width: 18px;
+      margin: 0;
+      padding: 0 var(--sp-tight);
+      font-size: var(--fs-xs);
+      line-height: var(--line-height-badge);
+      text-align: center;
+      animation: badge-in var(--motion-normal) var(--ease) both;
     }
 
-    .nav-heading,.command-shortcut { display: none; }
-    .nav [role="group"] + .nav-heading + [role="group"] { margin-top: var(--sp-control); }
-    .user-menu > .btn { justify-content: center; padding: 0; }
-    .user-menu .menu-options { left: calc(100% + 10px); bottom: 0; }
-    .nav .alert-count { position: absolute; top: 0; right: 0; font-size: var(--fs-xs); }
+    .nav .alert-count {
+      border-radius: 999px;
+      background: var(--warn-bg);
+    }
+
+    .nav .alert-count.critical {
+      background: var(--bad-bg);
+    }
+
+    .account {
+      gap: 0;
+    }
+
+    .account > .user-menu,.account > .locale-toggle {
+      min-width: 0;
+      max-width: 0;
+      padding: 0;
+      border-width: 0;
+      overflow: hidden;
+      opacity: 0;
+      visibility: hidden;
+      transition: max-width var(--motion-slow) var(--ease),opacity var(--motion-instant) var(--ease),visibility 0s linear var(--motion-slow);
+    }
+
+    .account > .nav-toggle {
+      width: 100%;
+    }
+  }
+
+  /* 平板：网格列始终是图标栏宽度；侧栏宽度显式给出，浮出时从图标栏宽度平滑过渡到完整宽度。 */
+  html.nav-compact .shell {
+    grid-template-columns: var(--rail-w) minmax(0,1fr);
+  }
+
+  html.nav-compact .sidebar {
+    width: var(--rail-w);
+    transition: width var(--motion-slow) var(--ease),box-shadow var(--motion-slow) var(--ease);
+  }
+
+  html.nav-compact.nav-peek .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: var(--nav-w);
+    box-shadow: var(--shadow-lg);
+  }
+}
+
+@keyframes badge-in {
+  from {
+    opacity: 0;
+    transform: scale(.6);
   }
 }
 
@@ -214,10 +174,6 @@
     overscroll-behavior: contain;
     transform: translateX(-100%);
     transition: transform var(--motion-normal) var(--ease);
-  }
-
-  .nav-pill {
-    view-transition-name: none;
   }
 
   .drawer-open .sidebar {

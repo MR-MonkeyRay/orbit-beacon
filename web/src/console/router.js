@@ -2,21 +2,23 @@ import {t} from './i18n.js';
 import {errorText} from '../shared/errors.js';
 import {h, reducedMotion} from '../shared/dom.js';
 import {ensureSession, onSession, pauseSessionVerification, session, setNavigationSignal, verifySession} from './api.js';
-import {setActiveNav} from './shell.js';
+import {revealNavigation, setActiveNav} from './shell.js';
+import {motionTiming} from '../shared/motion.js';
 import {button, linkButton, pageHead, panel, resetIDs, skeleton} from './ui/components.js';
 import {closeDialogs, confirmDiscard, dialogActionStale, hasUnsavedDialogChanges} from './ui/dialogs.js';
 import {progress} from './ui/feedback.js';
 
 // History API 路由器。页面是返回元素（或重定向路径字符串）的异步函数。
-// 数据先于切换加载；只有加载慢时才显示骨架屏，
-// 切换在支持时使用视图过渡。
+// 路由可提供与页面布局一致的 placeholder()：导航时立即换上占位，数据到达后原位替换；
+// 没有占位的路由在加载超过 160ms 时显示通用骨架。静默刷新始终等数据就绪后原地替换。
+// 页面进入只在 #view 上做 WAAPI 淡入，不使用视图过渡（快照会绘制在顶层、盖住侧栏）。
 let view;
 let routes = [];
 let navigation = 0;
 let controller;
 let currentURL = location.pathname + location.search + location.hash;
 let intent = 0;
-let transition;
+let viewAnimation;
 let confirmedUnload = false;
 
 class NavigationCancelled extends DOMException {
@@ -45,13 +47,6 @@ export function reloadAfterConfirmation() {
   location.reload();
 }
 
-function skipTransition(hidden = false) {
-  if (!transition) return;
-  transition.skipped = true;
-  transition.hidden ||= hidden;
-  transition.value.skipTransition();
-}
-
 export async function go(target, options = {}) {
   const attempt = ++intent;
   if (!options.force && hasUnsavedWork() && !(await confirmDiscard())) throw new NavigationCancelled();
@@ -75,7 +70,6 @@ export const refresh = () => dialogActionStale() ? Promise.reject(new Navigation
 async function render(options = {}) {
   const token = ++navigation;
   controller?.abort();
-  skipTransition();
   controller = new AbortController();
   setNavigationSignal(controller.signal);
   const openerID = closeDialogs();
@@ -85,12 +79,15 @@ async function render(options = {}) {
   const route = matched || routes.find((item) => item.fallback);
   const focusID = options.quiet ? openerID || document.activeElement?.id : '';
   progress.start();
-  let skeletonShown = false;
-  const skeletonTimer = options.quiet ? 0 : setTimeout(() => {
-    if (token !== navigation) return;
-    skeletonShown = true;
-    swap(skeleton(), route, 'fade', token);
-  }, 160);
+  // 第一次可见的替换（占位或骨架）负责进入动画与回到顶部，数据到达后的替换不再重复。
+  let shown = false;
+  const showLoading = (content) => {
+    if (token !== navigation || shown) return;
+    shown = true;
+    swap(content, route, 'enter', token);
+    if (options.scroll !== undefined) window.scrollTo({top: options.scroll, behavior: 'instant'});
+  };
+  const skeletonTimer = options.quiet ? 0 : setTimeout(() => showLoading(skeleton()), 160);
   const loadingController = controller;
   const cancelSkeleton = () => clearTimeout(skeletonTimer);
   loadingController.signal.addEventListener('abort', cancelSkeleton, {once: true});
@@ -110,6 +107,12 @@ async function render(options = {}) {
       return go(session.user ? '/overview' : '/login', {replace: true, force: true});
     }
     if (!matched) throw Object.assign(new Error('Not found'), {status: 404});
+    if (!options.quiet && route.placeholder) {
+      clearTimeout(skeletonTimer);
+      showLoading(route.placeholder());
+      // 占位不得占用页面的稳定 ID；静默刷新恢复焦点依赖它们与首次渲染一致。
+      resetIDs();
+    }
     content = await route.page();
   } catch (error) {
     if (token !== navigation) throw new NavigationCancelled();
@@ -121,8 +124,7 @@ async function render(options = {}) {
   }
   if (token !== navigation) throw new NavigationCancelled();
   if (typeof content === 'string') return go(content, {replace: true, force: true});
-  await swap(content, route, options.quiet ? 'none' : skeletonShown ? 'fade' : 'transition', token);
-  if (token !== navigation) throw new NavigationCancelled();
+  swap(content, route, options.quiet ? 'none' : shown ? 'fill' : 'enter', token);
   if (options.quiet) {
     const previous = focusID && document.getElementById(focusID);
     const target = previous && !previous.disabled ? previous : view.querySelector('h1');
@@ -130,7 +132,7 @@ async function render(options = {}) {
     if (document.activeElement !== target) view.querySelector('h1')?.focus({preventScroll: true});
     return;
   }
-  if (options.scroll !== undefined) window.scrollTo({top: options.scroll, behavior: 'instant'});
+  if (!shown && options.scroll !== undefined) window.scrollTo({top: options.scroll, behavior: 'instant'});
   const target = view.querySelector('[data-autofocus]') || view.querySelector('h1');
   if (target) {
     target.focus({preventScroll: true});
@@ -138,33 +140,27 @@ async function render(options = {}) {
   }
 }
 
+// 同步替换：内容、导航高亮与标题在同一任务内更新，浏览器不会画出中间状态。
+// enter：#view 淡入并上移 4px；fill：占位换成真实内容，不重播动画；none：静默刷新。
 function swap(content, route, mode, token) {
-  const update = () => {
-    if (token !== navigation) return;
-    document.documentElement.classList.toggle('route-login', Boolean(route.bare));
-    setActiveNav(route.nav);
-    view.replaceChildren(content);
-    const heading = content.querySelector('h1');
-    document.title = heading ? `${heading.textContent} – OrbitBeacon` : t('shell.consoleTitle');
-  };
-  if (mode === 'transition' && !document.hidden && document.startViewTransition && !reducedMotion.matches) {
-    const current = {value: document.startViewTransition(update), skipped: false, hidden: false};
-    transition = current;
-    const ready = current.value.ready.catch((error) => {
-      // 显式跳过以 AbortError 拒绝；文档变为隐藏时浏览器可能以
-      // InvalidStateError 跳过。其他失败
-      // （包括重复的过渡名称）仍是导航错误。
-      if (current.skipped && error.name === 'AbortError' || current.hidden && error.name === 'InvalidStateError') return;
-      throw error;
-    });
-    return Promise.all([current.value.updateCallbackDone, ready]);
-  }
-  update();
-  if (mode !== 'none') {
-    content.classList.add('enter');
-    content.addEventListener('animationend', () => content.classList.remove('enter'), {once: true});
-  }
-  return Promise.resolve();
+  if (token !== navigation) return;
+  const root = document.documentElement;
+  const wasBare = root.classList.contains('route-login');
+  root.classList.toggle('route-login', Boolean(route.bare));
+  setActiveNav(route.nav);
+  view.replaceChildren(content);
+  const heading = content.querySelector('h1');
+  document.title = heading?.textContent ? `${heading.textContent} – OrbitBeacon` : t('shell.consoleTitle');
+  if (mode !== 'enter') return;
+  animateView();
+  if (wasBare && !route.bare) revealNavigation();
+}
+
+function animateView() {
+  viewAnimation?.cancel();
+  viewAnimation = null;
+  if (reducedMotion.matches || document.hidden || typeof view.animate !== 'function') return;
+  viewAnimation = view.animate([{opacity: 0, transform: 'translateY(4px)'}, {opacity: 1, transform: 'none'}], motionTiming('--motion-normal', '--ease'));
 }
 
 function errorPage(error) {
@@ -187,7 +183,6 @@ export function startRouter(table) {
     navigation += 1;
     intent += 1;
     controller?.abort();
-    skipTransition();
     closeDialogs();
     document.getElementById('toasts')?.replaceChildren();
     view.replaceChildren();
@@ -227,9 +222,8 @@ export function startRouter(table) {
     if (location.pathname === '/login' || !session.user || document.hidden) return;
     void verifySession({signal: lifetime.signal}).catch(() => { /* 网络故障时保留已有快照，但会话仍按已知时间过期 */ });
   };
-  const hide = () => { skipTransition(true); pauseSessionVerification(); };
-  listen(document, 'visibilitychange', () => { if (document.hidden) hide(); else revalidate(); });
-  listen(window, 'pagehide', hide);
+  listen(document, 'visibilitychange', () => { if (document.hidden) pauseSessionVerification(); else revalidate(); });
+  listen(window, 'pagehide', pauseSessionVerification);
   listen(window, 'pageshow', revalidate);
   listen(window, 'beforeunload', (event) => {
     if (confirmedUnload) { confirmedUnload = false; return; }
@@ -242,7 +236,7 @@ export function startRouter(table) {
     navigation += 1;
     intent += 1;
     controller?.abort();
-    skipTransition();
+    viewAnimation?.cancel();
     closeDialogs();
     progress.done();
   };

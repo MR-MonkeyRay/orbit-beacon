@@ -56,9 +56,12 @@
   }
 }
 
-/* 外壳 */
+/* 外壳。展开宽度与图标栏宽度固定：12px 内边距 + 15px 条目左内边距让 18px 图标中心
+   始终落在 36px（图标栏中线），收起/展开时图标不移动，只裁剪并淡出文字。 */
 :root {
   --content-max:1180px;
+  --nav-w:248px;
+  --rail-w:72px;
 }
 
 @media (min-width:1680px) {
@@ -69,8 +72,9 @@
 
 .shell {
   display: grid;
-  grid-template-columns: 248px minmax(0,1fr);
+  grid-template-columns: var(--nav-w) minmax(0,1fr);
   min-height: 100dvh;
+  transition: grid-template-columns var(--motion-slow) var(--ease);
 }
 
 .sidebar {
@@ -84,7 +88,9 @@
   padding: 20px var(--sp-control);
   background: var(--rail);
   border-right: 1px solid var(--line);
+  overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .brand {
@@ -99,7 +105,15 @@
   text-decoration: none;
 }
 
+.sidebar .brand {
+  padding-left: 9px;
+  white-space: nowrap;
+}
+
+/* pill 的 z-index:-1 落在 .nav 的层叠上下文里，始终画在所有条目文字之下。 */
 .nav {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -107,17 +121,24 @@
 
 .nav a,.nav-public,.nav .notification-entry,.nav .command-entry {
   position: relative;
-  isolation: isolate;
   display: flex;
   align-items: center;
   gap: var(--sp-control);
+  min-width: 0;
   min-height: var(--control-h-lg);
-  padding: 0 var(--sp-control);
+  padding: 0 var(--sp-control) 0 15px;
   border-radius: var(--r-md);
   color: var(--ink-subtle);
   font-weight: var(--fw-medium);
   text-decoration: none;
+  white-space: nowrap;
   transition: color var(--motion-fast),background-color var(--motion-fast);
+}
+
+.sidebar .nav-label {
+  min-width: 0;
+  overflow: hidden;
+  transition: opacity var(--motion-normal) var(--ease) .12s;
 }
 
 @media (hover:hover) {
@@ -143,7 +164,6 @@
   background: var(--panel);
   box-shadow: var(--shadow);
   border: 1px solid var(--line);
-  view-transition-name: nav-pill;
 }
 
 .nav a[aria-current="page"] .icon {
@@ -162,8 +182,22 @@
   display: flex;
   align-items: center;
   gap: var(--sp-inline);
-  padding: var(--sp-control) var(--sp-inline) var(--sp-tight);
+  padding: var(--sp-control) 0 var(--sp-tight);
   border-top: 1px solid var(--line);
+  transition: gap var(--motion-slow) var(--ease);
+}
+
+/* 图标栏只保留展开按钮：头像菜单与语言按钮先淡出、收窄，动画结束后再隐藏出焦点顺序。 */
+.account > .user-menu,.account > .locale-toggle {
+  flex: none;
+  max-width: var(--control-h);
+  transition: max-width var(--motion-slow) var(--ease),opacity var(--motion-normal) var(--ease) .12s,visibility 0s;
+}
+
+.account > .nav-toggle {
+  margin-left: auto;
+  width: var(--control-h);
+  transition: width var(--motion-slow) var(--ease),background-color var(--motion-fast),color var(--motion-fast);
 }
 
 .avatar {
@@ -183,7 +217,13 @@
   min-width: 0;
   padding: 34px clamp(var(--sp-content),4vw,48px) 64px;
   outline: none;
-  view-transition-name: main-view;
+}
+
+/* 平板展开时侧栏脱离网格浮在内容上，主区域必须固定在第二列。 */
+@media (min-width:768px) {
+  .main {
+    grid-column: 2;
+  }
 }
 
 .main>* {
@@ -201,22 +241,62 @@
 }
 
 .nav-heading {
+  position: relative;
   margin: var(--sp-control) var(--sp-control) var(--sp-tight);
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
   color: var(--ink-muted);
+  white-space: nowrap;
+  transition: color var(--motion-normal) var(--ease) .12s;
+}
+
+/* 图标栏中标题保留高度，文字淡出、换成居中的短分隔线，条目不上下跳动。 */
+.nav-heading::after {
+  content: "";
+  position: absolute;
+  inset: 50% 0 auto;
+  height: 1px;
+  background: var(--border);
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease);
 }
 .nav [role="group"] { display: grid; gap: 2px; }
 .nav-tools { margin-top: auto; padding-top: var(--sp-content); }
 .nav-tools .nav-public { margin: 0; border: 0; padding-top: 0; min-height: var(--control-h-lg); }
-.command-shortcut { margin-left: auto; font: var(--fs-sm) var(--mono); color: var(--ink-muted); }
+.command-shortcut { margin-left: auto; font: var(--fs-sm) var(--mono); color: var(--ink-muted); transition: opacity var(--motion-normal) var(--ease) .12s; }
 .nav .alert-count { margin-left: auto; color: var(--warn); font-size: var(--fs-sm); font-weight: var(--fw-bold); }
 .nav .alert-count.critical { color: var(--bad); }
 .nav .alert-entry.stale .alert-count { text-decoration: underline dotted; }
 .user-menu > .btn { width: var(--control-h); height: var(--control-h); justify-content: center; padding: 0; }
 .nav-toggle { display: none; }
-@media (min-width:1200px) { .nav-toggle { display: inline-grid; } }
+@media (min-width:768px) { .nav-toggle { display: inline-grid; } }
 .user-menu .menu-options { top: auto; bottom: calc(100% + 6px); left: 0; right: auto; min-width: max(100%, 180px); max-height: min(70dvh, 540px); overflow-y: auto; }
+
+/* 图标栏悬停提示：挂在 body 下、固定定位，不受侧栏裁剪，也不参与布局。 */
+.rail-tip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--z-toast);
+  padding: var(--sp-tight) var(--sp-inline);
+  border-radius: var(--r-sm);
+  background: var(--ink);
+  color: var(--bg);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-compact);
+  white-space: nowrap;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-4px,-50%);
+  transition: opacity var(--motion-fast) var(--ease),transform var(--motion-fast) var(--ease);
+}
+
+.rail-tip.show {
+  opacity: 1;
+  transform: translate(0,-50%);
+}
 /* 退出登录与偏好选项分开。 */
 .user-menu .menu-options > .menu-item:last-child { border-top: 1px solid var(--line); margin-top: var(--sp-tight); }
 .menu-heading { padding: var(--sp-tight) var(--sp-control); color: var(--ink-muted); font-size: var(--fs-sm); }

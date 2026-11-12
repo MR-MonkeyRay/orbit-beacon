@@ -320,6 +320,7 @@
 }
 
 .tabs {
+  position: relative;
   display: flex;
   gap: var(--sp-tight);
   margin-bottom: 20px;
@@ -355,21 +356,21 @@
   color: var(--ink);
 }
 
-.tabs button::after {
-  content: "";
+/* 唯一的选中指示条，由 tabs.js 按选中按钮的位置与宽度放置，切换时滑动。 */
+.tab-indicator {
   position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: -1px;
+  left: 0;
+  bottom: 0;
+  width: 0;
   height: 2px;
   border-radius: 2px;
   background: var(--beacon);
-  transform: scaleX(0);
-  transition: transform var(--motion-normal) var(--ease);
+  pointer-events: none;
+  transition: transform var(--motion-slow) var(--ease),width var(--motion-slow) var(--ease);
 }
 
-.tabs button[aria-selected="true"]::after {
-  transform: scaleX(1);
+.tab-indicator.instant {
+  transition: none;
 }
 
 .tabs .icon {
@@ -387,15 +388,13 @@
   }
 }
 
-.tabpanel {
-  animation: fade var(--motion-normal) var(--ease);
+.tab-holder {
+  transition: min-height var(--motion-slow) var(--ease);
 }
 
-@keyframes fade {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
+/* 只淡入不位移：位移会让面板在切换瞬间超出容器、闪出滚动条。 */
+.tabpanel {
+  animation: fade-only var(--motion-normal) var(--ease);
 }
 
 .split {
