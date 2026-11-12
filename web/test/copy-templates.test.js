@@ -56,14 +56,13 @@ test('alert summaries keep their node link and timestamp in both languages', () 
 });
 
 test('enrollment and account copy keeps concise steps and removes obsolete expiry and compaction strings', () => {
-  for (const [catalog, expected] of [[zhCN, {ticket: '复制票据', hint: '至少 8 个字符', single: '只能使用一次'}],
-    [en, {ticket: 'Copy ticket', hint: 'At least 8 characters', single: 'Single use'}]]) {
-    assert.equal(catalog['nodes.enrollment.copyToken'], expected.ticket);
+  for (const [catalog, expected] of [[zhCN, {key: '复制密钥', hint: '至少 8 个字符'}],
+    [en, {key: 'Copy key', hint: 'At least 8 characters'}]]) {
+    assert.equal(catalog['nodes.enrollment.copyToken'], expected.key);
     assert.equal(catalog['account.passwordBytes'], expected.hint);
-    assert.equal(catalog['nodes.enrollment.issueIntro'], expected.single);
-    for (const key of ['copyStep', 'runStep', 'waitStep', 'waiting', 'reported', 'manual', 'viewNode']) assert.ok(catalog[`nodes.enrollment.${key}`]);
+    for (const key of ['copyStep', 'runStep', 'waitStep', 'waiting', 'reported', 'key', 'includeKey', 'viewNode']) assert.ok(catalog[`nodes.enrollment.${key}`]);
     assert.equal(catalog['nodes.enrollment.expiry'], undefined);
     assert.ok(catalog['data.management.mysqlCompactWarning']);
-    assert.doesNotMatch(catalog['nodes.enrollment.issueIntro'], /403|30/);
+    for (const key of ['manual', 'caption', 'issueIntro', 'secretWarning', 'revoke', 'state']) assert.equal(catalog[`nodes.enrollment.${key}`], undefined);
   }
 });

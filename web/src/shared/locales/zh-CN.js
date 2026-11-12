@@ -52,7 +52,7 @@ export default {
   'errors.backup_queue_full': '备份队列已满，请稍后重试。',
   'errors.notification_channel_capacity_reached': '通知通道最多为 20 个。',
   'errors.alert_rule_capacity_reached': '告警规则最多为 200 条。',
-  'errors.enrollment_not_found': '未找到该注册票据。',
+  'errors.enrollment_not_found': '未找到该密钥。',
   'errors.enrollment_conflict': '此次注册与当前节点身份冲突。',
   'errors.identity_conflict': '此安装身份已绑定到其他节点。',
   'errors.artifact_not_ready': '归档尚未就绪。',

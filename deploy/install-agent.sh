@@ -1,5 +1,5 @@
 #!/bin/sh
-# POSIX sh 安装器。禁止用 sh -x 运行，避免泄露注册票据。
+# POSIX sh 安装器。禁止用 sh -x 运行，避免泄露密钥。
 set -eu
 # 即使调用方误开 xtrace，也先关闭追踪以保护下方的敏感信息，之后不再启用。
 set +x
@@ -20,7 +20,8 @@ usage() {
   --version VERSION         固定发布版本，如 0.1.0（不带 v）
   --binary FILE             使用本地二进制，跳过下载；此时版本可省略
   --ca-file FILE            Server 的私有 CA PEM；HTTP 不可使用
-  --token-file FILE         从文件读取注册票据，也支持 stdin 或终端隐藏输入
+  --key KEY                 会出现在进程列表和 shell 历史中，适用于一次性密钥
+  --token-file FILE         从文件读取密钥，也支持 stdin 或终端隐藏输入
   --update-base-url URL     HTTPS 发布镜像根地址；重装默认保留，'' 关闭远程升级
 
 账户与服务：
@@ -38,13 +39,13 @@ usage() {
 Linux：识别 CentOS/RHEL、Debian、Ubuntu、Alpine 及其衍生系统。
 架构：x86_64/amd64、aarch64/arm64；不提供 32 位发布包。
 安装需 root；Agent 始终以 orbitbeacon-agent 非 root 运行。
-固定安装到 /opt/orbit-beacon，重装保留身份和 agent.yaml，不接受命令行票据。
+固定安装到 /opt/orbit-beacon，重装保留身份和 agent.yaml。
 例：sh install-agent.sh --server https://beacon.example.com --version 0.1.0
     sh install-agent.sh --server https://beacon.example.com --binary ./agent --service none
 USAGE
 }
 
-server='' version='' ca_source='' token_source='' local_binary=''
+server='' version='' ca_source='' token_source='' key='' local_binary=''
 default_update_base=https://github.com/mr-monkeyray/orbit-beacon/releases/download
 update_base_url=$default_update_base
 update_base_set=0
@@ -53,9 +54,10 @@ service=auto no_start=0 requested_uid='' requested_gid=''
 download_timeout=300 download_retries=3
 while [ "$#" -gt 0 ]; do
     case $1 in
-        --server|--version|--ca-file|--token-file|--binary|--update-base-url|--uid|--gid|--service|--download-timeout|--download-retries)
+        --server|--version|--ca-file|--token-file|--key|--binary|--update-base-url|--uid|--gid|--service|--download-timeout|--download-retries)
             [ "$#" -ge 2 ] || die "缺少 $1 的参数值"
-            case $2 in --*) die "缺少 $1 的参数值" ;; esac
+            # base64url 密钥可能以 -- 开头，按字面量接收。
+            case $2 in --*) [ "$1" = --key ] || die "缺少 $1 的参数值" ;; esac
             [ -n "$2" ] || [ "$1" = --update-base-url ] || die "缺少 $1 的参数值"
             case $1 in
                 --update-base-url) update_base_url=$2; update_base_set=1 ;;
@@ -63,6 +65,7 @@ while [ "$#" -gt 0 ]; do
                 --version) version=$2 ;;
                 --ca-file) ca_source=$2 ;;
                 --token-file) token_source=$2 ;;
+                --key) key=$2 ;;
                 --binary) local_binary=$2 ;;
                 --uid) requested_uid=$2 ;;
                 --gid) requested_gid=$2 ;;
@@ -75,9 +78,11 @@ while [ "$#" -gt 0 ]; do
         --yes) yes=1; shift ;;
         --no-start) no_start=1; shift ;;
         --help|-h) usage; exit 0 ;;
-        *) die '未知选项。请使用 --help；票据只能通过文件、标准输入或终端隐藏输入提示提供。' ;;
+        *) die '未知选项。请使用 --help。' ;;
     esac
 done
+
+[ -z "$key" ] || [ -z "$token_source" ] || die '--key 与 --token-file 不能同时使用。'
 
 case $service in auto|systemd|openrc|none) ;; *) die '--service 必须是 auto、systemd、openrc 或 none。' ;; esac
 check_number() {
@@ -175,7 +180,7 @@ has_identity() {
 }
 
 if [ "$uninstall" = 1 ]; then
-    if [ "$update_base_set" != 0 ] || [ -n "$server$version$ca_source$token_source$local_binary$requested_uid$requested_gid" ] || [ "$service" != auto ] || [ "$no_start" != 0 ] || [ "$download_timeout:$download_retries" != 300:3 ]; then die '不要将安装选项与 --uninstall 混用。'; fi
+    if [ "$update_base_set" != 0 ] || [ -n "$server$version$ca_source$token_source$key$local_binary$requested_uid$requested_gid" ] || [ "$service" != auto ] || [ "$no_start" != 0 ] || [ "$download_timeout:$download_retries" != 300:3 ]; then die '不要将安装选项与 --uninstall 混用。'; fi
     say '请先在控制台吊销该节点凭据；本地删除不会吊销。'
     say '卸载将删除服务、二进制、策略、本地配置、CA 副本及全部 Agent 状态。请先停止前台 Agent。'
     if [ "$yes" != 1 ]; then
@@ -529,25 +534,31 @@ fi
 chown -h "root:$agent_gid" "$runtime_config"
 chmod 0640 "$runtime_config"
 
-# 仅通过标准输入、文件或终端读取票据；绝不将其放入命令行参数。
-if [ -n "$token_source" ]; then
+# printf 为 shell 内建；密钥只写入私有临时文件，不传给子进程参数。
+if [ -n "$key" ]; then
+    printf '%s\n' "$key" > "$tmp/token"
+    unset key
+elif [ -n "$token_source" ]; then
     cat -- "$token_source" > "$tmp/token"
 elif [ ! -t 0 ]; then
     cat > "$tmp/token"
-elif ! has_identity; then
-    printf '注册票据（隐藏输入）：' >/dev/tty
-    tty_state=$(stty -g </dev/tty)
-    stty -echo </dev/tty
-    token=
-    IFS= read -r token </dev/tty || :
-    stty "$tty_state" </dev/tty
-    tty_state=
-    printf '\n' >/dev/tty
-    printf '%s\n' "$token" > "$tmp/token"
-    unset token
+fi
+# 空的非终端 stdin 也可回退到控制终端；已有身份时不提示。
+if [ ! -s "$tmp/token" ] && [ -z "$token_source" ] && ! has_identity; then
+    if tty_state=$(stty -g </dev/tty 2>/dev/null) 2>/dev/null; then
+        stty -echo </dev/tty
+        printf '密钥（隐藏输入）：' >/dev/tty
+        token=
+        IFS= read -r token </dev/tty || :
+        stty "$tty_state" </dev/tty
+        tty_state=
+        printf '\n' >/dev/tty
+        [ -z "$token" ] || printf '%s\n' "$token" > "$tmp/token"
+        unset token
+    fi
 fi
 if [ -s "$tmp/token" ]; then
-    # 在同一文件系统的 root 所有目录内准备票据，避免跨文件系统时 mv 退化为复制。
+    # 在同一文件系统的 root 所有目录内准备密钥，避免跨文件系统时 mv 退化为复制。
     token_tmp=$(mktemp "$install_root/.enrollment.XXXXXXXX")
     install -m 0600 "$tmp/token" "$token_tmp"
     chown -h "$agent_uid:$agent_gid" "$token_tmp"
@@ -556,8 +567,8 @@ if [ -s "$tmp/token" ]; then
     mv -fT -- "$token_tmp" "$token_file"
     token_tmp=
     say '正在以非 root Agent 用户注册...'
-    # 静默子进程：即使端点故障或恶意也不得回显票据。
-    # 也不将诊断输出重定向到可能留存票据的日志。
+    # 静默子进程：即使端点故障或恶意也不得回显密钥。
+    # 也不将诊断输出重定向到可能留存密钥的日志。
     if [ "$use_runuser" = 1 ]; then
         if runuser -u "$account" -- "$binary" enroll --install-policy "$policy" --config "$runtime_config" --token-file "$token_file" >/dev/null 2>&1; then
             enrolled=1
@@ -572,16 +583,16 @@ if [ -s "$tmp/token" ]; then
     fi
     if [ "$enrolled" != 1 ]; then
         say "注册失败。请保留 $token_file；服务未启用。"
-        say "尚未提交且票据仍有效时，以 $account 身份重试：$binary enroll --install-policy $policy --config $runtime_config --token-file $token_file"
+        say "尚未提交且密钥仍有效时，以 $account 身份重试：$binary enroll --install-policy $policy --config $runtime_config --token-file $token_file"
         say "可能已提交但响应丢失时，以 $account 身份确认已有凭据：$binary enroll --install-policy $policy --config $runtime_config"
-        say '确认成功后，不再传入字符串或票据文件，使用原安装参数加 < /dev/null 重新运行安装器以补装并启动服务。恢复不会删除残留票据。'
-        die '请检查服务器 URL、CA、网络；票据只能在 30 分钟内首次成功激活，重复使用返回 403。'
+        say '确认成功后，不再传入字符串或密钥文件，使用原安装参数加 < /dev/null 重新运行安装器以补装并启动服务。恢复不会删除残留密钥。'
+        die '请检查服务器 URL、CA、网络；密钥只能在 30 分钟内首次成功激活，重复使用返回 403。'
     fi
-    say '注册成功（Agent 在成功后自行删除票据）。'
+    say '注册成功（Agent 在成功后自行删除密钥）。'
 elif has_identity; then
     say '已有身份；保留并跳过注册。'
 else
-    die '未提供注册票据。请通过 --token-file、stdin 或终端提示输入后重试。'
+    die '未提供密钥；请使用 --key 或终端提示。'
 fi
 
 if [ "$service" = systemd ]; then

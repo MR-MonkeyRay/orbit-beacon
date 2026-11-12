@@ -9,7 +9,7 @@ import {menuButton} from '../ui/menu.js';
 import {issueEnrollment} from './enrollments.js';
 import {typedConfirmation} from '../ui/typed-confirmation.js';
 
-export function lifecycleActions(node, refreshTickets = () => {}) {
+export function lifecycleActions(node) {
   const path = `/nodes/${encodeURIComponent(node.id)}`;
   const actions = [];
   let running = false;
@@ -66,7 +66,6 @@ export function lifecycleActions(node, refreshTickets = () => {}) {
     actions.forEach((item) => { item.disabled = true; });
     try {
       await issueEnrollment({node_id: node.id}, t('nodes.enrollment.title', {name: node.name}), () => node.deleted);
-      if (!node.deleted) await refreshTickets();
     } catch (error) { toastError(error); }
     finally {
       running = false;

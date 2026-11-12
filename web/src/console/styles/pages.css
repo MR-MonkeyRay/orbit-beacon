@@ -720,5 +720,4 @@
 .enrollment-progress {display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-control);}
 .enrollment-spinner {width:16px;height:16px;border:2px solid var(--ink-muted);border-top-color:transparent;border-radius:50%;animation:spin .7s var(--ease-linear) infinite;}
 .enrollment-success {color:var(--ok);}
-.enrollment-manual summary {cursor:pointer;}
 @media (prefers-reduced-motion:reduce) {.enrollment-spinner {animation:none;}}

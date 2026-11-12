@@ -111,7 +111,7 @@ async function setup({hash = '#details', presence = 'online', lastSeen = '2026-1
   }
 }
 
-test('node Agent section keeps commands and enrollment without fetching runtime', async () => {
+test('node Agent section keeps commands without fetching enrollment keys or runtime', async () => {
   const env = await setup({hash: '#agent'});
   try {
     const tabs = elements(env.root).filter((element) => element.getAttribute('role') === 'tab');
@@ -122,7 +122,8 @@ test('node Agent section keeps commands and enrollment without fetching runtime'
     assert.equal(env.root.querySelector('#tab-config'), null);
     assert.equal(env.requests.some((request) => request.url?.endsWith('/runtime') || request === `${path}/runtime`), false);
     assert.equal(env.root.querySelector('#node-agent').parentElement.querySelectorAll('dl').length, 0);
-    assert.ok(env.root.querySelector('#node-enrollment'));
+    assert.equal(env.root.querySelector('#node-enrollment'), null);
+    assert.equal(env.requests.some((request) => request.url.startsWith('/api/v1/enrollments')), false);
     assert.equal(env.root.querySelector('.node-summary').querySelectorAll('time').at(-1).getAttribute('datetime'), env.node.last_seen);
     assert.ok(formFor(env.root, 'notes'));
     assert.ok(formFor(env.root, 'public_name'));
@@ -267,8 +268,8 @@ test('unset expiry uses the existing not-set label', async () => {
   } finally { env.cleanup(); }
 });
 
-for (const [hash, section] of Object.entries({details: 'details', public: 'public', agent: 'agent', enrollment: 'enrollment',
-  'settings-details': 'details', 'settings-public': 'public', 'settings-agent': 'agent', 'settings-enrollment': 'enrollment'})) {
+for (const [hash, section] of Object.entries({details: 'details', public: 'public', agent: 'agent',
+  'settings-details': 'details', 'settings-public': 'public', 'settings-agent': 'agent'})) {
   test(`#${hash} opens settings and targets ${section}`, async () => {
     const env = await setup({hash: `#${hash}`});
     try {

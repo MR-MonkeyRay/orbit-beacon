@@ -421,7 +421,7 @@ test('detail missing sample is not deletion and lazy Agent section needs no runt
   assert.equal(env.root.querySelector('.node-deleted-notice').hidden, true);
   env.root.querySelector('#tab-settings').click(); await flush(); env.mutations();
   assert.ok(env.root.querySelector('#node-agent'));
-  assert.ok(env.root.querySelector('#node-enrollment'));
+  assert.equal(env.root.querySelector('#node-enrollment'), null);
   assert.equal(env.sockets.length, 1);
 });
 
@@ -536,18 +536,9 @@ test('detail deletion fences an already open lifecycle confirmation without chan
   assert.equal(button(env.root, copy('nodes.disable')).disabled, true);
 });
 
-test('detail deletion fences an already open enrollment revocation confirmation', async (t) => {
-  const env = await setup(t, {page: 'node', hash: '#enrollment'}); await flush();
-  button(env.root, copy('nodes.enrollment.revoke')).click(); await flush();
-  const dialog = env.body.querySelector('dialog'); env.send({node: null, latest: null});
-  button(dialog, copy('nodes.enrollment.revokeConfirm')).click(); dialog.dispatchEvent(new Event('animationend')); await flush();
-  assert.equal(env.requests.some((request) => request.method === 'DELETE'), false);
-  assert.equal(button(env.root, copy('nodes.enrollAgent')).disabled, true);
-});
-
 test('detail deletion suppresses a delayed deployment secret and sends no mode field', async (t) => {
   let release;
-  const env = await setup(t, {page: 'node', hash: '#enrollment', mutate: (request) => {
+  const env = await setup(t, {page: 'node', mutate: (request) => {
     assert.equal(request.url, '/api/v1/enrollments');
     assert.deepEqual(JSON.parse(request.body), {node_id: id(1)});
     return new Promise((resolve) => { release = () => resolve(response({token: 'late-fake-secret', server_version: '1.2.3', expires_at: '2026-10-28T00:30:00Z'})); });
@@ -638,7 +629,7 @@ test('four node tabs lazily build settings with newest snapshots and detach comm
   env.send({node: {...env.inventory[0], name: 'Renamed before creation'}, latest: latest(7)}, 10);
   await switchTo('settings');
   assert.equal(control(env.root, 'name').value, 'Renamed before creation');
-  assert.equal(reads('/enrollments').length, 1);
+  assert.equal(reads('/enrollments').length, 0);
   env.send({node: {...env.inventory[0], name: 'Renamed again'}, latest: latest(8)}, 20);
   assert.equal(control(env.root, 'name').value, 'Renamed before creation');
   await switchTo('monitor');
@@ -993,19 +984,19 @@ test('mobile sort control uses the same URL-backed order and default status pagi
   }
 });
 
-test('header enrollment issues through More and reloads the built ticket list, then restores More focus', async (t) => {
-  const env = await setup(t, {page: 'node', hash: '#settings-enrollment', mutate: (request) => {
+test('header enrollment issues through More without a per-node key list and restores More focus', async (t) => {
+  const env = await setup(t, {page: 'node', hash: '#settings', mutate: (request) => {
     assert.equal(request.url, '/api/v1/enrollments');
     assert.deepEqual(JSON.parse(request.body), {node_id: id(1)});
     return response({token: 'test-secret', server_version: '1.2.3', expires_at: '2026-10-28T00:30:00Z'});
   }});
   const before = env.requests.filter((request) => request.url.startsWith('/api/v1/enrollments')).length;
-  assert.equal(button(env.root, copy('nodes.enrollment.issue')), undefined);
+  assert.equal(env.root.querySelector('.node-enrollments'), null);
   const more = button(env.root, copy('nodes.more')); more.click();
   button(env.root, copy('nodes.enrollAgent')).click(); await flush();
   const dialog = env.body.querySelector('dialog'); assert.ok(dialog);
   button(dialog, copy('nodes.close')).click(); dialog.dispatchEvent(new Event('animationend')); await flush();
-  assert.equal(env.requests.filter((request) => request.url.startsWith('/api/v1/enrollments')).length, before + 2);
+  assert.equal(env.requests.filter((request) => request.url.startsWith('/api/v1/enrollments')).length, before + 1);
   assert.equal(document.activeElement, more); assert.equal(more.disabled, false);
   assert.equal(more.getAttribute('aria-expanded'), 'false');
 });

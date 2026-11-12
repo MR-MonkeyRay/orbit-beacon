@@ -52,7 +52,7 @@ export default {
   'errors.backup_queue_full': 'The backup queue is full. Try again later.',
   'errors.notification_channel_capacity_reached': 'A maximum of 20 notification channels is allowed.',
   'errors.alert_rule_capacity_reached': 'A maximum of 200 alert rules is allowed.',
-  'errors.enrollment_not_found': 'The enrollment ticket was not found.',
+  'errors.enrollment_not_found': 'The key was not found.',
   'errors.enrollment_conflict': 'This enrollment conflicts with the current node identity.',
   'errors.identity_conflict': 'This installation is already bound to another node.',
   'errors.artifact_not_ready': 'The archive is not ready yet.',

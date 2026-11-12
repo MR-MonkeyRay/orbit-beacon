@@ -1,6 +1,6 @@
 # Linux Agent 安装与运维
 
-流程：**创建节点并签发注册票据 → 安装并注册 → 确认上报**。术语见[约定](conventions.md)，服务器部署与网络信任见[部署指南](../deploy/README.md#https-与反向代理)。
+流程：**创建节点并签发密钥 → 安装并注册 → 确认上报**。术语见[约定](conventions.md)，服务器部署与网络信任见[部署指南](../deploy/README.md#https-与反向代理)。
 
 ## 准备
 
@@ -10,19 +10,17 @@
 - 不自动安装软件包。Debian/Ubuntu 可用 `apt-get install curl ca-certificates coreutils passwd util-linux procps`；CentOS/RHEL 用 `dnf install curl ca-certificates coreutils shadow-utils util-linux procps-ng`（旧系统用 `yum`）；Alpine 用 `apk add curl ca-certificates coreutils openrc`，账户和 `su` 可用 BusyBox。systemd 的 reload 还需 `procps` / `procps-ng` 提供 `/bin/kill`。
 - 不要复制服务器私钥、跳过证书校验，或把管理员 Cookie 传到 Agent 主机。
 
-## 注册票据
+## 密钥
 
-新增节点后自动显示完整部署命令，点击“复制部署命令 / Copy deployment command”后在主机上执行，再等待上报。手动安装可展开“手动安装 / Manual installation”，点击“复制票据 / Copy ticket”；已有节点在详情“更多 → 注册 Agent / More → Enroll Agent”签发，不重复创建。关闭弹窗会清空明文，到期后须重新签发。
+新增节点后，复制命令，在主机执行，按“密钥（隐藏输入）：”提示粘贴密钥，再等待上报。密钥单独复制；“命令中包含密钥 / Include key in command”默认关闭。已有节点用“更多 → 注册 Agent / More → Enroll Agent”；分组用“部署 Agent / Deploy Agent”，每次部署一个 Agent。关闭弹窗会清空明文。
 
-- 新签发票据统一有效 30 分钟，完整激活事务首次提交成功后立即失效；再次激活返回 `403 forbidden`，包括同安装、同凭据的重试。
-- “设置 → 分组 / Settings → Groups”的“部署 Agent / Deploy Agent”每次为该组部署一个 Agent，不再提供多次使用票据。历史票据保留原期限与使用计数，但只要已使用就不能再次激活。
-- 重新签发或吊销票据不撤销已部署 Agent 的节点凭据，也不影响其他独立票据。
-
-完整部署命令含明文凭据，会进入 shell 历史、终端记录和剪贴板；不要公开分享。若需避免命令历史暴露，可用下方隐藏输入或 `--token-file`，通过已核验主机身份的 SSH/SCP 等安全通道传递票据。不要开 `set -x`，也不要把秘密放进公共日志或仓库。
+- 密钥为 32 字节随机数的 base64url 编码，服务端只存 SHA-256；有效 30 分钟，仅可成功激活一次，重复使用返回 `403 forbidden`。
+- 重新签发或吊销密钥不撤销已部署 Agent 的节点凭据，也不影响其他密钥。历史密钥保留原期限与使用计数，已使用就不能再次激活。
+- `--key` 会出现在进程列表和 shell 历史中，可用于一次性密钥；默认隐藏输入避免这类暴露。不要开 `set -x`，或把密钥放进公共日志、仓库。
 
 ## 安装与启动
 
-优先复制控制台的完整部署命令；它固定服务端构建版本，先通过 HTTPS 完整下载安装器，再以 root 或 sudo 执行，并经 stdin 传入票据。版本无效时只提供票据；固定版本的 Git tag、架构二进制和 `SHA256SUMS` 必须已发布，下载失败不会改用 latest 或跳过校验。私有 CA 使用下面的手动方式。
+控制台的一行命令默认不含密钥：通过 HTTPS 下载固定版本安装器，再用 `sudo` 执行。启用“命令中包含密钥”时追加 `--key '密钥'`。版本无效时只提供密钥；Git tag、架构二进制和 `SHA256SUMS` 须已发布，下载失败不改用 latest 或跳过校验。私有 CA 使用下方手动方式。
 
 手动安装使用与服务器匹配、已发布且包含脚本的固定版本；检查后运行，不要把网络脚本直接管道给 root shell。源码部署可读取 `VERSION`，否则手动设置版本：
 
@@ -36,7 +34,9 @@ sudo sh ./install-agent.sh \
   --server https://beacon.your-domain.com --version "$VERSION"
 ```
 
-上述手动命令会在终端隐藏读取注册票据；等提示出现后再粘贴。也可使用 `--token-file /安全路径/enrollment.token`；自动化通过标准输入传入，不启用 `set -x`，并提前完成 sudo 认证：
+未提供密钥且没有已有身份时，安装器从 `/dev/tty` 隐藏提示输入。来源顺序：`--key` → `--token-file` → 非终端 stdin → 隐藏提示；`--key` 与 `--token-file` 互斥，`--key` 不可为空。非终端 stdin 为空时仍尝试终端；没有密钥或可用终端则报错。已有身份且未传密钥时不提示。
+
+自动化可用 `--key '一次性密钥'`、`--token-file /安全路径/enrollment.token` 或 stdin；stdin 方式先完成 sudo 认证：
 
 ```sh
 sudo -v
@@ -52,14 +52,15 @@ unset TOKEN
 
 ### 安装器参数
 
-`sh ./install-agent.sh --help` 无需 root。参数使用 `--选项 值`，不接受命令行注册票据。
+`sh ./install-agent.sh --help` 无需 root。参数使用 `--选项 值`。
 
 | 参数 | 用途 / 默认值 |
 | --- | --- |
 | `--server URL` | 必填，HTTP(S) 根地址，不带路径、查询、片段或凭据 |
 | `--version VERSION` | 固定发布版本，不带 `v`；在线安装必填 |
 | `--binary FILE` | 本地非空二进制，替代下载；此时版本可省略 |
-| `--token-file FILE` | 票据文件；也可从 stdin 或终端隐藏提示输入 |
+| `--key KEY` | 一次性密钥；会出现在进程列表和 shell 历史中，与 `--token-file` 互斥 |
+| `--token-file FILE` | 密钥文件；未指定来源时从 stdin 或终端隐藏提示输入 |
 | `--ca-file FILE` | HTTPS Server 的私有 CA；HTTP 不可使用 |
 | `--update-base-url URL` | HTTPS 发布镜像根地址，重装默认保留；`''` 关闭远程升级 |
 | `--uid N`、`--gid N` | 专用账户的非零数字 UID/GID；不传则自动分配。已有账户/组不匹配时拒绝，不迁移身份、不重编号 |
@@ -103,7 +104,7 @@ sudo sh ./install-agent.sh --server https://beacon.your-domain.com \
 
 脚本以 Agent 账号注册，成功后按所选服务管理器启用并启动（`--no-start` 除外）；`none` 不安装服务，仅打印前台启动命令。OpenRC 服务在每次启动前以 Agent 用户检查升级回滚，正常退出或身份冲突退出码 3 不重启，其他退出延迟 10 秒重启；日志送往系统 syslog，标签 `orbitbeacon-agent`，需主机运行 syslog 服务。注册失败保留 state 中的 `enrollment.token`，不启用服务。
 
-只有确认尚未提交、票据仍有效时，才带票据重试：
+只有确认尚未提交、密钥仍有效时，才带密钥重试：
 
 ```sh
 sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent enroll \
@@ -112,7 +113,7 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent enroll \
   --token-file /opt/orbit-beacon/state/enrollment.token
 ```
 
-可能已提交但响应丢失时，不再重放原票据；以 Agent 用户确认已保存的节点凭据：
+可能已提交但响应丢失时，不再重放原密钥；以 Agent 用户确认已保存的节点凭据：
 
 ```sh
 sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent enroll \
@@ -120,7 +121,7 @@ sudo -u orbitbeacon-agent /opt/orbit-beacon/bin/orbitbeacon-agent enroll \
   --config /opt/orbit-beacon/etc/agent.yaml
 ```
 
-恢复成功后，用原来的 `--server`、版本和 CA 参数重跑安装脚本，加 `< /dev/null` 补装并启动服务，不再传字符串或票据文件。空票据恢复不会删除残留 `enrollment.token`；确认恢复成功后自行清理。显式激活只有成功才安全删除票据；清理失败不代表认领已回滚。原命令含旧字符串时重复执行仍返回 403，不会因本地已有身份而假装成功。
+恢复成功后，用原来的 `--server`、版本和 CA 参数重跑安装脚本，加 `< /dev/null` 补装并启动服务，不再传字符串或密钥文件。无密钥恢复不会删除残留 `enrollment.token`；确认恢复成功后自行清理。显式激活只有成功才安全删除密钥；清理失败不代表认领已回滚。原命令含旧字符串时重复执行仍返回 403，不会因本地已有身份而假装成功。
 
 更换服务管理器前，先停止、禁用旧服务并删除对应 unit/init 文件，保留整个 `/opt/orbit-beacon` 后重装；安装器拒绝同时留下两种服务。systemd 可用 `systemctl disable --now orbitbeacon-agent` 后删除 unit 并 `systemctl daemon-reload`；OpenRC 用 `rc-service orbitbeacon-agent stop`、`rc-update del orbitbeacon-agent default` 后删除 init 文件。`--no-start` 不会自动迁移或停止旧服务。
 
@@ -145,7 +146,7 @@ Alpine/OpenRC 用 `sudo rc-service orbitbeacon-agent status`；手动启用并�
 | --- | --- |
 | `runtime_identity_mismatch` | 用 policy 指定的非 root UID/GID 运行，不能直接 `sudo orbitbeacon-agent run` |
 | `install_policy_conflict` | 检查额外 `--config` 和 `ORBITBEACON_*`，按[安装策略校验](#本地运行参数与-reload)消除冲突 |
-| `401` / `403 node_disabled` | 检查节点是否禁用或凭据已吊销；按[身份变更规则](architecture.md#状态与历史)启用或重新签发注册票据 |
+| `401` / `403 node_disabled` | 检查节点是否禁用或凭据已吊销；按[身份变更规则](architecture.md#状态与历史)启用或重新签发密钥 |
 | `409 identity_conflict`，退出码 3 | 同一身份被更新进程取代；systemd/OpenRC 均停止自动重启争抢。克隆机器必须独立 state 并分别注册 |
 | 网络或其他 HTTP 错误 | Agent 退避重试，记录首次失败、至少间隔 5 分钟的连续失败摘要及恢复；样本处理见[数据流](architecture.md#数据流) |
 
@@ -215,7 +216,7 @@ sudo sh ./install-agent.sh --server https://beacon.your-domain.com \
   --version "$VERSION" < /dev/null
 ```
 
-已有 `identity.json` 且没有传入注册票据时，脚本保留身份与本地 `agent.yaml`，跳过注册，替换二进制后重启服务。仍须传相同 `--server` 和所需 `--ca-file`；省略 CA 参数会使新 policy 改用系统信任。
+已有 `identity.json` 且没有传入密钥时，脚本保留身份与本地 `agent.yaml`，跳过注册，替换二进制后重启服务。仍须传相同 `--server` 和所需 `--ca-file`；省略 CA 参数会使新 policy 改用系统信任。
 
 卸载前先在控制台吊销节点凭据或删除节点；对应 API 为 `DELETE /api/v1/nodes/{id}/credential`。然后：
 
@@ -230,7 +231,7 @@ sudo sh ./install-agent.sh --uninstall
 
 从仓库根运行 `sh deploy/install-agent.docker-test.sh`，默认使用 Debian 12、Ubuntu 24.04、CentOS Stream 9、Alpine 3.21；可在命令后传镜像列表缩小范围。需要 Go、Docker 及可访问的镜像/软件仓库，仅构建当前宿主 amd64/arm64 架构。容器无特权，安装脚本和二进制只读挂载，安装写入一次性容器。
 
-检查真实系统工具下的离线安装、账户权限、身份/配置保留、非 root 二进制运行和服务文件；用身份保留标记跳过注册，不覆盖真实注册、完整开机启动或跨架构执行。架构选择、下载校验、票据保护及 OpenRC 退出行为由 `sh deploy/install-agent.test.sh` 覆盖。
+检查真实系统工具下的离线安装、账户权限、身份/配置保留、非 root 二进制运行和服务文件；用身份保留标记跳过注册，不覆盖真实注册、完整开机启动或跨架构执行。架构选择、下载校验、密钥保护及 OpenRC 退出行为由 `sh deploy/install-agent.test.sh` 覆盖。
 
 ## 手动前台安装
 
@@ -264,7 +265,7 @@ sudo install -o root -g "$AGENT_GID" -m 0640 \
 
 CA 使用限制见[配置参考](../deploy/README.md#配置参考)。私有 CA 由 root 安装为 `/opt/orbit-beacon/etc/ca.pem`（root:Agent 组、`0640`），并填写 policy 的 `ca_file`。policy、CA 及祖先目录须 root 所有且不可被组/其他用户写入，无符号链接；不要放在家目录或 `/tmp`。state 按[安装路径](#安装与启动)的要求归运行用户所有。
 
-用安全通道接收注册票据。下面的命令会隐藏读取票据，保存为当前用户所有的 `0600` 普通文件；路径不能有符号链接，祖先目录只归 root 或运行用户，且不可被组/其他用户写入（安全 sticky 临时目录例外）。以普通用户一次性执行整个括号块，等提示后再粘贴票据；不要逐行执行或开 `set -x`。子 shell 退出或收到 HUP/INT/TERM 会恢复回显，票据不进入命令参数、shell 历史或导出的环境变量；写文件用 shell 内建 `printf`：
+用安全通道接收密钥。下面的命令会隐藏读取密钥，保存为当前用户所有的 `0600` 普通文件；路径不能有符号链接，祖先目录只归 root 或运行用户，且不可被组/其他用户写入（安全 sticky 临时目录例外）。以普通用户一次性执行整个括号块，等提示后再粘贴密钥；不要逐行执行或开 `set -x`。子 shell 退出或收到 HUP/INT/TERM 会恢复回显，密钥不进入命令参数、shell 历史或导出的环境变量；写文件用 shell 内建 `printf`：
 
 ```sh
 (
@@ -296,7 +297,7 @@ Ctrl+C 或 SIGTERM 停止。不传 `--config` 时使用默认运行参数。若�
 
 - 在可信管理机登录，取得会话与 CSRF，按[接口契约（OpenAPI）](../api/openapi.yaml) 调用 `POST /api/v1/enrollments`。
 - 单节点请求为 `{"node_id":"节点 UUID"}`；分组请求为 `{"group_id":"分组 UUID"}`，恰好提供一个目标；旧 `mode` 字段会被严格解码拒绝为 400。
-- 签发响应中的 `token` 仅显示一次，`server_version` 用于固定安装版本；列表与详情均不含这两个字段。妥善清理临时 Cookie 与票据副本，结束后注销会话。Origin 规则见[配置参考](../deploy/README.md#配置参考)。
+- 签发响应中的密钥 `token` 仅显示一次，`server_version` 用于固定安装版本；列表与详情均不含这两个字段。妥善清理临时 Cookie 与密钥副本，结束后注销会话。Origin 规则见[配置参考](../deploy/README.md#配置参考)。
 
 ## 流量累计
 

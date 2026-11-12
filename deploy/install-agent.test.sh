@@ -124,6 +124,10 @@ if [ "${1:-}" = enroll ]; then
 	done
 	[ -n "$token_file" ] || exit 20
 	[ -s "$token_file" ] || exit 21
+	if [ -n "${TEST_EXPECT_KEY_FILE:-}" ]; then cmp -s "$token_file" "$TEST_EXPECT_KEY_FILE" || exit 22; fi
+	# A noisy Agent must not leak the key through installer output or retained logs.
+	cat "$token_file"
+	cat "$token_file" >&2
 	[ "${TEST_ENROLL_FAIL:-0}" != 1 ] || exit 17
 	mkdir -p "$TEST_ROOT/opt/orbit-beacon/state"
 	printf '%s\n' '{"node_id":"test-node"}' >"$TEST_ROOT/opt/orbit-beacon/state/identity.json"
@@ -264,6 +268,113 @@ run_with_token() {
 
 [ -f "$INSTALLER" ] || fail "installer not found: $INSTALLER"
 [ -f "$UNIT_SOURCE" ] || fail "unit not found: $UNIT_SOURCE"
+
+# --key is only passed to the installer; the Agent still receives a private file.
+for key_shell in dash 'busybox ash'; do
+    if [ "$key_shell" = 'busybox ash' ] && ! command -v busybox >/dev/null 2>&1; then
+        printf '%s\n' 'SKIP - BusyBox ash key enrollment (busybox missing)'
+        continue
+    fi
+    setup_case "key_$(printf '%s' "$key_shell" | tr ' ' _)"
+    secret='--key-DO-NOT-LOG'
+    printf '%s\n' "$secret" >"$TEST_FIXTURES/expected-key"
+    runner=$INSTALLER
+    if [ "$key_shell" = 'busybox ash' ]; then
+        # Standalone BusyBox applets bypass PATH; functions preserve the fake-root stubs.
+        runner=$CASE_DIR/ash-driver
+        printf '%s\n' 'set +x' >"$runner"
+        for stub in "$CASE_DIR"/bin/*; do
+            printf '%s() { "%s" "$@"; }\n' "${stub##*/}" "$stub" >>"$runner"
+        done
+        printf '. "%s"\n' "$INSTALLER" >>"$runner"
+    fi
+    # shellcheck disable=SC2086
+    printf '%s\n' ignored-stdin | env PATH="$TEST_PATH" TEST_EXPECT_KEY_FILE="$TEST_FIXTURES/expected-key" $key_shell -x "$runner" --server https://monitor.example.com --version 0.1.0 --key "$secret" >"$CASE_DIR/output" 2>&1
+    assert_exists "$TEST_ROOT/opt/orbit-beacon/state/identity.json"
+    [ "$(cat "$TEST_ROOT/opt/orbit-beacon/state/enrollment.token")" = "$secret" ] || fail 'Agent received a different key'
+    assert_log_has "--token-file $TEST_ROOT/opt/orbit-beacon/state/enrollment.token"
+    assert_log_lacks "$secret"
+    if grep -F -- "$secret" "$CASE_DIR/output" "$CASE_DIR/owners.log" "$TEST_ROOT/enrollments.log" >/dev/null; then fail 'key leaked to output or logs'; fi
+    pass "$key_shell --key enrolls through a file without leaking to output or child argv/logs, even with xtrace"
+done
+
+setup_case key_conflict
+printf '%s\n' file-key >"$TEST_FIXTURES/key"
+for order in key-first file-first; do
+    if [ "$order" = key-first ]; then set -- --key ABC --token-file "$TEST_FIXTURES/key"
+    else set -- --token-file "$TEST_FIXTURES/key" --key ABC; fi
+    if run_installer "$CASE_DIR/output" "$@" </dev/null; then fail 'key/file conflict accepted'; fi
+    grep -F -- '--key 与 --token-file' "$CASE_DIR/output" >/dev/null || fail 'missing conflict message'
+done
+if run_installer "$CASE_DIR/output" --key '' </dev/null; then fail 'empty key accepted'; fi
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon"
+pass '--key rejects an empty value and --token-file in either order before mutation'
+
+setup_case no_key_no_tty
+# setsid drops a controlling tty even when the suite was started interactively.
+if env PATH="$TEST_PATH" setsid -w dash "$INSTALLER" --server https://monitor.example.com --version 0.1.0 </dev/null >"$CASE_DIR/output" 2>&1; then fail 'empty stdin without tty accepted'; fi
+grep -F -- '--key 或终端提示' "$CASE_DIR/output" >/dev/null || fail 'missing key/prompt diagnostic'
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon/state/identity.json"
+assert_log_lacks 'systemctl enable'
+pass 'empty non-tty stdin without a controlling tty fails with key/prompt guidance'
+
+if command -v script >/dev/null 2>&1; then
+    for prompt_stdin in tty empty blank; do
+        setup_case "prompt_$prompt_stdin"
+        # script provides /dev/tty; delay input until echo is disabled and the prompt is visible.
+        cat >"$CASE_DIR/prompt.sh" <<'PROMPT'
+#!/bin/sh
+set -eu
+before=$(stty -g </dev/tty)
+set +e
+if [ "$PROMPT_STDIN" != tty ]; then
+    dash "$INSTALLER" --server https://monitor.example.com --version 0.1.0 </dev/null
+else
+    dash "$INSTALLER" --server https://monitor.example.com --version 0.1.0
+fi
+code=$?
+set -e
+[ "$(stty -g </dev/tty)" = "$before" ]
+if [ "$PROMPT_STDIN" = blank ]; then [ "$code" = 1 ]; else [ "$code" = 0 ]; fi
+PROMPT
+        export INSTALLER
+        PROMPT_STDIN=$prompt_stdin python3 - "$CASE_DIR" <<'PY'
+import os, pathlib, select, subprocess, sys, time
+case = pathlib.Path(sys.argv[1])
+proc = subprocess.Popen(['script', '-qec', f'sh "{case}/prompt.sh"', str(case / 'typescript')],
+    env={**os.environ, 'PATH': os.environ['TEST_PATH']}, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+output = b''
+sent = False
+try:
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([proc.stdout], [], [], 0.1)
+        if ready:
+            chunk = os.read(proc.stdout.fileno(), 4096)
+            if not chunk:
+                break
+            output += chunk
+            if not sent and '密钥（隐藏输入）：'.encode() in output:
+                proc.stdin.write(b'\n' if os.environ['PROMPT_STDIN'] == 'blank' else b'prompt-secret-DO-NOT-LOG\n'); proc.stdin.flush(); sent = True
+    assert sent, output.decode(errors='replace')
+    assert proc.wait(timeout=5) == 0, output.decode(errors='replace')
+    assert b'prompt-secret-DO-NOT-LOG' not in output, 'prompt echoed the key'
+    assert b'prompt-secret-DO-NOT-LOG' not in (case / 'typescript').read_bytes(), 'typescript leaked the key'
+finally:
+    if proc.poll() is None:
+        proc.kill(); proc.wait()
+PY
+        if [ "$prompt_stdin" = blank ]; then
+            assert_not_exists "$TEST_ROOT/opt/orbit-beacon/state/identity.json"
+        else
+            [ "$(cat "$TEST_ROOT/opt/orbit-beacon/state/enrollment.token")" = prompt-secret-DO-NOT-LOG ] || fail 'prompt key changed'
+        fi
+        assert_log_lacks prompt-secret-DO-NOT-LOG
+        pass "$prompt_stdin stdin uses hidden /dev/tty prompt and restores terminal state"
+    done
+else
+    printf '%s\n' 'SKIP - hidden prompt pseudo-tty tests (script missing)'
+fi
 
 setup_case basic
 secret='basic-token-DO-NOT-LOG'

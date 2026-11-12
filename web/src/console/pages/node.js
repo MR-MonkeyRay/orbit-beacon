@@ -9,7 +9,6 @@ import {toast} from '../ui/feedback.js';
 import {field, input, onSubmit, saveBar, select, tagEditor, textarea, trackDirty, validateBytes} from '../ui/forms.js';
 import {tabSet} from '../ui/tabs.js';
 import {nodeCommandsPanel} from './node-commands.js';
-import {enrollmentTab} from './enrollments.js';
 import {latestSamplePanel} from './latest-sample.js';
 import {lifecycleActions} from './node-lifecycle.js';
 import {historyPanel} from './node-history.js';
@@ -56,11 +55,10 @@ export async function nodePage() {
   let availability;
   let billingSettings = trafficSettings;
   let probes;
-  let tickets;
   let commands;
   const badge = statusBadge(displayStatus(node));
   const connection = liveStatus();
-  const actions = lifecycleActions(node, () => tickets?.reload());
+  const actions = lifecycleActions(node);
   const summary = h('div', {class: 'node-summary'});
   const updateSummary = () => {
     const group = groups.find((item) => item.id === node.group_id);
@@ -106,12 +104,10 @@ export async function nodePage() {
     {id: 'settings', label: t('shell.settings'), icon: 'sliders', hashes: {
       'settings-details': 'node-details', details: 'node-details',
       'settings-public': 'node-public', public: 'node-public',
-      'settings-agent': 'node-agent', agent: 'node-agent',
-      'settings-enrollment': 'node-enrollment', enrollment: 'node-enrollment'
+      'settings-agent': 'node-agent', agent: 'node-agent'
     }, build: () => {
       commands ||= nodeCommandsPanel(node, signal, {heading: 'h3'});
       commands.snapshot(node);
-      tickets ||= enrollmentTab(node, {listOnly: true});
       const section = (id, label, ...content) => h('section', {class: 'stack node-settings-section'},
         h('h2', {id, tabindex: '-1'}, label), content);
       return {element: h('div', {class: 'stack node-settings'},
@@ -121,8 +117,7 @@ export async function nodePage() {
           actions.snapshot();
         })),
         section('node-public', t('nodes.publicPage'), publicTab(node, publicSettings)),
-        section('node-agent', 'Agent', commands.element,
-          h('section', {class: 'stack node-enrollments'}, h('h3', {id: 'node-enrollment', tabindex: '-1'}, t('nodes.enrollment.caption')), tickets))),
+        section('node-agent', 'Agent', commands.element)),
         attach: commands.attach, detach: commands.detach};
     }}
   ], t('nodes.sections'));
@@ -142,8 +137,6 @@ export async function nodePage() {
       }
     }
     for (const control of actions.querySelectorAll('button')) control.disabled = true;
-    const enrollment = root.querySelector('.node-enrollments');
-    for (const control of enrollment?.querySelectorAll('button') || []) control.disabled = true;
   };
   root.addEventListener('submit', (event) => {
     if (node.deleted) { event.preventDefault(); event.stopImmediatePropagation(); }

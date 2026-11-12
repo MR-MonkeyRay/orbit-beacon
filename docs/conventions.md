@@ -9,7 +9,7 @@
 | 控制台 | Console |
 | 节点 | Node |
 | 状态页 | Status page |
-| 注册票据 / 注册 | Enrollment ticket / Enroll |
+| 密钥 / 注册 | Key / Enroll |
 | 节点凭据 | Node credential |
 | 上报 | Report |
 | 告警规则 / 告警事件 | Alert rule / Alert event |

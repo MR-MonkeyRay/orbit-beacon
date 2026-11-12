@@ -60,7 +60,7 @@ build/orbitbeacon-server health --url http://localhost:8080
 
 ### 5. 注册 Agent
 
-在“节点 / Nodes”添加节点后，复制弹窗中的完整部署命令，在 Agent 主机执行；票据 30 分钟内仅可成功激活一次。已有节点从详情“更多 → 注册 Agent / More → Enroll Agent”重新签发，分组入口为该组部署一个 Agent。安装与恢复见 [Agent 指南](docs/agent.md#注册票据)。回到节点详情确认最近上报与样本；注册成功不等于已上报。Agent 采集配置仅保存在本地，不随报告发送；使用 `orbitbeacon-agent doctor` 检查本地设置。
+在“节点 / Nodes”添加节点后，复制命令，在主机执行，按提示粘贴单独复制的密钥，再等待上报。命令默认不含密钥，可开启“命令中包含密钥 / Include key in command”；密钥有效 30 分钟、仅用一次。已有节点用“更多 → 注册 Agent / More → Enroll Agent”，分组入口每次部署一个 Agent。安装与恢复见 [Agent 指南](docs/agent.md#密钥)。Agent 采集配置保存在本地，使用 `orbitbeacon-agent doctor` 检查。
 
 ### 6. 公开节点
 

@@ -38,7 +38,7 @@ MySQL 整理需具备所整理表的 `SELECT`、`INSERT` 权限。
 | `trusted_proxies` | `[]` | 可信代理 IP / CIDR，见下文 |
 | `web_update_interval_seconds` | `10` | 整数 2–60 秒，网页推送合并与 HTTP 轮询周期；重启生效，不改变 Agent 采集周期 |
 | `metrics_listen` | 空字符串 | 独立 HTTP `/metrics`（服务自身）与 `/metrics/nodes`（节点）监听，主监听不提供；无认证，节点指标含节点名、地区、服务商、磁盘路径和网卡名，须绑定回环或受保护网络 |
-| `access_log` | `false` | 访问日志；健康检查仅记录 5xx，不记录查询字符串、Cookie、Authorization 或注册票据 |
+| `access_log` | `false` | 访问日志；健康检查仅记录 5xx，不记录查询字符串、Cookie、Authorization 或密钥 |
 | `allow_insecure_webhooks` | `false` | 允许字面回环地址的 HTTP Webhook，见[通知网络](#通知网络) |
 | `notification_allow_private_networks` | `false` | 允许内网通知目标，见[通知网络](#通知网络) |
 | `database` | `{}` | 默认 SQLite；MySQL 使用嵌套映射，见[数据库](#数据库) |
@@ -304,7 +304,7 @@ return hmac.Equal(got, mac.Sum(nil))
 | 监控 / Monitoring | 已落库节点观测、流量、探测与指标历史 |
 | 事件 / Events | 审计、告警、已结束投递、站内通知及已结束任务历史；不含历史备份密码 |
 
-- 至少选一类，默认只选配置。登录会话、注册票据、待执行任务、待发送通知、旧下载产物、部署配置、TLS 证书和可执行文件都不归档，部署文件另存。配置 settings 只含全站状态页开关、API 令牌全局限额和存储故障通知订阅；恢复配置会整体替换这些设置，仅监控/事件恢复保留当前值；缺状态页开关时默认开启。
+- 至少选一类，默认只选配置。登录会话、密钥、待执行任务、待发送通知、旧下载产物、部署配置、TLS 证书和可执行文件都不归档，部署文件另存。配置 settings 只含全站状态页开关、API 令牌全局限额和存储故障通知订阅；恢复配置会整体替换这些设置，仅监控/事件恢复保留当前值；缺状态页开关时默认开启。
 - 每包是 `.tar.gz.age`，带独立 16 位随机字母数字密码，在详情显示、复制或下载。密码不上传，也没有主密码托管；务必另存，原机丢失且没记录就无法恢复。下载和密码有效期见[存储与保留](../docs/architecture.md#存储与保留)，快照边界见[备份](../docs/architecture.md#备份)。
 
 ### 计划
