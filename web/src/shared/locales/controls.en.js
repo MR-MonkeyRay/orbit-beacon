@@ -1,8 +1,7 @@
 export default {
+  'controls.language.switch': 'Switch to {language}',
   'controls.theme': 'Theme',
   'controls.live.reconnecting': 'Reconnecting…',
-  'controls.language': 'Language',
-  'controls.language.preference': 'Language: {preference}',
   'controls.followSystem': 'Follow system',
   'controls.theme.system': 'System',
   'controls.theme.light': 'Light',

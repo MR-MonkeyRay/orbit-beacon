@@ -1,8 +1,7 @@
 export default {
+  'controls.language.switch': '切换到 {language}',
   'controls.theme': '主题',
   'controls.live.reconnecting': '重新连接中…',
-  'controls.language': '语言',
-  'controls.language.preference': '语言：{preference}',
   'controls.followSystem': '跟随系统',
   'controls.theme.system': '跟随系统',
   'controls.theme.light': '浅色',

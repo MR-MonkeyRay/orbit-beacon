@@ -26,7 +26,6 @@ export default {
   'common.status.disabled': '已禁用',
   'common.unavailable': '不可用',
   'common.none': '无',
-  'common.language': '语言',
   'errors.generic': '无法完成此操作，请检查网络后重试。',
   'errors.withRequest': '{message}（请求 {id}）',
   'errors.locale_storage_failed': '无法保存语言设置。'

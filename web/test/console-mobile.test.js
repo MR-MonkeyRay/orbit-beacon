@@ -4,14 +4,20 @@ import {h, reducedMotion} from '../src/shared/dom.js';
 import {setNavigationSignal, setSession} from '../src/console/api.js';
 import {copy, flush, installDOM} from './console-dom.js';
 
-async function setup(t, {mobile = true} = {}) {
+async function setup(t, {mobile = true, tablet = false, nav = null, storageBlocked = false} = {}) {
   const dom = installDOM();
   const originals = new Map(['window', 'fetch', 'matchMedia', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
   globalThis.window = new EventTarget();
   window.scrollTo = () => {};
   globalThis.requestAnimationFrame = () => 0;
   const phone = new EventTarget(); phone.matches = mobile;
-  globalThis.matchMedia = () => phone;
+  const desktop = new EventTarget(); desktop.matches = !mobile && !tablet;
+  const compact = new EventTarget(); compact.matches = tablet;
+  globalThis.matchMedia = (query) => query === '(max-width: 767px)' ? phone : query === '(min-width: 1200px)' ? desktop : compact;
+  localStorage.getItem = (key) => {
+    if (storageBlocked) throw new Error('Storage unavailable');
+    return key === 'orbitbeacon.nav' ? nav : null;
+  };
   const motion = Object.getOwnPropertyDescriptor(reducedMotion, 'matches');
   Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => true});
   Object.assign(location, {pathname: '/overview', search: '', hash: '', href: 'https://example.test/overview', origin: 'https://example.test'});
@@ -64,7 +70,7 @@ async function setup(t, {mobile = true} = {}) {
     await flush();
     return router;
   };
-  return {...dom, menu, bar, backdrop, sidebar, view, anchor, overview, command, phone, user, requests, route, railClicks, ...shell,
+  return {...dom, menu, bar, backdrop, sidebar, view, anchor, overview, command, phone, user, requests, route, railClicks, desktop, compact, ...shell,
     resize(matches) { phone.matches = matches; phone.dispatchEvent(new Event('change')); }};
 }
 
@@ -164,7 +170,7 @@ test('forced-password and bare routes hide the mobile bar and cannot open naviga
 test('drawer traps keyboard focus but leaves an open dialog to its native focus and Escape handling', async (t) => {
   const env = await setup(t); env.menu.click();
   env.menu.focus(); assert.equal(press('Tab', {shiftKey: true}).defaultPrevented, true);
-  assert.equal(document.activeElement, document.getElementById('user-menu'));
+  assert.equal(document.activeElement, document.getElementById('account').children[1]);
   assert.equal(press('Tab').defaultPrevented, true); assert.equal(document.activeElement, env.menu);
   const {modal} = await import('../src/console/ui/dialogs.js');
   const dialog = modal(copy('shell.commandPalette'), () => h('input'));
@@ -233,7 +239,7 @@ test('pageHead keeps primary action separate from live status for the mobile tit
   } finally { dom.restore(); }
 });
 
-test('user menu exposes language/theme radios, persists explicit themes and preserves the drawer', async (t) => {
+test('user menu exposes only theme radios, persists explicit themes and preserves the drawer', async (t) => {
   const env = await setup(t); env.menu.click();
   const root = document.querySelector('.user-menu');
   const trigger = document.getElementById('user-menu');
@@ -241,27 +247,27 @@ test('user menu exposes language/theme radios, persists explicit themes and pres
   const radios = root.querySelectorAll('[role="menuitemradio"]');
   assert.equal(trigger.getAttribute('aria-label'), 'Admin');
   assert.equal(root.querySelector('.avatar').textContent, 'A');
-  assert.equal(radios.length, 6);
-  assert.deepEqual(radios.map((radio) => radio.getAttribute('aria-checked')), ['true', 'false', 'false', 'true', 'false', 'false']);
+  assert.equal(radios.length, 3);
+  assert.deepEqual(radios.map((radio) => radio.getAttribute('aria-checked')), ['true', 'false', 'false']);
   trigger.click(); state(env, true);
   assert.equal(menu.hidden, false);
   const writes = [];
   localStorage.setItem = (key, value) => writes.push([key, value]);
   localStorage.removeItem = (key) => writes.push([key, null]);
-  radios[5].click();
+  radios[2].click();
   assert.equal(document.documentElement.dataset.theme, 'dark');
-  assert.equal(radios[5].getAttribute('aria-checked'), 'true');
-  assert.equal(radios[3].getAttribute('aria-checked'), 'false');
+  assert.equal(radios[2].getAttribute('aria-checked'), 'true');
+  assert.equal(radios[0].getAttribute('aria-checked'), 'false');
   assert.deepEqual(writes, [['orbitbeacon-theme', 'dark']]);
   assert.equal(menu.hidden, true); state(env, true);
-  trigger.click(); radios[3].click();
+  trigger.click(); radios[0].click();
   assert.equal(document.documentElement.dataset.theme, undefined);
   assert.deepEqual(writes.at(-1), ['orbitbeacon-theme', null]);
   await env.route(); trigger.click();
   assert.equal(menu.hidden, false, 'route navigation must not dispose the persistent account menu');
 });
 
-test('user-menu language follows draft confirmation, cancellation, busy guard, storage and full reload', async (t) => {
+test('account language toggle follows draft confirmation, cancellation, busy guard, storage and full reload', async (t) => {
   const env = await setup(t); await env.route();
   let preference = 'system';
   const writes = [];
@@ -270,23 +276,20 @@ test('user-menu language follows draft confirmation, cancellation, busy guard, s
   localStorage.setItem = (key, value) => { writes.push([key, value]); preference = value; };
   location.reload = () => reloads++;
   const dirty = h('form', {dataset: {dirty: 'true'}}, h('input', {value: 'draft'})); env.view.append(dirty);
-  const root = document.querySelector('.user-menu');
-  const trigger = root.querySelector('button');
-  const radios = root.querySelectorAll('[role="menuitemradio"]');
-  trigger.click(); radios[2].click(); await flush();
+  const language = document.getElementById('account').children[1];
+  language.click(); await flush();
   assert.ok(document.querySelector('dialog'));
   assert.deepEqual(writes, []);
   document.querySelector('dialog').querySelector('button').click(); await flush();
   assert.equal(dirty.querySelector('input').value, 'draft'); assert.equal(reloads, 0);
-  assert.equal(radios[0].getAttribute('aria-checked'), 'true');
-  dirty.dataset.busy = 'true'; trigger.click(); radios[2].click(); await flush();
+  assert.equal(language.title, 'Switch to 中文');
+  dirty.dataset.busy = 'true'; language.click(); await flush();
   assert.equal(document.querySelector('dialog'), null); assert.deepEqual(writes, []);
   delete dirty.dataset.busy;
-  trigger.click(); radios[2].click(); await flush();
+  language.click(); await flush();
   const dialog = document.querySelector('dialog');
   dialog.querySelectorAll('button').find((button) => button.textContent === copy('controls.discard')).click(); await flush();
-  assert.deepEqual(writes, [['orbitbeacon-locale', 'en']]); assert.equal(reloads, 1);
-  assert.equal(radios[2].getAttribute('aria-checked'), 'true');
+  assert.deepEqual(writes, [['orbitbeacon-locale', 'zh-CN']]); assert.equal(reloads, 1);
   assert.equal(location.pathname, '/overview');
 });
 
@@ -303,10 +306,10 @@ test('login keeps language in the card header and required validation without vi
   const card = page.querySelector('.login-card');
   const head = card.querySelector('.auth-card-head');
   assert.equal(card.firstElementChild, head);
-  assert.equal(head.lastElementChild.className, 'console-locale auth-locale');
-  const language = head.querySelector('select');
+  assert.equal(head.lastElementChild.className, 'icon-button');
+  const language = head.lastElementChild;
   assert.ok(language.getAttribute('aria-label'));
-  assert.equal(head.querySelector('label').querySelector('.sr').textContent, copy('common.language'));
+  assert.equal(head.querySelector('select'), null);
   assert.ok(card.querySelector('h1'));
   const form = card.querySelector('form');
   assert.equal(form.querySelectorAll('.field-required').length, 0);
@@ -320,6 +323,56 @@ test('login keeps language in the card header and required validation without vi
   localStorage.getItem = () => stored;
   localStorage.setItem = (_key, value) => { stored = value; };
   location.reload = () => reloads++;
-  language.value = 'en'; language.dispatchEvent(new Event('change')); await flush();
-  assert.equal(stored, 'en'); assert.equal(reloads, 1);
+  language.click(); await flush();
+  assert.equal(stored, 'zh-CN'); assert.equal(reloads, 1);
+});
+
+test('desktop collapse persists, repaints its icon and survives account re-rendering', async (t) => {
+  const env = await setup(t, {mobile: false, nav: 'collapsed'});
+  const root = document.documentElement;
+  let toggle = document.querySelector('.nav-toggle');
+  assert.equal(root.classList.contains('nav-collapsed'), true);
+  assert.equal(toggle.hidden, false);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(toggle.title, copy('shell.expandNav'));
+  assert.equal(toggle.querySelector('use').getAttribute('href'), '#i-sidebar-expand');
+  const writes = [];
+  localStorage.setItem = (key, value) => writes.push([key, value]);
+  toggle.click();
+  assert.equal(root.classList.contains('nav-collapsed'), false);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(toggle.title, copy('shell.collapseNav'));
+  assert.deepEqual(writes, [['orbitbeacon.nav', 'expanded']]);
+  localStorage.setItem = () => { throw new Error('Storage unavailable'); };
+  toggle.click();
+  assert.equal(root.classList.contains('nav-collapsed'), true);
+  setSession({user: env.user, csrf_token: 'new', expires_at: ''});
+  toggle = document.querySelector('.nav-toggle');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(document.getElementById('account').children.length, 3);
+  assert.equal(document.querySelector('.who-name'), null);
+});
+
+test('tablet rail and mobile drawer hide collapse without losing the stored desktop choice', async (t) => {
+  const env = await setup(t, {mobile: false, tablet: true, nav: 'collapsed'});
+  const toggle = document.querySelector('.nav-toggle');
+  assert.equal(toggle.hidden, true);
+  assert.equal(document.documentElement.classList.contains('nav-compact'), true);
+  env.compact.matches = false; env.compact.dispatchEvent(new Event('change'));
+  env.resize(true);
+  assert.equal(toggle.hidden, true);
+  assert.equal(document.documentElement.classList.contains('nav-compact'), false);
+  env.resize(false); env.desktop.matches = true; env.desktop.dispatchEvent(new Event('change'));
+  assert.equal(toggle.hidden, false);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+});
+
+test('desktop navigation still collapses when preference storage cannot be read or written', async (t) => {
+  await setup(t, {mobile: false, storageBlocked: true});
+  localStorage.setItem = () => { throw new Error('Storage unavailable'); };
+  const toggle = document.querySelector('.nav-toggle');
+  toggle.click();
+  assert.equal(document.documentElement.classList.contains('nav-collapsed'), true);
+  toggle.click();
+  assert.equal(document.documentElement.classList.contains('nav-collapsed'), false);
 });

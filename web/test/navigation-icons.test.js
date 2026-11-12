@@ -21,6 +21,7 @@ test('sidebar keeps the primary page order and gives notifications its own inbox
   assert.ok(html.indexOf('id="notifications"') < html.indexOf('class="nav-public"'));
   assert.match(html, /<kbd class="command-shortcut">Ctrl K<\/kbd>/);
   assert.ok(ICONS.inbox);
+  for (const name of ['languages', 'sidebar-collapse', 'sidebar-expand']) assert.ok(ICONS[name]);
   assert.notEqual(ICONS.inbox, ICONS.bell);
 });
 
@@ -39,5 +40,8 @@ test('sidebar responsive rules hide headings and shortcuts in the rail, touch hi
   assert.match(shell, /\.alert-count\.critical\s*\{[^}]*color: var\(--bad\)/);
   assert.match(shell, /dialog\.command-dialog\s*\{[^}]*margin: 15vh auto auto/);
   assert.match(shell, /@media \(pointer: coarse\)\s*\{\s*\.command-shortcut\s*\{ display: none/);
-  assert.match(responsive, /@media \(min-width:768px\) and \(max-width:1199px\)\s*\{\s*\.nav-heading,\.command-shortcut,\.user-menu \.who-name\s*\{ display: none/);
+  assert.match(responsive, /:where\(html\.nav-compact, html\.nav-collapsed\)/);
+  assert.match(responsive, /\.nav-heading,\.command-shortcut\s*\{ display: none/);
+  assert.match(responsive, /grid-template-columns: 72px minmax\(0,1fr\)/);
+  assert.match(responsive, /\.account\s*\{[^}]*flex-direction: column/);
 });

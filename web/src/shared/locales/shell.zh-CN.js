@@ -1,4 +1,6 @@
 export default {
+  'shell.collapseNav': '收起导航',
+  'shell.expandNav': '展开导航',
   'shell.monitoring': '监控',
   'shell.management': '管理',
   'shell.tools': '工具',

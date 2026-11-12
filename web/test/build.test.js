@@ -175,6 +175,14 @@ for (const theme of ['default', 'example']) test(`${theme} actual theme builds c
   assert.match(css, /\.region-heading/);
   assert.match(css, /\.node-search/);
   assert.match(css, /safe-area-inset-top/);
+  assert.match(css, /safe-area-inset-bottom/);
+  assert.match(css, /min-height:100vh;min-height:100dvh/);
+  assert.match(css, /#empty\{flex:1;align-content:center;border:0\}/);
+  const html = await readFile(path.join(out, 'public.html'), 'utf8');
+  assert.match(html, /class="hero-row">\s*<h1 id="headline"[\s\S]*?<div class="live">/);
+  assert.match(html, /id="refresh"[^>]*aria-label="Refresh"[^>]*title="Refresh"/);
+  assert.doesNotMatch(html, /<span data-i18n="common.refresh">/);
+  assert.doesNotMatch(js, /Automatic updates|Language: \{preference\}/);
   assert.match(js, /Search this page/);
   assert.doesNotMatch(js, /Top resource usage/);
 });

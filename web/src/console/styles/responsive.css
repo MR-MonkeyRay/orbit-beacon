@@ -44,100 +44,111 @@
   }
 }
 
-/* 图标栏：每个标签变为工具提示，悬停或键盘聚焦时显示。
+/* nav-compact 在启动脚本与断点监听中同步；手动收起复用同一套图标栏。
+   图标栏：每个标签变为工具提示，悬停或键盘聚焦时显示。
    标签保持为真实元素（非生成内容），确保它仍是控件唯一的可访问名称。 */
-@media (min-width:768px) and (max-width:1199px) {
-  .shell {
-    grid-template-columns: 72px minmax(0,1fr);
-  }
 
-  .sidebar {
-    padding: var(--sp-content) var(--sp-inline);
-    overflow: visible;
-  }
+@media (min-width:768px) {
+  :where(html.nav-compact, html.nav-collapsed) {
+    .shell {
+      grid-template-columns: 72px minmax(0,1fr);
+    }
 
-  .sidebar .brand {
-    justify-content: center;
-    padding: var(--sp-tight) 0 var(--sp-content);
-  }
+    .sidebar {
+      padding: var(--sp-content) var(--sp-inline);
+      overflow: visible;
+    }
 
-  .nav a,.nav-public,.nav .notification-entry,.nav .command-entry {
-    justify-content: center;
-    gap: 0;
-    padding: 0;
-  }
+    .sidebar .brand {
+      justify-content: center;
+      padding: var(--sp-tight) 0 var(--sp-content);
+    }
 
-  .nav .notification-entry,.nav .command-entry {
-    flex-wrap: nowrap;
-    padding-block: 0;
-  }
+    .nav a,.nav-public,.nav .notification-entry,.nav .command-entry {
+      justify-content: center;
+      gap: 0;
+      padding: 0;
+    }
 
-  .nav-public {
-    padding-top: 14px;
-  }
+    .nav .notification-entry,.nav .command-entry {
+      flex-wrap: nowrap;
+      padding-block: 0;
+    }
 
-  .sidebar .nav-label {
-    position: absolute;
-    left: calc(100% + 12px);
-    top: 50%;
-    z-index: var(--z-toast);
-    padding: var(--sp-tight) var(--sp-inline);
-    border-radius: var(--r-sm);
-    background: var(--ink);
-    color: var(--bg);
-    font-size: var(--fs-sm);
-    font-weight: var(--fw-semibold);
-    line-height: var(--lh-compact);
-    white-space: nowrap;
-    box-shadow: var(--shadow);
-    opacity: 0;
-    transform: translate(-4px,-50%);
-    pointer-events: none;
-    transition: opacity var(--motion-fast),transform var(--motion-fast) var(--ease);
-  }
+    .nav-public {
+      padding-top: 14px;
+    }
 
-  .sidebar .brand {
-    position: relative;
-  }
+    .sidebar .nav-label {
+      position: absolute;
+      left: calc(100% + 12px);
+      top: 50%;
+      z-index: var(--z-toast);
+      padding: var(--sp-tight) var(--sp-inline);
+      border-radius: var(--r-sm);
+      background: var(--ink);
+      color: var(--bg);
+      font-size: var(--fs-sm);
+      font-weight: var(--fw-semibold);
+      line-height: var(--lh-compact);
+      white-space: nowrap;
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transform: translate(-4px,-50%);
+      pointer-events: none;
+      transition: opacity var(--motion-fast),transform var(--motion-fast) var(--ease);
+    }
 
-  .sidebar :focus-visible>.nav-label {
-    opacity: 1;
-    transform: translate(0,-50%);
-  }
+    .sidebar .brand {
+      position: relative;
+    }
 
-  @media (hover:hover) {
-    .sidebar :hover>.nav-label {
+    .sidebar :focus-visible>.nav-label {
       opacity: 1;
       transform: translate(0,-50%);
     }
-  }
 
-  /* 触屏没有 hover，点按产生的是 :focus 而非 :focus-visible。 */
-  @media (pointer:coarse) {
-    .sidebar :focus>.nav-label {
-      opacity: 1;
-      transform: translate(0,-50%);
+    @media (hover:hover) {
+      .sidebar :hover>.nav-label {
+        opacity: 1;
+        transform: translate(0,-50%);
+      }
     }
-  }
 
-  .notification-entry .notification-count {
-    position: absolute;
-    top: 3px;
-    right: 4px;
-    min-width: 18px;
-    margin: 0;
-    padding: 0 var(--sp-tight);
-    font-size: var(--fs-xs);
-    line-height: var(--line-height-badge);
-  }
+    /* 触屏没有 hover，点按产生的是 :focus 而非 :focus-visible。 */
+    @media (pointer:coarse) {
+      .sidebar :focus>.nav-label {
+        opacity: 1;
+        transform: translate(0,-50%);
+      }
+    }
 
-  .notification-entry .notification-freshness {
-    display: none;
-  }
+    .notification-entry .notification-count {
+      position: absolute;
+      top: 3px;
+      right: 4px;
+      min-width: 18px;
+      margin: 0;
+      padding: 0 var(--sp-tight);
+      font-size: var(--fs-xs);
+      line-height: var(--line-height-badge);
+    }
 
-  .account {
-    justify-items: center;
-    padding: var(--sp-control) 0 var(--sp-tight);
+    .notification-entry .notification-freshness {
+      display: none;
+    }
+
+    .account {
+      flex-direction: column;
+      align-items: center;
+      padding: var(--sp-control) 0 var(--sp-tight);
+    }
+
+    .nav-heading,.command-shortcut { display: none; }
+    .nav [role="group"] + .nav-heading + [role="group"] { margin-top: var(--sp-control); }
+    .user-menu > .btn { justify-content: center; padding: 0; }
+    .user-menu .menu-options { left: calc(100% + 10px); bottom: 0; }
+    .nav .alert-count { position: absolute; top: 0; right: 0; font-size: var(--fs-xs); }
   }
 }
 
@@ -308,7 +319,7 @@
     padding-right: 52px;
   }
 
-  input,select,textarea,.input,.account-locale select {
+  input,select,textarea,.input {
     min-width: 0;
     max-width: 100%;
     font-size: max(16px,var(--fs-base));
@@ -463,12 +474,4 @@
 
 @media (min-width:768px) and (max-width:1023px) {
   .nodes-table .hide-compact:not(.column-hidden) { display: table-cell; }
-}
-
-@media (min-width:768px) and (max-width:1199px) {
-  .nav-heading,.command-shortcut,.user-menu .who-name { display: none; }
-  .nav [role="group"] + .nav-heading + [role="group"] { margin-top: var(--sp-control); }
-  .user-menu > .btn { justify-content: center; padding: 0; }
-  .user-menu .menu-options { left: calc(100% + 10px); bottom: 0; }
-  .nav .alert-count { position: absolute; top: 0; right: 0; font-size: var(--fs-xs); }
 }

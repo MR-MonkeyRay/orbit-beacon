@@ -59,26 +59,26 @@
   border-bottom:2px solid var(--ink);
 }
 
-.example-layout {
+.page > .example-layout {
   display:grid;
-  grid-template-columns:minmax(240px,300px) minmax(0,1fr);
+  grid-template-columns:minmax(0,1fr);
+  grid-template-rows:auto 1fr;
   gap:40px;
   padding-top:32px;
-  align-items:start;
+  align-items:stretch;
 }
 
 .example-page .example-overview {
-  display:flex;
-  flex-direction:column;
-  align-items:stretch;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 160px;
+  align-items:center;
   gap:24px;
   padding:0 0 28px;
   border-bottom:1px solid var(--border);
 }
 
 .example-page .constellation {
-  align-self:center;
-  width:min(100%,280px);
+  width:min(100%,160px);
 }
 
 .example-page .hero h1 {
@@ -91,28 +91,9 @@
   font-size:var(--fs-base);
 }
 
-.example-page .live {
-  display:grid;
-  grid-template-columns:34px minmax(0,1fr);
-  gap:12px;
-  margin-top:24px;
-  padding:16px 0 0;
-  border:0;
-  border-top:1px solid var(--line);
-  border-radius:0;
-  background:transparent;
-}
-
-.example-page .live .refresh {
-  grid-column:1 / -1;
-  justify-self:start;
-}
-
-.example-page .live-text .update-time,.example-page .live-text .update-mode {
-  white-space:normal;
-}
-
 .example-content {
+  display:flex;
+  flex-direction:column;
   min-width:0;
 }
 
@@ -161,9 +142,10 @@
 }
 
 @media (max-width:1023px) {
-  .example-layout {
+  .page > .example-layout {
     grid-template-columns:minmax(0,1fr);
     gap:28px;
+    grid-template-rows:auto 1fr;
     padding-top:24px;
   }
 
@@ -175,19 +157,9 @@
 
   .example-page .constellation {
     grid-column:2;
-    grid-row:1;
+    grid-row:2;
     order:0;
     width:100%;
-  }
-
-  .example-page .hero-copy {
-    grid-column:1;
-    grid-row:1;
-  }
-
-  .example-page .live {
-    display:flex;
-    flex-wrap:wrap;
   }
 }
 
@@ -199,21 +171,13 @@
 
   .example-page .constellation {
     grid-column:1;
-    grid-row:1;
-    justify-self:end;
+    grid-row:3;
+    justify-self:center;
     width:140px;
     margin-bottom:16px;
   }
 
-  .example-page .hero-copy {
-    grid-row:2;
-  }
-
   .example-page .hero h1 {
     font-size:36px;
-  }
-
-  .example-page .live {
-    margin-top:20px;
   }
 }

@@ -42,7 +42,10 @@ test('public WS snapshots render values; heartbeats and ordinary snapshots do no
   const socket = ui.sockets[0]; socket.open(); socket.message(snapshot(payload('first')));
   assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'first');
   assert.notEqual(ui.elements.updated.querySelector('.update-time').textContent, '');
-  assert.notEqual(ui.elements.updated.querySelector('.update-mode').textContent, '');
+  assert.match(ui.elements.updated.textContent, /^Updated \d{2}:\d{2}$/);
+  assert.equal(ui.elements.updated.querySelector('.update-mode'), null);
+  assert.ok(ui.elements.updated.title.includes('2026'));
+  assert.doesNotMatch(ui.elements.updated.textContent, /Automatic|Refresh in|·/);
   assert.equal(ui.elements.countdown.classList.contains('running'), false);
   const announced = ui.elements.announcement.textContent;
   const updated = ui.elements.updated.textContent;
@@ -72,13 +75,13 @@ test('public fallback is transparent and HTTP countdown uses the server interval
   ui.sockets[0].fail(); await flush();
   assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'polled');
   assert.equal(ui.elements.countdown.classList.contains('running'), true);
-  assert.match(ui.elements.updated.querySelector('.update-mode').textContent, /60/);
+  assert.match(ui.elements.updated.title, /60/);
   const announced = ui.elements.announcement.textContent;
   ui.shiftWall(3600000);
   await ui.advance(30000);
   assert.equal(ui.requests.length, 2);
   assert.equal(ui.elements.announcement.textContent, announced);
-  assert.match(ui.elements.updated.querySelector('.update-mode').textContent, /30/);
+  assert.match(ui.elements.updated.title, /30/);
   await ui.advance(30000);
   assert.equal(ui.requests.length, 3);
   assert.doesNotMatch(ui.elements.updated.textContent, /WS|SSE|HTTP/);
@@ -99,9 +102,9 @@ test('public broken channel retains values and online presence until the next va
   assert.equal(ui.elements.nodes.children.length, 0);
   assert.equal(ui.elements.headline.textContent, copy('public.heading'));
   assert.equal(ui.elements.retry.hidden, true);
-  // 空集合只由摘要行说明一次；空态盒子保持隐藏。
-  assert.equal(ui.elements.empty.hidden, true);
-  assert.equal(ui.elements.summary.textContent, copy('public.empty.all'));
+  assert.equal(ui.elements.empty.hidden, false);
+  assert.equal(ui.elements['empty-text'].textContent, copy('public.empty.all'));
+  assert.equal(ui.elements.summary.textContent, '');
   sse.frame(snapshot(payload('returned'))); await flush();
   assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'returned');
 });
@@ -159,7 +162,7 @@ test('public filters survive valid patches and keep filtering the current page',
   assert.equal(ui.elements.nodes.children[0].hidden, true);
 });
 
-test('public empty box explains an empty filter but not an empty collection', async (t) => {
+test('public empty box explains empty filters and empty collections', async (t) => {
   const ui = await setup(t); ui.sockets[0].open();
   const data = payload('online'); data.nodes.push({...data.nodes[0], name: 'offline', status: 'offline'});
   ui.sockets[0].message(snapshot(data));
@@ -168,7 +171,16 @@ test('public empty box explains an empty filter but not an empty collection', as
   assert.equal(ui.elements.empty.hidden, false);
   assert.equal(ui.elements['empty-text'].textContent, copy('public.filter.empty.offline'));
   ui.sockets[0].message(snapshot(payload('', {nodes: []})));
+  assert.equal(ui.elements.empty.hidden, false);
+  assert.equal(ui.elements['empty-text'].textContent, copy('public.empty.all'));
+  assert.equal(ui.elements.summary.textContent, '');
+  assert.equal(ui.elements.filters.hidden, true);
+  assert.equal(ui.elements.pagination.hidden, true);
+  assert.equal(ui.elements.retry.hidden, true);
+  ui.sockets[0].message(snapshot(payload('back')));
+  ui.elements.filters.children[0].click();
   assert.equal(ui.elements.empty.hidden, true);
+  assert.equal(ui.elements.filters.hidden, false);
 });
 
 test('public hide and BFCache preserve stale values and resume with a fresh WS scope', async (t) => {
@@ -251,9 +263,9 @@ test('reduced-motion HTTP refresh and loading state work without any animation c
   release(); await flush();
   assert.equal(ui.elements.refresh.hasAttribute('aria-busy'), false);
   assert.equal(ui.elements.nodes.children.length, 1);
-  assert.match(ui.elements.updated.textContent, /10/);
+  assert.match(ui.elements.updated.title, /10/);
   await ui.advance(5000);
-  assert.match(ui.elements.updated.textContent, /5/);
+  assert.match(ui.elements.updated.title, /5/);
   await ui.advance(5000);
   assert.equal(ui.requests.length, 3, 'next HTTP poll is independent of CSS animationend');
   release(); await flush();
@@ -325,7 +337,8 @@ test('public summary banner reports offline and unknown counts and only writes w
   assert.equal(summary.dataset.tone, 'warn');
   assert.match(summary.textContent, /1 node offline · 1 node unknown/);
   socket.message(snapshot(payload('', {nodes: []})));
-  assert.equal(summary.dataset.tone, 'neutral');
+  assert.equal(summary.textContent, '');
+  assert.equal(ui.elements.empty.hidden, false);
 });
 
 test('public card percentages round while threshold classes use shared strict boundaries and keep exact ARIA values', async (t) => {
@@ -390,4 +403,16 @@ test('optional region heading renderer receives names; absent hooks retain the b
   assert.deepEqual(received, [copy('public.regionUnknown'), 'West']);
   ui.sockets[0].message(snapshot(payload('', {nodes})));
   assert.equal(received.length, 2);
+});
+
+test('public empty later page centers the empty-page message and hides pagination', async (t) => {
+  const ui = await setup(t); ui.sockets[0].open();
+  ui.sockets[0].message(snapshot(payload('one', {has_more: true, next_offset: 50})));
+  ui.elements.next.click(); ui.sockets[1].open();
+  ui.sockets[1].message(snapshot(payload('', {nodes: []})));
+  assert.equal(ui.elements.empty.hidden, false);
+  assert.equal(ui.elements['empty-text'].textContent, copy('public.empty.page'));
+  assert.equal(ui.elements.filters.hidden, true);
+  assert.equal(ui.elements.pagination.hidden, true);
+  assert.equal(ui.elements.retry.hidden, true);
 });

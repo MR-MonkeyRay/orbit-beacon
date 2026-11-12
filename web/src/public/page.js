@@ -3,9 +3,9 @@ import {h} from '../shared/dom.js';
 import {themeButton} from '../shared/theme.js';
 import {validResponse} from './validate.js';
 import {connectLive} from '../shared/live.js';
-import {t} from '../shared/i18n.js';
-import {formatTimestamp, formatFullTimestamp} from '../shared/format.js';
-import {localeSelect} from '../shared/locale-select.js';
+import {getLocale, t} from '../shared/i18n.js';
+import {formatFullTimestamp} from '../shared/format.js';
+import {localeToggle} from '../shared/locale-select.js';
 import {errorText} from '../shared/errors.js';
 import {statusLabels} from '../shared/status.js';
 
@@ -22,7 +22,7 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
   const emptyText = $('empty-text');
   const retry = $('retry');
   const headline = $('headline');
-  // 标题固定为名词，数量与空态文案只写摘要行。
+  // 标题固定为名词；空集合使用主区域空态。
   headline.textContent = t('public.heading');
   const summary = $('summary');
   summary.setAttribute('role', 'status');
@@ -34,17 +34,19 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
   };
   const updated = $('updated');
   const updateTime = h('span', {class: 'update-time'}, updated.textContent);
-  const updateMode = h('span', {class: 'update-mode'});
-  updated.replaceChildren(updateTime, updateMode);
+  updated.replaceChildren(updateTime);
+  const shortTime = new Intl.DateTimeFormat(getLocale(), {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'});
   const announcement = $('announcement');
   const refresh = $('refresh');
+  refresh.title = t('common.refresh');
   const countdown = $('countdown');
   const filtersBar = $('filters');
   const pagination = $('pagination');
   const previous = $('previous');
   const next = $('next');
   const page = $('page');
-  const constellation = createConstellation($('constellation'));
+  const constellationRoot = $('constellation');
+  const constellation = createConstellation(constellationRoot);
 
   let offset = 0;
   let nextOffset = null;
@@ -64,7 +66,7 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
 
   themeButton($('theme'));
   const localeError = $('locale-error');
-  $('top-actions').prepend(localeSelect({onError(error) {
+  $('top-actions').prepend(localeToggle({onError(error) {
     localeError.textContent = errorText(error);
     localeError.hidden = false;
   }}));
@@ -142,12 +144,15 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
     nodes.forEach((node, index) => cards[index].update(node));
     current = nodes;
     constellation.update(nodes);
+    // 没有节点时星座图只剩空轨道，与居中空态重复。
+    constellationRoot.hidden = nodes.length === 0;
 
-    // 标题保持名词不变，数量/在线状态与空态说明都放摘要行。
+    // 正常状态写摘要；空集合在剩余主区域显示。
     const online = nodes.filter((node) => node.status === 'online').length;
     const partial = offset > 0 || result.has_more;
     if (nodes.length === 0) {
-      setSummary(t(partial ? 'public.empty.page' : 'public.empty.all'), 'neutral');
+      setSummary('');
+      emptyText.textContent = t(partial ? 'public.empty.page' : 'public.empty.all');
     } else {
       const offline = nodes.filter((node) => node.status === 'offline').length;
       const unknown = nodes.length - online - offline;
@@ -157,14 +162,11 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
         online === nodes.length ? 'ok' : offline === nodes.length ? 'bad' : 'warn');
     }
     lastGenerated = new Date(result.generated_at);
-    updateText(t('public.updatedAt', {time: formatTimestamp(lastGenerated)}), t('public.autoUpdate'));
-    updated.title = t('public.localTime', {time: formatFullTimestamp(lastGenerated)});
+    updateText();
     nextOffset = result.next_offset;
     next.disabled = nextOffset === null;
-    pagination.hidden = offset === 0 && nextOffset === null;
-    // 空集合已由标题说明；此区域仅用于
-    // 筛选结果为空和加载失败。
-    empty.hidden = true;
+    pagination.hidden = !nodes.length || offset === 0 && nextOffset === null;
+    empty.hidden = nodes.length > 0;
     retry.hidden = true;
     applyFilter();
   }
@@ -181,12 +183,13 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
     headline.textContent = t('public.heading');
     // 摘要区回到加载文案，避免显示未本地化的破折号。
     setSummary(t('public.loading'));
-    updateText(t('public.notUpdated'));
-    updated.removeAttribute('title');
+    lastGenerated = undefined;
+    updateText();
     nextOffset = null;
     next.disabled = true;
     empty.hidden = true;
     filtersBar.hidden = true;
+    pagination.hidden = true;
     delete countdown.dataset.state;
   }
 
@@ -219,9 +222,13 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
     if (list.querySelector('.placeholder')) list.replaceChildren(...cards);
   }
 
-  function updateText(time, mode = '') {
-    updateTime.textContent = mode ? `${time} ·` : time;
-    updateMode.textContent = mode ? ` ${mode}` : '';
+  function updateText({stale = false, seconds = null} = {}) {
+    updateTime.textContent = stale ? t('public.stale') : lastGenerated
+      ? t('public.updatedAt', {time: shortTime.format(lastGenerated)}) : t('public.notUpdated');
+    const details = [lastGenerated ? t('public.localTime', {time: formatFullTimestamp(lastGenerated)}) : '',
+      seconds !== null ? t('public.refreshIn', {count: seconds}) : ''].filter(Boolean).join(' — ');
+    updated.title = details;
+    countdown.parentElement.title = details;
   }
 
   function paintConnection(state) {
@@ -234,7 +241,7 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
       const paint = () => {
         const remaining = deadline === null ? 0 : Math.max(0, deadline - performance.now());
         const seconds = Math.ceil(remaining / 1000);
-        updateText(t('public.updatedAt', {time: formatTimestamp(lastGenerated)}), state.transport === 'http' && state.retryAt !== null ? t('public.refreshIn', {count: seconds}) : t('public.autoUpdate'));
+        updateText({seconds: state.transport === 'http' && state.retryAt !== null ? seconds : null});
         if (seconds > 0) displayTimer = setTimeout(paint, Math.min(1000, remaining));
       };
       paint();
@@ -245,14 +252,16 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
       if (hasSnapshot) {
         cards.forEach((card) => card.setStale());
         setSummary(t(document.hidden ? 'public.paused' : 'public.reconnecting'));
-        updateText(t('public.updatedAt', {time: formatTimestamp(lastGenerated)}), t('public.stale'));
+        updateText({stale: true});
       } else {
         list.replaceChildren();
         setSummary(t('public.loadFailed'));
         empty.hidden = false;
         emptyText.textContent = t('public.loadFailed');
         retry.hidden = false;
-        updateText(t('public.notUpdated'));
+        filtersBar.hidden = true;
+        pagination.hidden = true;
+        updateText({stale: true});
       }
     } else {
       countdown.dataset.state = 'connecting';

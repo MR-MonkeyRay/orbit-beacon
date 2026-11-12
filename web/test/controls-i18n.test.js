@@ -2,55 +2,65 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {flush, installDOM} from './console-dom.js';
 
-test('locale selection preserves dirty content when cancelled and restores the preference on storage failure', async () => {
+test('locale toggle preserves drafts on cancel or storage failure, and disables during confirmation or page work', async () => {
   const dom = installDOM();
-  let stored = 'system';
+  let stored = 'en';
   const writes = [];
-  globalThis.localStorage = {getItem: () => stored, setItem: (key, value) => { writes.push([key, value]); stored = value; }};
+  localStorage.getItem = () => stored;
+  localStorage.setItem = (key, value) => { writes.push([key, value]); stored = value; };
   try {
-    const {localeSelect} = await import('../src/shared/locale-select.js');
+    const {localeToggle} = await import('../src/shared/locale-select.js');
     const secret = document.createElement('input'); secret.value = 'unsaved secret'; dom.body.append(secret);
     let reloads = 0;
-    let accept = false;
+    let resolve;
     const errors = [];
-    const select = localeSelect({beforeChange: async () => accept, reload: () => { reloads += 1; }, onError: (error) => errors.push(error)});
-    dom.body.append(select);
-    select.value = 'en'; select.dispatchEvent(new Event('change')); await flush();
-    assert.equal(select.value, 'system');
+    const toggle = localeToggle({beforeChange: () => new Promise((done) => { resolve = done; }), reload: () => reloads++, onError: (error) => errors.push(error)});
+    dom.body.append(toggle);
+    assert.equal(toggle.className, 'icon-button');
+    assert.equal(toggle.title, 'Switch to 中文');
+    assert.equal(toggle.getAttribute('aria-label'), toggle.title);
+    assert.ok(toggle.querySelector('svg'));
+    toggle.click(); toggle.click();
+    assert.equal(toggle.disabled, true);
+    resolve(false); await flush();
+    assert.equal(toggle.disabled, false);
     assert.equal(secret.value, 'unsaved secret');
-    assert.deepEqual(writes, []);
-    assert.equal(reloads, 0);
-    accept = true;
+    assert.deepEqual(writes, []); assert.equal(reloads, 0);
+    const form = document.createElement('form'); form.dataset.busy = 'true'; dom.body.append(form);
+    dom.mutations(); assert.equal(toggle.disabled, true);
+    toggle.click(); assert.deepEqual(writes, []);
+    delete form.dataset.busy; dom.mutations(); assert.equal(toggle.disabled, false);
     localStorage.setItem = () => { throw new Error('private storage internals'); };
-    select.value = 'zh-CN'; select.dispatchEvent(new Event('change')); await flush();
-    assert.equal(select.value, 'system');
-    assert.equal(secret.value, 'unsaved secret');
-    assert.equal(reloads, 0);
-    assert.equal(errors.length, 1);
-    assert.equal(errors[0].code, 'locale_storage_failed');
-    assert.equal(select.disabled, false);
+    toggle.click(); resolve(true); await flush();
+    assert.equal(toggle.title, 'Switch to 中文');
+    assert.equal(secret.value, 'unsaved secret'); assert.equal(reloads, 0);
+    assert.equal(errors.length, 1); assert.equal(errors[0].code, 'locale_storage_failed');
+    assert.equal(toggle.disabled, false);
   } finally { dom.restore(); }
 });
 
-test('locale selection persists an explicit preference even when its effective language is unchanged', async () => {
-  const dom = installDOM();
-  let stored = 'system';
-  let writes = 0;
-  localStorage.getItem = () => stored;
-  localStorage.setItem = (_key, value) => { stored = value; writes += 1; };
-  try {
-    const {localeSelect} = await import('../src/shared/locale-select.js');
-    let confirmations = 0;
-    let reloads = 0;
-    const select = localeSelect({beforeChange: async () => { confirmations += 1; return true; }, reload: () => { reloads += 1; }});
-    select.value = 'system'; select.dispatchEvent(new Event('change')); await flush();
-    assert.equal(confirmations, 0);
-    select.value = 'en'; select.dispatchEvent(new Event('change')); await flush();
-    assert.equal(stored, 'en');
-    assert.equal(writes, 1);
-    assert.equal(reloads, 1);
-  } finally { dom.restore(); }
-});
+for (const [preference, language, expected] of [['en', 'zh-CN', 'zh-CN'], ['zh-CN', 'en', 'en'], ['system', 'en', 'zh-CN'], ['system', 'zh-CN', 'en']]) {
+  test(`locale toggle flips ${preference} with browser language ${language} to ${expected}`, async () => {
+    const dom = installDOM();
+    const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    Object.defineProperty(globalThis, 'navigator', {configurable: true, value: {languages: [language]}});
+    let stored = preference;
+    localStorage.getItem = () => stored;
+    const events = [];
+    localStorage.setItem = (key, value) => { stored = value; events.push([key, value]); };
+    try {
+      const {localeToggle} = await import('../src/shared/locale-select.js');
+      const toggle = localeToggle({beforeChange: async () => { events.push('confirm'); return true; }, reload: () => events.push('reload')});
+      const label = toggle.getAttribute('aria-label');
+      assert.ok(label.endsWith(expected === 'en' ? 'English' : '中文'));
+      toggle.click(); await flush();
+      assert.deepEqual(events, ['confirm', ['orbitbeacon-locale', expected], 'reload']);
+    } finally {
+      if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor); else delete globalThis.navigator;
+      dom.restore();
+    }
+  });
+}
 
 test('standalone dirty tracking observes changes and resets its saved baseline without a save bar', async () => {
   const dom = installDOM();
@@ -111,7 +121,7 @@ test('dialog dirty state detects routing changes beyond the first selected chann
   } finally { dom.restore(); }
 });
 
-test('shared menu/select locale change path confirms before writing and reloads only on success', async () => {
+test('shared locale change path confirms before writing and reloads only on success', async () => {
   const dom = installDOM();
   try {
     const {changeLocalePreference} = await import('../src/shared/locale-select.js');

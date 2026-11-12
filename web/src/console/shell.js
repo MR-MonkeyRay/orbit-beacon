@@ -1,10 +1,9 @@
 import {t} from './i18n.js';
 import {initCommandPalette} from './command-palette.js';
-import {getLocalePreference} from '../shared/i18n.js';
 import {menuButton} from './ui/menu.js';
-import {localeSelect, changeLocalePreference} from '../shared/locale-select.js';
+import {localeToggle} from '../shared/locale-select.js';
 import {confirmLocaleChange, reloadAfterConfirmation} from './router.js';
-import {h} from '../shared/dom.js';
+import {h, icon} from '../shared/dom.js';
 import {currentTheme, onThemeChange, setTheme} from '../shared/theme.js';
 import {getNavigationSignal, onSession, session, signOut} from './api.js';
 import {busy} from './ui/components.js';
@@ -17,6 +16,7 @@ let sidebar;
 let account;
 let drawer;
 let accountLifetime;
+let syncNavigation;
 function shellElements() {
   sidebar = document.getElementById('sidebar');
   account = document.getElementById('account');
@@ -31,20 +31,9 @@ function renderAccount() {
   if (session.user?.must_change_password) document.documentElement.classList.add('route-login');
   if (!session.user || session.user.must_change_password) { account.replaceChildren(); return; }
   const {username} = session.user;
-  let changingLocale = false;
   const userMenu = menuButton({id: 'user-menu', signal: accountLifetime.signal,
-    label: h('span', {class: 'who'}, h('span', {class: 'avatar', 'aria-hidden': 'true'}, username.slice(0, 1)),
-      h('span', {class: 'who-name'}, username)),
+    label: h('span', {class: 'avatar', 'aria-hidden': 'true'}, username.slice(0, 1)),
     items: [
-      ...['system', 'zh-CN', 'en'].map((value) => ({group: t('controls.language'),
-        label: value === 'system' ? t('controls.followSystem') : value === 'en' ? 'English' : '中文',
-        checked: () => getLocalePreference() === value, onSelect: async () => {
-          if (changingLocale || value === getLocalePreference()) return;
-          changingLocale = true;
-          await changeLocalePreference(value, {beforeChange: confirmLocaleChange, reload: reloadAfterConfirmation, onError: toastError});
-          changingLocale = false;
-          if (!accountLifetime.signal.aborted) userMenu.syncChecks();
-        }})),
       ...['system', 'light', 'dark'].map((value) => ({group: t('controls.theme'),
         label: value === 'system' ? t('controls.followSystem') : t(`controls.theme.${value}`),
         checked: () => currentTheme() === value, onSelect: () => setTheme(value)})),
@@ -58,12 +47,19 @@ function renderAccount() {
   onThemeChange(userMenu.syncChecks, accountLifetime.signal);
   trigger.setAttribute('aria-label', username);
   trigger.title = username;
-  account.replaceChildren(userMenu);
+  const collapse = h('button', {type: 'button', class: 'icon-button nav-toggle', 'aria-controls': 'sidebar', onclick: () => {
+    const collapsed = !document.documentElement.classList.contains('nav-collapsed');
+    document.documentElement.classList.toggle('nav-collapsed', collapsed);
+    try { localStorage.setItem('orbitbeacon.nav', collapsed ? 'collapsed' : 'expanded'); } catch {}
+    syncNavigation();
+  }});
+  account.replaceChildren(userMenu, consoleLocaleToggle({signal: accountLifetime.signal}), collapse);
+  syncNavigation();
 }
 
-export function consoleLocaleSelect({navigation = false} = {}) {
-  return localeSelect({beforeChange: confirmLocaleChange, reload: reloadAfterConfirmation, onError: toastError,
-    signal: navigation ? getNavigationSignal() : undefined});
+export function consoleLocaleToggle({navigation = false, signal} = {}) {
+  return localeToggle({beforeChange: confirmLocaleChange, reload: reloadAfterConfirmation, onError: toastError,
+    signal: navigation ? getNavigationSignal() : signal});
 }
 
 // 标记当前激活区块；pill 元素带有 view-transition-name，
@@ -87,6 +83,23 @@ export function brandMark() { shellElements(); return sidebar.querySelector('.ma
 
 export function initShell() {
   shellElements();
+  const root = document.documentElement;
+  try { root.classList.toggle('nav-collapsed', localStorage.getItem('orbitbeacon.nav') === 'collapsed'); } catch {}
+  const desktop = matchMedia('(min-width: 1200px)');
+  const tablet = matchMedia('(min-width: 768px) and (max-width: 1199px)');
+  syncNavigation = () => {
+    root.classList.toggle('nav-compact', tablet.matches);
+    const toggle = account.querySelector('.nav-toggle');
+    if (!toggle) return;
+    const collapsed = root.classList.contains('nav-collapsed');
+    toggle.hidden = !desktop.matches;
+    toggle.replaceChildren(icon(collapsed ? 'sidebar-expand' : 'sidebar-collapse'));
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.title = t(collapsed ? 'shell.expandNav' : 'shell.collapseNav');
+    toggle.setAttribute('aria-label', toggle.title);
+  };
+  desktop.addEventListener('change', syncNavigation);
+  tablet.addEventListener('change', syncNavigation);
   drawer = mobileNavigation();
   const shortcut = sidebar.querySelector('.command-shortcut');
   if (shortcut) shortcut.textContent = /Mac|iPhone|iPad|iPod/.test(navigator.userAgentData?.platform || navigator.platform || '') ? '⌘K' : 'Ctrl K';
@@ -96,6 +109,8 @@ export function initShell() {
   const stopCommands = initCommandPalette();
   return () => {
     unsubscribe();
+    desktop.removeEventListener('change', syncNavigation);
+    tablet.removeEventListener('change', syncNavigation);
     accountLifetime?.abort();
     drawer.dispose();
     drawer = undefined;

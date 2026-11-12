@@ -1,6 +1,6 @@
 # 状态页主题开发
 
-主题只改变匿名状态页 `/` 的呈现，不改变登录页或控制台。`default` 保留现有外观；`example` 使用暖白／深绿配色、侧栏概览和更方正的节点卡片，包含完整的筛选、分页、语言和主题切换。
+主题只改变匿名状态页 `/` 的呈现，不改变登录页或控制台。`default` 保留现有外观；`example` 使用暖白／深绿配色、横向概览和更方正的节点卡片，包含完整的筛选、分页、语言和主题切换。
 
 ## 从示例开始
 
@@ -68,24 +68,26 @@ HTML 中保留以下占位符，各一次：
 
 | ID | 元素与用途 |
 | --- | --- |
-| `top-actions` | 语言选择器插入的容器，保留其他操作 |
+| `top-actions` | 语言图标按钮插入的容器，保留其他操作 |
 | `theme` | `button type="button"`，明暗切换 |
 | `locale-error` | 初始 `hidden` 的错误区域，保留 `role="alert"` |
-| `headline`、`summary` | 主标题使用 `h1`；摘要显示节点状态、本页范围或临时连接状态。正常快照带 `data-tone="ok|warn|bad|neutral"` 的状态摘要；运行时添加礼貌 live region，仅在摘要变化时更新文字 |
-| `updated` | 更新时间与连接状态文字；其子节点由运行时创建 |
+| `headline`、`summary` | 主标题使用 `h1`；摘要显示节点状态、本页范围或临时连接状态。正常快照带 `data-tone="ok|warn|bad"` 的状态摘要；运行时添加礼貌 live region，仅在摘要变化时更新文字 |
+| `updated` | 短更新时间或过期状态；完整本地时间与刷新倒计时放在 title，子节点由运行时创建 |
 | `countdown` | 装饰性刷新指示器，保留 `aria-hidden="true"` |
 | `refresh` | `button type="button"`，刷新当前页 |
 | `constellation` | 图形容器，保留 `aria-hidden="true"` |
 | `filters` | 初始 `hidden` 的筛选容器，保留 `role="group"` 与无障碍名称 |
 | `announcement` | 屏幕阅读器状态文字，保留 `role="status"`、`aria-live="polite"` 与 `.sr` |
-| `empty`、`empty-text` | 空筛选或加载失败的区域与文字，外层初始 `hidden` |
+| `empty`、`empty-text` | 空集合、空筛选或加载失败的区域与文字，外层初始 `hidden` |
 | `retry` | `button type="button"`，初始 `hidden` |
 | `nodes` | `ul`，卡片列表，保留翻译后的无障碍名称 |
 | `pagination` | 初始 `hidden` 的 `nav`，保留翻译后的无障碍名称 |
 | `previous`、`next` | 分页按钮，初始 `disabled` |
 | `page` | 页码文字 |
 
-运行时会添加 `.update-time`、`.update-mode`、`.loading`、`.running`、`.enter`、筛选按钮和分页状态，并更新 `hidden`、`disabled`、`aria-busy`、`aria-pressed`、`data-state` 以及动画用 CSS 变量。若仍复用默认组件，保留对应样式和 `[hidden] { display:none!important; }`，不要用布局样式让隐藏数据重新出现。刷新完成不能依赖 `animationend`。
+两个内置主题用 `.hero-row` 将 `headline` 和刷新控件放在同一可换行的 flex 行，摘要在下方。`.page` 为满视口高的 flex 列，主区域伸展；`empty` 在剩余空间居中，页脚保留安全区底部留白。
+
+运行时会添加 `.update-time`、`.loading`、`.running`、`.enter`、筛选按钮和分页状态，并更新 `hidden`、`disabled`、`aria-busy`、`aria-pressed`、`data-state` 以及动画用 CSS 变量。若仍复用默认组件，保留对应样式和 `[hidden] { display:none!important; }`，不要用布局样式让隐藏数据重新出现。刷新完成不能依赖 `animationend`。
 
 ### 呈现函数接口
 

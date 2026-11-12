@@ -717,6 +717,11 @@
 .enrollment-steps h3 {display:flex;align-items:center;gap:var(--sp-inline);font-size:var(--fs-base);margin-bottom:var(--sp-control);}
 /* 步骤序号由计数器绘制；列表语义已表达顺序。 */
 .enrollment-steps h3::before {content:counter(step);display:inline-grid;place-items:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--orbit-soft);color:var(--orbit);font-size:var(--fs-sm);font-weight:var(--fw-semibold);}
+.enrollment-key-head {display:flex;align-items:baseline;justify-content:space-between;gap:var(--sp-inline);font-size:var(--fs-sm);}
+.enrollment-key-head .mono {color:var(--ink-subtle);}
+.enrollment-steps>li>*+* {margin-top:var(--sp-control);}
+.enrollment-command {white-space:pre-wrap;word-break:break-all;}
+.enrollment-actions {display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--sp-control);}
 .enrollment-progress {display:flex;align-items:center;flex-wrap:wrap;gap:var(--sp-control);}
 .enrollment-spinner {width:16px;height:16px;border:2px solid var(--ink-muted);border-top-color:transparent;border-radius:50%;animation:spin .7s var(--ease-linear) infinite;}
 .enrollment-success {color:var(--ok);}

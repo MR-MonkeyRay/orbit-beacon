@@ -1,7 +1,6 @@
-import {t} from '../i18n.js';
 import {h} from '../../shared/dom.js';
 import {orbitSVG} from '../../shared/orbit.js';
-import {brandMark, consoleLocaleSelect} from '../shell.js';
+import {brandMark, consoleLocaleToggle} from '../shell.js';
 
 // 共享的极简鉴权布局，保留控制台现有的轨道装饰画。
 function orbits() {
@@ -19,7 +18,7 @@ export function authLayout({title, description, content, footer}) {
       h('div', {class: 'login-card'},
         h('div', {class: 'auth-card-head'},
           h('div', {class: 'brand'}, brandMark(), h('span', null, 'OrbitBeacon')),
-          h('label', {class: 'console-locale auth-locale'}, h('span', {class: 'sr'}, t('common.language')), consoleLocaleSelect({navigation: true}))),
+          consoleLocaleToggle({navigation: true})),
         h('h1', {tabindex: '-1'}, title),
         description ? h('p', null, description) : null, content),
       footer ? h('p', {class: 'login-foot'}, footer) : null));

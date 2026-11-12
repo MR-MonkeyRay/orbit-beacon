@@ -54,14 +54,14 @@ export async function issueEnrollment(target, title, isDeleted = () => false) {
     h('span', {class: 'enrollment-spinner', 'aria-hidden': 'true'}), t('nodes.enrollment.waiting')) : null;
   const waitStep = waiting ? h('li', null, h('h3', null, t('nodes.enrollment.waitStep')), waiting) : null;
   const keyRow = h('div', {class: 'enrollment-key stack'},
-    h('div', {class: 'toolbar'}, h('strong', null, t('nodes.enrollment.key')), countdown),
+    h('div', {class: 'enrollment-key-head'}, h('strong', null, t('nodes.enrollment.key')), countdown),
     h('pre', {class: 'code enrollment-token', tabindex: '0'}, token), copyToken);
   const dialog = modal(title, (close) => h('div', null,
     h('div', {class: 'dialog-body stack'},
       h('ol', {class: 'enrollment-steps'},
         h('li', null, h('h3', null, t('nodes.enrollment.copyStep')),
           ...(installer.textContent
-            ? [h('pre', {class: 'code', tabindex: '0'}, installer), toggle, copyInstall]
+            ? [h('pre', {class: 'code enrollment-command', tabindex: '0'}, installer), h('div', {class: 'enrollment-actions'}, toggle, copyInstall)]
             : [callout(t('nodes.enrollment.unreleased'))])),
         h('li', null, h('h3', null, t('nodes.enrollment.runStep')), keyRow),
         waitStep),

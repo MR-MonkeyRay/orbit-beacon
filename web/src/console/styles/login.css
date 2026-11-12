@@ -93,17 +93,6 @@
   padding: 0;
 }
 
-.auth-locale {
-  flex: 0 1 130px;
-  min-width: 0;
-}
-
-.auth-locale select {
-  width: 100%;
-  min-height: var(--control-h-sm);
-  font-size: var(--fs-sm);
-}
-
 .login-card .btn {
   white-space: normal;
   overflow-wrap: anywhere;

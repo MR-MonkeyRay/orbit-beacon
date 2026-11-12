@@ -1,4 +1,6 @@
 export default {
+  'shell.collapseNav': 'Collapse navigation',
+  'shell.expandNav': 'Expand navigation',
   'shell.monitoring': 'Monitoring',
   'shell.management': 'Management',
   'shell.tools': 'Tools',
