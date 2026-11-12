@@ -4,9 +4,9 @@ import {copyElementText} from '../../shared/clipboard.js';
 import {api, getNavigationSignal, groupsList, invalidate, onSession, session} from '../api.js';
 import {displayStatus, absoluteWhen, shortID} from '../format.js';
 import {connectConsoleLive} from '../live.js';
-import {callout, iconButton, link, liveStatus, pageHead, panel, patchStatusBadge, statusBadge} from '../ui/components.js';
+import {callout, iconButton, link, liveStatus, panel, patchStatusBadge, statusBadge} from '../ui/components.js';
 import {toast} from '../ui/feedback.js';
-import {field, input, onSubmit, saveBar, select, tagEditor, textarea, trackDirty, validateBytes} from '../ui/forms.js';
+import {field, input, onSubmit, saveBar, select, tagEditor, textarea, toggleSwitch, trackDirty, validateBytes} from '../ui/forms.js';
 import {tabSet} from '../ui/tabs.js';
 import {nodeCommandsPanel} from './node-commands.js';
 import {latestSamplePanel} from './latest-sample.js';
@@ -29,14 +29,14 @@ export async function nodePage() {
       throw error;
     })
   ]);
-  // 视觉上由 CSS 截断，textContent 保持完整，复制和屏幕阅读器都能拿到全值。
-  const idText = h('span', {class: 'mono', title: node.id}, node.id);
+  const idText = h('span', {class: 'mono', title: node.id}, shortID(node.id));
+  const fullID = h('span', {class: 'sr'}, node.id);
   const showCopied = () => {
     copy.replaceChildren(icon('check'));
     setTimeout(() => copy.replaceChildren(icon('copy')), 1600);
   };
   const copy = iconButton('copy', t('nodes.copyID'), async () => {
-    const result = await copyElementText(idText);
+    const result = await copyElementText(fullID);
     if (result === 'clipboard') {
       showCopied();
       toast(t('nodes.copiedID'));
@@ -59,14 +59,37 @@ export async function nodePage() {
   const badge = statusBadge(displayStatus(node));
   const connection = liveStatus();
   const actions = lifecycleActions(node);
+  const publicBadge = h('a', {class: 'badge node-public-badge', href: '#public', onclick: (event) => {
+    event.preventDefault();
+    void tabs.selectTab('public');
+  }});
+  const publicLabel = h('span');
+  const publicDot = h('span', {class: 'publication-dot', 'aria-hidden': 'true'});
+  let publication;
+  const updatePublic = () => {
+    const state = publicSettings.enabled ? t('nodes.published') : t('nodes.notPublished');
+    publicBadge.textContent = state;
+    publicBadge.dataset.published = String(publicSettings.enabled);
+    publicLabel.textContent = t('settings.publicPage');
+    publicDot.dataset.published = String(publicSettings.enabled);
+    const tab = tabs.querySelector('#tab-public');
+    tab.setAttribute('aria-label', `${t('settings.publicPage')}: ${state}`);
+    publication?.snapshot();
+  };
   const summary = h('div', {class: 'node-summary'});
   const updateSummary = () => {
     const group = groups.find((item) => item.id === node.group_id);
-    const parts = [group?.name || (node.group_id ? t('nodes.unknownID', {id: shortID(node.group_id)}) : null), node.region || node.geo_location, node.provider,
+    const detected = !node.region && node.geo_location;
+    const location = node.region || node.geo_location;
+    const parts = [group?.name || (node.group_id ? t('nodes.unknownID', {id: shortID(node.group_id)}) : null),
+      location ? h('span', {class: 'node-location'}, detected ? countryFlag(node.geo_country) : '', location,
+        detected ? h('small', {class: 'node-auto', title: t('nodes.detectedLocation')}, t('nodes.auto')) : null) : null,
+      node.provider,
       node.tags?.length ? h('span', {class: 'cell-tags'}, node.tags.map((tag) => h('span', {class: 'tag static'}, tag))) : null,
-      node.created_at ? h('span', null, t('nodes.added'), ' ', absoluteWhen(node.created_at)) : null,
+      node.remote_ip ? h('span', {class: 'mono'}, node.remote_ip) : null,
+      h('span', {class: 'node-id'}, idText, fullID, copy),
       node.last_seen ? h('span', null, t('nodes.lastSeen'), ' ', absoluteWhen(node.last_seen)) : null].filter(Boolean);
-    summary.replaceChildren(...parts.flatMap((part, index) => index ? [h('span', {'aria-hidden': 'true'}, '·'), part] : [part]));
+    summary.replaceChildren(...parts.map((part) => part instanceof Node ? part : h('span', null, part)));
   };
   updateSummary();
   const deletedNotice = h('div', {class: 'node-deleted-notice', hidden: true}, callout(t('nodes.deletedNotice')));
@@ -101,31 +124,27 @@ export async function nodePage() {
       return h('div', {class: 'stack'}, traffic, billing);
     }},
     {id: 'probes', label: t('nodes.probes'), icon: 'check', build: () => probes ||= probesPanel(id, signal)},
-    {id: 'settings', label: t('shell.settings'), icon: 'sliders', hashes: {
-      'settings-details': 'node-details', details: 'node-details',
-      'settings-public': 'node-public', public: 'node-public',
-      'settings-agent': 'node-agent', agent: 'node-agent'
-    }, build: () => {
-      commands ||= nodeCommandsPanel(node, signal, {heading: 'h3'});
+    {id: 'public', label: h('span', {class: 'node-public-label'}, publicLabel, publicDot), icon: 'globe', build: () => {
+      publication = publicTab(node, publicSettings, updatePublic);
+      return publication.element;
+    }},
+    {id: 'manage', label: t('nodes.manage'), icon: 'key', build: () => {
+      commands ||= nodeCommandsPanel(node, signal);
       commands.snapshot(node);
-      const section = (id, label, ...content) => h('section', {class: 'stack node-settings-section'},
-        h('h2', {id, tabindex: '-1'}, label), content);
-      return {element: h('div', {class: 'stack node-settings'},
-        section('node-details', t('nodes.details'), detailsTab(node, groups, () => {
-          title.textContent = node.name;
-          updateSummary();
-          actions.snapshot();
-        })),
-        section('node-public', t('nodes.publicPage'), publicTab(node, publicSettings)),
-        section('node-agent', 'Agent', commands.element)),
+      return {element: h('div', {class: 'stack node-manage'}, commands.element, actions.manage()),
         attach: commands.attach, detach: commands.detach};
-    }}
+    }},
+    {id: 'settings', label: t('shell.settings'), icon: 'sliders', build: () => detailsTab(node, groups, () => {
+      title.textContent = node.name;
+      updateSummary();
+      actions.snapshot();
+    })}
   ], t('nodes.sections'));
-  const head = pageHead(node.name, connection.element, actions);
-  const title = head.querySelector('h1');
-  head.querySelector('.head-actions').classList.add('detail-actions');
-  head.firstElementChild.replaceChildren(back,
-    h('div', {class: 'detail-head'}, title, badge), summary, h('div', {class: 'id-chip'}, idText, copy));
+  updatePublic();
+  const title = h('h1', {tabindex: '-1'}, node.name);
+  const head = h('header', {class: 'page-head node-head'}, back,
+    h('div', {class: 'node-head-main'}, h('div', {class: 'detail-head'}, title, badge, publicBadge),
+      h('div', {class: 'detail-actions'}, connection.element, actions)), summary);
   const root = h('div', null, head,
     deletedNotice, tabs);
   const lockDeleted = () => {
@@ -136,7 +155,8 @@ export async function nodePage() {
         else control.disabled = true;
       }
     }
-    for (const control of actions.querySelectorAll('button')) control.disabled = true;
+    actions.snapshot();
+    for (const control of root.querySelector('.node-manage')?.querySelectorAll('button') || []) control.disabled = true;
   };
   root.addEventListener('submit', (event) => {
     if (node.deleted) { event.preventDefault(); event.stopImmediatePropagation(); }
@@ -165,6 +185,7 @@ export async function nodePage() {
       patchStatusBadge(badge, displayStatus(node));
       actions.snapshot();
       updateSummary();
+      publication?.snapshot();
       currentLatest = data.latest;
       history?.snapshot(currentLatest);
       currentServerTime = frame.server_time;
@@ -193,11 +214,17 @@ function editableForm(form, controls, save, node, discard) {
   });
 }
 
+function countryFlag(country) {
+  const code = (country || '').toUpperCase();
+  return /^[A-Z]{2}$/.test(code) ? `${String.fromCodePoint(...[...code].map((letter) => 127397 + letter.charCodeAt(0)))} ` : '';
+}
+
 function detailsTab(node, groups, onSaved) {
   const group = groups.find((item) => item.id === node.group_id);
   const name = input({name: 'name', required: true, value: node.name, id: 'node-name'});
   validateBytes(name, 1, 255, t('nodes.name'));
-  const region = input({name: 'region', value: node.region, id: 'node-region'});
+  const region = input({name: 'region', value: node.region, id: 'node-region',
+    placeholder: node.geo_location ? t('nodes.autoLocation', {location: node.geo_location}) : t('nodes.autoDetect')});
   const provider = input({name: 'provider', value: node.provider, id: 'node-provider'});
   const choices = [['', t('nodes.ungrouped')], ...groups.map((item) => [item.id, item.name])];
   if (node.group_id && !group) choices.push([node.group_id, t('nodes.unknownID', {id: shortID(node.group_id)})]);
@@ -208,16 +235,31 @@ function detailsTab(node, groups, onSaved) {
   const notes = textarea({name: 'notes', id: 'node-notes'}, node.notes);
   const extra = ['display_order', 'price_amount', 'price_currency', 'billing_cycle', 'auto_renew', 'bandwidth', 'ipv4', 'ipv6', 'network_route', 'plan_extra'].map((key) => {
     const boolean = ['auto_renew', 'ipv4', 'ipv6'].includes(key);
-    const control = key === 'billing_cycle' ? select(['', 'month', 'quarter', 'half_year', 'year', 'once'].map((value) => [value, value ? t(`nodes.cycle.${value}`) : '—']), node[key], {name: key})
+    const control = key === 'billing_cycle' ? select(['', 'month', 'quarter', 'half_year', 'year', 'once'].map((value) => [value, t(value ? `nodes.cycle.${value}` : 'nodes.cycle.none')]), node[key] || '', {name: key})
       : input({name: key, type: boolean ? 'checkbox' : key === 'display_order' ? 'number' : 'text', ...(boolean ? {checked: node[key]} : {value: node[key] ?? ''})});
     if (key === 'display_order') { control.min = '-1000000'; control.max = '1000000'; control.step = '1'; }
     return [key, control, boolean];
   });
+  const get = (key) => extra.find(([name]) => name === key)[1];
+  const row = (key) => field(t(`nodes.field.${key}`), get(key));
+  const price = h('div', {class: 'node-price'}, row('price_amount'), row('price_currency'));
+  const ip = h('div', {class: 'node-inline-checks'}, ['ipv4', 'ipv6'].map((key) => h('label', null, get(key), t(`nodes.field.${key}`))));
   const controls = saveBar(t('nodes.saveChanges'), 'node-save');
-  const form = h('form', {class: 'form form-wide'},
-    field(t('nodes.name'), name),
-    h('div', {class: 'form-row'}, field(t('nodes.region'), region), field(t('nodes.provider'), provider)),
-    field(t('nodes.group'), groupID), tags, field(t('nodes.expiresOn'), expiresOn), field(t('nodes.notes'), notes), extra.map(([key, control]) => field(t(`nodes.field.${key}`), control)), controls.bar);
+  controls.bar.classList.add('node-save-bar');
+  const card = (label, ...rows) => {
+    const result = panel(label, {}, h('div', {class: 'node-settings-fields'}, rows));
+    result.classList.add('node-settings-card');
+    return result;
+  };
+  const form = h('form', {class: 'form form-wide node-settings'},
+    card(t('nodes.basic'), field(t('nodes.name'), name), field(t('nodes.group'), groupID), tags, row('display_order')),
+    card(t('nodes.location'), field(t('nodes.region'), region, {hint: t('nodes.regionHint')}), field(t('nodes.provider'), provider)),
+    card(t('nodes.plan'), field(t('nodes.expiresOn'), expiresOn),
+      h('div', {class: 'field node-price-row'}, h('span', {class: 'field-label'}, t('nodes.field.price')), price), row('billing_cycle'),
+      h('div', {class: 'node-switch-row'}, toggleSwitch(t('nodes.field.auto_renew'), get('auto_renew'))),
+      row('bandwidth'), h('div', {class: 'field node-ip-row'}, h('span', {class: 'field-label'}, t('nodes.field.ip_version')), ip),
+      row('network_route'), row('plan_extra')),
+    card(t('nodes.notes'), field(t('nodes.privateNotes'), notes)), controls.bar);
   editableForm(form, controls, async () => {
     if (!tagBox.commit()) throw new Error(t('nodes.tagInvalid'));
     const result = await api(`/nodes/${encodeURIComponent(node.id)}`, {method: 'PATCH', body: {
@@ -236,29 +278,44 @@ function detailsTab(node, groups, onSaved) {
     tagBox.setValue(node.tags);
     form.markClean();
   });
-  return panel(null, {}, form);
+  return form;
 }
 
-const PUBLIC_FIELDS = ['region', 'provider', 'cpu', 'memory', 'load', 'uptime', 'availability', 'traffic', 'expires_on', 'price', 'billing_cycle', 'bandwidth', 'ip_version', 'network_route', 'plan_extra'];
+const PUBLIC_GROUPS = [
+  ['location', ['region', 'provider']],
+  ['metrics', ['cpu', 'memory', 'load', 'uptime', 'availability', 'traffic']],
+  ['plan', ['expires_on', 'price', 'billing_cycle', 'bandwidth', 'ip_version', 'network_route', 'plan_extra']]
+];
 
-function publicTab(node, settings) {
-  const enabled = h('input', {type: 'checkbox', name: 'enabled', checked: settings.enabled});
-  const checks = PUBLIC_FIELDS.map((key) => [key, h('input', {type: 'checkbox', name: key, checked: settings.fields.includes(key)})]);
+function publicTab(node, settings, onSaved) {
+  const enabled = input({type: 'checkbox', name: 'enabled', checked: settings.enabled});
+  const checks = PUBLIC_GROUPS.flatMap(([, keys]) => keys.map((key) => [key, input({type: 'checkbox', name: key, checked: settings.fields.includes(key)})]));
   const controls = saveBar(t('nodes.savePublic'), 'public-save');
-  const form = h('form', {class: 'form form-wide'},
-    h('label', {class: 'switch'}, enabled, h('span', {class: 'switch-track', 'aria-hidden': 'true'}), h('span', null, t('nodes.publish'))),
-    checks.map(([key, check]) => h('label', null, check, ' ', t(`nodes.field.${key}`))), controls.bar);
+  const warning = callout(t('nodes.publicUnavailable'));
+  const snapshot = () => { warning.hidden = !['pending', 'disabled'].includes(node.status) && !['pending', 'never', 'disabled'].includes(node.presence); };
+  const syncChecks = () => { for (const [, check] of checks) check.disabled = !enabled.checked || Boolean(node.deleted); };
+  enabled.addEventListener('change', syncChecks);
+  syncChecks(); snapshot();
+  const groups = PUBLIC_GROUPS.map(([group, keys]) => h('fieldset', {class: 'node-public-group'},
+    h('legend', null, t(`nodes.${group}`)),
+    h('div', {class: 'node-public-checks'}, keys.map((key) => h('label', {class: 'check-row'},
+      checks.find(([name]) => name === key)[1], h('span', null, t(`nodes.field.${key}`)))))));
+  const form = h('form', {class: 'form form-wide node-public-form'}, warning,
+    toggleSwitch(t('nodes.publish'), enabled), h('div', {class: 'node-public-groups'}, groups), controls.bar);
   editableForm(form, controls, async () => {
     const result = await api(`/nodes/${encodeURIComponent(node.id)}/public-settings`, {method: 'PATCH', body: {
       enabled: enabled.checked, fields: checks.filter(([, check]) => check.checked).map(([key]) => key)
     }});
     if (node.deleted) return;
     Object.assign(settings, result);
+    onSaved();
     return enabled.checked ? t('nodes.publicSaved') : t('nodes.publicHidden');
   }, node, () => {
     enabled.checked = settings.enabled;
     for (const [key, check] of checks) check.checked = settings.fields.includes(key);
+    syncChecks();
     form.markClean();
   });
-  return panel(null, {}, form);
+  const view = h('a', {href: '/', target: '_blank', rel: 'noopener'}, t('nodes.viewStatusPage'));
+  return {element: panel(t('settings.publicPage'), {action: view}, form), snapshot};
 }

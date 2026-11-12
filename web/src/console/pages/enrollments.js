@@ -43,7 +43,7 @@ export async function issueEnrollment(target, title, isDeleted = () => false) {
     h('span', {class: 'switch-text'}, t('nodes.enrollment.includeKey')));
   const tick = () => {
     countdown.textContent = enrollmentCountdown(ticket.expires_at);
-    const expired = !(Date.parse(ticket.expires_at) > Date.now());
+    const expired = !(Date.parse(ticket.expires_at) > Date.now()) || !active();
     copyToken.disabled = expired;
     includeKey.disabled = expired;
     copyInstall.disabled = expired || !installer.textContent;
@@ -71,7 +71,8 @@ export async function issueEnrollment(target, title, isDeleted = () => false) {
   let baseline;
   const live = target.node_id ? connectConsoleLive({nodeID: target.node_id, signal: dialog.signal,
     onSnapshot({node}) {
-      if (reported || !active() || dialog.signal.aborted || !node) return;
+      if (!node) { dialog.close('deleted'); return; }
+      if (reported || !active() || dialog.signal.aborted) return;
       // 已注册过的节点重新签发时旧 Agent 仍在上报，无法区分新安装，不显示等待步骤。
       baseline ??= node.presence;
       if (!['pending', 'never'].includes(baseline)) { waitStep.remove(); queueMicrotask(() => live?.close()); return; }

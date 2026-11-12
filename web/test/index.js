@@ -29,6 +29,7 @@ import './audit-actions.test.js';
 import './confirmation.test.js';
 import './enrollment.test.js';
 import './node-settings.test.js';
+import './node-lifecycle.test.js';
 // 导入节点页面会加载 shared/theme.js，须排在 theme.test.js 之后。
 import './menu.test.js';
 import './forms.test.js';

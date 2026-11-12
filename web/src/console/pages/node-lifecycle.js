@@ -2,10 +2,9 @@ import {t} from '../i18n.js';
 import {h} from '../../shared/dom.js';
 import {api, getNavigationSignal, getSessionEpoch, invalidate} from '../api.js';
 import {go, refresh} from '../router.js';
-import {busy, button} from '../ui/components.js';
+import {busy, button, panel} from '../ui/components.js';
 import {confirmDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
-import {menuButton} from '../ui/menu.js';
 import {issueEnrollment} from './enrollments.js';
 import {typedConfirmation} from '../ui/typed-confirmation.js';
 
@@ -26,7 +25,7 @@ export function lifecycleActions(node) {
         busy(control, true);
         await mutate();
         if (node.deleted) return;
-        invalidate('nodes');
+        if (!options.enrollment) invalidate('nodes');
         await after();
       } catch (error) { toastError(error); }
       finally {
@@ -34,13 +33,11 @@ export function lifecycleActions(node) {
         busy(control, false);
         actions.forEach((item) => { item.disabled = Boolean(node.deleted); });
         if (element.isConnected && !node.deleted && !navigation?.aborted && navigation === getNavigationSignal() && epoch === getSessionEpoch()) {
-          const opener = options.menu ? menu.querySelector('button') : control;
-          opener.focus({preventScroll: true});
+          if (control.isConnected) control.focus({preventScroll: true});
         }
       }
     };
-    if (options.menu) return {label, danger: true, onSelect, bind: (item) => { control = item; actions.push(item); }};
-    control = button(label, {onClick: onSelect});
+    control = button(label, {...options, onClick: onSelect});
     actions.push(control);
     return control;
   };
@@ -58,37 +55,34 @@ export function lifecycleActions(node) {
       const result = results.find((item) => item.node_id === node.id);
       if (result?.status !== 'succeeded') throw Object.assign(new Error('Node action failed'), {code: result?.error_code});
     }, async () => { await refresh(); toast(t(disabling ? 'nodes.disabledDone' : 'nodes.enabledDone', {name: node.name})); });
-  const items = [{label: t('nodes.enrollAgent'), onSelect: async () => {
-    if (running || node.deleted) return;
-    const navigation = getNavigationSignal();
-    const epoch = getSessionEpoch();
-    running = true;
-    actions.forEach((item) => { item.disabled = true; });
-    try {
-      await issueEnrollment({node_id: node.id}, t('nodes.enrollment.title', {name: node.name}), () => node.deleted);
-    } catch (error) { toastError(error); }
-    finally {
-      running = false;
-      element.snapshot();
-      if (menu.isConnected && !node.deleted && !navigation?.aborted && navigation === getNavigationSignal() && epoch === getSessionEpoch()) menu.querySelector('button').focus({preventScroll: true});
-    }
-  }},
-    // 吊销会清除上报身份与观测，与删除同级使用键入确认。
-    action(t('nodes.revokeCredential'), {menu: true}, () => typedConfirmation({
+  const element = h('div', {class: 'head-actions'}, toggle);
+  let management;
+  element.manage = () => {
+    if (management) return management;
+    const install = action(t('nodes.generate'), {enrollment: true}, () => true,
+      () => issueEnrollment({node_id: node.id}, t('nodes.enrollment.title', {name: node.name}), () => node.deleted), () => {});
+    const revoke = action(t('nodes.revokeCredential'), {variant: 'danger'}, () => typedConfirmation({
       title: t('nodes.revokeTitle', {name: node.name}), expected: node.name, confirm: t('nodes.revokeConfirm'),
       message: t('nodes.revokeIntro')
-    }), () => api(`${path}/credential`, {method: 'DELETE'}), async () => { await refresh(); toast(t('nodes.revokeDone')); }),
-    action(t('nodes.deleteNode'), {menu: true}, () => typedConfirmation({
+    }), () => api(`${path}/credential`, {method: 'DELETE'}), async () => { await refresh(); toast(t('nodes.revokeDone')); });
+    const remove = action(t('nodes.deleteNode'), {variant: 'danger'}, () => typedConfirmation({
       title: t('nodes.deleteTitle', {name: node.name}), expected: node.name, confirm: t('nodes.deleteNode'),
       message: t('nodes.deleteNodeIntro')
-    }), () => api(`${path}?confirm=true`, {method: 'DELETE'}), async () => { await go('/nodes', {force: true}); toast(t('nodes.deletedDone', {name: node.name})); })];
-  const menu = menuButton({label: t('nodes.more'), items});
-  const menuItems = menu.querySelectorAll('[role="menuitem"]');
-  items.forEach((item, index) => { if (item.bind) item.bind(menuItems[index]); else actions.push(menuItems[index]); });
-  actions.push(menu.querySelector('button'));
-  const element = h('div', {class: 'head-actions'}, toggle, menu);
+    }), () => api(`${path}?confirm=true`, {method: 'DELETE'}), async () => { await go('/nodes', {force: true}); toast(t('nodes.deletedDone', {name: node.name})); });
+    const row = (title, description, control) => h('div', {class: 'node-action-row'},
+      h('div', null, h('h3', null, title), description ? h('p', {class: 'text-note'}, description) : null), control);
+    const danger = panel(t('nodes.dangerZone'), {},
+      row(t('nodes.revokeCredential'), t('nodes.revokeIntro'), revoke),
+      row(t('nodes.deleteNode'), t('nodes.deleteNodeIntro'), remove));
+    danger.classList.add('node-danger');
+    management = h('div', {class: 'stack'},
+      panel(t('nodes.install'), {}, row(t('nodes.installCommand'), null, install)), danger);
+    element.snapshot();
+    return management;
+  };
   element.snapshot = () => {
-    actions[0].textContent = node.status === 'disabled' ? t('nodes.enable') : t('nodes.disable');
+    const label = node.status === 'disabled' ? t('nodes.enable') : t('nodes.disable');
+    if (toggle.textContent !== label) toggle.textContent = label;
     actions.forEach((control) => { control.disabled = running || Boolean(node.deleted); });
   };
   element.snapshot();

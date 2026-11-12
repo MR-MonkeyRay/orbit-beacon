@@ -19,7 +19,7 @@ const edit = (form, name, value) => {
   return input;
 };
 
-async function setup({hash = '#details', presence = 'online', lastSeen = '2026-10-28T10:00:00Z', patchStatus = 200, latest = null, expiresOn = null} = {}) {
+async function setup({hash = '#settings', presence = 'online', lastSeen = '2026-10-28T10:00:00Z', patchStatus = 200, latest = null, expiresOn = null, metadata = {}, publicEnabled = true, publicPatchStatus = 200} = {}) {
   const dom = installDOM();
   const originals = new Map(['fetch', 'window', 'WebSocket', 'matchMedia', 'requestAnimationFrame', 'history', 'performance', 'setTimeout', 'clearTimeout'].map((key) => [key, globalThis[key]]));
   const originalNow = Date.now;
@@ -61,7 +61,7 @@ async function setup({hash = '#details', presence = 'online', lastSeen = '2026-1
   setSession(userSession);
   const requests = [];
   const node = {id, name: 'Internal name', status: 'unknown', stopped: false, presence, agent_version: 'test-agent',
-    expires_on: expiresOn, last_seen: lastSeen, group_id: null, region: '', provider: '', notes: 'Saved notes', tags: [], created_at: '2026-10-27T10:00:00Z'};
+    expires_on: expiresOn, last_seen: lastSeen, group_id: null, region: '', provider: '', notes: 'Saved notes', tags: [], created_at: '2026-10-27T10:00:00Z', ...metadata};
   const traffic = {billing_day: 1, quota_bytes: '0', cycle: {}, daily: [], updated_at: null};
   globalThis.fetch = async (url, options) => {
     requests.push({url, options});
@@ -75,7 +75,10 @@ async function setup({hash = '#details', presence = 'online', lastSeen = '2026-1
       data = status === 200 ? options.method === 'PATCH' ? {billing_day: 2, quota_bytes: '1000000000', billing_mode: 'total'} : {billing_day: 1, quota_bytes: '0'}
         : {message: 'Billing update rejected'};
     } else if (url === '/api/v1/groups') data = {groups: []};
-    else if (url === `${path}/public-settings`) data = options.method === 'PATCH' ? JSON.parse(options.body) : {enabled: true, fields: ['cpu', 'memory', 'load', 'uptime', 'availability']};
+    else if (url === `${path}/public-settings`) {
+      status = options.method === 'PATCH' ? publicPatchStatus : 200;
+      data = status !== 200 ? {message: 'Public update rejected'} : options.method === 'PATCH' ? JSON.parse(options.body) : {enabled: publicEnabled, fields: ['cpu', 'memory', 'load', 'uptime', 'availability']};
+    }
     else if (url === `${path}/latest`) { data = latest || {message: 'No sample'}; status = latest ? 200 : 404; }
     else if (url === `${path}/traffic?days=30`) data = traffic;
     else if (url === `${path}/probes`) data = {probes: []};
@@ -111,22 +114,20 @@ async function setup({hash = '#details', presence = 'online', lastSeen = '2026-1
   }
 }
 
-test('node Agent section keeps commands without fetching enrollment keys or runtime', async () => {
-  const env = await setup({hash: '#agent'});
+test('node has six separate tabs and Manage loads commands without runtime or enrollment lists', async () => {
+  const env = await setup({hash: '#manage'});
   try {
     const tabs = elements(env.root).filter((element) => element.getAttribute('role') === 'tab');
-    assert.equal(tabs.length, 4);
-    assert.deepEqual(tabs.map((tab) => tab.id), ['tab-monitor', 'tab-traffic', 'tab-probes', 'tab-settings']);
-    assert.deepEqual(tabs.map((tab) => tab.querySelector('use').getAttribute('href')), ['#i-monitor', '#i-cloud', '#i-check', '#i-sliders']);
-    assert.equal(env.root.querySelector('#tab-settings').getAttribute('aria-selected'), 'true');
-    assert.equal(env.root.querySelector('#tab-config'), null);
-    assert.equal(env.requests.some((request) => request.url?.endsWith('/runtime') || request === `${path}/runtime`), false);
-    assert.equal(env.root.querySelector('#node-agent').parentElement.querySelectorAll('dl').length, 0);
-    assert.equal(env.root.querySelector('#node-enrollment'), null);
-    assert.equal(env.requests.some((request) => request.url.startsWith('/api/v1/enrollments')), false);
+    assert.deepEqual(tabs.map((tab) => tab.id), ['tab-monitor', 'tab-traffic', 'tab-probes', 'tab-public', 'tab-manage', 'tab-settings']);
+    assert.equal(env.root.querySelector('#tab-manage').getAttribute('aria-selected'), 'true');
+    assert.equal(env.root.querySelectorAll('h2').map((item) => item.textContent).join('|'), [copy('nodes.commands'), copy('nodes.install'), copy('nodes.dangerZone')].join('|'));
+    assert.equal(env.root.querySelector('.node-manage').querySelectorAll('.node-action-row').length, 3);
+    assert.equal(env.root.querySelector('header').querySelectorAll('button').length, 2, 'copy ID and enable/disable only');
+    assert.equal(env.root.querySelector('[role="menu"]'), null);
+    assert.equal(env.requests.some((request) => request.url.endsWith('/runtime') || request.url.startsWith('/api/v1/enrollments')), false);
     assert.equal(env.root.querySelector('.node-summary').querySelectorAll('time').at(-1).getAttribute('datetime'), env.node.last_seen);
-    assert.ok(formFor(env.root, 'notes'));
-    assert.ok(formFor(env.root, 'cpu'));
+    assert.equal(formFor(env.root, 'notes'), undefined);
+    assert.equal(formFor(env.root, 'cpu'), undefined);
   } finally { env.cleanup(); }
 });
 
@@ -268,67 +269,181 @@ test('unset expiry uses the existing not-set label', async () => {
   } finally { env.cleanup(); }
 });
 
-for (const [hash, section] of Object.entries({details: 'details', public: 'public', agent: 'agent',
-  'settings-details': 'details', 'settings-public': 'public', 'settings-agent': 'agent'})) {
-  test(`#${hash} opens settings and targets ${section}`, async () => {
+for (const hash of ['monitor', 'traffic', 'probes', 'public', 'manage', 'settings']) {
+  test(`#${hash} directly selects its node tab`, async () => {
     const env = await setup({hash: `#${hash}`});
     try {
-      assert.equal(env.root.querySelector('#tab-settings').getAttribute('aria-selected'), 'true');
-      const target = env.root.querySelector('[data-autofocus]');
-      assert.equal(target.id, `node-${section}`);
-      await env.root.lastElementChild.selectTab(hash);
-      assert.equal(document.activeElement, target);
-      assert.equal(target.scrolledIntoView.block, 'start');
-      assert.equal(location.hash, `#${hash}`);
+      assert.equal(env.root.querySelector(`#tab-${hash}`).getAttribute('aria-selected'), 'true');
+      assert.ok(env.root.querySelector(`#panel-${hash}`));
+      assert.equal(env.root.querySelector('[data-section-link]'), null);
     } finally { env.cleanup(); }
   });
 }
 
-test('header summary updates on live metadata and detail saves without losing the public draft', async () => {
+for (const hash of ['details', 'agent', 'settings-details', 'settings-public', 'settings-agent']) {
+  test(`removed #${hash} alias falls back to monitoring`, async () => {
+    const env = await setup({hash: `#${hash}`});
+    try { assert.equal(env.root.querySelector('#tab-monitor').getAttribute('aria-selected'), 'true'); }
+    finally { env.cleanup(); }
+  });
+}
+
+test('header uses three rows and live metadata never replaces a settings draft', async () => {
   const env = await setup({hash: '#settings'});
   try {
-    env.send({node: {...env.node, region: 'Tokyo', provider: 'Provider', tags: ['edge'], last_seen: '2026-10-28T10:01:00Z'}, latest: null});
-    const summary = env.root.querySelector('.node-summary');
-    assert.match(summary.textContent, /Tokyo·Provider·edge/);
-    assert.equal(summary.querySelectorAll('.tag').length, 1);
-    assert.deepEqual(summary.querySelectorAll('time').map((time) => time.getAttribute('datetime')), [env.node.created_at, '2026-10-28T10:01:00Z']);
-    assert.equal(factValues(env.root)[copy('nodes.region')], undefined);
-    assert.equal(factValues(env.root)[copy('nodes.lastSeen')], undefined);
-    const publicForm = formFor(env.root, 'cpu');
-    const publicName = edit(publicForm, 'cpu', false);
+    const head = env.root.querySelector('header');
+    assert.deepEqual(head.children.map((child) => child.className), ['back', 'node-head-main', 'node-summary']);
+    assert.equal(head.querySelector('a').textContent, copy('nodes.allNodes'));
+    assert.equal(head.querySelector('.node-id').querySelector('.mono').textContent, id.slice(0, 8));
     const details = formFor(env.root, 'notes');
+    const draft = edit(details, 'notes', 'Private draft'); draft.focus();
+    env.send({node: {...env.node, geo_location: 'California, US', geo_country: 'us', remote_ip: '203.0.113.5', provider: 'Provider', tags: ['edge'], last_seen: '2026-10-28T10:01:00Z'}, latest: null});
+    const summary = head.querySelector('.node-summary');
+    assert.ok(summary.textContent.includes('🇺🇸 California, US'));
+    assert.ok(summary.querySelector('.node-auto'));
+    assert.equal(summary.textContent.includes('·'), false);
+    assert.equal(summary.querySelectorAll('.tag').length, 1);
+    assert.ok(summary.textContent.includes('203.0.113.5'));
+    assert.deepEqual(summary.querySelectorAll('time').map((time) => time.getAttribute('datetime')), ['2026-10-28T10:01:00Z']);
+    assert.equal(formFor(env.root, 'notes'), details);
+    assert.equal(draft.value, 'Private draft');
+    assert.equal(env.document.activeElement, draft);
+    assert.equal(details.dataset.dirty, 'true');
     edit(details, 'region', 'Osaka');
     edit(details, 'name', 'Saved new name');
-    details.dispatchEvent(new Event('submit', {cancelable: true}));
-    await flush();
-    assert.match(summary.textContent, /Osaka/);
-    assert.equal(env.root.querySelector('h1').textContent, 'Saved new name');
-    assert.equal(formFor(env.root, 'cpu'), publicForm);
-    assert.equal(publicName.checked, false);
-    assert.equal(publicForm.dataset.dirty, 'true');
+    details.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+    assert.ok(summary.textContent.includes('Osaka'));
+    assert.equal(summary.querySelector('.node-auto'), null);
+    assert.equal(head.querySelector('h1').textContent, 'Saved new name');
     assert.equal(details.dataset.dirty, 'false');
-    assert.equal(location.hash, '#settings');
   } finally { env.cleanup(); }
 });
 
-test('saving and discarding details preserve a neighboring public draft', async () => {
+test('one settings form saves every metadata field and discard restores all groups', async () => {
   const env = await setup({hash: '#settings'});
   try {
-    const details = formFor(env.root, 'notes');
-    const publicForm = formFor(env.root, 'cpu');
-    edit(publicForm, 'cpu', false);
-    edit(details, 'notes', 'Discard me');
-    details.querySelectorAll('button').find((control) => control.textContent === copy('controls.discard')).click();
-    assert.equal(control(details, 'notes').value, env.node.notes);
-    assert.equal(details.dataset.dirty, 'false');
-    assert.equal(control(publicForm, 'cpu').checked, false);
-    assert.equal(publicForm.dataset.dirty, 'true');
-    publicForm.dispatchEvent(new Event('submit', {cancelable: true}));
-    await flush();
-    assert.equal(publicForm.dataset.dirty, 'false');
-    edit(publicForm, 'cpu', true);
-    publicForm.querySelectorAll('button').find((control) => control.textContent === copy('controls.discard')).click();
-    assert.equal(control(publicForm, 'cpu').checked, false);
-    assert.equal(publicForm.dataset.dirty, 'false');
+    const form = formFor(env.root, 'notes');
+    assert.equal(env.root.querySelectorAll('form').length, 1);
+    assert.equal(form.querySelectorAll('.node-settings-card').length, 4);
+    assert.equal(form.querySelectorAll('.form-actions').length, 1);
+    assert.equal(form.querySelector('.form-actions').classList.contains('node-save-bar'), true);
+    assert.equal(control(form, 'region').getAttribute('placeholder'), copy('nodes.autoDetect'));
+    assert.deepEqual(control(form, 'billing_cycle').options.map((option) => option.value), ['', 'month', 'quarter', 'half_year', 'year', 'once']);
+    const values = {name: 'Edge', group_id: '', region: 'Tokyo', provider: 'Cloud', display_order: '7', expires_on: '2028-02-29', price_amount: '12.50', price_currency: 'USD', billing_cycle: 'year', auto_renew: true, bandwidth: '1 Gbps', ipv4: true, ipv6: false, network_route: 'Direct', plan_extra: 'Premium', notes: 'Private'};
+    for (const [key, value] of Object.entries(values)) edit(form, key, value);
+    form.querySelector('[data-tags]').setValue(['edge', 'prod']);
+    form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+    const patch = env.requests.find((request) => request.url === path && request.options.method === 'PATCH');
+    assert.deepEqual(JSON.parse(patch.options.body), {...values, group_id: null, display_order: 7, tags: ['edge', 'prod']});
+    assert.equal(form.dataset.dirty, 'false');
+    edit(form, 'auto_renew', false); edit(form, 'price_amount', '99'); edit(form, 'notes', 'Discard');
+    form.querySelectorAll('button').find((item) => item.textContent === copy('controls.discard')).click();
+    assert.equal(control(form, 'auto_renew').checked, true);
+    assert.equal(control(form, 'price_amount').value, '12.50');
+    assert.equal(control(form, 'notes').value, 'Private');
+    assert.equal(form.dataset.dirty, 'false');
   } finally { env.cleanup(); }
+});
+
+test('status-page groups save the whitelist, disable fields when off, and update both publication badges', async () => {
+  const env = await setup({hash: '#public'});
+  try {
+    const form = formFor(env.root, 'enabled');
+    assert.equal(form.querySelectorAll('fieldset').length, 3);
+    const fields = ['region', 'provider', 'cpu', 'memory', 'load', 'uptime', 'availability', 'traffic', 'expires_on', 'price', 'billing_cycle', 'bandwidth', 'ip_version', 'network_route', 'plan_extra'];
+    assert.deepEqual(elements(form).filter((item) => item.name && item.name !== 'enabled').map((item) => item.name), fields);
+    assert.equal(form.querySelector('.callout').hidden, true);
+    assert.equal(env.root.querySelector('.node-public-badge').textContent, copy('nodes.published'));
+    assert.ok(env.root.querySelector('#tab-public').getAttribute('aria-label').includes(copy('nodes.published')));
+    assert.equal(env.root.querySelector('#panel-public').querySelector('a').getAttribute('href'), '/');
+    const enabled = edit(form, 'enabled', false); enabled.dispatchEvent(new Event('change'));
+    assert.ok(fields.every((name) => control(form, name).disabled));
+    form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+    const patches = () => env.requests.filter((request) => request.url === `${path}/public-settings` && request.options.method === 'PATCH');
+    assert.deepEqual(JSON.parse(patches()[0].options.body), {enabled: false, fields: ['cpu', 'memory', 'load', 'uptime', 'availability']});
+    assert.equal(env.root.querySelector('.node-public-badge').textContent, copy('nodes.notPublished'));
+    assert.ok(env.root.querySelector('#tab-public').getAttribute('aria-label').includes(copy('nodes.notPublished')));
+    edit(form, 'enabled', true).dispatchEvent(new Event('change'));
+    for (const key of fields) edit(form, key, ['region', 'price', 'traffic'].includes(key));
+    form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+    assert.deepEqual(JSON.parse(patches()[1].options.body), {enabled: true, fields: ['region', 'traffic', 'price']});
+    edit(form, 'enabled', false).dispatchEvent(new Event('change'));
+    form.querySelectorAll('button').find((item) => item.textContent === copy('controls.discard')).click();
+    assert.equal(enabled.checked, true);
+    assert.ok(fields.every((name) => !control(form, name).disabled));
+    env.send({node: {...env.node, status: 'disabled', presence: 'disabled'}, latest: null});
+    assert.equal(form.querySelector('.callout').hidden, false);
+    env.send({node: {...env.node, status: 'unknown', presence: 'pending'}, latest: null});
+    assert.equal(form.querySelector('.callout').hidden, false);
+    env.send({node: {...env.node, status: 'unknown', presence: 'online'}, latest: null});
+    assert.equal(form.querySelector('.callout').hidden, true);
+  } finally { env.cleanup(); }
+});
+
+test('public header badge selects the Status page tab using tabSet dirty protection', async () => {
+  const env = await setup({hash: '#settings'});
+  try {
+    const form = formFor(env.root, 'notes'); edit(form, 'notes', 'Draft');
+    env.root.querySelector('.node-public-badge').click(); await flush();
+    assert.equal(env.root.querySelector('#tab-settings').getAttribute('aria-selected'), 'true');
+    const dialog = env.body.querySelector('dialog');
+    assert.ok(dialog);
+    dialog.querySelectorAll('button').find((item) => item.textContent === copy('controls.discard')).click();
+    dialog.dispatchEvent(new Event('animationend')); await flush();
+    assert.equal(env.root.querySelector('#tab-public').getAttribute('aria-selected'), 'true');
+    assert.equal(location.hash, '#public');
+    assert.equal(env.document.activeElement, env.root.querySelector('#tab-public'));
+  } finally { env.cleanup(); }
+});
+
+
+test('detected location is only a placeholder; saving an empty region preserves auto-detection', async () => {
+  const env = await setup({metadata: {geo_location: 'California, US', geo_country: 'US'}});
+  try {
+    const form = formFor(env.root, 'notes');
+    const region = control(form, 'region');
+    assert.equal(region.value, '');
+    assert.equal(region.getAttribute('placeholder'), copy('nodes.autoLocation', {location: 'California, US'}));
+    edit(form, 'notes', 'Keep auto');
+    form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+    assert.equal(JSON.parse(env.requests.find((request) => request.options.method === 'PATCH').options.body).region, '');
+  } finally { env.cleanup(); }
+});
+
+test('initially hidden public fields stay selected but disabled; rejected saves preserve the draft and badges', async () => {
+  const env = await setup({hash: '#public', publicEnabled: false, publicPatchStatus: 400});
+  try {
+    const form = formFor(env.root, 'enabled');
+    assert.equal(control(form, 'cpu').checked, true);
+    assert.equal(control(form, 'cpu').disabled, true);
+    edit(form, 'enabled', true).dispatchEvent(new Event('change'));
+    assert.equal(control(form, 'cpu').disabled, false);
+    edit(form, 'cpu', false);
+    form.dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+    assert.equal(form.dataset.dirty, 'true');
+    assert.equal(control(form, 'enabled').checked, true);
+    assert.equal(control(form, 'cpu').checked, false);
+    assert.equal(form.querySelector('#public-save').disabled, false);
+    assert.equal(env.root.querySelector('.node-public-badge').textContent, copy('nodes.notPublished'));
+    assert.ok(toastHost.querySelector('.error'));
+    form.querySelectorAll('button').find((item) => item.textContent === copy('controls.discard')).click();
+    assert.equal(control(form, 'enabled').checked, false);
+    assert.equal(control(form, 'cpu').checked, true);
+    assert.equal(control(form, 'cpu').disabled, true);
+    assert.equal(form.dataset.dirty, 'false');
+  } finally { env.cleanup(); }
+});
+
+test('short header ID copies the complete UUID', async () => {
+  const env = await setup();
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  let copied;
+  Object.defineProperty(globalThis, 'navigator', {configurable: true, value: {clipboard: {writeText: async (text) => { copied = text; }}}});
+  try {
+    env.root.querySelector('.node-id').querySelector('button').click(); await flush();
+    assert.equal(copied, id);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, 'navigator', previous); else delete globalThis.navigator;
+    env.cleanup();
+  }
 });

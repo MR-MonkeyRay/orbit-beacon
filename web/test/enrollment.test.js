@@ -100,7 +100,7 @@ test('key dialog toggles command inclusion, copies key and command, expires both
   try {
     for (expected of [{node_id: '00000000-0000-4000-8000-000000000001'}, {group_id: 'group'}]) {
       now = Date.parse('2026-11-09T12:00:00Z');
-      const pending = issueEnrollment(expected, copy('nodes.enrollAgent'));
+      const pending = issueEnrollment(expected, copy('nodes.installCommand'));
       await flush();
       const dialog = dom.body.querySelector('dialog');
       const blocks = dialog.querySelectorAll('code');
@@ -212,7 +212,7 @@ for (const boundary of ['delete', 'navigation', 'session']) test(`pending key hi
   } finally { closeDialogs(); setNavigationSignal(null); setSession({user: null, csrf_token: '', expires_at: ''}); globalThis.fetch = originalFetch; dom.restore(); }
 });
 
-for (const boundary of ['close', 'navigation', 'session', 'view']) test(`node enrollment observes a live report and closes its channel on ${boundary}`, async (t) => {
+for (const boundary of ['close', 'navigation', 'session', 'view', 'delete']) test(`node enrollment observes a live report and closes its channel on ${boundary}`, async (t) => {
   const {liveHarness, frame, response} = await import('./live-harness.js');
   const nodeID = '00000000-0000-4000-8000-000000000009';
   const user = {id: '00000000-0000-4000-8000-000000000001', username: 'Admin', must_change_password: false};
@@ -255,7 +255,8 @@ for (const boundary of ['close', 'navigation', 'session', 'view']) test(`node en
     toggle.checked = true; toggle.dispatchEvent(new Event('change'));
     const secrets = dialog.querySelectorAll('code');
     assert.ok(secrets[0].textContent.includes("--key 'live-secret'"));
-    if (boundary === 'navigation') navigation.abort();
+    if (boundary === 'delete') socket.message(frame('snapshot', {data: {node: null, latest: null}}));
+    else if (boundary === 'navigation') navigation.abort();
     else if (boundary === 'session') setSession({user: null, csrf_token: '', expires_at: ''});
     else if (boundary === 'view') view.click();
     else closeDialogs();

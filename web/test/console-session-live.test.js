@@ -631,6 +631,7 @@ async function actionPage(t, respond, expires_at = '2026-10-28T00:10:00Z', load)
     (_match, path) => `from '${path === '../router.js' ? routerURL.href : new URL(path, lifecycleURL).href}'`);
   const {lifecycleActions} = await import(`data:text/javascript;base64,${Buffer.from(lifecycleSource).toString('base64')}`);
   const actions = lifecycleActions({id: user.id, name: 'Private node', status: 'online'});
+  actions.append(actions.manage());
   let loads = 0;
   const stop = startRouter([{match: (path) => path === '/login', bare: true, page: async () => {
     const heading = new TestElement('h1'); heading.append(copy('shell.signIn')); return heading;

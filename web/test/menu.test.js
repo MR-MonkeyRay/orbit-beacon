@@ -46,7 +46,7 @@ test('menu keyboard activation, roving focus, Escape, Tab, selection and outside
   } finally { scope.abort(); setNavigationSignal(null); dom.restore(); }
 });
 
-for (const status of ['pending', 'unknown', 'disabled']) test(`node header keeps ${status} lifecycle rules and puts ticket/revoke/delete in More`, async () => {
+for (const status of ['pending', 'unknown', 'disabled']) test(`node header keeps ${status} lifecycle rules with separate Manage actions`, async () => {
   const dom = installDOM();
   const scope = new AbortController(); setNavigationSignal(scope.signal);
   try {
@@ -56,13 +56,16 @@ for (const status of ['pending', 'unknown', 'disabled']) test(`node header keeps
     finally { if (previous === undefined) delete globalThis.window; else globalThis.window = previous; }
     const node = {id: 'node', name: 'Node', status};
     const root = lifecycleActions(node); dom.body.append(root); dom.mutations();
-    const items = root.querySelectorAll('[role="menuitem"]');
-    assert.deepEqual(items.map((item) => item.textContent), [copy('nodes.enrollAgent'), copy('nodes.revokeCredential'), copy('nodes.deleteNode')]);
-    assert.deepEqual(items.map((item) => item.disabled), [false, false, false]);
-    assert.deepEqual(items.map((item) => item.classList.contains('menu-danger')), [false, true, true]);
+    assert.equal(root.querySelectorAll('button').length, 1);
+    assert.equal(root.querySelector('[role="menu"]'), null);
     assert.equal(root.querySelector('button').textContent, copy(status === 'disabled' ? 'nodes.enable' : 'nodes.disable'));
+    const manage = root.manage(); dom.body.append(manage);
+    const items = manage.querySelectorAll('button');
+    assert.deepEqual(items.map((item) => item.textContent), [copy('nodes.generate'), copy('nodes.revokeCredential'), copy('nodes.deleteNode')]);
+    assert.deepEqual(items.map((item) => item.disabled), [false, false, false]);
+    assert.deepEqual(items.map((item) => item.classList.contains('btn-danger')), [false, true, true]);
     node.deleted = true; root.snapshot();
-    assert.equal(root.querySelectorAll('button').every((control) => control.disabled), true);
+    assert.equal([...root.querySelectorAll('button'), ...items].every((control) => control.disabled), true);
   } finally { scope.abort(); setNavigationSignal(null); dom.restore(); }
 });
 

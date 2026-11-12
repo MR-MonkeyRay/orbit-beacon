@@ -389,18 +389,19 @@ for (const page of ['nodes']) {
   });
 }
 
-for (const draft of [{hash: '#details', name: 'notes'}, {hash: '#public', name: 'cpu'}]) {
+for (const draft of [{hash: '#settings', name: 'notes'}, {hash: '#public', name: 'cpu'}]) {
   test(`detail ten typed live updates preserve ${draft.name} draft, dirty state, focus and tab`, async (t) => {
     const env = await setup(t, {page: 'node', hash: draft.hash});
     const form = formFor(env.root, draft.name); const input = edit(form, draft.name, draft.name === 'cpu' ? false : 'Unsaved text must survive'); input.focus(); if (draft.name !== 'cpu') input.setSelectionRange(2, 9);
-    const panel = env.root.querySelector('#panel-settings');
+    const panelID = draft.name === 'cpu' ? '#panel-public' : '#panel-settings';
+    const panel = env.root.querySelector(panelID);
     assert.equal(sampleFact(env.root, copy('nodes.cpu')), undefined);
     const requestsBefore = env.requests.length;
     for (let index = 1; index <= 10; index++) {
       env.send({node: {...env.inventory[0], presence: index % 2 ? 'offline' : 'online', notes: 'Changed elsewhere', agent_version: `1.${index}`}, latest: latest(index)}, index * 10);
       assert.equal(formFor(env.root, draft.name), form); assert.equal(draft.name === 'cpu' ? input.checked : input.value, draft.name === 'cpu' ? false : 'Unsaved text must survive'); assert.equal(form.dataset.dirty, 'true');
       assert.equal(env.document.activeElement, input); if (draft.name !== 'cpu') { assert.equal(input.selectionStart, 2); assert.equal(input.selectionEnd, 9); }
-      assert.equal(location.hash, draft.hash); assert.equal(env.root.querySelector('#panel-settings'), panel);
+      assert.equal(location.hash, draft.hash); assert.equal(env.root.querySelector(panelID), panel);
 
     }
     assert.equal(env.sockets.length, 1); assert.equal(env.root.querySelector('.live-status').textContent, copy('controls.live.live'));
@@ -410,17 +411,17 @@ for (const draft of [{hash: '#details', name: 'notes'}, {hash: '#public', name: 
     assert.equal(env.root.querySelector('.node-deleted-notice').hidden, false); assert.equal(draft.name === 'cpu' ? input.checked : input.value, draft.name === 'cpu' ? false : 'Unsaved text must survive');
     assert.equal(form.dataset.dirty, 'true'); if (input.type === 'checkbox') assert.equal(input.disabled, true); else assert.equal(input.readOnly, true);
     assert.equal(form.querySelectorAll('button').every((item) => item.disabled), true);
-    assert.equal(button(env.root, copy('nodes.enrollAgent')).disabled, true);
+    assert.equal(button(env.root, copy('nodes.disable')).disabled, true);
   });
 }
 
-test('detail missing sample is not deletion and lazy Agent section needs no runtime subscription', async (t) => {
+test('detail missing sample is not deletion and lazy Manage needs no runtime subscription', async (t) => {
   const env = await setup(t, {page: 'node'});
   env.send({node: {...env.inventory[0], status: 'disabled', presence: 'disabled'}, latest: null});
   assert.match(env.root.textContent, copyPattern('nodes.sampleEmpty'));
   assert.equal(env.root.querySelector('.node-deleted-notice').hidden, true);
-  env.root.querySelector('#tab-settings').click(); await flush(); env.mutations();
-  assert.ok(env.root.querySelector('#node-agent'));
+  env.root.querySelector('#tab-manage').click(); await flush(); env.mutations();
+  assert.ok(env.root.querySelector('.node-manage'));
   assert.equal(env.root.querySelector('#node-enrollment'), null);
   assert.equal(env.sockets.length, 1);
 });
@@ -508,7 +509,7 @@ test('overview deferred refresh keeps newer fleet status, deleted links and unkn
   assert.equal(button(env.root, copy('nodes.refreshList')).parentElement.hidden, true);
 });
 
-for (const draft of [{name: 'notes', value: 'Pending metadata draft', hash: '#details', result: node(1)},
+for (const draft of [{name: 'notes', value: 'Pending metadata draft', hash: '#settings', result: node(1)},
   {name: 'cpu', value: false, hash: '#public', result: {enabled: true, fields: ['cpu']}},
   {name: 'billing_day', value: '2', hash: '#traffic', result: {billing_day: 2, quota_bytes: '0'}}]) {
   test(`detail deletion fences pending ${draft.name} save continuation and keeps its dirty draft`, async (t) => {
@@ -538,12 +539,12 @@ test('detail deletion fences an already open lifecycle confirmation without chan
 
 test('detail deletion suppresses a delayed deployment secret and sends no mode field', async (t) => {
   let release;
-  const env = await setup(t, {page: 'node', mutate: (request) => {
+  const env = await setup(t, {page: 'node', hash: '#manage', mutate: (request) => {
     assert.equal(request.url, '/api/v1/enrollments');
     assert.deepEqual(JSON.parse(request.body), {node_id: id(1)});
     return new Promise((resolve) => { release = () => resolve(response({token: 'late-fake-secret', server_version: '1.2.3', expires_at: '2026-10-28T00:30:00Z'})); });
   }});
-  const issue = button(env.root, copy('nodes.enrollAgent')); issue.click(); await flush();
+  const issue = button(env.root, copy('nodes.generate')); issue.click(); await flush();
   assert.equal(typeof release, 'function');
   env.send({node: null, latest: null}); release(); await flush();
   assert.equal(env.body.querySelector('dialog'), null);
@@ -606,20 +607,20 @@ test('node list sorts Agent versions and patches the existing version cells', as
   assert.equal(env.root.querySelector('tbody').querySelector('tr').children[5].textContent, '1.10');
 });
 
-test('Agent command polling detaches on tab changes and clears on navigation', async (t) => {
-  const env = await setup(t, {page: 'node', hash: '#agent', commands: [{id: id(800), kind: 'restart', state: 'pending', result_code: '', requested_by: 'Alice', created_at: reported}]});
+test('Manage command polling detaches on tab changes and clears on navigation', async (t) => {
+  const env = await setup(t, {page: 'node', hash: '#manage', commands: [{id: id(800), kind: 'restart', state: 'pending', result_code: '', requested_by: 'Alice', created_at: reported}]});
   const commands = () => env.requests.filter((item) => item.url.endsWith('/commands')).length;
   const before = commands();
   [...env.intervals.values()][0](); await flush();
   assert.equal(commands(), before + 1);
   env.root.querySelector('#tab-monitor').click(); env.mutations(); await flush();
   env.advance(6000); await flush(); assert.equal(commands(), before + 1);
-  env.root.querySelector('#tab-settings').click(); env.mutations(); await flush();
+  env.root.querySelector('#tab-manage').click(); env.mutations(); await flush();
   const resumed = commands(); assert.equal(resumed, before + 2);
   env.scope.abort(); env.advance(6000); await flush(); assert.equal(commands(), resumed);
 });
 
-test('four node tabs lazily build settings with newest snapshots and detach command polling', async (t) => {
+test('six node tabs lazily build settings with newest snapshots and detach command polling', async (t) => {
   const env = await setup(t, {page: 'node', hash: '#probes'});
   const reads = (part) => env.requests.filter((request) => request.url.includes(part));
   const switchTo = async (id) => { env.root.querySelector(`#tab-${id}`).click(); env.mutations(); await flush(); env.mutations(); };
@@ -659,12 +660,13 @@ test('deletion before lazy tab creation keeps all future controls locked and mon
   const env = await setup(t, {page: 'node', hash: '#public'});
   env.send({node: null, latest: null});
   assert.equal(env.root.querySelector('.node-deleted-notice').hidden, false);
-  assert.equal(button(env.root, copy('nodes.enrollAgent')).disabled, true);
-  for (const tab of ['settings', 'traffic', 'monitor', 'probes']) {
+  assert.equal(button(env.root, copy('nodes.disable')).disabled, true);
+  for (const tab of ['settings', 'manage', 'traffic', 'monitor', 'probes', 'public']) {
     env.root.querySelector(`#tab-${tab}`).click(); env.mutations(); await flush(); env.mutations();
     for (const control of env.root.querySelectorAll('form').flatMap((form) => form.querySelectorAll('input,select,textarea,button'))) {
       assert.ok(control.readOnly || control.disabled, `${tab} deleted control remains locked`);
     }
+    if (tab === 'manage') assert.ok(env.root.querySelector('.node-manage').querySelectorAll('button').every((control) => control.disabled));
     if (tab === 'monitor') assert.ok(env.root.textContent.includes(copy('nodes.sampleEmpty')));
   }
   env.send({node: env.inventory[0], latest: latest(20)});
@@ -984,21 +986,19 @@ test('mobile sort control uses the same URL-backed order and default status pagi
   }
 });
 
-test('header enrollment issues through More without a per-node key list and restores More focus', async (t) => {
-  const env = await setup(t, {page: 'node', hash: '#settings', mutate: (request) => {
+test('Manage install issues one key without a ticket list and restores Install command focus', async (t) => {
+  const env = await setup(t, {page: 'node', hash: '#manage', mutate: (request) => {
     assert.equal(request.url, '/api/v1/enrollments');
     assert.deepEqual(JSON.parse(request.body), {node_id: id(1)});
     return response({token: 'test-secret', server_version: '1.2.3', expires_at: '2026-10-28T00:30:00Z'});
   }});
   const before = env.requests.filter((request) => request.url.startsWith('/api/v1/enrollments')).length;
   assert.equal(env.root.querySelector('.node-enrollments'), null);
-  const more = button(env.root, copy('nodes.more')); more.click();
-  button(env.root, copy('nodes.enrollAgent')).click(); await flush();
+  const install = button(env.root, copy('nodes.generate')); install.click(); await flush();
   const dialog = env.body.querySelector('dialog'); assert.ok(dialog);
   button(dialog, copy('nodes.close')).click(); dialog.dispatchEvent(new Event('animationend')); await flush();
   assert.equal(env.requests.filter((request) => request.url.startsWith('/api/v1/enrollments')).length, before + 1);
-  assert.equal(document.activeElement, more); assert.equal(more.disabled, false);
-  assert.equal(more.getAttribute('aria-expanded'), 'false');
+  assert.equal(document.activeElement, install); assert.equal(install.disabled, false);
 });
 
 test('detail live primary tiles retain their values and bar DOM while tweening', async (t) => {

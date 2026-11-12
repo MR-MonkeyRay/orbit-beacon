@@ -339,16 +339,6 @@
     min-height: 44px;
   }
 
-  .id-chip {
-    max-width: 100%;
-    border-radius: var(--r-md);
-  }
-
-  .id-chip .mono {
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-
   dialog {
     max-width: calc(100vw - 32px);
     max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
@@ -474,4 +464,30 @@
 
 @media (min-width:768px) and (max-width:1023px) {
   .nodes-table .hide-compact:not(.column-hidden) { display: table-cell; }
+}
+
+@media (min-width:768px) and (max-width:1100px) {
+  .node-public-groups { grid-template-columns: minmax(0,1fr); gap: var(--sp-content); }
+  .node-public-checks { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .node-head-main { flex-wrap: wrap; }
+  .node-head .detail-head { flex-basis: 100%; }
+}
+@media (max-width:767px) {
+  /* 通用 .page-head 手机布局是标题 + 操作两列；节点标题区自行分行。 */
+  .page-head.node-head { grid-template-columns: minmax(0,1fr); }
+  .page-head.node-head>* { grid-column: 1; grid-row: auto; width: auto; }
+  .node-head-main { flex-direction: column; align-items: stretch; }
+  .node-head .detail-actions { width: auto; align-items: center; }
+  .node-head .head-actions { width: auto; }
+  .node-summary { gap: var(--sp-inline) var(--sp-control); }
+  .node-public-groups { grid-template-columns: minmax(0,1fr); gap: var(--sp-content); }
+  .node-public-checks { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .node-settings-fields>.field { grid-template-columns: minmax(0,1fr); }
+  .node-settings-fields>.field>.text-note,.node-settings-fields>.field>.field-error { grid-column: 1; }
+  .node-settings-fields>.field>.field-label-row,.node-settings-fields>.field>.field-label,.node-settings-fields>.field>label { padding-top: 0; }
+  .node-switch-row .switch { display: flex; align-items: center; }
+  .node-switch-row .switch-text { order: -1; margin-right: auto; }
+  .node-inline-checks label { min-height: 44px; }
+  .node-action-row { flex-direction: column; align-items: flex-start; }
+  .node-save-bar { bottom: max(var(--sp-inline),env(safe-area-inset-bottom)); padding: var(--sp-control); }
 }

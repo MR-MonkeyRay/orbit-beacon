@@ -22,6 +22,12 @@ export function validateBytes(control, min, max, label) {
 
 export const input = (props = {}) => h('input', {class: ['checkbox', 'radio'].includes(props.type) ? '' : 'input', type: 'text', ...props});
 
+export function toggleSwitch(label, control) {
+  control.setAttribute('role', 'switch');
+  return h('label', {class: 'switch'}, control, h('span', {class: 'switch-track', 'aria-hidden': 'true'}),
+    h('span', {class: 'switch-text'}, label));
+}
+
 export function textarea(props, value) {
   const element = h('textarea', {class: 'input', rows: 4, ...props});
   element.value = value;

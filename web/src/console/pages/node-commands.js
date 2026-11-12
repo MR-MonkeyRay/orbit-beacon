@@ -27,7 +27,7 @@ export function nodeCommandsPanel(node, signal = getNavigationSignal(), {heading
   }));
   const body = h('tbody');
   const table = dataTable({columns: [t('nodes.command.kind'), t('nodes.command.status'), t('nodes.command.requestedBy'), t('settings.created'), h('span', {class: 'sr'}, t('settings.actions'))], body, hidden: true});
-  const element = panel(t('nodes.remoteCommands'), {heading}, h('div', {class: 'head-actions'}, controls), table);
+  const element = panel(t('nodes.commands'), {heading}, h('div', {class: 'head-actions'}, controls), table);
   const patch = () => {
     controls.forEach((control) => {
       const unavailable = !active() || !loaded || node.deleted || node.presence !== 'online' || node.status === 'disabled' || node.stopped;
@@ -38,6 +38,7 @@ export function nodeCommandsPanel(node, signal = getNavigationSignal(), {heading
         : running ? t('nodes.command.disabled.running')
         : pending ? t('nodes.command.disabled.activeCommand') : '';
     });
+    if (node.deleted) for (const control of element.querySelectorAll('button')) control.disabled = true;
     lifecycle?.syncPolling();
   };
   const render = () => {

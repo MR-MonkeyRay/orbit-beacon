@@ -305,20 +305,20 @@ test('section hash routes focus and scroll the section, while quiet refresh rest
   const env = await routing(t, {hidden: true, routes: [{match: () => true, page: async () => h('div', null,
     h('h1', {tabindex: '-1'}, 'Node'), tabSet([
       {id: 'monitor', label: 'Monitor', icon: 'monitor', build: () => h('div')},
-      {id: 'settings', label: 'Settings', icon: 'sliders', hashes: {agent: 'agent-section', 'settings-agent': 'agent-section'}, build: () => h('section', null,
-        h('h2', {id: 'agent-section', tabindex: '-1'}, 'Agent'), h('button', {id: 'agent-control'}, 'Action'))}
+      {id: 'settings', label: 'Settings', icon: 'sliders', hashes: {audit: 'audit-section', 'settings-audit': 'audit-section'}, build: () => h('section', null,
+        h('h2', {id: 'audit-section', tabindex: '-1'}, 'Audit'), h('button', {id: 'audit-control'}, 'Action'))}
     ], 'Sections'))}]});
   try {
-    for (const hash of ['agent', 'settings-agent']) {
+    for (const hash of ['audit', 'settings-audit']) {
       await env.go(`/node#${hash}`);
-      const target = document.getElementById('agent-section');
+      const target = document.getElementById('audit-section');
       assert.equal(document.activeElement, target);
       assert.equal(target.scrolledIntoView.block, 'start');
-      const control = document.getElementById('agent-control'); control.focus();
+      const control = document.getElementById('audit-control'); control.focus();
       await env.refresh();
-      assert.equal(document.activeElement.id, 'agent-control');
+      assert.equal(document.activeElement.id, 'audit-control');
       assert.equal(location.hash, `#${hash}`);
-      assert.equal(document.getElementById('agent-section').scrolledIntoView, undefined);
+      assert.equal(document.getElementById('audit-section').scrolledIntoView, undefined);
     }
   } finally { env.clean(); }
 });

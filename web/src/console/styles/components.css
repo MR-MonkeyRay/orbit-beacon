@@ -1061,3 +1061,10 @@ dialog.closing::backdrop {
 }
 .menu-options .menu-item { display: flex; width: 100%; justify-content: flex-start; border: 0; }
 .menu-options .menu-danger { color: var(--bad); }
+
+/* 紧凑发布状态，也可嵌入标签页。 */
+.publication-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--ink-muted); }
+.publication-dot[data-published="true"] { background: var(--ok); }
+
+.switch:has(input:disabled) { cursor: default; color: var(--ink-muted); }
+.switch input:disabled+.switch-track { opacity: .5; }
