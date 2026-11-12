@@ -123,10 +123,12 @@ function publicPageTab() {
       control.disabled = !active() || !session.csrf;
     }
   });
-  // 面板标题与“公开页”标签页同名，省略。
+  // 面板标题与“公开页”标签页同名，省略；打开状态页的入口与开关同行，不再放在概览页头。
   const element = panel(null, {},
-    h('label', {class: 'switch'}, control, h('span', {class: 'switch-track', 'aria-hidden': 'true'}),
-      h('span', {class: 'switch-text'}, h('strong', null, t('settings.publicEnable')))),
+    h('div', {class: 'public-page-row'},
+      h('label', {class: 'switch'}, control, h('span', {class: 'switch-track', 'aria-hidden': 'true'}),
+        h('span', {class: 'switch-text'}, h('strong', null, t('settings.publicEnable')))),
+      h('a', {class: 'btn btn-sm', href: '/'}, icon('external'), t('nodes.openPublic'))),
     errorBox, note, retry);
   return {element,
     attach() { controller = new AbortController(); void load(); },

@@ -122,7 +122,8 @@ test('node has six separate tabs and Manage loads commands without runtime or en
     assert.equal(env.root.querySelector('#tab-manage').getAttribute('aria-selected'), 'true');
     assert.equal(env.root.querySelectorAll('h2').map((item) => item.textContent).join('|'), [copy('nodes.commands'), copy('nodes.install'), copy('nodes.dangerZone')].join('|'));
     assert.equal(env.root.querySelector('.node-manage').querySelectorAll('.node-action-row').length, 3);
-    assert.equal(env.root.querySelector('header').querySelectorAll('button').length, 2, 'copy ID and enable/disable only');
+    assert.equal(env.root.querySelector('header').querySelectorAll('button').length, 1, 'the sticky header holds enable/disable only');
+    assert.equal(env.root.querySelector('.node-summary').querySelectorAll('button').length, 1, 'copy ID sits in the summary');
     assert.equal(env.root.querySelector('[role="menu"]'), null);
     assert.equal(env.requests.some((request) => request.url.endsWith('/runtime') || request.url.startsWith('/api/v1/enrollments')), false);
     assert.equal(env.root.querySelector('.node-summary').querySelectorAll('time').at(-1).getAttribute('datetime'), env.node.last_seen);
@@ -288,17 +289,22 @@ for (const hash of ['details', 'agent', 'settings-details', 'settings-public', '
   });
 }
 
-test('header uses three rows and live metadata never replaces a settings draft', async () => {
+test('the sticky header keeps one row and live metadata never replaces a settings draft', async () => {
   const env = await setup({hash: '#settings'});
   try {
     const head = env.root.querySelector('header');
-    assert.deepEqual(head.children.map((child) => child.className), ['back', 'node-head-main', 'node-summary']);
-    assert.equal(head.querySelector('a').textContent, copy('nodes.allNodes'));
-    assert.equal(head.querySelector('.node-id').querySelector('.mono').textContent, id.slice(0, 8));
+    assert.deepEqual(head.children.map((child) => child.className), ['detail-head', 'detail-actions']);
+    const back = head.querySelector('a');
+    assert.equal(back.className, 'back');
+    assert.equal(back.textContent, copy('nodes.allNodes'));
+    assert.equal(back.title, copy('nodes.allNodes'));
+    const summary = env.root.querySelector('.node-summary');
+    assert.equal(head.querySelector('.node-summary'), null);
+    assert.equal(summary.parentElement, head.parentElement);
+    assert.equal(summary.querySelector('.node-id').querySelector('.mono').textContent, id.slice(0, 8));
     const details = formFor(env.root, 'notes');
     const draft = edit(details, 'notes', 'Private draft'); draft.focus();
     env.send({node: {...env.node, geo_location: 'California, US', geo_country: 'us', remote_ip: '203.0.113.5', provider: 'Provider', tags: ['edge'], last_seen: '2026-10-28T10:01:00Z'}, latest: null});
-    const summary = head.querySelector('.node-summary');
     assert.ok(summary.textContent.includes('🇺🇸 California, US'));
     assert.ok(summary.querySelector('.node-auto'));
     assert.equal(summary.textContent.includes('·'), false);

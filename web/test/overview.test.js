@@ -68,22 +68,32 @@ test('resource lists independently exclude offline/missing values, cap at five, 
   } finally { dom.restore(); }
 });
 
-test('group bars hide zero groups, include online/offline/neutral segments, and retain text counts for AT', async () => {
+test('group tiles hide zero groups, color each status like the fleet bar, and keep text counts for AT', async () => {
   const dom = await setup();
   try {
     const groups = [{id: 'a', name: 'A'}, {id: 'b', name: 'B'}];
-    const nodes = [node(1, {group_id: 'a'}), node(2, {group_id: 'a', presence: 'offline'}), node(3, {group_id: 'a', presence: 'disabled'})];
+    const nodes = [node(1, {group_id: 'a'}), node(2, {group_id: 'a', presence: 'offline'}), node(3, {group_id: 'a', presence: 'disabled'}), node(4, {group_id: 'a', stopped: true})];
     const panel = groupsPanel(nodes, groups);
-    assert.equal(panel.querySelectorAll('.meter-row').length, 1);
-    const row = panel.querySelector('.meter-row');
-    assert.equal(row.querySelector('.num').textContent, `3 · Online: 1, Offline: 1, and Disabled: 1`);
-    const bar = row.querySelector('.group-bar');
+    assert.equal(panel.querySelectorAll('.group-tile').length, 1);
+    const tile = panel.querySelector('.group-tile');
+    assert.equal(tile.getAttribute('href'), '/nodes?group=a');
+    assert.equal(tile.querySelector('.group-name').textContent, 'A');
+    assert.equal(tile.querySelector('.num').textContent, `4 · Online: 1, Offline: 1, Disabled: 1, and Stopped: 1`);
+    const bar = tile.querySelector('.group-bar');
     assert.equal(bar.getAttribute('aria-hidden'), 'true');
-    assert.deepEqual(bar.children.map((segment) => segment.className), ['c-online', 'c-offline', 'c-unknown']);
-    assert.deepEqual(bar.children.map((segment) => segment.style.flex), ['1', '1', '1']);
+    assert.equal(tile.querySelector('.group-meta').getAttribute('aria-hidden'), 'true');
+    assert.deepEqual(bar.children.map((segment) => segment.className), ['c-online', 'c-offline', 'c-disabled', 'c-disabled']);
+    assert.deepEqual(bar.children.map((segment) => segment.style.flex), ['1', '1', '1', '1']);
+    assert.deepEqual(tile.querySelector('.group-meta').children.map((item) => item.querySelector('b').textContent), ['1', '1', '1', '1']);
+    // 实时帧只修补数值：卡片元素保持不变，焦点不会丢失。
+    panel.snapshot([node(1, {group_id: 'a'}), node(2, {group_id: 'a'})]);
+    assert.equal(panel.querySelector('.group-tile'), tile);
+    assert.equal(tile.querySelector('.num').textContent, `2 · Online: 2`);
+    assert.deepEqual(bar.children.map((segment) => segment.style.flex), ['2']);
     panel.snapshot([node(1)]);
-    assert.equal(panel.querySelectorAll('.meter-row').length, 1);
-    assert.match(panel.querySelector('.meter-row').textContent, /Ungrouped/);
+    assert.equal(panel.querySelectorAll('.group-tile').length, 1);
+    assert.match(panel.querySelector('.group-tile').className, /ungrouped/);
+    assert.match(panel.querySelector('.group-tile').textContent, /Ungrouped/);
     panel.snapshot([]); assert.equal(panel.hidden, true);
   } finally { dom.restore(); }
 });

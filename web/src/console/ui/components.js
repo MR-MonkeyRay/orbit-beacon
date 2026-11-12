@@ -153,7 +153,7 @@ export function emptyState(title, message, ...actions) {
 export function skeleton() {
   const line = (width) => h('div', {class: 'sk sk-line', style: `width:${width}%`});
   return h('div', {'aria-busy': 'true', 'aria-label': t('controls.loading')},
-    h('div', {class: 'sk sk-title'}), line(38),
+    h('div', {class: 'page-head'}, h('div', {class: 'sk sk-title'})), line(38),
     h('div', {class: 'grid-2'}, h('div', {class: 'sk sk-block'}), h('div', {class: 'sk sk-block'})),
     h('div', {class: 'sk sk-block', style: 'margin-top:18px;height:240px'}));
 }

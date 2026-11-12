@@ -37,12 +37,9 @@
       transition: opacity var(--motion-normal) var(--ease) var(--motion-fast);
     }
 
-    .nav .notification-entry {
-      flex-wrap: nowrap;
-    }
-
     .notification-entry .notification-freshness {
-      display: none;
+      opacity: 0;
+      transition: opacity var(--motion-instant) var(--ease);
     }
 
     .notification-entry .notification-count,.nav .alert-count {
@@ -67,23 +64,17 @@
       background: var(--bad-bg);
     }
 
-    .account {
-      gap: 0;
-    }
-
+    /* 头像菜单与语言按钮淡出后才移出焦点顺序；尺寸不变，由侧栏边缘裁剪。 */
     .account > .user-menu,.account > .locale-toggle {
-      min-width: 0;
-      max-width: 0;
-      padding: 0;
-      border-width: 0;
-      overflow: hidden;
       opacity: 0;
       visibility: hidden;
-      transition: max-width var(--motion-slow) var(--ease),opacity var(--motion-instant) var(--ease),visibility 0s linear var(--motion-slow);
+      transition: opacity var(--motion-instant) var(--ease),visibility 0s linear var(--motion-slow);
     }
 
+    /* 图标栏 72px 减去两侧 12px 内边距与 1px 右边框，账户行右缘在 59px；
+       右缘对齐的按钮左移到中心 36px，与条目图标同在图标栏中线。 */
     .account > .nav-toggle {
-      width: 100%;
+      transform: translateX(calc(var(--control-h) / 2 - 23px));
     }
   }
 
@@ -114,7 +105,7 @@
 
 @media (max-width:1023px) {
   .main {
-    padding: 26px var(--sp-group) 56px;
+    padding: 0 var(--sp-group) 56px;
   }
 
   .hide-compact {
@@ -201,7 +192,7 @@
   }
 
   .main {
-    padding: var(--sp-group) max(var(--sp-content),env(safe-area-inset-right)) calc(var(--sp-section) + env(safe-area-inset-bottom)) max(var(--sp-content),env(safe-area-inset-left));
+    padding: 0 max(var(--sp-content),env(safe-area-inset-right)) calc(var(--sp-section) + env(safe-area-inset-bottom)) max(var(--sp-content),env(safe-area-inset-left));
     overflow-wrap: anywhere;
   }
 
@@ -331,26 +322,40 @@
   .search .input { padding-right: var(--sp-control); }
 }
 
+/* 手机：页头固定在顶栏之下，标题、连接状态与操作同一行，标题过长时省略。 */
 @media (max-width:767px) {
+  :root {
+    --page-head-h: 60px;
+    --page-head-top: calc(64px + env(safe-area-inset-top));
+  }
   .page-head {
     display: grid;
-    grid-template-columns: minmax(0,1fr) auto;
-    align-items: start;
+    grid-template-columns: minmax(0,1fr) auto auto;
+    align-items: center;
     gap: var(--sp-inline);
+    padding-block: 10px;
+    margin-bottom: var(--sp-content);
   }
-  .page-head>.page-title { width: auto; }
-  .page-head>.head-actions {
-    width: auto;
-    justify-content: flex-end;
-    order: 0;
+  .page-head h1 {
+    overflow: hidden;
+    font-size: 20px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .page-head>.page-title { width: auto; min-width: 0; }
+  .page-head>.head-status {
     grid-column: 2;
     grid-row: 1;
-  }
-  .page-head>.head-status {
-    grid-column: 1 / -1;
-    grid-row: 2;
     width: auto;
     margin: 0;
+  }
+  .page-head>.head-actions {
+    width: auto;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    order: 0;
+    grid-column: 3;
+    grid-row: 1;
   }
   .head-status .live-status {
     min-height: 0;
@@ -425,15 +430,14 @@
 @media (min-width:768px) and (max-width:1100px) {
   .node-public-groups { grid-template-columns: minmax(0,1fr); gap: var(--sp-content); }
   .node-public-checks { grid-template-columns: repeat(3,minmax(0,1fr)); }
-  .node-head-main { flex-wrap: wrap; }
-  .node-head .detail-head { flex-basis: 100%; }
 }
 @media (max-width:767px) {
-  /* 通用 .page-head 手机布局是标题 + 操作两列；节点标题区自行分行。 */
-  .page-head.node-head { grid-template-columns: minmax(0,1fr); }
+  /* 节点页头含名称、两枚徽章与操作，手机上放不进一行；改为随页面滚动的两行，不占固定高度。 */
+  .page-head.node-head { position: relative; top: auto; grid-template-columns: minmax(0,1fr); }
   .page-head.node-head>* { grid-column: 1; grid-row: auto; width: auto; }
-  .node-head-main { flex-direction: column; align-items: stretch; }
-  .node-head .detail-actions { width: auto; align-items: center; }
+  .node-head .detail-head { flex-wrap: wrap; }
+  .node-head h1 { white-space: normal; overflow-wrap: anywhere; }
+  .node-head .detail-actions { width: auto; flex-wrap: wrap; align-items: center; }
   .node-head .head-actions { width: auto; }
   .node-summary { gap: var(--sp-inline) var(--sp-control); }
   .node-public-groups { grid-template-columns: minmax(0,1fr); gap: var(--sp-content); }

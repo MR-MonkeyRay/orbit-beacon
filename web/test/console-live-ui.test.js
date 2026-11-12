@@ -449,6 +449,10 @@ test('detail heartbeat changes only freshness and navigation closes the one live
 
 test('overview updates attention membership while preserving existing rows, activity and the live subscription', async (t) => {
   const env = await setup(t, {page: 'overview'});
+  // 固定页头只放标题与连接状态；添加节点与打开状态页在各自的页面里。
+  const head = env.root.querySelector('header');
+  assert.ok(head.querySelector('.live-status'));
+  assert.equal(head.querySelector('.head-actions'), null);
   const section = (title) => env.root.querySelectorAll('section').find((item) => item.querySelector('h2')?.textContent === title);
   const activity = section(copy('nodes.recentActivity')); const attention = section(copy('nodes.needsAttention'));
   assert.equal(attention.hidden, true);
@@ -482,9 +486,9 @@ test('overview live group segments retain metadata when fleet frames omit group 
   button(env.root, copy('nodes.refreshList')).click(); await flush();
   env.send({nodes: [compact(node(1)), compact(node(2)), compact({...grouped, presence: 'offline'})]}, 10);
   const groups = env.root.querySelectorAll('section').find((item) => item.querySelector('h2')?.textContent === copy('nodes.groups'));
-  const row = groups.querySelectorAll('.meter-row').find((row) => row.textContent.includes('Production'));
-  assert.ok(row.querySelector('.c-offline'));
-  assert.equal(row.querySelector('.c-online'), null);
+  const row = groups.querySelectorAll('.group-tile').find((row) => row.textContent.includes('Production'));
+  assert.ok(row.querySelector('.group-bar').querySelector('.c-offline'));
+  assert.equal(row.querySelector('.group-bar').querySelector('.c-online'), null);
 });
 
 test('overview deferred refresh keeps newer fleet status, deleted links and unknown-inventory notice', async (t) => {
@@ -706,7 +710,7 @@ test('overview total retargets its displayed count and navigation abort clears i
   Object.defineProperty(reducedMotion, 'matches', {configurable: true, get: () => false});
   t.after(() => Object.defineProperty(reducedMotion, 'matches', descriptor));
   const env = await setup(t, {page: 'overview'});
-  const groupFills = env.root.querySelectorAll('.meter-row').map((row) => row.querySelector('i'));
+  const groupFills = env.root.querySelectorAll('.group-bar').map((row) => row.querySelector('i'));
   assert.ok(groupFills.length > 0);
   assert.ok(groupFills.every((fill) => !fill.hasAttribute('style') && Number(fill.style.flex) > 0));
   const total = env.root.querySelector('.fleet-total').querySelector('strong');

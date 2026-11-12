@@ -27,10 +27,9 @@ export function nodePlaceholder() {
   const hash = location.hash.slice(1);
   const selected = NODE_TABS.some(([id]) => id === hash) ? hash : 'monitor';
   const head = h('header', {class: 'page-head node-head'},
-    h('span', {class: 'back'}, icon('left'), t('nodes.allNodes')),
-    h('div', {class: 'node-head-main'}, h('div', {class: 'detail-head'}, h('h1', null, skText('8em')), h('span', {class: 'sk sk-badge', 'aria-hidden': 'true'})),
-      h('div', {class: 'detail-actions'}, h('span', {class: 'live-status'}, t('controls.live.connecting')))),
-    h('div', {class: 'node-summary'}, skText('6em'), skText('8em'), skText('5em'), skText('9em')));
+    h('div', {class: 'detail-head'}, h('span', {class: 'back'}, icon('left')), h('h1', null, skText('8em')), h('span', {class: 'sk sk-badge', 'aria-hidden': 'true'})),
+    h('div', {class: 'detail-actions'}, h('span', {class: 'live-status'}, t('controls.live.connecting'))));
+  const summary = h('div', {class: 'node-summary'}, skText('6em'), skText('8em'), skText('5em'), skText('9em'));
   const tabs = h('div', {class: 'tabs', 'aria-hidden': 'true'}, NODE_TABS.map(([id, label, name]) =>
     h('span', {class: 'tab-placeholder', dataset: {selected: String(id === selected)}}, icon(name), t(label))));
   const tile = (label) => h('div', {class: 'sample-tile'}, h('dt', null, t(label)), h('dd', null, skValue(), h('span', {class: 'sk sk-meter', 'aria-hidden': 'true'})));
@@ -42,7 +41,7 @@ export function nodePlaceholder() {
       placeholderPanel(t('nodes.history'), h('div', {class: 'history-grid'},
         [0, 1].map(() => h('section', {class: 'history-metric'}, h('h3', null, skText('6em')), placeholderChart())))))
     : placeholderPanel(null, skLines('42%', '64%', '36%', '58%'));
-  return pagePlaceholder(head, tabs, body);
+  return pagePlaceholder(head, summary, tabs, body);
 }
 
 export async function nodePage() {
@@ -72,8 +71,10 @@ export async function nodePage() {
       toast(t('nodes.copiedIDFallback'));
     } else toast(t('nodes.copyIDManual'), {error: true});
   });
-  const back = link('/nodes', icon('left'), t('nodes.allNodes'));
+  // 固定页头只留一行：返回链接收成图标，文字保留为可访问名称与悬停提示。
+  const back = link('/nodes', icon('left'), h('span', {class: 'sr'}, t('nodes.allNodes')));
   back.className = 'back';
+  back.title = t('nodes.allNodes');
   let history;
   let currentLatest = latest;
   let currentServerTime = latest?.server_time;
@@ -169,10 +170,10 @@ export async function nodePage() {
   ], t('nodes.sections'));
   updatePublic();
   const title = h('h1', {tabindex: '-1'}, node.name);
-  const head = h('header', {class: 'page-head node-head'}, back,
-    h('div', {class: 'node-head-main'}, h('div', {class: 'detail-head'}, title, badge, publicBadge),
-      h('div', {class: 'detail-actions'}, connection.element, actions)), summary);
-  const root = h('div', null, head,
+  const head = h('header', {class: 'page-head node-head'},
+    h('div', {class: 'detail-head'}, back, title, badge, publicBadge),
+    h('div', {class: 'detail-actions'}, connection.element, actions));
+  const root = h('div', null, head, summary,
     deletedNotice, tabs);
   const lockDeleted = () => {
     if (!node.deleted) return;

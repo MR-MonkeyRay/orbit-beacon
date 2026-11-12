@@ -6,9 +6,13 @@
   cursor: pointer;
 }
 
+/* 网格而非可折行的 flex：侧栏宽度动画时标签只被裁剪，计数不会被挤到下一行把相邻条目顶起；
+   过期提示固定占第二行，收起时只淡出，条目高度在两种状态下一致。 */
 .nav .notification-entry {
-  flex-wrap: wrap;
-  gap: var(--sp-inline) var(--sp-control);
+  display: grid;
+  grid-template-columns: 18px minmax(0,1fr) auto;
+  align-content: center;
+  gap: 2px var(--sp-control);
   padding-block: var(--sp-inline);
 }
 
@@ -25,8 +29,11 @@
 }
 
 .notification-freshness {
-  width: 100%;
-  padding-left: 29px;
+  grid-column: 2 / -1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--warn);
   font-size: var(--fs-xs);
 }

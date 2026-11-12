@@ -374,6 +374,9 @@ test('public-page settings confirm disabling, block duplicate writes, and restor
     const control = elements(page).find((element) => element.name === 'public_page_enabled');
     assert.ok(control);
     assert.equal(control.checked, true);
+    // 打开状态页的入口从概览页头移到这里，与开关同行。
+    const open = elements(page).find((element) => element.tagName === 'a' && element.textContent === copy('nodes.openPublic'));
+    assert.equal(open?.getAttribute('href'), '/');
     const toggle = () => { control.checked = !control.checked; control.dispatchEvent(new Event('change')); };
     toggle(); await flush();
     assert.equal(writes.length, 0);

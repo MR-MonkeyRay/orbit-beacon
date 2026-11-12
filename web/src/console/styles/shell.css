@@ -178,26 +178,29 @@
   min-height: 54px;
 }
 
+/* 账户行几何在两种状态下不变：头像菜单与语言按钮保持原尺寸，图标栏里只淡出并被侧栏裁剪；
+   收起按钮固定尺寸、贴住行的右缘，侧栏宽度动画时只随右缘平移，不会被挤压或跳动。 */
 .account {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--sp-inline);
   padding: var(--sp-control) 0 var(--sp-tight);
   border-top: 1px solid var(--line);
-  transition: gap var(--motion-slow) var(--ease);
 }
 
-/* 图标栏只保留展开按钮：头像菜单与语言按钮先淡出、收窄，动画结束后再隐藏出焦点顺序。 */
 .account > .user-menu,.account > .locale-toggle {
   flex: none;
-  max-width: var(--control-h);
-  transition: max-width var(--motion-slow) var(--ease),opacity var(--motion-normal) var(--ease) .12s,visibility 0s;
+  transition: opacity var(--motion-normal) var(--ease) .12s,visibility 0s;
 }
 
-.account > .nav-toggle {
-  margin-left: auto;
-  width: var(--control-h);
-  transition: width var(--motion-slow) var(--ease),background-color var(--motion-fast),color var(--motion-fast);
+@media (min-width:768px) {
+  .account > .nav-toggle {
+    position: absolute;
+    top: var(--sp-control);
+    right: 0;
+    transition: transform var(--motion-slow) var(--ease),background-color var(--motion-fast),color var(--motion-fast);
+  }
 }
 
 .avatar {
@@ -213,9 +216,12 @@
   text-transform: uppercase;
 }
 
+/* 顶部留白由固定页头自己提供；横向裁剪让页头的铺满背景不越出主区域，
+   clip 不创建滚动容器，页头的 sticky 仍相对视口。 */
 .main {
   min-width: 0;
-  padding: 34px clamp(var(--sp-content),4vw,48px) 64px;
+  padding: 0 clamp(var(--sp-content),4vw,48px) 64px;
+  overflow-x: clip;
   outline: none;
 }
 

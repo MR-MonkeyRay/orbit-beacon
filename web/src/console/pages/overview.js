@@ -144,31 +144,54 @@ export function attentionPanel(nodes) {
   return element;
 }
 
+// 分组卡片：名称与节点数、与集群条同色的状态条、各状态计数。卡片整块是到筛选后节点列表的链接；
+// 实时帧只修补数值与状态条，卡片元素保持不变，键盘焦点与悬停不会因刷新丢失。
 export function groupsPanel(nodes, groups) {
-  const content = h('div');
-  const element = panel(t('nodes.groups'), {action: link('/settings#groups', t('nodes.manageGroups'))}, content);
+  const grid = h('div', {class: 'group-grid'});
+  const tiles = new Map();
+  const element = panel(t('nodes.groups'), {action: link('/settings#groups', t('nodes.manageGroups'))}, grid);
+  const tile = (href, ungrouped) => {
+    if (tiles.has(href)) return tiles.get(href);
+    const name = h('span', {class: 'group-name'});
+    const total = h('span', {class: 'group-total'});
+    const description = h('span', {class: 'sr'});
+    const bar = h('span', {class: 'group-bar', 'aria-hidden': 'true'});
+    const meta = h('span', {class: 'group-meta', 'aria-hidden': 'true'});
+    const anchor = link(href, h('span', {class: 'group-title'}, name, h('span', {class: 'num'}, total, description)), bar, meta);
+    anchor.className = ungrouped ? 'group-tile ungrouped' : 'group-tile';
+    const ref = {anchor, name, total, description, bar, meta, signature: ''};
+    tiles.set(href, ref);
+    return ref;
+  };
   element.snapshot = (current) => {
     const sizes = groups.map((group) => ({label: group.name, href: `/nodes?group=${group.id}`, nodes: current.filter((node) => node.group_id === group.id)}))
       .filter((group) => group.nodes.length).sort((a, b) => b.nodes.length - a.nodes.length).slice(0, 8);
     const ungrouped = current.filter((node) => !node.group_id);
-    if (ungrouped.length) sizes.push({label: t('nodes.ungrouped'), href: '/nodes?group=none', nodes: ungrouped});
-    content.replaceChildren(...sizes.map((group) => {
-      const counts = {online: 0, offline: 0, unknown: 0};
-      const statuses = new Map();
-      for (const node of group.nodes) {
-        const state = displayStatus(node);
-        counts[state === 'online' || state === 'offline' ? state : 'unknown']++;
-        statuses.set(state, (statuses.get(state) || 0) + 1);
-      }
-      const description = formatList([...statuses].map(([state, count]) => `${STATUS[state]}: ${count}`));
-      return h('div', {class: 'meter-row'}, link(group.href, group.label),
-        h('span', {class: 'num muted'}, group.nodes.length, h('span', {class: 'sr'}, ` · ${description}`)),
-        h('div', {class: 'bar group-bar', 'aria-hidden': 'true'}, Object.entries(counts).filter(([, count]) => count).map(([state, count]) => {
-          const segment = h('i', {class: `c-${state}`});
+    if (ungrouped.length) sizes.push({label: t('nodes.ungrouped'), href: '/nodes?group=none', nodes: ungrouped, ungrouped: true});
+    const anchors = sizes.map((group) => {
+      const ref = tile(group.href, group.ungrouped);
+      const counts = new Map();
+      for (const node of group.nodes) counts.set(displayStatus(node), (counts.get(displayStatus(node)) || 0) + 1);
+      const states = [...STATUS_ORDER, 'unknown'].filter((state) => counts.get(state)).map((state) => [state, counts.get(state)]);
+      const signature = `${group.label}|${states.join(';')}`;
+      if (ref.signature !== signature) {
+        ref.signature = signature;
+        ref.name.textContent = group.label;
+        ref.total.textContent = String(group.nodes.length);
+        ref.description.textContent = ` · ${formatList(states.map(([state, count]) => `${STATUS[state]}: ${count}`))}`;
+        const color = (state) => `c-${state === 'stopped' ? 'disabled' : state}`;
+        ref.bar.replaceChildren(...states.map(([state, count]) => {
+          const segment = h('i', {class: color(state)});
           segment.style.flex = String(count);
           return segment;
-        })));
-    }));
+        }));
+        ref.meta.replaceChildren(...states.map(([state, count]) => h('span', null, h('i', {class: color(state)}), h('b', null, count), ' ', STATUS[state])));
+      }
+      return ref.anchor;
+    });
+    const retained = new Set(anchors);
+    for (const [href, {anchor}] of tiles) if (!retained.has(anchor)) tiles.delete(href);
+    patchRows(grid, anchors);
     element.hidden = !sizes.length;
   };
   element.snapshot(nodes);
@@ -181,7 +204,7 @@ export function overviewPlaceholder() {
   const resourceColumn = (key) => h('div', null, h('h3', null, t(key)),
     h('ul', {class: 'rows resource-rows'}, [70, 52, 38].map((width) => h('li', null, skText(`${width}%`), h('span', {class: 'sk sk-meter', 'aria-hidden': 'true'})))));
   return pagePlaceholder(
-    placeholderHead(t('nodes.overview'), {actions: 2}),
+    placeholderHead(t('nodes.overview'), {actions: 0}),
     placeholderPanel(t('nodes.fleet'), h('div', {class: 'fleet-total'}, h('strong', {class: 'num'}, skValue()), skText('7em')),
       h('div', {class: 'fleet-bar sk', 'aria-hidden': 'true'}), legend),
     placeholderPanel(t('nodes.topUsage'), h('div', {class: 'resource-columns'}, resourceColumn('nodes.cpu'), resourceColumn('nodes.memory'))),
@@ -252,7 +275,7 @@ export async function overviewPage() {
   }});
   const inventoryNotice = h('div', {class: 'table-foot live-change', hidden: true, 'aria-live': 'polite'}, t('nodes.inventoryChanged'), refreshNodes);
   const root = h('div', null,
-    pageHead(t('nodes.overview'), connection.element, addNodeButton(), h('a', {class: 'btn', href: '/'}, icon('external'), t('nodes.openPublic'))),
+    pageHead(t('nodes.overview'), connection.element),
     fleet,
     alerts.error ? panel(t('nodes.activeAlerts'), {action: link('/alerts', t('nodes.viewAlerts'))}, h('p', {role: 'status', class: 'text-note'}, t('nodes.alertsLoadError', {error: errorText(alerts.error)}))) : alerts.summary.firing.total ? activeAlertsSummary(alerts.summary) : null,
     resources,
