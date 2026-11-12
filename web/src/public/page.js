@@ -1,3 +1,4 @@
+import {serviceSection} from './services.js';
 import {translateHTML} from '../shared/translate-html.js';
 import {h} from '../shared/dom.js';
 import {themeButton} from '../shared/theme.js';
@@ -19,6 +20,8 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
   const $ = (id) => document.getElementById(id);
   const list = $('nodes');
   const empty = $('empty');
+  const services = serviceSection();
+  empty.parentElement.insertBefore(services, empty);
   const emptyText = $('empty-text');
   const retry = $('retry');
   const headline = $('headline');
@@ -130,6 +133,7 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
 
   function render(result) {
     const nodes = result.nodes;
+    services.update(result.services, result.generated_at);
     const nextKeys = nodes.map((node) => `${node.name}\u0000${node.region}\u0000${node.provider}`).join('\u0001');
     if (nextKeys !== keys || cards.length !== nodes.length) {
       cards = nodes.map(() => createCard());
@@ -174,6 +178,7 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
   function clearData() {
     hasSnapshot = false;
     list.replaceChildren();
+    services.update([], new Date().toISOString());
     cards = [];
     keys = '';
     current = [];
@@ -255,6 +260,7 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
         updateText({stale: true});
       } else {
         list.replaceChildren();
+        services.update([], new Date().toISOString());
         setSummary(t('public.loadFailed'));
         empty.hidden = false;
         emptyText.textContent = t('public.loadFailed');

@@ -12,7 +12,12 @@ export function validAvailability(value) {
 }
 
 // 无效数据绝不替换最后一次校验通过的公开集合。
+export function validService(service) {
+ if (!service || typeof service !== 'object' || Array.isArray(service) || Object.keys(service).length !== 5 || Object.keys(service).some((key) => !['name','type','status','latency_ms','availability'].includes(key))) return false;
+ return typeof service.name === 'string' && [...service.name].length >= 1 && [...service.name].length <= 100 && !/[\u0000-\u001f\u007f-\u009f]/.test(service.name) && ['http','tcp','icmp'].includes(service.type) && ['up','down','unknown'].includes(service.status) && (service.latency_ms === null || typeof service.latency_ms === 'number' && Number.isFinite(service.latency_ms) && service.latency_ms >= 0) && Array.isArray(service.availability) && service.availability.length === 30 && Array.from(service.availability).every(validPercent);
+}
 export function validResponse(result, offset = 0) {
+ if (!Array.isArray(result?.services) || result.services.length > 100 || !result.services.every(validService)) return false;
   if (!result || !Array.isArray(result.nodes) || result.nodes.length > 100 || typeof result.has_more !== 'boolean' || !Number.isFinite(timestampMillis(result.generated_at))) return false;
   if (result.has_more ? !Number.isSafeInteger(result.next_offset) || result.next_offset <= offset : result.next_offset !== null) return false;
   return result.nodes.every((node) => {

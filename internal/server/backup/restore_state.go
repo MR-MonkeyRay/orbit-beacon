@@ -265,7 +265,11 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 			}
 			check := func(names []string, values []any) error {
 				var exists bool
-				if e := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM nodes WHERE id=?)", values[0]).Scan(&exists); e != nil {
+				parent := "nodes"
+				if spec.Name == "service_checks_latest" || spec.Name == "service_check_buckets" {
+					parent = "services"
+				}
+				if e := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+parent+" WHERE id=?)", values[0]).Scan(&exists); e != nil {
 					return e
 				}
 				if !exists {

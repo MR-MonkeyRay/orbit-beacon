@@ -229,9 +229,13 @@ func projectCategory(ctx context.Context, destination, main, metrics *sql.DB, ca
 			if err = rows.Scan(pointers...); err != nil {
 				break
 			}
-			if spec.Name == "buckets" {
+			if spec.Name == "buckets" || spec.Name == "service_check_buckets" {
 				var exists bool
-				err = main.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM nodes WHERE id=?)", values[0]).Scan(&exists)
+				parent := "nodes"
+				if spec.Name == "service_check_buckets" {
+					parent = "services"
+				}
+				err = main.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+parent+" WHERE id=?)", values[0]).Scan(&exists)
 				if err != nil {
 					break
 				}

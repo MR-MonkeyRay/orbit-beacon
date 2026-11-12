@@ -15,6 +15,7 @@ import (
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/notify"
+	"orbitbeacon/internal/server/services"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/traffic"
 	"orbitbeacon/internal/server/validation"
@@ -40,6 +41,8 @@ type errorMapping struct {
 
 // Agent 专属响应优先于共享的服务映射。
 var errorMappings = []errorMapping{
+	{serviceErrors, matches(services.ErrNotFound), http.StatusNotFound, "not_found", "Service not found", false},
+	{serviceErrors, matches(services.ErrCapacity), http.StatusConflict, "service_capacity_reached", "Maximum of 100 services reached", false},
 	{serviceErrors, matches(auth.ErrAPITokenLimit), http.StatusConflict, "api_token_limit", "API token limit reached", false},
 	{serviceErrors, matches(auth.ErrTOTPRequired), http.StatusUnauthorized, "totp_required", "Second factor required", false},
 	{serviceErrors, matches(auth.ErrTOTPInvalid), http.StatusUnauthorized, "totp_invalid", "Invalid second factor", false},

@@ -10,7 +10,7 @@ export function auditItem(event, names, withDetails, {compact = false} = {}) {
   const actor = event.actor_id ? names.get(event.actor_id) || shortID(event.actor_id) : agentActor ? t('nodes.audit.agent') : t('nodes.audit.system');
   const resource = event.action.split('.')[0];
   const resourceLabel = resource === 'alert_rule' ? t('audit.targetRule') : '';
-  const detailName = resource === 'alert_rule' ? event.details?.name : null;
+  const detailName = (resource === 'alert_rule' || resource === 'service') ? event.details?.name : null;
   const target = event.target_id ? (typeof detailName === 'string' && detailName.trim() ? detailName : names.get(event.target_id))
     || [resourceLabel, shortID(event.target_id)].filter(Boolean).join(' ') : null;
   const details = withDetails ? h('details', {class: 'ev-details'}, h('summary', null, icon('right'), t('nodes.audit.details')),

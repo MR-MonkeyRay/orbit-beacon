@@ -24,6 +24,7 @@ import (
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/notify"
+	"orbitbeacon/internal/server/services"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/traffic"
 	"orbitbeacon/internal/server/webui"
@@ -62,6 +63,7 @@ type Options struct {
 type handler struct {
 	geo                      *geoWorker
 	storage                  *storage.Databases
+	services                 *services.Manager
 	commands                 *commands.Service
 	backups                  *backup.Service
 	inbox                    *inbox.Service
@@ -156,6 +158,11 @@ func NewHandler(opts Options) (*handler, error) {
 			h.storage.History = opts.History.Database()
 		}
 	}
+	var serviceNotifier services.Notifier
+	if opts.Notifications != nil {
+		serviceNotifier = opts.Notifications
+	}
+	h.services = services.New(opts.Nodes.Database(), h.storage.History, opts.Now, opts.Logger, serviceNotifier, opts.Nodes.InvalidatePublicSafety)
 	h.commands = commands.New(opts.Nodes.Database(), opts.Now)
 	h.saturation = opts.SaturationMetrics
 	h.publicPageUnknown.Store(true)

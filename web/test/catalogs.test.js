@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 import {fileURLToPath} from 'node:url';
+import {readFileSync} from 'node:fs';
 import en from '../src/shared/locales/en.js';
 import zhCN from '../src/shared/locales/zh-CN.js';
 import publicEn from '../src/shared/locales/public-catalog.en.js';
@@ -40,5 +41,12 @@ for (const theme of ['default', 'example']) test(`${theme} public entry bundles 
   assert.ok(inputs.includes('src/shared/locales/public-catalog.en.js'));
   assert.ok(inputs.includes('src/shared/locales/public-catalog.zh-CN.js'));
   assert.ok(!inputs.some((name) => name.startsWith('src/console/')));
-  assert.ok(!inputs.some((name) => /locales\/(?:en|zh-CN|shell\..*|nodes\..*|settings\..*|account\..*|audit\..*|notifications\..*|data\..*|alerts\..*)\.js$/.test(name)));
+  assert.ok(!inputs.some((name) => /locales\/(?:en|zh-CN|shell\..*|nodes\..*|settings\..*|account\..*|audit\..*|notifications\..*|data\..*|alerts\..*|services\..*)\.js$/.test(name)));
+  // t() throws on unknown keys, so every key public-only code names must be in the public catalog.
+  const root = new URL('..', import.meta.url);
+  for (const name of inputs.filter((file) => /^(?:src\/public|themes)\//.test(file))) {
+    const source = readFileSync(new URL(name, root), 'utf8');
+    for (const [, key] of source.matchAll(/\bt\('([A-Za-z0-9_.]+)'/g)) assert.ok(Object.hasOwn(publicEn, key), `${name}: ${key}`);
+    for (const [, prefix] of source.matchAll(/\bt\(`([A-Za-z0-9_.]+)\$\{/g)) assert.ok(keys(publicEn).some((key) => key.startsWith(prefix)), `${name}: ${prefix}`);
+  }
 });

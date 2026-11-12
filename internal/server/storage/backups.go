@@ -36,7 +36,7 @@ CREATE INDEX backup_tasks_artifact_cleanup ON backup_tasks(artifact_cleanup_afte
  WHERE kind='backup_export' AND artifact_deleted_at IS NULL AND restored=0;
 CREATE TABLE inbox_notifications (
  sequence INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL,
- kind TEXT NOT NULL CHECK(kind IN ('task','alert','storage')), source_id TEXT NOT NULL,
+ kind TEXT NOT NULL CHECK(kind IN ('task','alert','storage','service')), source_id TEXT NOT NULL,
  transition TEXT NOT NULL,
  severity TEXT NOT NULL, created_at TEXT NOT NULL, details_json TEXT NOT NULL,
  UNIQUE(kind,source_id,transition)

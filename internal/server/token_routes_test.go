@@ -15,6 +15,9 @@ import (
 )
 
 var literalTokenRoutes = []string{
+	"GET /api/v1/services",
+	"GET /api/v1/services/{id}",
+	"GET /api/v1/services/{id}/history",
 	"GET /api/v1/nodes",
 	"GET /api/v1/nodes/{id}",
 	"GET /api/v1/nodes/{id}/latest",

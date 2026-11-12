@@ -1,7 +1,7 @@
 import {t} from './i18n.js';
 
 const errorKeys = new Set([
-  'api_token_limit',
+  'api_token_limit', 'service_capacity_reached',
  'totp_required', 'totp_invalid', 'totp_already_enabled', 'totp_setup_expired',
   'command_same_version', 'command_not_allowed', 'command_active', 'node_unavailable',
   'unauthenticated', 'forbidden', 'password_change_required', 'password_unchanged', 'public_page_disabled',
@@ -26,6 +26,14 @@ export function errorText(error) {
 }
 
 const fieldReasons = new Map([
+  ['must contain 1 to 100 characters without controls', 'services.validation.name'],
+  ['must be between 30 and 3600', 'services.validation.interval'],
+  ['must be between 1 and 30 and less than interval', 'services.validation.timeout'],
+  ['must be between 0 and 3600000', 'services.validation.threshold'],
+  ['must be a signed 32-bit integer', 'services.validation.order'],
+  ['must be one of http, tcp, icmp', 'services.validation.type'],
+  ['must match the service type without credentials', 'services.validation.target'],
+
   ['must be a valid probe target', 'alerts.validation.probeTarget'],
   ['must be null for this metric', 'alerts.validation.probeTarget'],
   ['must be >', 'fields.comparator'],

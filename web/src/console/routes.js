@@ -4,6 +4,7 @@ export const consoleRoutes = [
   {path: '/login', page: 'login', bare: true},
   {path: '/change-password', page: 'changePassword', bare: true},
   {path: '/overview', page: 'overview', label: 'shell.overview', icon: 'overview', nav: '/overview', fallback: true},
+  {path: '/services', page: 'services', label: 'shell.services', icon: 'activity', nav: '/services'},
   {path: '/nodes', page: 'nodes', label: 'shell.nodes', icon: 'server', nav: '/nodes'},
   {path: '/nodes/{id}', page: 'node', nav: '/nodes'},
   {path: '/settings', page: 'settings', label: 'shell.settings', icon: 'sliders', nav: '/settings'},

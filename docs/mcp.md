@@ -25,6 +25,9 @@
 
 | 工具 | 参数 |
 | --- | --- |
+| `list_services` | 无；返回服务配置、最近检查与 24 小时可用率 |
+| `get_service` | `id` |
+| `get_service_history` | `id`、`range`（1h / 24h / 7d / 30d） |
 | `list_nodes` | `limit?`（1–100）、`offset?`（≥0） |
 | `get_node` | `id` |
 | `get_node_latest` | `id` |

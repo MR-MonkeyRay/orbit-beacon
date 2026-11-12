@@ -253,7 +253,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 
 	a.handler, a.httpServer = handler, httpServer
 	a.ingest, a.notifications = ingestService, notifications
-	a.background = []func(context.Context){availabilityService.Run, backups.Run, notifications.Run, evaluator.Run, handler.RunRetention, handler.RunGeo}
+	a.background = []func(context.Context){availabilityService.Run, backups.Run, notifications.Run, evaluator.Run, handler.RunRetention, handler.RunGeo, handler.RunServices}
 	if cfg.Database.Standby != nil {
 		a.background = append(a.background, notifications.RunStorage)
 	}
@@ -315,10 +315,11 @@ func (a *App) shutdown(background *sync.WaitGroup) {
 	if a.ingest != nil {
 		a.withDeadline(a.ingest.Shutdown, "ingest_shutdown_timeout", "shutdown_timeout")
 	}
+	// Producers finish their final durable flush before the outbox rejects new writes.
+	background.Wait()
 	if a.notifications != nil {
 		a.withDeadline(a.notifications.Shutdown, "notification_shutdown_timeout", "shutdown_timeout")
 	}
-	background.Wait()
 	if err := a.stopReplication(); err != nil {
 		a.logger.LogAttrs(context.Background(), slog.LevelError, "replication_stop_failed", logging.ErrorAttrs(err, "close_failed")...)
 	}

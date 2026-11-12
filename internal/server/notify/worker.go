@@ -68,11 +68,15 @@ func (s *Service) Enqueue(ctx context.Context, tx *storage.Tx, n alerts.Notifica
 	if e != nil {
 		return e
 	}
+	return s.enqueuePayload(ctx, tx, ids, n.EventID, notificationPayload(n))
+}
+
+func (s *Service) enqueuePayload(ctx context.Context, tx *storage.Tx, ids []string, eventID string, p Payload) error {
+	var e error
 	now := timekey.Format(s.opts.Now())
-	p := notificationPayload(n)
 	raw, _ := json.Marshal(p)
 	for _, id := range ids {
-		duplicate, err := deliveryPayloadExists(ctx, tx, id, n.EventID, raw, "")
+		duplicate, err := deliveryPayloadExists(ctx, tx, id, eventID, raw, "")
 		if err != nil {
 			return err
 		}
@@ -94,14 +98,14 @@ func (s *Service) Enqueue(ctx context.Context, tx *storage.Tx, n alerts.Notifica
 				p.SummaryCount = total + 1
 				summaryRaw, _ := json.Marshal(p)
 				p.SummaryCount = 0
-				conflict, err := deliveryPayloadExists(ctx, tx, id, n.EventID, summaryRaw, summaryID)
+				conflict, err := deliveryPayloadExists(ctx, tx, id, eventID, summaryRaw, summaryID)
 				if err != nil {
 					return err
 				}
 				if conflict {
 					return errors.New("notification summary payload conflict")
 				}
-				_, e = tx.ExecContext(ctx, "UPDATE notification_deliveries SET payload_json=?,event_id=?,coalesced_count=?,attempts=0,last_error_code='',updated_at=? WHERE id=?", string(summaryRaw), n.EventID, total+1, now, summaryID)
+				_, e = tx.ExecContext(ctx, "UPDATE notification_deliveries SET payload_json=?,event_id=?,coalesced_count=?,attempts=0,last_error_code='',updated_at=? WHERE id=?", string(summaryRaw), eventID, total+1, now, summaryID)
 				if e != nil {
 					return e
 				}
@@ -115,7 +119,7 @@ func (s *Service) Enqueue(ctx context.Context, tx *storage.Tx, n alerts.Notifica
 		if e != nil {
 			return e
 		}
-		_, e = tx.ExecContext(ctx, `INSERT INTO notification_deliveries(id,channel_id,event_id,state,next_attempt_at,payload_json,created_at,updated_at) VALUES(?,?,?,'pending',?,?,?,?)`, deliveryID, id, n.EventID, now, string(raw), now, now)
+		_, e = tx.ExecContext(ctx, `INSERT INTO notification_deliveries(id,channel_id,event_id,state,next_attempt_at,payload_json,created_at,updated_at) VALUES(?,?,?,'pending',?,?,?,?)`, deliveryID, id, eventID, now, string(raw), now, now)
 		if e != nil {
 			return e
 		}

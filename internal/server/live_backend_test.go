@@ -17,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 	"orbitbeacon/internal/server/availability"
 	"orbitbeacon/internal/server/ingest"
+	"orbitbeacon/internal/server/services"
 )
 
 func liveTestGate(t *testing.T) (chan struct{}, func()) {
@@ -941,5 +942,35 @@ func TestPublicPagesEqualIncludesAvailability(t *testing.T) {
 	b.Nodes[0].Availability.StartDay = "2026-10-08"
 	if publicPagesEqual(a, b) {
 		t.Fatal("new UTC day omitted")
+	}
+}
+
+func TestPublicPagesEqualIncludesServices(t *testing.T) {
+	a := ingest.PublicPage{Services: []services.PublicService{{Name: "Health", Type: "http", Status: "up", Availability: make([]*float64, 30)}}}
+	b := ingest.PublicPage{Services: []services.PublicService{{Name: "Health", Type: "http", Status: "up", Availability: make([]*float64, 30)}}}
+	if !publicPagesEqual(a, b) {
+		t.Fatal("identical services differ")
+	}
+	a.GeneratedAt = time.Date(2026, 11, 11, 23, 59, 0, 0, time.UTC)
+	b.GeneratedAt = a.GeneratedAt.Add(time.Minute)
+	if publicPagesEqual(a, b) {
+		t.Fatal("service daily labels did not advance at UTC midnight")
+	}
+	b.GeneratedAt = a.GeneratedAt.Add(time.Second)
+	if !publicPagesEqual(a, b) {
+		t.Fatal("same-day transport time changed the service projection")
+	}
+	b.Services[0].Status = "down"
+	if publicPagesEqual(a, b) {
+		t.Fatal("status omitted")
+	}
+	b.Services[0].Status = "up"
+	b.Services[0].Availability[29] = new(99.0)
+	if publicPagesEqual(a, b) {
+		t.Fatal("service availability omitted")
+	}
+	b.Services = nil
+	if publicPagesEqual(a, b) {
+		t.Fatal("withdrawal omitted")
 	}
 }

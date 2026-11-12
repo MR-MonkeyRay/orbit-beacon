@@ -101,9 +101,11 @@ func toolFromResponse(t *testing.T, r map[string]json.RawMessage) toolResult {
 }
 func validArguments(name string) map[string]any {
 	switch name {
+	case "get_service_history":
+		return map[string]any{"id": testID, "range": "1h"}
 	case "get_node_history":
 		return map[string]any{"id": testID, "metric": "cpu_percent", "range": "1h"}
-	case "get_node", "get_node_latest", "get_node_availability", "get_node_traffic", "get_node_probes", "get_alert":
+	case "get_service", "get_node", "get_node_latest", "get_node_availability", "get_node_traffic", "get_node_probes", "get_alert":
 		return map[string]any{"id": testID}
 	default:
 		return map[string]any{}
@@ -159,7 +161,7 @@ func TestCompleteSessionWithMemoryPipes(t *testing.T) {
 	var list struct {
 		Tools []tool `json:"tools"`
 	}
-	if err := json.Unmarshal(listed["result"], &list); err != nil || len(list.Tools) != 11 {
+	if err := json.Unmarshal(listed["result"], &list); err != nil || len(list.Tools) != len(toolTable()) {
 		t.Fatal("tools/list mismatch")
 	}
 	reply := exchange(wire("tools/call", 3, map[string]any{"name": "list_nodes", "arguments": map[string]any{"limit": 2, "offset": 0}}))
@@ -178,7 +180,7 @@ func TestCompleteSessionWithMemoryPipes(t *testing.T) {
 }
 
 func TestToolTableMatchesReadOnlyOpenAPI(t *testing.T) {
-	expected := []string{"list_nodes", "get_node", "get_node_latest", "get_node_history", "get_node_availability", "get_node_traffic", "get_node_probes", "list_alerts", "get_alert_summary", "get_alert", "list_groups"}
+	expected := []string{"list_services", "get_service", "get_service_history", "list_nodes", "get_node", "get_node_latest", "get_node_history", "get_node_availability", "get_node_traffic", "get_node_probes", "list_alerts", "get_alert_summary", "get_alert", "list_groups"}
 	var names []string
 	actualPaths := map[string]bool{}
 	for _, tool := range toolTable() {

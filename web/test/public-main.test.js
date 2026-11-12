@@ -9,7 +9,7 @@ const loadRenderers = async () => ({
   ...await import('../themes/default/constellation.js'),
 });
 const payload = (name = 'edge', extra = {}) => ({
-  nodes: [{name, region: '', provider: '', status: 'online', last_seen: '2026-10-27T12:34:56Z',
+  services: [], nodes: [{name, region: '', provider: '', status: 'online', last_seen: '2026-10-27T12:34:56Z',
     availability: {start_day: '2026-09-28', percent: null, days: Array(30).fill(null)},
     cpu_percent: 25, memory_percent: null, load1: null, uptime_seconds: 3600,
     metric_status: {cpu_percent: 'ok', memory_percent: 'unavailable', load1: 'unavailable', uptime_seconds: 'ok'}}],
@@ -446,4 +446,14 @@ test('public search tolerates a fleet without selected region or provider fields
   const visible = ui.elements.nodes.querySelectorAll('.node').filter((card) => !card.hidden);
   assert.equal(visible.length, 1);
   assert.equal(visible[0].querySelector('h2').textContent, 'edge-12');
+});
+
+test('public services appear above the no-public-nodes message and live removal hides the section', async (t) => {
+  const ui = await setup(t); const socket = ui.sockets[0]; socket.open();
+  socket.message(snapshot(payload('none', {nodes: [], services: [{name: 'Health', type: 'http', status: 'up', latency_ms: 2, availability: Array(30).fill(100)}]})));
+  const section = ui.body.querySelector('.public-services');
+  assert.equal(section.hidden, false); assert.equal(ui.elements.empty.hidden, false);
+  assert.ok(ui.elements.emptyText?.textContent || ui.elements['empty-text'].textContent);
+  socket.message(snapshot(payload('none', {nodes: [], services: []})));
+  assert.equal(section.hidden, true);
 });

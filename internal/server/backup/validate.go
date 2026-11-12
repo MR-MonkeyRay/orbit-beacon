@@ -28,6 +28,7 @@ import (
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/notify"
 	"orbitbeacon/internal/server/secretbox"
+	"orbitbeacon/internal/server/services"
 	"orbitbeacon/internal/timekey"
 	"orbitbeacon/internal/uuid"
 )
@@ -40,6 +41,7 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 		return invalidPayload("category", "")
 	}
 	users := 0
+	serviceCount := 0
 	userIDs := make(map[string]bool)
 	var notificationBox, backupBox, accountBox *secretbox.Box
 	if category == Configuration {
@@ -119,6 +121,13 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 			if table.Name == "recovery_codes" && !userIDs[row.text("user_id")] {
 				rows.Close()
 				return invalidPayload(table.Name, "")
+			}
+			if table.Name == "services" {
+				serviceCount++
+				if serviceCount > 100 {
+					rows.Close()
+					return invalidPayload(table.Name, "")
+				}
 			}
 			if table.Name == "users" {
 				users++
@@ -412,6 +421,29 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 			expiry = &v
 		}
 		return (v1.ProbeResult{TLSExpiresAt: expiry, Target: r.text("target"), OK: r.integer("ok") == 1, LatencyMS: r.floatPointer("latency_ms"), Error: r.text("error"), StatusCode: code, CheckedAt: at}).Validate()
+	case "services":
+		if !uuid.ValidUUID(r.text("id")) || r.integer("enabled") < 0 || r.integer("enabled") > 1 || r.integer("public") < 0 || r.integer("public") > 1 || r.integer("notify") < 0 || r.integer("notify") > 1 {
+			return invalidRow()
+		}
+		return services.Validate(services.Service{Name: r.text("name"), Type: r.text("type"), Target: r.text("target"), IntervalSeconds: int(r.integer("interval_seconds")), TimeoutSeconds: int(r.integer("timeout_seconds")), DisplayOrder: int(r.integer("display_order")), LatencyThresholdMS: r.number("latency_threshold_ms")})
+	case "service_checks_latest":
+		var result services.Result
+		if !uuid.ValidUUID(r.text("service_id")) || objectJSON(r.text("result_json"), &result) != nil || services.ValidateResult(result) != nil {
+			return invalidRow()
+		}
+	case "service_check_buckets":
+		checks, successes := r.integer("checks"), r.integer("successes")
+		if !uuid.ValidUUID(r.text("service_id")) || r.integer("t") < 0 || r.integer("t")%300 != 0 || checks < 1 || successes < 0 || successes > checks {
+			return invalidRow()
+		}
+		for _, key := range []string{"latency_sum_ms", "latency_min_ms", "latency_max_ms"} {
+			if !finite(r.number(key)) || r.number(key) < 0 {
+				return invalidRow()
+			}
+		}
+		if r.number("latency_max_ms") < r.number("latency_min_ms") || r.number("latency_max_ms") > r.number("latency_sum_ms") {
+			return invalidRow()
+		}
 	case "probe_hourly":
 		at, err := timekey.Parse(r.text("hour"))
 		if err != nil || timekey.Format(at) != r.text("hour") || !at.Equal(at.Truncate(time.Hour)) || r.text("node_id") == "" || r.integer("checks") < 0 || r.integer("failures") < 0 || r.integer("failures") > r.integer("checks") || !finite(r.number("latency_sum_ms")) || r.number("latency_sum_ms") < 0 || !finite(r.number("latency_max_ms")) || r.number("latency_max_ms") < 0 || r.number("latency_max_ms") > 60000 || r.number("latency_max_ms") > r.number("latency_sum_ms") {
@@ -448,7 +480,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 		_, err := notify.ParsePayload([]byte(r.text("payload_json")))
 		return err
 	case "inbox_notifications":
-		if !oneOf(r.text("kind"), "task", "alert", "storage") || r.text("source_id") == "" || r.text("transition") == "" || inbox.ValidateDetails(r.text("kind"), json.RawMessage(r.text("details_json"))) != nil {
+		if !oneOf(r.text("kind"), "task", "alert", "storage", "service") || r.text("source_id") == "" || r.text("transition") == "" || inbox.ValidateDetails(r.text("kind"), json.RawMessage(r.text("details_json"))) != nil {
 			return invalidRow()
 		}
 	case "inbox_reads":

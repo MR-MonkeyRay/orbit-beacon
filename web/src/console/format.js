@@ -8,6 +8,7 @@ export const displayStatus = (node) => node.stopped ? 'stopped' : node.presence;
 export const STATUS_ORDER = ['online', 'offline', 'never', 'pending', 'disabled', 'stopped'];
 
 export const ACTIONS = {
+ 'service.create': t('audit.action.service.create'), 'service.update': t('audit.action.service.update'), 'service.delete': t('audit.action.service.delete'),
   'command.create': t('audit.commandCreate'), 'command.bulk': t('audit.commandBulk'),
   'command.succeeded': t('audit.commandSucceeded'),
   'command.failed': t('audit.commandFailed'), 'command.rejected': t('audit.commandRejected'),

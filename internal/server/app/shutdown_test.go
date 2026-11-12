@@ -145,3 +145,15 @@ func TestStalledHTTPDoesNotConsumeLaterDrainBudgets(t *testing.T) {
 		}
 	})
 }
+
+func TestShutdownWaitsForServiceFlushBeforeClosingOutbox(t *testing.T) {
+	trace := &shutdownTrace{}
+	app := shutdownApp(trace, false)
+	var background sync.WaitGroup
+	background.Add(1)
+	go func() { defer background.Done(); trace.add("service_flush") }()
+	app.shutdown(&background)
+	if slices.Index(trace.events, "service_flush") > slices.Index(trace.events, "notify_stopped") {
+		t.Fatalf("outbox closed before producer flush: %v", trace.events)
+	}
+}

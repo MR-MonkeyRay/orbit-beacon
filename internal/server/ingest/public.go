@@ -11,6 +11,7 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/availability"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/services"
 	"orbitbeacon/internal/server/storage"
 )
 
@@ -234,16 +235,18 @@ func (s *Service) ProjectPublicRecord(record nodes.PublicRecord, now time.Time) 
 
 // PublicPage 保持匿名响应的字段顺序与 null 语义。
 type PublicPage struct {
-	Nodes       []PublicNode `json:"nodes"`
-	HasMore     bool         `json:"has_more"`
-	NextOffset  *int         `json:"next_offset"`
-	GeneratedAt time.Time    `json:"generated_at"`
+	Services    []services.PublicService `json:"services"`
+	Nodes       []PublicNode             `json:"nodes"`
+	HasMore     bool                     `json:"has_more"`
+	NextOffset  *int                     `json:"next_offset"`
+	GeneratedAt time.Time                `json:"generated_at"`
 }
 
 const publicPageCacheLimit = 128
 
 type publicPageKey struct {
 	service       *nodes.Service
+	services      *services.Manager
 	limit, offset int
 	ttl           time.Duration
 }
@@ -267,7 +270,7 @@ type publicPageCache struct {
 
 // PublicPage 合并并发的缓存未命中，并限制缓存页数。可见性版本在查询前捕获：
 // 竞争的变更无法用新版本为旧数据背书。缓存期间的返回页面不可变。
-func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offset int, ttl time.Duration, clock func() time.Time) (PublicPage, error) {
+func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offset int, ttl time.Duration, clock func() time.Time, serviceSources ...*services.Manager) (PublicPage, error) {
 	lease, leaseErr := ns.Database().Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
 		return PublicPage{}, leaseErr
@@ -275,6 +278,9 @@ func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offs
 	defer lease.Close()
 	ctx = lease.Context()
 	key := publicPageKey{service: ns, limit: limit, offset: offset, ttl: ttl}
+	if len(serviceSources) > 0 {
+		key.services = serviceSources[0]
+	}
 	cache := &s.publicPages
 	for {
 		if err := ctx.Err(); err != nil {
@@ -310,7 +316,10 @@ func (s *Service) PublicPage(ctx context.Context, ns *nodes.Service, limit, offs
 		cache.mu.Unlock()
 
 		records, more, err := ns.ListPublicRecords(ctx, limit, offset, now)
-		page := PublicPage{Nodes: make([]PublicNode, 0, len(records)), HasMore: more, GeneratedAt: now}
+		page := PublicPage{Nodes: make([]PublicNode, 0, len(records)), Services: []services.PublicService{}, HasMore: more, GeneratedAt: now}
+		if err == nil && key.services != nil {
+			page.Services, err = key.services.PublicAt(ctx, now)
+		}
 		if more {
 			next := offset + len(records)
 			page.NextOffset = &next

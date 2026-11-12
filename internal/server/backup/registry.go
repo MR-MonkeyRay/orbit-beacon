@@ -71,6 +71,7 @@ var intentionallyExcluded = map[string]map[string]string{
 
 var categoryTables = map[Category][]tableSpec{
 	Configuration: {
+		table("services", "main", "", "id TEXT,name TEXT,type TEXT,target TEXT,interval_seconds INTEGER,timeout_seconds INTEGER,enabled INTEGER,public INTEGER,display_order INTEGER,notify INTEGER,latency_threshold_ms REAL,created_at TEXT,updated_at TEXT", "id"),
 		table("users", "main", "", "id TEXT,username TEXT,password_hash TEXT,created_at TEXT,must_change_password INTEGER,totp_ciphertext BLOB,totp_pending_ciphertext BLOB,totp_pending_at TEXT,totp_last_step INTEGER", "id"),
 		table("recovery_codes", "main", "", "user_id TEXT,code_hash BLOB", "user_id,code_hash"),
 		table("settings", "main", "key IN ('public_page_enabled','api_token_rate_limit_per_minute','storage_notifications')", "key TEXT,value TEXT", "key"),
@@ -84,6 +85,8 @@ var categoryTables = map[Category][]tableSpec{
 		table("backup_plans", "main", "", "id TEXT,name TEXT,enabled INTEGER,kind TEXT,categories_json TEXT,cron TEXT,destination_json TEXT,credentials_ciphertext BLOB,retain_count INTEGER,created_at TEXT,updated_at TEXT", "id"),
 	},
 	Monitoring: {
+		table("service_checks_latest", "main", "", "service_id TEXT,result_json TEXT", "service_id"),
+		table("service_check_buckets", "metrics", "", "service_id TEXT,t INTEGER,checks INTEGER,successes INTEGER,latency_sum_ms REAL,latency_min_ms REAL,latency_max_ms REAL", "service_id,t"),
 		table("node_observations", "main", "", "node_id TEXT,last_seen TEXT,system TEXT,remote_ip TEXT,geo_country TEXT,geo_location TEXT,geo_checked_at TEXT", "node_id"),
 		table("traffic_hourly", "main", "", "node_id TEXT,epoch TEXT,period_start TEXT,rx_bytes INTEGER,tx_bytes INTEGER,updated_at TEXT", "node_id,epoch,period_start"),
 		table("node_availability_daily", "main", "", "node_id TEXT,day TEXT,online_seconds INTEGER,offline_seconds INTEGER", "node_id,day"),

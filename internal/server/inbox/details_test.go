@@ -91,3 +91,15 @@ func TestInsertValidatesDetailsShapes(t *testing.T) {
 		})
 	}
 }
+
+func TestServiceDetailsValidateImmutableSnapshot(t *testing.T) {
+	valid := `{"id":"10000000-0000-4000-8000-000000000001","service_id":"10000000-0000-4000-8000-000000000002","name":"Health","target":"localhost:443","error":"timeout","transition":"down","latency_ms":null,"tls_expires_at":null,"occurred_at":"2026-11-11T12:00:00Z"}`
+	if e := inbox.ValidateDetails("service", json.RawMessage(valid)); e != nil {
+		t.Fatal(e)
+	}
+	for _, raw := range []string{`{}`, strings.Replace(valid, `"down"`, `"invalid"`, 1), strings.Replace(valid, `"latency_ms":null`, `"latency_ms":-1`, 1), strings.Replace(valid, `"tls_expires_at":null`, `"tls_expires_at":"invalid"`, 1), strings.Replace(valid, `"name":"Health"`, `"name":null`, 1)} {
+		if e := inbox.ValidateDetails("service", json.RawMessage(raw)); e == nil {
+			t.Fatalf("invalid service snapshot accepted: %s", raw)
+		}
+	}
+}

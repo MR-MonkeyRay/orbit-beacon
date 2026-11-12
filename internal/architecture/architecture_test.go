@@ -16,6 +16,16 @@ const modulePath = "orbitbeacon"
 // allowedInternalImports 是仓库刻意保持精简的依赖图。每个 internal 包都必须
 // 列出来，新包才无法悄悄绕过边界审查。
 var allowedInternalImports = map[string]map[string]bool{
+	"orbitbeacon/internal/server/services": {
+		"orbitbeacon/internal/server/storage":    true,
+		"orbitbeacon/internal/server/egress":     true,
+		"orbitbeacon/internal/server/inbox":      true,
+		"orbitbeacon/internal/server/audit":      true,
+		"orbitbeacon/internal/server/validation": true,
+		"orbitbeacon/internal/timekey":           true,
+		"orbitbeacon/internal/uuid":              true,
+		"orbitbeacon/internal/logging":           true,
+	},
 	"orbitbeacon/cmd/orbitbeacon-mcp": {
 		"orbitbeacon/internal/buildinfo": true,
 		"orbitbeacon/internal/uuid":      true,
@@ -77,6 +87,7 @@ var allowedInternalImports = map[string]map[string]bool{
 	"orbitbeacon/internal/timekey":     {},
 	"orbitbeacon/internal/buildinfo":   {},
 	"orbitbeacon/internal/server": {
+		"orbitbeacon/internal/server/services":     true,
 		"orbitbeacon/internal/server/egress":       true,
 		"orbitbeacon/internal/server/availability": true,
 		"orbitbeacon/internal/server/commands":     true,
@@ -129,6 +140,7 @@ var allowedInternalImports = map[string]map[string]bool{
 		"orbitbeacon/internal/timekey":           true,
 	},
 	"orbitbeacon/internal/server/backup": {
+		"orbitbeacon/internal/server/services":   true,
 		"orbitbeacon/internal/config":            true,
 		"orbitbeacon/internal/uuid":              true,
 		"orbitbeacon/internal/protocol/v1":       true,
@@ -183,6 +195,7 @@ var allowedInternalImports = map[string]map[string]bool{
 		"orbitbeacon/internal/timekey":        true,
 	},
 	"orbitbeacon/internal/server/ingest": {
+		"orbitbeacon/internal/server/services":     true,
 		"orbitbeacon/internal/server/storage":      true,
 		"orbitbeacon/internal/server/availability": true,
 		"orbitbeacon/internal/server/commands":     true,
@@ -216,6 +229,7 @@ var allowedInternalImports = map[string]map[string]bool{
 	},
 	"orbitbeacon/internal/server/secretbox": {},
 	"orbitbeacon/internal/server/notify": {
+		"orbitbeacon/internal/server/services":   true,
 		"orbitbeacon/internal/server/storage":    true,
 		"orbitbeacon/internal/logging":           true,
 		"orbitbeacon/internal/uuid":              true,

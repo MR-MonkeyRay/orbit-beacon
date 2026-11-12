@@ -50,14 +50,16 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
   const sourceName = (details) => details.destination?.plan_name || details.destination?.actor_name || (details.kind === 'backup_export' ? t('notifications.manualExport') : t('notifications.deletedPlan'));
   const notificationTitle = (notification) => {
     const details = notification.details || {};
+    if (notification.kind === 'service') return `${details.name || t('services.title')} · ${t(`services.event.${notification.transition}`)}`;
     return notification.kind === 'alert'
       ? t('notifications.alertSummary', {source: details.rule_name || t('notifications.alert'), state: stateLabel(notification.transition) || notification.transition})
       : t('notifications.taskSummary', {source: sourceName(details), state: stateLabel(details.state || notification.transition) || t('notifications.unknownState')});
   };
   const snapshot = (notification) => {
     const details = notification.details || {};
-    const rows = [[t('notifications.received'), when(notification.created_at)], [t('notifications.status'), stateLabel(notification.transition) || notification.transition]];
-    if (notification.kind === 'alert') rows.push(
+    const rows = [[t('notifications.received'), when(notification.created_at)], [t('notifications.status'), notification.kind === 'service' ? t(`services.event.${notification.transition}`) : stateLabel(notification.transition) || notification.transition]];
+    if (notification.kind === 'service') rows.push([t('services.name'), details.name], [t('services.target'), details.target], [t('notifications.failureCode'), details.error || null], [t('services.latency'), formatMetricValue('probe_latency_ms', details.latency_ms)], [t('services.certificateExpiry'), details.tls_expires_at ? when(details.tls_expires_at) : null]);
+    else if (notification.kind === 'alert') rows.push(
       [t('notifications.rule'), details.rule_name || details.rule_id], [t('notifications.node'), details.node_name || details.node_id],
       [t('notifications.metric'), metricLabel(details.metric)], [t('notifications.severity'), severityLabel(details.severity || notification.severity)],
       [t('notifications.value'), formatMetricValue(details.metric, details.value)], [t('notifications.started'), details.started_at ? when(details.started_at) : null],
@@ -122,7 +124,7 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
       const control = button('', {className: 'notification-row', onClick: () => showDetail(notification.id)});
       control.append(h('span', {class: 'notification-row-title'}, notificationTitle(notification)),
         h('span', {class: 'notification-row-meta'}, h('span', {class: notification.read ? 'notification-read' : 'notification-unread'}, notification.read ? t('notifications.read') : t('notifications.unread')), when(notification.created_at)),
-        notification.kind === 'alert' ? h('span', {class: 'notification-row-subject'}, notification.details?.node_name || notification.details?.node_id || t('notifications.unknownNode')) : h('span', {class: 'notification-row-subject'}, categories(notification.details?.categories)));
+        notification.kind === 'service' ? h('span', {class: 'notification-row-subject'}, notification.details?.target) : notification.kind === 'alert' ? h('span', {class: 'notification-row-subject'}, notification.details?.node_name || notification.details?.node_id || t('notifications.unknownNode')) : h('span', {class: 'notification-row-subject'}, categories(notification.details?.categories)));
       return control;
     };
     list.replaceChildren(...groupNotifications(entries).map((group) => {
@@ -240,6 +242,10 @@ export function createNotificationInbox({api, isActive, isStale, failureText, re
         } catch (error) { if (!current()) return; readStatus.textContent = t('notifications.readSaveFailed', {error: errorText(error)}); }
       }
       if (!current()) return;
+      if (notification.kind === 'service') {
+        source.replaceChildren(h('a', {class: 'btn', href: '/services', dataset: {link: ''}}, t('services.title')));
+        return;
+      }
       const task = notification.kind === 'task';
       try {
         const value = await api(`/${task ? 'tasks' : 'alerts'}/${encodeURIComponent(notification.source_id)}`, requestOptions(controller.signal));

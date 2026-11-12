@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strconv"
 	"time"
+
+	"orbitbeacon/internal/uuid"
 )
 
 // ValidateDetails 校验通知消费方使用的不可变快照格式，
@@ -18,6 +20,31 @@ func ValidateDetails(kind string, data json.RawMessage) error {
 		return ErrInvalidInput
 	}
 	switch kind {
+	case "service":
+		if len(fields) != 9 || !detailsStrings(fields, false, "id", "service_id", "name", "target", "error", "transition") || !detailsTimes(fields, false, "occurred_at") || !detailsTimes(fields, true, "tls_expires_at") {
+			return ErrInvalidInput
+		}
+
+		for _, name := range []string{"id", "service_id", "name", "target", "error", "transition", "occurred_at", "latency_ms", "tls_expires_at"} {
+			if _, present := fields[name]; !present {
+				return ErrInvalidInput
+			}
+		}
+		var event struct {
+			ID, Name, Target, Transition string
+			ServiceID                    string    `json:"service_id"`
+			LatencyMS                    *float64  `json:"latency_ms"`
+			OccurredAt                   time.Time `json:"occurred_at"`
+		}
+		if json.Unmarshal(data, &event) != nil || !uuid.ValidUUID(event.ID) || !uuid.ValidUUID(event.ServiceID) || event.Name == "" || event.Target == "" || event.OccurredAt.IsZero() || event.LatencyMS != nil && *event.LatencyMS < 0 {
+			return ErrInvalidInput
+		}
+		switch event.Transition {
+		case "down", "recovered", "latency_high", "latency_recovered", "certificate_expiring":
+		default:
+			return ErrInvalidInput
+		}
+
 	case "task":
 		if !detailsStrings(fields, false, "id", "kind", "state", "phase", "error_code", "warning_code") ||
 			!detailsStrings(fields, true, "plan_id", "actor_id", "artifact_name", "artifact_bytes", "artifact_sha256", "result_location") ||

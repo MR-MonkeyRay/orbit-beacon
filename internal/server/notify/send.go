@@ -19,11 +19,14 @@ import (
 	"unicode/utf8"
 
 	"orbitbeacon/internal/server/egress"
+	"orbitbeacon/internal/server/services"
 )
 
 const SendTimeout = 10 * time.Second
 
 type Payload struct {
+	Service *services.Event `json:"service,omitempty"`
+
 	EventID string `json:"event_id"`
 	State   string `json:"state"`
 	Rule    struct {
@@ -216,6 +219,31 @@ func networkFailure(e error) Result {
 	return failure("network_error", true)
 }
 func renderMessage(p Payload, template string, maxBytes int) string {
+	if p.Service != nil {
+		e := p.Service
+		text := fmt.Sprintf("OrbitBeacon service %s: %s\nTarget: %s\nError: %s", e.Transition, e.Name, e.Target, e.Error)
+		if template != "" {
+			snapshot := p
+			snapshot.Service = nil
+			text = renderMessage(snapshot, template, 0) + fmt.Sprintf("\nService: %s\nTarget: %s\nError: %s", e.Name, e.Target, e.Error)
+		} else if p.SummaryCount > 1 {
+			text = fmt.Sprintf("OrbitBeacon: %d service notifications coalesced.\n%s", p.SummaryCount, text)
+		}
+		if e.LatencyMS != nil {
+			text += fmt.Sprintf("\nLatency: %.2f ms", *e.LatencyMS)
+		}
+		if e.TLSExpiresAt != nil {
+			text += "\nCertificate expires: " + e.TLSExpiresAt.UTC().Format(time.RFC3339)
+		}
+		if maxBytes > 0 && len(text) > maxBytes {
+			end := maxBytes - len("…")
+			for end > 0 && !utf8.RuneStart(text[end]) {
+				end--
+			}
+			text = text[:end] + "…"
+		}
+		return text
+	}
 	value, resolved, target := "", "", ""
 	if p.Rule.Target != nil {
 		target = *p.Rule.Target

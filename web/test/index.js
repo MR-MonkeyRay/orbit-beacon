@@ -76,3 +76,4 @@ import './command-palette.test.js';
 import './console-mobile.test.js';
 
 import './tween.test.js';
+import './services.test.js';

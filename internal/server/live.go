@@ -234,9 +234,19 @@ func publicPagesEqual(a, b ingest.PublicPage) bool {
 	if a.HasMore != b.HasMore || !equalLiveValue(a.NextOffset, b.NextOffset) {
 		return false
 	}
+	// Service daily bars derive their date labels from the snapshot projection time.
+	if len(a.Services) > 0 && a.GeneratedAt.UTC().Format(time.DateOnly) != b.GeneratedAt.UTC().Format(time.DateOnly) {
+		return false
+	}
 	// Compare the effective projection, including disclosure changes, not private data.
-	left, le := json.Marshal(a.Nodes)
-	right, re := json.Marshal(b.Nodes)
+	left, le := json.Marshal(struct {
+		Nodes    []ingest.PublicNode
+		Services any
+	}{a.Nodes, a.Services})
+	right, re := json.Marshal(struct {
+		Nodes    []ingest.PublicNode
+		Services any
+	}{b.Nodes, b.Services})
 	return le == nil && re == nil && bytes.Equal(left, right)
 }
 

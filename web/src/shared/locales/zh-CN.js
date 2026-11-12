@@ -10,7 +10,10 @@ import account from './account.zh-CN.js';
 import audit from './audit.zh-CN.js';
 import notifications from './notifications.zh-CN.js';
 
+import services from './services.zh-CN.js';
+
 export default {
+ ...services,
   'fields.historyDiskMetric': '磁盘仅适用于磁盘和 inode 历史。',
   'fields.absoluteDiskPath': '请输入不含 NUL、最多 1024 字节的绝对路径。',
   'fields.queryOnce': '此参数只能提供一次。',

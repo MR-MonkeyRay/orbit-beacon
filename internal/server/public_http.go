@@ -21,7 +21,7 @@ func (h *handler) publicSnapshotVersion(ctx context.Context, limit, offset int) 
 			return ingest.PublicPage{}, 0, err
 		}
 		version := h.nodes.PublicVisibilityVersion()
-		page, err := h.ingest.PublicPage(ctx, h.nodes, limit, offset, h.liveInterval(), h.now)
+		page, err := h.ingest.PublicPage(ctx, h.nodes, limit, offset, h.liveInterval(), h.now, h.services)
 		if disabled := h.publicPageAccess(); disabled != nil {
 			return ingest.PublicPage{}, 0, disabled
 		}

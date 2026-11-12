@@ -14,6 +14,9 @@ type tokenHandler func(*handler, http.ResponseWriter, *http.Request, string)
 
 // 此表独立于管理路由；新管理接口默认不向 API 令牌开放。
 var tokenRoutes = map[string]tokenHandler{
+	"GET /api/v1/services":                (*handler).servicesRoute,
+	"GET /api/v1/services/{id}":           (*handler).servicesRoute,
+	"GET /api/v1/services/{id}/history":   (*handler).servicesRoute,
 	"GET /api/v1/nodes":                   (*handler).tokenNodes,
 	"GET /api/v1/nodes/{id}":              (*handler).tokenNode,
 	"GET /api/v1/nodes/{id}/latest":       (*handler).tokenLatest,

@@ -5,7 +5,7 @@ info:
   description: |
     定义管理、Agent 与匿名 API 的字段、认证和错误码；各端点说明各自的访问要求。
     info.version 是接口契约版本，独立于程序发布版本，仅随契约变更更新；说明文字修订不升版。
-    JSON 请求限单个对象、64 KiB；字符串长度按 UTF-8 字节计算。
+    JSON 请求限单个对象、64 KiB；除字段另有说明外，字符串长度按 UTF-8 字节计算。
     x-minLengthBytes / x-maxLengthBytes 为扩展，客户端须显式支持，服务端仍执行校验。
     使用与安全边界见[架构](../docs/architecture.md)、[部署](../deploy/README.md)、
     [Agent](../docs/agent.md)及[术语与约定](../docs/conventions.md)。
@@ -20,6 +20,124 @@ servers:
 security:
   - session: []
 paths:
+  /api/v1/services:
+    get:
+      operationId: listServices
+      x-read-only-token: true
+      description: 服务端执行的服务检查，最多 100 项，按 display_order 降序、名称、ID 排序。管理员或只读 API 令牌。
+      security: [{session: []}, {bearerAuth: []}]
+      responses:
+        '200':
+          description: 服务配置及最近检查。
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [services]
+                properties:
+                  services: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/Service'}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createService
+      description: 管理员创建服务；最多 100 项。服务端检查，内部地址可用，元数据端点始终拒绝。
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: '#/components/schemas/ServicePatch'}
+                - {required: [name, type, target]}
+      responses:
+        '201':
+          description: 已创建。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Service'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/services/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    get:
+      operationId: getService
+      x-read-only-token: true
+      description: 管理员或只读 API 令牌读取服务配置与检查结果。
+      security: [{session: []}, {bearerAuth: []}]
+      responses:
+        '200':
+          description: 服务。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Service'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: updateService
+      description: 管理员更新提供的字段。修改目标、类型、启用或延迟策略时重置状态。
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ServicePatch'}
+      responses:
+        '200':
+          description: 已更新。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Service'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteService
+      description: 管理员删除服务及最近检查；历史桶在 30 天保留期内清理。
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204': {description: 已删除。}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/services/{id}/history:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    get:
+      operationId: getServiceHistory
+      x-read-only-token: true
+      description: 管理员或只读 API 令牌读取样本可用率（成功检查数/检查数，不是时长）；无样本的桶为 null。1h/24h 使用 300 秒桶，7d 使用小时桶，30d 使用 UTC 日桶。边界包含与范围起点重叠的桶。
+      security: [{session: []}, {bearerAuth: []}]
+      parameters:
+        - name: range
+          in: query
+          required: true
+          schema: {type: string, enum: [1h, 24h, 7d, 30d]}
+      responses:
+        '200':
+          description: 桶序列。
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [range, step_seconds, buckets]
+                properties:
+                  range: {type: string, enum: [1h, 24h, 7d, 30d]}
+                  step_seconds: {type: integer, enum: [300, 3600, 86400]}
+                  buckets:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [time, availability, avg_latency_ms, max_latency_ms]
+                      properties:
+                        time: {type: string, format: date-time}
+                        availability: {type: [number, 'null'], minimum: 0, maximum: 100}
+                        avg_latency_ms: {type: [number, 'null'], minimum: 0}
+                        max_latency_ms: {type: [number, 'null'], minimum: 0}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/data-management:
     get:
       operationId: getDataManagement
@@ -3401,9 +3519,9 @@ components:
       required: [id, kind, source_id, transition, severity, created_at, details, read]
       properties:
         id: {type: string, format: uuid}
-        kind: {type: string, enum: [task, alert, storage]}
+        kind: {type: string, enum: [task, alert, storage, service]}
         source_id: {type: string, description: 来源任务、告警或本地控制事件的 UUID；可能已无法解析。}
-        transition: {type: string, enum: [succeeded, failed, firing, resolved, replica_unavailable, standby_activated, manual_required, recovery_failed, primary_restored]}
+        transition: {type: string, enum: [succeeded, failed, firing, resolved, replica_unavailable, standby_activated, manual_required, recovery_failed, primary_restored, down, recovered, latency_high, latency_recovered, certificate_expiring]}
         severity: {type: string}
         created_at: {type: string, format: date-time, description: '通知的实际创建时间，非告警条件的起始时间。'}
         details:
@@ -3412,6 +3530,7 @@ components:
             - $ref: '#/components/schemas/InboxRestoreInterruptedSnapshot'
             - $ref: '#/components/schemas/InboxAlertSnapshot'
             - $ref: '#/components/schemas/InboxStorageSnapshot'
+            - $ref: '#/components/schemas/ServiceEvent'
         read: {type: boolean, description: 仅针对已认证用户的已读标志。}
     InboxPage:
       type: object
@@ -4077,11 +4196,86 @@ components:
         - {$ref: '#/components/schemas/LiveHeartbeatFrame'}
         - {$ref: '#/components/schemas/LiveCloseFrame'}
         - {$ref: '#/components/schemas/LiveErrorFrame'}
+    ServicePatch:
+      type: object
+      additionalProperties: false
+      properties: &serviceConfigProperties
+        name: {type: string, minLength: 1, maxLength: 100, description: 按 Unicode 字符计数，不允许控制字符。}
+        type: {type: string, enum: [http, tcp, icmp]}
+        target: {type: string, maxLength: 2048, description: 'http: 无凭据/片段的绝对 http(s) URL；tcp: host:port（1–65535，IPv6 使用方括号）；icmp: 无端口的主机名或 IP。'}
+        interval_seconds: {type: integer, minimum: 30, maximum: 3600, default: 60}
+        timeout_seconds: {type: integer, minimum: 1, maximum: 30, default: 10, description: 必须小于 interval_seconds。}
+        enabled: {type: boolean, default: true}
+        public: {type: boolean, default: false}
+        notify: {type: boolean, default: false, description: 故障/恢复、连续三次高延迟及延迟恢复、14 天内到期证书（每天最多一次）写入站内通知并向所有启用通道投递。}
+        display_order: {type: integer, minimum: -1000000, maximum: 1000000, default: 0}
+        latency_threshold_ms: {type: number, minimum: 0, maximum: 3600000, default: 0, description: 0 关闭延迟通知。}
+    Service:
+      allOf:
+        - {type: object, properties: *serviceConfigProperties}
+        - type: object
+          required: [id, name, type, target, interval_seconds, timeout_seconds, enabled, public, notify, display_order, latency_threshold_ms, created_at, updated_at, latest, availability_24h]
+          properties:
+            id: {type: string, format: uuid}
+            created_at: {type: string, format: date-time}
+            updated_at: {type: string, format: date-time}
+            latest:
+              oneOf:
+                - {$ref: '#/components/schemas/ServiceResult'}
+                - {type: 'null'}
+            availability_24h: {type: [number, 'null'], minimum: 0, maximum: 100}
+    ServiceResult:
+      type: object
+      additionalProperties: false
+      required: [ok, status, latency_ms, error, status_code, packet_loss, tls_expires_at, checked_at, latency_high, consecutive_failures, consecutive_slow, certificate_notified_day]
+      properties:
+        ok: {type: boolean}
+        status: {type: string, enum: [up, down, unknown], description: 两次失败判定故障，一次成功恢复。首个失败前无成功时为 unknown。}
+        latency_ms: {type: [number, 'null'], minimum: 0, description: HTTP 到响应头、TCP 连接、ICMP 成功包平均 RTT。}
+        error: {type: string, enum: ['', permission_denied, unsupported, timeout, refused, dns, http_status, denied, error]}
+        status_code: {type: [integer, 'null'], minimum: 100, maximum: 599}
+        packet_loss: {type: [number, 'null'], minimum: 0, maximum: 100, description: ICMP 三个包的丢包百分比。}
+        tls_expires_at: {type: [string, 'null'], format: date-time}
+        checked_at: {type: string, format: date-time}
+        latency_high: {type: boolean}
+        consecutive_failures: {type: integer, minimum: 0, maximum: 2}
+        consecutive_slow: {type: integer, minimum: 0, maximum: 3}
+        certificate_notified_day: {type: string, description: 最近证书通知的 UTC 日期，或空字符串。}
+    ServiceEvent:
+      type: object
+      additionalProperties: false
+      required: [id, service_id, name, target, error, transition, latency_ms, tls_expires_at, occurred_at]
+      properties:
+        id: {type: string, format: uuid}
+        service_id: {type: string, format: uuid}
+        name: {type: string}
+        target: {type: string}
+        error: {type: string}
+        transition: {type: string, enum: [down, recovered, latency_high, latency_recovered, certificate_expiring]}
+        latency_ms: {type: [number, 'null']}
+        tls_expires_at: {type: [string, 'null'], format: date-time}
+        occurred_at: {type: string, format: date-time}
+    PublicService:
+      type: object
+      additionalProperties: false
+      required: [name, type, status, latency_ms, availability]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
+        type: {type: string, enum: [http, tcp, icmp]}
+        status: {type: string, enum: [up, down, unknown]}
+        latency_ms: {type: [number, 'null'], minimum: 0}
+        availability:
+          type: array
+          minItems: 30
+          maxItems: 30
+          description: 从 generated_at 的 UTC 日期前 29 天开始；无样本为 null。仅公开且启用的服务，绝不含目标或错误。
+          items: {type: [number, 'null'], minimum: 0, maximum: 100}
     PublicNodeList:
       type: object
       additionalProperties: false
-      required: [nodes, has_more, next_offset, generated_at]
+      required: [nodes, services, has_more, next_offset, generated_at]
       properties:
+        services: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/PublicService'}}
         nodes:
           type: array
           maxItems: 100

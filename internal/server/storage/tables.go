@@ -56,9 +56,12 @@ var mainTables = []TableSpec{
 	{ID: 28, Name: "inbox_reads", Columns: []ColumnSpec{{"user_id", Text, false}, {"notification_id", Text, false}, {"read_at", Text, false}}, PK: []string{"user_id", "notification_id"}, FK: []ForeignKeySpec{{"user_id", "users", "id", "CASCADE"}, {"notification_id", "inbox_notifications", "id", "CASCADE"}}},
 	{ID: 29, Name: "inbox_sequence", Columns: []ColumnSpec{{"id", Integer, false}, {"value", Integer, false}}, PK: []string{"id"}, FK: []ForeignKeySpec{}},
 	{ID: 30, Name: "node_deletions", Columns: []ColumnSpec{{"node_id", Text, false}, {"deleted_at", Text, false}}, PK: []string{"node_id"}, FK: []ForeignKeySpec{}},
+	{ID: 33, Name: "services", Columns: []ColumnSpec{{"id", Text, false}, {"name", Text, false}, {"type", Text, false}, {"target", Text, false}, {"interval_seconds", Integer, false}, {"timeout_seconds", Integer, false}, {"enabled", Integer, false}, {"public", Integer, false}, {"display_order", Integer, false}, {"notify", Integer, false}, {"latency_threshold_ms", Float, false}, {"created_at", Text, false}, {"updated_at", Text, false}}, PK: []string{"id"}, FK: []ForeignKeySpec{}},
+	{ID: 34, Name: "service_checks_latest", Columns: []ColumnSpec{{"service_id", Text, false}, {"result_json", Text, false}}, PK: []string{"service_id"}, FK: []ForeignKeySpec{{"service_id", "services", "id", "CASCADE"}}},
 }
 var historyTables = []TableSpec{
 	{ID: 32, Name: "buckets", Columns: []ColumnSpec{{"node_id", Text, false}, {"metric", Text, false}, {"step", Integer, false}, {"t", Integer, false}, {"total", Float, false}, {"peak", Float, false}, {"samples", Integer, false}}, PK: []string{"node_id", "metric", "step", "t"}, FK: []ForeignKeySpec{}},
+	{ID: 35, Name: "service_check_buckets", Columns: []ColumnSpec{{"service_id", Text, false}, {"t", Integer, false}, {"checks", Integer, false}, {"successes", Integer, false}, {"latency_sum_ms", Float, false}, {"latency_min_ms", Float, false}, {"latency_max_ms", Float, false}}, PK: []string{"service_id", "t"}, FK: []ForeignKeySpec{}},
 }
 
 func Tables(domain Domain) []TableSpec {

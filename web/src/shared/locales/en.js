@@ -10,7 +10,10 @@ import account from './account.en.js';
 import audit from './audit.en.js';
 import notifications from './notifications.en.js';
 
+import services from './services.en.js';
+
 export default {
+ ...services,
   'fields.historyDiskMetric': 'Disk is available for disk and inode history only.',
   'fields.absoluteDiskPath': 'Enter an absolute path of at most 1024 bytes without NUL.',
   'fields.queryOnce': 'Supply this parameter exactly once.',

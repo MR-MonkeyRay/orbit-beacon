@@ -8,6 +8,7 @@
 | Agent | Agent |
 | 控制台 | Console |
 | 节点 | Node |
+| 服务 | Service |
 | 状态页 | Status page |
 | 密钥 / 注册 | Key / Enroll |
 | 节点凭据 | Node credential |
