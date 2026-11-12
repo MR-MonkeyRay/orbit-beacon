@@ -17,7 +17,7 @@ const ERRORS = {
 const HISTORY_RANGES = ['24h', '7d'];
 
 export function probeErrorText(error) {
-  if (!error) return '';
+  if (!error || error === 'pending') return '';
   if (error === 'http_status') return t('nodes.probe.http');
   return ERRORS[error] || t('nodes.probe.error');
 }

@@ -13,8 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"orbitbeacon/internal/agent/collect"
-	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/enrollment"
 	"orbitbeacon/internal/server/nodes"
@@ -88,9 +86,11 @@ func coalesceReport(now time.Time, targets ...string) v1.Report {
 	source := m.Sources["cpu"]
 	source.MeasurementWindowMS = &window
 	m.Sources["cpu"] = source
-	report := v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "session", Seq: 1, SampledAt: now, Runtime: v1.DefaultRuntimeSettings(), System: &v1.System{Hostname: "host", OS: "linux", Arch: "amd64"}, Metrics: m, Traffic: []v1.Traffic{}}
+	report := v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "session", Seq: 1, SampledAt: now, System: &v1.System{Hostname: "host", OS: "linux", Arch: "amd64"}, Metrics: m, Traffic: []v1.Traffic{}}
 	if len(targets) != 0 {
-		report.Runtime.ProbeTargets = targets
+		for _, target := range targets {
+			report.ProbeResults = append(report.ProbeResults, v1.ProbeResult{Target: target, Error: "pending"})
+		}
 	}
 	return report
 }
@@ -117,7 +117,7 @@ func TestCoalesceDurabilityConditions(t *testing.T) {
 		{"restart", func(t *testing.T, f *coalesceFixture) {
 			f.service = NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }})
 		}, true},
-		{"runtime changed", func(t *testing.T, f *coalesceFixture) { f.report.Runtime.ReportIntervalSeconds = 5 }, true},
+		{"disabled metric", func(t *testing.T, f *coalesceFixture) { f.report.Metrics.MetricStatus["disk"] = "disabled" }, false},
 		{"interval boundary", func(t *testing.T, f *coalesceFixture) { f.now = f.now.Add(time.Second) }, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -144,23 +144,23 @@ func TestCoalesceDurabilityConditions(t *testing.T) {
 	}
 }
 
-func TestCoalesceRuntimeChangeAndDuplicate(t *testing.T) {
+func TestCoalesceSystemChangeAndDuplicate(t *testing.T) {
 	f := newCoalesceFixture(t, 0)
 	ctx := context.Background()
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
-	f.report.Runtime.ReportIntervalSeconds = 5
+	f.report.System.Hostname = "changed"
 	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
 	f.now = f.now.Add(time.Second)
 	f.report.Seq++
-	f.report.Runtime.ReportIntervalSeconds = 10
+	f.report.System.Hostname = "host"
 	if _, err := acceptReport(ctx, f.service, coalesceToken, f.report); err != nil {
 		t.Fatal(err)
 	}
 	if f.writes(t) != 3 {
-		t.Fatal("runtime changes did not persist")
+		t.Fatal("system changes did not persist")
 	}
 	latest, err := f.service.Latest(ctx, f.id)
 	if err != nil {
@@ -527,7 +527,6 @@ func TestFreshCredentialEpochRejectsQueuedExactABA(t *testing.T) {
 	// A/0/'' 都是确切的持久化身份。
 	f.service = NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }})
 	target := "tcp://queued-identity.test:443"
-	f.report.Runtime.ProbeTargets = []string{target}
 	f.report.ProbeResults = []v1.ProbeResult{probeResult(target, f.now, true)}
 	f.report.Traffic = []v1.Traffic{trafficEntry("a", f.now, "100", "200")}
 	f.report.System.Hostname = "queued-old-host"
@@ -563,13 +562,13 @@ func TestFreshCredentialEpochRejectsQueuedExactABA(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("queued report did not finish")
 	}
-	var runtime, system, generation, session string
+	var system, generation, session string
 	var seen sql.NullString
-	if err := f.db.QueryRow(`SELECT agent_runtime,system,last_seen,run_generation,report_session_id FROM nodes WHERE id=?`, f.id).Scan(&runtime, &system, &seen, &generation, &session); err != nil {
+	if err := f.db.QueryRow(`SELECT system,last_seen,run_generation,report_session_id FROM nodes WHERE id=?`, f.id).Scan(&system, &seen, &generation, &session); err != nil {
 		t.Fatal(err)
 	}
-	if runtime != "" || seen.Valid || generation != "0" || session != "" || system != `{"hostname":"enrolled","os":"linux","arch":"amd64"}` {
-		t.Fatalf("queued report resurrected identity: runtime=%q system=%q seen=%v run=%s/%q", runtime, system, seen, generation, session)
+	if seen.Valid || generation != "0" || session != "" || system != `{"hostname":"enrolled","os":"linux","arch":"amd64"}` {
+		t.Fatalf("queued report resurrected identity: system=%q seen=%v run=%s/%q", system, seen, generation, session)
 	}
 	for _, table := range []string{"probe_latest", "probe_hourly", "traffic_hourly", "traffic_daily"} {
 		var count int
@@ -584,7 +583,6 @@ func TestFreshCredentialEpochRejectsQueuedExactABA(t *testing.T) {
 	// 被拒绝的报告及其待处理计数都不得产生 ACK。
 	f.report.Traffic = nil
 	f.report.ProbeResults = nil
-	f.report.Runtime.ProbeTargets = nil
 	f.report.System.Hostname = "fresh-host"
 	response, err := acceptReport(ctx, f.service, coalesceToken, f.report)
 	if err != nil || response.AcceptedSeq != 1 || len(response.TrafficAcks) != 0 {
@@ -693,31 +691,7 @@ func TestCoalesceCanceledSameNodeWaiterDoesNotBlockShutdown(t *testing.T) {
 	}
 }
 
-func TestTypedRuntimeSelectionsStayCanonicalWithoutAnotherDurableWrite(t *testing.T) {
-	f := newCoalesceFixture(t, 30*time.Second)
-	f.now = f.now.Add(time.Second)
-	f.report.Seq++
-	f.report.Runtime.Interfaces = nil
-	f.report.Runtime.DiskPaths = nil
-	f.report.Runtime.ProbeTargets = nil
-	if _, err := f.service.accept(context.Background(), f.id, nil, 0, f.report); err != nil {
-		t.Fatal(err)
-	}
-	latest, err := f.service.Latest(context.Background(), f.id)
-	if err != nil || latest.Runtime.Interfaces == nil || latest.Runtime.DiskPaths == nil || latest.Runtime.ProbeTargets == nil {
-		t.Fatalf("latest runtime=%+v err=%v", latest.Runtime, err)
-	}
-	observed, err := f.nodes.GetRuntime(context.Background(), f.id)
-	if err != nil || observed == nil || observed.Interfaces == nil || observed.DiskPaths == nil || observed.ProbeTargets == nil {
-		t.Fatalf("observed runtime=%+v err=%v", observed, err)
-	}
-	if f.writes(t) != 1 {
-		t.Fatal("equivalent empty runtime selections caused another durable write")
-	}
-}
-
-// holdWriter 以持久化报告的方式占用写入准入：它被 Shutdown 跟踪，
-// 并预留一个写入槽。
+// holdWriter 预留写入槽并让 Shutdown 跟踪该任务。
 func holdWriter(ctx context.Context, s *Service) (func(), error) {
 	finish, err := s.beginUse(ctx)
 	if err != nil {
@@ -745,75 +719,6 @@ func publicNode(ctx context.Context, ns *nodes.Service, s *Service, id string, n
 		}
 	}
 	return PublicNode{}, nodes.ErrNotFound
-}
-
-func TestNormalizedCapabilitiesAvoidExtraDurableWrite(t *testing.T) {
-	f := newCoalesceFixture(t, time.Hour)
-	policy := config.InstallPolicy{ServerURL: "https://example.test", StateDir: t.TempDir(), InstallMode: "native"}
-	load := func(commands, features string) config.Agent {
-		cfg, err := config.LoadAgent(config.LoadOptions{LookupEnv: func(key string) (string, bool) {
-			switch key {
-			case "ORBITBEACON_REMOTE_COMMANDS":
-				return commands, true
-			case "ORBITBEACON_DISABLED_FEATURES":
-				return features, true
-			}
-			return "", false
-		}}, &policy)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return cfg
-	}
-	first := load(`["stop","restart","upgrade"]`, `["probes","network","disk"]`)
-	f.report.Runtime = first.RuntimeSettings
-	f.report.Seq++
-	f.now = f.now.Add(time.Second)
-	if _, err := acceptReport(t.Context(), f.service, coalesceToken, f.report); err != nil {
-		t.Fatal(err)
-	}
-	writes := f.writes(t)
-	second := load(`["upgrade","restart","stop"]`, `["disk","network","traffic","probes"]`)
-	f.report.Runtime = second.RuntimeSettings
-	f.report.Seq++
-	f.now = f.now.Add(time.Second)
-	if _, err := acceptReport(t.Context(), f.service, coalesceToken, f.report); err != nil {
-		t.Fatal(err)
-	}
-	if f.writes(t) != writes {
-		t.Fatal("reordered capabilities caused durable write")
-	}
-	latest, err := f.service.Latest(t.Context(), f.id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !latest.Runtime.Equal(second.RuntimeSettings) || len(latest.Metrics.Disks) != 0 || len(latest.Metrics.Networks) != 0 || len(latest.Traffic) != 0 {
-		t.Fatalf("empty disabled series rejected: %+v", latest)
-	}
-}
-
-func TestNormalizeCapabilityNilSlicesAsEmptyObservations(t *testing.T) {
-	settings := v1.DefaultRuntimeSettings()
-	c, err := collect.New(collect.Options{Config: settings})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	metrics, _ := c.Collect(ctx)
-	report := v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "normalize", Seq: 1, SampledAt: time.Now().UTC(), Runtime: settings, Metrics: metrics, Traffic: []v1.Traffic{}}
-	report.Runtime.RemoteCommands = nil
-	report.Runtime.DisabledFeatures = nil
-	normalized, err := normalizeReport(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if normalized.Runtime.RemoteCommands == nil || normalized.Runtime.DisabledFeatures == nil {
-		t.Fatal("nil capabilities leaked into stored observation")
-	}
-	if len(normalized.Runtime.RemoteCommands) != 0 || len(normalized.Runtime.DisabledFeatures) != 0 {
-		t.Fatal("observation received defaults")
-	}
 }
 
 var fixtureDatabases sync.Map

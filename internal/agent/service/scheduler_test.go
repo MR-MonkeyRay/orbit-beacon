@@ -12,6 +12,7 @@ import (
 
 	"orbitbeacon/internal/agent/identity"
 	"orbitbeacon/internal/agent/service"
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -90,7 +91,7 @@ func TestSchedulerKeepsCollectingWithOneInFlightAndLatestOnlyNotification(t *tes
 		release := make(chan struct{})
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
+		scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() config.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 			Collect: func(ctx context.Context) (v1.Metrics, error) {
 				active := activeCollections.Add(1)
 				if active > maxCollections.Load() {
@@ -168,7 +169,7 @@ func TestSchedulerNetworkBackoffDoesNotPauseCollection(t *testing.T) {
 		var generations []uint64
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
+		scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() config.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 			Collect: func(context.Context) (v1.Metrics, error) { collections.Add(1); return schedulerMetrics(), nil },
 			Report: func(_ context.Context, report v1.Report) (v1.ReportResponse, error) {
 				times = append(times, time.Now())

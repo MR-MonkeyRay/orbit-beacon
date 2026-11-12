@@ -108,7 +108,7 @@ func TestQuotaDisabledFeaturesNeedFreshEvidenceToResolve(t *testing.T) {
 		t.Run(feature, func(t *testing.T) {
 			f, _, _, _ := quotaFixture(t, 0)
 			f.tick(t)
-			f.latest.report.Runtime.DisabledFeatures = []string{feature}
+			f.latest.report.Metrics.MetricStatus = map[string]string{"traffic": "disabled"}
 			f.latest.report.ReceivedAt = f.now.Add(-time.Hour)
 			f.tick(t)
 			if len(f.events(t, "firing")) != 1 {

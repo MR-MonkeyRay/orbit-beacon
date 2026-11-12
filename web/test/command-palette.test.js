@@ -309,7 +309,7 @@ test('new-node View node link navigates to the overview without the post-dialog 
   const node = {id, name: 'New Host', notes: '', region: '', provider: '', group_id: null, tags: [], created_at: '2026-11-09T00:00:00Z',
     status: 'online', presence: 'online', stopped: false, last_seen: '2026-11-09T00:00:00Z', agent_version: '1.2.3'};
   const snapshot = (data) => socket.dispatchEvent(Object.assign(new Event('message'), {data: JSON.stringify({type: 'snapshot', server_time: '2026-11-09T00:00:00Z', update_interval_seconds: 10,
-    data: {node: data, latest: null, runtime: null}})}));
+    data: {node: data, latest: null}})}));
   // 新建节点先以 pending 出现，Agent 上报后才视为成功。
   snapshot({...node, status: 'pending', presence: 'pending', last_seen: null, agent_version: ''}); await flush();
   snapshot(node); await flush();

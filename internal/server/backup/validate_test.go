@@ -128,7 +128,7 @@ func TestPayloadMonitoringRejectsMalformedJSON(t *testing.T) {
 	db := validationDB(t, Monitoring)
 	for _, system := range []string{"{", "null", `{"hostname":42}`} {
 		db.Exec("DELETE FROM node_observations")
-		if _, err := db.Exec("INSERT INTO node_observations(node_id,last_seen,system,agent_runtime) VALUES(?,NULL,?,'')", validationID, system); err != nil {
+		if _, err := db.Exec("INSERT INTO node_observations(node_id,last_seen,system) VALUES(?,NULL,?)", validationID, system); err != nil {
 			t.Fatal(err)
 		}
 		if err := ValidatePayloadData(context.Background(), db, Monitoring, nil); err == nil {
@@ -312,36 +312,6 @@ func TestPayloadScheduleWeekdayAndWildcardSemantics(t *testing.T) {
 		}
 		if got := schedule.Next(now).Format(time.RFC3339); got != tc.want {
 			t.Fatalf("%s: %s != %s", tc.expression, got, tc.want)
-		}
-	}
-}
-
-func TestPayloadObservationRuntimeValidation(t *testing.T) {
-	db := validationDB(t, Monitoring)
-	for _, raw := range []string{"", `{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]}`, `{"report_interval_seconds":5,"disk_interval_seconds":3600,"interfaces":["eth0"],"disk_paths":["/srv/data"],"probe_targets":["https://example.com/health"]}`} {
-		if _, err := db.Exec("DELETE FROM node_observations"); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.Exec("INSERT INTO node_observations(node_id,last_seen,system,agent_runtime) VALUES(?,NULL,'{}',?)", validationID, raw); err != nil {
-			t.Fatal(err)
-		}
-		if err := ValidatePayloadData(context.Background(), db, Monitoring, nil); err != nil {
-			t.Fatalf("valid runtime %q rejected: %v", raw, err)
-		}
-	}
-	for _, raw := range []string{
-		`{`, `null`, `{}`, `[]`,
-		`{"report_interval_seconds":1,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[]}`,
-		`{"report_interval_seconds":10,"disk_interval_seconds":59,"interfaces":[],"disk_paths":[],"probe_targets":[]}`,
-		`{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[1],"disk_paths":[],"probe_targets":[]}`,
-		`{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":["relative"],"probe_targets":[]}`,
-		`{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":["ftp://example.com"]}`,
-	} {
-		if _, err := db.Exec("UPDATE node_observations SET agent_runtime=?", raw); err != nil {
-			t.Fatal(err)
-		}
-		if err := ValidatePayloadData(context.Background(), db, Monitoring, nil); err == nil {
-			t.Fatalf("accepted invalid runtime %q", raw)
 		}
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"math"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +34,7 @@ func assertJSONRoundTrip(t *testing.T, input string, dst any) {
 
 const reportJSON = `{
  "protocol_version":1,"run_generation":7,"session_id":"run-seven","seq":9,
- "sampled_at":"2026-10-26T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":["eth0"],"disk_paths":["/"],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]},
+ "sampled_at":"2026-10-26T12:00:00Z",
  "system":{"hostname":"same-hostname","os":"linux","arch":"amd64"},
  "metrics":{"disk_io":null,"pressure":null,"temperature_celsius":null,
   "cpu_percent":null,"load1":0.5,"load5":1.25,"load15":2,
@@ -227,26 +226,6 @@ func TestValidateProbeTarget(t *testing.T) {
 	}
 }
 
-func TestRuntimeSettingsProbeTargetValidation(t *testing.T) {
-	valid := v1.RuntimeSettings{
-		ReportIntervalSeconds: 30, DiskIntervalSeconds: 60,
-		ProbeTargets: []string{"tcp://db:5432", "https://example.com/health"},
-	}
-	if err := valid.Validate(); err != nil {
-		t.Fatalf("valid probe targets rejected: %v", err)
-	}
-	duplicate := valid
-	duplicate.ProbeTargets = []string{"tcp://db:5432", "tcp://db:5432"}
-	if err := duplicate.Validate(); err == nil {
-		t.Fatal("duplicate probe targets accepted")
-	}
-	tooMany := valid
-	tooMany.ProbeTargets = []string{"icmp://host0", "icmp://host1", "icmp://host2", "icmp://host3", "icmp://host4", "icmp://host5"}
-	if err := tooMany.Validate(); err == nil {
-		t.Fatal("too many probe targets accepted")
-	}
-}
-
 func TestReportProbeResultValidation(t *testing.T) {
 	var report v1.Report
 	if err := json.Unmarshal([]byte(reportJSON), &report); err != nil {
@@ -258,7 +237,6 @@ func TestReportProbeResultValidation(t *testing.T) {
 		CheckedAt: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC),
 	}
 	report.ProbeResults = []v1.ProbeResult{valid}
-	report.Runtime.ProbeTargets = []string{valid.Target}
 	if err := report.Validate(); err != nil {
 		t.Fatalf("valid probe result rejected: %v", err)
 	}
@@ -343,44 +321,6 @@ func TestMetricStatusesAndMonotonicFreshness(t *testing.T) {
 		if got := source.Fresh(); got != tt.fresh {
 			t.Errorf("interval=%d age=%d fresh=%v, want %v", tt.interval, tt.age, got, tt.fresh)
 		}
-	}
-}
-
-func TestSelectionRejectsAggregateReportExpansion(t *testing.T) {
-	for _, character := range []string{"<", "&", "\x01", "\u2028", "\\"} {
-		t.Run(character, func(t *testing.T) {
-			paths := make([]string, 8)
-			interfaces := make([]string, 8)
-			for i := range paths {
-				paths[i] = "/" + strings.Repeat(character, (1020/len(character))) + string(rune('a'+i))
-				interfaces[i] = strings.Repeat("<", 254) + string(rune('a'+i))
-			}
-			if err := (v1.RuntimeSettings{DiskPaths: paths, Interfaces: interfaces}).ValidateSelection(); err == nil {
-				t.Fatal("selection can expand beyond the report budget")
-			}
-		})
-	}
-	paths, interfaces := make([]string, 8), make([]string, 8)
-	for i := range paths {
-		paths[i] = "/" + strings.Repeat("a", 1022) + string(rune('a'+i))
-		interfaces[i] = strings.Repeat("a", 254) + string(rune('a'+i))
-	}
-	if err := (v1.RuntimeSettings{DiskPaths: paths, Interfaces: interfaces}).ValidateSelection(); err != nil {
-		t.Fatalf("ordinary maximum-length selections rejected: %v", err)
-	}
-	probes := make([]string, 5)
-	for i := range probes {
-		suffix := "?id=" + strconv.Itoa(i)
-		probes[i] = "https://example.com/" + strings.Repeat("<", 1024-len("https://example.com/")-len(suffix)) + suffix
-	}
-	if err := (v1.RuntimeSettings{DiskPaths: paths, Interfaces: interfaces, ProbeTargets: probes}).ValidateSelection(); err == nil {
-		t.Fatal("probe results can expand beyond the report budget")
-	}
-	probeHeavy := v1.RuntimeSettings{DiskPaths: paths, ProbeTargets: probes}
-	if err := probeHeavy.ValidateSelection(); err == nil {
-		t.Fatal("probe target expansion alone can exceed the report budget")
-	} else if validation, ok := err.(*v1.ValidationError); !ok || validation.Fields["probe_targets"] == "" {
-		t.Fatalf("probe target budget error missing probe_targets field: %v", err)
 	}
 }
 

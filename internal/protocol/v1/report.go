@@ -1,11 +1,12 @@
 package v1
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 )
+
+const MaxProbeTargets = 5
 
 type Report struct {
 	CommandResults  []CommandResult `json:"command_results,omitzero"`
@@ -14,26 +15,10 @@ type Report struct {
 	SessionID       string          `json:"session_id"`
 	Seq             uint64          `json:"seq"`
 	SampledAt       time.Time       `json:"sampled_at"`
-	Runtime         RuntimeSettings `json:"runtime"`
 	System          *System         `json:"system,omitempty"`
 	Metrics         Metrics         `json:"metrics"`
 	Traffic         []Traffic       `json:"traffic"`
 	ProbeResults    []ProbeResult   `json:"probe_results,omitzero"`
-}
-
-// UnmarshalJSON 强制上报包含完整的运行时观测，且不会把本地配置默认值或
-// 部分本地 JSON 纳入上报契约。
-func (r *Report) UnmarshalJSON(data []byte) error {
-	type report Report
-	var decoded report
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-	if decoded.Runtime.Interfaces == nil || decoded.Runtime.DiskPaths == nil || decoded.Runtime.ProbeTargets == nil || decoded.Runtime.RemoteCommands == nil || decoded.Runtime.DisabledFeatures == nil {
-		return errors.New("report runtime requires non-null selection arrays")
-	}
-	*r = Report(decoded)
-	return nil
 }
 
 func (r Report) Validate() error {
@@ -47,9 +32,6 @@ func (r Report) Validate() error {
 		if err := r.System.Validate(); err != nil {
 			return err
 		}
-	}
-	if err := r.Runtime.Validate(); err != nil {
-		return err
 	}
 	if err := r.Metrics.Validate(); err != nil {
 		return err
@@ -82,23 +64,13 @@ func (r Report) Validate() error {
 			return err
 		}
 	}
-	if len(r.ProbeResults) > 5 {
+	if len(r.ProbeResults) > MaxProbeTargets {
 		return errors.New("too many probe results")
 	}
 	probeTargets := make(map[string]struct{}, len(r.ProbeResults))
 	for _, result := range r.ProbeResults {
 		if err := result.Validate(); err != nil {
 			return err
-		}
-		configured := false
-		for _, target := range r.Runtime.ProbeTargets {
-			if target == result.Target {
-				configured = true
-				break
-			}
-		}
-		if !configured {
-			return errors.New("probe result target is not configured in report runtime")
 		}
 		if _, exists := probeTargets[result.Target]; exists {
 			return errors.New("duplicate probe result target")

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/agent/identity"
+	"orbitbeacon/internal/config"
 	oblogging "orbitbeacon/internal/logging"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
@@ -36,7 +37,7 @@ type SchedulerOptions struct {
 	Identity              *identity.Store
 	// RuntimeSettings 返回不可变快照；只有 ReloadConfig 可在采集循环中
 	// 同步发布新的配置快照。
-	RuntimeSettings func() v1.RuntimeSettings
+	RuntimeSettings func() config.RuntimeSettings
 	Reload          <-chan struct{}
 	// ConfigRevision 包含不会出现在上报中的本地配置变化。
 	ConfigRevision func() uint64
@@ -54,7 +55,8 @@ type Scheduler struct {
 	credentialsInvalid atomic.Bool
 	mu                 sync.Mutex
 	latest             v1.Report
-	commandSettings    v1.RuntimeSettings
+	latestSettings     config.RuntimeSettings
+	commandSettings    config.RuntimeSettings
 	collectNow         chan struct{}
 	stopping           atomic.Bool
 }
@@ -163,9 +165,10 @@ func (s *Scheduler) Run(ctx context.Context) (runErr error) {
 				}
 			}
 			seq++
-			snapshot := v1.Report{ProtocolVersion: 1, RunGeneration: state.RunGeneration, SessionID: state.SessionID, Seq: seq, SampledAt: time.Now().UTC(), Runtime: settings, System: s.options.System, Metrics: metrics, Traffic: []v1.Traffic{}}
+			snapshot := v1.Report{ProtocolVersion: 1, RunGeneration: state.RunGeneration, SessionID: state.SessionID, Seq: seq, SampledAt: time.Now().UTC(), System: s.options.System, Metrics: metrics, Traffic: []v1.Traffic{}}
 			s.mu.Lock()
 			s.latest = snapshot
+			s.latestSettings = settings
 			s.mu.Unlock()
 			select {
 			case notify <- struct{}{}:
@@ -220,6 +223,7 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 	var stopID string
 	var stopSampleSeq uint64
 	var stopReport *v1.Report
+	var stopSettings config.RuntimeSettings
 	canceled := func() error {
 		if stopping && parent.Err() == nil {
 			return &ExitError{Code: 0}
@@ -251,24 +255,27 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 			}
 			s.mu.Lock()
 			report := s.latest
+			settings := s.latestSettings
 			s.mu.Unlock()
 			if stopping && report.Seq > stopSampleSeq {
 				if stopReport == nil {
 					snapshot := report
 					stopReport = &snapshot
+					stopSettings = settings
 				}
 				// An in-flight collection can publish after stop starts. Retrying
 				// one snapshot keeps a lost response from advancing last_seen.
 				report = *stopReport
+				settings = stopSettings
 			}
 			if report.Seq <= sent && !(stopping && s.options.Commands != nil && len(s.options.Commands.state.Pending) > 0) {
 				break
 			}
-			if s.options.Traffic != nil && !report.Runtime.FeatureDisabled(v1.FeatureTraffic) {
+			if s.options.Traffic != nil && !settings.FeatureDisabled(v1.FeatureTraffic) {
 				report.Traffic = s.options.Traffic.Entries()
 			}
-			if s.options.Probes != nil && !report.Runtime.FeatureDisabled(v1.FeatureProbes) {
-				report.ProbeResults = s.options.Probes.Results(report.Runtime.ProbeTargets)
+			if s.options.Probes != nil && !settings.FeatureDisabled(v1.FeatureProbes) {
+				report.ProbeResults = s.options.Probes.Results(settings.ProbeTargets)
 			}
 			if s.options.Commands != nil {
 				report.CommandResults = s.options.Commands.results()

@@ -15,11 +15,11 @@ import (
 	"time"
 
 	"orbitbeacon/internal/agent/collect"
-	v1 "orbitbeacon/internal/protocol/v1"
+	"orbitbeacon/internal/config"
 )
 
-func linuxConfig() v1.RuntimeSettings {
-	return v1.RuntimeSettings{ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{"/"}, Interfaces: []string{"lo"}, ProbeTargets: []string{}}
+func linuxConfig() config.RuntimeSettings {
+	return config.RuntimeSettings{ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{"/"}, Interfaces: []string{"lo"}, ProbeTargets: []string{}}
 }
 
 func meminfo(t *testing.T) map[string]uint64 {

@@ -15,12 +15,13 @@ import (
 
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/sensors"
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
 func hostCollector(t *testing.T, options Options) *Collector {
 	t.Helper()
-	options.Config = v1.DefaultRuntimeSettings()
+	options.Config = config.DefaultRuntimeSettings()
 	c, err := New(options)
 	if err != nil {
 		t.Fatal(err)
@@ -287,12 +288,12 @@ func TestTemperatureToggleRejectsOldPendingResult(t *testing.T) {
 	}})
 	c.collectTemperature(context.Background(), &v1.Metrics{})
 	job := c.temperaturePending
-	cfg := v1.DefaultRuntimeSettings()
+	cfg := config.DefaultRuntimeSettings()
 	cfg.DisabledFeatures = []string{v1.FeatureTemperature}
 	if err := c.SetConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.SetConfig(v1.DefaultRuntimeSettings()); err != nil {
+	if err := c.SetConfig(config.DefaultRuntimeSettings()); err != nil {
 		t.Fatal(err)
 	}
 	close(release)
@@ -431,7 +432,7 @@ func TestHostMetricFailuresLeaveStatusAndReportAlone(t *testing.T) {
 	if err := m.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if len(m.MetricStatus) != len(v1.MetricStatusFields())+len(m.Disks)+len(m.Networks) || len(m.Sources) != len(v1.SourceFamilies())+len(m.Disks)+len(m.Networks) {
+	if len(m.MetricStatus) != len(v1.MetricStatusFields())+len(m.Disks)+len(m.Networks)+2 || len(m.Sources) != len(v1.SourceFamilies())+len(m.Disks)+len(m.Networks) {
 		t.Fatal("optional host metrics changed status contract")
 	}
 	<-c.temperaturePending.done

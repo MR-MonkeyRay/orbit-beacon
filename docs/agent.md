@@ -137,7 +137,7 @@ Alpine/OpenRC 用 `sudo rc-service orbitbeacon-agent status`；手动启用并�
 
 `doctor` 检查配置、身份文件、HTTP/HTTPS 连通性和采集（HTTPS 同时验证证书），**不注册、不上报、不验证节点凭据**；`authentication: "not_checked"` 是预期结果。
 
-在控制台查看最近上报与样本，节点详情“设置 → Agent / Settings → Agent”查看实际运行参数；状态含义见[状态与历史](architecture.md#状态与历史)，公开节点步骤见[快速开始](../README.md#6-公开节点)。
+在控制台查看最近上报与样本，使用 `orbitbeacon-agent doctor` 查看本地运行参数；状态含义见[状态与历史](architecture.md#状态与历史)，公开节点步骤见[快速开始](../README.md#6-公开节点)。
 
 常见问题：
 
@@ -190,7 +190,7 @@ disabled_features:
 
 环境变量为 `ORBITBEACON_REPORT_INTERVAL_SECONDS` 等大写参数名；`remote_commands` 和 `disabled_features` 不提供 flag，其余 flag 使用 `--report-interval-seconds` 等连字符形式。**配置文件使用 YAML 序列和映射；环境变量、CLI 的复合值仍使用 JSON**，例如 `ORBITBEACON_INTERFACES='["eth0"]'` 或 `--probe-targets '["https://example.com/a,b"]'`，不按逗号拆分。`probe_expected_status` 的 flag 示例为 `--probe-expected-status '{"https://example.com/health":204}'`。
 
-修改后执行 `sudo systemctl reload orbitbeacon-agent`，OpenRC 用 `sudo rc-service orbitbeacon-agent reload`，前台进程用 `kill -HUP <PID>`。reload 重读原 YAML，沿用启动时环境和显式 flags，不重读 policy；有效变更在采样边界完整应用并重采，不重置身份或累计流量，坏配置保留旧值。检查日志 `configuration_reloaded` / `configuration_unchanged` / `configuration_reload_rejected` 和下一报告；服务 reload 命令成功只代表信号送达。
+修改后执行 `sudo systemctl reload orbitbeacon-agent`，OpenRC 用 `sudo rc-service orbitbeacon-agent reload`，前台进程用 `kill -HUP <PID>`。reload 重读原 YAML，沿用启动时环境和显式 flags，不重读 policy；有效变更在采样边界完整应用并重采，不重置身份或累计流量，坏配置保留旧值。检查日志 `configuration_reloaded` / `configuration_unchanged` / `configuration_reload_rejected` 和下一报告的指标；本地设置不随报告发送；服务 reload 命令成功只代表信号送达。
 
 ## 远程升级
 
@@ -319,7 +319,7 @@ Ctrl+C 或 SIGTERM 停止。不传 `--config` 时使用默认运行参数。若�
 
 HTTPS 收到响应时携带叶证书到期时间 `tls_expires_at`，状态码不匹配时仍携带；握手失败（含过期证书）为 `tls` 且无到期时间。
 
-每 60 秒执行一次，单次超时 5 秒，最多并发 5 个；reload 后新增目标立即开始检查。报告携带该次采样目标集合中最近完成的结果，未完成的省略，删除目标后停止携带；结果去重见[状态与历史](architecture.md#状态与历史)。结果不包含响应体、原始错误信息或证书主体。
+每 60 秒执行一次，单次超时 5 秒，最多并发 5 个；reload 后新增目标立即开始检查。报告携带所有本地目标的最新结果，首次检查完成前标为 `pending`，不计入失败或可用率；删除目标后停止携带，但历史按正常保留策略清理。结果去重见[状态与历史](architecture.md#状态与历史)。结果不包含响应体、原始错误信息或证书主体。
 
 HTTP 探测不使用 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`，不能依赖代理做出口限制。Linux ICMP 要求 Agent 的组 ID 位于 `net.ipv4.ping_group_range`；用 `sysctl net.ipv4.ping_group_range` 检查，按主机或容器策略配置允许范围。权限不足报告 `unsupported`，不会提权，也不需要 `CAP_NET_RAW`。
 
@@ -327,7 +327,7 @@ HTTP 探测不使用 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`，不能依赖�
 
 ## 远程指令
 
-远程指令只有 `upgrade`、`restart`、`stop`，都受本机 `remote_commands` 限制；服务器不能修改 Agent 设置。
+远程指令只有 `upgrade`、`restart`、`stop`，都受本机 `remote_commands` 限制；本地禁用由 Agent 返回 `disabled_locally`，服务器不保存或修改 Agent 设置。
 
 - `upgrade`：只接受严格 `MAJOR.MINOR.PATCH`（无前导零），有效期 20 分钟；下发时剩余不足 7 分钟按过期拒绝。
 - `restart`：持久化执行标记后以 75 退出，由 systemd `Restart=on-failure` 拉起；同一 ID 不会再次重启。有效期 5 分钟。

@@ -9,10 +9,9 @@ import {frame, liveHarness, response, stream} from './live-harness.js';
 
 const id = (number) => `00000000-0000-4000-8000-${String(number).padStart(12, '0')}`;
 const reported = '2026-10-28T00:00:00Z';
-const runtime = {report_interval_seconds: 10, disk_interval_seconds: 60, interfaces: [], disk_paths: [], probe_targets: [], remote_commands: ['upgrade', 'restart', 'stop'], disabled_features: []};
 const node = (number) => ({id: id(number), name: `Node ${String(number).padStart(3, '0')}`, status: 'unknown', stopped: false, presence: 'online',
   last_seen: reported, agent_version: '1.0', group_id: null, region: '', provider: '', notes: 'Saved notes', tags: [], created_at: reported});
-const latest = (seq = 1) => ({received_at: reported, sampled_at: reported, seq, runtime,
+const latest = (seq = 1) => ({received_at: reported, sampled_at: reported, seq,
   system: {agent_version: '1.0'}, metrics: {cpu_percent: seq, uptime_seconds: 3600,
     metric_status: {cpu_percent: 'ok', uptime_seconds: 'ok'},
     sources: {cpu: {age_ms: 0, source_interval_ms: 10000}, uptime: {age_ms: 0, source_interval_ms: 10000}}}});
@@ -63,7 +62,6 @@ async function setup(t, {page = 'nodes', hash = '#monitor', count = 2, search = 
     if (path === '/api/v1/alerts/summary') return response({firing: {total: 0}, newest: []});
     if (path === `/api/v1/nodes/${id(1)}`) return response(inventory[0]);
     if (path.endsWith('/commands')) return response({commands});
-    if (path.endsWith('/runtime')) return response({runtime});
     if (path.endsWith('/traffic-settings')) return response({billing_day: 1, quota_bytes: '0'});
     if (path.endsWith('/public-settings')) return response({enabled: true, name: 'Saved public name', region: '', provider: ''});
     if (path.endsWith('/latest')) return sample ? response({...sample, server_time: reported}) : response({message: 'No sample'}, {status: 404});
@@ -399,7 +397,7 @@ for (const draft of [{hash: '#details', name: 'notes'}, {hash: '#public', name: 
     assert.equal(sampleFact(env.root, copy('nodes.cpu')), undefined);
     const requestsBefore = env.requests.length;
     for (let index = 1; index <= 10; index++) {
-      env.send({node: {...env.inventory[0], presence: index % 2 ? 'offline' : 'online', notes: 'Changed elsewhere', agent_version: `1.${index}`}, latest: latest(index), runtime: {...runtime, report_interval_seconds: 5}}, index * 10);
+      env.send({node: {...env.inventory[0], presence: index % 2 ? 'offline' : 'online', notes: 'Changed elsewhere', agent_version: `1.${index}`}, latest: latest(index)}, index * 10);
       assert.equal(formFor(env.root, draft.name), form); assert.equal(input.value, 'Unsaved text must survive'); assert.equal(form.dataset.dirty, 'true');
       assert.equal(env.document.activeElement, input); assert.equal(input.selectionStart, 2); assert.equal(input.selectionEnd, 9);
       assert.equal(location.hash, draft.hash); assert.equal(env.root.querySelector('#panel-settings'), panel);
@@ -408,7 +406,7 @@ for (const draft of [{hash: '#details', name: 'notes'}, {hash: '#public', name: 
     assert.equal(env.sockets.length, 1); assert.equal(env.root.querySelector('.live-status').textContent, copy('controls.live.live'));
     assert.equal(env.requests.length, requestsBefore, 'live samples do not duplicate independent panel reads');
 
-    env.send({node: null, latest: null, runtime: null}, 101);
+    env.send({node: null, latest: null}, 101);
     assert.equal(env.root.querySelector('.node-deleted-notice').hidden, false); assert.equal(input.value, 'Unsaved text must survive');
     assert.equal(form.dataset.dirty, 'true'); assert.equal(input.readOnly, true);
     assert.equal(form.querySelectorAll('button').every((item) => item.disabled), true);
@@ -416,26 +414,19 @@ for (const draft of [{hash: '#details', name: 'notes'}, {hash: '#public', name: 
   });
 }
 
-test('detail missing sample is not deletion and lazy Agent settings use the newest runtime without another subscription', async (t) => {
+test('detail missing sample is not deletion and lazy Agent section needs no runtime subscription', async (t) => {
   const env = await setup(t, {page: 'node'});
-  env.send({node: {...env.inventory[0], status: 'disabled', presence: 'disabled'}, latest: null, runtime: null});
-  assert.match(env.root.textContent, copyPattern('nodes.sampleEmpty')); assert.equal(env.root.querySelector('.node-deleted-notice').hidden, true);
-  assert.equal(control(env.root, 'notes'), undefined);
-  env.send({node: {...env.inventory[0], presence: 'offline'}, latest: latest(3), runtime: {...runtime, report_interval_seconds: 5, interfaces: ['eth1']}});
+  env.send({node: {...env.inventory[0], status: 'disabled', presence: 'disabled'}, latest: null});
+  assert.match(env.root.textContent, copyPattern('nodes.sampleEmpty'));
+  assert.equal(env.root.querySelector('.node-deleted-notice').hidden, true);
   env.root.querySelector('#tab-settings').click(); await flush(); env.mutations();
-  assert.equal(sampleFact(env.root, copy('nodes.reportInterval')).textContent, copy('nodes.seconds', {count: 5})); assert.equal(sampleFact(env.root, copy('nodes.interfaces')).textContent, 'eth1');
-  const settings = env.root.querySelector('#panel-settings');
-  env.send({node: env.inventory[0], latest: latest(4), runtime: {...runtime, report_interval_seconds: 15}});
-  assert.equal(env.root.querySelector('#panel-settings'), settings); assert.equal(sampleFact(settings, copy('nodes.reportInterval')).textContent, copy('nodes.seconds', {count: 15}));
-  env.root.querySelector('#tab-monitor').click(); await flush(); env.mutations();
-  env.send({node: env.inventory[0], latest: latest(5), runtime: {...runtime, report_interval_seconds: 20}});
-  env.root.querySelector('#tab-settings').click(); await flush(); env.mutations();
-  assert.equal(sampleFact(env.root, copy('nodes.reportInterval')).textContent, copy('nodes.seconds', {count: 20}));
+  assert.ok(env.root.querySelector('#node-agent'));
+  assert.ok(env.root.querySelector('#node-enrollment'));
   assert.equal(env.sockets.length, 1);
 });
 
 test('detail heartbeat changes only freshness and navigation closes the one live subscription', async (t) => {
-  const env = await setup(t, {page: 'node'}); env.send({node: env.inventory[0], latest: latest(), runtime});
+  const env = await setup(t, {page: 'node'}); env.send({node: env.inventory[0], latest: latest()});
   const value = sampleFact(env.root, copy('nodes.cpu')).querySelector('.sample-value');
   const input = env.root.querySelector('#tab-monitor'); input.focus();
   await env.advance(10000); env.socket.message(frame('heartbeat', {server_time: '2026-10-28T00:00:10Z'}));
@@ -446,7 +437,7 @@ test('detail heartbeat changes only freshness and navigation closes the one live
   env.socket.message(frame('heartbeat', {server_time: '2026-10-28T00:01:00Z'}));
   assert.equal(sampleFact(env.root, copy('nodes.cpu')).querySelector('.sample-value'), value); assert.equal(env.document.activeElement, input);
   env.socket.end(); await flush(); assert.equal(env.root.querySelector('.live-status').textContent, copy('controls.live.reconnecting')); assert.equal(value.textContent, '1%');
-  env.fallback.frame(frame('snapshot', {data: {node: env.inventory[0], latest: latest(), runtime}})); await flush();
+  env.fallback.frame(frame('snapshot', {data: {node: env.inventory[0], latest: latest()}})); await flush();
   assert.equal(env.root.querySelector('.live-status').textContent, copy('controls.live.live'));
   env.document.hidden = true; env.document.dispatchEvent(new Event('visibilitychange'));
   assert.equal(env.root.querySelector('.live-status').textContent, copy('controls.live.stale'));
@@ -526,7 +517,7 @@ for (const draft of [{name: 'notes', value: 'Pending metadata draft', hash: '#de
     const form = formFor(env.root, draft.name); const input = edit(form, draft.name, draft.value); input.focus();
     form.dispatchEvent(new Event('submit', {cancelable: true})); await flush(); assert.equal(typeof release, 'function');
     const before = env.requests.length;
-    env.send({node: null, latest: null, runtime: null});
+    env.send({node: null, latest: null});
     release(response(draft.result)); await flush();
     assert.equal(formFor(env.root, draft.name), form); assert.equal(input.value, draft.value); assert.equal(form.dataset.dirty, 'true');
     assert.equal(env.document.activeElement, input); assert.equal(input.readOnly, true);
@@ -539,7 +530,7 @@ test('detail deletion fences an already open lifecycle confirmation without chan
   const env = await setup(t, {page: 'node'});
   button(env.root, copy('nodes.disable')).click(); await flush();
   const dialog = env.body.querySelector('dialog');
-  env.send({node: null, latest: null, runtime: null});
+  env.send({node: null, latest: null});
   button(dialog, copy('nodes.disableNode')).click(); dialog.dispatchEvent(new Event('animationend')); await flush();
   assert.equal(env.requests.some((request) => request.url === '/api/v1/nodes/batch'), false);
   assert.equal(button(env.root, copy('nodes.disable')).disabled, true);
@@ -548,7 +539,7 @@ test('detail deletion fences an already open lifecycle confirmation without chan
 test('detail deletion fences an already open enrollment revocation confirmation', async (t) => {
   const env = await setup(t, {page: 'node', hash: '#enrollment'}); await flush();
   button(env.root, copy('nodes.enrollment.revoke')).click(); await flush();
-  const dialog = env.body.querySelector('dialog'); env.send({node: null, latest: null, runtime: null});
+  const dialog = env.body.querySelector('dialog'); env.send({node: null, latest: null});
   button(dialog, copy('nodes.enrollment.revokeConfirm')).click(); dialog.dispatchEvent(new Event('animationend')); await flush();
   assert.equal(env.requests.some((request) => request.method === 'DELETE'), false);
   assert.equal(button(env.root, copy('nodes.enrollAgent')).disabled, true);
@@ -563,40 +554,17 @@ test('detail deletion suppresses a delayed deployment secret and sends no mode f
   }});
   const issue = button(env.root, copy('nodes.enrollAgent')); issue.click(); await flush();
   assert.equal(typeof release, 'function');
-  env.send({node: null, latest: null, runtime: null}); release(); await flush();
+  env.send({node: null, latest: null}); release(); await flush();
   assert.equal(env.body.querySelector('dialog'), null);
   assert.equal(env.body.textContent.includes('late-fake-secret'), false);
   assert.equal(issue.disabled, true);
-});
-
-test('detail live capability arrays reject unknown, repeated, missing and null values', async (t) => {
-  for (const [field, values] of [
-    ['remote_commands', ['shell']], ['remote_commands', ['restart', 'restart']],
-    ['disabled_features', ['cpu']], ['disabled_features', ['disk', 'disk']],
-    ['remote_commands', null], ['disabled_features', null],
-    ['remote_commands', undefined], ['disabled_features', undefined]
-  ]) {
-    await t.test(`${field}=${JSON.stringify(values)}`, async (t) => {
-      const env = await setup(t, {page: 'node', hash: '#agent'});
-      env.send({node: env.inventory[0], latest: latest(), runtime});
-      env.send({node: env.inventory[0], latest: latest(), runtime: {...runtime, [field]: values, report_interval_seconds: 5}});
-      assert.equal(sampleFact(env.root, copy('nodes.reportInterval')).textContent, copy('nodes.seconds', {count: 10}));
-    });
-  }
-});
-
-test('detail live accepts empty capability arrays as reported', async (t) => {
-  const env = await setup(t, {page: 'node', hash: '#agent'});
-  env.send({node: env.inventory[0], latest: latest(), runtime: {...runtime, remote_commands: [], disabled_features: []}});
-  assert.equal(sampleFact(env.root, copy('nodes.remoteCommands')).textContent, copy('nodes.none'));
-  assert.equal(sampleFact(env.root, copy('nodes.disabledFeatures')).textContent, copy('nodes.none'));
 });
 
 for (const page of ['nodes', 'overview', 'node']) test(`${page} uses Stopped badge and separates stopped from offline`, async (t) => {
   const env = await setup(t, {page, search: page === 'nodes' ? '?sort=status' : ''});
   const stopped = {...env.inventory[0], stopped: true, presence: 'offline'};
   const offline = {...env.inventory[1], presence: 'offline'};
-  env.send(page === 'node' ? {node: stopped, latest: null, runtime} : {nodes: [compact(stopped), compact(offline)]});
+  env.send(page === 'node' ? {node: stopped, latest: null} : {nodes: [compact(stopped), compact(offline)]});
   const badges = env.root.querySelectorAll('.badge');
   const stoppedBadge = badges.find((badge) => badge.textContent === copy('common.status.stopped'));
   if (page !== 'overview') { assert.ok(stoppedBadge); assert.ok(stoppedBadge.classList.contains('disabled')); }
@@ -621,7 +589,7 @@ for (const page of ['nodes', 'overview', 'node']) test(`${page} uses Stopped bad
 
 for (const page of ['nodes', 'node']) test(`${page} rejects missing and nonboolean stopped live fields`, async (t) => {
   const env = await setup(t, {page});
-  const send = (value) => env.send(page === 'node' ? {node: value, latest: null, runtime} : {nodes: [compact(value)]});
+  const send = (value) => env.send(page === 'node' ? {node: value, latest: null} : {nodes: [compact(value)]});
   send({...env.inventory[0], stopped: true, presence: 'offline'});
   for (const stopped of [undefined, null, 'false', 0]) {
     send({...env.inventory[0], stopped, presence: 'online'});
@@ -667,11 +635,11 @@ test('four node tabs lazily build settings with newest snapshots and detach comm
   assert.equal(control(env.root, 'name'), undefined);
   assert.equal(reads('/history?').length, 0); assert.equal(reads('/availability?').length, 0);
   assert.equal(reads('/commands').length, 0); assert.equal(reads('/enrollments').length, 0);
-  env.send({node: {...env.inventory[0], name: 'Renamed before creation'}, latest: latest(7), runtime}, 10);
+  env.send({node: {...env.inventory[0], name: 'Renamed before creation'}, latest: latest(7)}, 10);
   await switchTo('settings');
   assert.equal(control(env.root, 'name').value, 'Renamed before creation');
   assert.equal(reads('/enrollments').length, 1);
-  env.send({node: {...env.inventory[0], name: 'Renamed again'}, latest: latest(8), runtime}, 20);
+  env.send({node: {...env.inventory[0], name: 'Renamed again'}, latest: latest(8)}, 20);
   assert.equal(control(env.root, 'name').value, 'Renamed before creation');
   await switchTo('monitor');
   const sample = sampleFact(env.root, copy('nodes.cpu')).querySelector('.sample-value');
@@ -685,7 +653,7 @@ test('four node tabs lazily build settings with newest snapshots and detach comm
   assert.ok(sampled.title.includes(copy('nodes.sequence', {value: 8})));
   await switchTo('settings');
   assert.equal(control(env.root, 'name').value, 'Renamed again');
-  env.send({node: {...env.inventory[0], name: 'Hidden monitor update'}, latest: latest(9), runtime}, 30);
+  env.send({node: {...env.inventory[0], name: 'Hidden monitor update'}, latest: latest(9)}, 30);
   await switchTo('monitor');
   assert.equal(sampleFact(env.root, copy('nodes.cpu')).querySelector('.sample-value'), sample);
   assert.equal(sample.textContent, '9%');
@@ -698,7 +666,7 @@ test('four node tabs lazily build settings with newest snapshots and detach comm
 
 test('deletion before lazy tab creation keeps all future controls locked and monitor empty', async (t) => {
   const env = await setup(t, {page: 'node', hash: '#public'});
-  env.send({node: null, latest: null, runtime: null});
+  env.send({node: null, latest: null});
   assert.equal(env.root.querySelector('.node-deleted-notice').hidden, false);
   assert.equal(button(env.root, copy('nodes.enrollAgent')).disabled, true);
   for (const tab of ['settings', 'traffic', 'monitor', 'probes']) {
@@ -708,7 +676,7 @@ test('deletion before lazy tab creation keeps all future controls locked and mon
     }
     if (tab === 'monitor') assert.ok(env.root.textContent.includes(copy('nodes.sampleEmpty')));
   }
-  env.send({node: env.inventory[0], latest: latest(20), runtime});
+  env.send({node: env.inventory[0], latest: latest(20)});
   env.root.querySelector('#tab-monitor').click(); env.mutations(); await flush();
   assert.equal(sampleFact(env.root, copy('nodes.cpu')), undefined);
   assert.ok(env.root.textContent.includes(copy('nodes.sampleEmpty')));
@@ -1050,7 +1018,7 @@ test('detail live primary tiles retain their values and bar DOM while tweening',
   const track = meter.querySelector('i');
   const primary = env.root.querySelector('.sample-primary');
   const tiles = [...primary.children];
-  env.send({node: env.inventory[0], latest: latest(95), runtime});
+  env.send({node: env.inventory[0], latest: latest(95)});
   assert.equal(sampleFact(env.root, copy('nodes.cpu')), cpu);
   assert.equal(cpu.querySelector('.usage-meter'), meter);
   assert.equal(cpu.querySelector('.sample-value'), value);

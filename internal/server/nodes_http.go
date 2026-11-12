@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strings"
 
-	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/nodes"
 )
 
@@ -104,17 +103,6 @@ func (h *handler) nodesRoute(w http.ResponseWriter, r *http.Request, requestID s
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		if len(parts) == 3 && parts[2] == "runtime" {
-			runtime, err := h.nodes.GetRuntime(r.Context(), id)
-			if err != nil {
-				h.serviceError(w, err, requestID)
-				return
-			}
-			writeJSON(w, http.StatusOK, struct {
-				Runtime *v1.RuntimeSettings `json:"runtime"`
-			}{runtime})
 			return
 		}
 		if len(parts) == 3 && parts[2] == "traffic-settings" {

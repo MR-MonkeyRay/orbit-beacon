@@ -53,9 +53,11 @@ test('probe pending rows retain state, absent-check values and text-only targets
     assert.equal(env.requests.length, 1);
     assert.equal(env.requests[0].path, '/api/v1/nodes/node%2Fid/probes');
     const target = 'https://example.com/<img onerror=bad>';
-    env.respond(env.requests[0], {probes: [probe({target})]});
+    env.respond(env.requests[0], {probes: [probe({target, error: 'pending'})]});
     await flush();
     assert.match(env.root.textContent, copyPattern('common.status.pending'));
+    assert.equal(env.root.querySelector('.badge').className, 'badge pending');
+    assert.doesNotMatch(env.root.textContent, copyPattern('nodes.probe.error'));
     assert.match(env.root.textContent, copyPattern('nodes.probe.notChecked'));
     assert.match(env.root.textContent, copyPattern('nodes.probe.checks', {percent: copy('common.unavailable'), count: 0}));
     assert.equal(env.root.querySelector('.probe-target').textContent, target);

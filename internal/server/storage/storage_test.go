@@ -64,7 +64,7 @@ func TestOpenInitializesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
 		t.Fatalf("obsolete session field=%d err=%v", obsolete, err)
 	}
 
-	for _, field := range []struct{ table, column string }{{"users", "role"}, {"inbox_notifications", "audience"}, {"groups", "desired_config"}, {"nodes", "desired_revision"}, {"nodes", "applied_revision"}, {"nodes", "config_error"}, {"nodes", "report_interval_seconds"}, {"nodes", "disk_interval_seconds"}, {"nodes", "interfaces"}, {"nodes", "disk_paths"}, {"nodes", "probe_targets"}} {
+	for _, field := range []struct{ table, column string }{{"users", "role"}, {"inbox_notifications", "audience"}, {"groups", "desired_config"}, {"nodes", "desired_revision"}, {"nodes", "applied_revision"}, {"nodes", "config_error"}, {"nodes", "report_interval_seconds"}, {"nodes", "disk_interval_seconds"}, {"nodes", "interfaces"}, {"nodes", "disk_paths"}, {"nodes", "probe_targets"}, {"nodes", "agent_runtime"}} {
 		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info(?) WHERE name=?`, field.table, field.column).Scan(&obsolete); err != nil || obsolete != 0 {
 			t.Fatalf("obsolete %s.%s=%d err=%v", field.table, field.column, obsolete, err)
 		}

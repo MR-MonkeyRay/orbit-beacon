@@ -10,7 +10,6 @@ import (
 	"math"
 	"net"
 	"net/url"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -281,7 +280,16 @@ func (m Metrics) Validate() error {
 		return errors.New("invalid temperature")
 	}
 
-	if len(m.MetricStatus) != len(metricStatusFields)+len(m.Disks)+len(m.Networks) || len(m.Sources) != len(sourceFamilies)+len(m.Disks)+len(m.Networks) {
+	disabled := 0
+	for _, key := range DisabledStatusFields() {
+		if status, exists := m.MetricStatus[key]; exists {
+			if status != "disabled" {
+				return fmt.Errorf("collector status %s must be disabled", key)
+			}
+			disabled++
+		}
+	}
+	if len(m.MetricStatus) != len(metricStatusFields)+len(m.Disks)+len(m.Networks)+disabled || len(m.Sources) != len(sourceFamilies)+len(m.Disks)+len(m.Networks) {
 		return errors.New("metric statuses and sources must match the reported fields and series exactly")
 	}
 	checkSource := func(key string) error {
@@ -439,6 +447,12 @@ type ProbeResult struct {
 func (p ProbeResult) Validate() error {
 	if err := ValidateProbeTarget(p.Target); err != nil {
 		return err
+	}
+	if p.Error == "pending" {
+		if p.OK || p.LatencyMS != nil || p.StatusCode != nil || p.TLSExpiresAt != nil || !p.CheckedAt.IsZero() {
+			return errors.New("pending probe must not contain a check")
+		}
+		return nil
 	}
 	if p.OK != (p.Error == "") {
 		return errors.New("probe result status and error disagree")
@@ -657,10 +671,6 @@ func validProbeIPv4(host string) bool {
 
 func asciiAlphaNumeric(character byte) bool {
 	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9'
-}
-
-func validDiskPath(path string) bool {
-	return len(path) <= 1024 && !strings.ContainsRune(path, 0) && filepath.IsAbs(path)
 }
 
 func validInterfaceName(name string) bool {

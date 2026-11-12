@@ -80,7 +80,7 @@ func TestAccessLogDisabledAndHealthProbeFiltering(t *testing.T) {
 
 func TestRequestRouteUsesOnlyKnownTemplates(t *testing.T) {
 	for _, test := range []struct{ path, want string }{
-		{"/api/v1/nodes/00000000-0000-4000-8000-000000000001/runtime", "/api/v1/nodes/{id}/runtime"},
+		{"/api/v1/nodes/00000000-0000-4000-8000-000000000001/runtime", "unmatched"},
 		{"/api/v1/nodes/batch", "/api/v1/nodes/batch"},
 		{"/api/v1/users/00000000-0000-4000-8000-000000000001", "/api/v1/users/{id}"},
 		{"/api/v1/nodes/secret/runtime", "unmatched"},

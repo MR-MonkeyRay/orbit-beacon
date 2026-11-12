@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 
 	"reflect"
 	"testing"
 	"time"
 
-	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/storagetest"
@@ -61,22 +59,13 @@ func TestMySQLNodePublicPaginationAndProbeBytes(t *testing.T) {
 		t.Fatal(page[0].AvailabilityJSON)
 	}
 	for _, target := range []string{"https://example.com/" + string(bytes.Repeat([]byte("a"), 1004)), "https://example.com/" + string(bytes.Repeat([]byte("é"), 502))} {
-		settings := v1.DefaultRuntimeSettings()
-		settings.ProbeTargets = []string{target}
-		runtime, err := json.Marshal(settings)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := raw.Exec(`UPDATE nodes SET agent_runtime=? WHERE id=?`, string(runtime), ids[2]); err != nil {
-			t.Fatal(err)
-		}
 		if _, err := raw.Exec(`INSERT INTO probe_latest(node_id,target,ok,error,checked_at) VALUES(?,?,1,'',?)`, ids[2], target, timekey.Format(now)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := raw.Exec(`INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms,latency_max_ms) VALUES(?,?,?,1,0,2.5,2.5)`, ids[2], target, timekey.Format(now.Truncate(time.Hour))); err != nil {
 			t.Fatal(err)
 		}
-		probes, err := s.ObservedProbes(ctx, ids[2], now.Add(-24*time.Hour))
+		probes, err := s.ObservedProbes(ctx, ids[2], now.Add(-24*time.Hour), target)
 		if err != nil || len(probes) != 1 || probes[0].Target != target || probes[0].Checks24H != 1 {
 			t.Fatalf("probes=%+v err=%v", probes, err)
 		}

@@ -28,26 +28,16 @@ func TestManagementLatestSample(t *testing.T) {
 	apiError(t, request(t, f.handler, http.MethodGet, path, "", second, "", ""), http.StatusNotFound, "node_not_found")
 	body := strings.Replace(reportBody(1, 1, "private-session", 25), `"metrics":`, `"system":{"hostname":"test","os":"linux","arch":"amd64","agent_version":"v1.2.3"},"metrics":`, 1)
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, body), 1)
-	runtimePath := "/api/v1/nodes/" + id + "/runtime"
-	settings := request(t, f.handler, http.MethodGet, runtimePath, "", second, "", "")
-	assertHTTPStatus(t, settings, http.StatusOK)
-	var runtimeEnvelope struct {
-		Runtime map[string]json.RawMessage `json:"runtime"`
-	}
-	if err := json.Unmarshal(settings.Body.Bytes(), &runtimeEnvelope); err != nil || len(runtimeEnvelope.Runtime) != 7 || string(runtimeEnvelope.Runtime["report_interval_seconds"]) != "10" || string(runtimeEnvelope.Runtime["probe_targets"]) != "[]" {
-		t.Fatalf("runtime=%s err=%v", settings.Body, err)
-	}
-	assertHTTPStatus(t, request(t, f.handler, http.MethodPatch, runtimePath, `{"report_interval_seconds":5}`, second, "", ""), http.StatusMethodNotAllowed)
 	got := request(t, f.handler, http.MethodGet, path, "", second, "", "")
 	assertHTTPStatus(t, got, http.StatusOK)
 	var sample map[string]json.RawMessage
 	if err := json.Unmarshal(got.Body.Bytes(), &sample); err != nil {
 		t.Fatal(err)
 	}
-	if len(sample) != 7 {
+	if len(sample) != 6 {
 		t.Fatalf("unexpected fields: %s", got.Body)
 	}
-	for _, key := range []string{"received_at", "sampled_at", "seq", "metrics", "system", "runtime", "server_time"} {
+	for _, key := range []string{"received_at", "sampled_at", "seq", "metrics", "system", "server_time"} {
 		if _, ok := sample[key]; !ok {
 			t.Errorf("missing %s", key)
 		}
@@ -62,10 +52,6 @@ func TestManagementLatestSample(t *testing.T) {
 	var generated time.Time
 	if err := json.Unmarshal(sample["server_time"], &generated); err != nil || !generated.Equal(f.now) || generated.Location() != time.UTC {
 		t.Fatalf("server_time=%s err=%v", sample["server_time"], err)
-	}
-	var latestRuntime map[string]json.RawMessage
-	if err := json.Unmarshal(sample["runtime"], &latestRuntime); err != nil || len(latestRuntime) != 7 || string(latestRuntime["report_interval_seconds"]) != "10" || string(latestRuntime["probe_targets"]) != "[]" {
-		t.Fatalf("latest runtime=%s err=%v", sample["runtime"], err)
 	}
 	for _, secret := range []string{"run_generation", "session_id", token, "private-session", "token_hash"} {
 		if strings.Contains(got.Body.String(), secret) {
@@ -120,11 +106,6 @@ func TestManagementLatestSample(t *testing.T) {
 		t.Fatal(err)
 	}
 	apiError(t, request(t, f.handler, http.MethodGet, path, "", second, "", ""), http.StatusNotFound, "node_not_found")
-	settings = request(t, f.handler, http.MethodGet, runtimePath, "", second, "", "")
-	assertHTTPStatus(t, settings, http.StatusOK)
-	if strings.TrimSpace(settings.Body.String()) != `{"runtime":null}` {
-		t.Fatalf("revoked runtime=%s", settings.Body)
-	}
 	apiError(t, request(t, f.handler, http.MethodGet, "/api/v1/nodes/00000000-0000-4000-8000-000000000001/latest", "", second, "", ""), http.StatusNotFound, "node_not_found")
 	wrongMethod := request(t, f.handler, http.MethodPost, path, "", second, "", "")
 	assertHTTPStatus(t, wrongMethod, http.StatusMethodNotAllowed)

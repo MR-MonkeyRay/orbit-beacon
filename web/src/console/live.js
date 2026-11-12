@@ -6,7 +6,6 @@ import {uuid} from '../shared/uuid.js';
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const time = (value) => Number.isFinite(timestampMillis(value));
 const stringList = (value, max = Infinity) => Array.isArray(value) && value.length <= max && value.every((item) => typeof item === 'string');
-const enumList = (value, allowed) => stringList(value, allowed.length) && new Set(value).size === value.length && value.every((item) => allowed.includes(item));
 const number = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const nullableNumber = (value) => value === null || number(value);
 const optionalPercent = (value) => value === undefined || value === null || number(value) && value <= 100;
@@ -15,12 +14,6 @@ const status = (value) => record(value) && uuid.test(value.id) && ['pending', 'o
   && typeof value.stopped === 'boolean'
   && optionalPercent(value.cpu_percent) && optionalPercent(value.memory_used_percent)
   && (value.last_seen === null || time(value.last_seen)) && typeof value.agent_version === 'string';
-const runtime = (value) => value === null || record(value) && Number.isInteger(value.report_interval_seconds)
-  && value.report_interval_seconds >= 5 && value.report_interval_seconds <= 60
-  && Number.isInteger(value.disk_interval_seconds) && value.disk_interval_seconds >= 60 && value.disk_interval_seconds <= 3600
-  && stringList(value.interfaces, 8) && stringList(value.disk_paths, 8) && stringList(value.probe_targets, 5)
-  && enumList(value.remote_commands, ['upgrade', 'restart', 'stop'])
-  && enumList(value.disabled_features, ['disk', 'network', 'traffic', 'probes', 'disk_io', 'pressure', 'temperature']);
 const node = (value) => status(value) && ['name', 'notes', 'region', 'provider'].every((key) => typeof value[key] === 'string')
   && (value.group_id === null || typeof value.group_id === 'string' && uuid.test(value.group_id)) && stringList(value.tags) && time(value.created_at);
 const metrics = (value) => {
@@ -37,14 +30,13 @@ const metrics = (value) => {
     && nullableNumber(network.rx_bytes_per_sec) && nullableNumber(network.tx_bytes_per_sec));
 };
 const latest = (value) => value === null || record(value) && time(value.received_at) && time(value.sampled_at)
-  && Number.isInteger(value.seq) && value.seq > 0 && (value.system === null || record(value.system)) && metrics(value.metrics)
-  && record(value.runtime) && runtime(value.runtime);
+  && Number.isInteger(value.seq) && value.seq > 0 && (value.system === null || record(value.system)) && metrics(value.metrics);
 function validSnapshot(data, nodeID) {
   if (!record(data)) return false;
   if (!nodeID) return Array.isArray(data.nodes) && data.nodes.length <= 10000 && data.nodes.every(status)
     && new Set(data.nodes.map((item) => item.id)).size === data.nodes.length;
-  if (data.node === null) return data.latest === null && data.runtime === null;
-  return node(data.node) && data.node.id === nodeID && latest(data.latest) && runtime(data.runtime);
+  if (data.node === null) return data.latest === null;
+  return node(data.node) && data.node.id === nodeID && latest(data.latest);
 }
 
 // 元数据重载后再读取状态快照，确认当前节点清单。

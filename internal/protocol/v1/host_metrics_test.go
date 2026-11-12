@@ -3,7 +3,6 @@ package v1_test
 import (
 	"encoding/json"
 	"math"
-	"slices"
 	"testing"
 
 	v1 "orbitbeacon/internal/protocol/v1"
@@ -63,21 +62,5 @@ func TestOptionalHostMetricsValidation(t *testing.T) {
 				t.Fatal("zero boundary")
 			}
 		})
-	}
-}
-
-func TestHostMetricFeatureOrderAndDiskImplication(t *testing.T) {
-	want := []string{"disk", "network", "traffic", "probes", "disk_io", "pressure", "temperature"}
-	if !slices.Equal(v1.DisabledFeatureOrder(), want) {
-		t.Fatal(v1.DisabledFeatureOrder())
-	}
-	config := v1.DefaultRuntimeSettings()
-	config.DisabledFeatures = []string{v1.FeatureDisk}
-	if !config.FeatureDisabled(v1.FeatureDiskIO) || config.FeatureDisabled(v1.FeaturePressure) {
-		t.Fatal("disk implication")
-	}
-	config.DisabledFeatures = []string{v1.FeatureDiskIO}
-	if config.FeatureDisabled(v1.FeatureDisk) {
-		t.Fatal("reverse implication")
 	}
 }

@@ -2,9 +2,11 @@ package collect
 
 import (
 	"github.com/shirou/gopsutil/v4/disk"
-	v1 "orbitbeacon/internal/protocol/v1"
 	"testing"
 	"time"
+
+	"orbitbeacon/internal/config"
+	v1 "orbitbeacon/internal/protocol/v1"
 )
 
 func TestDiskInodesFromExistingUsageReading(t *testing.T) {
@@ -16,7 +18,7 @@ func TestDiskInodesFromExistingUsageReading(t *testing.T) {
 		{"supported", 100, 25, true}, {"empty", 100, 0, true}, {"unsupported", 0, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c, err := New(Options{Config: v1.DefaultRuntimeSettings()})
+			c, err := New(Options{Config: config.DefaultRuntimeSettings()})
 			if err != nil {
 				t.Fatal(err)
 			}

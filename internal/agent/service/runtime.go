@@ -24,7 +24,7 @@ import (
 type Runtime struct {
 	logger         *slog.Logger
 	identity       *identity.Store
-	settings       v1.RuntimeSettings
+	settings       config.RuntimeSettings
 	expectedStatus map[string]int
 	configRevision uint64
 	collector      *collect.Collector
@@ -49,7 +49,7 @@ func OpenRuntime(ctx context.Context, cfg config.Agent, logger *slog.Logger) (*R
 	if err := v1.ValidateProbeExpectedStatus(cfg.ProbeTargets, cfg.ProbeExpectedStatus); err != nil {
 		return nil, err
 	}
-	initial := cloneRuntimeSettings(cfg.RuntimeSettings, v1.RuntimeSettings{})
+	initial := cloneRuntimeSettings(cfg.RuntimeSettings, config.RuntimeSettings{})
 	collector, err := collect.New(collect.Options{Config: initial})
 	if err != nil {
 		return nil, err
@@ -84,7 +84,7 @@ func (r *Runtime) Enroll(ctx context.Context, token string) (v1.EnrollmentRespon
 }
 
 // 切片属于不可变的配置快照，只在变化时复制。
-func cloneRuntimeSettings(next, current v1.RuntimeSettings) v1.RuntimeSettings {
+func cloneRuntimeSettings(next, current config.RuntimeSettings) config.RuntimeSettings {
 	if slices.Equal(next.Interfaces, current.Interfaces) && current.Interfaces != nil {
 		next.Interfaces = current.Interfaces
 	} else {
@@ -129,7 +129,7 @@ func (r *Runtime) Run(ctx context.Context, reload <-chan struct{}, loadSettings 
 	go func() { defer close(done); _ = probes.Run(ctx) }()
 	defer func() { cancel(); <-done }()
 	scheduler := NewScheduler(SchedulerOptions{Commands: openCommandStore(r.commandPath, r.logger, r.system.AgentVersion), Upgrade: r.upgrade, Logger: r.logger, Probes: probes, Traffic: r.collector.Traffic(), Identity: r.identity,
-		RuntimeSettings: func() v1.RuntimeSettings { return r.settings }, Reload: reload,
+		RuntimeSettings: func() config.RuntimeSettings { return r.settings }, Reload: reload,
 		ConfigRevision: func() uint64 { return r.configRevision },
 		ReloadConfig:   func(ctx context.Context) error { return r.reloadSettings(ctx, probes, loadSettings) },
 		Collect:        r.collector.Collect, Report: r.client.Report, System: &r.system})
@@ -173,22 +173,21 @@ func (r *Runtime) reloadSettings(ctx context.Context, probes *probe.Runner, load
 }
 
 type Diagnostics struct {
-	Configuration    string            `json:"configuration"`
-	Identity         string            `json:"identity"`
-	Connectivity     string            `json:"connectivity"`
-	Authentication   string            `json:"authentication"`
-	Collection       string            `json:"collection"`
-	InstallMode      string            `json:"install_mode"`
-	RemoteCommands   []string          `json:"remote_commands"`
-	DisabledFeatures []string          `json:"disabled_features"`
-	MetricStatus     map[string]string `json:"metric_status"`
+	Configuration  string `json:"configuration"`
+	Identity       string `json:"identity"`
+	Connectivity   string `json:"connectivity"`
+	Authentication string `json:"authentication"`
+	Collection     string `json:"collection"`
+	InstallMode    string `json:"install_mode"`
+	config.RuntimeSettings
+	MetricStatus map[string]string `json:"metric_status"`
 }
 
 // Doctor 不发送注册或指标上报请求，也不推进持久化的 RunGeneration。
 // 通过 HEAD 请求检查 DNS 和端点连通性；使用 HTTPS 时还检查证书信任，
 // 但不验证节点凭据，也不提交采样数据。
 func (r *Runtime) Doctor(ctx context.Context) (Diagnostics, error) {
-	result := Diagnostics{Configuration: "valid", Identity: "valid", Connectivity: "error", Authentication: "not_checked", Collection: "error", InstallMode: r.installMode, RemoteCommands: r.settings.RemoteCommands, DisabledFeatures: r.settings.DisabledFeatures}
+	result := Diagnostics{Configuration: "valid", Identity: "valid", Connectivity: "error", Authentication: "not_checked", Collection: "error", InstallMode: r.installMode, RuntimeSettings: r.settings.Normalized()}
 	request, err := http.NewRequestWithContext(ctx, http.MethodHead, r.client.baseURL+"/api/agent/v1/report", nil)
 	if err != nil {
 		return result, errors.New("cannot construct diagnostic request")

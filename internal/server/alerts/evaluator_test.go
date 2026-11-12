@@ -77,7 +77,7 @@ func newFixture(t *testing.T, seconds int) *alertFixture {
 }
 func (f *alertFixture) value(v float64) {
 	f.latest.err = nil
-	f.latest.report = ingest.LatestReport{ReceivedAt: f.now, Report: v1.Report{Runtime: v1.DefaultRuntimeSettings(), Metrics: v1.Metrics{CPUPercent: ptr(v), MetricStatus: map[string]string{"cpu_percent": "ok"}, Sources: map[string]v1.SourceMetadata{"cpu": {SampleID: "cpu", SourceIntervalMS: 10000}}}}}
+	f.latest.report = ingest.LatestReport{ReceivedAt: f.now, Report: v1.Report{Metrics: v1.Metrics{CPUPercent: ptr(v), MetricStatus: map[string]string{"cpu_percent": "ok"}, Sources: map[string]v1.SourceMetadata{"cpu": {SampleID: "cpu", SourceIntervalMS: 10000}}}}}
 }
 func (f *alertFixture) tick(t *testing.T) {
 	t.Helper()
@@ -316,11 +316,11 @@ func TestMetricComputationAndLessThanHysteresis(t *testing.T) {
 	}
 }
 
-func TestProbesDownMetricCountsFailuresAndEmptyIsZero(t *testing.T) {
+func TestProbesDownMetricCountsFailuresAndEmptyIsDisabled(t *testing.T) {
 	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 	latest := ingest.LatestReport{
 		ReceivedAt: now,
-		Report: v1.Report{Runtime: v1.RuntimeSettings{ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, Interfaces: []string{}, DiskPaths: []string{}, ProbeTargets: []string{"tcp://one.example:443", "https://two.example/health", "icmp://three.example"}}, ProbeResults: []v1.ProbeResult{
+		Report: v1.Report{ProbeResults: []v1.ProbeResult{
 			{Target: "tcp://one.example:443", OK: true},
 			{Target: "https://two.example/health", OK: false},
 			{Target: "icmp://three.example", OK: false},
@@ -332,8 +332,8 @@ func TestProbesDownMetricCountsFailuresAndEmptyIsZero(t *testing.T) {
 	}
 	latest.ProbeResults = nil
 	value = metricValue(latest, Rule{Metric: "probes_down"}, now)
-	if value == nil || *value != 0 {
-		t.Fatalf("empty probes_down=%v want 0", value)
+	if value != nil {
+		t.Fatalf("empty probes_down=%v want no value", value)
 	}
 }
 
@@ -357,7 +357,7 @@ func TestProbesDownFiresAndEmptyResultsResolve(t *testing.T) {
 	f.rule = r
 	f.latest.report = ingest.LatestReport{
 		ReceivedAt: f.now,
-		Report: v1.Report{Runtime: v1.RuntimeSettings{ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, Interfaces: []string{}, DiskPaths: []string{}, ProbeTargets: []string{"tcp://one.example:443", "https://two.example/health"}}, ProbeResults: []v1.ProbeResult{
+		Report: v1.Report{ProbeResults: []v1.ProbeResult{
 			{Target: "tcp://one.example:443", OK: true},
 			{Target: "https://two.example/health", OK: false},
 		}},
@@ -370,7 +370,7 @@ func TestProbesDownFiresAndEmptyResultsResolve(t *testing.T) {
 	f.latest.report.ProbeResults = nil
 	f.tick(t)
 	events = f.events(t, "resolved")
-	if len(events) != 1 || events[0].Value == nil || *events[0].Value != 0 {
+	if len(events) != 1 || events[0].Value != nil {
 		t.Fatalf("resolved events=%+v", events)
 	}
 }
@@ -770,7 +770,7 @@ func TestRealIngestIdentityFence(t *testing.T) {
 	f.e = NewEvaluator(f.s, real, EvaluatorOptions{})
 	f.exec(t, "UPDATE nodes SET run_generation='1',report_session_id='one' WHERE id=?", f.node)
 	var report v1.Report
-	raw := `{"protocol_version":1,"run_generation":1,"session_id":"one","seq":1,"sampled_at":"2026-10-27T12:00:00Z","runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]},"metrics":{"cpu_percent":90,"load1":0,"load5":0,"load15":0,"memory_total_bytes":100,"memory_available_bytes":50,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":10,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000}}},"traffic":[]}`
+	raw := `{"protocol_version":1,"run_generation":1,"session_id":"one","seq":1,"sampled_at":"2026-10-27T12:00:00Z","metrics":{"cpu_percent":90,"load1":0,"load5":0,"load15":0,"memory_total_bytes":100,"memory_available_bytes":50,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":10,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-1","age_ms":0,"source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","age_ms":0,"source_interval_ms":10000},"memory":{"sample_id":"memory-1","age_ms":0,"source_interval_ms":10000},"swap":{"sample_id":"swap-1","age_ms":0,"source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","age_ms":0,"source_interval_ms":10000}}},"traffic":[]}`
 	if err := json.Unmarshal([]byte(raw), &report); err != nil {
 		t.Fatal(err)
 	}
@@ -844,7 +844,10 @@ func TestLocallyDisabledFeatureResolvesItsFiringAlert(t *testing.T) {
 			if _, err := f.s.Save(context.Background(), "", patch(t, test.rule)); err != nil {
 				t.Fatal(err)
 			}
-			f.latest.report = ingest.LatestReport{ReceivedAt: f.now, Report: v1.Report{Runtime: v1.DefaultRuntimeSettings(), Metrics: test.metrics}}
+			f.latest.report = ingest.LatestReport{ReceivedAt: f.now, Report: v1.Report{Metrics: test.metrics}}
+			if test.name == "probes" {
+				f.latest.report.ProbeResults = []v1.ProbeResult{{Target: "tcp://example.test:80", OK: true}}
+			}
 			f.tick(t)
 			if len(f.events(t, "firing")) != 1 {
 				t.Fatalf("events=%+v", f.events(t, "all"))
@@ -858,7 +861,8 @@ func TestLocallyDisabledFeatureResolvesItsFiringAlert(t *testing.T) {
 				}
 			}
 			f.latest.report.Metrics = v1.Metrics{}
-			f.latest.report.Runtime.DisabledFeatures = []string{test.feature}
+			f.latest.report.Metrics.MetricStatus = map[string]string{test.feature: "disabled"}
+			f.latest.report.ProbeResults = nil
 			// 过期报告中的关闭决定不算数。
 			f.advance(int(nodes.OnlineWindow/time.Second) + 1)
 			f.tick(t)
@@ -875,5 +879,56 @@ func TestLocallyDisabledFeatureResolvesItsFiringAlert(t *testing.T) {
 				t.Fatal("disabled feature fired again")
 			}
 		})
+	}
+}
+
+func TestDisabledScalarStatusResolvesOnlyFreshReport(t *testing.T) {
+	f := newFixture(t, 0)
+	f.tick(t)
+	if len(f.events(t, "firing")) != 1 {
+		t.Fatal("did not fire")
+	}
+	f.latest.report.Metrics.CPUPercent = nil
+	f.latest.report.Metrics.MetricStatus["cpu_percent"] = "disabled"
+	f.advance(int(nodes.OnlineWindow/time.Second) + 1)
+	f.tick(t)
+	if len(f.events(t, "firing")) != 1 {
+		t.Fatal("stale disabled status resolved")
+	}
+	f.latest.report.ReceivedAt = f.now
+	f.tick(t)
+	events := f.events(t, "resolved")
+	if len(events) != 1 || events[0].Value != nil {
+		t.Fatalf("disabled resolution=%+v", events)
+	}
+}
+
+func TestProbesDownPendingNeitherFailsNorResolves(t *testing.T) {
+	f := newFixture(t, 0)
+	if _, err := f.s.Save(t.Context(), f.rule.ID, patch(t, `{"metric":"probes_down","threshold":0}`)); err != nil {
+		t.Fatal(err)
+	}
+	f.latest.report.ProbeResults = []v1.ProbeResult{{Target: "tcp://one.test:80", Error: "pending"}}
+	f.tick(t)
+	if value := metricValue(f.latest.report, Rule{Metric: "probes_down"}, f.now); value != nil {
+		t.Fatalf("pending value=%v", value)
+	}
+	if len(f.events(t, "all")) != 0 {
+		t.Fatal("pending counted as down")
+	}
+	f.latest.report.ProbeResults[0].Error = "timeout"
+	f.tick(t)
+	if len(f.events(t, "firing")) != 1 {
+		t.Fatal("failure did not fire")
+	}
+	f.latest.report.ProbeResults[0].Error = "pending"
+	f.tick(t)
+	if len(f.events(t, "firing")) != 1 {
+		t.Fatal("pending resolved after restart")
+	}
+	f.latest.report.ProbeResults[0].Error = "timeout"
+	f.tick(t)
+	if len(f.events(t, "all")) != 1 {
+		t.Fatal("restart caused resolve/re-fire flap")
 	}
 }

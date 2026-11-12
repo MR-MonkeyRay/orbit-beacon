@@ -13,6 +13,7 @@ import (
 
 	"orbitbeacon/internal/agent/identity"
 	"orbitbeacon/internal/agent/service"
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -37,7 +38,7 @@ func TestSchedulerIdentityConflictStopsRun(t *testing.T) {
 				var collections, activeCollections, reports, activeReports atomic.Int64
 				var reportContext context.Context
 				logs := &testLogSink{}
-				scheduler := service.NewScheduler(service.SchedulerOptions{Logger: logs.logger(), Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
+				scheduler := service.NewScheduler(service.SchedulerOptions{Logger: logs.logger(), Identity: state, RuntimeSettings: func() config.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 					Collect: func(ctx context.Context) (v1.Metrics, error) {
 						activeCollections.Add(1)
 						defer activeCollections.Add(-1)
@@ -122,7 +123,7 @@ func TestSchedulerOtherReportFailuresRemainRetryable(t *testing.T) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				var collections, reports atomic.Int64
-				scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
+				scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() config.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 					Collect: func(context.Context) (v1.Metrics, error) {
 						collections.Add(1)
 						return schedulerMetrics(), nil

@@ -101,7 +101,7 @@ func (r *Runner) SetConfig(targets []string, expected map[string]int) error {
 	return nil
 }
 
-// Results 按上报的目标顺序返回独立副本，忽略未完成或已删除的检查。
+// Results 为每个配置目标返回独立副本；首次检查完成前显式返回 pending。
 // 读取旧快照不会改变当前探测目标。
 func (r *Runner) Results(targets []string) []v1.ProbeResult {
 	r.mu.Lock()
@@ -109,7 +109,11 @@ func (r *Runner) Results(targets []string) []v1.ProbeResult {
 	var results []v1.ProbeResult
 	for _, target := range targets {
 		state := r.targets[target]
-		if state == nil || state.result == nil {
+		if state == nil {
+			continue
+		}
+		if state.result == nil {
+			results = append(results, v1.ProbeResult{Target: target, Error: "pending"})
 			continue
 		}
 		result := *state.result

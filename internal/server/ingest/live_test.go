@@ -54,7 +54,7 @@ func TestLiveFleetProjectsIdentityAwareMemoryWithoutDecodingReports(t *testing.T
 	}
 }
 
-func TestLiveDetailResetAndABARejectOldMemoryAndPreserveRestartRuntime(t *testing.T) {
+func TestLiveDetailResetAndABARejectOldMemoryAndPreserveRestartLiveness(t *testing.T) {
 	for _, mutation := range []string{"revoke", "aba", "new-run", "restart"} {
 		t.Run(mutation, func(t *testing.T) {
 			f := newCoalesceFixture(t, 30*time.Second)
@@ -65,11 +65,11 @@ func TestLiveDetailResetAndABARejectOldMemoryAndPreserveRestartRuntime(t *testin
 					t.Fatal(err)
 				}
 			case "aba":
-				if _, err := f.db.Exec("UPDATE nodes SET credential_epoch=credential_epoch+2,last_seen=NULL,system='',agent_runtime='',run_generation='0',report_session_id='' WHERE id=?", f.id); err != nil {
+				if _, err := f.db.Exec("UPDATE nodes SET credential_epoch=credential_epoch+2,last_seen=NULL,system='',run_generation='0',report_session_id='' WHERE id=?", f.id); err != nil {
 					t.Fatal(err)
 				}
 			case "new-run":
-				if _, err := f.db.Exec("UPDATE nodes SET run_generation='2',report_session_id='next',agent_runtime='' WHERE id=?", f.id); err != nil {
+				if _, err := f.db.Exec("UPDATE nodes SET run_generation='2',report_session_id='next' WHERE id=?", f.id); err != nil {
 					t.Fatal(err)
 				}
 			case "restart":
@@ -86,12 +86,8 @@ func TestLiveDetailResetAndABARejectOldMemoryAndPreserveRestartRuntime(t *testin
 			if latest != nil {
 				t.Fatalf("%s exposed old latest: %+v", mutation, latest)
 			}
-			if mutation == "restart" {
-				if record.Runtime == nil || record.Node.Presence != "online" {
-					t.Fatalf("restart lost durable observations: %+v", record)
-				}
-			} else if record.Runtime != nil {
-				t.Fatalf("%s exposed old runtime: %+v", mutation, record.Runtime)
+			if mutation == "restart" && record.Node.Presence != "online" {
+				t.Fatalf("restart lost liveness: %+v", record)
 			}
 			if mutation == "revoke" || mutation == "aba" {
 				if record.Node.LastSeen != nil || (record.Node.Presence != "pending" && record.Node.Presence != "never") {
@@ -99,35 +95,6 @@ func TestLiveDetailResetAndABARejectOldMemoryAndPreserveRestartRuntime(t *testin
 				}
 			}
 		})
-	}
-}
-
-func TestLiveDetailUsesOneAcceptedSamplesRuntimeAcrossDurableCommit(t *testing.T) {
-	f := newCoalesceFixture(t, 30*time.Second)
-	record, err := f.nodes.LiveDetail(context.Background(), f.id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.now = f.now.Add(time.Second)
-	f.report.Seq++
-	f.report.Runtime.ReportIntervalSeconds = 5
-	if _, err := acceptReport(context.Background(), f.service, coalesceToken, f.report); err != nil {
-		t.Fatal(err)
-	}
-	latest, err := f.service.ProjectLiveDetail(&record, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if latest != nil && latest.Runtime.ReportIntervalSeconds != record.Runtime.ReportIntervalSeconds {
-		t.Fatalf("mixed runtime/latest: latest=%+v runtime=%+v", latest.Runtime, record.Runtime)
-	}
-	record, err = f.nodes.LiveDetail(context.Background(), f.id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	latest, err = f.service.ProjectLiveDetail(&record, f.now)
-	if err != nil || latest == nil || record.Runtime.ReportIntervalSeconds != 5 || latest.Runtime.ReportIntervalSeconds != 5 {
-		t.Fatalf("current detail runtime/latest=%+v/%+v err=%v", record.Runtime, latest, err)
 	}
 }
 
@@ -163,32 +130,29 @@ func TestLiveFleetRejectsLateFastPathMemoryAfterCredentialReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	latest, err := f.service.ProjectLiveDetail(&record, f.now)
-	if err != nil || latest != nil || record.Runtime != nil || record.Node.LastSeen != nil {
+	if err != nil || latest != nil || record.Node.LastSeen != nil {
 		t.Fatalf("late admitted memory repopulated detail: %+v latest=%+v err=%v", record, latest, err)
 	}
 }
 
-func TestLiveDetailPrefersAcceptedSampleRuntimeDuringDurablePublicationGap(t *testing.T) {
+func TestLiveDetailPrefersAcceptedSampleDuringDurablePublicationGap(t *testing.T) {
 	f := newCoalesceFixture(t, 30*time.Second)
 	// 下一条报告的持久化事务已提交，但其已接受的内存快照尚未发布。
 	// 上一份已接受样本在相同完整进程身份下仍然有效。
 	f.now = f.now.Add(time.Second)
-	if _, err := f.db.Exec(`UPDATE nodes SET last_seen=?,agent_runtime='{"report_interval_seconds":5,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]}' WHERE id=?`, timekey.Format(f.now), f.id); err != nil {
+	if _, err := f.db.Exec(`UPDATE nodes SET last_seen=? WHERE id=?`, timekey.Format(f.now), f.id); err != nil {
 		t.Fatal(err)
 	}
 	record, err := f.nodes.LiveDetail(context.Background(), f.id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Runtime == nil || record.Runtime.ReportIntervalSeconds != 5 {
-		t.Fatalf("fixture runtime=%+v", record.Runtime)
-	}
 	latest, err := f.service.ProjectLiveDetail(&record, f.now)
 	if err != nil || latest == nil {
 		t.Fatalf("accepted current-identity sample disappeared: latest=%+v err=%v", latest, err)
 	}
-	if record.Runtime.ReportIntervalSeconds != 10 || latest.Runtime.ReportIntervalSeconds != 10 {
-		t.Fatalf("old sample paired with newly durable runtime: runtime=%+v latest=%+v", record.Runtime, latest.Runtime)
+	if latest.Seq != 1 {
+		t.Fatalf("unpublished sample: %+v", latest)
 	}
 }
 

@@ -256,10 +256,9 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 	if err := json.Unmarshal([]byte(reportBody(1, 1, "private-session", 25)), &report); err != nil {
 		t.Fatal(err)
 	}
-	report.Runtime.ProbeTargets = []string{"https://private-probe.example"}
 	expiry := time.Date(2035, 5, 6, 7, 8, 9, 0, time.UTC)
 	latency := 1.0
-	report.ProbeResults = []v1.ProbeResult{{Target: report.Runtime.ProbeTargets[0], OK: true, LatencyMS: &latency, CheckedAt: f.now, TLSExpiresAt: &expiry}}
+	report.ProbeResults = []v1.ProbeResult{{Target: "https://private-probe.example", OK: true, LatencyMS: &latency, CheckedAt: f.now, TLSExpiresAt: &expiry}}
 	reportJSON, err := json.Marshal(report)
 	if err != nil {
 		t.Fatal(err)

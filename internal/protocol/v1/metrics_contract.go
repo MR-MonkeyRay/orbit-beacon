@@ -32,3 +32,8 @@ func SourceFamilies() [5]string     { return sourceFamilies }
 
 func DiskMetricKey(path string) string    { return "disk:" + path }
 func NetworkMetricKey(name string) string { return "network:" + name }
+
+// DisabledStatusFields are optional report signals for locally disabled collectors.
+func DisabledStatusFields() [7]string {
+	return [7]string{"disk", "network", "traffic", "probes", "disk_io", "pressure", "temperature"}
+}

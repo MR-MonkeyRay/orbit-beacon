@@ -1,7 +1,10 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"net/http"
+	"sort"
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
@@ -58,7 +61,11 @@ type probeView struct {
 }
 
 func (h *handler) nodeProbes(w http.ResponseWriter, r *http.Request, id, requestID string) {
-	probes, err := h.readProbes(r, id)
+	probes, version, err := consoleSnapshot(h, r.Context(), func(context.Context) ([]probeView, error) { return h.readProbes(r, id) })
+	if errors.Is(err, errSnapshotBusy) || err == nil && h.nodes.PublicVisibilityVersion() != version {
+		fail(w, http.StatusServiceUnavailable, "snapshot_busy", "Node inventory is changing; retry later", requestID)
+		return
+	}
 	if err != nil {
 		h.serviceError(w, err, requestID)
 		return
@@ -70,10 +77,40 @@ func (h *handler) nodeProbes(w http.ResponseWriter, r *http.Request, id, request
 
 func (h *handler) readProbes(r *http.Request, id string) ([]probeView, error) {
 	window := h.now().UTC().Truncate(time.Hour).Add(-23 * time.Hour)
-	observed, err := h.nodes.ObservedProbes(r.Context(), id, window)
+	latest, latestErr := h.ingest.Latest(r.Context(), id)
+	if latestErr != nil && !errors.Is(latestErr, nodes.ErrNotFound) {
+		return nil, latestErr
+	}
+	targets := make([]string, 0, len(latest.ProbeResults))
+	for _, result := range latest.ProbeResults {
+		targets = append(targets, result.Target)
+	}
+	observed, err := h.nodes.ObservedProbes(r.Context(), id, window, targets...)
 	if err != nil {
 		return nil, err
 	}
+	if latestErr == nil {
+		stored := make(map[string]nodes.ObservedProbe, len(observed))
+		for _, p := range observed {
+			stored[p.Target] = p
+		}
+		observed = nil
+		for _, result := range latest.ProbeResults {
+			p := stored[result.Target]
+			p.Target, p.Error, p.LatencyMS, p.StatusCode, p.TLSExpiresAt = result.Target, result.Error, result.LatencyMS, result.StatusCode, result.TLSExpiresAt
+			p.Status, p.CheckedAt = "pending", nil
+			if result.Error != "pending" {
+				p.Status = "down"
+				if result.OK {
+					p.Status = "up"
+				}
+				at := result.CheckedAt
+				p.CheckedAt = &at
+			}
+			observed = append(observed, p)
+		}
+	}
+	sort.Slice(observed, func(i, j int) bool { return observed[i].Target < observed[j].Target })
 	probes := make([]probeView, 0, len(observed))
 	for _, stored := range observed {
 		probe := probeView{

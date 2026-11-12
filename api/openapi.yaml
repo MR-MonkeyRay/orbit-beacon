@@ -507,9 +507,9 @@ paths:
       description: |
         认证后的只读快照，使用与公开传输相同的帧结构与服务端节奏。
         省略 node_id 返回完整资产的紧凑状态；提供则返回该节点的详情、
-        最新采样与观测到的运行时。集群接收时间合并当前身份的内存上报与
+        最新采样。集群接收时间合并当前身份的内存上报与
         持久化观测，无需解码每个节点的完整上报。
-        已删除节点的详情是成功的快照，node/latest/runtime 为 null；
+        已删除节点的详情是成功的快照，node/latest 为 null；
         存在但尚无当前采样的节点有 node 而 latest 为 null。
         不接受订阅、重放、增量或 Agent 配置写入。
       parameters:
@@ -2200,7 +2200,7 @@ paths:
         - session: []
         - bearerAuth: []
       operationId: getNodeProbes
-      description: 所有已认证管理员均可用。按期望配置顺序为每个当前配置的探测目标返回一条；已从配置移除的目标不返回结果。最新结果与小时计数按合并的接收事务节奏持久化，响应可能滞后上报约 30 秒。24 小时窗口包含大于等于当前 UTC 小时减 23 小时的 UTC 小时，无单独的上截止。未知节点返回 node_not_found。
+      description: 所有已认证管理员均可用。按目标字典序返回最近接受报告中的探测结果（最多五条），首次检查完成前为 pending；已从最新报告移除的目标不返回结果。服务器重启后无内存报告时，返回最近观测到的至多五个目标。小时计数按合并的接收事务节奏持久化，可能滞后上报约 30 秒。24 小时窗口包含大于等于当前 UTC 小时减 23 小时的 UTC 小时，无单独的上截止。未知节点返回 node_not_found。
       responses:
         '429':
           description: rate_limited; whole seconds until one request is available.
@@ -2413,7 +2413,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       summary: 创建 upgrade、restart 或 stop 指令
-      description: upgrade 有效期十五分钟，restart/stop 五分钟；目标版本必须是无前导零的 MAJOR.MINOR.PATCH。stop 的 confirm 必须等于节点名。未观测 runtime 或本地不允许返回 409 command_not_allowed；已有活动指令返回 409 command_active；禁用、已关闭或未注册返回 409 node_unavailable。upgrade 已是目标版本返回 409 command_same_version。
+      description: upgrade 有效期十五分钟，restart/stop 五分钟；目标版本必须是无前导零的 MAJOR.MINOR.PATCH。stop 的 confirm 必须等于节点名。尚无已接受的运行身份返回 409 command_not_allowed；本地不允许由 Agent 返回 disabled_locally；已有活动指令返回 409 command_active；禁用、已关闭或未注册返回 409 node_unavailable。upgrade 已是目标版本返回 409 command_same_version。
       security: [{session: []}]
       parameters:
         - {$ref: '#/components/parameters/CSRF'}
@@ -2456,27 +2456,6 @@ paths:
         '204': {description: 已取消}
         '404': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
-        default: {$ref: '#/components/responses/Error'}
-  /api/v1/nodes/{id}/runtime:
-    parameters:
-      - $ref: '#/components/parameters/NodeID'
-    get:
-      operationId: getAgentRuntime
-      description: 当前凭据最后接受的运行时，绝非服务端期望配置。有效上报前为 null；凭据替换或吊销清除观测。已移除的 /config 路由返回 404。
-      responses:
-        '200':
-          description: Agent 持有的运行时观测。
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: false
-                required: [runtime]
-                properties:
-                  runtime:
-                    oneOf:
-                      - {$ref: '#/components/schemas/RuntimeSettings'}
-                      - {type: 'null'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes/{id}/traffic-settings:
     parameters:
@@ -2779,10 +2758,10 @@ paths:
         目标完全来自 Bearer 认证。请求体上限 64 KiB；每节点每秒一个请求，突发容量为三。
         认证与准入先于请求体读取，处理时在事务中重新校验凭据是否完全匹配。
         新代次替换持久化的会话隔离标记（fence）；旧代次或同代次不同会话返回 409。
-        重复/旧序号无法替换 latest、last_seen、runtime，也无法重新添加已移除的探测目标。
-        latest/序号状态仅存于当前进程，不属于持久历史。runtime 必填且由 Agent 管理；
-        探测结果须属于本次上报的 runtime。接受的 runtime 变更受现有身份隔离标记约束，
-        持久化时移除已过时的探测观测。已禁用节点在读取请求体前收到 403。不返回期望配置。
+        重复/旧序号无法替换 latest、last_seen，也无法重新添加已移除的探测目标。
+        latest/序号状态仅存于当前进程，不属于持久历史。报告不包含本地设置；
+        探测结果涵盖全部当前目标，首次检查前为 pending。接受的报告受现有身份隔离标记约束，
+        移除目标不删除探测历史，历史按保留策略清理。已禁用节点在读取请求体前收到 403。不返回期望配置。
       requestBody:
         required: true
         content:
@@ -3590,7 +3569,7 @@ components:
         每 30 秒评估已注册且启用的节点；除流量配额外，指标须来自新鲜且通过身份隔离校验的最新上报。
         缺失/已过期/错误的指标会重置待触发时长，既不触发告警，也不能作为恢复依据。
         磁盘使用率取新鲜且采集成功的磁盘中的最大值；总量为零的内存、交换空间或磁盘视为无数据。
-        probes_down 统计最新上报中的失败结果；无探测结果即数值零，因此移除目标可使告警恢复。
+        probes_down 统计最新上报中的失败结果；有 pending 时无数值，无结果时视为关闭。新鲜报告中指标状态为 disabled 或规则目标缺席时恢复事件，过期或缺失报告不触发恢复。
         指标条件须持续满足 for_seconds。offline 使用距最近一次服务端收到上报
         （无上报则为注册）的时长，无额外待触发延迟。恢复判断采用阈值 2% 的回差，
         百分比指标的回差至少为 1 个百分点；probes_down 使用限制在 0..5 的计数回差。probe_failed 无回差；probe_latency_ms 仅使用阈值 2% 的回差；probe_tls_expiry_days 使用阈值 2% 且至少 1 天的回差。
@@ -3833,13 +3812,12 @@ components:
       unevaluatedProperties: false
     LatestSampleView:
       type: object
-      required: [received_at, sampled_at, seq, metrics, system, runtime]
+      required: [received_at, sampled_at, seq, metrics, system]
       properties:
         received_at: {type: string, format: date-time}
         sampled_at: {type: string, format: date-time}
         seq: {type: integer, minimum: 1}
         metrics: {$ref: '#/components/schemas/Metrics'}
-        runtime: {$ref: '#/components/schemas/RuntimeSettings'}
         system:
           oneOf:
             - {$ref: '#/components/schemas/System'}
@@ -4051,7 +4029,7 @@ components:
     ConsoleDetailState:
       type: object
       additionalProperties: false
-      required: [node, latest, runtime]
+      required: [node, latest]
       properties:
         node:
           oneOf:
@@ -4065,11 +4043,6 @@ components:
               unevaluatedProperties: false
             - {type: 'null'}
           description: 最新接受的进程本地采样；null 不表示已删除。不含凭据或进程身份。
-        runtime:
-          oneOf:
-            - {$ref: '#/components/schemas/RuntimeSettings'}
-            - {type: 'null'}
-          description: 当前身份最后观测到的 Agent 持有运行时；上报前或身份重置后为 null。
     ConsoleSnapshotFrame:
       allOf:
         - {$ref: '#/components/schemas/LiveFrameClock'}
@@ -4111,54 +4084,6 @@ components:
           else:
             properties:
               next_offset: {type: 'null'}
-    InterfaceSelection:
-      type: array
-      maxItems: 8
-      uniqueItems: true
-      description: 唯一的非空接口名，每个 1–255 UTF-8 字节，不含 NUL、CR 或 LF；服务端/Agent/采集器共用校验。空选择使用默认路由。
-      items:
-        type: string
-        x-minLengthBytes: 1
-        x-maxLengthBytes: 255
-        allOf:
-          - {pattern: '^[^\u0000\r\n]+$'}
-          - {pattern: '[^\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]'}
-    ProbeTargets:
-      type: array
-      maxItems: 5
-      uniqueItems: true
-      description: 唯一的服务探测目标。每个目标最多 1024 UTF-8 字节，不含空白。支持格式：tcp://host:port、不含 userinfo 或 fragment 的 http:// 或 https:// URL、icmp://host、dns://host。目标对所有控制台用户可见；切勿在 URL（含查询字符串）中放入机密。
-      items:
-        type: string
-        x-minLengthBytes: 1
-        x-maxLengthBytes: 1024
-        pattern: '^\S+$'
-    RuntimeSettings:
-      type: object
-      additionalProperties: true
-      required: [report_interval_seconds, disk_interval_seconds, interfaces, disk_paths, probe_targets, remote_commands, disabled_features]
-      description: 由 Agent 管理的设置。本地 JSON 严格校验，默认上报/磁盘采集间隔分别为 10/60 秒，remote_commands 默认包含 upgrade、restart、stop，其余数组默认为空；上报须提供全部 runtime 字段，不接受 null，也不填充默认值。大小预算按路径/接口各出现四次、探测目标各出现两次的 JSON 转义后长度计算，为有大小上限的采集数据结构预留 13 KiB。最终编码上报仍以 64 KiB 为上限。空 interfaces 使用默认路由；空 disk_paths 使用 Agent 默认磁盘；空 probe_targets 禁用探测。
-      properties:
-        report_interval_seconds: {type: integer, minimum: 5, maximum: 60}
-        disk_interval_seconds: {type: integer, minimum: 60, maximum: 3600}
-        interfaces: {$ref: '#/components/schemas/InterfaceSelection'}
-        disk_paths:
-          type: array
-          maxItems: 8
-          uniqueItems: true
-          description: 平台有效的绝对路径，每个最多 1024 字节，不含 NUL。服务端/Agent/采集器共用校验。
-          items: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 1024, pattern: '^[^\u0000]+$'}
-        probe_targets: {$ref: '#/components/schemas/ProbeTargets'}
-        remote_commands:
-          type: array
-          maxItems: 3
-          uniqueItems: true
-          items: {type: string, enum: [upgrade, restart, stop]}
-        disabled_features:
-          type: array
-          maxItems: 7
-          uniqueItems: true
-          items: {type: string, enum: [disk, network, traffic, probes, disk_io, pressure, temperature]}
     BillingMode:
       type: string
       enum: [total, max, rx, tx]
@@ -4265,7 +4190,7 @@ components:
         probes:
           type: array
           maxItems: 5
-          description: 每个配置目标一条，保持期望配置顺序。
+          description: 最近报告中的目标按字典序排列；重启后无报告时取最近观测的至多五个目标。
           items: {$ref: '#/components/schemas/ProbeStatus'}
     ProbeStatus:
       type: object
@@ -4273,9 +4198,9 @@ components:
       required: [target, status, latency_ms, error, status_code, checked_at, tls_expires_at, uptime_24h, checks_24h]
       properties:
         target: {type: string, x-maxLengthBytes: 1024}
-        status: {type: string, enum: [up, down, pending], description: pending 表示尚无存储的最新结果。}
+        status: {type: string, enum: [up, down, pending], description: pending 表示当前 Agent 首次检查尚未完成。}
         latency_ms: {type: [number, 'null'], minimum: 0, maximum: 60000}
-        error: {type: string, enum: ['', timeout, refused, dns, tls, http_status, unreachable, unsupported, error]}
+        error: {type: string, enum: ['', pending, timeout, refused, dns, tls, http_status, unreachable, unsupported, error]}
         status_code: {type: [integer, 'null'], minimum: 100, maximum: 599, description: 适用时的 HTTP 响应状态码。}
         tls_expires_at: {type: [string, 'null'], format: date-time, description: HTTPS leaf certificate expiry when a response arrived.}
         checked_at: {type: [string, 'null'], format: date-time}
@@ -4352,7 +4277,7 @@ components:
         metric_status:
           type: object
           required: [cpu_percent, load1, load5, load15, memory_total_bytes, memory_available_bytes, swap_total_bytes, swap_used_bytes, uptime_seconds]
-          description: '校验九个已知标量键与每个上报的 disk:/network: 键。丢弃未知扩展键与值；不匹配的 disk:/network: 键被拒绝。'
+          description: '校验九个已知标量键与每个上报的 disk:/network: 键；本地关闭的采集项通过可选的 disabled 状态键表示。丢弃未知扩展键与值；不匹配的 disk:/network: 键被拒绝。'
           properties:
             cpu_percent: {$ref: '#/components/schemas/MetricStatus'}
             load1: {$ref: '#/components/schemas/MetricStatus'}
@@ -4363,6 +4288,13 @@ components:
             swap_total_bytes: {$ref: '#/components/schemas/MetricStatus'}
             swap_used_bytes: {$ref: '#/components/schemas/MetricStatus'}
             uptime_seconds: {$ref: '#/components/schemas/MetricStatus'}
+            disk: {const: disabled}
+            network: {const: disabled}
+            traffic: {const: disabled}
+            probes: {const: disabled}
+            disk_io: {const: disabled}
+            pressure: {const: disabled}
+            temperature: {const: disabled}
           patternProperties:
             '^(disk:|network:)': {$ref: '#/components/schemas/MetricStatus'}
           additionalProperties: true
@@ -4400,14 +4332,14 @@ components:
         target: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 1024, description: Validated service-probe target.}
         ok: {type: boolean}
         latency_ms: {type: [number, 'null'], minimum: 0, maximum: 60000, description: 成功结果非 null，失败为 null。}
-        error: {type: string, enum: ['', timeout, refused, dns, tls, http_status, unreachable, unsupported, error], description: 当且仅当 ok 为 true 时为空；http_status 须附 status_code。}
+        error: {type: string, enum: ['', pending, timeout, refused, dns, tls, http_status, unreachable, unsupported, error], description: 当且仅当 ok 为 true 时为空；http_status 须附 status_code。pending 的 ok 为 false，latency_ms、status_code、tls_expires_at 均为 null，checked_at 为零时间。}
         status_code: {type: [integer, 'null'], minimum: 100, maximum: 599, description: 仅 HTTP 探测时存在；error 为 http_status 时必填。}
         tls_expires_at: {type: [string, 'null'], format: date-time, description: HTTPS leaf certificate expiry when a response arrived; null on handshake failure.}
-        checked_at: {type: string, format: date-time}
+        checked_at: {type: string, format: date-time, description: pending 为零时间 0001-01-01T00:00:00Z；其他结果为实际检查时间。}
     Report:
       type: object
       additionalProperties: true
-      required: [protocol_version, run_generation, session_id, seq, sampled_at, runtime, metrics, traffic]
+      required: [protocol_version, run_generation, session_id, seq, sampled_at, metrics, traffic]
       properties:
         command_results: {type: array, maxItems: 2, items: {$ref: '#/components/schemas/CommandResult'}}
         protocol_version: {const: 1}
@@ -4415,11 +4347,10 @@ components:
         session_id: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
         seq: {type: integer, minimum: 1}
         sampled_at: {type: string, format: date-time}
-        runtime: {$ref: '#/components/schemas/RuntimeSettings'}
         system: {$ref: '#/components/schemas/System'}
         metrics: {$ref: '#/components/schemas/Metrics'}
         traffic: {type: array, maxItems: 24, description: 唯一的 epoch/period_start 对，含每进程按小时累计的字节计数器。, items: {$ref: '#/components/schemas/Traffic'}}
-        probe_results: {type: array, maxItems: 5, description: 每个当前配置目标的最新结果；目标值唯一。, items: {$ref: '#/components/schemas/ProbeResult'}}
+        probe_results: {type: array, maxItems: 5, description: 每个当前配置目标的最新结果；首次检查完成前为 pending，目标值唯一。, items: {$ref: '#/components/schemas/ProbeResult'}}
     CommandTargetConstraint:
       if: {properties: {kind: {const: upgrade}}}
       then: {required: [target_version]}

@@ -3,7 +3,6 @@ package collect_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -13,11 +12,12 @@ import (
 	"time"
 
 	"orbitbeacon/internal/agent/collect"
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
 func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
-	config := v1.DefaultRuntimeSettings()
+	config := config.DefaultRuntimeSettings()
 	base := os.TempDir() + string(filepath.Separator)
 	for i := range 8 {
 		config.DiskPaths = append(config.DiskPaths, base+strings.Repeat("a", 1023-len(base))+string(rune('a'+i)))
@@ -27,18 +27,9 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 		prefix := "https://probe" + strconv.Itoa(i) + ".example/"
 		config.ProbeTargets = append(config.ProbeTargets, prefix+strings.Repeat("a", 1024-len(prefix)))
 	}
-	// Five maximum-length targets plus eight maximum-length paths/interfaces exceed
-	// the new reservation. They must fail admission, rather than produce a large report.
-	if err := config.Validate(); !errors.Is(err, v1.ErrReportBudget) {
-		t.Fatalf("oversized selections must be rejected by budget: %v", err)
+	if err := config.Validate(); err != nil {
+		t.Fatal(err)
 	}
-	config.ProbeTargets[3] = config.ProbeTargets[3][:884]
-	// Retain three maximum-length targets and fill the last target up to the admission limit.
-	config.ProbeTargets[4] = config.ProbeTargets[4][:55]
-	if err := config.Validate(); !errors.Is(err, v1.ErrReportBudget) {
-		t.Fatalf("selection over the limit must be rejected: %v", err)
-	}
-	config.ProbeTargets[4] = config.ProbeTargets[4][:54]
 	config.ReportIntervalSeconds, config.DiskIntervalSeconds = 60, 3600
 	collector, err := collect.New(collect.Options{Config: config})
 	if err != nil {
@@ -73,7 +64,7 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 		metrics.Sources[key] = source
 	}
 	config.DisabledFeatures = v1.DisabledFeatureOrder() // 最大枚举编码，独立于采集开关覆盖预留。
-	report := v1.Report{ProtocolVersion: 1, RunGeneration: math.MaxUint64, SessionID: strings.Repeat("s", 255), Seq: math.MaxUint64, SampledAt: at, Runtime: config, Metrics: metrics, Traffic: []v1.Traffic{}, System: &v1.System{Hostname: strings.Repeat("<", 255), OS: strings.Repeat("&", 64), Arch: strings.Repeat(">", 64), AgentVersion: strings.Repeat("a", 64)}}
+	report := v1.Report{ProtocolVersion: 1, RunGeneration: math.MaxUint64, SessionID: strings.Repeat("s", 255), Seq: math.MaxUint64, SampledAt: at, Metrics: metrics, Traffic: []v1.Traffic{}, System: &v1.System{Hostname: strings.Repeat("<", 255), OS: strings.Repeat("&", 64), Arch: strings.Repeat(">", 64), AgentVersion: strings.Repeat("a", 64)}}
 	widestRate, widestPercent, widestTemperature := 999999999999999.9, 99.99, 149.99
 	report.Metrics.DiskIO = &v1.DiskIOMetrics{ReadBytesPerSec: widestRate, WriteBytesPerSec: widestRate, BusyPercent: widestPercent}
 	report.Metrics.Pressure = &v1.PressureMetrics{CPU: &widestPercent, Memory: &widestPercent, IO: &widestPercent}
@@ -103,18 +94,15 @@ func TestMaximumOrdinarySelectionsProduceSendableReport(t *testing.T) {
 	for _, values := range [][]string{config.Interfaces, config.DiskPaths} {
 		for _, value := range values {
 			encoded, _ := json.Marshal(value)
-			selectionBytes += 4 * len(encoded)
+			selectionBytes += 3 * len(encoded)
 		}
 	}
 	for _, value := range config.ProbeTargets {
 		encoded, _ := json.Marshal(value)
-		selectionBytes += 2*len(encoded) + 216
+		selectionBytes += len(encoded) + 216
 	}
 	envelope := len(data) - selectionBytes
 	t.Logf("maximum ordinary report: %d bytes; fixed envelope: %d bytes; wire headroom: %d bytes", len(data), envelope, v1.MaxMessageBytes-len(data))
-	if selectionBytes+15*1024 != v1.MaxMessageBytes {
-		t.Fatalf("test no longer fills the selection budget: %d", selectionBytes+15*1024)
-	}
 	if envelope > 15*1024 {
 		t.Fatalf("fixed envelope exceeds reserved 15 KiB: %d", envelope)
 	}

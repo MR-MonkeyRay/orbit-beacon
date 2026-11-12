@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"reflect"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"orbitbeacon/internal/agent/collect"
 	"orbitbeacon/internal/agent/identity"
 	"orbitbeacon/internal/agent/service"
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -21,10 +21,10 @@ func TestSchedulerDeadlineStillReportsCompleteConfiguredMetrics(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		config := runtimeSettings(10)
-		config.Interfaces = []string{"deadline0", "deadline1"}
-		config.DiskPaths = []string{t.TempDir(), t.TempDir()}
-		collector, err := collect.New(collect.Options{Config: config})
+		cfg := runtimeSettings(10)
+		cfg.Interfaces = []string{"deadline0", "deadline1"}
+		cfg.DiskPaths = []string{t.TempDir(), t.TempDir()}
+		collector, err := collect.New(collect.Options{Config: cfg})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -32,7 +32,7 @@ func TestSchedulerDeadlineStillReportsCompleteConfiguredMetrics(t *testing.T) {
 		defer cancel()
 		reports := make(chan v1.Report, 1)
 		scheduler := service.NewScheduler(service.SchedulerOptions{
-			Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return config },
+			Identity: state, RuntimeSettings: func() config.RuntimeSettings { return cfg },
 			Collect: func(ctx context.Context) (v1.Metrics, error) {
 				// 先等待调度器的实际采集超时，再让采集器返回完整快照。
 				<-ctx.Done()
@@ -62,7 +62,7 @@ func TestSchedulerDeadlineStillReportsCompleteConfiguredMetrics(t *testing.T) {
 		if err := report.Validate(); err != nil {
 			t.Errorf("deadline report is not protocol-valid: %v", err)
 		}
-		if report.Seq != 1 || !reflect.DeepEqual(report.Runtime, config) {
+		if report.Seq != 1 {
 			t.Errorf("deadline changed report runtime ownership: %+v", report)
 		}
 		for _, field := range []string{"cpu_percent", "load1", "load5", "load15", "memory_total_bytes", "memory_available_bytes", "swap_total_bytes", "swap_used_bytes", "uptime_seconds"} {
@@ -75,10 +75,10 @@ func TestSchedulerDeadlineStillReportsCompleteConfiguredMetrics(t *testing.T) {
 				t.Errorf("deadline report missing valid source %s", family)
 			}
 		}
-		if len(report.Metrics.Disks) != len(config.DiskPaths) || len(report.Metrics.Networks) != len(config.Interfaces) {
+		if len(report.Metrics.Disks) != len(cfg.DiskPaths) || len(report.Metrics.Networks) != len(cfg.Interfaces) {
 			t.Errorf("deadline report omitted configured series: %+v", report.Metrics)
 		}
-		for _, path := range config.DiskPaths {
+		for _, path := range cfg.DiskPaths {
 			found := false
 			for _, disk := range report.Metrics.Disks {
 				if disk.Path == path {
@@ -89,7 +89,7 @@ func TestSchedulerDeadlineStillReportsCompleteConfiguredMetrics(t *testing.T) {
 				t.Errorf("deadline report missing disk %s", path)
 			}
 		}
-		for _, name := range config.Interfaces {
+		for _, name := range cfg.Interfaces {
 			found := false
 			for _, network := range report.Metrics.Networks {
 				if network.Name == name {

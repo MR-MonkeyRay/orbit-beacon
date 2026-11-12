@@ -1,16 +1,18 @@
-package v1
+package config
 
 import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	v1 "orbitbeacon/internal/protocol/v1"
 )
 
 func TestProbeResultEnvelopeCoversTLSExpiry(t *testing.T) {
 	at := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.FixedZone("widest", 23*3600+59*60))
 	latency, code := 0.00010000000000000002, 599
 	target := "https://example.test"
-	result := ProbeResult{Target: target, OK: true, LatencyMS: &latency, StatusCode: &code, CheckedAt: at, TLSExpiresAt: &at}
+	result := v1.ProbeResult{Target: target, OK: true, LatencyMS: &latency, StatusCode: &code, CheckedAt: at, TLSExpiresAt: &at}
 	data, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)

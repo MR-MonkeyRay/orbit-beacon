@@ -64,7 +64,7 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 	source := m.Sources["cpu"]
 	source.MeasurementWindowMS = &window
 	m.Sources["cpu"] = source
-	report := v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "private-session", Seq: 1, SampledAt: now, Runtime: v1.DefaultRuntimeSettings(), Metrics: m, Traffic: []v1.Traffic{}}
+	report := v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "private-session", Seq: 1, SampledAt: now, Metrics: m, Traffic: []v1.Traffic{}}
 	if _, err := acceptReport(ctx, s, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", report); err != nil {
 		t.Fatal(err)
 	}

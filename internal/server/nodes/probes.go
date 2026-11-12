@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
 )
@@ -32,23 +34,20 @@ type ProbeHistoryPoint struct {
 }
 
 func (s *Service) ProbeHistory(ctx context.Context, id, target string, window time.Time) ([]ProbeHistoryPoint, error) {
-	// 一次读取快照把节点是否存在、当前身份选中的目标和历史绑定在一起。
+	// 一次读取快照把节点是否存在、当前身份与保留的目标历史绑定在一起。
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
 		return nil, leaseErr
 	}
 	defer lease.Close()
 	ctx = lease.Context()
-	selected := probeTargetsSQL(lease.Dialect())
+
 	rows, err := lease.QueryContext(ctx, `
 		SELECT nodes.id, hourly.hour, hourly.checks, hourly.failures,
 		       hourly.latency_sum_ms, hourly.latency_max_ms
 		FROM nodes
 		LEFT JOIN probe_hourly AS hourly ON hourly.node_id=nodes.id AND hourly.target=? AND hourly.hour>=?
-		 AND EXISTS (
-		  SELECT 1 FROM `+selected+` AS selected
-		  WHERE selected.value=hourly.target
-		 )
+         AND length(nodes.token_hash)>0 AND nodes.run_generation!='0' AND nodes.report_session_id!=''
 		WHERE nodes.id=? ORDER BY hourly.hour`, target, timekey.Format(window), id)
 	if err != nil {
 		return nil, fmt.Errorf("read probe history: %w", err)
@@ -88,7 +87,7 @@ func (s *Service) ProbeHistory(ctx context.Context, id, target string, window ti
 	return points, nil
 }
 
-func (s *Service) ObservedProbes(ctx context.Context, id string, window time.Time) ([]ObservedProbe, error) {
+func (s *Service) ObservedProbes(ctx context.Context, id string, window time.Time, targets ...string) ([]ObservedProbe, error) {
 	// 一次读取快照把目标列表和观测结果绑定到同一凭据。
 	// 轮换不会把旧目标变成新身份的探测项。
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
@@ -97,16 +96,28 @@ func (s *Service) ObservedProbes(ctx context.Context, id string, window time.Tim
 	}
 	defer lease.Close()
 	ctx = lease.Context()
-	selected := probeTargetsSQL(lease.Dialect())
+
+	if len(targets) > v1.MaxProbeTargets {
+		return nil, errors.New("too many probe targets")
+	}
+	filter := ""
+	args := []any{}
+	if len(targets) > 0 {
+		filter = " AND latest.target IN (" + strings.TrimSuffix(strings.Repeat("?,", len(targets)), ",") + ")"
+		for _, target := range targets {
+			args = append(args, target)
+		}
+	}
+	args = append(args, timekey.Format(window), id, v1.MaxProbeTargets)
 	rows, err := lease.QueryContext(ctx, `
-		SELECT nodes.id, selected.value, latest.ok, latest.latency_ms, latest.error,
+        SELECT nodes.id, latest.target, latest.ok, latest.latency_ms, latest.error,
 		       latest.status_code, latest.checked_at, latest.tls_expires_at,
 		       coalesce(sum(hourly.checks),0), coalesce(sum(hourly.failures),0)
 		FROM nodes
-		LEFT JOIN `+selected+` AS selected ON true
-		LEFT JOIN probe_latest AS latest ON latest.node_id=nodes.id AND latest.target=selected.value
-		LEFT JOIN probe_hourly AS hourly ON hourly.node_id=nodes.id AND hourly.target=selected.value AND hourly.hour>=?
-		WHERE nodes.id=? GROUP BY nodes.id,selected.`+"`key`"+`,selected.value,latest.ok,latest.latency_ms,latest.error,latest.status_code,latest.checked_at,latest.tls_expires_at ORDER BY selected.`+"`key`", timekey.Format(window), id)
+		LEFT JOIN probe_latest AS latest ON latest.node_id=nodes.id
+          AND length(nodes.token_hash)>0 AND nodes.run_generation!='0' AND nodes.report_session_id!=''`+filter+`
+		LEFT JOIN probe_hourly AS hourly ON hourly.node_id=nodes.id AND hourly.target=latest.target AND hourly.hour>=?
+		WHERE nodes.id=? GROUP BY nodes.id,latest.target,latest.ok,latest.latency_ms,latest.error,latest.status_code,latest.checked_at,latest.tls_expires_at ORDER BY max(latest.checked_at) DESC,latest.target LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read observed probes: %w", err)
 	}
@@ -168,13 +179,6 @@ func (s *Service) ObservedProbes(ctx context.Context, id string, window time.Tim
 	return probes, nil
 }
 
-func probeTargetsSQL(dialect storage.Dialect) string {
-	if dialect == storage.MySQL {
-		return "JSON_TABLE(CASE WHEN length(nodes.token_hash)>0 AND nodes.run_generation!='0' AND nodes.report_session_id!='' THEN COALESCE(NULLIF(nodes.agent_runtime,''),'{}') ELSE '{}' END, '$.probe_targets[*]' COLUMNS (`key` FOR ORDINALITY,value VARCHAR(1024) PATH '$'))"
-	}
-	return `json_each(CASE WHEN length(nodes.token_hash)>0 AND nodes.run_generation!='0' AND nodes.report_session_id!='' THEN nullif(nodes.agent_runtime,'') ELSE NULL END, '$.probe_targets')`
-}
-
 func (s *Service) CleanupProbeHistory(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
 	if s == nil || s.db == nil || limit < 1 {
 		return 0, errors.New("probe retention is unavailable")
@@ -193,6 +197,13 @@ func (s *Service) CleanupProbeHistory(ctx context.Context, cutoff time.Time, lim
 	count, err := storage.DeleteBatch(ctx, tx, `SELECT node_id,target,hour FROM probe_hourly WHERE hour<? ORDER BY hour LIMIT ?`, `DELETE FROM probe_hourly WHERE node_id=? AND target=? AND hour=?`, timekey.Format(cutoff), limit)
 	if err != nil {
 		return 0, err
+	}
+	if count < int64(limit) {
+		latestCount, err := storage.DeleteBatch(ctx, tx, `SELECT node_id,target FROM probe_latest WHERE checked_at<? ORDER BY checked_at,target LIMIT ?`, `DELETE FROM probe_latest WHERE node_id=? AND target=?`, timekey.Format(cutoff), limit-int(count))
+		if err != nil {
+			return 0, err
+		}
+		count += latestCount
 	}
 	return count, tx.Commit()
 }

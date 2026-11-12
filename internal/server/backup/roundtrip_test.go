@@ -41,11 +41,10 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := "22222222-2222-4222-8222-222222222222"
-	runtime := `{"report_interval_seconds":5,"disk_interval_seconds":120,"interfaces":["eth0"],"disk_paths":["/srv/monitoring-canary"],"probe_targets":["https://example.com/health"]}`
 	if _, err = db.Exec(`INSERT INTO groups(id,name) VALUES('66666666-6666-4666-8666-666666666666','fixture-group')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(`INSERT INTO nodes(id,name,status,group_id,token_hash,credential_epoch,installation_id,first_enrolled_at,last_seen,system,agent_runtime,billing_day,quota_bytes,billing_mode,run_generation,report_session_id,created_at) VALUES(?,'node','online','66666666-6666-4666-8666-666666666666',?,23,'fixture-installation',?,?,?,?,2,'18446744073709551615','max','17','33333333-3333-4333-8333-333333333333',?)`, node, bytes.Repeat([]byte{3}, 32), at, at, `{"hostname":"monitoring-canary"}`, runtime, at); err != nil {
+	if _, err = db.Exec(`INSERT INTO nodes(id,name,status,group_id,token_hash,credential_epoch,installation_id,first_enrolled_at,last_seen,system,billing_day,quota_bytes,billing_mode,run_generation,report_session_id,created_at) VALUES(?,'node','online','66666666-6666-4666-8666-666666666666',?,23,'fixture-installation',?,?,?,2,'18446744073709551615','max','17','33333333-3333-4333-8333-333333333333',?)`, node, bytes.Repeat([]byte{3}, 32), at, at, `{"hostname":"monitoring-canary"}`, at); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = db.Exec(`INSERT INTO agent_commands(id,node_id,credential_epoch,kind,state,requested_by,created_at,expires_at) VALUES('77777777-7777-4777-8777-777777777777',?,23,'restart','pending','11111111-1111-4111-8111-111111111111',?,?)`, node, at, timekey.Format(now.Add(5*time.Minute))); err != nil {
@@ -157,12 +156,12 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 					}
 				}
 				if c == Monitoring {
-					var gotRuntime, system, lastSeen string
-					if err = reader.QueryRow(`SELECT agent_runtime,system,last_seen FROM node_observations WHERE node_id=?`, node).Scan(&gotRuntime, &system, &lastSeen); err != nil {
+					var system, lastSeen string
+					if err = reader.QueryRow(`SELECT system,last_seen FROM node_observations WHERE node_id=?`, node).Scan(&system, &lastSeen); err != nil {
 						t.Fatal(err)
 					}
-					if gotRuntime != runtime || system != `{"hostname":"monitoring-canary"}` || lastSeen != at {
-						t.Fatal("last observed runtime, system, or receipt time lost")
+					if system != `{"hostname":"monitoring-canary"}` || lastSeen != at {
+						t.Fatal("observed system or receipt time lost")
 					}
 				}
 				reader.Close()

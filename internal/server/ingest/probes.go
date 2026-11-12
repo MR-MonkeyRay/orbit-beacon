@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"slices"
+	"sort"
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
@@ -14,7 +16,7 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-const probeTargetLimit = 5
+const probeTargetLimit = v1.MaxProbeTargets
 
 // 在每秒一次上报的准入速率下，该限制覆盖默认含偏移的不足 60 秒持久化间隔（含突发）。
 // 溢出时通过背压保留已接受的检查。
@@ -80,7 +82,7 @@ func probeWatermark(ctx context.Context, q probeQueryer, nodeID, target string) 
 
 func (b *probeBuffer) retainTargets(targets []string) {
 	for target := range b.targets {
-		if !slices.Contains(targets, target) {
+		if !slices.Contains(targets, target) && len(b.targets[target].pending) == 0 {
 			delete(b.targets, target)
 		}
 	}
@@ -88,7 +90,7 @@ func (b *probeBuffer) retainTargets(targets []string) {
 
 func (b *probeBuffer) buffer(ctx context.Context, q probeQueryer, nodeID string, results []v1.ProbeResult, targets []string) error {
 	for _, result := range results {
-		if !slices.Contains(targets, result.Target) {
+		if result.Error == "pending" || !slices.Contains(targets, result.Target) {
 			continue
 		}
 		entry, exists := b.targets[result.Target]
@@ -99,7 +101,7 @@ func (b *probeBuffer) buffer(ctx context.Context, q probeQueryer, nodeID string,
 					if slices.Contains(targets, target) || len(candidate.pending) != 0 {
 						continue
 					}
-					if oldest == "" || candidate.counted.Before(b.targets[oldest].counted) {
+					if oldest == "" || (candidate.counted.Before(b.targets[oldest].counted) || candidate.counted.Equal(b.targets[oldest].counted) && target < oldest) {
 						oldest = target
 					}
 				}
@@ -206,4 +208,23 @@ func (state *nodeState) probesPending() bool {
 		}
 	}
 	return false
+}
+
+// Duplicate reports may carry newer checks, but cannot restore removed targets.
+func (state *nodeState) reportProbeTargets(report v1.Report, duplicate bool) ([]string, error) {
+	if duplicate {
+		state.mu.Lock()
+		body := state.latest
+		state.mu.Unlock()
+		report = v1.Report{}
+		if err := json.Unmarshal(body, &report); err != nil {
+			return nil, err
+		}
+	}
+	targets := make([]string, 0, len(report.ProbeResults))
+	for _, result := range report.ProbeResults {
+		targets = append(targets, result.Target)
+	}
+	sort.Strings(targets)
+	return targets, nil
 }

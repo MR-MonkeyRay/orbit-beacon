@@ -2,7 +2,6 @@ package alerts
 
 import (
 	"math"
-	"slices"
 	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
@@ -17,7 +16,7 @@ func metricValue(latest ingest.LatestReport, r Rule, now time.Time) *float64 {
 	if !latestFresh(latest, now) {
 		return nil
 	}
-	if metricDisabled(r, latest.Runtime) {
+	if metricDisabled(r, latest.Report) {
 		return nil
 	}
 	m := latest.Metrics
@@ -41,7 +40,7 @@ func metricValue(latest ingest.LatestReport, r Rule, now time.Time) *float64 {
 			return nil
 		}
 		for _, probe := range latest.ProbeResults {
-			if probe.Target != *r.Target {
+			if probe.Target != *r.Target || probe.Error == "pending" {
 				continue
 			}
 			switch metric {
@@ -64,6 +63,9 @@ func metricValue(latest ingest.LatestReport, r Rule, now time.Time) *float64 {
 	case "probes_down":
 		value := 0.0
 		for _, probe := range latest.ProbeResults {
+			if probe.Error == "pending" {
+				return nil
+			}
 			if !probe.OK {
 				value++
 			}
@@ -110,19 +112,30 @@ func targetMetric(metric string) bool {
 }
 
 // metricDisabled 判断指标是否被 Agent 本地关闭或目标已移除。明确关闭不是数据缺失。
-func metricDisabled(r Rule, runtime v1.RuntimeSettings) bool {
+func metricDisabled(r Rule, report v1.Report) bool {
 	if targetMetric(r.Metric) {
-		return runtime.FeatureDisabled(v1.FeatureProbes) || r.Target == nil || !slices.Contains(runtime.ProbeTargets, *r.Target)
+		for _, probe := range report.ProbeResults {
+			if r.Target != nil && probe.Target == *r.Target {
+				return false
+			}
+		}
+		return true
 	}
+	status := report.Metrics.MetricStatus
 	switch r.Metric {
 	case "traffic_quota_percent":
-		return runtime.FeatureDisabled(v1.FeatureTraffic)
+		return status["traffic"] == "disabled"
 	case "disk_used_percent":
-		return runtime.FeatureDisabled(v1.FeatureDisk)
+		return status["disk"] == "disabled"
 	case "probes_down":
-		return runtime.FeatureDisabled(v1.FeatureProbes)
+		return len(report.ProbeResults) == 0
+	case "memory_used_percent":
+		return status["memory_total_bytes"] == "disabled" || status["memory_available_bytes"] == "disabled"
+	case "swap_used_percent":
+		return status["swap_total_bytes"] == "disabled" || status["swap_used_bytes"] == "disabled"
+	default:
+		return status[r.Metric] == "disabled"
 	}
-	return false
 }
 
 func condition(r Rule, value float64, firing bool) bool {

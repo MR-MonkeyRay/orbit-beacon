@@ -84,7 +84,7 @@ var categoryTables = map[Category][]tableSpec{
 		table("backup_plans", "main", "", "id TEXT,name TEXT,enabled INTEGER,kind TEXT,categories_json TEXT,cron TEXT,destination_json TEXT,credentials_ciphertext BLOB,retain_count INTEGER,created_at TEXT,updated_at TEXT", "id"),
 	},
 	Monitoring: {
-		table("node_observations", "main", "", "node_id TEXT,last_seen TEXT,system TEXT,agent_runtime TEXT", "node_id"),
+		table("node_observations", "main", "", "node_id TEXT,last_seen TEXT,system TEXT", "node_id"),
 		table("traffic_hourly", "main", "", "node_id TEXT,epoch TEXT,period_start TEXT,rx_bytes INTEGER,tx_bytes INTEGER,updated_at TEXT", "node_id,epoch,period_start"),
 		table("node_availability_daily", "main", "", "node_id TEXT,day TEXT,online_seconds INTEGER,offline_seconds INTEGER", "node_id,day"),
 		table("traffic_daily", "main", "", "node_id TEXT,day TEXT,rx_bytes INTEGER,tx_bytes INTEGER", "node_id,day"),

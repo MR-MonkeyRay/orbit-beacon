@@ -8,12 +8,13 @@ import (
 
 	"github.com/shirou/gopsutil/v4/disk"
 
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
 func TestSnapshotSourceAgesUseOneFinalBoundary(t *testing.T) {
 	path := t.TempDir()
-	config := v1.RuntimeSettings{ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{path}, Interfaces: []string{"lo"}}
+	config := config.RuntimeSettings{ReportIntervalSeconds: 10, DiskIntervalSeconds: 60, DiskPaths: []string{path}, Interfaces: []string{"lo"}}
 	collector, err := New(Options{Config: config})
 	if err != nil {
 		t.Fatal(err)

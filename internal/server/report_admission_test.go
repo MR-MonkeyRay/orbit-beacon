@@ -119,10 +119,10 @@ func TestReportAdmissionRejectsExactABAResetDuringBodyRead(t *testing.T) {
 	if r.Code != http.StatusUnauthorized && r.Code != http.StatusConflict {
 		t.Fatalf("pre-reset admission accepted after body read: status=%d body=%s", r.Code, r.Body.String())
 	}
-	var runtime string
+
 	var seen any
-	if err := f.db.QueryRow(`SELECT agent_runtime,last_seen FROM nodes WHERE id=?`, id).Scan(&runtime, &seen); err != nil || runtime != "" || seen != nil {
-		t.Fatalf("pre-reset request restored runtime=%q last_seen=%v err=%v", runtime, seen, err)
+	if err := f.db.QueryRow(`SELECT last_seen FROM nodes WHERE id=?`, id).Scan(&seen); err != nil || seen != nil {
+		t.Fatalf("pre-reset request restored last_seen=%v err=%v", seen, err)
 	}
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, reportBody(1, 1, "fresh-admission", 10)), 1)
 }

@@ -9,8 +9,7 @@ import (
 )
 
 func makeReport(o options, n node, seq uint64, now time.Time) v1.Report {
-	report := v1.Report{ProtocolVersion: v1.ProtocolVersion, RunGeneration: 1, SessionID: n.session, Seq: seq, SampledAt: now, System: &n.system, Runtime: v1.DefaultRuntimeSettings()}
-	report.Runtime.ReportIntervalSeconds = int(o.interval / time.Second)
+	report := v1.Report{ProtocolVersion: v1.ProtocolVersion, RunGeneration: 1, SessionID: n.session, Seq: seq, SampledAt: now, System: &n.system}
 	cpu, load, uptime := float64(20+seq%30), 0.5, float64(seq)*o.interval.Seconds()
 	memoryTotal, memoryAvailable, swapTotal, swapUsed := uint64(8<<30), uint64(4<<30), uint64(1<<30), uint64(0)
 	read, write, busy, pressureCPU, pressureMemory, pressureIO, temperature := 1048576.0, 524288.0, 12.5, 1.25, 0.5, 2.75, 48.5
@@ -27,7 +26,6 @@ func makeReport(o options, n node, seq uint64, now time.Time) v1.Report {
 	for i := range o.disks {
 		diskUsed, inodesUsed := uint64(i%10+1)*(10<<30), uint64(i%10+1)*1_000_000
 		path := fmt.Sprintf("/load/disk%d", i)
-		report.Runtime.DiskPaths = append(report.Runtime.DiskPaths, path)
 		report.Metrics.Disks = append(report.Metrics.Disks, v1.DiskMetrics{Path: path, TotalBytes: &diskTotal, UsedBytes: &diskUsed, InodesTotal: &inodesTotal, InodesUsed: &inodesUsed, SampledAt: now})
 		key := v1.DiskMetricKey(path)
 		report.Metrics.MetricStatus[key] = "ok"
@@ -39,7 +37,6 @@ func makeReport(o options, n node, seq uint64, now time.Time) v1.Report {
 	for i := range o.networks {
 		name := fmt.Sprintf("eth%d", i)
 		rx, tx := float64((i+1)*1024), float64((i+1)*512)
-		report.Runtime.Interfaces = append(report.Runtime.Interfaces, name)
 		report.Metrics.Networks = append(report.Metrics.Networks, v1.NetworkMetrics{Name: name, RxBytesPerSec: &rx, TxBytesPerSec: &tx})
 		key := v1.NetworkMetricKey(name)
 		report.Metrics.MetricStatus[key] = "ok"
@@ -53,7 +50,6 @@ func makeReport(o options, n node, seq uint64, now time.Time) v1.Report {
 		latency := float64(i + 1)
 		expiry := now.Add(30 * 24 * time.Hour)
 		status := 200
-		report.Runtime.ProbeTargets = append(report.Runtime.ProbeTargets, target)
 		report.ProbeResults = append(report.ProbeResults, v1.ProbeResult{Target: target, OK: true, LatencyMS: &latency, CheckedAt: now, StatusCode: &status, TLSExpiresAt: &expiry})
 	}
 	return report

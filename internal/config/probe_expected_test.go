@@ -39,7 +39,7 @@ func TestAgentProbeExpectedStatus(t *testing.T) {
 					t.Fatalf("source=%s valid=%t: %v", source, tc.valid, err)
 				}
 				if err == nil {
-					body, _ := json.Marshal(v1.Report{Runtime: got.RuntimeSettings})
+					body, _ := json.Marshal(v1.Report{})
 					if strings.Contains(string(body), "probe_expected_status") {
 						t.Fatalf("local setting leaked: %s", body)
 					}

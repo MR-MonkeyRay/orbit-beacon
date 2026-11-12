@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -238,7 +239,7 @@ func (s *commandStore) acknowledge(results []v1.CommandResult) {
 }
 
 // handle returns an action only after its durable execution barrier has synced.
-func (s *commandStore) handle(c v1.Command, serverTime time.Time, settings v1.RuntimeSettings) string {
+func (s *commandStore) handle(c v1.Command, serverTime time.Time, settings config.RuntimeSettings) string {
 	if err := c.Validate(); err != nil {
 		s.logger.Warn("invalid_remote_command")
 		return ""

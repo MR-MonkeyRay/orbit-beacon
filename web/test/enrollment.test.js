@@ -327,9 +327,9 @@ for (const boundary of ['close', 'navigation', 'session', 'view']) test(`node en
     const node = {id: nodeID, name: 'Node', notes: '', region: '', provider: '', group_id: null, tags: [],
       created_at: '2026-10-27T00:00:00Z', status: 'pending', presence: 'pending', stopped: false, last_seen: null, agent_version: ''};
     socket.open();
-    socket.message(frame('snapshot', {data: {node, latest: null, runtime: null}})); await flush();
+    socket.message(frame('snapshot', {data: {node, latest: null}})); await flush();
     assert.equal(progress.textContent, copy('nodes.enrollment.waiting'));
-    socket.message(frame('snapshot', {data: {node: {...node, status: 'online', presence: 'online', last_seen: '2026-10-28T00:00:00Z'}, latest: null, runtime: null}})); await flush();
+    socket.message(frame('snapshot', {data: {node: {...node, status: 'online', presence: 'online', last_seen: '2026-10-28T00:00:00Z'}, latest: null}})); await flush();
     assert.equal(progress.querySelector('.enrollment-spinner'), null);
     assert.ok(progress.textContent.includes(copy('nodes.enrollment.reported')));
     const view = progress.querySelector('a');
@@ -338,7 +338,7 @@ for (const boundary of ['close', 'navigation', 'session', 'view']) test(`node en
     assert.equal(view.dataset.link, '');
     assert.equal(dialog.querySelector('[role="timer"]').parentElement.parentElement.hidden, true);
     // Subsequent frames do not replace the focused success action.
-    socket.message(frame('snapshot', {data: {node: {...node, status: 'online', presence: 'online'}, latest: null, runtime: null}})); await flush();
+    socket.message(frame('snapshot', {data: {node: {...node, status: 'online', presence: 'online'}, latest: null}})); await flush();
     assert.equal(progress.querySelector('a'), view);
     const secrets = dialog.querySelectorAll('code');
     if (boundary === 'navigation') navigation.abort();
@@ -373,7 +373,7 @@ test('node enrollment skips the wait step when the node already reported before 
     socket.open();
     const node = {id: nodeID, name: 'Node', notes: '', region: '', provider: '', group_id: null, tags: [],
       created_at: '2026-10-27T00:00:00Z', status: 'online', presence: 'online', stopped: false, last_seen: '2026-10-28T00:00:00Z', agent_version: '1.2.3'};
-    socket.message(frame('snapshot', {data: {node, latest: null, runtime: null}})); await flush();
+    socket.message(frame('snapshot', {data: {node, latest: null}})); await flush();
     // 旧 Agent 仍在上报，不能当作新安装成功。
     assert.equal(dialog.querySelector('.enrollment-progress'), null);
     assert.equal(dialog.querySelector('.enrollment-steps').children.length, 2);

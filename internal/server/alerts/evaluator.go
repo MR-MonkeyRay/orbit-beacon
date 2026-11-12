@@ -378,7 +378,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 					}
 				} else if r.Metric == "traffic_quota_percent" {
 					v, hasQuota := quotas[n.id]
-					disabled := latestErr == nil && metricDisabled(r, latest.Runtime)
+					disabled := latestErr == nil && metricDisabled(r, latest.Report)
 					if !hasQuota || (disabled && latestFresh(latest, now)) {
 						delete(e.pending, key)
 						if firing {
@@ -401,7 +401,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, now time.Time) error {
 				if value == nil {
 					delete(e.pending, key)
 					// 本地关闭后不会再有数据，不恢复的话事件会一直处于触发状态。
-					if firing && latestErr == nil && latestFresh(latest, now) && metricDisabled(r, latest.Runtime) {
+					if firing && latestErr == nil && latestFresh(latest, now) && metricDisabled(r, latest.Report) {
 						if err := e.resolve(ctx, o, nil, now); err != nil {
 							evaluationErr = errors.Join(evaluationErr, err)
 						}

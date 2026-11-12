@@ -9,6 +9,7 @@ import (
 
 	"github.com/shirou/gopsutil/v4/disk"
 
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -55,7 +56,7 @@ func TestDiskCollectionResolvesPathsUnderHostRoot(t *testing.T) {
 				root = t.TempDir()
 			}
 			t.Setenv("HOST_ROOT", root)
-			collector, err := New(Options{Config: v1.RuntimeSettings{
+			collector, err := New(Options{Config: config.RuntimeSettings{
 				ReportIntervalSeconds: 10,
 				DiskIntervalSeconds:   60,
 				DiskPaths:             test.configured,

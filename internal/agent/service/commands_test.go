@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"orbitbeacon/internal/agent/identity"
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -52,7 +53,7 @@ func TestCommandsRejectAndDeduplicate(t *testing.T) {
 			if test.expired {
 				now = c.ExpiresAt
 			}
-			settings := v1.DefaultRuntimeSettings()
+			settings := config.DefaultRuntimeSettings()
 			if test.disabled {
 				settings.RemoteCommands = nil
 			}
@@ -81,10 +82,10 @@ func TestCommandCrashRecoveryAndResponseLoss(t *testing.T) {
 			s := commandTestStore(t)
 			c := testCommand(kind)
 			now := c.ExpiresAt.Add(-time.Minute)
-			if got := s.handle(c, now, v1.DefaultRuntimeSettings()); got != kind {
+			if got := s.handle(c, now, config.DefaultRuntimeSettings()); got != kind {
 				t.Fatal(got)
 			}
-			if got := s.handle(c, now, v1.DefaultRuntimeSettings()); got != "" {
+			if got := s.handle(c, now, config.DefaultRuntimeSettings()); got != "" {
 				t.Fatal("executed twice")
 			}
 			recovered := openCommandStore(s.path, s.logger, "")
@@ -94,7 +95,7 @@ func TestCommandCrashRecoveryAndResponseLoss(t *testing.T) {
 			if got := recovered.results(); len(got) != 1 || got[0].Status != "succeeded" || got[0].Code != "ok" {
 				t.Fatal(got)
 			}
-			if got := recovered.handle(c, now, v1.DefaultRuntimeSettings()); got != "" {
+			if got := recovered.handle(c, now, config.DefaultRuntimeSettings()); got != "" {
 				t.Fatal("replayed after crash")
 			}
 			// Only a successful response acknowledges a result; reopening retains it.
@@ -108,7 +109,7 @@ func TestCommandCrashRecoveryAndResponseLoss(t *testing.T) {
 			if len(recovered.results()) != 0 {
 				t.Fatal("ack lost")
 			}
-			if recovered.handle(c, now, v1.DefaultRuntimeSettings()) != "" {
+			if recovered.handle(c, now, config.DefaultRuntimeSettings()) != "" {
 				t.Fatal("ack removed dedup ID")
 			}
 		})
@@ -126,7 +127,7 @@ func TestStopInterruptedAtExecutionBarrier(t *testing.T) {
 		}
 		return persist(state)
 	}
-	if s.handle(c, c.ExpiresAt.Add(-time.Minute), v1.DefaultRuntimeSettings()) != "" {
+	if s.handle(c, c.ExpiresAt.Add(-time.Minute), config.DefaultRuntimeSettings()) != "" {
 		t.Fatal("executed despite write failure")
 	}
 	recovered := openCommandStore(s.path, s.logger, "")
@@ -134,7 +135,7 @@ func TestStopInterruptedAtExecutionBarrier(t *testing.T) {
 	if recovered.blocked || len(results) != 1 || results[0].Status != "failed" || results[0].Code != "interrupted" {
 		t.Fatal(results)
 	}
-	if recovered.handle(c, c.ExpiresAt.Add(-time.Minute), v1.DefaultRuntimeSettings()) != "" {
+	if recovered.handle(c, c.ExpiresAt.Add(-time.Minute), config.DefaultRuntimeSettings()) != "" {
 		t.Fatal("stop repeated")
 	}
 }
@@ -142,14 +143,14 @@ func TestCommandStateCorruptAndWriteFailureFailClosed(t *testing.T) {
 	s := commandTestStore(t)
 	s.persist = func(commandState) error { return errors.New("disk full") }
 	c := testCommand("restart")
-	if s.handle(c, c.ExpiresAt.Add(-time.Minute), v1.DefaultRuntimeSettings()) != "" || !s.blocked {
+	if s.handle(c, c.ExpiresAt.Add(-time.Minute), config.DefaultRuntimeSettings()) != "" || !s.blocked {
 		t.Fatal("write failure executed")
 	}
 	if err := os.WriteFile(s.path, []byte("invalid"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	corrupt := openCommandStore(s.path, s.logger, "")
-	if !corrupt.blocked || corrupt.handle(c, c.ExpiresAt.Add(-time.Minute), v1.DefaultRuntimeSettings()) != "" {
+	if !corrupt.blocked || corrupt.handle(c, c.ExpiresAt.Add(-time.Minute), config.DefaultRuntimeSettings()) != "" {
 		t.Fatal("corruption executed")
 	}
 	data, _ := os.ReadFile(s.path)
@@ -163,7 +164,7 @@ func TestCommandHistorySaturationCannotReplay(t *testing.T) {
 	for i := range 33 {
 		c := testCommand("stop")
 		c.ID = fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
-		action := s.handle(c, now, v1.DefaultRuntimeSettings())
+		action := s.handle(c, now, config.DefaultRuntimeSettings())
 		if (i < 32) != (action == "stop") {
 			t.Fatalf("%d: %s", i, action)
 		}
@@ -171,7 +172,7 @@ func TestCommandHistorySaturationCannotReplay(t *testing.T) {
 	}
 	c := testCommand("stop")
 	c.ID = "00000000-0000-4000-8000-000000000000"
-	if s.handle(c, now, v1.DefaultRuntimeSettings()) != "" {
+	if s.handle(c, now, config.DefaultRuntimeSettings()) != "" {
 		t.Fatal("old ID replay")
 	}
 	overflow := s.state.Pending
@@ -179,7 +180,7 @@ func TestCommandHistorySaturationCannotReplay(t *testing.T) {
 		t.Fatal("acknowledged capacity rejection retained")
 	}
 	c.ID = "00000000-0000-4000-8000-000000000099"
-	s.handle(c, now, v1.DefaultRuntimeSettings())
+	s.handle(c, now, config.DefaultRuntimeSettings())
 	if got := s.results(); len(got) != 1 || got[0].Status != "rejected" || got[0].Code != "failed" {
 		t.Fatal(got)
 	}
@@ -200,7 +201,7 @@ func TestCommandSchedulerExitAndImmediateStopReport(t *testing.T) {
 				c := testCommand(commandKind)
 				calls := 0
 				started := time.Now()
-				s := NewScheduler(SchedulerOptions{Identity: id, Commands: store, RuntimeSettings: v1.DefaultRuntimeSettings, Collect: func(context.Context) (v1.Metrics, error) { return v1.Metrics{}, nil }, Report: func(ctx context.Context, r v1.Report) (v1.ReportResponse, error) {
+				s := NewScheduler(SchedulerOptions{Identity: id, Commands: store, RuntimeSettings: config.DefaultRuntimeSettings, Collect: func(context.Context) (v1.Metrics, error) { return v1.Metrics{}, nil }, Report: func(ctx context.Context, r v1.Report) (v1.ReportResponse, error) {
 					calls++
 					if calls == 1 {
 						return v1.ReportResponse{Command: &c, ServerTime: c.ExpiresAt.Add(-time.Minute)}, nil
@@ -243,7 +244,7 @@ func TestCommandSchedulerExitAndImmediateStopReport(t *testing.T) {
 func TestCommandResultsSendOldestTwoAndOnlyAcknowledgeSent(t *testing.T) {
 	s := commandTestStore(t)
 	now := testCommand("stop").ExpiresAt.Add(-time.Minute)
-	settings := v1.DefaultRuntimeSettings()
+	settings := config.DefaultRuntimeSettings()
 	settings.RemoteCommands = nil
 	for i := range 3 {
 		c := testCommand("restart")
@@ -270,7 +271,7 @@ func TestCommandResultsSendOldestTwoAndOnlyAcknowledgeSent(t *testing.T) {
 func TestStopFlushesOldResultsBeforeOwnResultAndLostResponse(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := commandTestStore(t)
-		settings := v1.DefaultRuntimeSettings()
+		settings := config.DefaultRuntimeSettings()
 		disabled := settings
 		disabled.RemoteCommands = nil
 		c := testCommand("stop")
@@ -287,7 +288,7 @@ func TestStopFlushesOldResultsBeforeOwnResultAndLostResponse(t *testing.T) {
 		calls, collections, ownResults := 0, 0, 0
 		var flushedSeq uint64
 		var scheduler *Scheduler
-		scheduler = NewScheduler(SchedulerOptions{Identity: id, Commands: store, RuntimeSettings: func() v1.RuntimeSettings { return settings }, RandomFloat: func() float64 { return 0.5 }, Collect: func(context.Context) (v1.Metrics, error) { collections++; return v1.Metrics{}, nil }, Report: func(ctx context.Context, report v1.Report) (v1.ReportResponse, error) {
+		scheduler = NewScheduler(SchedulerOptions{Identity: id, Commands: store, RuntimeSettings: func() config.RuntimeSettings { return settings }, RandomFloat: func() float64 { return 0.5 }, Collect: func(context.Context) (v1.Metrics, error) { collections++; return v1.Metrics{}, nil }, Report: func(ctx context.Context, report v1.Report) (v1.ReportResponse, error) {
 			calls++
 			if len(report.CommandResults) > 2 {
 				t.Fatal("oversized result batch")
@@ -330,14 +331,14 @@ func TestStopFlushesOldResultsBeforeOwnResultAndLostResponse(t *testing.T) {
 func TestCommandAcknowledgementFailureDisablesNextExecution(t *testing.T) {
 	s := commandTestStore(t)
 	c := testCommand("restart")
-	settings := v1.DefaultRuntimeSettings()
+	settings := config.DefaultRuntimeSettings()
 	settings.RemoteCommands = nil
 	s.handle(c, c.ExpiresAt.Add(-time.Minute), settings)
 	s.persist = func(commandState) error { return errors.New("sync failed") }
 	s.acknowledge(s.results())
 	next := c
 	next.ID = "00000000-0000-4000-8000-000000000002"
-	if s.handle(next, c.ExpiresAt.Add(-time.Minute), v1.DefaultRuntimeSettings()) != "" || !s.blocked {
+	if s.handle(next, c.ExpiresAt.Add(-time.Minute), config.DefaultRuntimeSettings()) != "" || !s.blocked {
 		t.Fatal("ack persistence failure allowed execution")
 	}
 	recovered := openCommandStore(s.path, s.logger, "")
@@ -348,7 +349,7 @@ func TestCommandAcknowledgementFailureDisablesNextExecution(t *testing.T) {
 
 func TestCommandsOnlyEvictExpiredAcknowledgedIDs(t *testing.T) {
 	s := commandTestStore(t)
-	settings := v1.DefaultRuntimeSettings()
+	settings := config.DefaultRuntimeSettings()
 	settings.RemoteCommands = nil
 	now := testCommand("restart").ExpiresAt.Add(-time.Minute)
 	for i := range commandHistoryLimit {
@@ -360,7 +361,7 @@ func TestCommandsOnlyEvictExpiredAcknowledgedIDs(t *testing.T) {
 	next.ID = "00000000-0000-4000-8000-999999999999"
 	next.ExpiresAt = next.ExpiresAt.Add(time.Hour)
 	// All history expired, but results are still pending: no eviction is safe.
-	s.handle(next, now.Add(2*time.Minute), v1.DefaultRuntimeSettings())
+	s.handle(next, now.Add(2*time.Minute), config.DefaultRuntimeSettings())
 	last := s.state.Pending[len(s.state.Pending)-1]
 	if last.ID != next.ID || last.Status != "rejected" || last.Code != "failed" {
 		t.Fatal(last)
@@ -368,7 +369,7 @@ func TestCommandsOnlyEvictExpiredAcknowledgedIDs(t *testing.T) {
 	for len(s.state.Pending) > 0 {
 		s.acknowledge(s.results())
 	}
-	if got := s.handle(next, now.Add(2*time.Minute), v1.DefaultRuntimeSettings()); got != "restart" {
+	if got := s.handle(next, now.Add(2*time.Minute), config.DefaultRuntimeSettings()); got != "restart" {
 		t.Fatal(got)
 	}
 	if len(s.state.Processed) != 32 {
@@ -385,7 +386,7 @@ func TestCommandExpiringDuringTheRequestIsNotExecuted(t *testing.T) {
 		}
 		c := testCommand(v1.RemoteCommandRestart)
 		calls := 0
-		s := NewScheduler(SchedulerOptions{Identity: id, Commands: store, RuntimeSettings: v1.DefaultRuntimeSettings, Collect: func(context.Context) (v1.Metrics, error) { return v1.Metrics{}, nil }, Report: func(context.Context, v1.Report) (v1.ReportResponse, error) {
+		s := NewScheduler(SchedulerOptions{Identity: id, Commands: store, RuntimeSettings: config.DefaultRuntimeSettings, Collect: func(context.Context) (v1.Metrics, error) { return v1.Metrics{}, nil }, Report: func(context.Context, v1.Report) (v1.ReportResponse, error) {
 			calls++
 			if calls > 1 {
 				return v1.ReportResponse{}, nil
@@ -413,11 +414,11 @@ func TestReloadedLocalSwitchBlocksNextCommand(t *testing.T) {
 			t.Fatal(err)
 		}
 		c := testCommand(v1.RemoteCommandRestart)
-		settings := v1.DefaultRuntimeSettings()
+		settings := config.DefaultRuntimeSettings()
 		reload := make(chan struct{}, 1)
 		var collected atomic.Int64
 		s := NewScheduler(SchedulerOptions{Identity: id, Commands: store, Reload: reload,
-			RuntimeSettings: func() v1.RuntimeSettings { return settings },
+			RuntimeSettings: func() config.RuntimeSettings { return settings },
 			ReloadConfig: func(context.Context) error {
 				settings.RemoteCommands = []string{}
 				return nil
@@ -429,7 +430,7 @@ func TestReloadedLocalSwitchBlocksNextCommand(t *testing.T) {
 				return v1.Metrics{}, nil
 			},
 			Report: func(_ context.Context, r v1.Report) (v1.ReportResponse, error) {
-				if r.Runtime.AllowsCommand(v1.RemoteCommandRestart) {
+				if settings.AllowsCommand(v1.RemoteCommandRestart) {
 					return v1.ReportResponse{}, nil
 				}
 				return v1.ReportResponse{Command: &c, ServerTime: c.ExpiresAt.Add(-time.Minute)}, nil

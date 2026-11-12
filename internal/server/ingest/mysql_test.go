@@ -41,7 +41,7 @@ func TestMySQLIngestionProbeTrafficAndCommands(t *testing.T) {
 	}
 	s := ingest.NewService(db, ingest.Options{Now: func() time.Time { return now }, PersistInterval: time.Second, DisablePersistOffset: true})
 	var report v1.Report
-	if err := json.Unmarshal([]byte(`{"protocol_version":1,"run_generation":18446744073709551615,"session_id":"one","seq":1,"runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]},"metrics":{"cpu_percent":10,"load1":0,"load5":0,"load15":0,"memory_total_bytes":100,"memory_available_bytes":50,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":10,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-1","source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","source_interval_ms":10000},"memory":{"sample_id":"memory-1","source_interval_ms":10000},"swap":{"sample_id":"swap-1","source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","source_interval_ms":10000}}},"traffic":[]}`), &report); err != nil {
+	if err := json.Unmarshal([]byte(`{"protocol_version":1,"run_generation":18446744073709551615,"session_id":"one","seq":1,"metrics":{"cpu_percent":10,"load1":0,"load5":0,"load15":0,"memory_total_bytes":100,"memory_available_bytes":50,"swap_total_bytes":0,"swap_used_bytes":0,"uptime_seconds":10,"disks":[],"networks":[],"metric_status":{"cpu_percent":"ok","load1":"ok","load5":"ok","load15":"ok","memory_total_bytes":"ok","memory_available_bytes":"ok","swap_total_bytes":"ok","swap_used_bytes":"ok","uptime_seconds":"ok"},"sources":{"cpu":{"sample_id":"cpu-1","source_interval_ms":10000,"measurement_window_ms":10000},"load":{"sample_id":"load-1","source_interval_ms":10000},"memory":{"sample_id":"memory-1","source_interval_ms":10000},"swap":{"sample_id":"swap-1","source_interval_ms":10000},"uptime":{"sample_id":"uptime-1","source_interval_ms":10000}}},"traffic":[]}`), &report); err != nil {
 		t.Fatal(err)
 	}
 	report.SampledAt = now
@@ -52,7 +52,6 @@ func TestMySQLIngestionProbeTrafficAndCommands(t *testing.T) {
 		t.Fatalf("256-byte report session accepted: %v", err)
 	}
 	target := "https://example.com/health"
-	report.Runtime.ProbeTargets = []string{target}
 	latency := 2.5
 	report.ProbeResults = []v1.ProbeResult{{Target: target, OK: true, LatencyMS: &latency, CheckedAt: now}}
 	report.Traffic = []v1.Traffic{{Epoch: "abc", PeriodStart: now.Truncate(time.Hour), RxBytes: "100", TxBytes: "200"}}
@@ -89,7 +88,6 @@ func TestMySQLIngestionProbeTrafficAndCommands(t *testing.T) {
 	if err != nil || summary.Cycle.RxBytes != "120" || summary.Cycle.TxBytes != "200" {
 		t.Fatalf("traffic=%+v err=%v", summary, err)
 	}
-	report.Runtime.ProbeTargets = []string{}
 	report.ProbeResults = nil
 	now = now.Add(time.Second)
 	report.Seq++

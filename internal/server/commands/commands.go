@@ -118,7 +118,7 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 		return Record{}, err
 	}
 	defer tx.Rollback()
-	var name, status, raw, generation, session, version string
+	var name, status, generation, session, version string
 	var epoch int64
 	var credential sql.NullBool
 	var stopped bool
@@ -126,7 +126,7 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 	if tx.Dialect() == storage.MySQL {
 		versionSQL = "CASE WHEN JSON_VALID(`system`) THEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(`system`,'$.agent_version')) COLLATE utf8mb4_0900_bin,'') ELSE '' END"
 	}
-	err = tx.QueryRowContext(ctx, `SELECT name,status,agent_runtime,credential_epoch,length(token_hash)>0,run_generation,report_session_id,`+versionSQL+`,`+StoppedSQL+` FROM nodes WHERE id=?`, nodeID).Scan(&name, &status, &raw, &epoch, &credential, &generation, &session, &version, &stopped)
+	err = tx.QueryRowContext(ctx, `SELECT name,status,credential_epoch,length(token_hash)>0,run_generation,report_session_id,`+versionSQL+`,`+StoppedSQL+` FROM nodes WHERE id=?`, nodeID).Scan(&name, &status, &epoch, &credential, &generation, &session, &version, &stopped)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
@@ -139,8 +139,7 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 	if status == "disabled" || !credential.Bool || stopped {
 		return Record{}, ErrNodeUnavailable
 	}
-	runtime, decodeErr := v1.DecodeRuntimeSettings(raw)
-	if decodeErr != nil || generation == "0" || session == "" || !runtime.AllowsCommand(req.Kind) {
+	if generation == "0" || session == "" {
 		return Record{}, ErrNotAllowed
 	}
 	if req.Kind == v1.RemoteCommandUpgrade && version == req.TargetVersion {

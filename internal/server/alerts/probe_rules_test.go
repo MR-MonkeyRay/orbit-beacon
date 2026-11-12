@@ -102,9 +102,7 @@ func TestProbeRuleSchemaTable(t *testing.T) {
 }
 
 func probeLatest(now time.Time, result ...v1.ProbeResult) ingest.LatestReport {
-	runtime := v1.DefaultRuntimeSettings()
-	runtime.ProbeTargets = []string{probeTarget}
-	return ingest.LatestReport{ReceivedAt: now, Report: v1.Report{Runtime: runtime, ProbeResults: result}}
+	return ingest.LatestReport{ReceivedAt: now, Report: v1.Report{ProbeResults: result}}
 }
 
 func TestProbeMetricValues(t *testing.T) {
@@ -244,10 +242,10 @@ func TestProbeEvaluatorLifecycle(t *testing.T) {
 			if err != nil || len(summary.Newest) != 1 || summary.Newest[0].Target == nil {
 				t.Fatalf("summary: %+v %v", summary, err)
 			}
-			f.latest.report.ProbeResults = nil
+			f.latest.report.ProbeResults = []v1.ProbeResult{{Target: probeTarget, Error: "pending"}}
 			f.tick(t)
 			if len(f.events(t, "firing")) != 1 {
-				t.Fatal("missing result resolved")
+				t.Fatal("pending result resolved")
 			}
 			if metric == "probe_latency_ms" {
 				f.latest.report.ProbeResults = []v1.ProbeResult{{Target: probeTarget, OK: false}}
@@ -276,19 +274,19 @@ func TestProbeEvaluatorDisabledNeedsFreshReport(t *testing.T) {
 					t.Fatal("did not fire")
 				}
 				if mode == "removed" {
-					f.latest.report.Runtime.ProbeTargets = nil
+					f.latest.report.ProbeResults = []v1.ProbeResult{{Target: probeTarget + "/other", Error: "pending"}}
 				} else {
-					f.latest.report.Runtime.DisabledFeatures = []string{v1.FeatureProbes}
+					f.latest.report.ProbeResults = nil
 				}
 				f.latest.report.ReceivedAt = f.now.Add(-time.Hour)
 				f.tick(t)
 				if len(f.events(t, "firing")) != 1 {
-					t.Fatal("stale configuration resolved")
+					t.Fatal("stale target absence resolved")
 				}
 				f.latest.report.ReceivedAt = f.now
 				f.tick(t)
 				if len(f.events(t, "resolved")) != 1 {
-					t.Fatal("fresh disabled configuration failed to resolve")
+					t.Fatal("fresh target absence failed to resolve")
 				}
 			})
 		}
@@ -314,7 +312,6 @@ func TestProbeTargetChangeRestartsRound(t *testing.T) {
 	if definition(f.rule) == original {
 		t.Fatal("target omitted from definition")
 	}
-	f.latest.report.Runtime.ProbeTargets = append(f.latest.report.Runtime.ProbeTargets, changed)
 	f.latest.report.ProbeResults = append(f.latest.report.ProbeResults, v1.ProbeResult{Target: changed, OK: false})
 	f.tick(t)
 	if len(f.events(t, "resolved")) != 1 || len(f.events(t, "firing")) != 0 {
@@ -347,18 +344,16 @@ func TestProbeRuleDefinitionAndDisabled(t *testing.T) {
 	}
 	for _, metric := range []string{"probe_failed", "probe_latency_ms", "probe_tls_expiry_days"} {
 		r.Metric, r.Target = metric, ptr(probeTarget)
-		runtime := v1.DefaultRuntimeSettings()
-		runtime.ProbeTargets = []string{probeTarget}
-		if metricDisabled(r, runtime) {
+		report := v1.Report{ProbeResults: []v1.ProbeResult{{Target: probeTarget, Error: "pending"}}}
+		if metricDisabled(r, report) {
 			t.Fatal("configured target disabled")
 		}
-		runtime.ProbeTargets = []string{probeTarget + "/other"}
-		if !metricDisabled(r, runtime) {
+		report.ProbeResults = []v1.ProbeResult{{Target: probeTarget + "/other"}}
+		if !metricDisabled(r, report) {
 			t.Fatal("removed target enabled")
 		}
-		runtime.ProbeTargets = []string{probeTarget}
-		runtime.DisabledFeatures = []string{v1.FeatureProbes}
-		if !metricDisabled(r, runtime) {
+		report.ProbeResults = nil
+		if !metricDisabled(r, report) {
 			t.Fatal("disabled probes enabled")
 		}
 	}

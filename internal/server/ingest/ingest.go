@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -363,9 +362,9 @@ func (s *Service) charge(state *nodeState) error {
 
 type normalizedReport struct {
 	v1.Report
-	body, runtimeJSON []byte
-	system            any
-	systemHash        [sha256.Size]byte
+	body       []byte
+	system     any
+	systemHash [sha256.Size]byte
 }
 
 func normalizeReport(report v1.Report) (normalizedReport, error) {
@@ -378,15 +377,9 @@ func normalizeReport(report v1.Report) (normalizedReport, error) {
 	if err := validateTraffic(report.Traffic); err != nil {
 		return normalizedReport{}, fmt.Errorf("%w: %v", ErrInvalidReport, err)
 	}
-	runtime := report.Runtime.Normalized()
-	report.Runtime = runtime
 	body, err := json.Marshal(report)
 	if err != nil {
 		return normalizedReport{}, fmt.Errorf("%w: %v", ErrInvalidReport, err)
-	}
-	runtimeJSON, err := json.Marshal(runtime)
-	if err != nil {
-		return normalizedReport{}, err
 	}
 	var system any
 	var systemHash [sha256.Size]byte
@@ -398,7 +391,7 @@ func normalizeReport(report v1.Report) (normalizedReport, error) {
 		system = string(encoded)
 		systemHash = sha256.Sum256(encoded)
 	}
-	return normalizedReport{Report: report, body: body, runtimeJSON: runtimeJSON, system: system, systemHash: systemHash}, nil
+	return normalizedReport{Report: report, body: body, system: system, systemHash: systemHash}, nil
 }
 
 type acceptanceSnapshot struct {
@@ -406,7 +399,7 @@ type acceptanceSnapshot struct {
 	epoch                int64
 	generationText       string
 	generation           uint64
-	session, runtime     string
+	session              string
 	cachedCredential     [sha256.Size]byte
 	cachedEpoch          int64
 	cachedGeneration     uint64
@@ -517,12 +510,12 @@ func (s *Service) acceptGeneration(ctx context.Context, nodeID string, credentia
 	// 只读认证围栏在下面的 SELECT 处线性化。
 	// 在它之前提交的凭据/状态变更总能被观察到；
 	// 在它之后提交的变更在这个并发请求之后才生效。
-	var generationText, session, status, storedSystem, storedRuntime string
+	var generationText, session, status, storedSystem string
 	var lastSeenText sql.NullString
 	var storedCredential []byte
 	var storedEpoch int64
 	var activeCommand bool
-	if err := lease.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status, COALESCE(`system`, ''), agent_runtime, last_seen, EXISTS(SELECT 1 FROM agent_commands WHERE node_id=nodes.id AND state IN ('pending','delivered')) FROM nodes WHERE id = ?", nodeID).Scan(&generationText, &session, &storedCredential, &storedEpoch, &status, &storedSystem, &storedRuntime, &lastSeenText, &activeCommand); err != nil {
+	if err := lease.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status, COALESCE(`system`, ''), last_seen, EXISTS(SELECT 1 FROM agent_commands WHERE node_id=nodes.id AND state IN ('pending','delivered')) FROM nodes WHERE id = ?", nodeID).Scan(&generationText, &session, &storedCredential, &storedEpoch, &status, &storedSystem, &lastSeenText, &activeCommand); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return v1.ReportResponse{}, nodes.ErrUnauthenticated
 		}
@@ -565,9 +558,9 @@ func (s *Service) acceptGeneration(ctx context.Context, nodeID string, credentia
 	intervalDue := s.persistenceDue(nodeID, persistedLastSeen, now)
 	duplicate := sameState && report.Seq <= cachedSeq
 	durable := newStorageGeneration || activeCommand || len(report.CommandResults) > 0 || !sameState || generation != report.RunGeneration || session != report.SessionID ||
-		(!duplicate && (storedRuntime != string(normalized.runtimeJSON) || !sameSystem)) || intervalDue
+		(!duplicate && !sameSystem) || intervalDue
 	response := v1.ReportResponse{NodeID: nodeID, AcceptedSeq: report.Seq, ServerTime: now}
-	fence := acceptanceSnapshot{credential: storedCredential, epoch: storedEpoch, generationText: generationText, generation: generation, session: session, runtime: storedRuntime,
+	fence := acceptanceSnapshot{credential: storedCredential, epoch: storedEpoch, generationText: generationText, generation: generation, session: session,
 		cachedCredential: cachedCredential, cachedEpoch: cachedEpoch, cachedGeneration: cachedGeneration, cachedSession: cachedSession, cachedSeq: cachedSeq, hasLatest: hasLatest, duplicate: duplicate, persistedLastSeen: persistedLastSeen}
 	if !durable {
 		return s.acceptInMemory(ctx, lease, nodeID, state, normalized, fence, response)
@@ -579,15 +572,12 @@ func (s *Service) acceptInMemory(ctx context.Context, lease *storage.Lease, node
 	now := response.ServerTime
 	var err error
 	probes := state.copyProbes(fence.credential, fence.epoch, fence.generation, fence.session)
-	currentRuntime := report.Runtime
-	if fence.duplicate {
-		currentRuntime, err = decodeRuntime(fence.runtime)
-		if err != nil {
-			return v1.ReportResponse{}, err
-		}
+	targets, err := state.reportProbeTargets(report.Report, fence.duplicate)
+	if err != nil {
+		return v1.ReportResponse{}, err
 	}
-	probes.retainTargets(currentRuntime.ProbeTargets)
-	if err := probes.buffer(ctx, lease, nodeID, report.ProbeResults, currentRuntime.ProbeTargets); err != nil {
+	probes.retainTargets(targets)
+	if err := probes.buffer(ctx, lease, nodeID, report.ProbeResults, targets); err != nil {
 		return v1.ReportResponse{}, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -631,10 +621,10 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 		return v1.ReportResponse{}, err
 	}
 	defer tx.Rollback()
-	var txGenerationText, txSession, txStatus, txRuntime string
+	var txGenerationText, txSession, txStatus string
 	var txCredential []byte
 	var txEpoch int64
-	if err := tx.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status, agent_runtime FROM nodes WHERE id = ?", nodeID).Scan(&txGenerationText, &txSession, &txCredential, &txEpoch, &txStatus, &txRuntime); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status FROM nodes WHERE id = ?", nodeID).Scan(&txGenerationText, &txSession, &txCredential, &txEpoch, &txStatus); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return v1.ReportResponse{}, nodes.ErrUnauthenticated
 		}
@@ -669,34 +659,16 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 	if err != nil {
 		return v1.ReportResponse{}, err
 	}
-	currentRuntime := report.Runtime
-	if fence.duplicate {
-		currentRuntime, err = decodeRuntime(txRuntime)
-		if err != nil {
-			return v1.ReportResponse{}, err
-		}
+	targets, err := state.reportProbeTargets(report.Report, fence.duplicate)
+	if err != nil {
+		return v1.ReportResponse{}, err
 	}
 	probes := state.copyProbes(txCredential, txEpoch, fence.generation, txSession)
-	probes.retainTargets(currentRuntime.ProbeTargets)
-	if !fence.duplicate && txRuntime != string(report.runtimeJSON) {
-		args := []any{nodeID}
-		condition := ""
-		if len(currentRuntime.ProbeTargets) > 0 {
-			condition = " AND target NOT IN (" + strings.TrimSuffix(strings.Repeat("?,", len(currentRuntime.ProbeTargets)), ",") + ")"
-			for _, target := range currentRuntime.ProbeTargets {
-				args = append(args, target)
-			}
-		}
-		for _, table := range []string{"probe_latest", "probe_hourly"} {
-			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE node_id=?"+condition, args...); err != nil {
-				return v1.ReportResponse{}, err
-			}
-		}
-	}
+	probes.retainTargets(targets)
 	if err := probes.persist(ctx, tx, nodeID, now); err != nil {
 		return v1.ReportResponse{}, err
 	}
-	if err := probes.buffer(ctx, tx, nodeID, report.ProbeResults, currentRuntime.ProbeTargets); err != nil {
+	if err := probes.buffer(ctx, tx, nodeID, report.ProbeResults, targets); err != nil {
 		return v1.ReportResponse{}, err
 	}
 	if err := probes.persist(ctx, tx, nodeID, now); err != nil {
@@ -734,7 +706,7 @@ func (s *Service) persistReport(ctx context.Context, nodeID string, credential [
 	if err != nil {
 		return v1.ReportResponse{}, err
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE nodes SET run_generation = ?, report_session_id = ?, last_seen = ?, `system` = COALESCE(?, `system`), agent_runtime = ? WHERE id = ?", strconv.FormatUint(report.RunGeneration, 10), report.SessionID, timekey.Format(now), report.system, string(report.runtimeJSON), nodeID); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE nodes SET run_generation = ?, report_session_id = ?, last_seen = ?, `system` = COALESCE(?, `system`) WHERE id = ?", strconv.FormatUint(report.RunGeneration, 10), report.SessionID, timekey.Format(now), report.system, nodeID); err != nil {
 		return v1.ReportResponse{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -830,13 +802,6 @@ func (s *Service) pruneStates(live map[string]bool, candidates map[string]stateC
 		}
 		delete(s.states, id)
 	}
-}
-
-func decodeRuntime(raw string) (v1.RuntimeSettings, error) {
-	if raw == "" {
-		return v1.RuntimeSettings{}, nil
-	}
-	return v1.DecodeRuntimeSettings(raw)
 }
 
 // LatestReport 拥有报告快照及其服务端接收时间。

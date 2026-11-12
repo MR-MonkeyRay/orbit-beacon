@@ -144,7 +144,7 @@ func TestPersistOffsetFastPathAndDue(t *testing.T) {
 }
 
 func TestPersistOffsetImmediateChanges(t *testing.T) {
-	for _, mutation := range []string{"run", "credential", "runtime", "system", "restart"} {
+	for _, mutation := range []string{"run", "credential", "system", "restart"} {
 		t.Run(mutation, func(t *testing.T) {
 			f := newCoalesceFixtureWithOptions(t, Options{})
 			f.now = f.now.Add(time.Second)
@@ -163,8 +163,6 @@ func TestPersistOffsetImmediateChanges(t *testing.T) {
 				if _, err := f.db.Exec("UPDATE nodes SET token_hash=?,credential_epoch=credential_epoch+1 WHERE id=?", credential[:], f.id); err != nil {
 					t.Fatal(err)
 				}
-			case "runtime":
-				f.report.Runtime.ReportIntervalSeconds = 5
 			case "system":
 				f.report.System.Hostname = "changed"
 			case "restart":

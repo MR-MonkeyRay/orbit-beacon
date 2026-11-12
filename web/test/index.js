@@ -55,7 +55,6 @@ import './notifications-lifecycle.test.js';
 import './notification-grouping.test.js';
 import './console-session-live.test.js';
 import './console-router-transitions.test.js';
-import './console-observation-time.test.js';
 import './console-live-ui.test.js';
 import './overview.test.js';
 import './node-commands.test.js';

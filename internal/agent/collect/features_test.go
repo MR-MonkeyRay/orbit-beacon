@@ -7,11 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
 func TestFeatureReloadClearsSeriesAndTrafficBaseline(t *testing.T) {
-	cfg := v1.DefaultRuntimeSettings()
+	cfg := config.DefaultRuntimeSettings()
 	cfg.Interfaces = []string{"eth0"}
 	cfg.DiskPaths = []string{"/"}
 	c, err := New(Options{Config: cfg})
@@ -50,7 +51,12 @@ func TestFeatureReloadClearsSeriesAndTrafficBaseline(t *testing.T) {
 			t.Fatal("disabled source", key)
 		}
 	}
-	report := v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "features", Seq: 1, SampledAt: time.Now(), Runtime: disabled, Metrics: metrics, Traffic: []v1.Traffic{}}
+	for _, key := range v1.DisabledStatusFields() {
+		if metrics.MetricStatus[key] != "disabled" {
+			t.Fatalf("disabled collector %s status=%q", key, metrics.MetricStatus[key])
+		}
+	}
+	report := v1.Report{ProtocolVersion: 1, RunGeneration: 1, SessionID: "features", Seq: 1, SampledAt: time.Now(), Metrics: metrics, Traffic: []v1.Traffic{}}
 	if err := report.Validate(); err != nil {
 		t.Fatal(err)
 	}

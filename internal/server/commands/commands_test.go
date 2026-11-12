@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
@@ -33,9 +32,8 @@ func fixture(t *testing.T) (*sql.DB, *Service, time.Time) {
 	}
 	t.Cleanup(func() { db.Close() })
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
-	runtime, _ := json.Marshal(v1.DefaultRuntimeSettings())
 	hash := sha256.Sum256([]byte("credential"))
-	if _, err := db.Exec(`INSERT INTO nodes(id,name,status,token_hash,agent_runtime,run_generation,report_session_id,created_at) VALUES(?,'host','unknown',?,?,'1','session',?)`, testNode, hash[:], string(runtime), timekey.Format(now)); err != nil {
+	if _, err := db.Exec(`INSERT INTO nodes(id,name,status,token_hash,run_generation,report_session_id,created_at) VALUES(?,'host','unknown',?,'1','session',?)`, testNode, hash[:], timekey.Format(now)); err != nil {
 		t.Fatal(err)
 	}
 	stable, err := storage.OpenMain(t.Context(), filepath.Join(dir, "commands.db"))
@@ -100,14 +98,12 @@ func TestConcurrentCreateOnlyOneActiveAndPendingCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-func TestCommandCreateValidatesRuntimeAndClosedKinds(t *testing.T) {
+func TestCommandCreateValidatesAvailabilityAndClosedKinds(t *testing.T) {
 	for _, test := range []struct {
 		name, kind, confirm, sql string
 		want                     error
 	}{
 		{"unknown", "shell", "", "", ErrInvalid}, {"upgrade", "upgrade", "", "", ErrInvalid}, {"confirm", "stop", "bad", "", ErrInvalid},
-		{"no runtime", "restart", "", "agent_runtime=''", ErrNotAllowed},
-		{"disabled locally", "restart", "", `agent_runtime='{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":[],"disabled_features":[]}'`, ErrNotAllowed},
 		{"disabled", "restart", "", "status='disabled'", ErrNodeUnavailable}, {"unregistered", "restart", "", "token_hash=NULL", ErrNodeUnavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -231,7 +227,7 @@ func TestCreateGroupIsolatesNodeTransactionFailuresAndAcceptsRestart(t *testing.
 	}
 	for _, id := range []string{secondNode, outsideNode} {
 		hash := sha256.Sum256([]byte(id))
-		if _, err := db.Exec(`INSERT INTO nodes(id,name,status,token_hash,agent_runtime,run_generation,report_session_id,created_at,group_id) SELECT ?,?,'unknown',?,agent_runtime,run_generation,report_session_id,created_at,? FROM nodes WHERE id=?`, id, id, hash[:], groupID, testNode); err != nil {
+		if _, err := db.Exec(`INSERT INTO nodes(id,name,status,token_hash,run_generation,report_session_id,created_at,group_id) SELECT ?,?,'unknown',?,run_generation,report_session_id,created_at,? FROM nodes WHERE id=?`, id, id, hash[:], groupID, testNode); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -273,11 +269,10 @@ func TestCreateGroupHasNoMemberLimitAndHandlesEmptyGroups(t *testing.T) {
 	if err != nil || empty != (BulkResult{}) {
 		t.Fatal(empty, err)
 	}
-	runtime, _ := json.Marshal(v1.DefaultRuntimeSettings())
 	for i := range 201 {
 		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+100)
 		hash := sha256.Sum256([]byte(id))
-		if _, err := db.Exec(`INSERT INTO nodes(id,name,status,token_hash,agent_runtime,run_generation,report_session_id,created_at,group_id) VALUES(?,?,'unknown',?,?,'1','session',?,?)`, id, id, hash[:], string(runtime), timekey.Format(now), groupID); err != nil {
+		if _, err := db.Exec(`INSERT INTO nodes(id,name,status,token_hash,run_generation,report_session_id,created_at,group_id) VALUES(?,?,'unknown',?,'1','session',?,?)`, id, id, hash[:], timekey.Format(now), groupID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -370,27 +365,21 @@ func TestUpgradeGroupSkipsCurrentStoppedAndDisallowed(t *testing.T) {
 	ids := []string{testNode, "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004"}
 	for _, id := range ids[1:] {
 		hash := sha256.Sum256([]byte(id))
-		if _, err := db.Exec(`INSERT INTO nodes(id,name,status,token_hash,agent_runtime,run_generation,report_session_id,created_at,group_id) SELECT ?,?,'unknown',?,agent_runtime,run_generation,report_session_id,created_at,? FROM nodes WHERE id=?`, id, id, hash[:], group, testNode); err != nil {
+		if _, err := db.Exec(`INSERT INTO nodes(id,name,status,token_hash,run_generation,report_session_id,created_at,group_id) SELECT ?,?,'unknown',?,run_generation,report_session_id,created_at,? FROM nodes WHERE id=?`, id, id, hash[:], group, testNode); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if _, err := db.Exec(`UPDATE nodes SET system='{"agent_version":"1.2.4"}' WHERE id=?`, ids[1]); err != nil {
 		t.Fatal(err)
 	}
-	settings := v1.DefaultRuntimeSettings()
-	settings.RemoteCommands = []string{"restart", "stop"}
-	raw, _ := json.Marshal(settings)
-	if _, err := db.Exec(`UPDATE nodes SET agent_runtime=? WHERE id=?`, string(raw), ids[2]); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := db.Exec(`INSERT INTO agent_commands(id,node_id,credential_epoch,kind,state,result_code,requested_by,created_at,expires_at,delivered_generation) VALUES('00000000-0000-4000-8000-000000000090',?,0,'stop','succeeded','ok','user',?,?,'1')`, ids[3], timekey.Format(now.Add(-time.Minute)), timekey.Format(now.Add(time.Minute))); err != nil {
 		t.Fatal(err)
 	}
 	result, err := s.CreateGroup(t.Context(), group, "user", CreateRequest{Kind: "upgrade", TargetVersion: "1.2.4", Confirm: "Production"})
-	if err != nil || result.Created != 1 || result.Skipped != 3 {
+	if err != nil || result.Created != 2 || result.Skipped != 2 {
 		t.Fatal(result, err)
 	}
-	for _, id := range ids[1:] {
+	for _, id := range []string{ids[1], ids[3]} {
 		var count int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM agent_commands WHERE node_id=? AND kind='upgrade'`, id).Scan(&count); err != nil || count != 0 {
 			t.Fatal(id, count, err)

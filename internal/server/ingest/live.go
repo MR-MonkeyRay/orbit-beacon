@@ -50,8 +50,7 @@ func liveMetricValue(metric publicMetric) *float64 {
 	return new(metric.value)
 }
 
-// ProjectLiveDetail 使用同一持久化行中的身份和观测数据。即使新事务已提交但内存尚未发布，
-// runtime 也必须与返回的已接受样本一致。重启后无内存样本时可单独使用持久化 runtime。
+// ProjectLiveDetail 使用同一持久化行中的身份围栏投影最近接受的样本。
 func (s *Service) ProjectLiveDetail(record *nodes.LiveDetailRecord, now time.Time) (*LatestReport, error) {
 	identity := &record.Identity
 	if !identity.HasCredential || identity.Generation == 0 || identity.Session == "" {
@@ -70,7 +69,6 @@ func (s *Service) ProjectLiveDetail(record *nodes.LiveDetailRecord, now time.Tim
 	if err := json.Unmarshal(body, &report); err != nil {
 		return nil, err
 	}
-	record.Runtime = &report.Runtime
 	return &LatestReport{Report: report, ReceivedAt: received}, nil
 }
 

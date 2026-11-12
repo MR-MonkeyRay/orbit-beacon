@@ -7,7 +7,6 @@ const id = '00000000-0000-4000-8000-000000000001';
 const path = `/api/v1/nodes/${id}`;
 const toastHost = new TestElement('div');
 toastHost.id = 'toasts';
-const runtime = {report_interval_seconds: 10, disk_interval_seconds: 60, interfaces: [], disk_paths: [], probe_targets: [], remote_commands: ['upgrade', 'restart', 'stop'], disabled_features: []};
 const control = (root, name) => elements(root).find((element) => element.name === name);
 const formFor = (root, name) => root.querySelectorAll('form').find((form) => control(form, name));
 const factValues = (root) => Object.fromEntries(root.querySelectorAll('dt').map((label) => [label.textContent, label.parentElement.querySelector('dd').textContent]));
@@ -20,7 +19,7 @@ const edit = (form, name, value) => {
   return input;
 };
 
-async function setup({hash = '#details', observed = runtime, presence = 'online', lastSeen = '2026-10-28T10:00:00Z', patchStatus = 200, latest = null, expiresOn = null} = {}) {
+async function setup({hash = '#details', presence = 'online', lastSeen = '2026-10-28T10:00:00Z', patchStatus = 200, latest = null, expiresOn = null} = {}) {
   const dom = installDOM();
   const originals = new Map(['fetch', 'window', 'WebSocket', 'matchMedia', 'requestAnimationFrame', 'history', 'performance', 'setTimeout', 'clearTimeout'].map((key) => [key, globalThis[key]]));
   const originalNow = Date.now;
@@ -38,7 +37,7 @@ async function setup({hash = '#details', observed = runtime, presence = 'online'
         if (this.closed) return;
         this.dispatchEvent(new Event('open'));
         this.message({type: 'snapshot', server_time: new Date(clock + now).toISOString(), update_interval_seconds: 10,
-          data: {node, latest: latest ? {...latest, system: latest.system || null, runtime: observed || runtime} : null, runtime: observed}});
+          data: {node, latest: latest ? {...latest, system: latest.system || null} : null}});
       });
     }
     message(value) { this.dispatchEvent(Object.assign(new Event('message'), {data: JSON.stringify(value)})); }
@@ -71,7 +70,6 @@ async function setup({hash = '#details', observed = runtime, presence = 'online'
     if (url === '/api/v1/me') data = userSession;
     else if (url === path) data = options.method === 'PATCH' ? Object.assign(node, JSON.parse(options.body)) : node;
     else if (url === `${path}/commands`) data = {commands: []};
-    else if (url === `${path}/runtime`) data = {runtime: observed};
     else if (url === `${path}/traffic-settings`) {
       status = options.method === 'PATCH' ? patchStatus : 200;
       data = status === 200 ? options.method === 'PATCH' ? {billing_day: 2, quota_bytes: '1000000000', billing_mode: 'total'} : {billing_day: 1, quota_bytes: '0'}
@@ -113,7 +111,7 @@ async function setup({hash = '#details', observed = runtime, presence = 'online'
   }
 }
 
-test('node tabs show reported local settings through #agent without the removed config route', async () => {
+test('node Agent section keeps commands and enrollment without fetching runtime', async () => {
   const env = await setup({hash: '#agent'});
   try {
     const tabs = elements(env.root).filter((element) => element.getAttribute('role') === 'tab');
@@ -122,54 +120,12 @@ test('node tabs show reported local settings through #agent without the removed 
     assert.deepEqual(tabs.map((tab) => tab.querySelector('use').getAttribute('href')), ['#i-monitor', '#i-cloud', '#i-check', '#i-sliders']);
     assert.equal(env.root.querySelector('#tab-settings').getAttribute('aria-selected'), 'true');
     assert.equal(env.root.querySelector('#tab-config'), null);
-    const values = factValues(env.root);
-    assert.deepEqual(Object.fromEntries(Object.entries(values).slice(0, 8)), {
-      [copy('nodes.reportInterval')]: copy('nodes.seconds', {count: 10}), [copy('nodes.diskInterval')]: copy('nodes.seconds', {count: 60}), [copy('nodes.interfaces')]: copy('nodes.defaultRoute'),
-      [copy('nodes.diskPaths')]: copy('nodes.agentDefault'), [copy('nodes.probes')]: copy('nodes.noneConfigured'),
-      [copy('nodes.remoteCommands')]: ['upgrade', 'restart', 'stop'].map((name) => copy(`nodes.command.${name}`)).join(' · '),
-      [copy('nodes.disabledFeatures')]: copy('nodes.none'), [copy('nodes.agentVersion')]: 'test-agent'
-    });
+    assert.equal(env.requests.some((request) => request.url?.endsWith('/runtime') || request === `${path}/runtime`), false);
+    assert.equal(env.root.querySelector('#node-agent').parentElement.querySelectorAll('dl').length, 0);
+    assert.ok(env.root.querySelector('#node-enrollment'));
     assert.equal(env.root.querySelector('.node-summary').querySelectorAll('time').at(-1).getAttribute('datetime'), env.node.last_seen);
     assert.ok(formFor(env.root, 'notes'));
     assert.ok(formFor(env.root, 'public_name'));
-  } finally { env.cleanup(); }
-});
-
-test('agent settings distinguishes no report and offline last observations', async () => {
-  for (const options of [
-    {observed: null, presence: 'never', lastSeen: null},
-    {presence: 'offline'},
-    {presence: 'offline', lastSeen: null}
-  ]) {
-    const env = await setup({hash: '#agent', ...options});
-    try {
-      if (options.observed === null) {
-        assert.equal(env.root.querySelector('#node-agent').parentElement.querySelectorAll('dl').length, 0);
-      } else if (options.lastSeen === null) {
-        assert.equal(env.root.querySelector('#node-agent').parentElement.querySelectorAll('time').length, 0);
-        assert.equal(factValues(env.root)[copy('nodes.reportInterval')], copy('nodes.seconds', {count: 10}));
-      } else {
-        assert.equal(env.root.querySelector('.node-summary').querySelectorAll('time').at(-1).getAttribute('datetime'), env.node.last_seen);
-      }
-    } finally { env.cleanup(); }
-  }
-});
-
-test('agent settings displays reported selections as inert text without editable controls', async () => {
-  const observed = {report_interval_seconds: 5, disk_interval_seconds: 120, interfaces: ['eth0', 'wg0'],
-    disk_paths: ['/', '/var/lib'], probe_targets: ['https://example.test/<img>'], remote_commands: ['restart'], disabled_features: ['disk', 'traffic']};
-  const env = await setup({hash: '#agent', observed});
-  try {
-    const values = factValues(env.root);
-    assert.equal(values[copy('nodes.reportInterval')], copy('nodes.seconds', {count: 5}));
-    assert.equal(values[copy('nodes.diskInterval')], copy('nodes.seconds', {count: 120}));
-    assert.equal(values[copy('nodes.interfaces')], 'eth0\nwg0');
-    assert.equal(values[copy('nodes.diskPaths')], '/\n/var/lib');
-    assert.equal(values[copy('nodes.probes')], observed.probe_targets[0]);
-    assert.equal(values[copy('nodes.remoteCommands')], copy('nodes.command.restart'));
-    assert.equal(values[copy('nodes.disabledFeatures')], `${copy('nodes.feature.disk')} · ${copy('nodes.feature.traffic')}`);
-    const settings = env.root.querySelector('#node-agent').parentElement.querySelector('section');
-    assert.equal(settings.querySelectorAll('input,select,textarea,button,a,img').length, 0);
   } finally { env.cleanup(); }
 });
 
@@ -330,7 +286,7 @@ for (const [hash, section] of Object.entries({details: 'details', public: 'publi
 test('header summary updates on live metadata and detail saves without losing the public draft', async () => {
   const env = await setup({hash: '#settings'});
   try {
-    env.send({node: {...env.node, region: 'Tokyo', provider: 'Provider', tags: ['edge'], last_seen: '2026-10-28T10:01:00Z'}, runtime, latest: null});
+    env.send({node: {...env.node, region: 'Tokyo', provider: 'Provider', tags: ['edge'], last_seen: '2026-10-28T10:01:00Z'}, latest: null});
     const summary = env.root.querySelector('.node-summary');
     assert.match(summary.textContent, /Tokyo·Provider·edge/);
     assert.equal(summary.querySelectorAll('.tag').length, 1);

@@ -443,7 +443,7 @@ func (s *Service) RevokeCredential(ctx context.Context, id string) error {
 	defer tx.Rollback()
 	// 耗尽时必须回滚，不能让 SQLite 把身份围栏提升为 REAL。
 	// 现有 NOT NULL 约束只拒绝实际的自增。
-	result, err := tx.ExecContext(ctx, "UPDATE nodes SET credential_epoch = CASE WHEN length(token_hash)>0 THEN CASE WHEN credential_epoch < 9223372036854775807 THEN credential_epoch + 1 ELSE NULL END ELSE credential_epoch END, token_hash = NULL, installation_id = NULL, run_generation = '0', report_session_id = '', agent_runtime = '', last_seen = NULL, `system` = '{}', status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'pending' END WHERE id = ?", id)
+	result, err := tx.ExecContext(ctx, "UPDATE nodes SET credential_epoch = CASE WHEN length(token_hash)>0 THEN CASE WHEN credential_epoch < 9223372036854775807 THEN credential_epoch + 1 ELSE NULL END ELSE credential_epoch END, token_hash = NULL, installation_id = NULL, run_generation = '0', report_session_id = '', last_seen = NULL, `system` = '{}', status = CASE WHEN status = 'disabled' THEN 'disabled' ELSE 'pending' END WHERE id = ?", id)
 	if err := affected(result, err); err != nil {
 		return err
 	}
@@ -604,31 +604,6 @@ func (s *Service) Batch(ctx context.Context, req BatchRequest) ([]BatchResult, e
 		results = append(results, result)
 	}
 	return results, nil
-}
-
-// GetRuntime 返回当前身份最近一次观测到的 Agent 设置。
-func (s *Service) GetRuntime(ctx context.Context, id string) (*v1.RuntimeSettings, error) {
-	var raw string
-	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
-	if leaseErr != nil {
-		return nil, leaseErr
-	}
-	defer lease.Close()
-	ctx = lease.Context()
-	if err := lease.QueryRowContext(ctx, "SELECT CASE WHEN length(token_hash)>0 AND run_generation!='0' AND report_session_id!='' THEN agent_runtime ELSE '' END FROM nodes WHERE id=?", id).Scan(&raw); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	if raw == "" {
-		return nil, nil
-	}
-	runtime, err := v1.DecodeRuntimeSettings(raw)
-	if err != nil {
-		return nil, err
-	}
-	return &runtime, nil
 }
 
 func readTrafficSettings(ctx context.Context, q interface {

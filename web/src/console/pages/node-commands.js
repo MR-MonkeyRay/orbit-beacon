@@ -12,7 +12,7 @@ const kinds = ['upgrade', 'restart', 'stop'];
 const activeCommand = (command) => ['pending', 'delivered'].includes(command.state);
 const resultCodes = ['disabled_locally', 'unsupported', 'interrupted', 'failed', 'download', 'checksum', 'self_check', 'downgrade', 'rolled_back'];
 
-export function nodeCommandsPanel(node, runtime, signal = getNavigationSignal(), {heading = 'h2'} = {}) {
+export function nodeCommandsPanel(node, signal = getNavigationSignal(), {heading = 'h2'} = {}) {
   const path = `/nodes/${encodeURIComponent(node.id)}/commands`;
   const sessionSignal = getSessionSignal();
   let records = [];
@@ -29,16 +29,12 @@ export function nodeCommandsPanel(node, runtime, signal = getNavigationSignal(),
   const table = dataTable({columns: [t('nodes.command.kind'), t('nodes.command.status'), t('nodes.command.requestedBy'), t('settings.created'), h('span', {class: 'sr'}, t('settings.actions'))], body, hidden: true});
   const element = panel(t('nodes.remoteCommands'), {heading}, h('div', {class: 'head-actions'}, controls), table);
   const patch = () => {
-    controls.forEach((control, index) => {
-      const kind = kinds[index];
-      const unavailable = !active() || !loaded || node.deleted || node.status === 'disabled' || node.stopped;
-      // runtime 未加载时能力未知，同样禁用。
-      const unsupported = !runtime || !runtime.remote_commands.includes(kind);
+    controls.forEach((control) => {
+      const unavailable = !active() || !loaded || node.deleted || node.presence !== 'online' || node.status === 'disabled' || node.stopped;
       const pending = records.some(activeCommand);
-      control.disabled = unavailable || unsupported || running || pending;
+      control.disabled = unavailable || running || pending;
       // 禁用按钮要说明原因，用户才能自行排除。
       control.title = unavailable ? t('nodes.command.disabled.nodeUnavailable')
-        : unsupported ? t('nodes.command.disabled.unsupported')
         : running ? t('nodes.command.disabled.running')
         : pending ? t('nodes.command.disabled.activeCommand') : '';
     });
@@ -89,7 +85,7 @@ export function nodeCommandsPanel(node, runtime, signal = getNavigationSignal(),
       const approved = kind === 'upgrade' ? Boolean(targetVersion) : kind === 'stop'
         ? await typedConfirmation({title: t('nodes.command.stopTitle'), message: t('nodes.command.stopConsequence'), expected, confirm: t('nodes.command.stop')})
         : await confirmDialog({title: t('nodes.command.restartTitle'), confirm: t('nodes.command.restart')});
-      if (!approved || !active() || current !== controller || node.deleted || node.stopped || node.status === 'disabled' || !runtime?.remote_commands.includes(kind) || records.some(activeCommand)) return;
+      if (!approved || !active() || current !== controller || node.deleted || node.stopped || node.status === 'disabled' || node.presence !== 'online' || records.some(activeCommand)) return;
       await api(path, {method: 'POST', body: {kind, ...(kind === 'upgrade' ? {target_version: targetVersion} : {}), ...(kind === 'stop' ? {confirm: expected} : {})}, signal: current.signal});
     });
   }
@@ -109,5 +105,5 @@ export function nodeCommandsPanel(node, runtime, signal = getNavigationSignal(),
   };
   signal?.addEventListener('abort', () => { detach(); sessionSignal.removeEventListener('abort', detach); }, {once: true});
   sessionSignal.addEventListener('abort', detach, {once: true});
-  return {element, attach, detach, snapshot(current, observed) { node = current; runtime = observed; patch(); }};
+  return {element, attach, detach, snapshot(current) { node = current; patch(); }};
 }

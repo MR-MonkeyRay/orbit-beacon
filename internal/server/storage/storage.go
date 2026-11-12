@@ -221,7 +221,7 @@ CREATE TABLE nodes (
  token_hash BLOB UNIQUE, installation_id TEXT, first_enrolled_at TEXT, last_seen TEXT,
  credential_epoch INTEGER NOT NULL DEFAULT 0,
  system TEXT NOT NULL DEFAULT '{}', public_settings TEXT NOT NULL DEFAULT '{}',
- agent_runtime TEXT NOT NULL DEFAULT '', billing_day INTEGER NOT NULL DEFAULT 1,
+ billing_day INTEGER NOT NULL DEFAULT 1,
  quota_bytes TEXT NOT NULL DEFAULT '0', billing_mode TEXT NOT NULL DEFAULT 'total' CHECK(billing_mode IN ('total','max','rx','tx')), created_at TEXT NOT NULL,
  run_generation TEXT NOT NULL DEFAULT '0', report_session_id TEXT NOT NULL DEFAULT ''
 );

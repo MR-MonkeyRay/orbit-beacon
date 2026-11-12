@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/datadir"
 	"orbitbeacon/internal/server/inbox"
 	"orbitbeacon/internal/server/secretbox"
@@ -259,7 +258,7 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 				}
 			}
 			if spec.Name == "node_observations" && !selected[Monitoring] {
-				query = "SELECT id,last_seen,system,agent_runtime FROM nodes"
+				query = "SELECT id,last_seen,system FROM nodes"
 			}
 			if reader == nil {
 				return &Error{Code: "restore_invalid_data"}
@@ -282,27 +281,14 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 				for rows.Next() {
 					var node string
 					var last any
-					var system, runtime string
-					if e = rows.Scan(&node, &last, &system, &runtime); e != nil {
+					var system string
+					if e = rows.Scan(&node, &last, &system); e != nil {
 						break
 					}
 					if e = check(nil, []any{node}); e != nil {
 						break
 					}
-					if runtime != "" {
-						var settings v1.RuntimeSettings
-						if objectJSON(runtime, &settings) != nil || settings.Validate() != nil {
-							e = invalidPayload("node_observations", node)
-							break
-						}
-						encoded, err := json.Marshal(settings.Normalized())
-						if err != nil {
-							e = invalidPayload("node_observations", node)
-							break
-						}
-						runtime = string(encoded)
-					}
-					_, e = tx.ExecContext(ctx, `UPDATE nodes SET last_seen=?,system=?,agent_runtime=? WHERE id=?`, last, system, runtime, node)
+					_, e = tx.ExecContext(ctx, `UPDATE nodes SET last_seen=?,system=? WHERE id=?`, last, system, node)
 					if e != nil {
 						break
 					}

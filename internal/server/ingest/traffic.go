@@ -296,8 +296,8 @@ func (s *Service) drainNodeTraffic(ctx context.Context, id string, state *nodeSt
 	defer tx.Rollback()
 	var credential []byte
 	var credentialEpoch int64
-	var generation, session, status, runtimeJSON string
-	err = tx.QueryRowContext(ctx, `SELECT token_hash,credential_epoch,run_generation,report_session_id,status,agent_runtime FROM nodes WHERE id=?`, id).Scan(&credential, &credentialEpoch, &generation, &session, &status, &runtimeJSON)
+	var generation, session, status string
+	err = tx.QueryRowContext(ctx, `SELECT token_hash,credential_epoch,run_generation,report_session_id,status FROM nodes WHERE id=?`, id).Scan(&credential, &credentialEpoch, &generation, &session, &status)
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
@@ -323,11 +323,6 @@ func (s *Service) drainNodeTraffic(ctx context.Context, id string, state *nodeSt
 		return err
 	}
 	probes := state.copyProbes(credential, credentialEpoch, observedGeneration, session)
-	runtime, err := decodeRuntime(runtimeJSON)
-	if err != nil {
-		return err
-	}
-	probes.retainTargets(runtime.ProbeTargets)
 	if err := probes.persist(ctx, tx, id, now); err != nil {
 		return err
 	}

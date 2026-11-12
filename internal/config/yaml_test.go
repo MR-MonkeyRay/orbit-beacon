@@ -130,4 +130,3 @@ func TestYAMLScalarTypesRemainStrict(t *testing.T) {
 		}
 	}
 }
-

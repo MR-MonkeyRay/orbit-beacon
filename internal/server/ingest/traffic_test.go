@@ -182,7 +182,7 @@ func TestTrafficPendingAndCommittedAreBounded(t *testing.T) {
 	credential := sha256.Sum256([]byte("credential"))
 	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
 	for n := 0; n < 100; n++ {
-		report := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 1, SessionID: "session", Traffic: []v1.Traffic{trafficEntry(fmt.Sprintf("%x", n), now, "1", "2")}}
+		report := v1.Report{RunGeneration: 1, SessionID: "session", Traffic: []v1.Traffic{trafficEntry(fmt.Sprintf("%x", n), now, "1", "2")}}
 		state.bufferTraffic(credential[:], 0, report, 1, "session", now)
 	}
 	if len(state.traffic.pending) != trafficBufferLimit {
@@ -299,11 +299,11 @@ func TestTrafficExpiredPendingReleasesCapacity(t *testing.T) {
 	credential := sha256.Sum256([]byte("credential"))
 	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
 	for n := 0; n < trafficBufferLimit; n++ {
-		report := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 1, SessionID: "session", Traffic: []v1.Traffic{trafficEntry(fmt.Sprintf("%x", n), now, "1", "2")}}
+		report := v1.Report{RunGeneration: 1, SessionID: "session", Traffic: []v1.Traffic{trafficEntry(fmt.Sprintf("%x", n), now, "1", "2")}}
 		state.bufferTraffic(credential[:], 0, report, 1, "session", now)
 	}
 	now = now.Add(36 * 24 * time.Hour)
-	report := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 1, SessionID: "session", Traffic: []v1.Traffic{trafficEntry("ff", now, "3", "4")}}
+	report := v1.Report{RunGeneration: 1, SessionID: "session", Traffic: []v1.Traffic{trafficEntry("ff", now, "3", "4")}}
 	state.bufferTraffic(credential[:], 0, report, 1, "session", now)
 	if len(state.traffic.pending) != 1 {
 		t.Fatalf("expired buckets occupy pending capacity: %d", len(state.traffic.pending))
@@ -384,12 +384,12 @@ func TestTrafficStagesRestartWithoutReplacingAcceptedCounters(t *testing.T) {
 	oldKey := trafficKey{"a", timekey.Format(now)}
 	newKey := trafficKey{"b", timekey.Format(now)}
 	state := &nodeState{}
-	old := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 1, SessionID: "old", Traffic: []v1.Traffic{trafficEntry("a", now, "100", "200")}}
+	old := v1.Report{RunGeneration: 1, SessionID: "old", Traffic: []v1.Traffic{trafficEntry("a", now, "100", "200")}}
 	state.bufferTraffic(credential[:], 0, old, 1, "old", now)
 	state.commitTraffic(map[trafficKey]trafficCounters{oldKey: {100, 200}}, now)
 	old.Traffic[0] = trafficEntry("a", now, "150", "250")
 	state.bufferTraffic(credential[:], 0, old, 1, "old", now)
-	incoming := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 2, SessionID: "new", Traffic: []v1.Traffic{trafficEntry("b", now, "25", "35")}}
+	incoming := v1.Report{RunGeneration: 2, SessionID: "new", Traffic: []v1.Traffic{trafficEntry("b", now, "25", "35")}}
 	state.stageTraffic(credential[:], 0, incoming, 1, "old", now)
 	if state.traffic.generation != 1 || state.traffic.pending[oldKey].rx != 150 || state.traffic.committed[oldKey].rx != 100 {
 		t.Fatal("incoming run replaced accepted counters before commit")
@@ -420,8 +420,8 @@ func TestTrafficStagedRestartStillFencesIdentityChanges(t *testing.T) {
 			now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
 			credential := sha256.Sum256([]byte("restart-credential"))
 			state := &nodeState{}
-			old := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 1, SessionID: "old", Traffic: []v1.Traffic{trafficEntry("a", now, "150", "250")}}
-			incoming := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 2, SessionID: "new", Traffic: []v1.Traffic{trafficEntry("b", now, "25", "35")}}
+			old := v1.Report{RunGeneration: 1, SessionID: "old", Traffic: []v1.Traffic{trafficEntry("a", now, "150", "250")}}
+			incoming := v1.Report{RunGeneration: 2, SessionID: "new", Traffic: []v1.Traffic{trafficEntry("b", now, "25", "35")}}
 			state.bufferTraffic(credential[:], 0, old, 1, "old", now)
 			state.stageTraffic(credential[:], 0, incoming, 1, "old", now)
 			generation, session := uint64(1), "old"
@@ -638,8 +638,8 @@ func TestTrafficStagesRetryWhenOnlyIncomingBufferSurvivesFence(t *testing.T) {
 	now := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
 	credential := sha256.Sum256([]byte("credential"))
 	state := &nodeState{}
-	old := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 1, SessionID: "old", Traffic: []v1.Traffic{trafficEntry("a", now, "150", "250")}}
-	incoming := v1.Report{Runtime: v1.DefaultRuntimeSettings(), RunGeneration: 2, SessionID: "new", Traffic: []v1.Traffic{trafficEntry("b", now, "25", "35")}}
+	old := v1.Report{RunGeneration: 1, SessionID: "old", Traffic: []v1.Traffic{trafficEntry("a", now, "150", "250")}}
+	incoming := v1.Report{RunGeneration: 2, SessionID: "new", Traffic: []v1.Traffic{trafficEntry("b", now, "25", "35")}}
 	state.bufferTraffic(credential[:], 0, old, 1, "old", now)
 	state.stageTraffic(credential[:], 0, incoming, 1, "old", now)
 	// 模拟一个新到来的缓冲区，其准入时观测到的身份比已接受运行更新，

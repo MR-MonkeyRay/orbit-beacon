@@ -32,7 +32,7 @@ func TestMySQLAlertsSnapshotsSilencesAndResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	latest := &latestStub{report: ingest.LatestReport{ReceivedAt: now, Report: v1.Report{Runtime: v1.DefaultRuntimeSettings(), Metrics: v1.Metrics{CPUPercent: ptr(90.0), MetricStatus: map[string]string{"cpu_percent": "ok"}, Sources: map[string]v1.SourceMetadata{"cpu": {SampleID: "cpu", SourceIntervalMS: 10000}}}}}}
+	latest := &latestStub{report: ingest.LatestReport{ReceivedAt: now, Report: v1.Report{Metrics: v1.Metrics{CPUPercent: ptr(90.0), MetricStatus: map[string]string{"cpu_percent": "ok"}, Sources: map[string]v1.SourceMetadata{"cpu": {SampleID: "cpu", SourceIntervalMS: 10000}}}}}}
 	e := NewEvaluator(s, latest, EvaluatorOptions{Now: func() time.Time { return now }})
 	var req SilenceRequest
 	wire, _ := json.Marshal(map[string]any{"reason": "maintenance", "scope_kind": "all", "ends_at": now.Add(time.Hour)})

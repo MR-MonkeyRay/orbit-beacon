@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"time"
 
-	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/commands"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/timekey"
@@ -43,7 +42,6 @@ type LiveRecord struct {
 type LiveDetailRecord struct {
 	Node     Node
 	Identity LiveIdentity `json:"-"`
-	Runtime  *v1.RuntimeSettings
 }
 
 // Presence 由持久化清单和身份匹配的实时叠加层共用。
@@ -123,26 +121,25 @@ type liveDetailScanner struct {
 	epoch      *int64
 	generation *string
 	session    *string
-	runtime    *string
 }
 
 func (s liveDetailScanner) Scan(dest ...any) error {
-	return s.scanner.Scan(append(dest, s.credential, s.epoch, s.generation, s.session, s.runtime)...)
+	return s.scanner.Scan(append(dest, s.credential, s.epoch, s.generation, s.session)...)
 }
 
 func (s *Service) LiveDetail(ctx context.Context, id string) (LiveDetailRecord, error) {
 	var record LiveDetailRecord
 	var credential []byte
 	var epoch int64
-	var generation, session, runtime string
+	var generation, session string
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
 		return LiveDetailRecord{}, leaseErr
 	}
 	defer lease.Close()
 	ctx = lease.Context()
-	row := lease.QueryRowContext(ctx, "SELECT "+nodeColumns(lease.Dialect())+",token_hash,credential_epoch,run_generation,report_session_id,agent_runtime FROM nodes WHERE id=?", id)
-	node, err := scanNode(liveDetailScanner{row, &credential, &epoch, &generation, &session, &runtime}, s.now())
+	row := lease.QueryRowContext(ctx, "SELECT "+nodeColumns(lease.Dialect())+",token_hash,credential_epoch,run_generation,report_session_id FROM nodes WHERE id=?", id)
+	node, err := scanNode(liveDetailScanner{row, &credential, &epoch, &generation, &session}, s.now())
 	if err != nil {
 		return record, err
 	}
@@ -150,13 +147,6 @@ func (s *Service) LiveDetail(ctx context.Context, id string) (LiveDetailRecord, 
 	record.Identity, err = liveIdentity(credential, epoch, generation, session)
 	if err != nil {
 		return record, err
-	}
-	if record.Identity.HasCredential && record.Identity.Generation != 0 && record.Identity.Session != "" && runtime != "" {
-		settings, err := v1.DecodeRuntimeSettings(runtime)
-		if err != nil {
-			return record, err
-		}
-		record.Runtime = &settings
 	}
 	return record, nil
 }

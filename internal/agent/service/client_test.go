@@ -133,7 +133,7 @@ func TestEnrollmentPersistsCandidateAndRequiresSeparateRecoveryAfterLostResponse
 	}
 }
 
-func TestReportRecoveryUsesNodeTokenAndReportsOnlyLocalRuntime(t *testing.T) {
+func TestReportRecoveryUsesNodeTokenAndOmitsLocalSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "identity.json")
 	state, err := identity.Open(t.Context(), path, identity.Options{})
 	if err != nil {
@@ -172,7 +172,7 @@ func TestReportRecoveryUsesNodeTokenAndReportsOnlyLocalRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	for seq := uint64(1); seq <= 3; seq++ {
-		_, err := client.Report(context.Background(), v1.Report{ProtocolVersion: 1, RunGeneration: run.RunGeneration, SessionID: run.SessionID, Seq: seq, Runtime: runtimeSettings(10), Metrics: schedulerMetrics()})
+		_, err := client.Report(context.Background(), v1.Report{ProtocolVersion: 1, RunGeneration: run.RunGeneration, SessionID: run.SessionID, Seq: seq, Metrics: schedulerMetrics()})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -182,12 +182,8 @@ func TestReportRecoveryUsesNodeTokenAndReportsOnlyLocalRuntime(t *testing.T) {
 	if len(bodies) != 3 {
 		t.Fatalf("report recovery performed additional enrollment/requests: %d", len(bodies))
 	}
-	for i, body := range bodies {
-		var settings v1.RuntimeSettings
-		if err := json.Unmarshal(body["runtime"], &settings); err != nil || settings.ReportIntervalSeconds != 10 {
-			t.Fatalf("report %d changed local settings: %+v %v", i, settings, err)
-		}
-		for _, removed := range []string{"config_revision", "config_error"} {
+	for _, body := range bodies {
+		for _, removed := range []string{"runtime", "config_revision", "config_error"} {
 			if _, ok := body[removed]; ok {
 				t.Fatalf("report retained removed field %q", removed)
 			}

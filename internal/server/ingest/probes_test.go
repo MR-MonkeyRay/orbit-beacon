@@ -438,64 +438,6 @@ func TestProbeCredentialRotationAfterInitialReadDropsOldPending(t *testing.T) {
 	}
 }
 
-func TestRuntimeTargetRemovalPurgesPendingAtomicallyAndDuplicatesCannotRestore(t *testing.T) {
-	target := "tcp://removed.example:443"
-	f := newCoalesceFixture(t, 30*time.Second, target)
-	f.now = f.now.Add(time.Second)
-	f.report.Seq++
-	f.report.ProbeResults = []v1.ProbeResult{probeResult(target, f.now, true)}
-	if _, err := probeAccept(t, f); err != nil {
-		t.Fatal(err)
-	}
-	old := f.report
-	f.report.Seq++
-	f.report.Runtime.ProbeTargets = []string{}
-	f.report.ProbeResults = nil
-	if _, err := f.db.Exec(`CREATE TRIGGER reject_runtime_removal BEFORE UPDATE OF agent_runtime ON nodes BEGIN SELECT RAISE(ABORT,'runtime rollback'); END`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := probeAccept(t, f); err == nil {
-		t.Fatal("failed runtime transaction accepted")
-	}
-	runtime, err := f.nodes.GetRuntime(context.Background(), f.id)
-	if err != nil || runtime == nil || len(runtime.ProbeTargets) != 1 || runtime.ProbeTargets[0] != target {
-		t.Fatalf("rollback runtime=%+v err=%v", runtime, err)
-	}
-	state := f.service.acquireExistingState(f.id)
-	state.mu.Lock()
-	pending := len(state.probes.targets[target].pending)
-	state.mu.Unlock()
-	f.service.releaseState(state)
-	if pending != 1 {
-		t.Fatalf("rollback discarded accepted pending probes=%d", pending)
-	}
-	if _, err := f.db.Exec(`DROP TRIGGER reject_runtime_removal`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := probeAccept(t, f); err != nil {
-		t.Fatal(err)
-	}
-	f.report = old
-	f.report.ProbeResults = []v1.ProbeResult{probeResult(target, f.now.Add(time.Second), true)}
-	response, err := probeAccept(t, f)
-	if err != nil || response.AcceptedSeq != 3 {
-		t.Fatalf("duplicate response=%+v err=%v", response, err)
-	}
-	if err := f.service.Shutdown(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	runtime, err = f.nodes.GetRuntime(context.Background(), f.id)
-	if err != nil || runtime == nil || len(runtime.ProbeTargets) != 0 {
-		t.Fatalf("duplicate restored runtime=%+v err=%v", runtime, err)
-	}
-	for _, table := range []string{"probe_latest", "probe_hourly"} {
-		var count int
-		if err := f.db.QueryRow("SELECT count(*) FROM "+table+" WHERE node_id=?", f.id).Scan(&count); err != nil || count != 0 {
-			t.Fatalf("%s resurrected target: count=%d err=%v", table, count, err)
-		}
-	}
-}
-
 func TestProbeHourlyMaximumAndSuccessSum(t *testing.T) {
 	f := newProbeFixture(t)
 	const target = "https://example.test/health"
@@ -523,5 +465,53 @@ func TestProbeHourlyMaximumAndSuccessSum(t *testing.T) {
 	}
 	if checks != 4 || failures != 1 || sum != 40 || maximum != 22 {
 		t.Fatalf("checks=%d failures=%d sum=%v max=%v", checks, failures, sum, maximum)
+	}
+}
+
+func TestReportTargetRemovalRetainsHistoryAndDuplicateCannotRestore(t *testing.T) {
+	f := newProbeFixture(t)
+	target := "tcp://example.test:443"
+	f.report.Seq++
+	f.now = f.now.Add(time.Second)
+	f.report.ProbeResults = []v1.ProbeResult{probeResult(target, f.now, false)}
+	if _, err := probeAccept(t, f); err != nil {
+		t.Fatal(err)
+	}
+	old := f.report
+	f.report.Seq++
+	f.now = f.now.Add(time.Second)
+	f.report.ProbeResults = nil
+	if _, err := probeAccept(t, f); err != nil {
+		t.Fatal(err)
+	}
+	old.ProbeResults = []v1.ProbeResult{probeResult(target, f.now, true)}
+	if _, err := f.service.accept(t.Context(), f.id, nil, 0, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	checks, failures, _ := probeTotals(t, f, target)
+	if checks != 1 || failures != 1 {
+		t.Fatalf("removed history changed: %d/%d", checks, failures)
+	}
+	latest, err := f.service.Latest(t.Context(), f.id)
+	if err != nil || len(latest.ProbeResults) != 0 {
+		t.Fatalf("duplicate restored target: %+v %v", latest, err)
+	}
+}
+func TestPendingProbeDoesNotCountAsCheck(t *testing.T) {
+	f := newProbeFixture(t)
+	f.report.Seq++
+	f.report.ProbeResults = []v1.ProbeResult{{Target: "tcp://pending.test:80", Error: "pending"}}
+	if _, err := probeAccept(t, f); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := f.db.QueryRow("SELECT count(*) FROM probe_hourly").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("pending counted: %d %v", count, err)
 	}
 }

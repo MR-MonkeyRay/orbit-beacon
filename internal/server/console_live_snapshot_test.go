@@ -57,12 +57,12 @@ func TestConsoleLiveDetailDistinguishesUnreportedDeletedAndRestarted(t *testing.
 	id, token, _ := enrollHTTP(t, f, "detail", 172)
 	cookie, _ := loginAgent(t, f, "admin")
 	data := consoleLiveData(t, f, cookie, "?node_id="+id)
-	if string(data["node"]) == "null" || string(data["latest"]) != "null" || string(data["runtime"]) != "null" {
+	if string(data["node"]) == "null" || string(data["latest"]) != "null" {
 		t.Fatalf("unreported detail: %s", data)
 	}
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, reportBody(1, 1, "detail", 25)), 1)
 	data = consoleLiveData(t, f, cookie, "?node_id="+id)
-	if string(data["latest"]) == "null" || string(data["runtime"]) == "null" {
+	if string(data["latest"]) == "null" {
 		t.Fatalf("reported detail: %s", data)
 	}
 	if strings.Contains(string(data["latest"]), "session_id") || strings.Contains(string(data["latest"]), "run_generation") {
@@ -76,14 +76,14 @@ func TestConsoleLiveDetailDistinguishesUnreportedDeletedAndRestarted(t *testing.
 	if err := json.Unmarshal(data["node"], &node); err != nil {
 		t.Fatal(err)
 	}
-	if node.Presence != "pending" || node.LastSeen != nil || string(data["latest"]) != "null" || string(data["runtime"]) != "null" {
+	if node.Presence != "pending" || node.LastSeen != nil || string(data["latest"]) != "null" {
 		t.Fatalf("revoked detail: %+v %s", node, data)
 	}
 	if err := f.nodes.Delete(context.Background(), id, true); err != nil {
 		t.Fatal(err)
 	}
 	data = consoleLiveData(t, f, cookie, "?node_id="+id)
-	if string(data["node"]) != "null" || string(data["latest"]) != "null" || string(data["runtime"]) != "null" {
+	if string(data["node"]) != "null" || string(data["latest"]) != "null" {
 		t.Fatalf("deleted detail: %s", data)
 	}
 }
@@ -120,7 +120,7 @@ func TestConsoleLiveFleetUsesCoalescedReceptionAndRetainsOfflineInventory(t *tes
 	}
 }
 
-func TestConsoleLiveDetailRetainsDurableRuntimeWithoutInMemorySample(t *testing.T) {
+func TestConsoleLiveDetailRetainsNodeWithoutInMemorySample(t *testing.T) {
 	f := newAgentHTTP(t, 1)
 	id, token, _ := enrollHTTP(t, f, "restart", 174)
 	cookie, _ := loginAgent(t, f, "admin")
@@ -132,7 +132,7 @@ func TestConsoleLiveDetailRetainsDurableRuntimeWithoutInMemorySample(t *testing.
 		t.Fatal(err)
 	}
 	data := consoleLiveData(t, f, cookie, "?node_id="+id)
-	if string(data["node"]) == "null" || string(data["latest"]) != "null" || string(data["runtime"]) == "null" {
+	if string(data["node"]) == "null" || string(data["latest"]) != "null" {
 		t.Fatalf("restart detail=%s", data)
 	}
 }
@@ -162,7 +162,7 @@ func TestConsoleLiveOldAdmissionCannotRepopulateCredentialABADetailOrFleet(t *te
 	if err := json.Unmarshal(data["node"], &node); err != nil {
 		t.Fatal(err)
 	}
-	if node.Presence != "never" || node.LastSeen != nil || string(data["runtime"]) != "null" || string(data["latest"]) != "null" {
+	if node.Presence != "never" || node.LastSeen != nil || string(data["latest"]) != "null" {
 		t.Fatalf("old identity in detail: %+v %s", node, data)
 	}
 	data = consoleLiveData(t, f, cookie, "")
@@ -217,7 +217,7 @@ func TestConsoleLiveCredentialRotationClearsEveryPrivateObservation(t *testing.T
 	if err := json.Unmarshal(data["node"], &node); err != nil {
 		t.Fatal(err)
 	}
-	if node.Presence != "never" || node.LastSeen != nil || node.AgentVersion != "replacement" || string(data["latest"]) != "null" || string(data["runtime"]) != "null" {
+	if node.Presence != "never" || node.LastSeen != nil || node.AgentVersion != "replacement" || string(data["latest"]) != "null" {
 		t.Fatalf("rotation reused old identity: %+v %s", node, data)
 	}
 	data = consoleLiveData(t, f, cookie, "")

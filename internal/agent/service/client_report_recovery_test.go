@@ -69,7 +69,7 @@ func TestReportRecoveryPromotionPreservesConcurrentDurableRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	if _, err := client.Report(context.Background(), v1.Report{ProtocolVersion: 1, RunGeneration: run.RunGeneration, SessionID: run.SessionID, Seq: 1, Runtime: runtimeSettings(10), Metrics: schedulerMetrics()}); err != nil {
+	if _, err := client.Report(context.Background(), v1.Report{ProtocolVersion: 1, RunGeneration: run.RunGeneration, SessionID: run.SessionID, Seq: 1, Metrics: schedulerMetrics()}); err != nil {
 		t.Errorf("report did not recover stale in-memory identity: %v", err)
 	}
 	mu.Lock()
@@ -126,7 +126,7 @@ func TestReportDoesNotRetryWithoutDistinctCredentialOrWithoutUnauthorized(t *tes
 				t.Fatal(err)
 			}
 			defer client.Close()
-			if _, err := client.Report(context.Background(), v1.Report{Seq: 1, Runtime: runtimeSettings(10), Metrics: schedulerMetrics()}); err == nil {
+			if _, err := client.Report(context.Background(), v1.Report{Seq: 1, Metrics: schedulerMetrics()}); err == nil {
 				t.Error("rejected report returned success")
 			}
 			mu.Lock()

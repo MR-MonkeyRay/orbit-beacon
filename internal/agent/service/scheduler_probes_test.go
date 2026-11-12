@@ -11,6 +11,7 @@ import (
 	"orbitbeacon/internal/agent/identity"
 	"orbitbeacon/internal/agent/probe"
 	"orbitbeacon/internal/agent/service"
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -34,7 +35,7 @@ func TestSchedulerSendsLatestProbesOnRetryAndDropsRemovedTargets(t *testing.T) {
 		reports := make(chan v1.Report, 10)
 		attempt := 0
 		scheduler := service.NewScheduler(service.SchedulerOptions{
-			Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return initial }, Probes: runner, Reload: reload, ReloadConfig: func(context.Context) error {
+			Identity: state, RuntimeSettings: func() config.RuntimeSettings { return initial }, Probes: runner, Reload: reload, ReloadConfig: func(context.Context) error {
 				initial = runtimeSettings(5)
 				return runner.SetTargets(nil)
 			}, RandomFloat: func() float64 { return .5 },
@@ -56,8 +57,8 @@ func TestSchedulerSendsLatestProbesOnRetryAndDropsRemovedTargets(t *testing.T) {
 		go func() { done <- scheduler.Run(ctx) }()
 		synctest.Wait()
 		first := <-reports
-		if len(first.ProbeResults) != 0 {
-			t.Fatal("report waited for unfinished probe")
+		if len(first.ProbeResults) != 1 || first.ProbeResults[0].Error != "pending" || !first.ProbeResults[0].CheckedAt.IsZero() {
+			t.Fatal("report must include pending without waiting for unfinished probe")
 		}
 		time.Sleep(time.Second)
 		synctest.Wait()

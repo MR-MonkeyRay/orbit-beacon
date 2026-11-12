@@ -3,6 +3,7 @@ package server_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server"
+	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/timekey"
 )
@@ -18,7 +20,8 @@ import (
 func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 	f := newHTTP(t, 5)
 	now := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
-	handler, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, Now: func() time.Time { return now }}))
+	ingester := ingest.NewService(f.nodes.Database(), ingest.Options{Now: func() time.Time { return now }})
+	handler, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Ingest: ingester, PublicURL: publicURL, Now: func() time.Time { return now }}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,10 +33,9 @@ func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 		t.Fatal(err)
 	}
 	targets := []string{"icmp://pending.example", "https://up.example/health", "tcp://down.example:443"}
-	runtime := v1.DefaultRuntimeSettings()
-	runtime.ProbeTargets = targets
-	body, _ := json.Marshal(runtime)
-	if _, err := f.db.Exec(`UPDATE nodes SET token_hash=zeroblob(32),status='unknown',run_generation='1',report_session_id='probe-fixture',agent_runtime=? WHERE id=?`, string(body), node.ID); err != nil {
+	token := agentSecret(29)
+	hash := sha256.Sum256([]byte(token))
+	if _, err := f.db.Exec(`UPDATE nodes SET token_hash=?,status='unknown',run_generation='1',report_session_id='probe-fixture' WHERE id=?`, hash[:], node.ID); err != nil {
 		t.Fatal(err)
 	}
 	checked := timekey.Format(now.Add(-time.Minute))
@@ -49,6 +51,25 @@ func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 	boundary := timekey.Format(now.Truncate(time.Hour).Add(-23 * time.Hour))
 	old := timekey.Format(now.Truncate(time.Hour).Add(-24 * time.Hour))
 	if _, err := f.db.Exec(`INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms) VALUES(?,?,?,4,1,30),(?,?,?,2,2,0),(?,?,?,1,0,10),(?,?,?,100,100,0),(?,?,?,9,9,0)`, node.ID, targets[1], hour, node.ID, targets[2], hour, node.ID, targets[1], boundary, node.ID, targets[1], old, node.ID, unconfigured, hour); err != nil {
+		t.Fatal(err)
+	}
+	var report v1.Report
+	if err := json.Unmarshal([]byte(reportBody(1, 1, "probe-fixture", 10)), &report); err != nil {
+		t.Fatal(err)
+	}
+	at := now.Add(-time.Minute)
+	latency, code := 12.5, 200
+	report.SampledAt = now
+	report.ProbeResults = []v1.ProbeResult{
+		{Target: targets[0], Error: "pending"},
+		{Target: targets[1], OK: true, LatencyMS: &latency, StatusCode: &code, CheckedAt: at, TLSExpiresAt: &expiry},
+		{Target: targets[2], Error: "timeout", CheckedAt: at},
+	}
+	admission, err := ingester.AdmitToken(t.Context(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ingester.AcceptAdmitted(t.Context(), admission, report); err != nil {
 		t.Fatal(err)
 	}
 	route := "/api/v1/nodes/" + node.ID + "/probes"
@@ -83,19 +104,19 @@ func TestProbesAPIEnvelopeOrderingAccessAndMethods(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range []string{"latency_ms", "status_code", "checked_at", "tls_expires_at", "uptime_24h"} {
-		if value, ok := raw.Probes[0][key]; !ok || string(value) != "null" {
+		if value, ok := raw.Probes[1][key]; !ok || string(value) != "null" {
 			t.Fatalf("pending %s=%s present=%t; body=%s", key, value, ok, response.Body)
 		}
 	}
-	for i, target := range targets {
+	for i, target := range []string{targets[1], targets[0], targets[2]} {
 		if envelope.Probes[i].Target != target {
 			t.Fatalf("order=%s", response.Body)
 		}
 	}
-	if p := envelope.Probes[0]; p.Status != "pending" || p.CheckedAt != nil || p.Uptime24H != nil || p.Checks24H != 0 {
+	if p := envelope.Probes[1]; p.Status != "pending" || p.CheckedAt != nil || p.Uptime24H != nil || p.Checks24H != 0 {
 		t.Fatalf("pending=%+v", p)
 	}
-	if p := envelope.Probes[1]; p.TLSExpiresAt == nil || !p.TLSExpiresAt.Equal(expiry) || p.Status != "up" || p.LatencyMS == nil || *p.LatencyMS != 12.5 || p.StatusCode == nil || *p.StatusCode != 200 || p.Uptime24H == nil || *p.Uptime24H != 80 || p.Checks24H != 5 {
+	if p := envelope.Probes[0]; p.TLSExpiresAt == nil || !p.TLSExpiresAt.Equal(expiry) || p.Status != "up" || p.LatencyMS == nil || *p.LatencyMS != 12.5 || p.StatusCode == nil || *p.StatusCode != 200 || p.Uptime24H == nil || *p.Uptime24H != 80 || p.Checks24H != 5 {
 		t.Fatalf("up=%+v", p)
 	}
 	if p := envelope.Probes[2]; p.Status != "down" || p.Error != "timeout" || p.LatencyMS != nil || p.Uptime24H == nil || *p.Uptime24H != 0 || p.Checks24H != 2 {
@@ -132,10 +153,7 @@ func TestProbeHistoryAPIValidationWindowsAndShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	const target = "https://example.test/health?a=1&b=2"
-	runtime := v1.DefaultRuntimeSettings()
-	runtime.ProbeTargets = []string{target}
-	body, _ := json.Marshal(runtime)
-	if _, err := f.db.Exec(`UPDATE nodes SET token_hash=zeroblob(32),run_generation='1',report_session_id='session',agent_runtime=? WHERE id=?`, string(body), node.ID); err != nil {
+	if _, err := f.db.Exec(`UPDATE nodes SET token_hash=zeroblob(32),run_generation='1',report_session_id='session' WHERE id=?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
 	route := "/api/v1/nodes/" + node.ID + "/probes/history"

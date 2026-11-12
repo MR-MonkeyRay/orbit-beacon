@@ -12,6 +12,7 @@ import (
 
 	"orbitbeacon/internal/agent/identity"
 	"orbitbeacon/internal/agent/service"
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -21,7 +22,7 @@ func TestSchedulerReloadAppliesAtSampleBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		settings := v1.DefaultRuntimeSettings()
+		settings := config.DefaultRuntimeSettings()
 		reload := make(chan struct{}, 1)
 		var collections atomic.Int64
 		reports := make(chan v1.Report, 8)
@@ -32,7 +33,7 @@ func TestSchedulerReloadAppliesAtSampleBoundary(t *testing.T) {
 		scheduler := service.NewScheduler(service.SchedulerOptions{
 			Logger:         logs.logger(),
 			ConfigRevision: func() uint64 { return revision },
-			Identity:       state, RuntimeSettings: func() v1.RuntimeSettings { return settings }, Reload: reload,
+			Identity:       state, RuntimeSettings: func() config.RuntimeSettings { return settings }, Reload: reload,
 			ReloadConfig: func(context.Context) error {
 				if reject {
 					return errors.New("invalid settings")
@@ -61,7 +62,7 @@ func TestSchedulerReloadAppliesAtSampleBoundary(t *testing.T) {
 		reload <- struct{}{}
 		synctest.Wait()
 		localChange := <-reports
-		if !localChange.Runtime.Equal(first.Runtime) || collections.Load() != 2 {
+		if localChange.Seq != 2 || collections.Load() != 2 {
 			t.Fatal("local configuration change was treated as unchanged")
 		}
 		time.Sleep(2 * time.Second)
@@ -70,7 +71,7 @@ func TestSchedulerReloadAppliesAtSampleBoundary(t *testing.T) {
 		reload <- struct{}{}
 		synctest.Wait()
 		second := <-reports
-		if second.Runtime.ReportIntervalSeconds != 5 || len(second.Runtime.ProbeTargets) != 1 || second.Seq != 3 || second.RunGeneration != first.RunGeneration || second.SessionID != first.SessionID {
+		if settings.ReportIntervalSeconds != 5 || len(settings.ProbeTargets) != 1 || second.Seq != 3 || second.RunGeneration != first.RunGeneration || second.SessionID != first.SessionID {
 			t.Fatalf("reload report = %+v", second)
 		}
 		reject = true
@@ -82,7 +83,7 @@ func TestSchedulerReloadAppliesAtSampleBoundary(t *testing.T) {
 		time.Sleep(5 * time.Second)
 		synctest.Wait()
 		third := <-reports
-		if third.Runtime.ReportIntervalSeconds != 5 || third.Seq != 4 {
+		if settings.ReportIntervalSeconds != 5 || third.Seq != 4 {
 			t.Fatalf("reload changed cadence or snapshot: %+v", third)
 		}
 		gotLogs := logs.snapshot()
@@ -110,7 +111,7 @@ func TestSchedulerReloadWaitsForCollectionAndKeepsSnapshotRuntime(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		settings := v1.DefaultRuntimeSettings()
+		settings := config.DefaultRuntimeSettings()
 		settings.ProbeTargets = []string{"tcp://old.example:80"}
 		reload := make(chan struct{}, 1)
 		release := make(chan struct{})
@@ -123,13 +124,13 @@ func TestSchedulerReloadWaitsForCollectionAndKeepsSnapshotRuntime(t *testing.T) 
 			return nil
 		}}
 		scheduler := service.NewScheduler(service.SchedulerOptions{
-			Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return settings }, Reload: reload,
+			Identity: state, RuntimeSettings: func() config.RuntimeSettings { return settings }, Reload: reload,
 			ReloadConfig: func(context.Context) error {
 				if collecting.Load() {
 					t.Error("reload overlapped collection")
 				}
 				loads.Add(1)
-				settings = v1.DefaultRuntimeSettings()
+				settings = config.DefaultRuntimeSettings()
 				settings.ReportIntervalSeconds = 5
 				settings.ProbeTargets = []string{"tcp://new.example:443"}
 				return nil
@@ -172,13 +173,10 @@ func TestSchedulerReloadWaitsForCollectionAndKeepsSnapshotRuntime(t *testing.T) 
 			report := <-reports
 			targets := requestedTargets[0]
 			requestedTargets = requestedTargets[1:]
-			if !reflect.DeepEqual(targets, report.Runtime.ProbeTargets) {
-				t.Fatalf("worker mixed runtime and probes: %+v / %v", report.Runtime, targets)
-			}
-			if report.Seq == 1 && report.Runtime.ReportIntervalSeconds != 10 {
+			if report.Seq == 1 && !reflect.DeepEqual(targets, []string{"tcp://old.example:80"}) {
 				t.Fatal("old sample borrowed new runtime")
 			}
-			if report.Seq == 2 && report.Runtime.ReportIntervalSeconds != 5 {
+			if report.Seq == 2 && !reflect.DeepEqual(targets, []string{"tcp://new.example:443"}) {
 				t.Fatal("new sample used old runtime")
 			}
 		}
@@ -202,7 +200,7 @@ func TestSchedulerWorkerUsesCapturedReportProbeTargets(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		settings := v1.DefaultRuntimeSettings()
+		settings := config.DefaultRuntimeSettings()
 		settings.ProbeTargets = []string{"tcp://old.example:80"}
 		reload := make(chan struct{}, 1)
 		entered := make(chan struct{}, 1)
@@ -212,9 +210,9 @@ func TestSchedulerWorkerUsesCapturedReportProbeTargets(t *testing.T) {
 		var entries atomic.Int64
 		ctx, cancel := context.WithCancel(t.Context())
 		scheduler := service.NewScheduler(service.SchedulerOptions{
-			Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return settings }, Reload: reload,
+			Identity: state, RuntimeSettings: func() config.RuntimeSettings { return settings }, Reload: reload,
 			ReloadConfig: func(context.Context) error {
-				settings = v1.DefaultRuntimeSettings()
+				settings = config.DefaultRuntimeSettings()
 				settings.ProbeTargets = []string{"tcp://new.example:443"}
 				return nil
 			},
@@ -245,13 +243,13 @@ func TestSchedulerWorkerUsesCapturedReportProbeTargets(t *testing.T) {
 		synctest.Wait()
 		first := <-reports
 		targets := <-requested
-		if first.Seq != 1 || !reflect.DeepEqual(targets, []string{"tcp://old.example:80"}) || !reflect.DeepEqual(first.Runtime.ProbeTargets, targets) {
-			t.Fatalf("old report borrowed new global target selection: %+v / %v", first.Runtime, targets)
+		if first.Seq != 1 || !reflect.DeepEqual(targets, []string{"tcp://old.example:80"}) {
+			t.Fatalf("old report borrowed new global target selection: %+v / %v", first, targets)
 		}
 		second := <-reports
 		targets = <-requested
-		if second.Seq != 2 || !reflect.DeepEqual(targets, []string{"tcp://new.example:443"}) || !reflect.DeepEqual(second.Runtime.ProbeTargets, targets) {
-			t.Fatalf("new report used wrong target selection: %+v / %v", second.Runtime, targets)
+		if second.Seq != 2 || !reflect.DeepEqual(targets, []string{"tcp://new.example:443"}) {
+			t.Fatalf("new report used wrong target selection: %+v / %v", second, targets)
 		}
 		cancel()
 		synctest.Wait()

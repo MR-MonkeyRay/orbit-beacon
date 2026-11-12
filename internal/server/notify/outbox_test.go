@@ -24,7 +24,7 @@ type outboxLatest struct {
 
 func (l *outboxLatest) Latest(context.Context, string) (ingest.LatestReport, error) {
 	return ingest.LatestReport{ReceivedAt: l.f.now, Report: v1.Report{
-		Runtime: v1.DefaultRuntimeSettings(),
+
 		Metrics: v1.Metrics{CPUPercent: &l.value, MetricStatus: map[string]string{"cpu_percent": "ok"}, Sources: map[string]v1.SourceMetadata{"cpu": {SampleID: "cpu", SourceIntervalMS: 10000}}},
 	}}, nil
 }

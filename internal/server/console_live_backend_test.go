@@ -565,7 +565,7 @@ func TestConsoleLiveDetailWireDistinguishesAbsentSampleFromDeletionAcrossTranspo
 				if err := json.Unmarshal(body, &frame); err != nil {
 					t.Fatal(err)
 				}
-				if frame.Type != "snapshot" || len(frame.Data) != 3 || (string(frame.Data["node"]) == "null") != deleted || string(frame.Data["latest"]) != "null" || string(frame.Data["runtime"]) != "null" {
+				if frame.Type != "snapshot" || len(frame.Data) != 2 || (string(frame.Data["node"]) == "null") != deleted || string(frame.Data["latest"]) != "null" {
 					t.Fatalf("detail=%s", body)
 				}
 				if transport != "http" {

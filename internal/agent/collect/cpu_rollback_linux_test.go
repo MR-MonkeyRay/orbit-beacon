@@ -13,6 +13,7 @@ import (
 
 	"github.com/shirou/gopsutil/v4/cpu"
 
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -99,7 +100,7 @@ func TestCPUCounterRollbackIsStaleAndNextContinuousWindowRecovers(t *testing.T) 
 			proc := t.TempDir()
 			t.Setenv("HOST_PROC", proc)
 			synctest.Test(t, func(t *testing.T) {
-				collector, err := New(Options{Config: v1.RuntimeSettings{ReportIntervalSeconds: 5, DiskIntervalSeconds: 60}})
+				collector, err := New(Options{Config: config.RuntimeSettings{ReportIntervalSeconds: 5, DiskIntervalSeconds: 60}})
 				if err != nil {
 					t.Fatal(err)
 				}

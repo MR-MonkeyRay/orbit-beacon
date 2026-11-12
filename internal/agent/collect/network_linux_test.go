@@ -12,6 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -118,7 +119,7 @@ func TestLinuxHostNetworkRatesUseInitCounters(t *testing.T) {
 			writeNetworkFixture(t, proc, "self/net/dev", dev(800000, 800000))
 			writeNetworkFixture(t, proc, "1/net/dev", dev(100, 200))
 			synctest.Test(t, func(t *testing.T) {
-				config := v1.RuntimeSettings{ReportIntervalSeconds: 5, DiskIntervalSeconds: 60}
+				config := config.RuntimeSettings{ReportIntervalSeconds: 5, DiskIntervalSeconds: 60}
 				if explicit {
 					config.Interfaces = []string{"host0"}
 				}
@@ -181,7 +182,7 @@ func TestLinuxHostNetworkMissingInitRouteDoesNotUseSelf(t *testing.T) {
 func TestTrafficDisabledStillCollectsRatesWithoutObservingCounters(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOST_PROC", root)
-	cfg := v1.DefaultRuntimeSettings()
+	cfg := config.DefaultRuntimeSettings()
 	cfg.Interfaces = []string{"eth0"}
 	cfg.DisabledFeatures = []string{v1.FeatureTraffic, v1.FeatureDisk}
 	c, err := New(Options{Config: cfg})

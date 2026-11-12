@@ -54,7 +54,7 @@ type InstallPolicy struct {
 type Agent struct {
 	ProbeExpectedStatus map[string]int `json:"probe_expected_status,omitempty"`
 	InstallPolicy
-	v1.RuntimeSettings
+	RuntimeSettings
 }
 
 func sources(opts LoadOptions, keys []string) ([]map[string]json.RawMessage, error) {
@@ -380,7 +380,7 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	if err := json.Unmarshal(data, &protected); err != nil {
 		return Agent{}, err
 	}
-	settings := v1.DefaultRuntimeSettings()
+	settings := DefaultRuntimeSettings()
 	resolved := make(map[string]json.RawMessage)
 	for _, layer := range layers {
 		for key, value := range layer {
@@ -406,7 +406,7 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 				continue
 			}
 			if _, ok := protected[key]; !ok {
-				candidate := v1.DefaultRuntimeSettings()
+				candidate := DefaultRuntimeSettings()
 				encoded, err := json.Marshal(map[string]json.RawMessage{key: value})
 				if err != nil {
 					return Agent{}, err

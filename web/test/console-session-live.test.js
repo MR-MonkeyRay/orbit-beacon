@@ -601,7 +601,7 @@ test('a server-valid detail with 101 metadata tags reaches the live consumer wit
     await flush();
     const node = {...fleet().data.nodes[0], name: 'Many tags', notes: '', region: '', provider: '', group_id: null,
       tags: Array.from({length: 101}, (_, index) => `tag-${index}`), created_at: '2026-10-27T00:00:00Z'};
-    const data = {node, latest: null, runtime: null};
+    const data = {node, latest: null};
     env.sockets[0].open(); env.sockets[0].message(frame('snapshot', {data}));
     await flush();
     assert.deepEqual(snapshots, [data]);

@@ -16,6 +16,7 @@ import (
 
 	"orbitbeacon/internal/agent/identity"
 	"orbitbeacon/internal/agent/service"
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -65,7 +66,7 @@ func TestSchedulerReportFailureLoggingTransitions(t *testing.T) {
 		logs := &testLogSink{}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		scheduler := service.NewScheduler(service.SchedulerOptions{Logger: logs.logger(), Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
+		scheduler := service.NewScheduler(service.SchedulerOptions{Logger: logs.logger(), Identity: state, RuntimeSettings: func() config.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 			Collect: func(context.Context) (v1.Metrics, error) { return schedulerMetrics(), nil },
 			Report: func(_ context.Context, report v1.Report) (v1.ReportResponse, error) {
 				attempt := attempts.Add(1)
@@ -134,7 +135,7 @@ func TestSchedulerReportFailureLoggingHTTPStatusAndBackoff(t *testing.T) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				logs := &testLogSink{}
-				scheduler := service.NewScheduler(service.SchedulerOptions{Logger: logs.logger(), Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
+				scheduler := service.NewScheduler(service.SchedulerOptions{Logger: logs.logger(), Identity: state, RuntimeSettings: func() config.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 					Collect: func(context.Context) (v1.Metrics, error) { return schedulerMetrics(), nil },
 					Report: func(context.Context, v1.Report) (v1.ReportResponse, error) {
 						return v1.ReportResponse{}, &service.HTTPError{StatusCode: tt.status, RetryAfter: tt.retryAfter}
@@ -172,7 +173,7 @@ func TestSchedulerUnauthorizedFailureAndRecoveryLogOnce(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		scheduler := service.NewScheduler(service.SchedulerOptions{
-			Logger: logs.logger(), Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
+			Logger: logs.logger(), Identity: state, RuntimeSettings: func() config.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 			Collect: func(context.Context) (v1.Metrics, error) { return schedulerMetrics(), nil },
 			Report: func(_ context.Context, report v1.Report) (v1.ReportResponse, error) {
 				if attempts.Add(1) == 1 {
@@ -223,7 +224,7 @@ func TestSchedulerReportFailureLoggingClassifiesLocalErrors(t *testing.T) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				logs := &testLogSink{}
-				scheduler := service.NewScheduler(service.SchedulerOptions{Logger: logs.logger(), Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
+				scheduler := service.NewScheduler(service.SchedulerOptions{Logger: logs.logger(), Identity: state, RuntimeSettings: func() config.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 					Collect: func(context.Context) (v1.Metrics, error) { return schedulerMetrics(), nil },
 					Report:  func(context.Context, v1.Report) (v1.ReportResponse, error) { return v1.ReportResponse{}, tt.err }})
 				done := make(chan error, 1)
@@ -265,7 +266,7 @@ func TestSchedulerCancellationDoesNotLogFailure(t *testing.T) {
 		cfg := runtimeSettings(5)
 		ctx, cancel := context.WithCancel(context.Background())
 		logs := &testLogSink{}
-		scheduler := service.NewScheduler(service.SchedulerOptions{Logger: logs.logger(), Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, Collect: func(context.Context) (v1.Metrics, error) { return schedulerMetrics(), nil },
+		scheduler := service.NewScheduler(service.SchedulerOptions{Logger: logs.logger(), Identity: state, RuntimeSettings: func() config.RuntimeSettings { return cfg }, Collect: func(context.Context) (v1.Metrics, error) { return schedulerMetrics(), nil },
 			Report: func(ctx context.Context, _ v1.Report) (v1.ReportResponse, error) {
 				<-ctx.Done()
 				return v1.ReportResponse{}, ctx.Err()
@@ -312,7 +313,7 @@ func TestSchedulerClientTimeoutLoggingIsSanitized(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		logs := &testLogSink{}
-		scheduler := service.NewScheduler(service.SchedulerOptions{Logger: logs.logger(), Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
+		scheduler := service.NewScheduler(service.SchedulerOptions{Logger: logs.logger(), Identity: state, RuntimeSettings: func() config.RuntimeSettings { return cfg }, RandomFloat: func() float64 { return 0.5 },
 			Collect: func(context.Context) (v1.Metrics, error) { return schedulerMetrics(), nil },
 			Report:  client.Report})
 		done := make(chan error, 1)

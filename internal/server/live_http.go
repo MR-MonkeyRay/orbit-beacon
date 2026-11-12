@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"time"
 
-	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/uuid"
@@ -24,7 +23,6 @@ type consoleDetailData struct {
 	Node     *nodes.Node       `json:"node"`
 	Latest   *latestSampleView `json:"latest"`
 	identity nodes.LiveIdentity
-	Runtime  *v1.RuntimeSettings `json:"runtime"`
 }
 
 func consoleNodeID(r *http.Request) (string, error) {
@@ -65,9 +63,9 @@ func (h *handler) consoleDetail(ctx context.Context, id string) (consoleDetailDa
 	if err != nil {
 		return consoleDetailData{}, err
 	}
-	data := consoleDetailData{Node: &record.Node, Runtime: record.Runtime, identity: record.Identity}
+	data := consoleDetailData{Node: &record.Node, identity: record.Identity}
 	if latest != nil {
-		data.Latest = &latestSampleView{ReceivedAt: latest.ReceivedAt, SampledAt: latest.SampledAt, Seq: latest.Seq, Metrics: latest.Metrics, System: latest.System, Runtime: latest.Runtime}
+		data.Latest = &latestSampleView{ReceivedAt: latest.ReceivedAt, SampledAt: latest.SampledAt, Seq: latest.Seq, Metrics: latest.Metrics, System: latest.System}
 	}
 	return data, nil
 }
@@ -91,14 +89,14 @@ func consoleDetailsEqual(a, b consoleDetailData) bool {
 			return false
 		}
 	}
-	if (a.Latest == nil) != (b.Latest == nil) || (a.Runtime == nil) != (b.Runtime == nil) {
+	if (a.Latest == nil) != (b.Latest == nil) {
 		return false
 	}
 	// 已接受的序列号和接收时间标识不可变样本，无需遍历所有指标映射来判断快照是否变化。
 	if a.Latest != nil && (a.Latest.Seq != b.Latest.Seq || !a.Latest.ReceivedAt.Equal(b.Latest.ReceivedAt) || !a.Latest.SampledAt.Equal(b.Latest.SampledAt)) {
 		return false
 	}
-	return a.Runtime == nil || a.Runtime.Equal(*b.Runtime)
+	return true
 }
 
 // 身份变更共享公开安全版本：每个投影在此处和出口处都被检查。

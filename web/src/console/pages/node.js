@@ -9,7 +9,6 @@ import {toast} from '../ui/feedback.js';
 import {field, input, onSubmit, saveBar, select, tagEditor, textarea, trackDirty, validateBytes} from '../ui/forms.js';
 import {tabSet} from '../ui/tabs.js';
 import {nodeCommandsPanel} from './node-commands.js';
-import {agentSettingsTab} from './node-agent-settings.js';
 import {enrollmentTab} from './enrollments.js';
 import {latestSamplePanel} from './latest-sample.js';
 import {lifecycleActions} from './node-lifecycle.js';
@@ -24,8 +23,8 @@ export async function nodePage() {
   const signal = getNavigationSignal();
   const id = location.pathname.match(NODE_PATH)[1];
   const path = `/nodes/${encodeURIComponent(id)}`;
-  const [node, runtime, trafficSettings, groups, publicSettings, latest] = await Promise.all([
-    api(path), api(`${path}/runtime`), api(`${path}/traffic-settings`), groupsList(), api(`${path}/public-settings`),
+  const [node, trafficSettings, groups, publicSettings, latest] = await Promise.all([
+    api(path), api(`${path}/traffic-settings`), groupsList(), api(`${path}/public-settings`),
     api(`${path}/latest`).catch((error) => {
       if (error.status === 404) return null;
       throw error;
@@ -57,9 +56,7 @@ export async function nodePage() {
   let availability;
   let billingSettings = trafficSettings;
   let probes;
-  let observedRuntime = runtime.runtime;
   let tickets;
-  let agent;
   let commands;
   const badge = statusBadge(displayStatus(node));
   const connection = liveStatus();
@@ -112,10 +109,8 @@ export async function nodePage() {
       'settings-agent': 'node-agent', agent: 'node-agent',
       'settings-enrollment': 'node-enrollment', enrollment: 'node-enrollment'
     }, build: () => {
-      agent ||= agentSettingsTab(node, observedRuntime);
-      agent.snapshot(node, observedRuntime);
-      commands ||= nodeCommandsPanel(node, observedRuntime, signal, {heading: 'h3'});
-      commands.snapshot(node, observedRuntime);
+      commands ||= nodeCommandsPanel(node, signal, {heading: 'h3'});
+      commands.snapshot(node);
       tickets ||= enrollmentTab(node, {listOnly: true});
       const section = (id, label, ...content) => h('section', {class: 'stack node-settings-section'},
         h('h2', {id, tabindex: '-1'}, label), content);
@@ -126,7 +121,7 @@ export async function nodePage() {
           actions.snapshot();
         })),
         section('node-public', t('nodes.publicPage'), publicTab(node, publicSettings)),
-        section('node-agent', 'Agent', agent, commands.element,
+        section('node-agent', 'Agent', commands.element,
           h('section', {class: 'stack node-enrollments'}, h('h3', {id: 'node-enrollment', tabindex: '-1'}, t('nodes.enrollment.caption')), tickets))),
         attach: commands.attach, detach: commands.detach};
     }}
@@ -161,9 +156,7 @@ export async function nodePage() {
     onSnapshot(data, frame) {
       if (!data.node) {
         node.deleted = true;
-        observedRuntime = null;
-        agent?.snapshot(node, null);
-        commands?.snapshot(node, null);
+        commands?.snapshot(node);
         deletionObserver.observe(root, {childList: true, subtree: true});
         deletedNotice.hidden = false;
         patchStatusBadge(badge, 'deleted');
@@ -175,7 +168,6 @@ export async function nodePage() {
       }
       if (node.deleted) return;
       Object.assign(node, data.node);
-      observedRuntime = data.runtime;
       if (title.textContent !== node.name) title.textContent = node.name;
       patchStatusBadge(badge, displayStatus(node));
       actions.snapshot();
@@ -184,8 +176,7 @@ export async function nodePage() {
       history?.snapshot(currentLatest);
       currentServerTime = frame.server_time;
       sample?.snapshot(data.latest, currentServerTime);
-      agent?.snapshot(node, observedRuntime);
-      commands?.snapshot(node, observedRuntime);
+      commands?.snapshot(node);
     }
   });
   return root;

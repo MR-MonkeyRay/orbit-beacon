@@ -28,8 +28,6 @@ func nodeMetricsReport(t *testing.T) v1.Report {
 	used := uint64(123)
 	rx, tx := 1.2345678901234567, 42.0
 	report.System = &v1.System{Hostname: "secret-hostname-value", OS: "linux", Arch: "amd64", AgentVersion: "v-test"}
-	report.Runtime.ProbeTargets = []string{"tcp://secret-probe.example:443"}
-	report.Runtime.DiskPaths = []string{"/secret-runtime-path"}
 	report.Metrics.MemoryTotalBytes = &large
 	report.Metrics.Disks = []v1.DiskMetrics{{Path: "/z", TotalBytes: &large, UsedBytes: &used, SampledAt: report.SampledAt}, {Path: "/a", TotalBytes: &large, UsedBytes: &used, SampledAt: report.SampledAt}}
 	report.Metrics.Networks = []v1.NetworkMetrics{{Name: "zeth", RxBytesPerSec: &rx, TxBytesPerSec: &tx}, {Name: "aeth", RxBytesPerSec: &rx, TxBytesPerSec: &tx}}

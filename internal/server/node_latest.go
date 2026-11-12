@@ -12,12 +12,11 @@ import (
 // 它的时间戳和原始指标元数据描述已接受的样本，
 // 而不是响应时间或节点当前的在线状态。
 type latestSampleView struct {
-	ReceivedAt time.Time          `json:"received_at"`
-	SampledAt  time.Time          `json:"sampled_at"`
-	Seq        uint64             `json:"seq"`
-	Metrics    v1.Metrics         `json:"metrics"`
-	System     *v1.System         `json:"system"`
-	Runtime    v1.RuntimeSettings `json:"runtime"`
+	ReceivedAt time.Time  `json:"received_at"`
+	SampledAt  time.Time  `json:"sampled_at"`
+	Seq        uint64     `json:"seq"`
+	Metrics    v1.Metrics `json:"metrics"`
+	System     *v1.System `json:"system"`
 }
 
 func (h *handler) latestSample(ctx context.Context, id string) (latestSampleView, error) {
@@ -31,7 +30,6 @@ func (h *handler) latestSample(ctx context.Context, id string) (latestSampleView
 		Seq:        latest.Seq,
 		Metrics:    latest.Metrics,
 		System:     latest.System,
-		Runtime:    latest.Runtime,
 	}, nil
 }
 

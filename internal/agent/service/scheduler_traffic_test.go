@@ -12,6 +12,7 @@ import (
 	"orbitbeacon/internal/agent/collect"
 	"orbitbeacon/internal/agent/identity"
 	"orbitbeacon/internal/agent/service"
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
@@ -29,7 +30,7 @@ func TestSchedulerSendsTrafficAndAppliesOnlySuccessfulAcks(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		attempt := 0
-		scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return cfg }, Traffic: traffic, RandomFloat: func() float64 { return 0.5 },
+		scheduler := service.NewScheduler(service.SchedulerOptions{Identity: state, RuntimeSettings: func() config.RuntimeSettings { return cfg }, Traffic: traffic, RandomFloat: func() float64 { return 0.5 },
 			Collect: func(context.Context) (v1.Metrics, error) {
 				n := samples.Add(1)
 				traffic.Observe([]string{"eth0"}, map[string]collect.NetworkCounter{"eth0": {RxBytes: uint64(100 * n), TxBytes: uint64(200 * n)}})

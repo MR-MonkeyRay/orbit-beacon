@@ -23,7 +23,7 @@ import (
 
 func TestRuntimeReloadValidatesBeforeChangingCollectorOrProbes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		initial := v1.DefaultRuntimeSettings()
+		initial := config.DefaultRuntimeSettings()
 		initial.Interfaces = []string{"eth0"}
 		initial.DiskPaths = []string{"/old"}
 		initial.ProbeTargets = []string{"tcp://old.example:80"}
@@ -31,7 +31,7 @@ func TestRuntimeReloadValidatesBeforeChangingCollectorOrProbes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		runtime := &Runtime{settings: cloneRuntimeSettings(initial, v1.RuntimeSettings{}), collector: collector}
+		runtime := &Runtime{settings: cloneRuntimeSettings(initial, config.RuntimeSettings{}), collector: collector}
 		runner := probe.NewRunner(probe.Options{Check: func(_ context.Context, target string) v1.ProbeResult {
 			latency := 1.0
 			return v1.ProbeResult{Target: target, OK: true, LatencyMS: &latency, CheckedAt: time.Now().UTC()}
@@ -99,7 +99,7 @@ func TestRuntimeReloadValidatesBeforeChangingCollectorOrProbes(t *testing.T) {
 			t.Fatal("settings snapshot aliases loader arrays")
 		}
 		pointer := &runtime.settings.Interfaces[0]
-		unchanged := cloneRuntimeSettings(runtime.settings, v1.RuntimeSettings{})
+		unchanged := cloneRuntimeSettings(runtime.settings, config.RuntimeSettings{})
 		if err := runtime.reloadSettings(ctx, runner, func() (config.Agent, error) { return config.Agent{RuntimeSettings: unchanged}, nil }); err != nil {
 			t.Fatal(err)
 		}
@@ -116,7 +116,7 @@ func TestRuntimeReloadValidatesBeforeChangingCollectorOrProbes(t *testing.T) {
 
 func TestRuntimeFeatureReloadChangesNextReportAndStopsProbes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		initial := v1.DefaultRuntimeSettings()
+		initial := config.DefaultRuntimeSettings()
 		initial.Interfaces = []string{"eth0"}
 		initial.ProbeTargets = []string{"tcp://example.test:80"}
 		collector, err := collect.New(collect.Options{Config: initial})
@@ -149,7 +149,7 @@ func TestRuntimeFeatureReloadChangesNextReportAndStopsProbes(t *testing.T) {
 		reload := make(chan struct{}, 1)
 		reports := make(chan v1.Report, 32)
 		next := initial
-		scheduler := NewScheduler(SchedulerOptions{Identity: state, RuntimeSettings: func() v1.RuntimeSettings { return runtime.settings }, Reload: reload,
+		scheduler := NewScheduler(SchedulerOptions{Identity: state, RuntimeSettings: func() config.RuntimeSettings { return runtime.settings }, Reload: reload,
 			ReloadConfig: func(ctx context.Context) error {
 				return runtime.reloadSettings(ctx, probes, func() (config.Agent, error) { return config.Agent{RuntimeSettings: next}, nil })
 			},
@@ -182,7 +182,7 @@ func TestRuntimeFeatureReloadChangesNextReportAndStopsProbes(t *testing.T) {
 		reload <- struct{}{}
 		synctest.Wait()
 		second := <-reports
-		if !second.Runtime.Equal(next) || second.Seq != first.Seq+1 || len(second.Metrics.Disks) != 0 || len(second.Metrics.Networks) != 0 || len(second.Traffic) != 0 || len(second.ProbeResults) != 0 {
+		if !runtime.settings.Equal(next) || second.Seq != first.Seq+1 || len(second.Metrics.Disks) != 0 || len(second.Metrics.Networks) != 0 || len(second.Traffic) != 0 || len(second.ProbeResults) != 0 {
 			t.Fatalf("disabled=%+v", second)
 		}
 		before := checks
@@ -198,7 +198,7 @@ func TestRuntimeFeatureReloadChangesNextReportAndStopsProbes(t *testing.T) {
 		reload <- struct{}{}
 		synctest.Wait()
 		last := <-reports
-		if !last.Runtime.Equal(initial) || len(last.Metrics.Disks) != 1 || len(last.Metrics.Networks) != 1 || checks <= before || len(last.Traffic) == 0 || last.Traffic[0] != outstanding {
+		if !runtime.settings.Equal(initial) || len(last.Metrics.Disks) != 1 || len(last.Metrics.Networks) != 1 || checks <= before || len(last.Traffic) == 0 || last.Traffic[0] != outstanding {
 			t.Fatal("re-enable did not restore collection/probes")
 		}
 		cancel()
@@ -213,7 +213,7 @@ type doctorTransport func(*http.Request) (*http.Response, error)
 func (f doctorTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestDoctorReportsEffectiveCapabilities(t *testing.T) {
-	cfg := v1.DefaultRuntimeSettings()
+	cfg := config.DefaultRuntimeSettings()
 	cfg.RemoteCommands = []string{v1.RemoteCommandRestart}
 	cfg.DisabledFeatures = v1.DisabledFeatureOrder()
 	collector, err := collect.New(collect.Options{Config: cfg})
@@ -229,6 +229,9 @@ func TestDoctorReportsEffectiveCapabilities(t *testing.T) {
 	result, err := runtime.Doctor(t.Context())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !result.RuntimeSettings.Equal(cfg) {
+		t.Fatalf("local settings missing: %+v", result)
 	}
 	if !reflect.DeepEqual(result.RemoteCommands, cfg.RemoteCommands) || !reflect.DeepEqual(result.DisabledFeatures, cfg.DisabledFeatures) {
 		t.Fatalf("doctor capabilities=%+v", result)
@@ -249,7 +252,7 @@ func TestDoctorReportsEffectiveCapabilities(t *testing.T) {
 func TestRuntimeReloadAppliesExpectedStatusToChecks(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }))
 	defer server.Close()
-	initial := v1.DefaultRuntimeSettings()
+	initial := config.DefaultRuntimeSettings()
 	initial.ProbeTargets = []string{server.URL + "/"}
 	collector, err := collect.New(collect.Options{Config: initial})
 	if err != nil {
@@ -284,7 +287,7 @@ func TestRuntimeReloadAppliesExpectedStatusToChecks(t *testing.T) {
 }
 
 func TestRuntimeExpectedStatusReload(t *testing.T) {
-	initial := v1.DefaultRuntimeSettings()
+	initial := config.DefaultRuntimeSettings()
 	target := "https://example.test"
 	initial.ProbeTargets = []string{target}
 	collector, err := collect.New(collect.Options{Config: initial})
@@ -321,7 +324,7 @@ func TestRuntimeExpectedStatusReload(t *testing.T) {
 	if runtime.expectedStatus[target] != 200 || runtime.configRevision != 1 {
 		t.Fatal("invalid reload partially applied")
 	}
-	bodyWithExpected, err := json.Marshal(v1.Report{Runtime: runtime.settings})
+	bodyWithExpected, err := json.Marshal(v1.Report{})
 	if err != nil {
 		t.Fatal(err)
 	}

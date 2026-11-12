@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/nodes"
@@ -21,12 +20,7 @@ func TestRuntimeOwnershipHTTPAndTrafficSettings(t *testing.T) {
 	}
 	base := "/api/v1/nodes/" + node.ID
 	assertHTTPStatus(t, request(t, f.handler, http.MethodGet, base+"/config", "", admin, "", ""), http.StatusNotFound)
-	observed := request(t, f.handler, http.MethodGet, base+"/runtime", "", admin, "", "")
-	assertHTTPStatus(t, observed, http.StatusOK)
-	if strings.TrimSpace(observed.Body.String()) != `{"runtime":null}` {
-		t.Fatalf("unreported runtime=%s", observed.Body.String())
-	}
-	apiError(t, request(t, f.handler, http.MethodGet, "/api/v1/nodes/00000000-0000-4000-8000-000000000999/runtime", "", admin, "", ""), http.StatusNotFound, "node_not_found")
+	assertHTTPStatus(t, request(t, f.handler, http.MethodGet, base+"/runtime", "", admin, "", ""), http.StatusNotFound)
 	assertHTTPStatus(t, request(t, f.handler, http.MethodPatch, base+"/config", `{"billing_day":2}`, admin, csrf, publicURL), http.StatusNotFound)
 	path := base + "/traffic-settings"
 	before := request(t, f.handler, http.MethodGet, path, "", admin, "", "")
@@ -63,58 +57,10 @@ func TestRuntimeOwnershipHTTPAndTrafficSettings(t *testing.T) {
 	}
 }
 
-func TestObservedRuntimeCannotRollbackOnDuplicateAndRevokeClearsIdentity(t *testing.T) {
-	f := newAgentHTTP(t, 2)
-	id, token, _ := enrollHTTP(t, f, "runtime-owner", 1)
-	withRuntime := func(seq uint64, targets string) string {
-		return strings.Replace(reportBody(1, seq, "runtime-session", 25), `"runtime":{"report_interval_seconds":10,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":[],"remote_commands":["upgrade","restart","stop"],"disabled_features":[]}`, `"runtime":{"report_interval_seconds":5,"disk_interval_seconds":60,"interfaces":[],"disk_paths":[],"probe_targets":`+targets+`,"remote_commands":["upgrade","restart","stop"],"disabled_features":[]}`, 1)
-	}
-	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, withRuntime(1, `["tcp://old.test:443"]`)), 1)
-	checked := "2026-10-26T12:00:00.000000000Z"
-	if _, err := f.db.Exec(`INSERT INTO probe_latest(node_id,target,ok,latency_ms,error,status_code,checked_at) VALUES(?,?,1,1,'',NULL,?)`, id, "tcp://old.test:443", checked); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.db.Exec(`INSERT INTO probe_hourly(node_id,target,hour,checks,failures,latency_sum_ms) VALUES(?,?,?,1,0,1)`, id, "tcp://old.test:443", checked); err != nil {
-		t.Fatal(err)
-	}
-	f.now = f.now.Add(time.Second)
-	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, withRuntime(2, `[]`)), 2)
-	f.now = f.now.Add(time.Second)
-	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, withRuntime(1, `["tcp://old.test:443"]`)), 2)
-	var raw string
-	if err := f.db.QueryRow(`SELECT agent_runtime FROM nodes WHERE id=?`, id).Scan(&raw); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(raw, "old.test") || !strings.Contains(raw, `"report_interval_seconds":5`) {
-		t.Fatalf("rolled-back runtime=%s", raw)
-	}
-	for _, table := range []string{"probe_latest", "probe_hourly"} {
-		var count int
-		if err := f.db.QueryRow(`SELECT count(*) FROM `+table+` WHERE node_id=?`, id).Scan(&count); err != nil || count != 0 {
-			t.Fatalf("%s retained removed target count=%d err=%v", table, count, err)
-		}
-	}
-	if err := f.nodes.RevokeCredential(context.Background(), id); err != nil {
-		t.Fatal(err)
-	}
-	var system, generation, session string
-	var seen any
-	if err := f.db.QueryRow(`SELECT agent_runtime,last_seen,system,run_generation,report_session_id FROM nodes WHERE id=?`, id).Scan(&raw, &seen, &system, &generation, &session); err != nil {
-		t.Fatal(err)
-	}
-	if raw != "" || seen != nil || system != "{}" || generation != "0" || session != "" {
-		t.Fatalf("revoked observation leaked: %q %v %q %q %q", raw, seen, system, generation, session)
-	}
-	if _, err := f.ingest.Latest(context.Background(), id); err == nil {
-		t.Fatal("old latest survived revocation")
-	}
-}
-
 func TestCredentialReplacementClearsObservedIdentityButFreshSameCredentialClaimPreservesIt(t *testing.T) {
 	f := newAgentHTTP(t, 1)
 	id, token, _ := enrollHTTP(t, f, "replace-runtime", 1)
 	body := strings.Replace(reportBody(4, 1, "old-session", 25), `"traffic":[]`, `"traffic":[],"system":{"hostname":"old-host","os":"linux","arch":"amd64","agent_version":"old-version"}`, 1)
-	body = strings.Replace(body, `"probe_targets":[]`, `"probe_targets":["tcp://identity.test:443"]`, 1)
 	body = strings.Replace(body, `"traffic":[]`, `"probe_results":[{"target":"tcp://identity.test:443","ok":true,"latency_ms":1,"error":"","status_code":null,"checked_at":"2026-10-26T12:00:00Z"}],"traffic":[]`, 1)
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, body), 1)
 	notes := "retained notes"
@@ -140,14 +86,6 @@ func TestCredentialReplacementClearsObservedIdentityButFreshSameCredentialClaimP
 	if err := f.db.QueryRow(`SELECT first_enrolled_at FROM nodes WHERE id=?`, id).Scan(&enrolledAt); err != nil {
 		t.Fatal(err)
 	}
-	settings := func() string {
-		var raw string
-		if err := f.db.QueryRow(`SELECT agent_runtime FROM nodes WHERE id=?`, id).Scan(&raw); err != nil {
-			t.Fatal(err)
-		}
-		return raw
-	}
-	before := settings()
 	var epochBefore int64
 	if err := f.db.QueryRow(`SELECT credential_epoch FROM nodes WHERE id=?`, id).Scan(&epochBefore); err != nil || epochBefore < 1 {
 		t.Fatalf("initial credential epoch=%d err=%v", epochBefore, err)
@@ -163,7 +101,7 @@ func TestCredentialReplacementClearsObservedIdentityButFreshSameCredentialClaimP
 	assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, enrollBody("installation-replace-runtime", token)), http.StatusOK)
 	apiError(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, enrollBody("installation-replace-runtime", token)), http.StatusForbidden, "forbidden")
 	same, err := f.nodes.Get(context.Background(), id)
-	if err != nil || same.LastSeen == nil || !same.LastSeen.Equal(*first.LastSeen) || same.AgentVersion != "old-version" || settings() != before {
+	if err != nil || same.LastSeen == nil || !same.LastSeen.Equal(*first.LastSeen) || same.AgentVersion != "old-version" {
 		t.Fatalf("same credential erased observations: %+v err=%v", same, err)
 	}
 	var epochSame int64
@@ -186,9 +124,6 @@ func TestCredentialReplacementClearsObservedIdentityButFreshSameCredentialClaimP
 		t.Fatal(err)
 	}
 	assertHTTPStatus(t, agentRequest(t, f, "/api/agent/v1/enroll", ticket.Token, claim), http.StatusInternalServerError)
-	if settings() != before {
-		t.Fatal("failed replacement cleared observed runtime")
-	}
 	var epochFailed int64
 	if err := f.db.QueryRow(`SELECT credential_epoch FROM nodes WHERE id=?`, id).Scan(&epochFailed); err != nil || epochFailed != epochBefore {
 		t.Fatalf("failed replacement changed epoch: before=%d after=%d err=%v", epochBefore, epochFailed, err)
@@ -220,8 +155,8 @@ func TestCredentialReplacementClearsObservedIdentityButFreshSameCredentialClaimP
 		t.Fatalf("replacement epoch: before=%d after=%d err=%v", epochBefore, epochReplacement, err)
 	}
 	current, err := f.nodes.Get(context.Background(), id)
-	if err != nil || current.Presence != "never" || current.LastSeen != nil || current.AgentVersion != "new-enrollment-version" || settings() != "" {
-		t.Fatalf("replacement observations=%+v runtime=%s err=%v", current, settings(), err)
+	if err != nil || current.Presence != "never" || current.LastSeen != nil || current.AgentVersion != "new-enrollment-version" {
+		t.Fatalf("replacement observations=%+v err=%v", current, err)
 	}
 	if current.Name != "replace-runtime" || current.Notes != notes {
 		t.Fatalf("replacement lost metadata: %+v", current)
@@ -310,7 +245,7 @@ func TestCredentialEpochExhaustionRollsBackIdentityMutation(t *testing.T) {
 			capture := func() string {
 				t.Helper()
 				var raw string
-				if err := f.db.QueryRow(`SELECT json_object('epoch',credential_epoch,'type',typeof(credential_epoch),'token',hex(token_hash),'installation',installation_id,'runtime',agent_runtime,'seen',last_seen,'system',system,'generation',run_generation,'session',report_session_id,'claims',(SELECT count(*) FROM enrollment_claims),'uses',(SELECT uses FROM enrollment_tokens WHERE id=?),'audit',(SELECT count(*) FROM audit_events)) FROM nodes WHERE id=?`, ticket.ID, id).Scan(&raw); err != nil {
+				if err := f.db.QueryRow(`SELECT json_object('epoch',credential_epoch,'type',typeof(credential_epoch),'token',hex(token_hash),'installation',installation_id,'seen',last_seen,'system',system,'generation',run_generation,'session',report_session_id,'claims',(SELECT count(*) FROM enrollment_claims),'uses',(SELECT uses FROM enrollment_tokens WHERE id=?),'audit',(SELECT count(*) FROM audit_events)) FROM nodes WHERE id=?`, ticket.ID, id).Scan(&raw); err != nil {
 					t.Fatal(err)
 				}
 				return raw

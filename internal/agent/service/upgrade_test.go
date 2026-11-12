@@ -149,7 +149,7 @@ func TestUpgradeFilesAndFailureCodes(t *testing.T) {
 				want := map[string]string{"checksum": "checksum", "missing_line": "checksum", "empty_manifest": "checksum", "oversize": "download", "manifest_oversize": "download", "self_check": "self_check", "redirect_http": "download", "download_error": "download"}[scenario]
 				store := openCommandStore(filepath.Join(u.stateDir, "commands.json"), slog.New(slog.DiscardHandler), "1.2.3")
 				command := upgradeCommand()
-				if store.handle(command, time.Now(), v1.DefaultRuntimeSettings()) != "upgrade" {
+				if store.handle(command, time.Now(), config.DefaultRuntimeSettings()) != "upgrade" {
 					t.Fatal("not executing")
 				}
 				store.finishUpgrade(result)
@@ -219,13 +219,13 @@ func TestUpgradeRecoveryExpiryAndReplay(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			s := commandTestStore(t)
 			c := upgradeCommand()
-			if s.handle(c, time.Now(), v1.DefaultRuntimeSettings()) != "upgrade" {
+			if s.handle(c, time.Now(), config.DefaultRuntimeSettings()) != "upgrade" {
 				t.Fatal("no action")
 			}
 			if s.state.Processed[0].TargetVersion != c.TargetVersion {
 				t.Fatal("target not persisted")
 			}
-			if s.handle(c, time.Now(), v1.DefaultRuntimeSettings()) != "" {
+			if s.handle(c, time.Now(), config.DefaultRuntimeSettings()) != "" {
 				t.Fatal("replayed")
 			}
 			version := "1.2.3"
@@ -246,7 +246,7 @@ func TestUpgradeRecoveryExpiryAndReplay(t *testing.T) {
 				t.Fatal("rollback marker retained", err)
 			}
 			recovered.acknowledge(recovered.results())
-			if recovered.handle(c, time.Now(), v1.DefaultRuntimeSettings()) != "" {
+			if recovered.handle(c, time.Now(), config.DefaultRuntimeSettings()) != "" {
 				t.Fatal("replayed after ack")
 			}
 		})
@@ -256,7 +256,7 @@ func TestUpgradeRecoveryExpiryAndReplay(t *testing.T) {
 		c := upgradeCommand()
 		now := time.Now()
 		c.ExpiresAt = now.Add(remaining)
-		action := s.handle(c, now, v1.DefaultRuntimeSettings())
+		action := s.handle(c, now, config.DefaultRuntimeSettings())
 		if remaining >= upgradeReserve {
 			if action != "upgrade" {
 				t.Fatal(action)
@@ -266,7 +266,7 @@ func TestUpgradeRecoveryExpiryAndReplay(t *testing.T) {
 		}
 	}
 	s := commandTestStore(t)
-	settings := v1.DefaultRuntimeSettings()
+	settings := config.DefaultRuntimeSettings()
 	settings.RemoteCommands = []string{}
 	if s.handle(upgradeCommand(), time.Now(), settings) != "" || s.results()[0].Code != "disabled_locally" {
 		t.Fatal(s.state)
@@ -276,7 +276,7 @@ func TestUpgradeRecoveryExpiryAndReplay(t *testing.T) {
 func TestUpgradeRejectsInvalidRecoveredTarget(t *testing.T) {
 	s := commandTestStore(t)
 	c := upgradeCommand()
-	s.handle(c, time.Now(), v1.DefaultRuntimeSettings())
+	s.handle(c, time.Now(), config.DefaultRuntimeSettings())
 	state := s.copyState()
 	state.Processed[0].TargetVersion = "../1.2.3"
 	if err := s.write(state); err != nil {
@@ -336,7 +336,7 @@ func TestUpgradeReportsContinueAndExit75(t *testing.T) {
 		t.Fatal(err)
 	}
 	scheduler := NewScheduler(SchedulerOptions{Commands: store, Upgrade: u})
-	scheduler.commandSettings = v1.DefaultRuntimeSettings()
+	scheduler.commandSettings = config.DefaultRuntimeSettings()
 	notify := make(chan struct{}, 1)
 	reports := make(chan struct{}, 8)
 	command := upgradeCommand()
@@ -345,7 +345,7 @@ func TestUpgradeReportsContinueAndExit75(t *testing.T) {
 		return v1.ReportResponse{ServerTime: time.Now(), Command: &command}, nil
 	}
 	scheduler.options.Identity = id
-	scheduler.latest = v1.Report{Seq: 1, Runtime: v1.DefaultRuntimeSettings()}
+	scheduler.latest = v1.Report{Seq: 1}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
@@ -389,7 +389,7 @@ func TestUpgradeMarkerClearedOnFirst200(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			s := NewScheduler(SchedulerOptions{Commands: store})
-			s.latest = v1.Report{Seq: 1, Runtime: v1.DefaultRuntimeSettings(), System: &v1.System{AgentVersion: version}}
+			s.latest = v1.Report{Seq: 1, System: &v1.System{AgentVersion: version}}
 			calls := 0
 			s.options.Report = func(context.Context, v1.Report) (v1.ReportResponse, error) {
 				calls++
@@ -453,11 +453,11 @@ func TestUpgradeSchedulerCancellationAndConcurrentCommand(t *testing.T) {
 	})
 	store := openCommandStore(filepath.Join(u.stateDir, "commands.json"), slog.New(slog.DiscardHandler), "1.2.3")
 	s := NewScheduler(SchedulerOptions{Commands: store, Upgrade: u})
-	s.commandSettings = v1.DefaultRuntimeSettings()
+	s.commandSettings = config.DefaultRuntimeSettings()
 	command := upgradeCommand()
 	notify := make(chan struct{}, 1)
 	reports := make(chan struct{}, 3)
-	s.latest = v1.Report{Seq: 1, Runtime: v1.DefaultRuntimeSettings()}
+	s.latest = v1.Report{Seq: 1}
 	reportCount := 0
 	s.options.Report = func(context.Context, v1.Report) (v1.ReportResponse, error) {
 		reportCount++
@@ -615,7 +615,7 @@ func writeUpgradeMarker(t *testing.T, s *commandStore, name string) string {
 func TestUpgradeRollbackNeverInheritsSuccess(t *testing.T) {
 	s := commandTestStore(t)
 	c := upgradeCommand()
-	if s.handle(c, time.Now(), v1.DefaultRuntimeSettings()) != "upgrade" {
+	if s.handle(c, time.Now(), config.DefaultRuntimeSettings()) != "upgrade" {
 		t.Fatal("no action")
 	}
 	marker := writeUpgradeMarker(t, s, "upgrade-pending")
@@ -637,7 +637,7 @@ func TestUpgradeRollbackNeverInheritsSuccess(t *testing.T) {
 func TestUpgradeSucceedsOnlyAfterAcceptedReport(t *testing.T) {
 	s := commandTestStore(t)
 	c := upgradeCommand()
-	if s.handle(c, time.Now(), v1.DefaultRuntimeSettings()) != "upgrade" {
+	if s.handle(c, time.Now(), config.DefaultRuntimeSettings()) != "upgrade" {
 		t.Fatal("no action")
 	}
 	marker := writeUpgradeMarker(t, s, "upgrade-pending")
@@ -645,7 +645,7 @@ func TestUpgradeSucceedsOnlyAfterAcceptedReport(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	scheduler := NewScheduler(SchedulerOptions{Commands: store})
-	scheduler.latest = v1.Report{Seq: 1, Runtime: v1.DefaultRuntimeSettings()}
+	scheduler.latest = v1.Report{Seq: 1}
 	reports := make(chan []v1.CommandResult, 8)
 	scheduler.options.Report = func(_ context.Context, report v1.Report) (v1.ReportResponse, error) {
 		reports <- report.CommandResults
@@ -683,7 +683,7 @@ func TestUpgradeWatchdog(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 			defer cancel()
 			s := NewScheduler(SchedulerOptions{Commands: store, UpgradeConfirmTimeout: 50 * time.Millisecond})
-			s.latest = v1.Report{Seq: 1, Runtime: v1.DefaultRuntimeSettings()}
+			s.latest = v1.Report{Seq: 1}
 			s.options.Report = func(context.Context, v1.Report) (v1.ReportResponse, error) {
 				if scenario == "confirmed" {
 					return v1.ReportResponse{}, nil
@@ -720,7 +720,7 @@ func TestUpgradeBudgetFitsTheCommandLifetime(t *testing.T) {
 func TestUpgradeCrashAfterConfirmationCannotRollBackOntoSuccess(t *testing.T) {
 	s := commandTestStore(t)
 	c := upgradeCommand()
-	if s.handle(c, time.Now(), v1.DefaultRuntimeSettings()) != "upgrade" {
+	if s.handle(c, time.Now(), config.DefaultRuntimeSettings()) != "upgrade" {
 		t.Fatal("no action")
 	}
 	marker := writeUpgradeMarker(t, s, "upgrade-pending")
@@ -748,7 +748,7 @@ func TestUpgradeUnremovableMarkerStaysUnconfirmed(t *testing.T) {
 	}
 	s := commandTestStore(t)
 	c := upgradeCommand()
-	if s.handle(c, time.Now(), v1.DefaultRuntimeSettings()) != "upgrade" {
+	if s.handle(c, time.Now(), config.DefaultRuntimeSettings()) != "upgrade" {
 		t.Fatal("no action")
 	}
 	writeUpgradeMarker(t, s, "upgrade-pending")

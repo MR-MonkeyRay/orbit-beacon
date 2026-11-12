@@ -261,6 +261,7 @@ func runDoctor(args []string, logger *slog.Logger) error {
 		}
 	} else {
 		fmt.Fprintf(os.Stdout, "配置: %s\n身份文件: %s\n连通性: %s\n节点认证: %s\n采集: %s\n安装模式: %s\n远程指令: %s\n已关闭功能: %s\n", result.Configuration, result.Identity, result.Connectivity, result.Authentication, result.Collection, result.InstallMode, strings.Join(result.RemoteCommands, ", "), strings.Join(result.DisabledFeatures, ", "))
+		fmt.Fprintf(os.Stdout, "上报间隔: %d 秒\n磁盘间隔: %d 秒\n网卡: %s\n磁盘路径: %s\n探测目标: %s\n", result.ReportIntervalSeconds, result.DiskIntervalSeconds, strings.Join(result.Interfaces, ", "), strings.Join(result.DiskPaths, ", "), strings.Join(result.ProbeTargets, ", "))
 		for metric, status := range result.MetricStatus {
 			fmt.Fprintf(os.Stdout, "%s: %s\n", metric, status)
 		}

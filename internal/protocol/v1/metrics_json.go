@@ -45,13 +45,14 @@ func (m *Metrics) UnmarshalJSON(data []byte) error {
 		}
 		return false, nil
 	}
+	disabledFields := DisabledStatusFields()
 	decoded.MetricStatus = make(map[string]string, len(metricStatusFields)+len(decoded.Disks)+len(decoded.Networks))
 	for key, raw := range wire.MetricStatus {
 		series, err := knownSeries(key)
 		if err != nil {
 			return err
 		}
-		if !series && !slices.Contains(metricStatusFields[:], key) {
+		if !series && !slices.Contains(metricStatusFields[:], key) && !slices.Contains(disabledFields[:], key) {
 			continue
 		}
 		var status string

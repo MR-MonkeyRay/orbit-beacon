@@ -109,7 +109,6 @@ var routes = []route{
 	{"GET /api/v1/nodes/{id}/commands", admin, withSession((*handler).commandsRoute)},
 	{"POST /api/v1/nodes/{id}/commands", admin, withSession((*handler).commandsRoute)},
 	{"POST /api/v1/nodes/{id}/commands/{command_id}/cancel", admin, withSession((*handler).commandsRoute)},
-	{"GET /api/v1/nodes/{id}/runtime", admin, endpoint((*handler).nodesRoute)},
 	{"GET /api/v1/nodes/{id}/latest", admin, endpoint((*handler).nodesRoute)},
 	{"GET /api/v1/nodes/{id}/history", admin, endpoint((*handler).nodesRoute)},
 	{"GET /api/v1/nodes/{id}/availability", admin, endpoint((*handler).nodesRoute)},

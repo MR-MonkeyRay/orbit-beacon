@@ -109,7 +109,7 @@ func TestRunnerBoundedConcurrencyAndNonblockingSnapshots(t *testing.T) {
 		if calls.Load() != 5 || active.Load() != 5 {
 			t.Fatalf("checks not concurrent: calls=%d active=%d", calls.Load(), active.Load())
 		}
-		if got := runner.Results(targets); len(got) != 0 {
+		if got := runner.Results(targets); len(got) != len(targets) || got[0].Error != "pending" {
 			t.Fatal("unfinished checks included")
 		}
 		if err := runner.SetTargets(nil); err != nil {
@@ -119,7 +119,7 @@ func TestRunnerBoundedConcurrencyAndNonblockingSnapshots(t *testing.T) {
 			t.Fatal(err)
 		}
 		synctest.Wait()
-		if got := runner.Results(targets); len(got) != 0 {
+		if got := runner.Results(targets); len(got) != len(targets) || got[0].Error != "pending" {
 			t.Fatalf("old completion published after remove/readd: %+v", got)
 		}
 		if calls.Load() != 10 || active.Load() != 5 || peak.Load() != 5 {

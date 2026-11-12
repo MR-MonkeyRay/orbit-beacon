@@ -365,13 +365,6 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 		if err := system.Validate(); err != nil {
 			return err
 		}
-		if r.text("agent_runtime") != "" {
-			var runtime v1.RuntimeSettings
-			if objectJSON(r.text("agent_runtime"), &runtime) != nil {
-				return invalidRow()
-			}
-			return runtime.Validate()
-		}
 	case "traffic_hourly":
 		if r.text("node_id") == "" || !canonicalTime(r.text("period_start")) || r.integer("rx_bytes") < 0 || r.integer("tx_bytes") < 0 {
 			return invalidRow()

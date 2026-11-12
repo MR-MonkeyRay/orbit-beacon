@@ -146,15 +146,25 @@ func TestAPITokenHTTPFieldsAndWrites(t *testing.T) {
 	id, agentToken, _ := enrollHTTP(t, f, "token-node", 81)
 	body := strings.Replace(reportBody(1, 1, "private-token-session", 25), `"metrics":`, `"system":{"hostname":"private-hostname","os":"linux","arch":"amd64","agent_version":"v1.2.3"},"metrics":`, 1)
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", agentToken, body), 1)
-	runtime := v1.DefaultRuntimeSettings()
-	runtime.ProbeTargets = []string{"https://private-target.example"}
-	encoded, _ := json.Marshal(runtime)
-	if _, err := f.db.Exec(`UPDATE nodes SET notes='private-notes',agent_runtime=? WHERE id=?`, string(encoded), id); err != nil {
+	if _, err := f.db.Exec(`UPDATE nodes SET notes='private-notes' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.db.Exec(`INSERT INTO probe_latest(node_id,target,ok,error,checked_at,tls_expires_at,status_code) VALUES(?,?,0,'http_status',?,?,302)`, id, runtime.ProbeTargets[0], timekey.Format(f.now), timekey.Format(f.now.Add(24*time.Hour))); err != nil {
+	if _, err := f.db.Exec(`INSERT INTO probe_latest(node_id,target,ok,error,checked_at,tls_expires_at,status_code) VALUES(?,?,0,'http_status',?,?,302)`, id, "https://private-target.example", timekey.Format(f.now), timekey.Format(f.now.Add(24*time.Hour))); err != nil {
 		t.Fatal(err)
 	}
+	var report v1.Report
+	if err := json.Unmarshal([]byte(body), &report); err != nil {
+		t.Fatal(err)
+	}
+	code := 302
+	expiry := f.now.Add(24 * time.Hour)
+	report.Seq = 2
+	report.ProbeResults = []v1.ProbeResult{{Target: "https://private-target.example", Error: "http_status", StatusCode: &code, TLSExpiresAt: &expiry, CheckedAt: f.now}}
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted(t, agentRequest(t, f, "/api/agent/v1/report", agentToken, string(encoded)), 2)
 	base := "/api/v1/nodes/" + id
 	bearer := "Bearer " + token
 	expectedNode := []string{"stopped", "id", "name", "status", "expires_on", "region", "provider", "group_id", "tags", "created_at", "last_seen", "presence", "agent_version"}
@@ -424,7 +434,7 @@ func tokenDomainSnapshot(t *testing.T, f fixture) []string {
 	for _, query := range []string{
 		"SELECT id,username,password_hash,must_change_password FROM users ORDER BY id",
 		"SELECT id,name FROM groups ORDER BY id",
-		"SELECT id,name,status,notes,group_id,agent_runtime FROM nodes ORDER BY id",
+		"SELECT id,name,status,notes,group_id FROM nodes ORDER BY id",
 		"SELECT id,name,enabled,metric FROM alert_rules ORDER BY id",
 		"SELECT id,rule_id,node_id,state FROM alert_events ORDER BY id",
 	} {

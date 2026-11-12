@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"testing"
 
-	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/commands"
 	"orbitbeacon/internal/server/nodes"
 )
@@ -18,9 +17,8 @@ func TestCommandAPIValidationAuthenticationCSRFAndLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, _ := json.Marshal(v1.DefaultRuntimeSettings())
 	hash := sha256.Sum256([]byte("agent credential"))
-	if _, err := f.db.Exec(`UPDATE nodes SET token_hash=?,agent_runtime=?,run_generation='1',report_session_id='session',status='unknown' WHERE id=?`, hash[:], string(runtime), n.ID); err != nil {
+	if _, err := f.db.Exec(`UPDATE nodes SET token_hash=?,run_generation='1',report_session_id='session',status='unknown' WHERE id=?`, hash[:], n.ID); err != nil {
 		t.Fatal(err)
 	}
 	path := "/api/v1/nodes/" + n.ID + "/commands"
@@ -87,14 +85,13 @@ func TestGroupCommandsConfirmationIsolationAndAudit(t *testing.T) {
 	if err := json.Unmarshal(groupResponse.Body.Bytes(), &group); err != nil {
 		t.Fatal(err)
 	}
-	runtime, _ := json.Marshal(v1.DefaultRuntimeSettings())
 	for i := range 5 {
 		hash := sha256.Sum256([]byte(fmt.Sprintf("credential-%d", i)))
 		n, err := f.nodes.CreatePending(t.Context(), nodes.CreateRequest{Name: fmt.Sprintf("host-%d", i)})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := f.db.Exec(`UPDATE nodes SET group_id=?,token_hash=?,agent_runtime=?,run_generation='1',report_session_id='session',status='unknown' WHERE id=?`, group.ID, hash[:], string(runtime), n.ID); err != nil {
+		if _, err := f.db.Exec(`UPDATE nodes SET group_id=?,token_hash=?,run_generation='1',report_session_id='session',status='unknown' WHERE id=?`, group.ID, hash[:], n.ID); err != nil {
 			t.Fatal(err)
 		}
 		switch i {
@@ -108,7 +105,7 @@ func TestGroupCommandsConfirmationIsolationAndAudit(t *testing.T) {
 				t.Fatal(err)
 			}
 		case 2:
-			if _, err := f.db.Exec(`UPDATE nodes SET agent_runtime='' WHERE id=?`, n.ID); err != nil {
+			if _, err := f.db.Exec(`UPDATE nodes SET run_generation='0' WHERE id=?`, n.ID); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -179,9 +176,8 @@ func TestUpgradeAPIHasOnlyVersionAndSameVersionConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings, _ := json.Marshal(v1.DefaultRuntimeSettings())
 	hash := sha256.Sum256([]byte("upgrade credential"))
-	if _, err := f.db.Exec(`UPDATE nodes SET token_hash=?,agent_runtime=?,run_generation='1',report_session_id='session',status='unknown',system='{"agent_version":"1.2.3"}' WHERE id=?`, hash[:], string(settings), n.ID); err != nil {
+	if _, err := f.db.Exec(`UPDATE nodes SET token_hash=?,run_generation='1',report_session_id='session',status='unknown',system='{"agent_version":"1.2.3"}' WHERE id=?`, hash[:], n.ID); err != nil {
 		t.Fatal(err)
 	}
 	cookie, csrf := login(t, f, "admin")

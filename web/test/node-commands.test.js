@@ -9,10 +9,9 @@ import {describeAction} from '../src/console/format.js';
 
 const id = '00000000-0000-4000-8000-000000000001';
 const node = () => ({id, name: 'Host', status: 'unknown', presence: 'online', stopped: false});
-const runtime = {remote_commands: ['restart', 'stop']};
 const record = (state = 'pending', result_code = '') => ({id, kind: 'restart', state, result_code, requested_by: 'Alice', created_at: '2026-11-05T10:00:00Z'});
 const button = (root, key) => root.querySelectorAll('button').find((item) => item.textContent === copy(key));
-async function setup(t, {current = node(), observed = runtime, records = []} = {}) {
+async function setup(t, {current = node(), records = []} = {}) {
   const dom = installDOM();
   const previous = new Map(['fetch', 'window', 'setTimeout', 'clearTimeout'].map((key) => [key, globalThis[key]]));
   globalThis.window = new EventTarget();
@@ -27,7 +26,7 @@ async function setup(t, {current = node(), observed = runtime, records = []} = {
     requests.push({url, options});
     return new Response(JSON.stringify(url.includes('/groups/') ? {created: 2, skipped: 3} : {commands: records}));
   };
-  const panel = nodeCommandsPanel(current, observed, scope.signal);
+  const panel = nodeCommandsPanel(current, scope.signal);
   dom.body.append(panel.element); panel.attach(); dom.mutations(); await flush();
   t.after(() => {
     scope.abort(); setNavigationSignal(null); setSession({user: null, csrf_token: '', expires_at: ''});
@@ -48,12 +47,9 @@ function confirmTyped(env, expected) {
   dialog.dispatchEvent(new Event('animationend'));
 }
 
-test('remote controls gate each capability, runtime, active state, disable and stopped', async (t) => {
+test('remote controls gate online state, active commands, disabled and stopped nodes', async (t) => {
   for (const [label, options, disabled] of [
-    ['allowed', {}, [false, false]], ['no runtime', {observed: null}, [true, true]],
-    ['stop only', {observed: {remote_commands: ['stop']}}, [true, false]],
-    ['restart only', {observed: {remote_commands: ['restart']}}, [false, true]],
-    ['no commands', {observed: {remote_commands: []}}, [true, true]],
+    ['allowed', {}, [false, false]], ['offline', {current: {...node(), presence: 'offline'}}, [true, true]],
     ['pending', {records: [record()]}, [true, true]], ['delivered', {records: [record('delivered')]}, [true, true]],
     ['disabled', {current: {...node(), status: 'disabled'}}, [true, true]],
     ['stopped', {current: {...node(), stopped: true}}, [true, true]],
@@ -172,7 +168,7 @@ test('a pending poll response cannot overwrite a newer command mutation refresh'
 });
 
 test('upgrade dialog requires a strict target version and submits it', async (t) => {
-  const env = await setup(t, {observed: {remote_commands: ['upgrade']}});
+  const env = await setup(t);
   button(env.panel.element, 'nodes.command.upgrade').click(); await flush();
   const dialog = env.body.querySelector('dialog');
   assert.equal(dialog.querySelector('h2').textContent, copy('nodes.command.upgrade'));
@@ -192,7 +188,7 @@ test('upgrade dialog requires a strict target version and submits it', async (t)
 });
 
 test('cancelling a typed confirmation closes without a discard prompt', async (t) => {
-  const env = await setup(t, {observed: {remote_commands: ['upgrade']}});
+  const env = await setup(t);
   button(env.panel.element, 'nodes.command.upgrade').click(); await flush();
   const dialog = env.body.querySelector('dialog');
   const entry = dialog.querySelector('input');
@@ -225,8 +221,8 @@ for (const menu of [false, true]) test(`group upgrade ${menu ? 'menu' : 'buttons
   assert.match(env.body.querySelector('#toasts').textContent, copyPattern('nodes.command.bulkResult', {created: 2, skipped: 3}));
 });
 
-test('upgrade capability gates and result labels include the target', async (t) => {
-  const env = await setup(t, {observed: {remote_commands: ['upgrade']}});
+test('upgrade availability gates and result labels include the target', async (t) => {
+  const env = await setup(t);
   assert.equal(button(env.panel.element, 'nodes.command.upgrade').disabled, false);
   for (const code of ['download', 'checksum', 'self_check', 'downgrade', 'rolled_back']) {
     env.setRecords([{...record('failed', code), kind: 'upgrade', target_version: '1.2.3'}]);
@@ -235,9 +231,9 @@ test('upgrade capability gates and result labels include the target', async (t) 
     assert.match(env.panel.element.querySelector('tbody').textContent, copyPattern(`nodes.command.result.${code}`));
   }
   for (const current of [{...node(), status: 'disabled'}, {...node(), stopped: true}]) {
-    env.panel.snapshot(current, {remote_commands: ['upgrade']});
+    env.panel.snapshot(current);
     assert.equal(button(env.panel.element, 'nodes.command.upgrade').disabled, true);
   }
-  env.panel.snapshot(node(), null); assert.equal(button(env.panel.element, 'nodes.command.upgrade').disabled, true);
+  env.panel.snapshot({...node(), presence: 'offline'}); assert.equal(button(env.panel.element, 'nodes.command.upgrade').disabled, true);
   assert.equal(errorText({code: 'command_same_version'}), copy('errors.command_same_version'));
 });

@@ -3,6 +3,7 @@ package nodes_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,11 +11,11 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-func TestObservedProbesReadsConfiguredTargetsAndHourlySummary(t *testing.T) {
+func TestObservedProbesReadsReportedTargetsAndHourlySummary(t *testing.T) {
 	service, db := newNodes(t, 1)
 	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
-	if _, err := db.Exec(`INSERT INTO nodes(id,name,token_hash,run_generation,report_session_id,agent_runtime,created_at)
-VALUES('node','node',X'01','1','session','{"probe_targets":["https://example.test"]}',?)`, timekey.Format(now)); err != nil {
+	if _, err := db.Exec(`INSERT INTO nodes(id,name,token_hash,run_generation,report_session_id,created_at)
+VALUES('node','node',X'01','1','session',?)`, timekey.Format(now)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO probe_latest(node_id,target,ok,latency_ms,error,status_code,checked_at,tls_expires_at)
@@ -79,7 +80,7 @@ func TestProbeHistoryWindowOrderingNullsAndIdentity(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 	const target = "https://example.test"
-	if _, err := db.Exec(`INSERT INTO nodes(id,name,token_hash,run_generation,report_session_id,agent_runtime,created_at) VALUES('node','node',X'01','1','session','{"probe_targets":["https://example.test"]}',?)`, timekey.Format(now)); err != nil {
+	if _, err := db.Exec(`INSERT INTO nodes(id,name,token_hash,run_generation,report_session_id,created_at) VALUES('node','node',X'01','1','session',?)`, timekey.Format(now)); err != nil {
 		t.Fatal(err)
 	}
 	// Deliberately insert out of order; the window includes its boundary but not the preceding hour.
@@ -108,8 +109,7 @@ func TestProbeHistoryWindowOrderingNullsAndIdentity(t *testing.T) {
 		t.Fatalf("mixed=%+v", points[2])
 	}
 	for _, update := range []string{
-		`UPDATE nodes SET agent_runtime='{"probe_targets":[]}'`,
-		`UPDATE nodes SET agent_runtime='{"probe_targets":["https://example.test"]}',report_session_id=''`,
+		`UPDATE nodes SET report_session_id=''`,
 		`UPDATE nodes SET report_session_id='session',run_generation='0'`,
 		`UPDATE nodes SET run_generation='1',token_hash=NULL`,
 	} {
@@ -123,5 +123,39 @@ func TestProbeHistoryWindowOrderingNullsAndIdentity(t *testing.T) {
 	}
 	if _, err := service.ProbeHistory(ctx, "missing", target, now); !errors.Is(err, nodes.ErrNotFound) {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestReportObservedTargetsBoundedAndDeterministic(t *testing.T) {
+	service, db := newNodes(t, 1)
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	if _, err := db.Exec(`INSERT INTO nodes(id,name,token_hash,run_generation,report_session_id,created_at) VALUES('node','node',X'01','1','session',?)`, timekey.Format(now)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 8; i >= 0; i-- {
+		if _, err := db.Exec(`INSERT INTO probe_latest(node_id,target,ok,error,checked_at) VALUES('node',?,0,'timeout',?)`, fmt.Sprintf("tcp://target%d:80", i), timekey.Format(now)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	probes, err := service.ObservedProbes(t.Context(), "node", now.Add(-time.Hour))
+	if err != nil || len(probes) != 5 {
+		t.Fatalf("probes=%+v err=%v", probes, err)
+	}
+	for i, p := range probes {
+		if p.Target != fmt.Sprintf("tcp://target%d:80", i) {
+			t.Fatalf("nondeterministic order: %+v", probes)
+		}
+	}
+	probes, err = service.ObservedProbes(t.Context(), "node", now.Add(-time.Hour), "tcp://target8:80")
+	if err != nil || len(probes) != 1 || probes[0].Target != "tcp://target8:80" {
+		t.Fatalf("current report target omitted: %+v %v", probes, err)
+	}
+	removed, err := service.CleanupProbeHistory(t.Context(), now.Add(time.Second), 3)
+	if err != nil || removed != 3 {
+		t.Fatalf("latest retention=%d %v", removed, err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM probe_latest`).Scan(&count); err != nil || count != 6 {
+		t.Fatalf("latest count=%d %v", count, err)
 	}
 }

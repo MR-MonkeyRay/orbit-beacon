@@ -352,7 +352,7 @@ func TestRoutingContractLabels(t *testing.T) {
 		labels[concreteOpenAPIPath(path)] = path
 	}
 	for path, label := range map[string]string{
-		"/api/v1/nodes/" + strings.ToUpper(routingContractID) + "/runtime": "/api/v1/nodes/{id}/runtime",
+		"/api/v1/nodes/" + strings.ToUpper(routingContractID) + "/probes": "/api/v1/nodes/{id}/probes",
 		"/api/v1/nodes/not-a-uuid":    "unmatched",
 		"/api/v1/nodes/":              "unmatched",
 		"/api":                        "unmatched",

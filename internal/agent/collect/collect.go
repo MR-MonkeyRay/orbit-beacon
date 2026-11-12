@@ -23,13 +23,14 @@ import (
 	"github.com/shirou/gopsutil/v4/sensors"
 
 	"orbitbeacon/internal/buildinfo"
+	"orbitbeacon/internal/config"
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
 const collectionTimeout = 3 * time.Second
 
 type Options struct {
-	Config            v1.RuntimeSettings
+	Config            config.RuntimeSettings
 	DiskIOReader      func(context.Context) (map[string]disk.IOCountersStat, error)
 	SysBlockRoot      string
 	PressureRoot      string
@@ -53,7 +54,7 @@ type networkSample struct {
 // 所有耗时均通过 Go 的单调时钟计算。
 type Collector struct {
 	mu                 sync.Mutex
-	config             v1.RuntimeSettings
+	config             config.RuntimeSettings
 	started            time.Time
 	epoch              string
 	sequence           uint64
@@ -119,7 +120,7 @@ func New(options Options) (*Collector, error) {
 
 // SetConfig 原子地切换采集项。设备缺失属于采集失败而非配置错误，
 // 不影响其他数据源继续工作。
-func (c *Collector) SetConfig(config v1.RuntimeSettings) error {
+func (c *Collector) SetConfig(config config.RuntimeSettings) error {
 	if err := config.Validate(); err != nil {
 		return err
 	}
@@ -213,6 +214,11 @@ func (c *Collector) Collect(parent context.Context) (v1.Metrics, error) {
 	}
 	if !c.config.FeatureDisabled(v1.FeatureDisk) {
 		c.collectDisks(ctx, &m)
+	}
+	for _, feature := range v1.DisabledFeatureOrder() {
+		if c.config.FeatureDisabled(feature) {
+			m.MetricStatus[feature] = "disabled"
+		}
 	}
 	c.finalizeSnapshot(&m, time.Now())
 	return m, ctx.Err()
