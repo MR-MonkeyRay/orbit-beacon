@@ -19,6 +19,5 @@
 .env
 *.key
 *.test
-/temp/*
-!/temp/README.md
+/temp/
 .smoke-*/
