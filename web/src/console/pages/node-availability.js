@@ -6,7 +6,7 @@ import {api} from '../api.js';
 import {button, panel} from '../ui/components.js';
 
 export function availabilityPanel(id, signal) {
-  const content = h('div', {'aria-busy': 'true'});
+  const content = h('div', {'aria-busy': 'true'}, h('span', {class: 'sk sk-availability', 'aria-hidden': 'true'}));
   const root = panel(t('public.availability'), {}, content);
   if (signal?.aborted) return root;
   const load = () => {

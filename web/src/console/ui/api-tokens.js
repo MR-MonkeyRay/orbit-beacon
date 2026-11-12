@@ -8,6 +8,7 @@ import {button, dataTable, emptyState, panel} from './components.js';
 import {confirmDialog, formDialog, modal} from './dialogs.js';
 import {field, input, passwordInput, select, validateBytes, onSubmit} from './forms.js';
 import {toastError} from './feedback.js';
+import {skLines} from './placeholders.js';
 
 function tokenDialog(token) {
   const value = h('pre', {class: 'recovery-secret', tabindex: '0'}, token);
@@ -19,7 +20,7 @@ function tokenDialog(token) {
 }
 
 export function apiTokensPanel() {
-  const body = h('div', {class: 'stack'});
+  const body = h('div', {class: 'stack'}, skLines('44%', '70%', '56%'));
   const navigation = getNavigationSignal();
   const alive = () => !navigation?.aborted;
   const load = async () => {

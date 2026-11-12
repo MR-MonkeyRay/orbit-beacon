@@ -87,7 +87,8 @@ async function render(options = {}) {
     swap(content, route, 'enter', token);
     if (options.scroll !== undefined) window.scrollTo({top: options.scroll, behavior: 'instant'});
   };
-  const skeletonTimer = options.quiet ? 0 : setTimeout(() => showLoading(skeleton()), 160);
+  // 会话校验较慢（首次打开）时同样优先用路由自己的占位；占位不含私有数据。
+  const skeletonTimer = options.quiet ? 0 : setTimeout(() => showLoading(matched?.placeholder ? matched.placeholder() : skeleton()), 160);
   const loadingController = controller;
   const cancelSkeleton = () => clearTimeout(skeletonTimer);
   loadingController.signal.addEventListener('abort', cancelSkeleton, {once: true});

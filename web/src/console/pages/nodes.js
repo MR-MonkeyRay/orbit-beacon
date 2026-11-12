@@ -11,8 +11,28 @@ import {runNodeBatch} from '../lib/nodes-bulk.js';
 import {NODE_PAGE_SIZE, SORTS, nodeSortDirection, readNodeFilter, scopedNodes, sortedNodes, writeNodeFilter} from '../lib/nodes-filters.js';
 import {patchNodesFromFleet} from '../lib/nodes-live.js';
 import {createNodeRow, fadeNodeRow, patchNodeSortHeaders} from '../lib/nodes-table.js';
-import {nodeColumnPicker, patchNodeColumns, readNodeColumns} from '../lib/nodes-columns.js';
+import {NODE_COLUMNS, nodeColumnPicker, patchNodeColumns, readNodeColumns} from '../lib/nodes-columns.js';
+import {pagePlaceholder, placeholderHead, placeholderRows} from '../ui/placeholders.js';
 import {addNodeButton} from '../lib/add-node-dialog.js';
+
+// 与节点列表同构：工具栏、状态分段与用户保存的列先出现，表格行以微光条占位。
+export function nodesPlaceholder() {
+  const columns = readNodeColumns();
+  const optional = NODE_COLUMNS.map(([key, label]) => ({label: t(label), className: `hide-compact${columns.has(key) ? '' : ' column-hidden'}`}));
+  const headers = [{label: '', className: 'selection-cell'}, t('nodes.column.name'), t('nodes.presence'),
+    {label: t('nodes.cpu'), className: 'num'}, {label: t('nodes.memory'), className: 'num'}, ...optional];
+  return pagePlaceholder(
+    placeholderHead(t('nodes.listTitle')),
+    h('div', {class: 'panel'},
+      h('div', {class: 'toolbar'}, h('span', {class: 'sk sk-field', 'aria-hidden': 'true'}),
+        // 真实分段只列出有节点的状态，加载前只能确定“全部”。
+        h('div', {class: 'segmented', 'aria-hidden': 'true'}, h('span', {class: 'segment'}, t('nodes.all'))),
+        h('span', {class: 'sk sk-field short', 'aria-hidden': 'true'})),
+      h('div', {class: 'table-wrap nodes-table-wrap'}, h('table', {class: 'table nodes-table'},
+        h('thead', null, h('tr', null, headers.map((header) => typeof header === 'object'
+          ? h('th', {scope: 'col', class: header.className}, header.label) : h('th', {scope: 'col'}, header)))),
+        placeholderRows(headers, 8)))));
+}
 
 export async function nodesPage() {
   const signal = getNavigationSignal();

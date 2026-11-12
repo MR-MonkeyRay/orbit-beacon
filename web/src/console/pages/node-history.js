@@ -7,6 +7,7 @@ import {button, link, panel} from '../ui/components.js';
 import {select} from '../ui/forms.js';
 import {historyError} from '../ui/history-error.js';
 import {panelLifecycle} from '../ui/polling-panel.js';
+import {placeholderChart} from '../ui/placeholders.js';
 
 const STORAGE_KEY = 'orbitbeacon.history.range';
 const MORE_STORAGE_KEY = 'orbitbeacon.history.more';
@@ -131,10 +132,12 @@ export function historyPanel(id, signal, latest) {
       ? {...item, metrics: [[loadMetric, t('nodes.load')]]} : item);
     shortSpan.hidden = true;
     status.textContent = t('nodes.historyLoading');
+    // 首次加载时图框本身就是加载提示，文字只留给读屏。
+    status.classList.toggle('sr', !charts.children.length);
     charts.setAttribute('aria-busy', 'true');
     extraCharts.setAttribute('aria-busy', 'true');
     // Keep rendered charts and their controls until the replacement data arrives.
-    if (!charts.children.length) charts.replaceChildren(...requestedCharts.filter((item) => PRIMARY.has(item.metrics[0][0]) || item.unit === 'load').map((item) => metricSection(item)));
+    if (!charts.children.length) charts.replaceChildren(...requestedCharts.filter((item) => PRIMARY.has(item.metrics[0][0]) || item.unit === 'load').map((item) => metricSection(item, placeholderChart())));
     charts.dataset.range = range;
     charts.dataset.loadMetric = loadMetric;
     const metrics = requestedCharts.flatMap((item) => item.metrics.map(([metric]) => metric));
@@ -203,6 +206,7 @@ export function historyPanel(id, signal, latest) {
     extraCharts.setAttribute('aria-busy', 'false');
     const failures = [...results.values()].filter((result) => result.error).length;
     status.textContent = failures ? t('nodes.historyPartial') : '';
+    status.classList.remove('sr');
     if (focusedID) {
       const target = document.getElementById(focusedID);
       if (target && root.contains(target)) target.focus({preventScroll: true});

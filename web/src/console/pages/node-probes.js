@@ -8,6 +8,7 @@ import {select} from '../ui/forms.js';
 import {facts, panel} from '../ui/components.js';
 import {historyError} from '../ui/history-error.js';
 import {panelLifecycle} from '../ui/polling-panel.js';
+import {skLines} from '../ui/placeholders.js';
 
 const ERRORS = {
   timeout: t('nodes.probe.timeout'), refused: t('nodes.probe.refused'), dns: t('nodes.probe.dns'),
@@ -120,7 +121,7 @@ export function probesPanel(id, signal) {
     const request = new AbortController();
     controller = request;
     content.setAttribute('aria-busy', 'true');
-    if (!content.children.length) content.replaceChildren(h('p', {class: 'text-note', role: 'status'}, t('nodes.probe.loading')));
+    if (!content.children.length) content.replaceChildren(h('p', {class: 'sr', role: 'status'}, t('nodes.probe.loading')), skLines('58%', '42%', '66%'));
     try {
       const data = await api(`/nodes/${encodeURIComponent(id)}/probes`, {signal: request.signal});
       if (!Array.isArray(data.probes)) throw Object.assign(new Error('Unreadable probe results'), {code: 'unreadable_response'});

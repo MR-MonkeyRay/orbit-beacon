@@ -6,6 +6,7 @@ import {button, facts, panel} from './components.js';
 import {formDialog, modal} from './dialogs.js';
 import {field, input, passwordInput, validateBytes} from './forms.js';
 import {toastError} from './feedback.js';
+import {skLines} from './placeholders.js';
 
 export function totpQR({size, modules}) {
   if (!Number.isInteger(size) || size < 21 || size > 177 || !/^[01]+$/.test(modules) || modules.length !== size * size) throw new Error('Invalid QR');
@@ -51,7 +52,7 @@ export function totpCredentials({title, secondFactor = true, action}) {
 }
 
 export function totpPanel() {
-  const body = h('div', {class: 'stack'});
+  const body = h('div', {class: 'stack'}, skLines('38%', '62%'));
   const navigation = getNavigationSignal();
   const alive = () => !navigation?.aborted;
   const load = async () => {

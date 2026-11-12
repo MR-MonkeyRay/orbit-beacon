@@ -4,20 +4,22 @@ import {translateHTML} from '../shared/translate-html.js';
 import {startRouter} from './router.js';
 import {initShell} from './shell.js';
 import {consoleRoutes, matchesConsoleRoute} from './routes.js';
-import {servicesPage} from './pages/services.js';
+import {servicesPage, servicesPlaceholder} from './pages/services.js';
 import {alertsPage} from './pages/alerts.js';
 import {loginPage} from './pages/login.js';
 import {changePasswordPage} from './pages/change-password.js';
-import {nodePage} from './pages/node.js';
-import {nodesPage} from './pages/nodes.js';
-import {overviewPage} from './pages/overview.js';
+import {nodePage, nodePlaceholder} from './pages/node.js';
+import {nodesPage, nodesPlaceholder} from './pages/nodes.js';
+import {overviewPage, overviewPlaceholder} from './pages/overview.js';
 import {settingsPage} from './pages/settings.js';
 
 translateHTML();
 
 const pages = {services: servicesPage, login: loginPage, changePassword: changePasswordPage, overview: overviewPage, nodes: nodesPage, node: nodePage, settings: settingsPage, alerts: alertsPage,
   dataManagement: () => consoleRoutes.find((route) => route.path === '/data').redirect};
-const routes = consoleRoutes.map((route) => ({...route, match: (path) => matchesConsoleRoute(route, path), page: pages[route.page]}));
+// 有监控数据的页面先渲染同构占位，数据到达后原位填入。
+const placeholders = {services: servicesPlaceholder, overview: overviewPlaceholder, nodes: nodesPlaceholder, node: nodePlaceholder};
+const routes = consoleRoutes.map((route) => ({...route, match: (path) => matchesConsoleRoute(route, path), page: pages[route.page], placeholder: placeholders[route.page]}));
 
 initShell();
 startRouter(routes);

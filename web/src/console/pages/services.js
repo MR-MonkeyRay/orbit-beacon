@@ -3,6 +3,7 @@ import {t} from '../i18n.js';
 import {api, session, getNavigationSignal} from '../api.js';
 import {formatMilliseconds, formatPercent} from '../format.js';
 import {button, dataTable, emptyState, iconButton, pageHead, panel} from '../ui/components.js';
+import {pagePlaceholder, placeholderHead, placeholderPanel, placeholderTable} from '../ui/placeholders.js';
 import {confirmDialog, formDialog, modal} from '../ui/dialogs.js';
 import {field, input, select, toggleSwitch} from '../ui/forms.js';
 import {chart} from '../ui/chart.js';
@@ -85,6 +86,12 @@ export function serviceDetail(item, signal) {
       permissionHint(item), item.latest?.error && item.latest.error !== 'permission_denied' ? h('p', {class: 'text-note'}, errorLabel(item.latest)) : null,
       h('div', {class: 'segmented', role: 'group', 'aria-label': t('services.historyRange')}, controls), status, retry, charts);
   });
+}
+
+export function servicesPlaceholder() {
+  const columns = ['name', 'type', 'target', 'status', 'latency', 'availability24h', 'visibility', 'actions'].map((key) => t(`services.${key}`));
+  return pagePlaceholder(h('div', {class: 'services-page'}, placeholderHead(t('services.title'), {status: false}),
+    placeholderPanel(null, placeholderTable(columns, {rows: 4, className: 'services-table'}))));
 }
 
 export async function servicesPage() {

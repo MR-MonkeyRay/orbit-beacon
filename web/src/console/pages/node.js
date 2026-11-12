@@ -17,6 +17,33 @@ import {trafficPanel} from './node-traffic.js';
 import {trafficSettingsPanel} from './node-traffic-settings.js';
 import {probesPanel} from './node-probes.js';
 import {NODE_PATH} from '../routes.js';
+import {pagePlaceholder, placeholderChart, placeholderPanel, skLines, skText, skValue} from '../ui/placeholders.js';
+
+const NODE_TABS = [['monitor', 'common.monitoring', 'monitor'], ['traffic', 'nodes.traffic', 'cloud'], ['probes', 'nodes.probes', 'check'],
+  ['public', 'settings.publicPage', 'globe'], ['manage', 'nodes.manage', 'key'], ['settings', 'shell.settings', 'sliders']];
+
+// 与节点详情同构：返回链接、标题行、标签条（按 hash 选中）与监控页的指标卡和图框先出现。
+export function nodePlaceholder() {
+  const hash = location.hash.slice(1);
+  const selected = NODE_TABS.some(([id]) => id === hash) ? hash : 'monitor';
+  const head = h('header', {class: 'page-head node-head'},
+    h('span', {class: 'back'}, icon('left'), t('nodes.allNodes')),
+    h('div', {class: 'node-head-main'}, h('div', {class: 'detail-head'}, h('h1', null, skText('8em')), h('span', {class: 'sk sk-badge', 'aria-hidden': 'true'})),
+      h('div', {class: 'detail-actions'}, h('span', {class: 'live-status'}, t('controls.live.connecting')))),
+    h('div', {class: 'node-summary'}, skText('6em'), skText('8em'), skText('5em'), skText('9em')));
+  const tabs = h('div', {class: 'tabs', 'aria-hidden': 'true'}, NODE_TABS.map(([id, label, name]) =>
+    h('span', {class: 'tab-placeholder', dataset: {selected: String(id === selected)}}, icon(name), t(label))));
+  const tile = (label) => h('div', {class: 'sample-tile'}, h('dt', null, t(label)), h('dd', null, skValue(), h('span', {class: 'sk sk-meter', 'aria-hidden': 'true'})));
+  const body = selected === 'monitor'
+    ? h('div', {class: 'stack'},
+      placeholderPanel(t('nodes.sample'), h('div', {class: 'sample-dashboard'},
+        h('dl', {class: 'sample-primary'}, tile('nodes.cpu'), tile('nodes.memory'), tile('nodes.disk'), tile('nodes.loadMinute')))),
+      placeholderPanel(t('public.availability'), h('span', {class: 'sk sk-availability', 'aria-hidden': 'true'})),
+      placeholderPanel(t('nodes.history'), h('div', {class: 'history-grid'},
+        [0, 1].map(() => h('section', {class: 'history-metric'}, h('h3', null, skText('6em')), placeholderChart())))))
+    : placeholderPanel(null, skLines('42%', '64%', '36%', '58%'));
+  return pagePlaceholder(head, tabs, body);
+}
 
 export async function nodePage() {
   const signal = getNavigationSignal();

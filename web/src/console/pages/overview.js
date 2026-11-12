@@ -11,6 +11,7 @@ import {addNodeButton} from '../lib/add-node-dialog.js';
 import {auditItem} from '../lib/audit-item.js';
 import {activeAlertsSummary} from './alert-events.js';
 import {toastError} from '../ui/feedback.js';
+import {pagePlaceholder, placeholderHead, placeholderPanel, skLines, skText, skValue} from '../ui/placeholders.js';
 
 function fleetPanel(nodes, signal) {
   const tween = createNumberTween({signal});
@@ -172,6 +173,19 @@ export function groupsPanel(nodes, groups) {
   };
   element.snapshot(nodes);
   return element;
+}
+
+// 与概览同构：节点总数、用量两列与最近动态先以占位出现，数据到达后原位填入。
+export function overviewPlaceholder() {
+  const legend = h('div', {class: 'legend'}, [STATUS.online, STATUS.offline].map((label) => h('span', null, label, ' ', skText('1.5em'))));
+  const resourceColumn = (key) => h('div', null, h('h3', null, t(key)),
+    h('ul', {class: 'rows resource-rows'}, [70, 52, 38].map((width) => h('li', null, skText(`${width}%`), h('span', {class: 'sk sk-meter', 'aria-hidden': 'true'})))));
+  return pagePlaceholder(
+    placeholderHead(t('nodes.overview'), {actions: 2}),
+    placeholderPanel(t('nodes.fleet'), h('div', {class: 'fleet-total'}, h('strong', {class: 'num'}, skValue()), skText('7em')),
+      h('div', {class: 'fleet-bar sk', 'aria-hidden': 'true'}), legend),
+    placeholderPanel(t('nodes.topUsage'), h('div', {class: 'resource-columns'}, resourceColumn('nodes.cpu'), resourceColumn('nodes.memory'))),
+    h('div', {class: 'grid-2 overview-bottom single'}, placeholderPanel(t('nodes.recentActivity'), skLines('46%', '30%', '52%', '28%', '40%'))));
 }
 
 export async function overviewPage() {

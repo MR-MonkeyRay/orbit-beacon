@@ -821,6 +821,165 @@ p.empty {
   border-radius: var(--r-lg);
 }
 
+/* 同构占位：行内微光条与真实文字同高，数据到达后原位替换，布局不跳。 */
+.sk-text {
+  display: inline-block;
+  max-width: 100%;
+  height: .8em;
+  border-radius: 6px;
+  vertical-align: middle;
+}
+
+h1 .sk-text {
+  height: .62em;
+}
+
+.sk-value {
+  display: inline-block;
+  width: 3.4em;
+  height: 1.1em;
+  border-radius: 6px;
+  vertical-align: middle;
+}
+
+.sk-lines {
+  display: grid;
+  gap: var(--sp-content);
+  padding-block: var(--sp-tight);
+}
+
+.sk-button {
+  display: inline-block;
+  width: 116px;
+  height: var(--control-h);
+  border-radius: var(--r-md);
+}
+
+.sk-badge {
+  display: inline-block;
+  width: 64px;
+  height: 24px;
+  border-radius: 999px;
+}
+
+.sk-field {
+  display: inline-block;
+  flex: 1 1 260px;
+  max-width: 420px;
+  height: var(--control-h);
+  border-radius: var(--r-md);
+}
+
+.sk-field.short {
+  flex: 0 0 132px;
+}
+
+.sk-meter {
+  display: block;
+  height: 6px;
+  margin-top: var(--sp-inline);
+  border-radius: 999px;
+}
+
+.sk-availability {
+  display: block;
+  height: 28px;
+  border-radius: var(--r-sm);
+}
+
+/* 与历史图表同比例（640×240）的空图框：三条虚线网格加底轴，整体微光扫过。 */
+.sk-chart {
+  position: relative;
+  display: grid;
+  grid-template-rows: repeat(4,1fr);
+  aspect-ratio: 8 / 3;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+}
+
+.sk-chart i {
+  border-top: 1px dashed var(--line);
+}
+
+.sk-chart i:first-child {
+  border-top: 0;
+}
+
+.sk-chart::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg,transparent,color-mix(in srgb,var(--orbit) 7%,transparent),transparent);
+  transform: translateX(-100%);
+  animation: shimmer 1.6s var(--ease-linear) infinite;
+}
+
+.segmented .segment {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  color: var(--ink-subtle);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.segmented .segment:first-child {
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--shadow-control);
+}
+
+.tabs .tab-placeholder {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-inline);
+  min-height: var(--control-h-lg);
+  padding: 0 14px;
+  color: var(--ink-muted);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.tabs .tab-placeholder .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.tabs .tab-placeholder[data-selected="true"] {
+  color: var(--ink);
+}
+
+/* 与 .tab-indicator 相同的位置与尺寸，真实标签条接手时下划线不动。 */
+.tabs .tab-placeholder[data-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--beacon);
+}
+
+.page-placeholder .live-status {
+  opacity: .7;
+}
+
+/* 真实摘要行含复制按钮，占位行保持同高，标签条不随数据到达而下移。 */
+.page-placeholder .node-summary {
+  min-height: 30px;
+}
+
+@media (prefers-reduced-motion:reduce) {
+  .sk-chart::after {
+    animation: none;
+  }
+}
+
 /* 对话框 */
 dialog {
   width: min(520px,calc(100vw - 32px));

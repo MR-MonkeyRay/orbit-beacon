@@ -6,6 +6,7 @@ import {formatBytes, formatPercent, when} from '../format.js';
 import {fitChartText, niceMax} from '../ui/chart.js';
 import {facts, panel} from '../ui/components.js';
 import {historyError} from '../ui/history-error.js';
+import {placeholderChart} from '../ui/placeholders.js';
 
 const DAY = 86400000;
 const dateFormat = new Intl.DateTimeFormat(getLocale(), {dateStyle: 'medium', timeZone: 'UTC'});
@@ -173,7 +174,7 @@ export function trafficPanel(id, signal) {
     if (signal?.aborted) return;
     const version = ++loadVersion;
     content.setAttribute('aria-busy', 'true');
-    content.replaceChildren(h('p', {class: 'text-note', role: 'status'}, t('nodes.trafficLoading')));
+    content.replaceChildren(h('p', {class: 'sr', role: 'status'}, t('nodes.trafficLoading')), placeholderChart());
     try {
       const data = await api(`/nodes/${encodeURIComponent(id)}/traffic?days=30`, {signal});
       if (!signal?.aborted && version === loadVersion) {

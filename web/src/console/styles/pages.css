@@ -383,7 +383,7 @@
     display: none;
   }
 
-  .tabs button {
+  .tabs button,.tabs .tab-placeholder {
     padding-inline: var(--sp-control);
   }
 }
