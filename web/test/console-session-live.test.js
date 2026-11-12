@@ -819,3 +819,22 @@ test('login credential rejection still renders its inline error after private-se
     for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
   }
 });
+
+test('the status-page sign-in marker follows the console session without storing credentials', async (t) => {
+  const env = setup(t, () => new Response(null, {status: 204}));
+  const writes = [];
+  globalThis.localStorage.setItem = (key, value) => writes.push([key, value]);
+  globalThis.localStorage.removeItem = (key) => writes.push([key, null]);
+  try {
+    client.setSession(proof());
+    assert.deepEqual(writes.at(-1), ['orbitbeacon.signed-in', '1']);
+    assert.ok(writes.every(([, value]) => value === null || value === '1'), 'the marker never holds the username or CSRF token');
+    await client.signOut();
+    assert.deepEqual(writes.at(-1), ['orbitbeacon.signed-in', null]);
+    client.setSession(proof());
+    client.invalidateSession('expired');
+    assert.deepEqual(writes.at(-1), ['orbitbeacon.signed-in', null]);
+    globalThis.localStorage.setItem = () => { throw new Error('storage blocked'); };
+    assert.doesNotThrow(() => client.setSession(proof()));
+  } finally { env.clean(); }
+});

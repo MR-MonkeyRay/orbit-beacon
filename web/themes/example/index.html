@@ -16,7 +16,7 @@
 <div class="page example-page">
 <header class="top">
 <a class="brand" href="/"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><ellipse class="mark-orbit" cx="16" cy="16" rx="13" ry="6" transform="rotate(-25 16 16)"/><circle class="mark-core" cx="16" cy="16" r="4.6"/><circle class="mark-sat" cx="27.9" cy="12.7" r="2.8"/></svg><span>OrbitBeacon</span></a>
-<div class="top-actions" id="top-actions"><button id="theme" class="icon-button" type="button"></button><a class="login" href="/login" data-i18n="public.signIn">Sign in</a></div>
+<div class="top-actions" id="top-actions"><button id="theme" class="icon-button" type="button"></button><a id="sign-in" class="login" href="/login" data-i18n="public.signIn">Sign in</a></div>
 </header>
 <p id="locale-error" class="locale-error" role="alert" hidden></p>
 <main class="example-layout">
@@ -35,9 +35,9 @@
 </div>
 </section>
 <div class="example-content">
+<div id="services" hidden></div>
 <div class="filters" id="filters" role="group" data-i18n-aria-label="public.filterLabel" aria-label="Filter nodes on this page by status" hidden></div>
 <p id="announcement" class="sr" role="status" aria-live="polite" data-i18n="public.loading">Loading nodes…</p>
-<!-- Public services are mounted above this empty/node area. -->
 <div id="empty" class="empty" hidden><p id="empty-text"></p><button id="retry" class="retry" type="button" data-i18n="common.retry" hidden>Retry</button></div>
 <ul id="nodes" class="nodes" data-i18n-aria-label="public.nodesLabel" aria-label="Public nodes"></ul>
 <nav class="pagination" id="pagination" data-i18n-aria-label="public.paginationLabel" aria-label="Node pages" hidden><button id="previous" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-left"/></svg><span data-i18n="public.previous">Previous</span></button><span id="page">Page 1</span><button id="next" type="button" disabled><span data-i18n="public.next">Next</span><svg class="icon" aria-hidden="true"><use href="#i-right"/></svg></button></nav>

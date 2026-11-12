@@ -1,6 +1,6 @@
 import {serviceSection} from './services.js';
 import {translateHTML} from '../shared/translate-html.js';
-import {h} from '../shared/dom.js';
+import {h, icon} from '../shared/dom.js';
 import {themeButton} from '../shared/theme.js';
 import {validResponse} from './validate.js';
 import {connectLive} from '../shared/live.js';
@@ -9,6 +9,27 @@ import {formatFullTimestamp} from '../shared/format.js';
 import {localeToggle} from '../shared/locale-select.js';
 import {errorText} from '../shared/errors.js';
 import {statusLabels} from '../shared/status.js';
+import {maybeSignedIn, rememberSignedIn} from '../shared/signed-in.js';
+
+// 控制台留下登录标记时，把“登录”换成直达控制台的头像入口。
+// 只读取用户名：不保留 CSRF 令牌、不发写请求；401 说明会话已失效，清掉标记，
+// 其他失败（网络、5xx、格式不符）保持“登录”原样。
+async function showAccount(link) {
+  let username;
+  try {
+    const response = await fetch('/api/v1/me', {credentials: 'same-origin', cache: 'no-store', headers: {Accept: 'application/json'}});
+    if (response.status === 401) { rememberSignedIn(false); return; }
+    if (!response.ok) return;
+    username = (await response.json())?.user?.username;
+  } catch { return; }
+  if (typeof username !== 'string' || !username) return;
+  link.removeAttribute('data-i18n');
+  link.className = 'account-chip';
+  link.href = '/overview';
+  link.title = t('public.openConsole');
+  link.replaceChildren(h('span', {class: 'avatar', 'aria-hidden': 'true'}, [...username][0]),
+    h('span', {class: 'account-name'}, username), icon('right', 'account-go'));
+}
 
 export function mountPublicPage({createCard, skeletonCards, createConstellation, createRegionHeading = (region) => h('li', {class: 'region-heading'}, h('h2', null, region))}) {
   const STATUS = statusLabels({unknown: 'public.status.unknown'});
@@ -21,7 +42,9 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
   const list = $('nodes');
   const empty = $('empty');
   const services = serviceSection();
-  empty.parentElement.insertBefore(services, empty);
+  // 主题可用 #services 占位指定服务区位置；没有占位时放在节点区之前。
+  const servicesSlot = $('services');
+  if (servicesSlot) servicesSlot.replaceWith(services); else empty.parentElement.insertBefore(services, empty);
   const emptyText = $('empty-text');
   const retry = $('retry');
   const headline = $('headline');
@@ -65,7 +88,8 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
   let query = '';
   const headings = new Map();
   const search = h('input', {type: 'search', class: 'node-search', hidden: true, 'aria-label': t('public.search'), placeholder: t('public.search'), oninput: () => { query = search.value.trim().toLocaleLowerCase(); applyFilter(); }});
-  filtersBar.parentElement.insertBefore(search, filtersBar);
+  // 搜索框跟在筛选按钮之后：主题可把两者排成一行，焦点顺序与视觉顺序一致。
+  filtersBar.after(search);
 
   themeButton($('theme'));
   const localeError = $('locale-error');
@@ -73,6 +97,8 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
     localeError.textContent = errorText(error);
     localeError.hidden = false;
   }}));
+  const signIn = $('sign-in');
+  if (signIn && maybeSignedIn()) void showAccount(signIn);
 
   // ------------------------------------------------------------------ 筛选
 

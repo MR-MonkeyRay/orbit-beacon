@@ -24,6 +24,7 @@ export default {
   'public.title': '节点状态 – OrbitBeacon',
   'public.description': '已公开节点的可用性与资源使用情况',
   'public.signIn': '登录',
+  'public.openConsole': '进入控制台',
   'public.heading': '节点状态',
   'public.loading': '正在加载节点…',
   'public.notUpdated': '尚未更新',

@@ -1,5 +1,7 @@
 // 管理 API 客户端、会话状态与短时请求缓存。
 
+import {rememberSignedIn} from '../shared/signed-in.js';
+
 export class ApiError extends Error {
   constructor(status, body) {
     super(body && body.message ? body.message : `Request failed with status ${status}`);
@@ -31,6 +33,7 @@ const currentProof = () => proofKey({user: session.user, csrf_token: session.csr
 const serverNow = () => serverAt + Math.max(0, monotonicNow() - monotonicAt);
 const cancelled = () => new DOMException('The session has changed.', 'AbortError');
 const notifySession = (detail = {}) => {
+  rememberSignedIn(Boolean(session.user));
   for (const listener of sessionListeners) listener(session, {epoch: sessionEpoch, ...detail});
 };
 

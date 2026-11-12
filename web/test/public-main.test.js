@@ -19,14 +19,17 @@ const snapshot = (data = payload(), interval = 10) => frame('snapshot', {data, u
 class PublicElement extends TestElement {
   constructor(tag) { super(tag); this.style.setProperty = (key, value) => { this.style[key] = value; }; }
   get lastChild() { return this.children.at(-1); }
+  after(node) { const siblings = this.parentElement.children; this.parentElement.insertBefore(node, siblings[siblings.indexOf(this) + 1] || null); }
   getBoundingClientRect() { return {}; }
 }
-async function setup(t, respond, customize) {
+async function setup(t, respond, customize, {storage = {}} = {}) {
   const env = liveHarness(t, respond);
-  globalThis.localStorage.getItem = (key) => key === 'orbitbeacon-locale' ? 'en' : null;
+  const stored = {'orbitbeacon-locale': 'en', ...storage};
+  globalThis.localStorage.getItem = (key) => stored[key] ?? null;
+  globalThis.localStorage.removeItem = (key) => { delete stored[key]; };
   env.document.createElement = (tag) => new PublicElement(tag);
   env.document.createElementNS = (_namespace, tag) => new PublicElement(tag);
-  const ids = ['nodes', 'empty', 'empty-text', 'retry', 'headline', 'summary', 'updated', 'announcement', 'refresh', 'countdown', 'filters', 'pagination', 'previous', 'next', 'page', 'constellation', 'theme', 'top-actions', 'locale-error'];
+  const ids = ['nodes', 'empty', 'empty-text', 'retry', 'headline', 'summary', 'updated', 'announcement', 'refresh', 'countdown', 'filters', 'pagination', 'previous', 'next', 'page', 'constellation', 'theme', 'top-actions', 'locale-error', 'sign-in'];
   const elements = Object.fromEntries(ids.map((id) => {
     const element = new PublicElement('div'); element.id = id; env.body.append(element); return [id, element];
   }));
@@ -34,7 +37,7 @@ async function setup(t, respond, customize) {
   const renderers = await loadRenderers();
   mountPublicPage(customize ? customize(renderers) : renderers);
   await flush();
-  return {...env, elements};
+  return {...env, elements, stored};
 }
 
 test('public WS snapshots render values; heartbeats and ordinary snapshots do not repeat ARIA announcements', async (t) => {
@@ -457,3 +460,48 @@ test('public services appear above the no-public-nodes message and live removal 
   socket.message(snapshot(payload('none', {nodes: [], services: []})));
   assert.equal(section.hidden, true);
 });
+
+const signedIn = {'orbitbeacon.signed-in': '1'};
+const meRequests = (ui) => ui.requests.filter((request) => request.url === '/api/v1/me');
+const answerMe = (me) => (request) => request.url === '/api/v1/me' ? me() : Promise.reject(new Error('offline'));
+
+test('anonymous visitors never probe the console session and keep the sign-in link', async (t) => {
+  const ui = await setup(t);
+  assert.equal(meRequests(ui).length, 0);
+  assert.equal(ui.requests.length, 0);
+  assert.equal(ui.elements['sign-in'].className, '');
+});
+
+test('a signed-in marker turns the sign-in link into a console chip using only the username', async (t) => {
+  const ui = await setup(t, answerMe(() => response({csrf_token: 'secret', expires_at: '2026-10-29T00:00:00Z',
+    user: {id: 'u1', username: 'Ada', must_change_password: false}})), undefined, {storage: signedIn});
+  await flush();
+  const [request] = meRequests(ui);
+  assert.equal(request.credentials, 'same-origin');
+  assert.equal(request.cache, 'no-store');
+  assert.equal(request.method, undefined, 'a plain GET without a body or CSRF header');
+  const chip = ui.elements['sign-in'];
+  assert.equal(chip.className, 'account-chip');
+  assert.equal(chip.href, '/overview');
+  assert.equal(chip.title, copy('public.openConsole'));
+  assert.equal(chip.querySelector('.avatar').textContent, 'A');
+  assert.equal(chip.querySelector('.avatar').getAttribute('aria-hidden'), 'true');
+  assert.equal(chip.querySelector('.account-name').textContent, 'Ada');
+  assert.doesNotMatch(chip.textContent, /secret/);
+  assert.equal(ui.stored['orbitbeacon.signed-in'], '1');
+});
+
+// 每个用例单独一个 test：liveHarness 在 t.after 里还原全局，同一 test 里建两次会互相覆盖。
+for (const [label, me, cleared] of [['an expired console session (401) clears the marker', () => response({code: 'unauthenticated'}, {status: 401}), true],
+  ['a server error keeps the sign-in link and the marker', () => response({}, {status: 503}), false],
+  ['a network failure keeps the sign-in link and the marker', () => Promise.reject(new Error('offline')), false],
+  ['a malformed /me body keeps the sign-in link and the marker', () => response({user: {username: 42}}), false]]) {
+  test(label, async (t) => {
+    const ui = await setup(t, answerMe(me), undefined, {storage: signedIn});
+    await flush();
+    assert.equal(meRequests(ui).length, 1);
+    assert.equal(ui.elements['sign-in'].className, '');
+    assert.equal(ui.elements['sign-in'].querySelector('.avatar'), null);
+    assert.equal(ui.stored['orbitbeacon.signed-in'], cleared ? undefined : '1');
+  });
+}

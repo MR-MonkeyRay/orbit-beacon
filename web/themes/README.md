@@ -70,6 +70,7 @@ HTML 中保留以下占位符，各一次：
 | --- | --- |
 | `top-actions` | 语言图标按钮插入的容器，保留其他操作 |
 | `theme` | `button type="button"`，明暗切换 |
+| `sign-in`（可选） | 指向 `/login` 的登录链接；共享运行时确认已登录时把它换成直达控制台的头像入口 `.account-chip`（样式见 `src/shared/account-chip.css`） |
 | `locale-error` | 初始 `hidden` 的错误区域，保留 `role="alert"` |
 | `headline`、`summary` | 主标题使用 `h1`；摘要显示节点状态、本页范围或临时连接状态。正常快照带 `data-tone="ok|warn|bad"` 的状态摘要；运行时添加礼貌 live region，仅在摘要变化时更新文字 |
 | `updated` | 短更新时间或过期状态；完整本地时间与刷新倒计时放在 title，子节点由运行时创建 |
@@ -77,6 +78,7 @@ HTML 中保留以下占位符，各一次：
 | `refresh` | `button type="button"`，刷新当前页 |
 | `constellation` | 图形容器，保留 `aria-hidden="true"` |
 | `filters` | 初始 `hidden` 的筛选容器，保留 `role="group"` 与无障碍名称 |
+| `services`（可选） | 公开服务区的占位，运行时用服务区整体替换；缺省时服务区插在 `empty` 之前 |
 | `announcement` | 屏幕阅读器状态文字，保留 `role="status"`、`aria-live="polite"` 与 `.sr` |
 | `empty`、`empty-text` | 空集合、空筛选或加载失败的区域与文字，外层初始 `hidden` |
 | `retry` | `button type="button"`，初始 `hidden` |
@@ -85,7 +87,7 @@ HTML 中保留以下占位符，各一次：
 | `previous`、`next` | 分页按钮，初始 `disabled` |
 | `page` | 页码文字 |
 
-两个内置主题用 `.hero-row` 将 `headline` 和刷新控件放在同一可换行的 flex 行，摘要在下方。`.page` 为满视口高的 flex 列，主区域伸展；`empty` 在剩余空间居中，页脚保留安全区底部留白。
+默认主题的 `.hero-split` 把标题、摘要和刷新信息排成一列，星座图在右侧；`filters` 放在 `.toolbar` 里，运行时把搜索框插在 `filters` 之后，同一行靠右。`example` 沿用 `.hero-row` 旧结构（标题与刷新控件同一可换行的 flex 行，摘要在下方），默认样式仍支持它。`.page` 为满视口高的 flex 列，主区域伸展；`empty` 在剩余空间居中，页脚保留安全区底部留白。
 
 运行时会添加 `.update-time`、`.loading`、`.running`、`.enter`、筛选按钮和分页状态，并更新 `hidden`、`disabled`、`aria-busy`、`aria-pressed`、`data-state` 以及动画用 CSS 变量。若仍复用默认组件，保留对应样式和 `[hidden] { display:none!important; }`，不要用布局样式让隐藏数据重新出现。刷新完成不能依赖 `animationend`。
 
@@ -105,7 +107,7 @@ mountPublicPage({createCard, skeletonCards, createConstellation});
 需要替换组件时，函数契约如下：
 
 - `createCard()` 返回一个 `li` DOM 节点，提供 `update(node)` 和 `setStale()` 方法。`update` 接收已校验的公开节点并清除连接过期标记；`setStale` 只表达“数据可能过期”，不能把节点改为离线或清空已有指标。运行时控制该节点的筛选隐藏与入场类。
-- `createRegionHeading(region)`（可选）：返回地区标题的 `li`；默认是 `.region-heading` 包含 `h2`，CSS 应让它跨满网格列。当前页加载超过 12 个节点时，运行时按地区插入标题，并添加搜索框 `.node-search`；搜索仅匹配当前页的名称、地区与提供商，与状态筛选叠加，翻页清空。12 个及以下保持平铺。未提供此钩子的主题沿用默认标题，`example` 无需改入口。
+- `createRegionHeading(region)`（可选）：返回地区标题的 `li`；默认是 `.region-heading` 包含 `h2`，CSS 应让它跨满网格列。当前页加载超过 12 个节点时，运行时按地区插入标题，并在 `filters` 之后添加搜索框 `.node-search`；搜索仅匹配当前页的名称、地区与提供商，与状态筛选叠加，翻页清空。12 个及以下保持平铺。未提供此钩子的主题沿用默认标题，`example` 无需改入口。
 - `skeletonCards(count)` 返回占位 `li` 数组，使用 `.placeholder` 以便加载结束清除；占位内容对辅助技术隐藏。
 - `createConstellation(container)` 返回 `{update(nodes), clear()}`。图形只反映当前页已校验的集合；`clear()` 必须撤下全部节点相关信息。
 
@@ -172,7 +174,8 @@ CSS 使用相对导入：
 
 ### 无凭据与 CSP
 
-- 状态页不需要账户、会话探测、CSRF token、Agent token 或管理接口。HTTP/SSE 使用 `credentials:'omit'`；浏览器 WebSocket 没有这个选项，可能自动带同源 Cookie，但公开端点完全忽略会话，主题不能读取、依赖或传递凭据。
+- 状态页不需要账户、CSRF token、Agent token 或管理接口。HTTP/SSE 使用 `credentials:'omit'`；浏览器 WebSocket 没有这个选项，可能自动带同源 Cookie，但公开端点完全忽略会话，主题不能读取、依赖或传递凭据。
+- 唯一例外在共享运行时而非主题：控制台登录后在 localStorage 留下不含凭据的 `orbitbeacon.signed-in` 标记；只有标记存在时，`page.js` 才以同源凭据 `GET /api/v1/me`，只读取 `user.username` 来显示 `sign-in` 头像入口，不保留 CSRF token、不发写请求；401 清除标记，其他失败保留“登录”。匿名访客不会多发请求。主题不要自行探测会话。
 - 主题代码和静态素材对匿名访客可见，不能放密码、密钥、私有主机地址、内部 ID 或未公开节点数据；也不要把节点快照写进 localStorage、日志、分析服务或远端图片 URL。
 - 节点名、地区、提供商等内容不要拼进 `innerHTML`、属性名、脚本或样式；用 `textContent` 或共享 `h()` 的文本子节点。
 - API、WebSocket 和导航留在原站点；不要用静态资源基址拼它们，也不要从 CDN 取 API 数据。

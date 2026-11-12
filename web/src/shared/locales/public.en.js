@@ -24,6 +24,7 @@ export default {
   'public.title': 'Node status – OrbitBeacon',
   'public.description': 'Availability and resource usage of public nodes',
   'public.signIn': 'Sign in',
+  'public.openConsole': 'Open console',
   'public.heading': 'Node status',
   'public.loading': 'Loading nodes…',
   'public.notUpdated': 'Not updated yet',

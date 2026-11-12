@@ -100,6 +100,7 @@
 .example-page .filters {
   margin-top:0;
   margin-bottom:20px;
+  border-radius:8px;
 }
 
 .example-page .login,.example-page .refresh,.example-page .retry,
@@ -113,7 +114,7 @@
 }
 
 .example-page .card {
-  padding:22px;
+  --card-pad:22px;
   border-top:3px solid var(--idle);
 }
 
@@ -134,7 +135,7 @@
 }
 
 .example-page .gauges {
-  margin-block:24px;
+  margin-top:24px;
 }
 
 .example-page footer {

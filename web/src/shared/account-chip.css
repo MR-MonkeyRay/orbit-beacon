@@ -1,0 +1,100 @@
+/* 公开页右上角的已登录入口（src/public/page.js 把 #sign-in 换成它）：
+   头像首字母 + 用户名，整块是直达控制台的链接；退出登录留在控制台。 */
+.account-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-inline);
+  flex: none;
+  height: 36px;
+  max-width: 220px;
+  padding: 0 10px 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  text-decoration: none;
+  white-space: nowrap;
+  animation: fade-only var(--motion-normal) var(--ease);
+  transition: border-color var(--motion-fast),background-color var(--motion-fast);
+}
+
+.account-chip .avatar {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  background: color-mix(in srgb,var(--orbit) 16%,var(--panel));
+  color: var(--orbit);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
+}
+
+.account-chip .account-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-chip .account-go {
+  width: 14px;
+  height: 14px;
+  margin-left: -2px;
+  color: var(--ink-muted);
+  transition: transform var(--motion-fast) var(--ease),color var(--motion-fast);
+}
+
+@media (hover:hover) {
+  /* 底色保持中性，头像圆才不会和悬停底色融在一起；边框和箭头给出可点提示。 */
+  .account-chip:hover {
+    border-color: var(--orbit);
+    background: var(--surface);
+  }
+
+  .account-chip:hover .account-go {
+    color: var(--orbit);
+    transform: translateX(2px);
+  }
+}
+
+.account-chip:focus-visible {
+  border-radius: 999px;
+}
+
+@media (pointer:coarse) {
+  .account-chip {
+    height: var(--control-h);
+    padding-left: 6px;
+  }
+}
+
+/* 窄屏只留头像；用户名改为视觉隐藏，链接的无障碍名称不变。 */
+@media (max-width:480px) {
+  .account-chip {
+    justify-content: center;
+    gap: 0;
+    width: 36px;
+    padding: 0;
+  }
+
+  .account-chip .account-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    clip: rect(0 0 0 0);
+  }
+
+  .account-chip .account-go {
+    display: none;
+  }
+}
+
+@media (max-width:480px) and (pointer:coarse) {
+  .account-chip {
+    width: var(--control-h);
+  }
+}

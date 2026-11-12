@@ -179,7 +179,13 @@ for (const theme of ['default', 'example']) test(`${theme} actual theme builds c
   assert.match(css, /min-height:100vh;min-height:100dvh/);
   assert.match(css, /#empty\{flex:1;align-content:center;border:0\}/);
   const html = await readFile(path.join(out, 'public.html'), 'utf8');
-  assert.match(html, /class="hero-row">\s*<h1 id="headline"[\s\S]*?<div class="live">/);
+  // 默认主题：标题、摘要、刷新信息成一列；example 保留旧的 .hero-row 结构，默认样式两者都支持。
+  if (theme === 'default') assert.match(html, /class="hero hero-split"[\s\S]*?<h1 id="headline"[\s\S]*?id="summary"[\s\S]*?<div class="live">/);
+  else assert.match(html, /class="hero-row">\s*<h1 id="headline"[\s\S]*?<div class="live">/);
+  assert.match(css, /\.hero-row\{/);
+  assert.match(html, /<a id="sign-in" class="login" href="\/login"/);
+  assert.match(html, /<div id="services" hidden><\/div>/);
+  assert.match(css, /\.account-chip\{/);
   assert.match(html, /id="refresh"[^>]*aria-label="Refresh"[^>]*title="Refresh"/);
   assert.doesNotMatch(html, /<span data-i18n="common.refresh">/);
   assert.doesNotMatch(js, /Automatic updates|Language: \{preference\}/);
