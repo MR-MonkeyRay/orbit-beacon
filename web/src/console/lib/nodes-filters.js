@@ -3,7 +3,7 @@ import {displayStatus, STATUS} from '../format.js';
 
 export const NODE_PAGE_SIZE = 50;
 
-export const SORTS = ['name', 'status', 'cpu', 'memory', 'agent_version', 'created'];
+export const SORTS = ['order', 'name', 'status', 'cpu', 'memory', 'agent_version', 'created'];
 // 概览及状态筛选保留 STATUS_ORDER；节点列表优先展示需要关注的节点。
 export const NODE_STATUS_ORDER = ['offline', 'never', 'pending', 'online', 'disabled', 'stopped'];
 
@@ -33,7 +33,7 @@ export function writeNodeFilter(filter) {
 }
 
 export function nodeSortDirection(filter) {
-  return filter.dir || (filter.sort === 'created' ? 'desc' : 'asc');
+  return filter.dir || (['created', 'order'].includes(filter.sort) ? 'desc' : 'asc');
 }
 
 export function scopedNodes(indexed, filter) {
@@ -52,10 +52,11 @@ export function sortedNodes(nodes, filter) {
       if (Number.isFinite(av) !== Number.isFinite(bv)) return Number.isFinite(av) ? -1 : 1;
       return (Number.isFinite(av) ? (av - bv) * sign : 0) || nameOrder || a.id.localeCompare(b.id);
     }
-    const order = filter.sort === 'name' ? a.name.localeCompare(b.name, getLocale(), {numeric: true, sensitivity: 'base'})
+    const order = filter.sort === 'order' ? (a.display_order || 0) - (b.display_order || 0)
+      : filter.sort === 'name' ? a.name.localeCompare(b.name, getLocale(), {numeric: true, sensitivity: 'base'})
       : filter.sort === 'status' ? NODE_STATUS_ORDER.indexOf(displayStatus(a)) - NODE_STATUS_ORDER.indexOf(displayStatus(b))
         : filter.sort === 'agent_version' ? a.agent_version.localeCompare(b.agent_version, getLocale(), {numeric: true, sensitivity: 'base'})
         : a.created_at.localeCompare(b.created_at);
-    return order * sign || (filter.sort === 'status' ? nameOrder : 0) || a.id.localeCompare(b.id);
+    return order * sign || (['status', 'order'].includes(filter.sort) ? nameOrder : 0) || a.id.localeCompare(b.id);
   });
 }

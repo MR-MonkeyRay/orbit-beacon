@@ -105,11 +105,11 @@ func installStreamQueryFixture(t *testing.T, db *sql.DB, h *handler, store *publ
 
 func setStreamPublicSettings(t *testing.T, db *sql.DB, visible bool, name string) {
 	t.Helper()
-	settings, err := json.Marshal(nodes.PublicSettings{Enabled: visible, Name: name, Region: "Earth", Provider: "Test"})
+	settings, err := json.Marshal(nodes.PublicSettings{Enabled: visible, Fields: nodes.PublicFields})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("UPDATE stream_fixture_nodes SET public_settings=?", string(settings)); err != nil {
+	if _, err := db.Exec("UPDATE stream_fixture_nodes SET public_settings=?,name=?,region='Earth',provider='Test'", string(settings), name); err != nil {
 		t.Fatal(err)
 	}
 }

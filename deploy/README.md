@@ -36,6 +36,9 @@ MySQL 整理需具备所整理表的 `SELECT`、`INSERT` 权限。
 | `public_url` | `http://localhost:8080` | 浏览器可信源，见下文 |
 | `max_nodes` | `500` | 正整数，包含待注册、禁用节点；不是性能承诺 |
 | `trusted_proxies` | `[]` | 可信代理 IP / CIDR，见下文 |
+| `geoip_lookup` | `true` | 将未手动设置地区的 Agent 公网 IP 发送到 ipinfo.io 查询地区；设为 `false` 或 `ORBITBEACON_GEOIP_LOOKUP=false` 关闭 |
+| `geoip_token` | 空字符串 | 可选 ipinfo.io token；不与 `geoip_token_file` 同用 |
+| `geoip_token_file` | 空字符串 | token 文件路径，同用户所有、权限 `0600`；支持 `ORBITBEACON_GEOIP_TOKEN_FILE` |
 | `web_update_interval_seconds` | `10` | 整数 2–60 秒，网页推送合并与 HTTP 轮询周期；重启生效，不改变 Agent 采集周期 |
 | `metrics_listen` | 空字符串 | 独立 HTTP `/metrics`（服务自身）与 `/metrics/nodes`（节点）监听，主监听不提供；无认证，节点指标含节点名、地区、服务商、磁盘路径和网卡名，须绑定回环或受保护网络 |
 | `access_log` | `false` | 访问日志；健康检查仅记录 5xx，不记录查询字符串、Cookie、Authorization 或密钥 |

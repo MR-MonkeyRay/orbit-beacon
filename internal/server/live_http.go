@@ -85,7 +85,7 @@ func consoleDetailsEqual(a, b consoleDetailData) bool {
 	}
 	if a.Node != nil {
 		a, b := a.Node, b.Node
-		if a.ID != b.ID || a.Name != b.Name || a.Status != b.Status || a.Presence != b.Presence || a.Stopped != b.Stopped || a.Notes != b.Notes || a.Region != b.Region || a.Provider != b.Provider || a.AgentVersion != b.AgentVersion || !equalLiveValue(a.GroupID, b.GroupID) || !equalLiveValue(a.ExpiresOn, b.ExpiresOn) || !slices.Equal(a.Tags, b.Tags) || !a.CreatedAt.Equal(b.CreatedAt) || !equalLiveTime(a.LastSeen, b.LastSeen) {
+		if a.DisplayOrder != b.DisplayOrder || a.PriceAmount != b.PriceAmount || a.PriceCurrency != b.PriceCurrency || a.BillingCycle != b.BillingCycle || a.AutoRenew != b.AutoRenew || a.Bandwidth != b.Bandwidth || a.IPv4 != b.IPv4 || a.IPv6 != b.IPv6 || a.NetworkRoute != b.NetworkRoute || a.PlanExtra != b.PlanExtra || a.RemoteIP != b.RemoteIP || a.GeoCountry != b.GeoCountry || a.GeoLocation != b.GeoLocation || a.ID != b.ID || a.Name != b.Name || a.Status != b.Status || a.Presence != b.Presence || a.Stopped != b.Stopped || a.Notes != b.Notes || a.Region != b.Region || a.Provider != b.Provider || a.AgentVersion != b.AgentVersion || !equalLiveValue(a.GroupID, b.GroupID) || !equalLiveValue(a.ExpiresOn, b.ExpiresOn) || !slices.Equal(a.Tags, b.Tags) || !a.CreatedAt.Equal(b.CreatedAt) || !equalLiveTime(a.LastSeen, b.LastSeen) {
 			return false
 		}
 	}

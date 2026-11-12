@@ -6,11 +6,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"orbitbeacon/internal/server/audit"
@@ -23,82 +22,101 @@ import (
 // OnlineWindow 是管理端和公开端共用的近期上报窗口。
 const OnlineWindow = 180 * time.Second
 
-// PublicSettings 仅包含明确选择用于匿名公开的文本。
+// PublicFields defines the storage and wire order for explicit disclosure.
+var PublicFields = []string{"region", "provider", "cpu", "memory", "load", "uptime", "availability", "traffic", "expires_on", "price", "billing_cycle", "bandwidth", "ip_version", "network_route", "plan_extra"}
+var DefaultPublicFields = []string{"cpu", "memory", "load", "uptime", "availability"}
+
 type PublicSettings struct {
-	Enabled  bool   `json:"enabled"`
-	Name     string `json:"name"`
-	Region   string `json:"region"`
-	Provider string `json:"provider"`
+	Enabled bool     `json:"enabled"`
+	Fields  []string `json:"fields"`
 }
 
-type PublicSettingsPatch struct {
-	Enabled  *bool   `json:"enabled"`
-	Name     *string `json:"name"`
-	Region   *string `json:"region"`
-	Provider *string `json:"provider"`
-}
-
-// 保留原始文本的有效性：否则 encoding/json 会在服务校验管理员输入之前，
-// 悄悄把非法 UTF-8 替换为 U+FFFD。
-func (p *PublicSettingsPatch) UnmarshalJSON(data []byte) error {
-	var wire struct {
-		Enabled  *bool           `json:"enabled"`
-		Name     json.RawMessage `json:"name"`
-		Region   json.RawMessage `json:"region"`
-		Provider json.RawMessage `json:"provider"`
+func (p *PublicSettings) UnmarshalJSON(data []byte) error {
+	type wire PublicSettings
+	value := wire{Fields: append([]string{}, DefaultPublicFields...)}
+	if !utf8.Valid(data) {
+		return validation.Invalid("fields", "must be valid UTF-8")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&wire); err != nil {
+	if err := decoder.Decode(&value); err != nil {
 		return err
 	}
-	*p = PublicSettingsPatch{Enabled: wire.Enabled}
-	for _, field := range []struct {
-		name string
-		raw  json.RawMessage
-		dst  **string
-	}{
-		{"name", wire.Name, &p.Name}, {"region", wire.Region, &p.Region}, {"provider", wire.Provider, &p.Provider},
-	} {
-		if !utf8.Valid(field.raw) {
-			return validation.Invalid(field.name, "must be valid UTF-8")
-		}
-		if len(field.raw) != 0 {
-			if err := json.Unmarshal(field.raw, field.dst); err != nil {
-				return err
-			}
-		}
+	if value.Fields == nil {
+		return validation.Invalid("fields", "must be an array")
 	}
-	return nil
+	*p = PublicSettings(value)
+	return p.Validate()
 }
 
-// Validate 校验公开字段，不改动已存储的设置。
+type PublicSettingsPatch struct {
+	Enabled *bool     `json:"enabled"`
+	Fields  *[]string `json:"fields"`
+}
+
+func (p *PublicSettingsPatch) UnmarshalJSON(data []byte) error {
+	if !utf8.Valid(data) {
+		return validation.Invalid("fields", "must be valid UTF-8")
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for _, key := range []string{"enabled", "fields"} {
+		if bytes.Equal(bytes.TrimSpace(raw[key]), []byte("null")) {
+			return validation.Invalid(key, "must not be null")
+		}
+	}
+	type wire PublicSettingsPatch
+	var w wire
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&w); err != nil {
+		return err
+	}
+	*p = PublicSettingsPatch(w)
+	return nil
+}
 func (p PublicSettings) Validate() error {
-	fields := make(map[string]string)
-	for _, field := range []struct {
-		name, value string
-		max         int
-	}{{"name", p.Name, 255}, {"region", p.Region, 128}, {"provider", p.Provider, 128}} {
-		if !utf8.ValidString(field.value) || len(field.value) > field.max || strings.ContainsFunc(field.value, unicode.IsControl) {
-			fields[field.name] = fmt.Sprintf("must be valid UTF-8 without control characters and at most %d bytes", field.max)
+	seen := map[string]bool{}
+	for _, field := range p.Fields {
+		if !slices.Contains(PublicFields, field) {
+			return validation.Invalid("fields", "unknown field")
 		}
-	}
-	if p.Enabled && strings.TrimSpace(p.Name) == "" {
-		fields["name"] = "must be nonempty when published"
-	}
-	if len(fields) > 0 {
-		return &validation.Error{Fields: fields}
+		if seen[field] {
+			return validation.Invalid("fields", "duplicate field")
+		}
+		seen[field] = true
 	}
 	return nil
 }
-
+func canonicalFields(fields []string) []string {
+	out := make([]string, 0, len(fields))
+	for _, field := range PublicFields {
+		if slices.Contains(fields, field) {
+			out = append(out, field)
+		}
+	}
+	return out
+}
 func decodePublic(raw string) (PublicSettings, error) {
-	var p PublicSettings
+	p := PublicSettings{Fields: append([]string{}, DefaultPublicFields...)}
 	if !utf8.ValidString(raw) {
 		return p, errors.New("invalid public settings UTF-8")
 	}
-	err := json.Unmarshal([]byte(raw), &p)
-	return p, err
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&p); err != nil {
+		return p, err
+	}
+	if p.Fields == nil {
+		return p, validation.Invalid("fields", "must be an array")
+	}
+	if err := p.Validate(); err != nil {
+		return p, err
+	}
+	p.Fields = canonicalFields(p.Fields)
+	return p, nil
 }
 
 func (s *Service) GetPublicSettings(ctx context.Context, id string) (PublicSettings, error) {
@@ -145,25 +163,17 @@ func (s *Service) PatchPublicSettings(ctx context.Context, id string, patch Publ
 		return PublicSettings{}, err
 	}
 	wasEnabled := p.Enabled
+	oldFields := append([]string{}, p.Fields...)
 	if patch.Enabled != nil {
 		p.Enabled = *patch.Enabled
 	}
-	for _, field := range []struct {
-		dst *string
-		src *string
-	}{{&p.Name, patch.Name}, {&p.Region, patch.Region}, {&p.Provider, patch.Provider}} {
-		if field.src != nil {
-			// 先校验再修剪，这样空白中的控制字符不会消失。
-			if !utf8.ValidString(*field.src) || strings.ContainsFunc(*field.src, unicode.IsControl) {
-				*field.dst = *field.src
-			} else {
-				*field.dst = strings.TrimSpace(*field.src)
-			}
-		}
+	if patch.Fields != nil {
+		p.Fields = append([]string{}, (*patch.Fields)...)
 	}
 	if err := p.Validate(); err != nil {
 		return PublicSettings{}, err
 	}
+	p.Fields = canonicalFields(p.Fields)
 	encoded, err := json.Marshal(p)
 	if err != nil {
 		return PublicSettings{}, err
@@ -178,7 +188,13 @@ func (s *Service) PatchPublicSettings(ctx context.Context, id string, patch Publ
 	if err := tx.Commit(); err != nil {
 		return PublicSettings{}, err
 	}
-	if wasEnabled && !p.Enabled {
+	withdrawn := wasEnabled && !p.Enabled
+	for _, field := range oldFields {
+		if wasEnabled && !slices.Contains(p.Fields, field) {
+			withdrawn = true
+		}
+	}
+	if withdrawn {
 		s.InvalidatePublicSafety()
 	} else {
 		s.InvalidatePublic()
@@ -214,7 +230,7 @@ func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int, now 
 		return nil, false, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT id,public_settings,last_seen,token_hash,credential_epoch,run_generation,report_session_id,'[]' FROM nodes WHERE status='unknown' AND token_hash IS NOT NULL AND first_enrolled_at IS NOT NULL ORDER BY created_at,id`)
+	rows, err := tx.QueryContext(ctx, `SELECT id,public_settings,last_seen,token_hash,credential_epoch,run_generation,report_session_id,'[]',name,region,provider,geo_country,geo_location,expires_on,price_amount,price_currency,billing_cycle,auto_renew,bandwidth,ipv4,ipv6,network_route,plan_extra,quota_bytes FROM nodes WHERE status='unknown' AND token_hash IS NOT NULL AND first_enrolled_at IS NOT NULL ORDER BY display_order DESC,name,id`)
 	if err != nil {
 		return nil, false, err
 	}
@@ -292,6 +308,11 @@ func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int, now 
 
 // PublicRecord 是内部身份围栏，绝不作为 HTTP 响应。
 type PublicRecord struct {
+	Name, Region, Provider, Country, GeoLocation                                             string
+	ExpiresOn                                                                                *string
+	PriceAmount, PriceCurrency, BillingCycle, Bandwidth, NetworkRoute, PlanExtra, QuotaBytes string
+	AutoRenew, IPv4, IPv6                                                                    bool
+
 	ID               string         `json:"-"`
 	AvailabilityJSON string         `json:"-"`
 	Settings         PublicSettings `json:"-"`
@@ -316,7 +337,7 @@ func scanPublicRecord(row interface{ Scan(...any) error }) (PublicRecord, error)
 	var raw, generation string
 	var seen sql.NullString
 	var credential []byte
-	err := row.Scan(&p.ID, &raw, &seen, &credential, &p.CredentialEpoch, &generation, &p.Session, &p.AvailabilityJSON)
+	err := row.Scan(&p.ID, &raw, &seen, &credential, &p.CredentialEpoch, &generation, &p.Session, &p.AvailabilityJSON, &p.Name, &p.Region, &p.Provider, &p.Country, &p.GeoLocation, &p.ExpiresOn, &p.PriceAmount, &p.PriceCurrency, &p.BillingCycle, &p.AutoRenew, &p.Bandwidth, &p.IPv4, &p.IPv6, &p.NetworkRoute, &p.PlanExtra, &p.QuotaBytes)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}

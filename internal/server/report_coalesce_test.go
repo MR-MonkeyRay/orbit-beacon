@@ -25,7 +25,7 @@ func TestReportCoalescingFastPathAdvancesLatestAndPublicLiveness(t *testing.T) {
 	f := newAgentHTTP(t, 1)
 	id, token, _ := enrollHTTP(t, f, "coalesce", 1)
 	if _, err := f.nodes.PatchPublicSettings(context.Background(), id, nodes.PublicSettingsPatch{
-		Enabled: boolPtr(true), Name: stringPtr("Coalesce"),
+		Enabled: boolPtr(true),
 	}); err != nil {
 		t.Fatal(err)
 	}

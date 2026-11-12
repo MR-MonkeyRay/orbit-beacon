@@ -16,8 +16,8 @@ import (
 func publishCacheNode(t *testing.T, f *agentFixture) (string, string) {
 	t.Helper()
 	id, token, _ := enrollHTTP(t, f, "private-cache", 151)
-	enabled, name := true, "Public cached"
-	if _, err := f.nodes.PatchPublicSettings(context.Background(), id, nodes.PublicSettingsPatch{Enabled: &enabled, Name: &name}); err != nil {
+	enabled := true
+	if _, err := f.nodes.PatchPublicSettings(context.Background(), id, nodes.PublicSettingsPatch{Enabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
 	return id, token
@@ -100,7 +100,7 @@ func TestPublicPageCacheImmediatelyUpdatesPublishedText(t *testing.T) {
 	id, _ := publishCacheNode(t, f)
 	publicList(t, f, "/api/public/v1/nodes", nil)
 	name := "Updated public name"
-	if _, err := f.nodes.PatchPublicSettings(context.Background(), id, nodes.PublicSettingsPatch{Name: &name}); err != nil {
+	if _, err := f.nodes.PatchMetadata(context.Background(), id, nodes.MetadataPatch{Name: &name}); err != nil {
 		t.Fatal(err)
 	}
 	response := agentHTTPCall(t, f, http.MethodGet, "/api/public/v1/nodes", "", nil, "", "")

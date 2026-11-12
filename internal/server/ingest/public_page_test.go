@@ -30,7 +30,7 @@ func publicPageFixture(t *testing.T, count int) *coalesceFixture {
 			t.Fatal(err)
 		}
 		credential := fmt.Sprintf("%032d", i)
-		if _, err := f.db.Exec(`UPDATE nodes SET status='unknown',token_hash=?,first_enrolled_at=?,last_seen=?,run_generation='1',report_session_id='session',public_settings='{"enabled":true,"name":"Public"}' WHERE id=?`, []byte(credential), timekey.Format(f.now), timekey.Format(f.now), node.ID); err != nil {
+		if _, err := f.db.Exec(`UPDATE nodes SET status='unknown',token_hash=?,first_enrolled_at=?,last_seen=?,run_generation='1',report_session_id='session',public_settings='{"enabled":true}' WHERE id=?`, []byte(credential), timekey.Format(f.now), timekey.Format(f.now), node.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -227,7 +227,7 @@ func TestPublicAvailabilityRealSQLiteBatchAndCache(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		id := fmt.Sprintf("private-node-%d", i)
 		if _, err := db.Exec(`INSERT INTO nodes(id,name,status,token_hash,first_enrolled_at,created_at,public_settings,run_generation,report_session_id,last_seen)
- VALUES(?,?,'unknown',?,?,?,? ,?,?,?)`, id, "private-name", []byte(strings.Repeat(fmt.Sprint(i), 32)), timekey.Format(now), timekey.Format(now), `{"enabled":true,"name":"Public"}`, fmt.Sprint(i), "session", timekey.Format(now)); err != nil {
+ VALUES(?,?,'unknown',?,?,?,? ,?,?,?)`, id, "edge", []byte(strings.Repeat(fmt.Sprint(i), 32)), timekey.Format(now), timekey.Format(now), `{"enabled":true}`, fmt.Sprint(i), "session", timekey.Format(now)); err != nil {
 			t.Fatal(err)
 		}
 		// 每个节点的百分比不同，串节点时断言会失败。
@@ -255,7 +255,7 @@ func TestPublicAvailabilityRealSQLiteBatchAndCache(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, secret := range []string{"private-node", "private-name", "online_seconds", "offline_seconds", "node_id"} {
+		for _, secret := range []string{"private-node", "online_seconds", "offline_seconds", "node_id"} {
 			if strings.Contains(string(raw), secret) {
 				t.Fatalf("leaked %s", raw)
 			}

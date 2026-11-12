@@ -32,6 +32,8 @@ import (
 const sessionCookie = "orbitbeacon_session"
 
 type Options struct {
+	GeoIPLookup              bool
+	GeoIPToken               string
 	Storage                  *storage.Databases
 	Backups                  *backup.Service
 	Inbox                    *inbox.Service
@@ -58,6 +60,7 @@ type Options struct {
 }
 
 type handler struct {
+	geo                      *geoWorker
 	storage                  *storage.Databases
 	commands                 *commands.Service
 	backups                  *backup.Service
@@ -166,6 +169,9 @@ func NewHandler(opts Options) (*handler, error) {
 	} else {
 		h.publicPageDisabled.Store(!publicPage.Enabled)
 		h.publicPageUnknown.Store(false)
+	}
+	if opts.GeoIPLookup {
+		h.geo = newGeoWorker(opts.Nodes, opts.GeoIPToken)
 	}
 	h.webUpdateIntervalSeconds = opts.WebUpdateIntervalSeconds
 	return h, nil

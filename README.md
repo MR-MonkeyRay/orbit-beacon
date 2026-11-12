@@ -94,6 +94,14 @@ go vet ./...
 
 `main` 全部检查通过后调用[发布流程](.github/workflows/release.yml)，提供 server、agent、mcp 的 amd64 / arm64 独立二进制、`SHA256SUMS` 与双架构服务端镜像。手动下载后先核对校验和，再 `chmod +x`。
 
+### Agent IP 地理位置
+
+服务器记录 Agent 客户端 IP，并遵循 `trusted_proxies` 配置。默认启用 `geoip_lookup: true`：未手动设置地区的节点会将公网 IP 发送给 **ipinfo.io** 查询国家和地区。成功或无效响应后缓存 24 小时；IP 变化后重新查询。设置 `geoip_lookup: false` 或 `ORBITBEACON_GEOIP_LOOKUP=false` 可关闭外部查询，IP 记录仍保留。可选 `geoip_token` / `ORBITBEACON_GEOIP_TOKEN` 或 `geoip_token_file` / `ORBITBEACON_GEOIP_TOKEN_FILE` 提供 token，两者不可同时配置；文件须为同用户所有的 `0600` 普通文件。
+
+公开设置为 `{enabled, fields}`。已发布节点始终显示自身名称、状态和 `last_seen`，其余键仅在选中时出现；已选中但无数据的指标为 `null`。地区优先使用手动值，否则使用自动位置。公开流量目前仅提供 `quota_bytes`，避免匿名请求逐节点查询账期用量。排序为 `display_order DESC, name, id`，集合不变时偏移分页顺序稳定。
+
+配置备份包含显示权重和套餐字段。IP 与地理位置随 `last_seen`、`system` 归入监控类别：它们是运行观测，不是管理员配置。仅恢复配置时保留目标节点已有的运行观测，不从配置备份恢复地址。
+
 ## 许可证
 
 [GNU GPL v3](LICENSE)。

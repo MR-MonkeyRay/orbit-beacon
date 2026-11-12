@@ -34,7 +34,7 @@ func TestPublicPageCapturesVisibilityVersionBeforeRacingMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	credential := sha256.Sum256([]byte("public-page-race-credential"))
-	if _, err := db.ExecContext(ctx, `UPDATE nodes SET status='unknown', token_hash=?, first_enrolled_at=?, last_seen=?, run_generation='1', report_session_id='session', public_settings='{"enabled":true,"name":"Published"}' WHERE id=?`, credential[:], timekey.Format(now), timekey.Format(now), node.ID); err != nil {
+	if _, err := db.ExecContext(ctx, `UPDATE nodes SET status='unknown', token_hash=?, first_enrolled_at=?, last_seen=?, run_generation='1', report_session_id='session', public_settings='{"enabled":true}' WHERE id=?`, credential[:], timekey.Format(now), timekey.Format(now), node.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -96,7 +96,7 @@ func TestPublicPageCapturesVisibilityVersionBeforeRacingMutation(t *testing.T) {
 	locked = false
 
 	first := <-result
-	if first.err != nil || len(first.page.Nodes) != 1 || first.page.Nodes[0].Name != "Published" {
+	if first.err != nil || len(first.page.Nodes) != 1 || first.page.Nodes[0].Name != "private" {
 		t.Fatalf("in-flight page = %+v, err=%v", first.page, first.err)
 	}
 	key := publicPageKey{service: ns, limit: 100, offset: 0, ttl: 10 * time.Second}

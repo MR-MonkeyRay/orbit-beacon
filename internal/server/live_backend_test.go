@@ -923,8 +923,8 @@ func TestPublicLiveWebSocketClearsHTTPHandshakeDeadlineAfterHijack(t *testing.T)
 func TestPublicPagesEqualIncludesAvailability(t *testing.T) {
 	first, _ := availability.Project("", time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC))
 	second, _ := availability.Project("", time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC))
-	a := ingest.PublicPage{Nodes: []ingest.PublicNode{{Availability: first}}}
-	b := ingest.PublicPage{Nodes: []ingest.PublicNode{{Availability: second}}}
+	a := ingest.PublicPage{Nodes: []ingest.PublicNode{{Fields: []string{"availability"}, Availability: first}}}
+	b := ingest.PublicPage{Nodes: []ingest.PublicNode{{Fields: []string{"availability"}, Availability: second}}}
 	if !publicPagesEqual(a, b) {
 		t.Fatal("equal availability changed snapshot")
 	}

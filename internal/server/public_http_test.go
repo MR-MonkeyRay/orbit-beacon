@@ -118,7 +118,7 @@ func publicNodeKeys(t *testing.T, node map[string]json.RawMessage) {
 		got = append(got, key)
 	}
 	sort.Strings(got)
-	want := []string{"availability", "cpu_percent", "last_seen", "load1", "memory_percent", "metric_status", "name", "provider", "region", "status", "uptime_seconds"}
+	want := []string{"availability", "cpu_percent", "last_seen", "load1", "memory_percent", "metric_status", "name", "status", "uptime_seconds"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("public node keys=%v want=%v", got, want)
 	}
@@ -141,7 +141,7 @@ func publicSettingsObject(t *testing.T, response *httptest.ResponseRecorder) map
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	if want := []string{"enabled", "name", "provider", "region"}; !reflect.DeepEqual(keys, want) {
+	if want := []string{"enabled", "fields"}; !reflect.DeepEqual(keys, want) {
 		t.Fatalf("public settings keys=%v want=%v", keys, want)
 	}
 	return object
@@ -160,54 +160,21 @@ func TestPublicSettingsHTTPAuthorizationValidationAndIsolation(t *testing.T) {
 	apiError(t, publicSettingsPatch(t, f, id, `{"enabled":true,"name":"wrong-origin"}`, admin, csrf, "https://attacker.example.test"), http.StatusForbidden, "forbidden")
 	apiError(t, publicSettingsPatch(t, f, id, `{"enabled":true,"name":"missing-csrf"}`, admin, "", publicURL), http.StatusForbidden, "forbidden")
 
-	for _, test := range []struct {
-		name  string
-		body  string
-		field string
-	}{
-		{"empty published name", `{"enabled":true,"name":""}`, "name"},
-		{"name too long", fmt.Sprintf(`{"enabled":true,"name":%q}`, strings.Repeat("中", 86)), "name"},
-		{"control character", `{"enabled":true,"name":"bad\u0000name"}`, "name"},
-		{"invalid UTF-8 name", string([]byte{'{', '"', 'n', 'a', 'm', 'e', '"', ':', '"', 0xff, '"', '}'}), "name"},
-		{"region too long", fmt.Sprintf(`{"region":%q}`, strings.Repeat("中", 43)), "region"},
-		{"provider control", `{"provider":"bad\nprovider"}`, "provider"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			fields := apiError(t, publicSettingsPatch(t, f, id, test.body, admin, csrf, publicURL), http.StatusBadRequest, "validation_failed")
-			var got map[string]string
-			if err := json.Unmarshal(fields["fields"], &got); err != nil || got[test.field] == "" {
-				t.Fatalf("validation fields=%s err=%v", fields["fields"], err)
-			}
-		})
+	for _, body := range []string{`{"fields":["unknown"]}`, `{"fields":["cpu","cpu"]}`} {
+		apiError(t, publicSettingsPatch(t, f, id, body, admin, csrf, publicURL), http.StatusBadRequest, "validation_failed")
 	}
-	apiError(t, publicSettingsPatch(t, f, id, `{"enabled":true,"name":"ok","unexpected":true}`, admin, csrf, publicURL), http.StatusBadRequest, "invalid_json")
-
-	settings := publicSettingsPatch(t, f, id, `{"enabled":true,"name":"  Tokyo public  ","region":"  Tokyo ","provider":" Example Cloud "}`, second, secondCSRF, publicURL)
-	object := publicSettingsObject(t, settings)
-	for key, want := range map[string]string{"name": "Tokyo public", "region": "Tokyo", "provider": "Example Cloud"} {
-		var got string
-		if err := json.Unmarshal(object[key], &got); err != nil || got != want {
-			t.Errorf("%s=%q err=%v want=%q", key, got, err, want)
-		}
+	apiError(t, publicSettingsPatch(t, f, id, `{"name":"alias"}`, admin, csrf, publicURL), http.StatusBadRequest, "invalid_json")
+	settings := publicSettingsObject(t, publicSettingsPatch(t, f, id, `{"enabled":true,"fields":["cpu","region"]}`, second, secondCSRF, publicURL))
+	if string(settings["fields"]) != `["region","cpu"]` {
+		t.Fatalf("canonical fields: %s", settings["fields"])
 	}
-	if enabled, ok := object["enabled"]; !ok || string(enabled) != "true" {
-		t.Fatalf("enabled=%s", object["enabled"])
-	}
-	// 省略和显式 null 保留原值；空字符串清除字段。
-	object = publicSettingsObject(t, publicSettingsPatch(t, f, id, `{"name":null,"region":"","provider":null}`, admin, csrf, publicURL))
-	var name, region, provider string
-	_ = json.Unmarshal(object["name"], &name)
-	_ = json.Unmarshal(object["region"], &region)
-	_ = json.Unmarshal(object["provider"], &provider)
-	if name != "Tokyo public" || region != "" || provider != "Example Cloud" {
-		t.Fatalf("null/empty patch changed wrong values: name=%q region=%q provider=%q", name, region, provider)
-	}
+	publicSettingsObject(t, publicSettingsPatch(t, f, id, `{"fields":[]}`, admin, csrf, publicURL))
 
 	pending, err := f.nodes.CreatePending(context.Background(), nodes.CreateRequest{Name: "pending-private"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertHTTPStatus(t, publicSettingsPatch(t, f, pending.ID, `{"enabled":true,"name":"Pending public"}`, admin, csrf, publicURL), http.StatusOK)
+	assertHTTPStatus(t, publicSettingsPatch(t, f, pending.ID, `{"enabled":true}`, admin, csrf, publicURL), http.StatusOK)
 	var sessionsBefore, sessionsAfter int
 	if err := f.db.QueryRow("SELECT count(*) FROM sessions").Scan(&sessionsBefore); err != nil {
 		t.Fatal(err)
@@ -232,7 +199,7 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 	if _, err := f.db.Exec(`INSERT INTO node_tags(node_id,tag) VALUES (?,'private-tag-2001:db8::8')`, id); err != nil {
 		t.Fatal(err)
 	}
-	if response := publicSettingsPatch(t, f, id, `{"enabled":true,"name":"Tokyo node","region":"Tokyo","provider":"Example cloud"}`, admin, csrf, publicURL); response.Code != http.StatusOK {
+	if response := publicSettingsPatch(t, f, id, `{"enabled":true}`, admin, csrf, publicURL); response.Code != http.StatusOK {
 		t.Fatalf("publish returned %d: %s", response.Code, response.Body)
 	}
 
@@ -280,7 +247,7 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 	}
 	node := anonymous.Nodes[0]
 	publicNodeKeys(t, node)
-	for key, want := range map[string]string{"name": `"Tokyo node"`, "region": `"Tokyo"`, "provider": `"Example cloud"`, "status": `"online"`, "cpu_percent": "25", "memory_percent": "50", "load1": "0.5", "uptime_seconds": "100"} {
+	for key, want := range map[string]string{"name": `"private-2001:db8::7"`, "status": `"online"`, "cpu_percent": "25", "memory_percent": "50", "load1": "0.5", "uptime_seconds": "100"} {
 		if string(node[key]) != want {
 			t.Errorf("public %s=%s want %s", key, node[key], want)
 		}
@@ -290,7 +257,7 @@ func TestPublicHTTPProjectionPrivacyAndTemporalBoundaries(t *testing.T) {
 	if err := json.Unmarshal(node["last_seen"], &lastSeen); err != nil || !lastSeen.Equal(base) {
 		t.Fatalf("last_seen=%s err=%v", node["last_seen"], err)
 	}
-	for _, sentinel := range []string{"private-2001:db8::7", "private-note-203.0.113.8", "private-region", "private-provider", "private-tag-2001:db8::8", "identical-host", "private-session", "cpu-1", "memory-1", "sample_id", "token_hash", "installation-private", "tls_expires_at", "2035-05-06", "private-probe.example"} {
+	for _, sentinel := range []string{"private-note-203.0.113.8", "private-region", "private-provider", "private-tag-2001:db8::8", "identical-host", "private-session", "cpu-1", "memory-1", "sample_id", "token_hash", "installation-private", "tls_expires_at", "2035-05-06", "private-probe.example"} {
 		if strings.Contains(string(anonymousBytes), sentinel) {
 			t.Errorf("anonymous response leaked private sentinel %q: %s", sentinel, anonymousBytes)
 		}
@@ -343,7 +310,7 @@ func TestPublicHTTPRotationRestartPaginationAndWithdrawal(t *testing.T) {
 		id, token, _ := enrollHTTP(t, f, fmt.Sprintf("private-node-%d", i), byte(i+10))
 		ids = append(ids, id)
 		tokens = append(tokens, token)
-		body := fmt.Sprintf(`{"enabled":true,"name":"Public %d","region":"Region %d","provider":"Provider"}`, i, i)
+		body := `{"enabled":true}`
 		assertHTTPStatus(t, publicSettingsPatch(t, f, id, body, admin, csrf, publicURL), http.StatusOK)
 	}
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", tokens[0], reportBody(1, 1, "first-session", 10)), 1)
@@ -353,7 +320,7 @@ func TestPublicHTTPRotationRestartPaginationAndWithdrawal(t *testing.T) {
 		t.Fatalf("first public page=%+v", first)
 	}
 	next, _ := publicList(t, f, "/api/public/v1/nodes?limit=1&offset=1", nil)
-	if len(next.Nodes) != 1 || next.Nodes[0]["name"] == nil || string(next.Nodes[0]["name"]) != `"Public 1"` {
+	if len(next.Nodes) != 1 || next.Nodes[0]["name"] == nil || string(next.Nodes[0]["name"]) != `"private-node-1"` {
 		t.Fatalf("stable public pagination=%+v", next)
 	}
 	for _, query := range []string{"?limit=0", "?limit=101", "?offset=-1", "?limit=nope"} {

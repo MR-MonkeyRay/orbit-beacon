@@ -16,13 +16,13 @@ func TestPublicCollectionExcludesInactiveNodesAndRawSeries(t *testing.T) {
 	f := newAgentHTTP(t, 8)
 	ctx := context.Background()
 	var visible, token string
-	enabled, name := true, "Explicit public"
+	enabled := true
 	for i, kind := range []string{"visible", "private", "disabled", "deleted"} {
 		id, credential, _ := enrollHTTP(t, f, "private-"+kind, byte(100+i))
 		if kind == "private" {
 			continue
 		}
-		if _, err := f.nodes.PatchPublicSettings(ctx, id, nodes.PublicSettingsPatch{Enabled: &enabled, Name: &name}); err != nil {
+		if _, err := f.nodes.PatchPublicSettings(ctx, id, nodes.PublicSettingsPatch{Enabled: &enabled}); err != nil {
 			t.Fatal(err)
 		}
 		switch kind {
@@ -42,7 +42,7 @@ func TestPublicCollectionExcludesInactiveNodesAndRawSeries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.nodes.PatchPublicSettings(ctx, pending.ID, nodes.PublicSettingsPatch{Enabled: &enabled, Name: &name}); err != nil {
+	if _, err := f.nodes.PatchPublicSettings(ctx, pending.ID, nodes.PublicSettingsPatch{Enabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.db.Exec("UPDATE nodes SET expires_on='2028-02-29' WHERE id=?", visible); err != nil {
@@ -66,7 +66,7 @@ func TestPublicCollectionExcludesInactiveNodesAndRawSeries(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, raw := publicList(t, f, "/api/public/v1/nodes", nil)
-	if len(result.Nodes) != 1 || string(result.Nodes[0]["name"]) != `"Explicit public"` {
+	if len(result.Nodes) != 1 || string(result.Nodes[0]["name"]) != `"private-visible"` {
 		t.Fatalf("inactive nodes exposed: %s", raw)
 	}
 	for _, secret := range []string{"expires_on", "2028-02-29", path, iface, "private-source-2001:db8::99", "private-report-session", visible, token} {

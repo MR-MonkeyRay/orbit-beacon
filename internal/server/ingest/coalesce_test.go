@@ -56,7 +56,7 @@ func newCoalesceFixtureWithOptions(t *testing.T, opts Options, targets ...string
 	}
 	f.id = node.ID
 	credential := sha256.Sum256([]byte(coalesceToken))
-	if _, err := db.Exec(`UPDATE nodes SET token_hash=?,status='unknown',first_enrolled_at=?,public_settings='{"enabled":true,"name":"Coalesce"}' WHERE id=?`, credential[:], timekey.Format(f.now), f.id); err != nil {
+	if _, err := db.Exec(`UPDATE nodes SET token_hash=?,status='unknown',first_enrolled_at=?,public_settings='{"enabled":true}' WHERE id=?`, credential[:], timekey.Format(f.now), f.id); err != nil {
 		t.Fatal(err)
 	}
 	// 统计行的持久化，包括相同值的 UPDATE。

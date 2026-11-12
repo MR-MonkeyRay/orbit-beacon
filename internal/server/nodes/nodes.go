@@ -37,6 +37,20 @@ const (
 )
 
 type Node struct {
+	DisplayOrder  int    `json:"display_order"`
+	PriceAmount   string `json:"price_amount"`
+	PriceCurrency string `json:"price_currency"`
+	BillingCycle  string `json:"billing_cycle"`
+	AutoRenew     bool   `json:"auto_renew"`
+	Bandwidth     string `json:"bandwidth"`
+	IPv4          bool   `json:"ipv4"`
+	IPv6          bool   `json:"ipv6"`
+	NetworkRoute  string `json:"network_route"`
+	PlanExtra     string `json:"plan_extra"`
+	RemoteIP      string `json:"remote_ip"`
+	GeoCountry    string `json:"geo_country"`
+	GeoLocation   string `json:"geo_location"`
+
 	Stopped      bool       `json:"stopped"`
 	ID           string     `json:"id"`
 	Name         string     `json:"name"`
@@ -58,6 +72,17 @@ type CreateRequest struct {
 }
 
 type MetadataPatch struct {
+	DisplayOrder  *int    `json:"display_order"`
+	PriceAmount   *string `json:"price_amount"`
+	PriceCurrency *string `json:"price_currency"`
+	BillingCycle  *string `json:"billing_cycle"`
+	AutoRenew     *bool   `json:"auto_renew"`
+	Bandwidth     *string `json:"bandwidth"`
+	IPv4          *bool   `json:"ipv4"`
+	IPv6          *bool   `json:"ipv6"`
+	NetworkRoute  *string `json:"network_route"`
+	PlanExtra     *string `json:"plan_extra"`
+
 	Name     *string `json:"name"`
 	Notes    *string `json:"notes"`
 	Region   *string `json:"region"`
@@ -203,7 +228,7 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 
 type scanner interface{ Scan(...any) error }
 
-const nodeColumnsBase = `id, name, status, created_at, notes, region, provider, group_id, expires_on,`
+const nodeColumnsBase = `display_order,price_amount,price_currency,billing_cycle,auto_renew,bandwidth,ipv4,ipv6,network_route,plan_extra,remote_ip,geo_country,geo_location,id, name, status, created_at, notes, region, provider, group_id, expires_on,`
 const nodeColumnsTail = ", last_seen, length(token_hash) > 0, `system`, " + commands.StoppedSQL
 
 func nodeColumns(dialect storage.Dialect) string {
@@ -218,7 +243,7 @@ func scanNode(row scanner, now time.Time) (Node, error) {
 	var created, tags, systemJSON string
 	var lastSeen sql.NullString
 	var hasCredential sql.NullBool
-	if err := row.Scan(&node.ID, &node.Name, &node.Status, &created, &node.Notes, &node.Region, &node.Provider, &node.GroupID, &node.ExpiresOn, &tags, &lastSeen, &hasCredential, &systemJSON, &node.Stopped); err != nil {
+	if err := row.Scan(&node.DisplayOrder, &node.PriceAmount, &node.PriceCurrency, &node.BillingCycle, &node.AutoRenew, &node.Bandwidth, &node.IPv4, &node.IPv6, &node.NetworkRoute, &node.PlanExtra, &node.RemoteIP, &node.GeoCountry, &node.GeoLocation, &node.ID, &node.Name, &node.Status, &created, &node.Notes, &node.Region, &node.Provider, &node.GroupID, &node.ExpiresOn, &tags, &lastSeen, &hasCredential, &systemJSON, &node.Stopped); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Node{}, ErrNotFound
 		}
@@ -307,6 +332,9 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 		return Node{}, ErrInvalidInput
 	}
 	fields := make(map[string]string)
+	if err := patch.ValidatePlan(); err != nil {
+		return Node{}, err
+	}
 	if patch.Name != nil && (strings.TrimSpace(*patch.Name) == "" || len(*patch.Name) > 255) {
 		fields["name"] = "must be nonempty and at most 255 bytes"
 	}
@@ -357,7 +385,11 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 			return Node{}, validation.Invalid("group_id", "group does not exist")
 		}
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE nodes SET name = COALESCE(?, name), notes = COALESCE(?, notes), region = COALESCE(?, region), provider = COALESCE(?, provider), group_id = CASE WHEN ? THEN ? ELSE group_id END, expires_on = CASE WHEN ? THEN ? ELSE expires_on END WHERE id = ?`, patch.Name, patch.Notes, patch.Region, patch.Provider, patch.GroupID != nil, groupID, patch.ExpiresOn != nil, expiresOn, id)
+	before, err := scanNode(tx.QueryRowContext(ctx, "SELECT "+nodeColumns(tx.Dialect())+" FROM nodes WHERE id=?", id), s.now())
+	if err != nil {
+		return Node{}, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE nodes SET display_order = COALESCE(?, display_order), price_amount = COALESCE(?, price_amount), price_currency = COALESCE(?, price_currency), billing_cycle = COALESCE(?, billing_cycle), auto_renew = COALESCE(?, auto_renew), bandwidth = COALESCE(?, bandwidth), ipv4 = COALESCE(?, ipv4), ipv6 = COALESCE(?, ipv6), network_route = COALESCE(?, network_route), plan_extra = COALESCE(?, plan_extra), name = COALESCE(?, name), notes = COALESCE(?, notes), geo_checked_at = CASE WHEN ? = '' THEN '' ELSE geo_checked_at END, region = COALESCE(?, region), provider = COALESCE(?, provider), group_id = CASE WHEN ? THEN ? ELSE group_id END, expires_on = CASE WHEN ? THEN ? ELSE expires_on END WHERE id = ?`, patch.DisplayOrder, patch.PriceAmount, patch.PriceCurrency, patch.BillingCycle, patch.AutoRenew, patch.Bandwidth, patch.IPv4, patch.IPv6, patch.NetworkRoute, patch.PlanExtra, patch.Name, patch.Notes, patch.Region, patch.Region, patch.Provider, patch.GroupID != nil, groupID, patch.ExpiresOn != nil, expiresOn, id)
 	if err := affected(result, err); err != nil {
 		return Node{}, err
 	}
@@ -375,12 +407,13 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 	if err != nil {
 		return Node{}, err
 	}
-	if err := audit.Insert(ctx, tx, "node.metadata.patch", id, s.now()); err != nil {
+	if err := audit.InsertDetails(ctx, tx, "node.metadata.patch", id, s.now(), metadataChanges(before, node)); err != nil {
 		return Node{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Node{}, err
 	}
+	s.InvalidatePublic()
 	return node, nil
 }
 

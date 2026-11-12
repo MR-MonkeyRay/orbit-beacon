@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"sync"
@@ -15,6 +16,18 @@ import (
 
 // PublicNode 是严格的匿名投影，独立于内部清单。
 type PublicNode struct {
+	Fields       []string        `json:"-"`
+	Country      string          `json:"country"`
+	ExpiresOn    *string         `json:"expires_on"`
+	Price        *PublicPrice    `json:"price"`
+	BillingCycle string          `json:"billing_cycle"`
+	AutoRenew    bool            `json:"auto_renew"`
+	Bandwidth    string          `json:"bandwidth"`
+	IPVersion    PublicIPVersion `json:"ip_version"`
+	NetworkRoute string          `json:"network_route"`
+	PlanExtra    string          `json:"plan_extra"`
+	Traffic      PublicTraffic   `json:"traffic"`
+
 	Availability  availability.Public `json:"availability"`
 	Name          string              `json:"name"`
 	Region        string              `json:"region"`
@@ -26,6 +39,70 @@ type PublicNode struct {
 	Load1         *float64            `json:"load1"`
 	UptimeSeconds *float64            `json:"uptime_seconds"`
 	MetricStatus  PublicMetricStatus  `json:"metric_status"`
+}
+
+type PublicPrice struct {
+	Amount   string `json:"amount"`
+	Currency string `json:"currency"`
+}
+type PublicIPVersion struct {
+	IPv4 bool `json:"ipv4"`
+	IPv6 bool `json:"ipv6"`
+}
+
+// Usage is deliberately omitted: public pages read quota with their existing node query.
+type PublicTraffic struct {
+	QuotaBytes string `json:"quota_bytes"`
+}
+
+// Absent means private; a selected metric or price without data is explicitly null.
+func (p PublicNode) MarshalJSON() ([]byte, error) {
+	out := map[string]any{"name": p.Name, "status": p.Status, "last_seen": p.LastSeen}
+	statuses := map[string]string{}
+	for _, field := range p.Fields {
+		switch field {
+		case "region":
+			out["region"] = p.Region
+			out["country"] = p.Country
+		case "provider":
+			out["provider"] = p.Provider
+		case "cpu":
+			out["cpu_percent"] = p.CPUPercent
+			statuses["cpu_percent"] = p.MetricStatus.CPUPercent
+		case "memory":
+			out["memory_percent"] = p.MemoryPercent
+			statuses["memory_percent"] = p.MetricStatus.MemoryPercent
+		case "load":
+			out["load1"] = p.Load1
+			statuses["load1"] = p.MetricStatus.Load1
+		case "uptime":
+			out["uptime_seconds"] = p.UptimeSeconds
+			statuses["uptime_seconds"] = p.MetricStatus.UptimeSeconds
+		case "availability":
+			out["availability"] = p.Availability
+		case "expires_on":
+			out["expires_on"] = p.ExpiresOn
+		case "price":
+			out["price"] = p.Price
+		case "billing_cycle":
+			out["billing_cycle"] = p.BillingCycle
+			out["auto_renew"] = p.AutoRenew
+		case "bandwidth":
+			out["bandwidth"] = p.Bandwidth
+		case "ip_version":
+			out["ip_version"] = p.IPVersion
+		case "network_route":
+			out["network_route"] = p.NetworkRoute
+		case "plan_extra":
+			out["plan_extra"] = p.PlanExtra
+		case "traffic":
+			out["traffic"] = p.Traffic
+		}
+	}
+	if len(statuses) > 0 {
+		out["metric_status"] = statuses
+	}
+	return json.Marshal(out)
 }
 
 type PublicMetricStatus struct {
@@ -115,7 +192,17 @@ func (s *Service) ProjectPublicRecord(record nodes.PublicRecord, now time.Time) 
 	if err != nil {
 		return PublicNode{}, err
 	}
-	out := PublicNode{Availability: projection, Name: record.Settings.Name, Region: record.Settings.Region, Provider: record.Settings.Provider, Status: "unknown", MetricStatus: unavailablePublicMetrics()}
+	region := record.Region
+	if region == "" {
+		region = record.GeoLocation
+	}
+	out := PublicNode{Fields: append([]string{}, record.Settings.Fields...), Country: record.Country, ExpiresOn: record.ExpiresOn,
+		BillingCycle: record.BillingCycle, AutoRenew: record.AutoRenew, Bandwidth: record.Bandwidth,
+		IPVersion: PublicIPVersion{record.IPv4, record.IPv6}, NetworkRoute: record.NetworkRoute, PlanExtra: record.PlanExtra,
+		Traffic: PublicTraffic{record.QuotaBytes}, Availability: projection, Name: record.Name, Region: region, Provider: record.Provider, Status: "unknown", MetricStatus: unavailablePublicMetrics()}
+	if record.PriceAmount != "" {
+		out.Price = &PublicPrice{record.PriceAmount, record.PriceCurrency}
+	}
 	if record.Generation == 0 || record.Session == "" || record.LastSeen.IsZero() || record.LastSeen.After(now) {
 		return out, nil
 	}

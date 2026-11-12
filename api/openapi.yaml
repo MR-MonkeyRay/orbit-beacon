@@ -334,24 +334,24 @@ paths:
         全局公开页禁用时，无论会话 Cookie 如何，本端点返回 403
         public_page_disabled 且不含节点数据。全局开关不改变各节点的发布状态。
 
-        仅包含公开设置有效且启用、公开名称非空、内部状态为 unknown、
+        仅包含公开设置有效且启用、内部状态为 unknown、
         持有有效节点凭据且已完成注册的节点。待注册、已禁用、已删除与未发布的节点被排除；
         JSON 格式错误或无效的公开设置同样被排除，不会回填。
         每个候选节点投影前都重新校验发布状态；并发撤销或删除会跳过该候选。
         其他读取失败会使整个请求失败，而非返回部分成功的响应。
         禁用、删除或撤销节点后，下次请求即排除该节点；已送达访问者的信息无法撤回。
 
-        候选按创建时间再按节点 UUID 排序，但不暴露这两个字段。
+        候选按 display_order 降序、节点名称、节点 UUID 排序，不暴露权重和 UUID。
         最多读取 limit+1 个候选以判定 has_more。
         next_offset 按消耗的候选数前进，而非按返回的节点数，
         因此并发撤销可能产生短页或空页但仍存在下一页。这是偏移分页，
         不是稳定集合快照，也不是节点总数。无效的分页参数返回 400。
         仅支持 GET；其他方法在认证前返回 405 并附 Allow: GET。
 
-        返回独立配置的公开文本、四个资源值、last_seen（服务端接收时间）
-        与四个新鲜度状态。内部元数据、ID、IP、主机名、凭据、安装/会话 ID、
-        运行时、原始上报、来源元数据、磁盘路径与网络名称一律不投影。
-        管理员须对填入公开文本的机密自行负责。generated_at 是状态与来源新鲜度的投影时钟。
+        名称始终为节点名称，状态与 last_seen 始终公开。其他键仅在 fields 选中时出现；
+        缺失表示未公开，null 表示已公开但没有数据。region 使用手动地区，否则使用 geo_location，
+        并附 country。traffic 当前只含 quota_bytes。绝不公开 notes、tags、group_id、remote_ip、
+        凭据、完整上报或来源元数据。generated_at 是状态与来源新鲜度的投影时钟。
 
         返回一个快照帧。server_time 为响应时钟；
         data.generated_at 为投影时钟，可按生效的 web_update_interval_seconds
@@ -2038,23 +2038,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                name: {type: [string, 'null'], x-minLengthBytes: 1, x-maxLengthBytes: 255, description: 非空白名称；null 保持不变。}
-                expires_on: {type: [string, 'null'], format: date, description: 真实的 YYYY-MM-DD 日期；省略保持不变，null 清除。}
-                notes: {type: [string, 'null'], description: 空字符串清除；null 保持不变。}
-                region: {type: [string, 'null'], description: 空字符串清除；null 保持不变。}
-                provider: {type: [string, 'null'], description: 空字符串清除；null 保持不变。}
-                group_id:
-                  type: [string, 'null']
-                  format: uuid
-                  description: 已有分组的 UUID，或 null 清除归属。
-                tags:
-                  type: [array, 'null']
-                  uniqueItems: true
-                  items: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255, description: 非空白标签；字符串不去除首尾空白，也不做规范化。}
-                  description: 替换全部标签；[] 清除，null 保持不变。拒绝完全重复的字符串。响应按字典序排序标签。
+              $ref: '#/components/schemas/MetadataPatch'
       responses:
         '200':
           description: 完整的已更新节点元数据。
@@ -2283,10 +2267,10 @@ paths:
       - $ref: '#/components/parameters/NodeID'
     get:
       operationId: getNodePublicSettings
-      description: 所有已认证管理员均可用。返回独立的公开设置，包括待注册或已禁用的节点；不从内部节点元数据填充任何值。
+      description: 所有已认证管理员均可用。返回 enabled 与字段白名单，包括待注册或已禁用的节点。
       responses:
         '200':
-          description: 完整的公开设置；遗留的空设置默认为禁用且文本为空。
+          description: 完整的公开设置；未配置时禁用，默认字段为 cpu、memory、load、uptime、availability。
           content:
             application/json:
               schema: {$ref: '#/components/schemas/PublicSettings'}
@@ -2297,23 +2281,10 @@ paths:
       operationId: patchNodePublicSettings
       description: |
         仅限管理员；须携带受信任的配置 Origin 与本会话的 CSRF 令牌。
-        省略或 null 的字段保持不变；空字符串清除文本。
-        文本先去除首尾空白，再校验 UTF-8 字节长度；无效 UTF-8 与控制字符会被拒绝，不会被静默移除。
-        合并后的设置在 enabled 为 true 时须有非空的公开名称。无效设置返回 400
-        validation_failed，字段键为 name、region 和/或 provider，
-        原有设置全部保持不变。未知字段被拒绝。
-
-        在一个事务中读取、合并、校验、持久化并插入带操作者的
-        node.public_settings.patch 审计事件；审计 details 为 {}，
-        审计插入失败回滚设置。有效的无变更补丁同样审计。
-        变更不修改内部元数据或凭据。停用发布保留公开文本供复用。
-        设置可在注册前或禁用时保存，但节点须注册且启用后才会展示；
-        保存不建立在线状态，也不证明已收到上报。
-
-        发布时暴露配置的名称、区域与服务商，以及有效时的 CPU、
-        内存百分比、一分钟负载与运行时长。公开文本刻意独立且默认为空，
-        绝不来自私有元数据。不要输入 IP 地址、主机名、域名或凭据。
-        不承诺自动机密检测或脱敏。
+        enabled 与 fields 均可选；省略保持不变，null 无效。fields 为空数组时仅公开名称、状态与 last_seen。
+        未知和重复字段返回 400；持久化使用规范顺序。字段撤回和停用立即使匿名缓存与实时流失效。
+        单事务合并、校验、持久化并记录 node.public_settings.patch；审计失败会回滚。
+        名称始终为节点名称；地区、提供商和套餐内容来自节点元数据，仅在选中后公开。
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -2974,7 +2945,7 @@ components:
         status: {type: string, enum: [pending, online, offline, unknown, disabled]}
         expires_on: {type: [string, 'null'], format: date}
 
-        region: {type: string}
+        region: {type: string, description: 手动地区，或未设置时的 geo_location；MCP 只读工具使用同一有效地区。}
         provider: {type: string}
         group_id:
           type: [string, 'null']
@@ -3756,11 +3727,53 @@ components:
           properties:
             name: {type: string, description: 告警规则名称（alert_rule.*）。}
           example: {}
+    MetadataPatch:
+      type: object
+      additionalProperties: false
+      description: Plan text is valid UTF-8 without control characters and is trimmed. Omitted or null scalar fields are unchanged. Geo fields are read-only.
+      properties:
+        name: {type: [string, 'null'], x-minLengthBytes: 1, x-maxLengthBytes: 255, description: 非空白名称；null 保持不变。}
+        expires_on: {type: [string, 'null'], format: date, description: 真实的 YYYY-MM-DD 日期；省略保持不变，null 清除。}
+        notes: {type: [string, 'null'], description: 空字符串清除；null 保持不变。}
+        region: {type: [string, 'null'], description: 空字符串清除；null 保持不变。}
+        provider: {type: [string, 'null'], description: 空字符串清除；null 保持不变。}
+        group_id:
+          type: [string, 'null']
+          format: uuid
+          description: 已有分组的 UUID，或 null 清除归属。
+        tags:
+          type: [array, 'null']
+          uniqueItems: true
+          items: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255, description: 非空白标签；字符串不去除首尾空白，也不做规范化。}
+          description: 替换全部标签；[] 清除，null 保持不变。拒绝完全重复的字符串。响应按字典序排序标签。
+        display_order: {type: [integer, 'null'], minimum: -1000000, maximum: 1000000, default: 0}
+        price_amount: {type: [string, 'null'], maxLength: 16, pattern: '^(?:|[0-9]+(?:\.[0-9]{1,2})?)$', default: ''}
+        price_currency: {type: [string, 'null'], maxLength: 8, default: '', description: Letters or currency symbols only.}
+        billing_cycle: {type: [string, 'null'], enum: ['', month, quarter, half_year, year, once, null], default: ''}
+        auto_renew: {type: [boolean, 'null'], default: false}
+        bandwidth: {type: [string, 'null'], x-maxLengthBytes: 64, default: ''}
+        ipv4: {type: [boolean, 'null'], default: false}
+        ipv6: {type: [boolean, 'null'], default: false}
+        network_route: {type: [string, 'null'], x-maxLengthBytes: 128, default: ''}
+        plan_extra: {type: [string, 'null'], x-maxLengthBytes: 255, default: ''}
     Node:
       type: object
       additionalProperties: false
-      required: [id, name, status, expires_on, notes, region, provider, group_id, tags, created_at, last_seen, presence, agent_version, stopped]
+      required: [id, name, status, expires_on, notes, region, provider, group_id, tags, created_at, last_seen, presence, agent_version, stopped, display_order, price_amount, price_currency, billing_cycle, auto_renew, bandwidth, ipv4, ipv6, network_route, plan_extra, remote_ip, geo_country, geo_location]
       properties:
+        display_order: {type: integer, minimum: -1000000, maximum: 1000000, default: 0}
+        price_amount: {type: string, maxLength: 16, pattern: '^(?:|[0-9]+(?:\.[0-9]{1,2})?)$', default: ''}
+        price_currency: {type: string, maxLength: 8, default: '', description: Letters or currency symbols only.}
+        billing_cycle: {type: string, enum: ['', month, quarter, half_year, year, once], default: ''}
+        auto_renew: {type: boolean, default: false}
+        bandwidth: {type: string, x-maxLengthBytes: 64, default: ''}
+        ipv4: {type: boolean, default: false}
+        ipv6: {type: boolean, default: false}
+        network_route: {type: string, x-maxLengthBytes: 128, default: ''}
+        plan_extra: {type: string, x-maxLengthBytes: 255, default: ''}
+        remote_ip: {type: string, readOnly: true}
+        geo_country: {type: string, pattern: '^(?:[A-Z]{2})?$', readOnly: true}
+        geo_location: {type: string, readOnly: true}
         stopped: {type: boolean, description: 最新 stop 成功，且收到它的进程和凭据仍是节点当前值；任何新进程上报后清除。}
         id: {type: string, format: uuid}
         name: {type: string}
@@ -3832,29 +3845,24 @@ components:
     PublicSettings:
       type: object
       additionalProperties: false
-      required: [enabled, name, region, provider]
-      description: 管理员独立发布的文本；绝不来自内部元数据。文本去除首尾空白后须为有效 UTF-8 且不含控制字符，长度限制按 UTF-8 字节计算。启用时须有非空名称。已有的空设置解码为禁用与三个空字符串。
+      required: [enabled, fields]
+      description: Explicit field disclosure in canonical order. Name and status are always public. Never-configured nodes default to disabled and cpu/memory/load/uptime/availability. Unknown or duplicate fields are rejected.
       properties:
         enabled: {type: boolean, default: false}
-        name: {type: string, x-maxLengthBytes: 255, default: '', pattern: '^[^\u0000-\u001f\u007f-\u009f]*$', description: 独立的公开名称；仅在发布禁用时允许为空。}
-        region: {type: string, x-maxLengthBytes: 128, default: '', pattern: '^[^\u0000-\u001f\u007f-\u009f]*$'}
-        provider: {type: string, x-maxLengthBytes: 128, default: '', pattern: '^[^\u0000-\u001f\u007f-\u009f]*$'}
-      allOf:
-        - if:
-            properties:
-              enabled: {const: true}
-          then:
-            properties:
-              name: {x-minLengthBytes: 1}
+        fields:
+          type: array
+          uniqueItems: true
+          default: [cpu, memory, load, uptime, availability]
+          items: {type: string, enum: [region, provider, cpu, memory, load, uptime, availability, traffic, expires_on, price, billing_cycle, bandwidth, ip_version, network_route, plan_extra]}
     PublicSettingsPatch:
       type: object
       additionalProperties: false
-      description: 四个字段均可选；省略或 null 保持存储值不变。空字符串清除文本。去除首尾空白后按 UTF-8 字节校验长度；无效 UTF-8 或控制字符会被拒绝，不会被静默移除。合并后的存储设置（而非仅本补丁）在启用时须有非空名称。空对象是有效的无变更补丁。
       properties:
-        enabled: {type: [boolean, 'null'], description: 启用或禁用发布；null 保持不变。}
-        name: {type: [string, 'null'], x-maxLengthBytes: 255, pattern: '^[^\u0000-\u001f\u007f-\u009f]*$', description: 去除首尾空白后的公开名称；合并设置禁用时可用空字符串清除；null 保持不变。}
-        region: {type: [string, 'null'], x-maxLengthBytes: 128, pattern: '^[^\u0000-\u001f\u007f-\u009f]*$', description: 去除首尾空白后的公开区域；空字符串清除；null 保持不变。}
-        provider: {type: [string, 'null'], x-maxLengthBytes: 128, pattern: '^[^\u0000-\u001f\u007f-\u009f]*$', description: 去除首尾空白后的公开服务商；空字符串清除；null 保持不变。}
+        enabled: {type: boolean}
+        fields:
+          type: array
+          uniqueItems: true
+          items: {type: string, enum: [region, provider, cpu, memory, load, uptime, availability, traffic, expires_on, price, billing_cycle, bandwidth, ip_version, network_route, plan_extra]}
     AvailabilityPercent:
       type: [number, 'null']
       minimum: 0
@@ -3895,37 +3903,18 @@ components:
     PublicNode:
       type: object
       additionalProperties: false
-      required: [name, region, provider, status, last_seen, availability, metric_status, cpu_percent, memory_percent, load1, uptime_seconds]
-      description: |
-        最小公开投影，绝非内部节点或原始上报。
-        公开文本为显式配置，绝不来自私有元数据。
-        资源键始终存在；null 表示不可用，而非零。
-
-        当前凭据无上报代次或会话，或 last_seen 缺失或晚于请求的 server_time 时，
-        状态为 unknown。否则 online 表示 0 到 180 秒（含边界）内收到过接受的新上报；
-        超过 180 秒为 offline。这是近期有效上报，非 ping、服务健康或可用性。
-        拒绝、重复与旧序号的上报不刷新 last_seen。
-        凭据轮换重置上报归属，在新上报前产生 unknown。
-
-        当前进程按完全匹配的凭据、绑定版本（epoch）、代次与会话保留最后接受的快照。
-        离线与来源过期不擦除可用数值，也不推进运行时长。不持久化完整上报；
-        服务端重启保留资产与持久化的 last_seen，但在新上报前可能返回 null 资源。
-        原始 ok/stale 状态加有效数值可用。原始 stale 或来源经过时间超过
-        max(3*interval_ms,45000) 时产生 stale 但保留数值。相等仍为新鲜。
-        来源间隔溢出使用协议的防溢出新鲜度规则。错误/不支持/缺失的值
-        为 unavailable/null，绝不从更早的成功上报填充。原始上报状态不变，
-        过期值不会成为告警/历史观测。
+      required: [name, status, last_seen]
+      description: Only selected fields appear. Absent means private; null means selected but no data. Name is the node name. Ordered by display_order descending then name then id. Region uses manual region then geo_location; country accompanies selected region. Traffic currently includes quota only. Metric status contains exactly the selected metric keys.
       properties:
         availability: {$ref: '#/components/schemas/PublicAvailability'}
-        name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255, description: 显式的公开名称。}
-        region: {type: string, x-maxLengthBytes: 128, description: 显式的公开区域；未设置时为空。}
-        provider: {type: string, x-maxLengthBytes: 128, description: 显式的公开服务商；未设置时为空。}
+        name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255, description: 节点名称。}
+        region: {type: string, x-maxLengthBytes: 255, description: 手动地区优先；否则为 geo_location。}
+        provider: {type: string, x-maxLengthBytes: 128, description: 节点提供商。}
         status: {type: string, enum: [online, offline, unknown]}
         last_seen: {type: [string, 'null'], format: date-time, description: 当前身份最近已知的服务端接收时间；重启后可能是合并的持久观测。上报前或身份重置后为 null。}
         metric_status:
           type: object
           additionalProperties: false
-          required: [cpu_percent, memory_percent, load1, uptime_seconds]
           properties:
             cpu_percent: {$ref: '#/components/schemas/PublicMetricStatus'}
             memory_percent: {$ref: '#/components/schemas/PublicMetricStatus'}
@@ -3935,6 +3924,33 @@ components:
         memory_percent: {type: [number, 'null'], minimum: 0, maximum: 100, description: '100 * (total - available) / total，无整数溢出；两个值须可用且 total 为正。'}
         load1: {type: [number, 'null'], minimum: 0, description: 一分钟系统负载均值；无单位，非百分比。}
         uptime_seconds: {type: [number, 'null'], minimum: 0, description: 系统运行时长（秒）。}
+        country: {type: string, pattern: '^(?:[A-Z]{2})?$'}
+        expires_on: {type: [string, 'null'], format: date}
+        price:
+          type: [object, 'null']
+          additionalProperties: false
+          required: [amount, currency]
+          properties:
+            amount: {type: string}
+            currency: {type: string}
+        billing_cycle: {type: string, enum: ['', month, quarter, half_year, year, once]}
+        auto_renew: {type: boolean}
+        bandwidth: {type: string}
+        ip_version:
+          type: object
+          additionalProperties: false
+          required: [ipv4, ipv6]
+          properties:
+            ipv4: {type: boolean}
+            ipv6: {type: boolean}
+        network_route: {type: string}
+        plan_extra: {type: string}
+        traffic:
+          type: object
+          additionalProperties: false
+          required: [quota_bytes]
+          properties:
+            quota_bytes: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
     PublicMetricStatus:
       type: string
       enum: [ok, stale, unavailable]

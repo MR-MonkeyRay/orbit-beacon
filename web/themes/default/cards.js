@@ -62,24 +62,26 @@ export function createCard() {
   let connectionStale = false;
   const paintFreshness = () => {
     if (!current) return;
-    const states = current.metric_status;
+    const states = current.metric_status || {};
     for (const [key, element] of [['cpu_percent', cpu], ['memory_percent', memory]]) {
-      const stale = current[key] !== null && (states[key] === 'stale' || connectionStale);
+      const stale = current[key] != null && (states[key] === 'stale' || connectionStale);
       element.classList.toggle('metric-stale', stale);
       element.setStale(stale);
     }
     for (const [key, element] of [['load1', load], ['uptime_seconds', uptime]]) {
-      const stale = current[key] !== null && (states[key] === 'stale' || connectionStale);
+      const stale = current[key] != null && (states[key] === 'stale' || connectionStale);
       element.classList.toggle('metric-stale', stale);
       if (stale) element.title = t('public.metric.staleNote'); else element.removeAttribute('title');
     }
     const hasTime = Number.isFinite(timestampMillis(current.last_seen));
     lastReport.hidden = !hasTime || !(connectionStale || current.status === 'offline' || Object.values(states).includes('stale'));
   };
+  const gauges = h('div', {class: 'gauges'}, cpu, memory);
+  const stats = h('dl', {class: 'stats'}, h('div', null, h('dt', null, t('public.metric.load')), load), h('div', null, h('dt', null, t('public.metric.uptime')), uptime));
+  const extras = h('div', {class: 'stats'});
   const article = h('article', {class: 'card'},
     h('header', {class: 'card-head'}, name, badge), where,
-    h('div', {class: 'gauges'}, cpu, memory),
-    h('dl', {class: 'stats'}, h('div', null, h('dt', null, t('public.metric.load')), load), h('div', null, h('dt', null, t('public.metric.uptime')), uptime)), availability, lastReport);
+    gauges, stats, availability, extras, lastReport);
   const item = h('li', {class: 'node'}, article);
   article.addEventListener('animationend', (event) => {
     if (event.target === article && event.animationName === 'status-changed') article.classList.remove('changed');
@@ -92,21 +94,37 @@ export function createCard() {
       article.classList.add('changed');
     }
     current = node;
-    availability.update(node.availability);
+    availability.hidden = !('availability' in node);
+    if (node.availability) availability.update(node.availability);
     connectionStale = false;
     item.dataset.status = node.status;
     name.textContent = node.name;
     badge.className = `status ${node.status}`;
     badge.textContent = STATUS[node.status];
-    region.lastChild.textContent = node.region;
-    region.hidden = !node.region;
-    provider.lastChild.textContent = node.provider;
+    region.lastChild.textContent = [node.region, node.country].filter(Boolean).join(' · ');
+    region.hidden = !node.region && !node.country;
+    provider.lastChild.textContent = node.provider || '';
     provider.hidden = !node.provider;
-    where.hidden = !node.region && !node.provider;
-    cpu.set(node.cpu_percent);
-    memory.set(node.memory_percent);
-    load.textContent = node.load1 === null ? '—' : formatLoadNumber(node.load1);
-    uptime.textContent = formatDuration(node.uptime_seconds);
+    where.hidden = !node.region && !node.country && !node.provider;
+    cpu.hidden = !('cpu_percent' in node);
+    cpu.set(node.cpu_percent ?? null);
+    memory.hidden = !('memory_percent' in node);
+    memory.set(node.memory_percent ?? null);
+    load.parentElement.hidden = !('load1' in node);
+    uptime.parentElement.hidden = !('uptime_seconds' in node);
+    gauges.hidden = cpu.hidden && memory.hidden;
+    stats.hidden = load.parentElement.hidden && uptime.parentElement.hidden;
+    load.textContent = node.load1 == null ? '—' : formatLoadNumber(node.load1);
+    uptime.textContent = formatDuration(node.uptime_seconds ?? null);
+    const lines = [];
+    if ('price' in node || 'billing_cycle' in node) lines.push(h('p', null, [node.price ? `${node.price.currency} ${node.price.amount}`.trim() : '', node.billing_cycle ? t(`public.cycle.${node.billing_cycle}`) : '', node.auto_renew ? t('public.field.auto_renew') : ''].filter(Boolean).join(' · ') || '—'));
+    if (node.ip_version) lines.push(h('p', {class: 'cell-tags'}, ['ipv4', 'ipv6'].filter((key) => node.ip_version[key]).map((key) => h('span', {class: 'tag static'}, key.toUpperCase()))));
+    for (const key of ['bandwidth', 'network_route', 'plan_extra', 'expires_on']) {
+      if (key in node) lines.push(h('p', null, t(`public.field.${key}`), ': ', node[key] || '—'));
+    }
+    if (node.traffic) lines.push(h('p', null, t('public.field.traffic'), ': ', node.traffic.quota_bytes, ' B'));
+    extras.replaceChildren(...lines);
+    extras.hidden = lines.length === 0;
     const received = timestampMillis(node.last_seen);
     lastReport.replaceChildren(...(Number.isFinite(received)
       ? tParts('public.lastReport', {time: h('time', {datetime: node.last_seen, title: node.last_seen}, formatTimestamp(new Date(received)))}) : []));

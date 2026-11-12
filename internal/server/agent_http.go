@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net"
 	"net/http"
 	"strings"
 
@@ -50,6 +51,7 @@ func (h *handler) agentRoute(w http.ResponseWriter, r *http.Request, requestID s
 			h.agentError(w, err, requestID)
 			return
 		}
+		h.observeAgentIP(r, result.NodeID)
 		writeJSON(w, http.StatusOK, result)
 		return
 	}
@@ -90,7 +92,26 @@ func (h *handler) agentRoute(w http.ResponseWriter, r *http.Request, requestID s
 		h.agentError(w, err, requestID)
 		return
 	}
+	h.observeAgentIP(r, result.NodeID)
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *handler) observeAgentIP(r *http.Request, id string) {
+	ip, _, err := net.SplitHostPort(h.clientAddr(r))
+	if err != nil {
+		ip = h.clientAddr(r)
+	}
+	eligible, changed, err := h.ingest.ObserveRemote(r.Context(), id, ip)
+	if err != nil {
+		h.logger.Warn("record agent IP", "error", err)
+		return
+	}
+	if changed {
+		h.nodes.InvalidatePublic()
+	}
+	if eligible && h.geo != nil && geoPublicIP(ip) {
+		h.geo.enqueue(id)
+	}
 }
 
 func (h *handler) enrollmentRoute(w http.ResponseWriter, r *http.Request, requestID string) {

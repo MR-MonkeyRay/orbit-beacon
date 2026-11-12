@@ -416,3 +416,34 @@ test('public empty later page centers the empty-page message and hides paginatio
   assert.equal(ui.elements.pagination.hidden, true);
   assert.equal(ui.elements.retry.hidden, true);
 });
+
+test('public cards render only selected plan fields and remove them after withdrawal', async (t) => {
+  const ui = await setup(t);
+  const socket = ui.sockets[0]; socket.open();
+  const minimal = {name: 'edge', status: 'unknown', last_seen: null};
+  socket.message(snapshot(payload('edge', {nodes: [{...minimal, region: 'California', country: 'US', price: {amount: '12.50', currency: '$'}, billing_cycle: 'month', auto_renew: true,
+    ip_version: {ipv4: true, ipv6: true}, bandwidth: '1 Gbps', network_route: 'Transit', plan_extra: 'Plan note', expires_on: '2027-01-01', traffic: {quota_bytes: '1000'}}]})));
+  const card = ui.elements.nodes.querySelector('.card');
+  assert.ok(card.textContent.includes('$ 12.50'));
+  assert.ok(card.textContent.includes('California · US'));
+  assert.ok(card.textContent.includes('IPV4') && card.textContent.includes('IPV6'));
+  assert.equal(card.querySelector('.gauges').hidden, true);
+  assert.equal(card.querySelector('dl').hidden, true);
+  assert.ok(card.textContent.includes('Plan note'));
+  socket.message(snapshot(payload('edge', {nodes: [minimal]})));
+  const withdrawn = ui.elements.nodes.querySelector('.card');
+  assert.doesNotMatch(withdrawn.textContent, /12\.50|California|IPV4|IPV6|Plan note|Transit/);
+  assert.equal(withdrawn.querySelector('.where').hidden, true);
+});
+
+test('public search tolerates a fleet without selected region or provider fields', async (t) => {
+  const ui = await setup(t);
+  const socket = ui.sockets[0]; socket.open();
+  const nodes = Array.from({length: 13}, (_, index) => ({name: `edge-${index}`, status: 'unknown', last_seen: null}));
+  socket.message(snapshot(payload('edge', {nodes})));
+  const search = document.querySelector('.node-search');
+  search.value = 'edge-12'; search.dispatchEvent(new Event('input'));
+  const visible = ui.elements.nodes.querySelectorAll('.node').filter((card) => !card.hidden);
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].querySelector('h2').textContent, 'edge-12');
+});

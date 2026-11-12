@@ -77,6 +77,7 @@ var allowedInternalImports = map[string]map[string]bool{
 	"orbitbeacon/internal/timekey":     {},
 	"orbitbeacon/internal/buildinfo":   {},
 	"orbitbeacon/internal/server": {
+		"orbitbeacon/internal/server/egress":       true,
 		"orbitbeacon/internal/server/availability": true,
 		"orbitbeacon/internal/server/commands":     true,
 		"orbitbeacon/internal/logging":             true,

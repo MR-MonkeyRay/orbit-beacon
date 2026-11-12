@@ -43,7 +43,7 @@ func TestLatestAndPublicProjectionFenceReplacementIdentity(t *testing.T) {
 				token = strings.Repeat("B", 43)
 				credential := sha256.Sum256([]byte(token))
 				// 有意复用主键，避免仅靠新节点 ID 隔离而掩盖内存身份比对失效。
-				if _, err := f.db.Exec(`INSERT INTO nodes(id,name,status,token_hash,first_enrolled_at,created_at,public_settings) VALUES(?,'replacement','unknown',?,?,?,'{"enabled":true,"name":"Replacement"}')`, f.id, credential[:], timekey.Format(f.now), timekey.Format(f.now)); err != nil {
+				if _, err := f.db.Exec(`INSERT INTO nodes(id,name,status,token_hash,first_enrolled_at,created_at,public_settings) VALUES(?,'replacement','unknown',?,?,?,'{"enabled":true}')`, f.id, credential[:], timekey.Format(f.now), timekey.Format(f.now)); err != nil {
 					t.Fatal(err)
 				}
 			}

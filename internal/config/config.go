@@ -25,6 +25,9 @@ type LoadOptions struct {
 }
 
 type Server struct {
+	GeoIPLookup                      bool           `json:"geoip_lookup"`
+	GeoIPTokenFile                   string         `json:"geoip_token_file"`
+	GeoIPToken                       string         `json:"geoip_token"`
 	Database                         DatabaseConfig `json:"database"`
 	AllowInsecureWebhooks            bool           `json:"allow_insecure_webhooks"`
 	NotificationAllowPrivateNetworks bool           `json:"notification_allow_private_networks"`
@@ -122,7 +125,7 @@ func encodeValue(key, value string) (json.RawMessage, error) {
 			return json.Marshal(value)
 		}
 		return json.Marshal(n)
-	case "access_log", "allow_insecure_webhooks", "notification_allow_private_networks":
+	case "geoip_lookup", "access_log", "allow_insecure_webhooks", "notification_allow_private_networks":
 		enabled, err := strconv.ParseBool(value)
 		if err != nil {
 			// 保留格式错误的值，待来源优先级确定后，
@@ -160,8 +163,8 @@ func encodeValue(key, value string) (json.RawMessage, error) {
 }
 
 func LoadServer(opts LoadOptions) (Server, error) {
-	cfg := Server{ListenAddr: "127.0.0.1:8080", DataDir: "./data", PublicURL: "http://localhost:8080", MaxNodes: 500, WebUpdateIntervalSeconds: 10}
-	layers, err := sources(opts, []string{"allow_insecure_webhooks", "notification_allow_private_networks", "listen_addr", "metrics_listen", "access_log", "data_dir", "public_url", "max_nodes", "web_update_interval_seconds", "trusted_proxies", "database"})
+	cfg := Server{GeoIPLookup: true, ListenAddr: "127.0.0.1:8080", DataDir: "./data", PublicURL: "http://localhost:8080", MaxNodes: 500, WebUpdateIntervalSeconds: 10}
+	layers, err := sources(opts, []string{"geoip_lookup", "geoip_token", "geoip_token_file", "allow_insecure_webhooks", "notification_allow_private_networks", "listen_addr", "metrics_listen", "access_log", "data_dir", "public_url", "max_nodes", "web_update_interval_seconds", "trusted_proxies", "database"})
 	if err != nil {
 		return Server{}, err
 	}
@@ -332,6 +335,14 @@ func ValidatePath(path string) error {
 }
 
 func (cfg Server) Validate() error {
+	if cfg.GeoIPToken != "" && cfg.GeoIPTokenFile != "" {
+		return errors.New("geoip_token and geoip_token_file are mutually exclusive")
+	}
+	if cfg.GeoIPTokenFile != "" {
+		if err := ValidatePath(cfg.GeoIPTokenFile); err != nil {
+			return err
+		}
+	}
 	if _, _, err := net.SplitHostPort(cfg.ListenAddr); err != nil {
 		return fmt.Errorf("listen_addr: %w", err)
 	}

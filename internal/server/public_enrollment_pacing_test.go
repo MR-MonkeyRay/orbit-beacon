@@ -19,8 +19,8 @@ func TestPublicStreamSQLiteFirstEnrollmentIsPacedAddition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enabled, label := true, "Prepublished node"
-	if _, err := f.nodes.PatchPublicSettings(context.Background(), pending.ID, nodes.PublicSettingsPatch{Enabled: &enabled, Name: &label}); err != nil {
+	enabled, label := true, pending.Name
+	if _, err := f.nodes.PatchPublicSettings(context.Background(), pending.ID, nodes.PublicSettingsPatch{Enabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
 	ticket, err := f.enrollments.CreateSingle(context.Background(), pending.ID)

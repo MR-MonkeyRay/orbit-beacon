@@ -52,3 +52,16 @@ test('default status URL stays clean and explicit legacy created sort round-trip
     assert.equal(nodeSortDirection(readNodeFilter('?sort=created')), 'desc');
   } finally { Object.assign(globalThis, original); }
 });
+
+test('order sort defaults descending and stabilizes ties by name then id', () => {
+  const filter = readNodeFilter('?sort=order');
+  assert.equal(nodeSortDirection(filter), 'desc');
+  const nodes = [
+    {id: 'z', name: 'B', display_order: 10},
+    {id: 'b', name: 'A', display_order: 10},
+    {id: 'a', name: 'A', display_order: 10},
+    {id: 'c', name: 'C', display_order: -1},
+    {id: 'd', name: 'D'},
+  ];
+  assert.deepEqual(sortedNodes(nodes, filter).map((node) => node.id), ['a', 'b', 'z', 'd', 'c']);
+});

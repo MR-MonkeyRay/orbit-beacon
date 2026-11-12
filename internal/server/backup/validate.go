@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/netip"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -103,7 +105,7 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 					return invalidPayload(table.Name, "")
 				}
 				row[c.Name] = value
-				if strings.HasSuffix(c.Name, "_at") {
+				if strings.HasSuffix(c.Name, "_at") && !(c.Name == "geo_checked_at" && row.text(c.Name) == "") {
 					if !canonicalTime(row.text(c.Name)) {
 						rows.Close()
 						return invalidPayload(table.Name, "")
@@ -355,6 +357,18 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 	case "backup_plans":
 		return validatePlanRow(r, backupBox)
 	case "node_observations":
+		if raw := r.text("remote_ip"); raw != "" {
+			ip, err := netip.ParseAddr(raw)
+			if err != nil || ip.Zone() != "" {
+				return invalidRow()
+			}
+		}
+		if country := r.text("geo_country"); country != "" && !regexp.MustCompile(`^[A-Z]{2}$`).MatchString(country) {
+			return invalidRow()
+		}
+		if location := r.text("geo_location"); !utf8.ValidString(location) || len(location) > 255 || strings.ContainsFunc(location, unicode.IsControl) || location != strings.TrimSpace(location) {
+			return invalidRow()
+		}
 		if r.text("node_id") == "" {
 			return invalidRow()
 		}
@@ -450,6 +464,36 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 }
 
 func validateNode(r payloadRow) error {
+	for _, key := range []string{"price_amount", "price_currency", "billing_cycle", "bandwidth", "network_route", "plan_extra"} {
+		if r.text(key) != strings.TrimSpace(r.text(key)) {
+			return invalidRow()
+		}
+	}
+
+	vDisplayOrder := int(r.integer("display_order"))
+	vPriceAmount := r.text("price_amount")
+	vPriceCurrency := r.text("price_currency")
+	vBillingCycle := r.text("billing_cycle")
+	vAutoRenew := r.integer("auto_renew") == 1
+	if r.integer("auto_renew") < 0 || r.integer("auto_renew") > 1 {
+		return invalidRow()
+	}
+	vBandwidth := r.text("bandwidth")
+	vIPv4 := r.integer("ipv4") == 1
+	if r.integer("ipv4") < 0 || r.integer("ipv4") > 1 {
+		return invalidRow()
+	}
+	vIPv6 := r.integer("ipv6") == 1
+	if r.integer("ipv6") < 0 || r.integer("ipv6") > 1 {
+		return invalidRow()
+	}
+	vNetworkRoute := r.text("network_route")
+	vPlanExtra := r.text("plan_extra")
+	patch := nodes.MetadataPatch{DisplayOrder: &vDisplayOrder, PriceAmount: &vPriceAmount, PriceCurrency: &vPriceCurrency, BillingCycle: &vBillingCycle, AutoRenew: &vAutoRenew, Bandwidth: &vBandwidth, IPv4: &vIPv4, IPv6: &vIPv6, NetworkRoute: &vNetworkRoute, PlanExtra: &vPlanExtra}
+	if err := patch.ValidatePlan(); err != nil {
+		return err
+	}
+
 	if r["expires_on"] != nil {
 		date, err := time.Parse(time.DateOnly, r.text("expires_on"))
 		if err != nil || date.Format(time.DateOnly) != r.text("expires_on") {

@@ -14,8 +14,8 @@ import (
 func TestPublicProjectionConcurrentReportsRotationAndDeletion(t *testing.T) {
 	f := newAgentHTTP(t, 2)
 	id, token, _ := enrollHTTP(t, f, "private-concurrent", 80)
-	enabled, name := true, "Public concurrent"
-	if _, err := f.nodes.PatchPublicSettings(context.Background(), id, nodes.PublicSettingsPatch{Enabled: &enabled, Name: &name}); err != nil {
+	enabled := true
+	if _, err := f.nodes.PatchPublicSettings(context.Background(), id, nodes.PublicSettingsPatch{Enabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
 	start := make(chan struct{})

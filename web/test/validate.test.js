@@ -33,7 +33,7 @@ function response(overrides = {}) {
 test('accepts valid payloads, nullable metrics, empty arrays, and extra fields', () => {
   assert.equal(validResponse(response(), 0), true);
   assert.equal(validResponse(response({nodes: [node({cpu_percent: null, memory_percent: null, load1: null, uptime_seconds: null,
-    last_seen: null, metric_status: {cpu_percent: 'unavailable', memory_percent: 'unavailable', load1: 'unavailable', uptime_seconds: 'unavailable'}, extra: true})], extra: true}), 0), true);
+    last_seen: null, metric_status: {cpu_percent: 'unavailable', memory_percent: 'unavailable', load1: 'unavailable', uptime_seconds: 'unavailable'}})], extra: true}), 0), true);
   assert.equal(validResponse(response({nodes: []}), 0), true);
   assert.equal(validResponse(response({has_more: true, next_offset: 50}), 0), true);
   assert.equal(validResponse(response({nodes: Array.from({length: 100}, () => node())}), 0), true);
@@ -109,4 +109,16 @@ test('requires nullable last_seen and exactly the four public metric states with
     assert.equal(validResponse(response({nodes: [node({metric_status: {...node().metric_status, [key]: 'unavailable'}})]})), false);
   }
   assert.equal(validResponse(response({nodes: [node({metric_status: {...node().metric_status, runtime: 'ok'}})]})), false);
+});
+
+test('accepts selected optional fields, absent metrics, and deliberate null data', () => {
+  const minimal = {name: 'edge', status: 'unknown', last_seen: null};
+  assert.equal(validResponse(response({nodes: [minimal]})), true);
+  const optional = {...minimal, region: 'California', country: 'US', price: {amount: '12.50', currency: '$'}, billing_cycle: 'month', auto_renew: false,
+    ip_version: {ipv4: true, ipv6: false}, bandwidth: '1 Gbps', network_route: 'Transit', plan_extra: '', expires_on: null, traffic: {quota_bytes: '18446744073709551615'}};
+  assert.equal(validResponse(response({nodes: [optional]})), true);
+  assert.equal(validResponse(response({nodes: [{...minimal, price: null, cpu_percent: null, metric_status: {cpu_percent: 'unavailable'}}]})), true);
+  for (const patch of [{price: {amount: '-1', currency: '$'}}, {billing_cycle: 'week'}, {ip_version: {ipv4: 1, ipv6: false}}, {country: 'USA'}, {traffic: {quota_bytes: 123}}, {remote_ip: '8.8.8.8'}]) {
+    assert.equal(validResponse(response({nodes: [{...optional, ...patch}]})), false);
+  }
 });

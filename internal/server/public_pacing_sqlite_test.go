@@ -21,11 +21,11 @@ func TestPublicStreamSQLiteOrdinaryChangesStayPaced(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newAgentHTTP(t, 2)
 			id, _ := publishCacheNode(t, f)
-			settings, err := f.nodes.GetPublicSettings(context.Background(), id)
+			asset, err := f.nodes.Get(context.Background(), id)
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantName := settings.Name
+			wantName := asset.Name
 			patch := nodes.PublicSettingsPatch{}
 			if publishing {
 				disabled, enabled := false, true
@@ -35,7 +35,7 @@ func TestPublicStreamSQLiteOrdinaryChangesStayPaced(t *testing.T) {
 				patch.Enabled = &enabled
 			} else {
 				wantName = "Updated public label"
-				patch.Name = &wantName
+
 			}
 			base, started := f.now, time.Now()
 			f.handler, err = server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, Enrollments: f.enrollments, Ingest: f.ingest, PublicURL: publicURL, Now: func() time.Time { return base.Add(time.Since(started)) }, WebUpdateIntervalSeconds: 2}))
@@ -61,7 +61,12 @@ func TestPublicStreamSQLiteOrdinaryChangesStayPaced(t *testing.T) {
 				t.Fatalf("unexpected initial inventory: type=%s page=%+v", kind, initial)
 			}
 			firstAt := time.Now()
-			if _, err := f.nodes.PatchPublicSettings(context.Background(), id, patch); err != nil {
+			if !publishing {
+				_, err = f.nodes.PatchMetadata(context.Background(), id, nodes.MetadataPatch{Name: &wantName})
+			} else {
+				_, err = f.nodes.PatchPublicSettings(context.Background(), id, patch)
+			}
+			if err != nil {
 				t.Fatal(err)
 			}
 			kind, code, page := sqliteStreamFrame(t, w.frames)

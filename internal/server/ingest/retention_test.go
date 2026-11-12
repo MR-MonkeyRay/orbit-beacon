@@ -54,7 +54,7 @@ func TestRetainedLastSampleLifecycle(t *testing.T) {
 	}
 	restarted := NewService(f.nodes.Database(), Options{Now: func() time.Time { return f.now }})
 	node, err := publicNode(ctx, f.nodes, restarted, f.id, f.now)
-	if err != nil || node.Status != "offline" || node.Name != "Coalesce" || node.CPUPercent != nil || node.UptimeSeconds != nil {
+	if err != nil || node.Status != "offline" || node.Name != "coalesce" || node.CPUPercent != nil || node.UptimeSeconds != nil {
 		t.Fatalf("restart node=%+v err=%v", node, err)
 	}
 	assertPublicStatuses(t, node, "unavailable", "unavailable", "unavailable", "unavailable")

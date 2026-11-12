@@ -20,7 +20,7 @@ const control = (root, name) => elements(root).find((element) => element.name ==
 const formFor = (root, name) => root.querySelectorAll('form').find((form) => control(form, name));
 const button = (root, label) => root.querySelectorAll('button').find((item) => item.textContent === label);
 const edit = (form, name, value) => {
-  const input = control(form, name); input.value = value; input.dispatchEvent(new Event('input')); form.dispatchEvent(new Event('input')); return input;
+  const input = control(form, name); if (input.type === 'checkbox') input.checked = value; else input.value = value; input.dispatchEvent(new Event('input')); form.dispatchEvent(new Event('input')); return input;
 };
 const sampleFact = (root, label) => root.querySelectorAll('dt').find((item) => item.textContent === label)?.parentElement.querySelector('dd');
 
@@ -63,7 +63,7 @@ async function setup(t, {page = 'nodes', hash = '#monitor', count = 2, search = 
     if (path === `/api/v1/nodes/${id(1)}`) return response(inventory[0]);
     if (path.endsWith('/commands')) return response({commands});
     if (path.endsWith('/traffic-settings')) return response({billing_day: 1, quota_bytes: '0'});
-    if (path.endsWith('/public-settings')) return response({enabled: true, name: 'Saved public name', region: '', provider: ''});
+    if (path.endsWith('/public-settings')) return response({enabled: true, fields: ['cpu', 'memory', 'load', 'uptime', 'availability']});
     if (path.endsWith('/latest')) return sample ? response({...sample, server_time: reported}) : response({message: 'No sample'}, {status: 404});
     if (path.endsWith('/traffic')) return response({billing_day: 1, quota_bytes: '0', cycle: {}, daily: [], updated_at: null});
     if (path.endsWith('/probes')) return response({probes: []});
@@ -389,17 +389,17 @@ for (const page of ['nodes']) {
   });
 }
 
-for (const draft of [{hash: '#details', name: 'notes'}, {hash: '#public', name: 'public_name'}]) {
+for (const draft of [{hash: '#details', name: 'notes'}, {hash: '#public', name: 'cpu'}]) {
   test(`detail ten typed live updates preserve ${draft.name} draft, dirty state, focus and tab`, async (t) => {
     const env = await setup(t, {page: 'node', hash: draft.hash});
-    const form = formFor(env.root, draft.name); const input = edit(form, draft.name, 'Unsaved text must survive'); input.focus(); input.setSelectionRange(2, 9);
+    const form = formFor(env.root, draft.name); const input = edit(form, draft.name, draft.name === 'cpu' ? false : 'Unsaved text must survive'); input.focus(); if (draft.name !== 'cpu') input.setSelectionRange(2, 9);
     const panel = env.root.querySelector('#panel-settings');
     assert.equal(sampleFact(env.root, copy('nodes.cpu')), undefined);
     const requestsBefore = env.requests.length;
     for (let index = 1; index <= 10; index++) {
       env.send({node: {...env.inventory[0], presence: index % 2 ? 'offline' : 'online', notes: 'Changed elsewhere', agent_version: `1.${index}`}, latest: latest(index)}, index * 10);
-      assert.equal(formFor(env.root, draft.name), form); assert.equal(input.value, 'Unsaved text must survive'); assert.equal(form.dataset.dirty, 'true');
-      assert.equal(env.document.activeElement, input); assert.equal(input.selectionStart, 2); assert.equal(input.selectionEnd, 9);
+      assert.equal(formFor(env.root, draft.name), form); assert.equal(draft.name === 'cpu' ? input.checked : input.value, draft.name === 'cpu' ? false : 'Unsaved text must survive'); assert.equal(form.dataset.dirty, 'true');
+      assert.equal(env.document.activeElement, input); if (draft.name !== 'cpu') { assert.equal(input.selectionStart, 2); assert.equal(input.selectionEnd, 9); }
       assert.equal(location.hash, draft.hash); assert.equal(env.root.querySelector('#panel-settings'), panel);
 
     }
@@ -407,8 +407,8 @@ for (const draft of [{hash: '#details', name: 'notes'}, {hash: '#public', name: 
     assert.equal(env.requests.length, requestsBefore, 'live samples do not duplicate independent panel reads');
 
     env.send({node: null, latest: null}, 101);
-    assert.equal(env.root.querySelector('.node-deleted-notice').hidden, false); assert.equal(input.value, 'Unsaved text must survive');
-    assert.equal(form.dataset.dirty, 'true'); assert.equal(input.readOnly, true);
+    assert.equal(env.root.querySelector('.node-deleted-notice').hidden, false); assert.equal(draft.name === 'cpu' ? input.checked : input.value, draft.name === 'cpu' ? false : 'Unsaved text must survive');
+    assert.equal(form.dataset.dirty, 'true'); if (input.type === 'checkbox') assert.equal(input.disabled, true); else assert.equal(input.readOnly, true);
     assert.equal(form.querySelectorAll('button').every((item) => item.disabled), true);
     assert.equal(button(env.root, copy('nodes.enrollAgent')).disabled, true);
   });
@@ -509,7 +509,7 @@ test('overview deferred refresh keeps newer fleet status, deleted links and unkn
 });
 
 for (const draft of [{name: 'notes', value: 'Pending metadata draft', hash: '#details', result: node(1)},
-  {name: 'public_name', value: 'Pending public draft', hash: '#public', result: {enabled: true, name: 'Saved'}},
+  {name: 'cpu', value: false, hash: '#public', result: {enabled: true, fields: ['cpu']}},
   {name: 'billing_day', value: '2', hash: '#traffic', result: {billing_day: 2, quota_bytes: '0'}}]) {
   test(`detail deletion fences pending ${draft.name} save continuation and keeps its dirty draft`, async (t) => {
     let release;
@@ -519,8 +519,8 @@ for (const draft of [{name: 'notes', value: 'Pending metadata draft', hash: '#de
     const before = env.requests.length;
     env.send({node: null, latest: null});
     release(response(draft.result)); await flush();
-    assert.equal(formFor(env.root, draft.name), form); assert.equal(input.value, draft.value); assert.equal(form.dataset.dirty, 'true');
-    assert.equal(env.document.activeElement, input); assert.equal(input.readOnly, true);
+    assert.equal(formFor(env.root, draft.name), form); assert.equal(draft.name === 'cpu' ? input.checked : input.value, draft.value); assert.equal(form.dataset.dirty, 'true');
+    assert.equal(env.document.activeElement, input); if (input.type === 'checkbox') assert.equal(input.disabled, true); else assert.equal(input.readOnly, true);
     assert.equal(form.querySelectorAll('button').every((item) => item.disabled), true);
     assert.equal(env.requests.length, before, 'late save does not refresh the deleted detail or its independent panels');
   });

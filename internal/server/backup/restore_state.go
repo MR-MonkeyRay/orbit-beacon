@@ -258,7 +258,7 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 				}
 			}
 			if spec.Name == "node_observations" && !selected[Monitoring] {
-				query = "SELECT id,last_seen,system FROM nodes"
+				query = "SELECT id,last_seen,system,remote_ip,geo_country,geo_location,geo_checked_at FROM nodes"
 			}
 			if reader == nil {
 				return &Error{Code: "restore_invalid_data"}
@@ -282,13 +282,14 @@ func buildRestoreState(ctx context.Context, main, metrics *sql.DB, sources map[C
 					var node string
 					var last any
 					var system string
-					if e = rows.Scan(&node, &last, &system); e != nil {
+					var remoteIP, country, location, checked string
+					if e = rows.Scan(&node, &last, &system, &remoteIP, &country, &location, &checked); e != nil {
 						break
 					}
 					if e = check(nil, []any{node}); e != nil {
 						break
 					}
-					_, e = tx.ExecContext(ctx, `UPDATE nodes SET last_seen=?,system=? WHERE id=?`, last, system, node)
+					_, e = tx.ExecContext(ctx, `UPDATE nodes SET last_seen=?,system=?,remote_ip=?,geo_country=?,geo_location=?,geo_checked_at=? WHERE id=?`, last, system, remoteIP, country, location, checked, node)
 					if e != nil {
 						break
 					}

@@ -79,6 +79,9 @@ type tokenNodeView struct {
 }
 
 func tokenNodeDTO(n nodes.Node) tokenNodeView {
+	if n.Region == "" {
+		n.Region = n.GeoLocation
+	}
 	return tokenNodeView{n.Stopped, n.ID, n.Name, n.Status, n.ExpiresOn, n.Region, n.Provider, n.GroupID, n.Tags, n.CreatedAt, n.LastSeen, n.Presence, n.AgentVersion}
 }
 func tokenNodeID(r *http.Request) string { return strings.Split(r.URL.Path, "/")[4] }

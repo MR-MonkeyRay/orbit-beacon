@@ -93,7 +93,7 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
     let shown = 0;
     cards.forEach((card, index) => {
       const node = current[index];
-      const matchesSearch = current.length <= 12 || !query || [node.name, node.region, node.provider].some((value) => value.toLocaleLowerCase().includes(query));
+      const matchesSearch = current.length <= 12 || !query || [node.name, node.region, node.provider].some((value) => typeof value === 'string' && value.toLocaleLowerCase().includes(query));
       card.hidden = Boolean(filter) && node.status !== filter || !matchesSearch;
       if (!card.hidden) shown += 1;
     });

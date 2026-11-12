@@ -298,7 +298,7 @@ func writeGenerationPublicName(t *testing.T, ctx context.Context, db *storage.Da
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(lease.Context(), "UPDATE nodes SET public_settings=? WHERE id=?", `{"enabled":true,"name":"`+name+`"}`, nodeID); err != nil {
+	if _, err := tx.ExecContext(lease.Context(), "UPDATE nodes SET name=?,public_settings=? WHERE id=?", name, `{"enabled":true}`, nodeID); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

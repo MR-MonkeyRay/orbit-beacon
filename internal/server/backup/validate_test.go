@@ -31,6 +31,12 @@ func validationDB(t *testing.T, category Category) *sql.DB {
 		columns := make([]string, 0, len(table.Columns))
 		for _, c := range table.Columns {
 			declaration := c.Name + " " + c.Type
+			if c.Name == "display_order" || c.Name == "auto_renew" || c.Name == "ipv4" || c.Name == "ipv6" {
+				declaration += " NOT NULL DEFAULT 0"
+			}
+			if c.Name == "price_amount" || c.Name == "price_currency" || c.Name == "billing_cycle" || c.Name == "bandwidth" || c.Name == "network_route" || c.Name == "plan_extra" || c.Name == "remote_ip" || c.Name == "geo_country" || c.Name == "geo_location" || c.Name == "geo_checked_at" {
+				declaration += " NOT NULL DEFAULT ''"
+			}
 			if c.Name == "totp_last_step" {
 				declaration += " NOT NULL DEFAULT 0"
 			}
@@ -497,5 +503,38 @@ func TestPayloadIMChannelURLs(t *testing.T) {
 				t.Fatalf("valid=%t err=%v", tt.valid, err)
 			}
 		})
+	}
+}
+
+func TestPayloadNodePlanColumns(t *testing.T) {
+	db := validationDB(t, Configuration)
+	if _, err := db.Exec(`INSERT INTO nodes(id,name,status,group_id,region,provider,notes,created_at,public_settings,billing_day,quota_bytes,billing_mode,token_hash,credential_epoch,installation_id,first_enrolled_at,run_generation,report_session_id) VALUES(?,'Node','pending',NULL,'','','',?,'{}',1,'0','total',NULL,0,NULL,NULL,'0','')`, validationID, validationTime); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		column string
+		value  any
+	}{
+		{"display_order", 1000001}, {"price_amount", "1.001"}, {"price_currency", "US1"}, {"billing_cycle", "weekly"}, {"auto_renew", 2}, {"ipv4", -1}, {"ipv6", 2}, {"bandwidth", " untrimmed"}, {"network_route", "bad\nroute"}, {"plan_extra", strings.Repeat("x", 256)},
+	} {
+		if _, err := db.Exec("UPDATE nodes SET "+tc.column+"=?", tc.value); err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err == nil {
+			t.Fatalf("accepted %s=%v", tc.column, tc.value)
+		}
+		value := any("")
+		if tc.column == "display_order" || tc.column == "auto_renew" || tc.column == "ipv4" || tc.column == "ipv6" {
+			value = 0
+		}
+		if _, err := db.Exec("UPDATE nodes SET "+tc.column+"=?", value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec("UPDATE nodes SET display_order=-1000000,price_amount='12.50',price_currency='€',billing_cycle='year',auto_renew=1,ipv4=1,ipv6=1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidatePayloadData(context.Background(), db, Configuration, make([]byte, 32)); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"orbitbeacon/internal/server/nodes"
 	"orbitbeacon/internal/server/notify"
 	"orbitbeacon/internal/server/secretbox"
+	"orbitbeacon/internal/server/securefs"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/traffic"
 )
@@ -182,7 +184,32 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 			nodeService.InvalidatePublic()
 		}
 	})
-	handler, err := server.NewHandler(server.Options{Storage: databases, RecoverUnavailableMain: cfg.Database.Standby != nil, Management: authService.Management(), Enrollments: enrollments, Traffic: trafficService, Availability: availabilityService, Inbox: inbox.New(db), Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, WebUpdateIntervalSeconds: cfg.WebUpdateIntervalSeconds, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: version, SaturationMetrics: saturation})
+	if cfg.GeoIPTokenFile != "" {
+		file, err := securefs.OpenFile(cfg.GeoIPTokenFile, os.O_RDONLY, 0)
+		if err != nil {
+			return nil, err
+		}
+		info, err := file.Stat()
+		if err != nil {
+			file.Close()
+			return nil, err
+		}
+		if info.Mode().Perm() != 0600 {
+			file.Close()
+			return nil, errors.New("geoip token file requires 0600")
+		}
+		data, err := io.ReadAll(io.LimitReader(file, 4097))
+		file.Close()
+		if err != nil {
+			return nil, err
+		}
+		if len(data) > 4096 {
+			return nil, errors.New("geoip token file too large")
+		}
+		cfg.GeoIPToken = strings.TrimSpace(string(data))
+		clear(data)
+	}
+	handler, err := server.NewHandler(server.Options{GeoIPLookup: cfg.GeoIPLookup, GeoIPToken: cfg.GeoIPToken, Storage: databases, RecoverUnavailableMain: cfg.Database.Standby != nil, Management: authService.Management(), Enrollments: enrollments, Traffic: trafficService, Availability: availabilityService, Inbox: inbox.New(db), Backups: backups, Notifications: notifications, Alerts: alertService, Ingest: ingestService, History: metricHistory, Auth: authService, Nodes: nodeService, TrustedProxies: cfg.TrustedProxies, PublicURL: cfg.PublicURL, WebUpdateIntervalSeconds: cfg.WebUpdateIntervalSeconds, Logger: logger, AccessLog: cfg.AccessLog, BuildVersion: version, SaturationMetrics: saturation})
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +253,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 
 	a.handler, a.httpServer = handler, httpServer
 	a.ingest, a.notifications = ingestService, notifications
-	a.background = []func(context.Context){availabilityService.Run, backups.Run, notifications.Run, evaluator.Run, handler.RunRetention}
+	a.background = []func(context.Context){availabilityService.Run, backups.Run, notifications.Run, evaluator.Run, handler.RunRetention, handler.RunGeo}
 	if cfg.Database.Standby != nil {
 		a.background = append(a.background, notifications.RunStorage)
 	}

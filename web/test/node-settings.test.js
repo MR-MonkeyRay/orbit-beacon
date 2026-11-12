@@ -12,7 +12,7 @@ const formFor = (root, name) => root.querySelectorAll('form').find((form) => con
 const factValues = (root) => Object.fromEntries(root.querySelectorAll('dt').map((label) => [label.textContent, label.parentElement.querySelector('dd').textContent]));
 const edit = (form, name, value) => {
   const input = control(form, name);
-  input.value = value;
+  if (input.type === 'checkbox') input.checked = value; else input.value = value;
   input.dispatchEvent(new Event('input'));
   // 小型控制台测试工具不模拟 DOM 事件传播。
   form.dispatchEvent(new Event('input'));
@@ -75,7 +75,7 @@ async function setup({hash = '#details', presence = 'online', lastSeen = '2026-1
       data = status === 200 ? options.method === 'PATCH' ? {billing_day: 2, quota_bytes: '1000000000', billing_mode: 'total'} : {billing_day: 1, quota_bytes: '0'}
         : {message: 'Billing update rejected'};
     } else if (url === '/api/v1/groups') data = {groups: []};
-    else if (url === `${path}/public-settings`) data = options.method === 'PATCH' ? JSON.parse(options.body) : {enabled: true, name: 'Saved public name', region: '', provider: ''};
+    else if (url === `${path}/public-settings`) data = options.method === 'PATCH' ? JSON.parse(options.body) : {enabled: true, fields: ['cpu', 'memory', 'load', 'uptime', 'availability']};
     else if (url === `${path}/latest`) { data = latest || {message: 'No sample'}; status = latest ? 200 : 404; }
     else if (url === `${path}/traffic?days=30`) data = traffic;
     else if (url === `${path}/probes`) data = {probes: []};
@@ -126,7 +126,7 @@ test('node Agent section keeps commands without fetching enrollment keys or runt
     assert.equal(env.requests.some((request) => request.url.startsWith('/api/v1/enrollments')), false);
     assert.equal(env.root.querySelector('.node-summary').querySelectorAll('time').at(-1).getAttribute('datetime'), env.node.last_seen);
     assert.ok(formFor(env.root, 'notes'));
-    assert.ok(formFor(env.root, 'public_name'));
+    assert.ok(formFor(env.root, 'cpu'));
   } finally { env.cleanup(); }
 });
 
@@ -294,8 +294,8 @@ test('header summary updates on live metadata and detail saves without losing th
     assert.deepEqual(summary.querySelectorAll('time').map((time) => time.getAttribute('datetime')), [env.node.created_at, '2026-10-28T10:01:00Z']);
     assert.equal(factValues(env.root)[copy('nodes.region')], undefined);
     assert.equal(factValues(env.root)[copy('nodes.lastSeen')], undefined);
-    const publicForm = formFor(env.root, 'public_name');
-    const publicName = edit(publicForm, 'public_name', 'Unsaved public draft');
+    const publicForm = formFor(env.root, 'cpu');
+    const publicName = edit(publicForm, 'cpu', false);
     const details = formFor(env.root, 'notes');
     edit(details, 'region', 'Osaka');
     edit(details, 'name', 'Saved new name');
@@ -303,8 +303,8 @@ test('header summary updates on live metadata and detail saves without losing th
     await flush();
     assert.match(summary.textContent, /Osaka/);
     assert.equal(env.root.querySelector('h1').textContent, 'Saved new name');
-    assert.equal(formFor(env.root, 'public_name'), publicForm);
-    assert.equal(publicName.value, 'Unsaved public draft');
+    assert.equal(formFor(env.root, 'cpu'), publicForm);
+    assert.equal(publicName.checked, false);
     assert.equal(publicForm.dataset.dirty, 'true');
     assert.equal(details.dataset.dirty, 'false');
     assert.equal(location.hash, '#settings');
@@ -315,20 +315,20 @@ test('saving and discarding details preserve a neighboring public draft', async 
   const env = await setup({hash: '#settings'});
   try {
     const details = formFor(env.root, 'notes');
-    const publicForm = formFor(env.root, 'public_name');
-    edit(publicForm, 'public_name', 'Public draft');
+    const publicForm = formFor(env.root, 'cpu');
+    edit(publicForm, 'cpu', false);
     edit(details, 'notes', 'Discard me');
     details.querySelectorAll('button').find((control) => control.textContent === copy('controls.discard')).click();
     assert.equal(control(details, 'notes').value, env.node.notes);
     assert.equal(details.dataset.dirty, 'false');
-    assert.equal(control(publicForm, 'public_name').value, 'Public draft');
+    assert.equal(control(publicForm, 'cpu').checked, false);
     assert.equal(publicForm.dataset.dirty, 'true');
     publicForm.dispatchEvent(new Event('submit', {cancelable: true}));
     await flush();
     assert.equal(publicForm.dataset.dirty, 'false');
-    edit(publicForm, 'public_name', 'Discard next');
+    edit(publicForm, 'cpu', true);
     publicForm.querySelectorAll('button').find((control) => control.textContent === copy('controls.discard')).click();
-    assert.equal(control(publicForm, 'public_name').value, 'Public draft');
+    assert.equal(control(publicForm, 'cpu').checked, false);
     assert.equal(publicForm.dataset.dirty, 'false');
   } finally { env.cleanup(); }
 });

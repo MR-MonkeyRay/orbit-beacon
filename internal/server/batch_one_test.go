@@ -41,8 +41,8 @@ func TestRevokedCredentialKeepsAssetAndAllowsReenrollment(t *testing.T) {
 	f := newAgentHTTP(t, 1)
 	id, token, _ := enrollHTTP(t, f, "a", 1)
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", token, reportBody(1, 1, "a", 10)), 1)
-	enabled, name := true, "Tokyo"
-	if _, err := f.nodes.PatchPublicSettings(context.Background(), id, nodes.PublicSettingsPatch{Enabled: &enabled, Name: &name}); err != nil {
+	enabled := true
+	if _, err := f.nodes.PatchPublicSettings(context.Background(), id, nodes.PublicSettingsPatch{Enabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.nodes.RevokeCredential(context.Background(), id); err != nil {
@@ -67,7 +67,7 @@ func TestRevokedCredentialKeepsAssetAndAllowsReenrollment(t *testing.T) {
 	f.now = f.now.Add(time.Second)
 	accepted(t, agentRequest(t, f, "/api/agent/v1/report", fresh, reportBody(1, 1, "new", 10)), 1)
 	settings, err := f.nodes.GetPublicSettings(context.Background(), id)
-	if err != nil || !settings.Enabled || settings.Name != "Tokyo" {
+	if err != nil || !settings.Enabled {
 		t.Fatalf("revocation lost public settings: %+v %v", settings, err)
 	}
 	if errors.Is(f.nodes.RevokeCredential(context.Background(), "00000000-0000-4000-8000-000000000009"), nodes.ErrNotFound) == false {

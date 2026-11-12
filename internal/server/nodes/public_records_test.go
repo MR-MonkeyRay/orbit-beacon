@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -18,9 +19,9 @@ import (
 func publishRecord(t *testing.T, db *sql.DB, node nodes.Node, created, seen time.Time, name string, generation uint64, session string) [32]byte {
 	t.Helper()
 	credential := sha256.Sum256([]byte("credential:" + node.ID))
-	settings := `{"enabled":true,"name":"` + name + `","region":"region","provider":"provider"}`
-	if _, err := db.Exec(`UPDATE nodes SET created_at=?, public_settings=?, status='unknown', token_hash=?, first_enrolled_at=?, last_seen=?, run_generation=?, report_session_id=? WHERE id=?`,
-		created.Format(time.RFC3339Nano), settings, credential[:], created.Format(time.RFC3339Nano), seen.Format(time.RFC3339Nano), generation, session, node.ID); err != nil {
+	settings := `{"enabled":true,"fields":["region","provider","cpu","memory","load","uptime","availability"]}`
+	if _, err := db.Exec(`UPDATE nodes SET name=?,region='region',provider='provider',created_at=?, public_settings=?, status='unknown', token_hash=?, first_enrolled_at=?, last_seen=?, run_generation=?, report_session_id=? WHERE id=?`,
+		name, created.Format(time.RFC3339Nano), settings, credential[:], created.Format(time.RFC3339Nano), seen.Format(time.RFC3339Nano), generation, session, node.ID); err != nil {
 		t.Fatal(err)
 	}
 	return credential
@@ -58,10 +59,10 @@ func TestListPublicRecordsVisibilityOrderingPaginationAndIdentity(t *testing.T) 
 		t.Fatalf("first page = %+v, more=%v; want first/second and more", records, more)
 	}
 	wantFirst := nodes.PublicRecord{
-		ID: first.ID, Settings: nodes.PublicSettings{Enabled: true, Name: "First", Region: "region", Provider: "provider"},
+		ID: first.ID, Name: "First", Region: "region", Provider: "provider", QuotaBytes: "0", Settings: nodes.PublicSettings{Enabled: true, Fields: []string{"region", "provider", "cpu", "memory", "load", "uptime", "availability"}},
 		LastSeen: base.Add(time.Minute), Credential: firstCredential, CredentialEpoch: 9, Generation: 7, Session: "session-first", AvailabilityJSON: "[]",
 	}
-	if records[0] != wantFirst {
+	if !reflect.DeepEqual(records[0], wantFirst) {
 		t.Errorf("first record = %+v, want %+v", records[0], wantFirst)
 	}
 	records, more, err = service.ListPublicRecords(ctx, 2, 2, time.Now())
@@ -119,9 +120,9 @@ func TestPublicVisibilityVersionTracksOnlyCommittedPublicMutations(t *testing.T)
 	assertVersion(0)
 
 	first := pending(t, service, "first")
-	name := "Published"
+
 	enabled := true
-	if _, err := service.PatchPublicSettings(ctx, first.ID, nodes.PublicSettingsPatch{Name: &name, Enabled: &enabled}); err != nil {
+	if _, err := service.PatchPublicSettings(ctx, first.ID, nodes.PublicSettingsPatch{Enabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
 	assertVersion(1)
@@ -150,10 +151,10 @@ func TestPublicVisibilityVersionTracksOnlyCommittedPublicMutations(t *testing.T)
 	if _, err := service.PatchMetadata(ctx, batchA.ID, nodes.MetadataPatch{Name: &privateName}); err != nil {
 		t.Fatal(err)
 	}
-	assertVersion(6)
+	assertVersion(7)
 
-	blank := ""
-	if _, err := service.PatchPublicSettings(ctx, batchA.ID, nodes.PublicSettingsPatch{Name: &blank, Enabled: &enabled}); err == nil {
+	invalid := []string{"invalid"}
+	if _, err := service.PatchPublicSettings(ctx, batchA.ID, nodes.PublicSettingsPatch{Fields: &invalid, Enabled: &enabled}); err == nil {
 		t.Fatal("invalid public settings patch succeeded")
 	}
 	if err := service.SetDisabled(ctx, "00000000-0000-4000-8000-000000008888", true); !errors.Is(err, nodes.ErrNotFound) {
@@ -165,18 +166,18 @@ func TestPublicVisibilityVersionTracksOnlyCommittedPublicMutations(t *testing.T)
 	if err := service.Delete(ctx, batchA.ID, false); !errors.Is(err, nodes.ErrInvalidInput) {
 		t.Fatalf("unconfirmed delete error = %v", err)
 	}
-	assertVersion(6)
+	assertVersion(7)
 
 	if _, err := db.Exec(`CREATE TRIGGER reject_public_patch BEFORE INSERT ON audit_events WHEN NEW.action='node.public_settings.patch' BEGIN SELECT RAISE(ABORT, 'test rollback'); END`); err != nil {
 		t.Fatal(err)
 	}
-	newName := "Would Roll Back"
-	if _, err := service.PatchPublicSettings(ctx, batchB.ID, nodes.PublicSettingsPatch{Name: &newName}); err == nil {
+	newFields := []string{"region"}
+	if _, err := service.PatchPublicSettings(ctx, batchB.ID, nodes.PublicSettingsPatch{Fields: &newFields}); err == nil {
 		t.Fatal("audit-triggered rollback unexpectedly succeeded")
 	}
-	assertVersion(6)
+	assertVersion(7)
 	settings, err := service.GetPublicSettings(ctx, batchB.ID)
-	if err != nil || settings.Name == newName {
+	if err != nil || len(settings.Fields) == 1 {
 		t.Fatalf("rolled-back public settings = %+v, err=%v", settings, err)
 	}
 }
@@ -211,5 +212,26 @@ func TestListPublicRecordsWithSeparateReadOnlyPool(t *testing.T) {
 	records, more, err := service.ListPublicRecords(ctx, 1, 0, time.Now())
 	if err != nil || more || len(records) != 1 || records[0].ID != node.ID {
 		t.Fatalf("reader page = %+v, more=%v, err=%v", records, more, err)
+	}
+}
+
+func TestPublicDisplayOrderAndNameTies(t *testing.T) {
+	s, db := newNodes(t, 10)
+	now := time.Now()
+	ctx := context.Background()
+	a, b, c := pending(t, s, "a"), pending(t, s, "b"), pending(t, s, "c")
+	publishRecord(t, db, a, now, now, "same", 1, "a")
+	publishRecord(t, db, b, now, now, "same", 1, "b")
+	publishRecord(t, db, c, now, now, "z", 1, "c")
+	if _, err := db.Exec("UPDATE nodes SET display_order=10 WHERE id=?", c.ID); err != nil {
+		t.Fatal(err)
+	}
+	records, more, err := s.ListPublicRecords(ctx, 1, 0, now)
+	if err != nil || !more || len(records) != 1 || records[0].ID != c.ID {
+		t.Fatalf("order %+v %v", records, err)
+	}
+	records, more, err = s.ListPublicRecords(ctx, 2, 1, now)
+	if err != nil || more || len(records) != 2 || records[0].Name != "same" || records[0].ID > records[1].ID {
+		t.Fatalf("ties %+v %v", records, err)
 	}
 }

@@ -75,7 +75,7 @@ var categoryTables = map[Category][]tableSpec{
 		table("recovery_codes", "main", "", "user_id TEXT,code_hash BLOB", "user_id,code_hash"),
 		table("settings", "main", "key IN ('public_page_enabled','api_token_rate_limit_per_minute','storage_notifications')", "key TEXT,value TEXT", "key"),
 		table("groups", "main", "", "id TEXT,name TEXT", "id"),
-		table("nodes", "main", "", "id TEXT,name TEXT,status TEXT,group_id TEXT,region TEXT,provider TEXT,notes TEXT,expires_on TEXT,created_at TEXT,public_settings TEXT,billing_day INTEGER,quota_bytes TEXT,billing_mode TEXT,token_hash BLOB,credential_epoch INTEGER,installation_id TEXT,first_enrolled_at TEXT,run_generation TEXT,report_session_id TEXT", "id"),
+		table("nodes", "main", "", "id TEXT,name TEXT,status TEXT,group_id TEXT,region TEXT,provider TEXT,notes TEXT,expires_on TEXT,display_order INTEGER,price_amount TEXT,price_currency TEXT,billing_cycle TEXT,auto_renew INTEGER,bandwidth TEXT,ipv4 INTEGER,ipv6 INTEGER,network_route TEXT,plan_extra TEXT,created_at TEXT,public_settings TEXT,billing_day INTEGER,quota_bytes TEXT,billing_mode TEXT,token_hash BLOB,credential_epoch INTEGER,installation_id TEXT,first_enrolled_at TEXT,run_generation TEXT,report_session_id TEXT", "id"),
 		table("node_tags", "main", "", "node_id TEXT,tag TEXT", "node_id,tag"),
 		table("alert_silences", "main", "", "id TEXT,reason TEXT,scope_kind TEXT,scope_id TEXT,starts_at TEXT,ends_at TEXT,created_at TEXT", "id"),
 		table("alert_rules", "main", "", "id TEXT,name TEXT,enabled INTEGER,scope_kind TEXT,scope_id TEXT,metric TEXT,target TEXT,comparator TEXT,threshold REAL,for_seconds INTEGER,severity TEXT,created_at TEXT,updated_at TEXT", "id"),
@@ -84,7 +84,7 @@ var categoryTables = map[Category][]tableSpec{
 		table("backup_plans", "main", "", "id TEXT,name TEXT,enabled INTEGER,kind TEXT,categories_json TEXT,cron TEXT,destination_json TEXT,credentials_ciphertext BLOB,retain_count INTEGER,created_at TEXT,updated_at TEXT", "id"),
 	},
 	Monitoring: {
-		table("node_observations", "main", "", "node_id TEXT,last_seen TEXT,system TEXT", "node_id"),
+		table("node_observations", "main", "", "node_id TEXT,last_seen TEXT,system TEXT,remote_ip TEXT,geo_country TEXT,geo_location TEXT,geo_checked_at TEXT", "node_id"),
 		table("traffic_hourly", "main", "", "node_id TEXT,epoch TEXT,period_start TEXT,rx_bytes INTEGER,tx_bytes INTEGER,updated_at TEXT", "node_id,epoch,period_start"),
 		table("node_availability_daily", "main", "", "node_id TEXT,day TEXT,online_seconds INTEGER,offline_seconds INTEGER", "node_id,day"),
 		table("traffic_daily", "main", "", "node_id TEXT,day TEXT,rx_bytes INTEGER,tx_bytes INTEGER", "node_id,day"),

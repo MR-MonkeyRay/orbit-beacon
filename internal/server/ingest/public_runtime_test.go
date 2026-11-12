@@ -41,8 +41,8 @@ func TestPublicRuntimeUsesCommittedIdentityAndPersistentLiveness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	name, enabled := "Public", true
-	if _, err := ns.PatchPublicSettings(ctx, n.ID, nodes.PublicSettingsPatch{Enabled: &enabled, Name: &name}); err != nil {
+	enabled := true
+	if _, err := ns.PatchPublicSettings(ctx, n.ID, nodes.PublicSettingsPatch{Enabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
 	s := ingest.NewService(stableDatabase(t, db), ingest.Options{Now: clock, DisablePersistOffset: true})

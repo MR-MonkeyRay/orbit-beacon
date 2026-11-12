@@ -46,28 +46,30 @@ type Options struct {
 }
 
 type nodeState struct {
-	mu                sync.Mutex
-	acceptGate        chan struct{}
-	refs              int
-	touch             uint64
-	credential        [sha256.Size]byte
-	credentialEpoch   int64
-	storageGeneration uint64
-	pendingCommit     *reportCommit
-	generation        uint64
-	session           string
-	seq               uint64
-	latest            []byte
-	cpuPercent        *float64
-	memoryUsedPercent *float64
-	receivedAt        time.Time
-	lastSeenPersisted time.Time
-	probes            probeBuffer
-	traffic           trafficBuffer
-	stagedTraffic     *trafficBuffer
-	public            publicMetrics
-	tokens            float64
-	refilled          time.Time
+	remoteMu                           sync.Mutex
+	remoteIP, remoteRegion, geoChecked string
+	mu                                 sync.Mutex
+	acceptGate                         chan struct{}
+	refs                               int
+	touch                              uint64
+	credential                         [sha256.Size]byte
+	credentialEpoch                    int64
+	storageGeneration                  uint64
+	pendingCommit                      *reportCommit
+	generation                         uint64
+	session                            string
+	seq                                uint64
+	latest                             []byte
+	cpuPercent                         *float64
+	memoryUsedPercent                  *float64
+	receivedAt                         time.Time
+	lastSeenPersisted                  time.Time
+	probes                             probeBuffer
+	traffic                            trafficBuffer
+	stagedTraffic                      *trafficBuffer
+	public                             publicMetrics
+	tokens                             float64
+	refilled                           time.Time
 }
 
 // 这些辅助函数要求持有 state.mu。限流历史独立于进程身份，失效后仍然保留。
@@ -511,11 +513,12 @@ func (s *Service) acceptGeneration(ctx context.Context, nodeID string, credentia
 	// 在它之前提交的凭据/状态变更总能被观察到；
 	// 在它之后提交的变更在这个并发请求之后才生效。
 	var generationText, session, status, storedSystem string
+	var remoteIP, remoteRegion, geoChecked string
 	var lastSeenText sql.NullString
 	var storedCredential []byte
 	var storedEpoch int64
 	var activeCommand bool
-	if err := lease.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status, COALESCE(`system`, ''), last_seen, EXISTS(SELECT 1 FROM agent_commands WHERE node_id=nodes.id AND state IN ('pending','delivered')) FROM nodes WHERE id = ?", nodeID).Scan(&generationText, &session, &storedCredential, &storedEpoch, &status, &storedSystem, &lastSeenText, &activeCommand); err != nil {
+	if err := lease.QueryRowContext(ctx, "SELECT run_generation, report_session_id, token_hash, credential_epoch, status, COALESCE(`system`, ''), last_seen,remote_ip,region,geo_checked_at, EXISTS(SELECT 1 FROM agent_commands WHERE node_id=nodes.id AND state IN ('pending','delivered')) FROM nodes WHERE id = ?", nodeID).Scan(&generationText, &session, &storedCredential, &storedEpoch, &status, &storedSystem, &lastSeenText, &remoteIP, &remoteRegion, &geoChecked, &activeCommand); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return v1.ReportResponse{}, nodes.ErrUnauthenticated
 		}
@@ -527,6 +530,9 @@ func (s *Service) acceptGeneration(ctx context.Context, nodeID string, credentia
 	if status == "disabled" {
 		return v1.ReportResponse{}, nodes.ErrDisabled
 	}
+	state.remoteMu.Lock()
+	state.remoteIP, state.remoteRegion, state.geoChecked = remoteIP, remoteRegion, geoChecked
+	state.remoteMu.Unlock()
 	generation, err := strconv.ParseUint(generationText, 10, 64)
 	if err != nil {
 		return v1.ReportResponse{}, err

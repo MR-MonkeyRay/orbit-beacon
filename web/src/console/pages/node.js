@@ -62,7 +62,7 @@ export async function nodePage() {
   const summary = h('div', {class: 'node-summary'});
   const updateSummary = () => {
     const group = groups.find((item) => item.id === node.group_id);
-    const parts = [group?.name || (node.group_id ? t('nodes.unknownID', {id: shortID(node.group_id)}) : null), node.region, node.provider,
+    const parts = [group?.name || (node.group_id ? t('nodes.unknownID', {id: shortID(node.group_id)}) : null), node.region || node.geo_location, node.provider,
       node.tags?.length ? h('span', {class: 'cell-tags'}, node.tags.map((tag) => h('span', {class: 'tag static'}, tag))) : null,
       node.created_at ? h('span', null, t('nodes.added'), ' ', absoluteWhen(node.created_at)) : null,
       node.last_seen ? h('span', null, t('nodes.lastSeen'), ' ', absoluteWhen(node.last_seen)) : null].filter(Boolean);
@@ -206,14 +206,22 @@ function detailsTab(node, groups, onSaved) {
   const tagBox = tags.querySelector('[data-tags]');
   const expiresOn = input({name: 'expires_on', type: 'date', value: node.expires_on || '', id: 'node-expires-on'});
   const notes = textarea({name: 'notes', id: 'node-notes'}, node.notes);
+  const extra = ['display_order', 'price_amount', 'price_currency', 'billing_cycle', 'auto_renew', 'bandwidth', 'ipv4', 'ipv6', 'network_route', 'plan_extra'].map((key) => {
+    const boolean = ['auto_renew', 'ipv4', 'ipv6'].includes(key);
+    const control = key === 'billing_cycle' ? select(['', 'month', 'quarter', 'half_year', 'year', 'once'].map((value) => [value, value ? t(`nodes.cycle.${value}`) : '—']), node[key], {name: key})
+      : input({name: key, type: boolean ? 'checkbox' : key === 'display_order' ? 'number' : 'text', ...(boolean ? {checked: node[key]} : {value: node[key] ?? ''})});
+    if (key === 'display_order') { control.min = '-1000000'; control.max = '1000000'; control.step = '1'; }
+    return [key, control, boolean];
+  });
   const controls = saveBar(t('nodes.saveChanges'), 'node-save');
   const form = h('form', {class: 'form form-wide'},
     field(t('nodes.name'), name),
     h('div', {class: 'form-row'}, field(t('nodes.region'), region), field(t('nodes.provider'), provider)),
-    field(t('nodes.group'), groupID), tags, field(t('nodes.expiresOn'), expiresOn), field(t('nodes.notes'), notes), controls.bar);
+    field(t('nodes.group'), groupID), tags, field(t('nodes.expiresOn'), expiresOn), field(t('nodes.notes'), notes), extra.map(([key, control]) => field(t(`nodes.field.${key}`), control)), controls.bar);
   editableForm(form, controls, async () => {
     if (!tagBox.commit()) throw new Error(t('nodes.tagInvalid'));
     const result = await api(`/nodes/${encodeURIComponent(node.id)}`, {method: 'PATCH', body: {
+      ...Object.fromEntries(extra.map(([key, control, boolean]) => [key, boolean ? control.checked : key === 'display_order' ? Number(control.value) : control.value])),
       name: name.value, expires_on: expiresOn.value || null, notes: notes.value, region: region.value, provider: provider.value, group_id: groupID.value || null, tags: tagBox.getValue()
     }});
     if (node.deleted) return;
@@ -224,70 +232,33 @@ function detailsTab(node, groups, onSaved) {
   }, node, () => {
     name.value = node.name; region.value = node.region; provider.value = node.provider; groupID.value = node.group_id || '';
     expiresOn.value = node.expires_on || ''; notes.value = node.notes;
+    for (const [key, control, boolean] of extra) { if (boolean) control.checked = node[key]; else control.value = node[key] ?? ''; }
     tagBox.setValue(node.tags);
     form.markClean();
   });
   return panel(null, {}, form);
 }
 
-function publicPreview() {
-  const name = h('h3');
-  const where = h('div', {class: 'where'});
-  const badge = h('span', {class: 'badge'});
-  const element = h('div', {class: 'preview-card'}, h('div', {class: 'top'}, name, badge), where);
-  element.paint = ({enabled, name: title, region, provider}) => {
-    name.replaceChildren(title || h('span', {class: 'placeholder'}, t('nodes.publicName')));
-    where.replaceChildren(...[region && h('span', null, icon('pin'), region), provider && h('span', null, icon('cloud'), provider)].filter(Boolean));
-    if (!region && !provider) where.append(h('span', {class: 'placeholder'}, t('nodes.noLocation')));
-    badge.className = `badge ${enabled ? 'online' : 'disabled'}`;
-    badge.textContent = enabled ? t('nodes.published') : t('nodes.hidden');
-  };
-  return element;
-}
+const PUBLIC_FIELDS = ['region', 'provider', 'cpu', 'memory', 'load', 'uptime', 'availability', 'traffic', 'expires_on', 'price', 'billing_cycle', 'bandwidth', 'ip_version', 'network_route', 'plan_extra'];
 
 function publicTab(node, settings) {
-  const hidden = node.status === 'pending' || node.status === 'disabled'
-    ? callout(t('nodes.publicUnavailable', {status: t(`common.status.${node.status}`)})) : null;
-  const privacy = callout(t('nodes.privacy'), 'info');
-  const preview = publicPreview();
-  const previewPanel = panel(t('nodes.preview'), {heading: 'h3', action: h('a', {class: 'btn btn-sm', href: '/'}, icon('external'), t('nodes.viewPublic'))}, preview);
-  previewPanel.classList.add('split-aside');
-
-
-  const enabled = h('input', {type: 'checkbox', name: 'enabled', id: 'public-enabled', checked: settings.enabled});
-  const name = input({name: 'public_name', value: settings.name, id: 'public-name', autocomplete: 'off', dataset: {field: 'name'}});
-  const region = input({name: 'public_region', value: settings.region, id: 'public-region', autocomplete: 'off', dataset: {field: 'region'}});
-  const provider = input({name: 'public_provider', value: settings.provider, id: 'public-provider', autocomplete: 'off', dataset: {field: 'provider'}});
-  const checkName = validateBytes(name, 0, 255, t('nodes.publicName'));
-  validateBytes(region, 0, 128, t('nodes.publicRegion'));
-  validateBytes(provider, 0, 128, t('nodes.publicProvider'));
-  // 与服务端一致，预览和必填检查都先去除文本首尾空白。
-  const sync = () => {
-    name.required = enabled.checked;
-    if (enabled.checked && name.value.trim() === '') name.setCustomValidity(t('nodes.publicNameRequired'));
-    else checkName();
-    preview.paint({enabled: enabled.checked, name: name.value.trim(), region: region.value.trim(), provider: provider.value.trim()});
-  };
-  for (const control of [enabled, name, region, provider]) control.addEventListener('input', sync);
-  enabled.addEventListener('change', sync);
-  sync();
+  const enabled = h('input', {type: 'checkbox', name: 'enabled', checked: settings.enabled});
+  const checks = PUBLIC_FIELDS.map((key) => [key, h('input', {type: 'checkbox', name: key, checked: settings.fields.includes(key)})]);
   const controls = saveBar(t('nodes.savePublic'), 'public-save');
   const form = h('form', {class: 'form form-wide'},
-    h('label', {class: 'switch'}, enabled, h('span', {class: 'switch-track', 'aria-hidden': 'true'}),
-      h('span', {class: 'switch-text'}, h('strong', null, t('nodes.publish')))),
-    field(t('nodes.publicName'), name),
-    h('div', {class: 'form-row'}, field(t('nodes.publicRegion'), region), field(t('nodes.publicProvider'), provider)),
-    controls.bar);
+    h('label', {class: 'switch'}, enabled, h('span', {class: 'switch-track', 'aria-hidden': 'true'}), h('span', null, t('nodes.publish'))),
+    checks.map(([key, check]) => h('label', null, check, ' ', t(`nodes.field.${key}`))), controls.bar);
   editableForm(form, controls, async () => {
-    const result = await api(`/nodes/${encodeURIComponent(node.id)}/public-settings`, {method: 'PATCH', body: {enabled: enabled.checked, name: name.value, region: region.value, provider: provider.value}});
+    const result = await api(`/nodes/${encodeURIComponent(node.id)}/public-settings`, {method: 'PATCH', body: {
+      enabled: enabled.checked, fields: checks.filter(([, check]) => check.checked).map(([key]) => key)
+    }});
     if (node.deleted) return;
     Object.assign(settings, result);
     return enabled.checked ? t('nodes.publicSaved') : t('nodes.publicHidden');
   }, node, () => {
-    enabled.checked = settings.enabled; name.value = settings.name; region.value = settings.region; provider.value = settings.provider;
-    sync();
+    enabled.checked = settings.enabled;
+    for (const [key, check] of checks) check.checked = settings.fields.includes(key);
     form.markClean();
   });
-  // 分段标题已标识状态页设置，预览保留自己的标题。
-  return h('div', {class: 'split'}, panel(null, {}, h('div', {class: 'stack'}, hidden, privacy, form)), previewPanel);
+  return panel(null, {}, form);
 }

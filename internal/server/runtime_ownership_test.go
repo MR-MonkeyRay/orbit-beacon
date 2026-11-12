@@ -67,8 +67,8 @@ func TestCredentialReplacementClearsObservedIdentityButFreshSameCredentialClaimP
 	if _, err := f.nodes.PatchMetadata(context.Background(), id, nodes.MetadataPatch{Notes: &notes}); err != nil {
 		t.Fatal(err)
 	}
-	enabled, publicName := true, "Retained public name"
-	if _, err := f.nodes.PatchPublicSettings(context.Background(), id, nodes.PublicSettingsPatch{Enabled: &enabled, Name: &publicName}); err != nil {
+	enabled := true
+	if _, err := f.nodes.PatchPublicSettings(context.Background(), id, nodes.PublicSettingsPatch{Enabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
 	day, quota := 2, "123456789"
@@ -162,7 +162,7 @@ func TestCredentialReplacementClearsObservedIdentityButFreshSameCredentialClaimP
 		t.Fatalf("replacement lost metadata: %+v", current)
 	}
 	public, err := f.nodes.GetPublicSettings(context.Background(), id)
-	if err != nil || !public.Enabled || public.Name != publicName {
+	if err != nil || !public.Enabled {
 		t.Fatalf("replacement lost public settings: %+v err=%v", public, err)
 	}
 	traffic, err := f.nodes.GetTrafficSettings(context.Background(), id)

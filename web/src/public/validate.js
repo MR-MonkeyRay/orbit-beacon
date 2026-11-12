@@ -16,13 +16,26 @@ export function validResponse(result, offset = 0) {
   if (!result || !Array.isArray(result.nodes) || result.nodes.length > 100 || typeof result.has_more !== 'boolean' || !Number.isFinite(timestampMillis(result.generated_at))) return false;
   if (result.has_more ? !Number.isSafeInteger(result.next_offset) || result.next_offset <= offset : result.next_offset !== null) return false;
   return result.nodes.every((node) => {
-    if (!node || !['name', 'region', 'provider'].every((key) => typeof node[key] === 'string') || !['online', 'offline', 'unknown'].includes(node.status)) return false;
-    if (!validAvailability(node.availability)) return false;
+    if (!node || typeof node.name !== 'string' || !['online', 'offline', 'unknown'].includes(node.status)) return false;
     if (node.last_seen !== null && !Number.isFinite(timestampMillis(node.last_seen))) return false;
-    if (!node.metric_status || typeof node.metric_status !== 'object' || Array.isArray(node.metric_status) || Object.keys(node.metric_status).length !== METRICS.length) return false;
-    return METRICS.every((key) => {
-      const value = node[key];
-      const status = node.metric_status[key];
+    const allowed = ['name', 'status', 'last_seen', 'region', 'country', 'provider', ...METRICS, 'metric_status', 'availability', 'traffic', 'expires_on', 'price', 'billing_cycle', 'auto_renew', 'bandwidth', 'ip_version', 'network_route', 'plan_extra'];
+    if (Object.keys(node).some((key) => !allowed.includes(key))) return false;
+    for (const key of ['region', 'country', 'provider', 'billing_cycle', 'bandwidth', 'network_route', 'plan_extra']) {
+      if (key in node && typeof node[key] !== 'string') return false;
+    }
+    if ('country' in node && !/^(?:[A-Z]{2})?$/.test(node.country)) return false;
+    if ('availability' in node && !validAvailability(node.availability)) return false;
+    if ('expires_on' in node && node.expires_on !== null && (typeof node.expires_on !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(node.expires_on))) return false;
+    if ('auto_renew' in node && typeof node.auto_renew !== 'boolean') return false;
+    if ('billing_cycle' in node && !['', 'month', 'quarter', 'half_year', 'year', 'once'].includes(node.billing_cycle)) return false;
+    if ('price' in node && node.price !== null && (!node.price || typeof node.price.amount !== 'string' || !/^[0-9]+(?:\.[0-9]{1,2})?$/.test(node.price.amount) || node.price.amount.length > 16 || typeof node.price.currency !== 'string')) return false;
+    if ('ip_version' in node && (!node.ip_version || typeof node.ip_version.ipv4 !== 'boolean' || typeof node.ip_version.ipv6 !== 'boolean')) return false;
+    if ('traffic' in node && (!node.traffic || typeof node.traffic.quota_bytes !== 'string' || !/^(?:0|[1-9][0-9]*)$/.test(node.traffic.quota_bytes))) return false;
+    const selected = METRICS.filter((key) => key in node);
+    if (selected.length === 0) return !('metric_status' in node);
+    if (!node.metric_status || typeof node.metric_status !== 'object' || Array.isArray(node.metric_status) || Object.keys(node.metric_status).length !== selected.length) return false;
+    return selected.every((key) => {
+      const value = node[key], status = node.metric_status[key];
       if (status === 'unavailable') return value === null;
       return (status === 'ok' || status === 'stale') && typeof value === 'number' && Number.isFinite(value) && value >= 0 && (!key.endsWith('_percent') || value <= 100);
     });

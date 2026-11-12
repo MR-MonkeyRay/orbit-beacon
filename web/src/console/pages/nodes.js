@@ -23,7 +23,7 @@ export async function nodesPage() {
 
   const filter = readNodeFilter();
   const groupNames = new Map(groups.map((group) => [group.id, group.name]));
-  const searchText = (node) => [node.name, node.region, node.provider, node.notes, groupNames.get(node.group_id) || '', ...node.tags].join('\n').toLowerCase();
+  const searchText = (node) => [node.name, node.region || node.geo_location, node.provider, node.notes, groupNames.get(node.group_id) || '', ...node.tags].join('\n').toLowerCase();
   const indexed = nodes.map((node) => ({node, text: searchText(node)}));
   const deleted = new Set();
   const rowRefs = new Map();
@@ -48,13 +48,14 @@ export async function nodesPage() {
   groupSelect.addEventListener('change', () => { filter.group = groupSelect.value; filter.page = 0; update(); });
 
   const direction = () => nodeSortDirection(filter);
-  const sortLabels = {name: t('nodes.column.name'), status: t('nodes.presence'), cpu: t('nodes.cpu'), memory: t('nodes.memory'), agent_version: t('nodes.agentVersion'), created: t('nodes.added')};
+  const sortLabels = {order: t('nodes.field.display_order'), name: t('nodes.column.name'), status: t('nodes.presence'), cpu: t('nodes.cpu'), memory: t('nodes.memory'), agent_version: t('nodes.agentVersion'), created: t('nodes.added')};
   const mobileSort = select(SORTS.flatMap((key) => ['asc', 'desc'].map((dir) => [`${key}:${dir}`, `${sortLabels[key]} ${dir === 'asc' ? '↑' : '↓'}`])), `${filter.sort}:${direction()}`, {class: 'input nodes-mobile-sort', 'aria-label': t('nodes.sort')});
   mobileSort.addEventListener('change', () => { [filter.sort, filter.dir] = mobileSort.value.split(':'); update(); });
   const columns = readNodeColumns();
+  const orderSort = h('button', {type: 'button', class: 'btn btn-sm', onclick: () => { filter.sort = 'order'; filter.dir = 'desc'; update(); }}, t('nodes.field.display_order'));
   const columnPicker = nodeColumnPicker({columns, signal, onChange: () => patchNodeColumns(table, columns)});
   const sortable = (key, label) => h('th', {scope: 'col', dataset: {sort: key}}, h('button', {type: 'button', onclick: () => {
-    filter.dir = filter.sort === key ? (direction() === 'asc' ? 'desc' : 'asc') : key === 'created' ? 'desc' : 'asc';
+    filter.dir = filter.sort === key ? (direction() === 'asc' ? 'desc' : 'asc') : ['created', 'order'].includes(key) ? 'desc' : 'asc';
     filter.sort = key;
     update();
   }}, label, icon('up')));
@@ -251,7 +252,7 @@ export async function nodesPage() {
     h('div', {class: 'toolbar'},
       h('div', {class: 'search'}, icon('search'), search, h('kbd', null, '/')),
       h('div', {class: 'segmented', role: 'group', 'aria-label': t('nodes.filterPresence')}, [...statusButtons.values()]),
-      groupSelect, mobileSort, columnPicker),
+      groupSelect, mobileSort, orderSort, columnPicker),
     h('div', {class: 'table-wrap nodes-table-wrap'}, h('table', {class: 'table nodes-table'}, h('caption', {class: 'sr'}, t('nodes.listTitle')), h('thead', null, h('tr', null, headers)), body)),
     h('div', {class: 'table-foot'}, summary, pager, changes), actionBar);
   update();

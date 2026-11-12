@@ -1,13 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
 	"net/netip"
-	"slices"
 	"sync"
 	"time"
 
@@ -229,21 +229,15 @@ func (h *handler) publicStreamIP(r *http.Request) string {
 	return address
 }
 
-// publicPagesEqual 忽略投影和传输时间，直接比较字段，
-// 避免仅为判断是否发送心跳就序列化未变化的 100 节点页面。
+// publicPagesEqual ignores transport time and compares only the selected wire projection.
 func publicPagesEqual(a, b ingest.PublicPage) bool {
 	if a.HasMore != b.HasMore || !equalLiveValue(a.NextOffset, b.NextOffset) {
 		return false
 	}
-	return slices.EqualFunc(a.Nodes, b.Nodes, func(a, b ingest.PublicNode) bool {
-		return a.Name == b.Name && a.Region == b.Region && a.Provider == b.Provider &&
-			a.Status == b.Status && equalLiveTime(a.LastSeen, b.LastSeen) &&
-			a.MetricStatus == b.MetricStatus && equalLiveValue(a.CPUPercent, b.CPUPercent) &&
-			equalLiveValue(a.MemoryPercent, b.MemoryPercent) && equalLiveValue(a.Load1, b.Load1) &&
-			equalLiveValue(a.UptimeSeconds, b.UptimeSeconds) &&
-			a.Availability.StartDay == b.Availability.StartDay && equalLiveValue(a.Availability.Percent, b.Availability.Percent) &&
-			slices.EqualFunc(a.Availability.Days, b.Availability.Days, equalLiveValue[float64])
-	})
+	// Compare the effective projection, including disclosure changes, not private data.
+	left, le := json.Marshal(a.Nodes)
+	right, re := json.Marshal(b.Nodes)
+	return le == nil && re == nil && bytes.Equal(left, right)
 }
 
 func equalLiveValue[T comparable](a, b *T) bool {
