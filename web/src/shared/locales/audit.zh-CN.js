@@ -7,7 +7,6 @@ export default {
   'audit.category.token': '令牌',
 
   "audit.targetRule": "告警规则",
-  "audit.targetAnnouncement": "公告",
   "audit.apiTokenRateUpdate": "修改 API 令牌限额",
   "audit.apiTokenGlobalRateUpdate": "修改 API 令牌全局限额",
   "audit.apiTokenRevoke": "撤销 API 令牌",
@@ -16,9 +15,6 @@ export default {
   "audit.totpDisable": "停用两步验证",
   "audit.totpReset": "重置两步验证",
   "audit.totpRecoveryCodes": "重新生成恢复码",
-  'audit.announcementCreate': '已创建公告',
-  'audit.announcementUpdate': '已更新公告',
-  'audit.announcementDelete': '已删除公告',
 
   'audit.commandCreate': '创建指令',
   'audit.commandBulk': '批量下发指令',

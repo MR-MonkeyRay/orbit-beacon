@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"orbitbeacon/internal/server/announcements"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/storage"
@@ -233,9 +232,7 @@ func (h *handler) publicStreamIP(r *http.Request) string {
 // publicPagesEqual 忽略投影和传输时间，直接比较字段，
 // 避免仅为判断是否发送心跳就序列化未变化的 100 节点页面。
 func publicPagesEqual(a, b ingest.PublicPage) bool {
-	if a.HasMore != b.HasMore || !equalLiveValue(a.NextOffset, b.NextOffset) || !slices.EqualFunc(a.Announcements, b.Announcements, func(a, b announcements.Public) bool {
-		return a.Level == b.Level && a.Title == b.Title && a.Body == b.Body && a.StartsAt.Equal(b.StartsAt) && equalLiveTime(a.EndsAt, b.EndsAt)
-	}) {
+	if a.HasMore != b.HasMore || !equalLiveValue(a.NextOffset, b.NextOffset) {
 		return false
 	}
 	return slices.EqualFunc(a.Nodes, b.Nodes, func(a, b ingest.PublicNode) bool {

@@ -1,6 +1,6 @@
 # OrbitBeacon
 
-自托管的多节点监控系统：Go 服务器提供 API、内嵌控制台与状态页，默认使用 SQLite，也可配置 [MySQL 主备](deploy/README.md#数据库)；Linux Agent 以非 root 身份采集并通过 HTTP / HTTPS 上报。控制台与状态页支持简体中文（zh-CN）和英文（en），状态页支持公告与可替换主题。
+自托管的多节点监控系统：Go 服务器提供 API、内嵌控制台与状态页，默认使用 SQLite，也可配置 [MySQL 主备](deploy/README.md#数据库)；Linux Agent 以非 root 身份采集并通过 HTTP / HTTPS 上报。控制台与状态页支持简体中文（zh-CN）和英文（en），状态页支持可替换主题。
 
 ## 功能
 
@@ -9,7 +9,7 @@
 | 节点指标、历史、探测与可用率 | 节点 / Nodes；节点详情 → 监控 / Monitoring、服务探测 / Service probes |
 | 流量计费与配额告警 | 节点详情 → 流量 / Traffic；告警 / Alerts（配额规则） |
 | Agent 注册、运行设置与远程升级 | 节点详情 → 更多 → 注册 Agent / More → Enroll Agent；节点详情 → 设置 → Agent / Settings → Agent；设置 → 分组 / Groups |
-| 状态页、公告、公开字段与主题 | 设置 → 状态页 / Status page；节点详情 → 设置 → 状态页展示 / Settings → Status page listing；构建时选择 `web/themes/<name>` |
+| 状态页、公开字段与主题 | 设置 → 状态页 / Status page；节点详情 → 设置 → 状态页展示 / Settings → Status page listing；构建时选择 `web/themes/<name>` |
 | 告警、静默与通知 | 告警 / Alerts；站内通知 / Notifications |
 | 管理员、两步验证与只读 API 令牌 | 设置 → 管理员 / Administrators、账户 / Account、API 令牌 / API tokens |
 | 加密导出、备份计划、恢复与数据清理 | 设置 → 数据 / Settings → Data（备份与导出、存储与清理） |
@@ -17,8 +17,8 @@
 ## 重要限制
 
 - 控制台支持桌面、平板与手机；手机使用抽屉导航，宽表格横向滚动。状态页支持所有设备。
-- 节点状态、历史、可用率、公告与通知可靠性边界见[状态与历史](docs/architecture.md#状态与历史)、[实时传输](docs/architecture.md#实时传输)、[告警与通知](docs/architecture.md#告警与通知)。
-- 公告与公开字段均为匿名可见文本，不自动脱敏；不要填写凭据、IP、主机名或秘密。
+- 节点状态、历史、可用率与通知可靠性边界见[状态与历史](docs/architecture.md#状态与历史)、[实时传输](docs/architecture.md#实时传输)、[告警与通知](docs/architecture.md#告警与通知)。
+- 公开字段为匿名可见文本，不自动脱敏；不要填写凭据、IP、主机名或秘密。
 - 当前部署支持 Linux；Agent 支持本地许可控制的远程版本升级，不提供终端或任意命令执行。
 
 ## 快速开始
@@ -64,7 +64,7 @@ build/orbitbeacon-server health --url http://localhost:8080
 
 ### 6. 公开节点
 
-在节点详情“设置 → 状态页展示 / Settings → Status page listing”填写公开信息，勾选“公开此节点 / Publish this node”。展示资格、公开范围及全站开关规则见[安全](docs/architecture.md#安全)、[实时传输](docs/architecture.md#实时传输)。全站公告在“设置 → 状态页 / Settings → Status page”添加，只在开始时间后显示；设置结束时间后到点隐藏。
+在节点详情“设置 → 状态页展示 / Settings → Status page listing”填写公开信息，勾选“公开此节点 / Publish this node”。展示资格、公开范围及全站开关规则见[安全](docs/architecture.md#安全)、[实时传输](docs/architecture.md#实时传输)。
 
 ## 文档
 

@@ -38,8 +38,6 @@ npm test
 | `build.config.json` | 首页主题和静态资源 CDN 地址 |
 | `test/`、`build.mjs` | 回归工具与双入口构建 |
 
-状态页公告面板位于 `src/console/pages/settings-announcements.js`，公开渲染由所选主题的公告渲染器提供；显示窗口和数量规则见[公告](../docs/architecture.md#公告)。
-
 ## 构建与缓存
 
 编辑 [`build.config.json`](build.config.json)，然后执行 `npm run build`：

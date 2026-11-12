@@ -15,7 +15,7 @@ test('full and public catalog sets have matching English and Chinese keys', () =
   for (const [small, full] of [[publicEn, en], [publicZhCN, zhCN]]) {
     for (const [key, value] of Object.entries(small)) {
       assert.deepEqual(value, full[key], key);
-      assert.match(key, /^(common|controls|public|errors)\.|^alerts\.severity\.(info|warning|critical)$/);
+      assert.match(key, /^(common|controls|public|errors)\./);
     }
     assert.ok(keys(small).length < keys(full).length / 4);
   }

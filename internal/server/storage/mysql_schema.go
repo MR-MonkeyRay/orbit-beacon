@@ -33,7 +33,6 @@ var mysqlMainSchema = []string{
 	"CREATE TABLE `inbox_reads` (\n `user_id` VARBINARY(64) NOT NULL,\n `notification_id` VARBINARY(64) NOT NULL,\n `read_at` VARCHAR(255) NOT NULL,\n PRIMARY KEY(user_id,notification_id),\n FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,\n FOREIGN KEY (`notification_id`) REFERENCES `inbox_notifications`(`id`) ON DELETE CASCADE\n) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin;",
 	"CREATE TABLE `inbox_sequence` (\n `id` BIGINT PRIMARY KEY CHECK(id=1),\n `value` BIGINT NOT NULL CHECK(value>=0)\n) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin;",
 	"CREATE TABLE `node_deletions` (\n `node_id` VARBINARY(64) PRIMARY KEY NOT NULL,\n `deleted_at` VARCHAR(255) NOT NULL\n) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin;",
-	"CREATE TABLE `announcements` (\n `id` VARBINARY(64) PRIMARY KEY,\n `level` VARCHAR(255) NOT NULL CHECK(level IN ('info','warning','critical')),\n `title` VARCHAR(255) NOT NULL,\n `body` LONGTEXT NOT NULL,\n `starts_at` VARCHAR(255) NOT NULL,\n `ends_at` VARCHAR(255),\n `created_at` VARCHAR(255) NOT NULL,\n `updated_at` VARCHAR(255) NOT NULL,\n CHECK(ends_at IS NULL OR ends_at > starts_at)\n) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin;",
 	"CREATE INDEX sessions_user ON `sessions`(user_id);",
 	"CREATE INDEX sessions_expiry ON `sessions`(expires_at);",
 	"CREATE INDEX api_tokens_owner ON `api_tokens`(created_by);",
@@ -71,7 +70,6 @@ var mysqlMainSchema = []string{
 	"CREATE INDEX backup_tasks_artifact_cleanup ON backup_tasks(artifact_cleanup_after,id);",
 	"CREATE INDEX inbox_notifications_history ON `inbox_notifications`(created_at DESC,id DESC);",
 	"CREATE INDEX inbox_reads_notification ON `inbox_reads`(notification_id);",
-	"CREATE INDEX announcements_window ON `announcements`(starts_at, ends_at);",
 	"INSERT INTO inbox_sequence(id,value) VALUES(1,0)",
 }
 var mysqlHistorySchema = []string{

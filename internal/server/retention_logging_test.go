@@ -3,7 +3,7 @@ package server
 import "testing"
 
 func TestRetentionChangedIncludesEveryResultField(t *testing.T) {
-	for i := range 16 {
+	for i := range 15 {
 		result := RetentionResult{}
 		switch i {
 		case 0:
@@ -36,8 +36,6 @@ func TestRetentionChangedIncludesEveryResultField(t *testing.T) {
 			result.AvailabilityRows = 1
 		case 14:
 			result.AlertSilences = 1
-		case 15:
-			result.Announcements = 1
 		}
 		if !retentionChanged(result) {
 			t.Fatalf("field %d does not trigger summary", i)

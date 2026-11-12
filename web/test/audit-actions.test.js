@@ -14,7 +14,7 @@ test('lifecycle and enrollment audit actions have friendly labels', () => {
 });
 
 
-for (const [resource, field, typeKey] of [['alert_rule', 'name', 'audit.targetRule'], ['announcement', 'title', 'audit.targetAnnouncement']]) {
+for (const [resource, field, typeKey] of [['alert_rule', 'name', 'audit.targetRule']]) {
   test(`${resource} audit targets use recorded names and typed legacy IDs`, () => {
     const dom = installDOM();
     try {
@@ -36,14 +36,14 @@ for (const [resource, field, typeKey] of [['alert_rule', 'name', 'audit.targetRu
 test('compact audit rows retain actor, recorded target and expandable details', () => {
   const dom = installDOM();
   try {
-    const row = auditItem({id: 'event', actor_id: 'user', target_id: 'announcement', action: 'announcement.update',
-      created_at: '2026-11-09T12:00:00Z', details: {title: '<Recorded title>', changed: ['body']}}, new Map([['user', 'Alice']]), true, {compact: true});
+    const row = auditItem({id: 'event', actor_id: 'user', target_id: 'rule', action: 'alert_rule.update',
+      created_at: '2026-11-09T12:00:00Z', details: {name: '<Recorded rule>', changed: ['threshold']}}, new Map([['user', 'Alice']]), true, {compact: true});
     assert.equal(row.tagName, 'tr');
     assert.equal(row.children.length, 5);
     assert.equal(row.children[1].textContent, 'Alice');
-    assert.equal(row.children[3].textContent, '<Recorded title>');
+    assert.equal(row.children[3].textContent, '<Recorded rule>');
     assert.ok(row.children[0].querySelector('time'));
-    assert.ok(row.querySelector('details').textContent.includes('announcement.update'));
-    assert.ok(row.querySelector('details').textContent.includes('["body"]'));
+    assert.ok(row.querySelector('details').textContent.includes('alert_rule.update'));
+    assert.ok(row.querySelector('details').textContent.includes('["threshold"]'));
   } finally { dom.restore(); }
 });

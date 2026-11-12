@@ -56,7 +56,6 @@ var mainTables = []TableSpec{
 	{ID: 28, Name: "inbox_reads", Columns: []ColumnSpec{{"user_id", Text, false}, {"notification_id", Text, false}, {"read_at", Text, false}}, PK: []string{"user_id", "notification_id"}, FK: []ForeignKeySpec{{"user_id", "users", "id", "CASCADE"}, {"notification_id", "inbox_notifications", "id", "CASCADE"}}},
 	{ID: 29, Name: "inbox_sequence", Columns: []ColumnSpec{{"id", Integer, false}, {"value", Integer, false}}, PK: []string{"id"}, FK: []ForeignKeySpec{}},
 	{ID: 30, Name: "node_deletions", Columns: []ColumnSpec{{"node_id", Text, false}, {"deleted_at", Text, false}}, PK: []string{"node_id"}, FK: []ForeignKeySpec{}},
-	{ID: 31, Name: "announcements", Columns: []ColumnSpec{{"id", Text, false}, {"level", Text, false}, {"title", Text, false}, {"body", Text, false}, {"starts_at", Text, false}, {"ends_at", Text, false}, {"created_at", Text, false}, {"updated_at", Text, false}}, PK: []string{"id"}, FK: []ForeignKeySpec{}},
 }
 var historyTables = []TableSpec{
 	{ID: 32, Name: "buckets", Columns: []ColumnSpec{{"node_id", Text, false}, {"metric", Text, false}, {"step", Integer, false}, {"t", Integer, false}, {"total", Float, false}, {"peak", Float, false}, {"samples", Integer, false}}, PK: []string{"node_id", "metric", "step", "t"}, FK: []ForeignKeySpec{}},

@@ -22,7 +22,6 @@ function node(overrides = {}) {
 
 function response(overrides = {}) {
   return {
-    announcements: [],
     nodes: [node()],
     has_more: false,
     next_offset: null,

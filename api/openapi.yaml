@@ -434,7 +434,7 @@ paths:
               examples:
                 snapshot:
                   summary: 公开快照帧
-                  value: "event: message\ndata: {\"type\":\"snapshot\",\"server_time\":\"2026-01-01T00:00:00Z\",\"update_interval_seconds\":10,\"data\":{\"announcements\":[],\"nodes\":[],\"has_more\":false,\"next_offset\":null,\"generated_at\":\"2026-01-01T00:00:00Z\"}}\n\n"
+                  value: "event: message\ndata: {\"type\":\"snapshot\",\"server_time\":\"2026-01-01T00:00:00Z\",\"update_interval_seconds\":10,\"data\":{\"nodes\":[],\"has_more\":false,\"next_offset\":null,\"generated_at\":\"2026-01-01T00:00:00Z\"}}\n\n"
                 heartbeat:
                   summary: 连接时钟，无新节点数据
                   value: "event: message\ndata: {\"type\":\"heartbeat\",\"server_time\":\"2026-01-01T00:00:10Z\",\"update_interval_seconds\":10}\n\n"
@@ -1287,72 +1287,6 @@ paths:
                   deliveries: {type: array, items: {$ref: '#/components/schemas/NotificationDelivery'}}
                   has_more: {type: boolean}
                   next_cursor: {type: string}
-        default: {$ref: '#/components/responses/Error'}
-  /api/v1/announcements:
-    get:
-      operationId: listAnnouncements
-      description: 管理员读取未结束公告，按 starts_at 降序、id 升序；active 包含开始边界，不包含结束边界。
-      responses:
-        '200':
-          description: 公告集合。
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [announcements]
-                properties:
-                  announcements: {type: array, items: {$ref: '#/components/schemas/Announcement'}}
-        default: {$ref: '#/components/responses/Error'}
-    post:
-      operationId: createAnnouncement
-      description: 管理员创建公告，与 announcement.create 审计原子提交；提交后立即使公开缓存和活跃流失效。starts_at 缺省为当前时间，ends_at 非空时须晚于开始及当前时间；最多 100 条未结束公告，超限返回 409 announcement_capacity_reached。文本修剪首尾空白、CRLF 归一化为 LF，仅按纯文本展示。
-      parameters:
-        - $ref: '#/components/parameters/Origin'
-        - $ref: '#/components/parameters/CSRF'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/AnnouncementCreate'}
-      responses:
-        '201':
-          description: 已创建公告。
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/Announcement'}
-        '409': {$ref: '#/components/responses/Error'}
-        default: {$ref: '#/components/responses/Error'}
-  /api/v1/announcements/{id}:
-    parameters:
-      - $ref: '#/components/parameters/ResourceID'
-    patch:
-      operationId: updateAnnouncement
-      description: 管理员更新公告，与 announcement.update 审计原子提交；缺失字段保留，只有 ends_at 接受 null（清除结束时间）。合并后重新校验；提交后立即使公开缓存和活跃流失效。
-      parameters:
-        - $ref: '#/components/parameters/Origin'
-        - $ref: '#/components/parameters/CSRF'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/AnnouncementPatch'}
-      responses:
-        '200':
-          description: 已更新公告。
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/Announcement'}
-        '404': {$ref: '#/components/responses/Error'}
-        default: {$ref: '#/components/responses/Error'}
-    delete:
-      operationId: deleteAnnouncement
-      description: 管理员删除公告，与 announcement.delete 审计原子提交；提交后立即使公开缓存和活跃流失效。
-      parameters:
-        - $ref: '#/components/parameters/Origin'
-        - $ref: '#/components/parameters/CSRF'
-      responses:
-        '204': {description: 已删除。}
-        '404': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/alert-silences:
     get:
@@ -3705,42 +3639,6 @@ components:
           type: array
           maxItems: 5
           items: {$ref: '#/components/schemas/AlertEvent'}
-    PublicAnnouncement:
-      type: object
-      additionalProperties: false
-      required: [level, title, body, starts_at, ends_at]
-      properties:
-        level: {type: string, enum: [info, warning, critical]}
-        title: {type: string, minLength: 1, x-maxLengthBytes: 100, description: 有效 UTF-8，无控制字符，修剪首尾空白。}
-        body: {type: string, minLength: 1, x-maxLengthBytes: 1000, description: 有效 UTF-8，除 LF 外无控制字符，CRLF 归一化为 LF，修剪首尾空白。}
-        starts_at: {type: string, format: date-time}
-        ends_at: {type: [string, 'null'], format: date-time, description: 非空时必须晚于 starts_at。}
-    AnnouncementPatch:
-      type: object
-      additionalProperties: false
-      properties:
-        level: {type: string, enum: [info, warning, critical]}
-        title: {type: string, minLength: 1, x-maxLengthBytes: 100}
-        body: {type: string, minLength: 1, x-maxLengthBytes: 1000}
-        starts_at: {type: string, format: date-time}
-        ends_at: {type: [string, 'null'], format: date-time}
-    AnnouncementCreate:
-      allOf:
-        - $ref: '#/components/schemas/AnnouncementPatch'
-        - required: [level, title, body]
-    Announcement:
-      type: object
-      required: [id, level, title, body, starts_at, ends_at, created_at, updated_at, active]
-      properties:
-        id: {type: string, format: uuid}
-        level: {type: string, enum: [info, warning, critical]}
-        title: {type: string}
-        body: {type: string}
-        starts_at: {type: string, format: date-time}
-        ends_at: {type: [string, 'null'], format: date-time}
-        created_at: {type: string, format: date-time}
-        updated_at: {type: string, format: date-time}
-        active: {type: boolean}
     AlertSilenceCreate:
       type: object
       additionalProperties: false
@@ -3874,11 +3772,10 @@ components:
         created_at: {type: string, format: date-time, description: UTC RFC3339.}
         details:
           type: object
-          description: 变更时的少量事实快照；alert_rule.create/update/delete 的 name 为规则名称，announcement.create/update/delete 的 title 为公告标题。历史事件可能缺少这些字段。
+          description: 变更时的少量事实快照；alert_rule.create/update/delete 的 name 为规则名称。历史事件可能缺少这些字段。
           additionalProperties: true
           properties:
             name: {type: string, description: 告警规则名称（alert_rule.*）。}
-            title: {type: string, description: 公告标题（announcement.*）。}
           example: {}
     Node:
       type: object
@@ -4192,15 +4089,10 @@ components:
         - {$ref: '#/components/schemas/LiveCloseFrame'}
         - {$ref: '#/components/schemas/LiveErrorFrame'}
     PublicNodeList:
-      description: 公告在每一页都包含当前生效项，按 critical、warning、info、starts_at 降序、id 升序排列，最多 5 条。定时窗口在现有缓存 TTL 内刷新，不含内部 ID 或审计字段。
       type: object
       additionalProperties: false
-      required: [nodes, has_more, next_offset, generated_at, announcements]
+      required: [nodes, has_more, next_offset, generated_at]
       properties:
-        announcements:
-          type: array
-          maxItems: 5
-          items: {$ref: '#/components/schemas/PublicAnnouncement'}
         nodes:
           type: array
           maxItems: 100

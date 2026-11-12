@@ -21,7 +21,6 @@ import {dataManagementPage} from './data-management.js';
 import {dataOperationsTab} from './data-operations.js';
 import {groupCommandActions} from '../lib/group-commands.js';
 import {showTask} from './backup-task.js';
-import {announcementsPanel} from './settings-announcements.js';
 
 export async function settingsPage() {
   const signal = getNavigationSignal();
@@ -129,10 +128,9 @@ function publicPageTab() {
     h('label', {class: 'switch'}, control, h('span', {class: 'switch-track', 'aria-hidden': 'true'}),
       h('span', {class: 'switch-text'}, h('strong', null, t('settings.publicEnable')))),
     errorBox, note, retry);
-  const announcements = announcementsPanel(navigation);
-  return {element: h('div', {class: 'stack'}, element, announcements.element),
-    attach() { controller = new AbortController(); void load(); announcements.attach(); },
-    detach() { controller?.abort(); announcements.detach(); }
+  return {element,
+    attach() { controller = new AbortController(); void load(); },
+    detach() { controller?.abort(); }
   };
 }
 
@@ -321,7 +319,7 @@ function auditTab(page, names, users) {
     node: 'shell.nodes', enrollment: 'audit.category.enrollment', command: 'audit.category.command',
     group: 'settings.groups', user: 'settings.account', session: 'settings.account',
     alert_rule: 'shell.alerts', alert_silence: 'shell.alerts', notification_channel: 'audit.category.notification',
-    announcement: 'announcements.title', backup: 'settings.data', api_token: 'audit.category.token',
+    backup: 'settings.data', api_token: 'audit.category.token',
     settings: 'audit.category.token', public_page: 'settings.publicPage'
   };
   const categories = [...new Set(Object.keys(ACTIONS).map((action) => resources[action.split('.')[0]]))];

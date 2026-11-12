@@ -7,7 +7,6 @@ export default {
   'audit.category.token': 'Tokens',
 
   "audit.targetRule": "Alert rule",
-  "audit.targetAnnouncement": "Announcement",
   "audit.apiTokenRateUpdate": "Update API token limit",
   "audit.apiTokenGlobalRateUpdate": "Update global API token limit",
   "audit.apiTokenRevoke": "Revoke API token",
@@ -16,9 +15,6 @@ export default {
   "audit.totpDisable": "Two-step verification disabled",
   "audit.totpReset": "Two-step verification reset",
   "audit.totpRecoveryCodes": "Recovery codes regenerated",
-  'audit.announcementCreate': 'Announcement created',
-  'audit.announcementUpdate': 'Announcement updated',
-  'audit.announcementDelete': 'Announcement deleted',
 
   'audit.commandCreate': 'Command created',
   'audit.commandBulk': 'Group commands issued',

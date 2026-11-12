@@ -9,7 +9,7 @@ import {localeSelect} from '../shared/locale-select.js';
 import {errorText} from '../shared/errors.js';
 import {statusLabels} from '../shared/status.js';
 
-export function mountPublicPage({createCard, skeletonCards, createConstellation, announcementRenderer, createRegionHeading = (region) => h('li', {class: 'region-heading'}, h('h2', null, region))}) {
+export function mountPublicPage({createCard, skeletonCards, createConstellation, createRegionHeading = (region) => h('li', {class: 'region-heading'}, h('h2', null, region))}) {
   const STATUS = statusLabels({unknown: 'public.status.unknown'});
   // 脚本已成功启动，移除脚本加载失败的回退提示。
   document.getElementById('script-error')?.remove();
@@ -18,7 +18,6 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
   const PAGE = 50;
   const $ = (id) => document.getElementById(id);
   const list = $('nodes');
-  const renderAnnouncements = announcementRenderer($('announcements'));
   const empty = $('empty');
   const emptyText = $('empty-text');
   const retry = $('retry');
@@ -128,7 +127,6 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
   // ------------------------------------------------------------------ 渲染
 
   function render(result) {
-    renderAnnouncements(result.announcements);
     const nodes = result.nodes;
     const nextKeys = nodes.map((node) => `${node.name}\u0000${node.region}\u0000${node.provider}`).join('\u0001');
     if (nextKeys !== keys || cards.length !== nodes.length) {
@@ -289,7 +287,6 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
         connection?.close();
         clearTimeout(displayTimer);
         restartCountdown(false);
-        renderAnnouncements([]);
         clearData();
         finish();
         location.replace('/');

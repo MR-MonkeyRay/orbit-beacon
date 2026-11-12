@@ -16,7 +16,6 @@
 | 告警静默 | Alert silence |
 | 通知通道 | Notification channel |
 | 站内通知 | Notifications |
-| 公告 | Announcement |
 | 在线 / 离线 / 未知 / 已过期 | Online / Offline / Unknown / Stale |
 | 待注册 / 未上报 / 禁用 | Pending / Never seen / Disabled |
 | 可用率 | Availability |

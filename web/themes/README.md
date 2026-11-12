@@ -1,6 +1,6 @@
 # 状态页主题开发
 
-主题只改变匿名状态页 `/` 的呈现，不改变登录页或控制台。`default` 保留现有外观；`example` 使用暖白／深绿配色、侧栏概览和更方正的节点卡片，包含完整的公告、筛选、分页、语言和主题切换。
+主题只改变匿名状态页 `/` 的呈现，不改变登录页或控制台。`default` 保留现有外观；`example` 使用暖白／深绿配色、侧栏概览和更方正的节点卡片，包含完整的筛选、分页、语言和主题切换。
 
 ## 从示例开始
 
@@ -57,9 +57,8 @@ HTML 中保留以下占位符，各一次：
 
 - `src/public/page.js`：`mountPublicPage(...)` 管理公开 API、校验、传输回退、分页、筛选、连接状态和可见性生命周期；只导入固定的公共源码，不依赖所选主题。
 - `src/public/validate.js`：公开快照校验，保持在呈现组件之前。
-- `themes/default/`：原有 HTML、CSS、节点卡片、星轨图与公告呈现。
-- `themes/default/announcements.js`：公告渲染；输入已按窗口过滤，按 critical、warning、info 及开始时间排序，最多 5 条纯文本。
-- `themes/example/`：独立 HTML/CSS/入口，复用默认卡片、星轨图与公告组件；复制后仍可使用这些固定的相对导入。
+- `themes/default/`：原有 HTML、CSS、节点卡片、星轨图呈现。
+- `themes/example/`：独立 HTML/CSS/入口，复用默认卡片、星轨图组件；复制后仍可使用这些固定的相对导入。
 - `src/shared/usage.js`：`usageLevel(percent)` 共用 >80% 警告、>90% 严重阈值；`usageMeter(percent)` 返回条形与文本 DOM，`meter.update(percent)` 更新数值，样式来自 `shared/tokens.css`。
 - `src/shared/`：DOM、实时通道、明暗与语言控件、格式化和公开词条；不要导入 `src/console/`、私有 API 客户端或控制台设置代码。
 
@@ -77,7 +76,6 @@ HTML 中保留以下占位符，各一次：
 | `countdown` | 装饰性刷新指示器，保留 `aria-hidden="true"` |
 | `refresh` | `button type="button"`，刷新当前页 |
 | `constellation` | 图形容器，保留 `aria-hidden="true"` |
-| `announcements` | 初始 `hidden` 的公告区域，保留翻译后的无障碍名称 |
 | `filters` | 初始 `hidden` 的筛选容器，保留 `role="group"` 与无障碍名称 |
 | `announcement` | 屏幕阅读器状态文字，保留 `role="status"`、`aria-live="polite"` 与 `.sr` |
 | `empty`、`empty-text` | 空筛选或加载失败的区域与文字，外层初始 `hidden` |
@@ -98,9 +96,8 @@ import './public.css';
 import {mountPublicPage} from '../../src/public/page.js';
 import {createCard, skeletonCards} from '../default/cards.js';
 import {createConstellation} from '../default/constellation.js';
-import {announcementRenderer} from '../default/announcements.js';
 
-mountPublicPage({createCard, skeletonCards, createConstellation, announcementRenderer});
+mountPublicPage({createCard, skeletonCards, createConstellation});
 ```
 
 需要替换组件时，函数契约如下：
@@ -109,7 +106,6 @@ mountPublicPage({createCard, skeletonCards, createConstellation, announcementRen
 - `createRegionHeading(region)`（可选）：返回地区标题的 `li`；默认是 `.region-heading` 包含 `h2`，CSS 应让它跨满网格列。当前页加载超过 12 个节点时，运行时按地区插入标题，并添加搜索框 `.node-search`；搜索仅匹配当前页的名称、地区与提供商，与状态筛选叠加，翻页清空。12 个及以下保持平铺。未提供此钩子的主题沿用默认标题，`example` 无需改入口。
 - `skeletonCards(count)` 返回占位 `li` 数组，使用 `.placeholder` 以便加载结束清除；占位内容对辅助技术隐藏。
 - `createConstellation(container)` 返回 `{update(nodes), clear()}`。图形只反映当前页已校验的集合；`clear()` 必须撤下全部节点相关信息。
-- `announcementRenderer(container)` 返回 `render(items)`。空数组必须清除所有公告并隐藏区域；重复快照尽量保留相同内容的 DOM。标题和正文只能作为纯文本呈现。
 
 ## 选择修改层级
 
@@ -162,7 +158,6 @@ CSS 使用相对导入：
   "server_time":"2026-11-07T12:00:00Z",
   "update_interval_seconds":10,
   "data":{
-    "announcements":[],
     "nodes":[],
     "generated_at":"2026-11-07T12:00:00Z",
     "has_more":false,
@@ -171,21 +166,21 @@ CSS 使用相对导入：
 }
 ```
 
-`mountPublicPage` 的呈现函数收到的是校验后的 `data`，不必解包帧。节点只有公开名称、地区、提供商、状态、最后上报时间、30 日可用性和 CPU／内存／负载／运行时间等公开指标；`metric_status` 独立表达 `ok`、`stale`、`unavailable`。缺失值是 `null`，不能显示成 `0`；离线不代表指标必须清空。公告是最多五条的当前生效公开内容，不含内部 ID。完整字段、分页候选游标与 heartbeat／close／error 帧见 [OpenAPI](../../api/openapi.yaml)。不要从当前节点数推算下一页偏移，也不要跨页拼出隐藏的总数。
+`mountPublicPage` 的呈现函数收到的是校验后的 `data`，不必解包帧。节点只有公开名称、地区、提供商、状态、最后上报时间、30 日可用性和 CPU／内存／负载／运行时间等公开指标；`metric_status` 独立表达 `ok`、`stale`、`unavailable`。缺失值是 `null`，不能显示成 `0`；离线不代表指标必须清空。完整字段、分页候选游标与 heartbeat／close／error 帧见 [OpenAPI](../../api/openapi.yaml)。不要从当前节点数推算下一页偏移，也不要跨页拼出隐藏的总数。
 
 ### 无凭据与 CSP
 
 - 状态页不需要账户、会话探测、CSRF token、Agent token 或管理接口。HTTP/SSE 使用 `credentials:'omit'`；浏览器 WebSocket 没有这个选项，可能自动带同源 Cookie，但公开端点完全忽略会话，主题不能读取、依赖或传递凭据。
 - 主题代码和静态素材对匿名访客可见，不能放密码、密钥、私有主机地址、内部 ID 或未公开节点数据；也不要把节点快照写进 localStorage、日志、分析服务或远端图片 URL。
-- 公告、节点名、地区、提供商等内容不要拼进 `innerHTML`、属性名、脚本或样式；用 `textContent` 或共享 `h()` 的文本子节点。
+- 节点名、地区、提供商等内容不要拼进 `innerHTML`、属性名、脚本或样式；用 `textContent` 或共享 `h()` 的文本子节点。
 - API、WebSocket 和导航留在原站点；不要用静态资源基址拼它们，也不要从 CDN 取 API 数据。
 - 页面受服务器 CSP 约束：不引入第三方脚本、外部字体、内联事件、`eval`，也不要自行放宽。自定义代码通过模块导入，样式通过 CSS 导入；构建生成的明暗启动脚本由服务器处理。外部请求会被策略阻止，不要让用户关 CSP。
 - 只安装可信作者的主题，并保护 CDN 写入权限。主题脚本和网站有相同浏览器权限；目录和样式隔离不是沙箱，恶意主题仍可能借已登录会话发请求。
 
 ### 关闭、撤回与过期
 
-- 收到已校验的 `public_page_disabled`，必须先停止通道与计时器，清除节点、公告、图形及衍生缓存，再 `location.replace('/')` 让服务器分流。保留旧画面并显示“已关闭”不符合隐私边界。
-- 后续有效快照是完整的当前页集合。节点或公告消失时必须立即从 DOM 和图形撤下；空集合也是有效撤回。分页期间公告可保留，直到下一页有效快照替换。
+- 收到已校验的 `public_page_disabled`，必须先停止通道与计时器，清除节点、图形及衍生缓存，再 `location.replace('/')` 让服务器分流。保留旧画面并显示“已关闭”不符合隐私边界。
+- 后续有效快照是完整的当前页集合。节点消失时必须立即从 DOM 和图形撤下；空集合也是有效撤回。
 - 普通断线、页面隐藏和临时错误不是撤回：保留最后一次有效值，明确标记过期／重连中，不伪造离线。无初始快照时显示加载失败与重试，不伪造空集合。
 - 无效快照绝不能替换最后一次有效数据。隐藏页面停止网络和倒计时；重新显示、BFCache 返回时使用新的连接范围，迟到响应不能回写。继续复用共享运行时即可保留这些行为。
 
@@ -197,10 +192,10 @@ HTML 保留 `data-i18n`、`data-i18n-content`、`data-i18n-aria-label`；组件�
 
 - [ ] 默认主题外观不变，自定义主题只影响状态页，登录页和控制台不变。
 - [ ] 执行 `npm --prefix web test`、`npm --prefix web run build`、`npm --prefix web run check`；重新编译并重启 Go 后检查实际页面。
-- [ ] 中英文、跟随系统／显式深色／显式浅色均可用；长名称、长公告、超长地区不撑破布局；手机窄屏、横屏安全区、平板、桌面无页面级横向溢出，筛选局部滚动可用。
+- [ ] 中英文、跟随系统／显式深色／显式浅色均可用；长名称、超长地区不撑破布局；手机窄屏、横屏安全区、平板、桌面无页面级横向溢出，筛选局部滚动可用。
 - [ ] 键盘操作、可见焦点、筛选 `aria-pressed`、分页禁用、语言保存错误和屏幕阅读器播报可用；`prefers-reduced-motion` 下动画停止，刷新、加载、分页和连接状态仍可理解。
 - [ ] 在线／离线／未知、缺失或过期指标、无节点、无匹配筛选、加载失败与重试都表现正确；WS → SSE → HTTP 回退、手动刷新、分页、隐藏／显示、BFCache 不重复订阅，不接受旧页或迟到数据。
-- [ ] 撤销节点发布、撤回公告、全局关闭状态页后没有残留卡片、图形或自定义缓存；关闭后由服务器重新路由。
+- [ ] 撤销节点发布、全局关闭状态页后没有残留卡片、图形或自定义缓存；关闭后由服务器重新路由。
 - [ ] 所有素材经构建导入，未手写产物版本；浏览器无 CSP、资源加载或运行时错误。
 
-行为回归可扩展 `test/public-main.test.js` 与 `test/announcements.test.js`，以输入快照和用户操作断言实际 DOM／通道结果；不要用源码字符串匹配证明导入或功能正确。
+行为回归可扩展 `test/public-main.test.js`，以输入快照和用户操作断言实际 DOM／通道结果；不要用源码字符串匹配证明导入或功能正确。

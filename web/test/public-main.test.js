@@ -7,10 +7,8 @@ import {frame, liveHarness, response, stream} from './live-harness.js';
 const loadRenderers = async () => ({
   ...await import('../themes/default/cards.js'),
   ...await import('../themes/default/constellation.js'),
-  ...await import('../themes/default/announcements.js')
 });
 const payload = (name = 'edge', extra = {}) => ({
-  announcements: [],
   nodes: [{name, region: '', provider: '', status: 'online', last_seen: '2026-10-27T12:34:56Z',
     availability: {start_day: '2026-09-28', percent: null, days: Array(30).fill(null)},
     cpu_percent: 25, memory_percent: null, load1: null, uptime_seconds: 3600,
@@ -28,7 +26,7 @@ async function setup(t, respond, customize) {
   globalThis.localStorage.getItem = (key) => key === 'orbitbeacon-locale' ? 'en' : null;
   env.document.createElement = (tag) => new PublicElement(tag);
   env.document.createElementNS = (_namespace, tag) => new PublicElement(tag);
-  const ids = ['announcements', 'nodes', 'empty', 'empty-text', 'retry', 'headline', 'summary', 'updated', 'announcement', 'refresh', 'countdown', 'filters', 'pagination', 'previous', 'next', 'page', 'constellation', 'theme', 'top-actions', 'locale-error'];
+  const ids = ['nodes', 'empty', 'empty-text', 'retry', 'headline', 'summary', 'updated', 'announcement', 'refresh', 'countdown', 'filters', 'pagination', 'previous', 'next', 'page', 'constellation', 'theme', 'top-actions', 'locale-error'];
   const elements = Object.fromEntries(ids.map((id) => {
     const element = new PublicElement('div'); element.id = id; env.body.append(element); return [id, element];
   }));
@@ -57,20 +55,16 @@ test('public WS snapshots render values; heartbeats and ordinary snapshots do no
   assert.equal(ui.requests.length, 0);
 });
 
-test('public page turn keeps the announcement element until the next page replaces it', async (t) => {
+test('public page turns update the title and replace the node collection', async (t) => {
   const ui = await setup(t);
-  const notice = {level: 'warning', title: 'maintenance', body: 'tonight', starts_at: '2026-10-27T00:00:00Z', ends_at: null};
-  ui.sockets[0].open(); ui.sockets[0].message(snapshot(payload('one', {announcements: [notice], has_more: true, next_offset: 50})));
-  const article = ui.elements.announcements.children[0];
+  ui.sockets[0].open(); ui.sockets[0].message(snapshot(payload('one', {has_more: true, next_offset: 50})));
   ui.elements.next.click();
-  assert.equal(ui.elements.announcements.children[0], article);
   assert.ok(document.title.startsWith(copy('public.page', {page: 2})));
-  ui.sockets[1].open(); ui.sockets[1].message(snapshot(payload('two', {announcements: [notice]})));
+  ui.sockets[1].open(); ui.sockets[1].message(snapshot(payload('two')));
   assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'two');
-  assert.equal(ui.elements.announcements.children[0], article);
   ui.elements.previous.click();
   ui.sockets[2].open(); ui.sockets[2].message(snapshot(payload('one', {has_more: true, next_offset: 50})));
-  assert.equal(ui.elements.announcements.children.length, 0);
+  assert.equal(ui.elements.nodes.querySelector('h2').textContent, 'one');
 });
 
 test('public fallback is transparent and HTTP countdown uses the server interval without heartbeat announcements', async (t) => {
@@ -284,15 +278,11 @@ test('theme renderers receive validated snapshots, stale state and terminal with
         update(nodes) { events.push(['overview', nodes.length]); constellation.update(nodes); },
         clear() { events.push(['clear']); constellation.clear(); }
       };
-    },
-    announcementRenderer(container) {
-      const render = renderers.announcementRenderer(container);
-      return (items) => { events.push(['announcements', items.length]); render(items); };
     }
   }));
   const socket = ui.sockets[0]; socket.open();
   socket.message(snapshot(payload('theme node')));
-  assert.deepEqual(events, [['announcements', 0], ['card', 'theme node'], ['overview', 1]]);
+  assert.deepEqual(events, [['card', 'theme node'], ['overview', 1]]);
   socket.message(snapshot(payload('rejected', {next_offset: 50})));
   await flush();
   assert.ok(events.some(([kind]) => kind === 'stale'));
@@ -303,7 +293,7 @@ test('theme renderers receive validated snapshots, stale state and terminal with
   const next = ui.sockets.at(-1); next.open();
   next.message(frame('error', {code: 'public_page_disabled'}));
   await flush();
-  assert.deepEqual(events.slice(-3), [['announcements', 0], ['clear'], ['redirect', '/']]);
+  assert.deepEqual(events.slice(-2), [['clear'], ['redirect', '/']]);
 });
 
 

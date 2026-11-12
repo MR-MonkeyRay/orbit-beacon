@@ -20,7 +20,6 @@ import (
 
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/alerts"
-	"orbitbeacon/internal/server/announcements"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/history"
 	"orbitbeacon/internal/server/inbox"
@@ -222,8 +221,6 @@ func nullableColumn(table, column string) bool {
 	switch table {
 	case "users":
 		return oneOf(column, "totp_ciphertext", "totp_pending_ciphertext", "totp_pending_at")
-	case "announcements":
-		return column == "ends_at"
 	case "nodes":
 		return oneOf(column, "expires_on", "group_id", "token_hash", "installation_id", "first_enrolled_at")
 	case "alert_silences":
@@ -278,20 +275,6 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 		return invalidRow()
 	}
 	switch table {
-	case "announcements":
-		start, err := timekey.Parse(r.text("starts_at"))
-		if err != nil {
-			return err
-		}
-		p := announcements.Public{Level: r.text("level"), Title: r.text("title"), Body: r.text("body"), StartsAt: start}
-		if r["ends_at"] != nil {
-			end, err := timekey.Parse(r.text("ends_at"))
-			if err != nil {
-				return err
-			}
-			p.EndsAt = &end
-		}
-		return announcements.Validate(&p)
 	case "settings":
 		switch r.text("key") {
 		case "public_page_enabled":

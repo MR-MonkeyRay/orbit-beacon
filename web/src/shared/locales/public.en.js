@@ -7,11 +7,6 @@ export default {
   'public.availabilityRange': {one: '{count} day ago', other: '{count} days ago'},
   'public.today': 'Today',
 
-  'public.announcements': 'Announcements',
-  'alerts.severity.info': 'Info',
-  'alerts.severity.warning': 'Warning',
-  'alerts.severity.critical': 'Critical',
-
   'public.availabilityNoData': 'No data',
   'public.availability': 'Availability',
   'public.availabilityDuration': 'Offline {offline}, unknown {unknown}',
@@ -50,8 +45,6 @@ export default {
   'public.duration.daysHours': '{days}d {hours}h',
   'public.duration.hoursMinutes': '{hours}h {minutes}m',
   'public.duration.minutes': '{minutes}m',
-  'public.announcement.window': '{start} – {end}',
-  'public.announcement.starts': 'From {start}',
   'public.metric.noData': 'No valid data yet',
   'public.metric.staleNote': 'value may be outdated',
   'public.metric.staleValue': '{value} ({note})',

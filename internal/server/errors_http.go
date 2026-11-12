@@ -7,7 +7,6 @@ import (
 
 	v1 "orbitbeacon/internal/protocol/v1"
 	"orbitbeacon/internal/server/alerts"
-	"orbitbeacon/internal/server/announcements"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/backup"
 	"orbitbeacon/internal/server/enrollment"
@@ -47,7 +46,6 @@ var errorMappings = []errorMapping{
 	{serviceErrors, matches(auth.ErrTOTPAlreadyEnabled), http.StatusConflict, "totp_already_enabled", "Two-step verification already enabled", false},
 	{serviceErrors, matches(auth.ErrTOTPSetupExpired), http.StatusBadRequest, "totp_setup_expired", "Two-step verification setup expired", false},
 	{serviceErrors, matches(auth.ErrTOTPUnavailable), http.StatusServiceUnavailable, "not_available", "Account secrets unavailable", false},
-	{serviceErrors, matches(announcements.ErrCapacity), http.StatusConflict, "announcement_capacity_reached", "Maximum of 100 unfinished announcements reached", false},
 	{agentErrors, matches(ingest.ErrProtocolUnsupported, v1.ErrProtocolUnsupported), http.StatusUpgradeRequired, "protocol_unsupported", "Protocol version is not supported", false},
 	{agentErrors, matches(enrollment.ErrConflict), http.StatusConflict, "enrollment_conflict", "Enrollment does not match the bound installation and credential", false},
 	{agentErrors, matches(enrollment.ErrInvalidTicket), http.StatusForbidden, "forbidden", "Enrollment ticket is unavailable", false},
@@ -82,7 +80,7 @@ var errorMappings = []errorMapping{
 	{serviceErrors | agentErrors, matches(notify.ErrSecretUnreadable), http.StatusConflict, "secret_unreadable", "Restore the notification encryption key or replace the affected secret and webhook URL", false},
 	{serviceErrors | agentErrors, matches(notify.ErrUnavailable), http.StatusServiceUnavailable, "not_available", "Notification secrets unavailable", false},
 	{serviceErrors | agentErrors, matches(alerts.ErrCapacity), http.StatusConflict, "alert_rule_capacity_reached", "Maximum of 200 alert rules reached", false},
-	{serviceErrors | agentErrors, matches(announcements.ErrNotFound, notify.ErrNotFound, alerts.ErrNotFound, auth.ErrNotFound, management.ErrNotFound, inbox.ErrNotFound), http.StatusNotFound, "not_found", "Resource not found", false},
+	{serviceErrors | agentErrors, matches(notify.ErrNotFound, alerts.ErrNotFound, auth.ErrNotFound, management.ErrNotFound, inbox.ErrNotFound), http.StatusNotFound, "not_found", "Resource not found", false},
 	{serviceErrors | agentErrors, matches(auth.ErrLastAdmin), http.StatusConflict, "last_administrator", "At least one administrator must remain", false},
 	{serviceErrors | agentErrors, matches(auth.ErrUsernameConflict), http.StatusConflict, "username_conflict", "Username is already in use", false},
 	{serviceErrors | agentErrors, matches(nodes.ErrInvalidInput, auth.ErrInvalidInput, management.ErrInvalidInput, inbox.ErrInvalidInput, traffic.ErrInvalidInput), http.StatusBadRequest, "validation_failed", "Request values are invalid", false},

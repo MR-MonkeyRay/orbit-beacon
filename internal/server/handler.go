@@ -13,7 +13,6 @@ import (
 
 	"orbitbeacon/internal/config"
 	"orbitbeacon/internal/server/alerts"
-	"orbitbeacon/internal/server/announcements"
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/availability"
 	"orbitbeacon/internal/server/backup"
@@ -60,7 +59,6 @@ type Options struct {
 
 type handler struct {
 	storage                  *storage.Databases
-	announcements            *announcements.Service
 	commands                 *commands.Service
 	backups                  *backup.Service
 	inbox                    *inbox.Service
@@ -155,7 +153,6 @@ func NewHandler(opts Options) (*handler, error) {
 			h.storage.History = opts.History.Database()
 		}
 	}
-	h.announcements = newAnnouncementService(opts.Nodes, opts.Now)
 	h.commands = commands.New(opts.Nodes.Database(), opts.Now)
 	h.saturation = opts.SaturationMetrics
 	h.publicPageUnknown.Store(true)

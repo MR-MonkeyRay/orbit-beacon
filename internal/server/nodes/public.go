@@ -13,7 +13,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"orbitbeacon/internal/server/announcements"
 	"orbitbeacon/internal/server/audit"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/validation"
@@ -344,14 +343,4 @@ func scanPublicRecord(row interface{ Scan(...any) error }) (PublicRecord, error)
 		}
 	}
 	return p, nil
-}
-
-func (s *Service) ListPublicAnnouncements(ctx context.Context, now time.Time) ([]announcements.Public, error) {
-	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
-	if leaseErr != nil {
-		return nil, leaseErr
-	}
-	defer lease.Close()
-	ctx = lease.Context()
-	return announcements.ListPublic(ctx, s.db, now)
 }

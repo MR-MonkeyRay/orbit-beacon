@@ -2,14 +2,12 @@ package management_test
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"log/slog"
 
 	"testing"
 	"time"
 
-	"orbitbeacon/internal/server/announcements"
 	"orbitbeacon/internal/server/availability"
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/server/nodes"
@@ -19,7 +17,7 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
-func TestMySQLManagementAvailabilityAnnouncementsAndTraffic(t *testing.T) {
+func TestMySQLManagementAvailabilityAndTraffic(t *testing.T) {
 
 	f := storagetest.Start(t)
 	db := f.Open(t, storage.MainDomain)
@@ -67,21 +65,6 @@ func TestMySQLManagementAvailabilityAnnouncementsAndTraffic(t *testing.T) {
 		t.Fatalf("availability=%+v err=%v", availabilitySummary, err)
 	}
 	if _, err := av.Cleanup(ctx, now.AddDate(0, 0, 100), 10); err != nil {
-		t.Fatal(err)
-	}
-	a := announcements.New(db, func() time.Time { return now }, nil)
-	var patch announcements.Patch
-	wire, _ := json.Marshal(map[string]any{"level": "info", "title": "notice", "body": "body", "starts_at": now, "ends_at": now.Add(time.Hour)})
-	if err := json.Unmarshal(wire, &patch); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.Save(ctx, "", patch); err != nil {
-		t.Fatal(err)
-	}
-	if list, err := announcements.ListPublic(ctx, db, now); err != nil || len(list) != 1 {
-		t.Fatalf("announcements=%+v err=%v", list, err)
-	}
-	if _, err := a.Cleanup(ctx, now.Add(2*time.Hour), 10); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := raw.Exec(`INSERT INTO traffic_hourly(node_id,epoch,period_start,rx_bytes,tx_bytes,updated_at) VALUES(?,'abc',?,100,200,?)`, n.ID, timekey.Format(now.Truncate(time.Hour)), timekey.Format(now)); err != nil {
