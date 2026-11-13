@@ -1,7 +1,7 @@
 import {alertTabs} from '../routes.js';
 import {h} from '../../shared/dom.js';
 import {t} from '../i18n.js';
-import {allNodes, api, getNavigationSignal, groupsList} from '../api.js';
+import {allNodes, api, getNavigationSignal, groupsList, serviceGroupsList} from '../api.js';
 import {refresh} from '../router.js';
 import {lazyTab} from '../ui/lazy-tab.js';
 import {pageHead} from '../ui/components.js';
@@ -38,8 +38,9 @@ export async function alertsPage() {
       }
     ),
     'silences': lazyTab(
-      () => Promise.all([api('/alert-silences', {signal}), groupsList(), allNodes()]),
-      ([{silences}, groups, nodes]) => silencesPanel({silences, groups, nodes, signal, saved: refresh})
+      // 监测分组读取失败不影响静默列表，只是编辑框不提供监测分组范围。
+      () => Promise.all([api('/alert-silences', {signal}), groupsList(), allNodes(), serviceGroupsList().catch(() => null)]),
+      ([{silences}, groups, nodes, serviceGroups]) => silencesPanel({silences, groups, nodes, serviceGroups, signal, saved: refresh})
     ),
     'channels': lazyTab(
       () => api('/notification-channels', {signal}),

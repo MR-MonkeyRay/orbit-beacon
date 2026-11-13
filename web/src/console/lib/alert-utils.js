@@ -64,6 +64,15 @@ export function scopeLabel(rule, groups = [], nodes = []) {
   const label = collection.find((item) => item.id === rule.scope_id)?.name || rule.scope_id || t('alerts.unknown');
   return t(rule.scope_kind === 'group' ? 'alerts.scope.groupName' : 'alerts.scope.nodeName', {name: label});
 }
+// 静默的范围比规则多一类监测分组，“全部”也包含监测；名称优先用服务端给出的 scope_name。
+export function silenceScopeLabel(silence, {groups = [], nodes = [], serviceGroups = []} = {}) {
+  if (silence.scope_kind === 'all') return t('alerts.silences.scope.all');
+  const keys = {group: ['alerts.silences.scope.groupName', groups], node: ['alerts.scope.nodeName', nodes], service_group: ['alerts.silences.scope.serviceGroupName', serviceGroups || []]};
+  const entry = keys[silence.scope_kind];
+  if (!entry) return t('alerts.scope.unknown');
+  const name = silence.scope_name || entry[1].find((item) => item.id === silence.scope_id)?.name || silence.scope_id || t('alerts.unknown');
+  return t(entry[0], {name});
+}
 export function validateRule(rule) {
   const fields = {};
   if (!rule.name?.trim() || byteLength(rule.name || '') > 100) fields.name = t('alerts.validation.name');

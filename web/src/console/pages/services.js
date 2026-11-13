@@ -2,6 +2,7 @@ import {h, icon} from '../../shared/dom.js';
 import {t} from '../i18n.js';
 import {api, session, getNavigationSignal, serviceGroupsList} from '../api.js';
 import {formatMilliseconds, formatPercent, shortID} from '../format.js';
+import {formatTimestamp} from '../../shared/format.js';
 import {button, emptyState, iconButton, pageHead, panel} from '../ui/components.js';
 import {pagePlaceholder, placeholderHead, placeholderPanel, placeholderTable} from '../ui/placeholders.js';
 import {confirmDialog, formDialog, modal} from '../ui/dialogs.js';
@@ -71,6 +72,8 @@ export function serviceEditor(item, {signal, saved, groups = null, onGroupCreate
   });
 }
 const statusOf = (item) => item.enabled ? item.latest?.status || 'unknown' : 'disabled';
+// 截止时间直接显示在标签里，触屏和键盘用户也能看到。
+const silenceBadge = (until) => h('span', {class: 'badge disabled'}, t('services.silencedUntil', {time: formatTimestamp(new Date(until))}));
 const statusBadge = (status) => h('span', {class: `badge ${status === 'up' ? 'online' : status === 'down' ? 'offline' : status}`}, t(`services.status.${status}`));
 const badge = (item) => statusBadge(statusOf(item));
 // 组头汇总只看启用的成员：有故障即故障，否则有未知即未知，否则正常；全部停用时显示停用。
@@ -185,9 +188,11 @@ export async function servicesPage() {
     status ? t(`services.status.${status}`) : t('nodes.all'), h('span', {class: 'count'}))]));
   const search = input({type: 'search', id: 'service-search', placeholder: t('services.search'), 'aria-label': t('services.search'), autocomplete: 'off'});
   search.addEventListener('input', () => { filter.q = search.value; render(); });
+  // 没有分组时没有组头，范围为全部的静默显示在工具栏。
+  const silenceNote = h('span', {class: 'services-silence'});
   const toolbar = h('div', {class: 'toolbar services-toolbar'},
     h('div', {class: 'segmented', role: 'group', 'aria-label': t('services.filterStatus')}, [...statusButtons.values()]),
-    h('div', {class: 'toolbar-end'}, h('div', {class: 'search'}, icon('search'), search)));
+    silenceNote, h('div', {class: 'toolbar-end'}, h('div', {class: 'search'}, icon('search'), search)));
   const table = h('div');
 
   // 选择针对当前筛选结果，与折叠无关：折叠的组也可以整组勾选后批量操作。
@@ -270,10 +275,13 @@ export async function servicesPage() {
   function section(key, label, members, visible, filtering) {
     const open = filtering || !collapsed.has(key);
     const status = groupStatus(members);
+    // 覆盖监测的静默只看分组（或范围为全部），同组成员的 silenced_until 相同。
+    const until = members.find((item) => item.silenced_until)?.silenced_until;
+    const silenced = until ? silenceBadge(until) : null;
     const control = h('button', {type: 'button', class: 'service-group-toggle', id: `service-group-${key}`, 'aria-expanded': String(open), disabled: filtering,
       onclick: () => toggle(key)}, icon(open ? 'down' : 'right'), h('span', {class: 'service-group-name'}, label), h('span', {class: 'count'}, String(members.length)));
     const head = h('tr', {class: 'service-group-head'}, selectionCell('td', groupCheckbox(key, label, visible)),
-      h('th', {colspan: SPAN - 1, scope: 'rowgroup'}, h('div', {class: 'service-group-bar'}, control, status ? statusBadge(status) : null)));
+      h('th', {colspan: SPAN - 1, scope: 'rowgroup'}, h('div', {class: 'service-group-bar'}, control, status ? statusBadge(status) : null, silenced)));
     const rows = !open ? [] : visible.length ? visible.map(row) : [h('tr', {class: 'service-group-empty'}, h('td', {colspan: SPAN}, t('services.empty')))];
     return h('tbody', {class: 'service-group', dataset: {group: key}}, head, rows);
   }
@@ -315,6 +323,8 @@ export async function servicesPage() {
       ? sections.map(([key, label, members]) => [key, label, members, members.filter((item) => matches.has(item.id))])
         .filter(([, , , visible]) => !filtering || visible.length).map(([key, label, members, visible]) => section(key, label, members, visible, filtering))
       : [h('tbody', null, matching.map(row))];
+    const flatUntil = groups.length ? null : services.find((item) => item.silenced_until)?.silenced_until;
+    silenceNote.replaceChildren(...(flatUntil ? [silenceBadge(flatUntil)] : []));
     const empty = filtering && !matches.size ? h('p', {class: 'text-note services-no-match'}, t('services.noMatch')) : null;
     const head = h('thead', null, h('tr', null, selectionCell('th', selectAll, {scope: 'col'}), COLUMNS.map((key) => h('th', {scope: 'col'}, t(`services.${key}`)))));
     table.replaceChildren(...[h('div', {class: 'table-wrap'}, h('table', {class: 'table services-table'}, h('caption', {class: 'sr'}, t('services.title')), head,

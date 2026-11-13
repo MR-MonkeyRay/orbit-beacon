@@ -64,7 +64,7 @@ const fieldReasons = new Map([
   ['offline duration must be at least the online window', 'fields.offlineDuration'],
   ['must be finite and within the metric bounds', 'fields.threshold'], ['must be > or <', 'fields.comparator'],
   ['unsupported metric', 'fields.metric'], ['must be null for all', 'fields.scope'],
-  ['must be all, group or node', 'fields.scope'], ['must identify an existing scope', 'fields.scope'], ['scope does not exist', 'fields.scope'],
+  ['must be all, group or node', 'fields.scope'], ['must be all, group, node or service_group', 'fields.scope'], ['must identify an existing scope', 'fields.scope'], ['scope does not exist', 'fields.scope'],
   ['must be an array of at most 20 existing channel IDs', 'fields.channels'],
   ['must contain unique existing channel IDs', 'fields.channels'], ['channel does not exist', 'fields.channels'],
   ['must be an object', 'fields.object'], ['unexpected fields for webhook', 'fields.object'], ['unexpected fields for URL channel', 'fields.object'],

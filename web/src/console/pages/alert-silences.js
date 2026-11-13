@@ -6,7 +6,7 @@ import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toastError} from '../ui/feedback.js';
 import {field, input, validateBytes} from '../ui/forms.js';
 import {alertScope} from '../ui/alert-scope.js';
-import {scopeLabel, validationError} from '../lib/alert-utils.js';
+import {silenceScopeLabel, validationError} from '../lib/alert-utils.js';
 import {eventTime} from './alert-events.js';
 
 export const localDateTime = (date) => {
@@ -14,7 +14,8 @@ export const localDateTime = (date) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 };
 
-export function silenceEditor({groups, nodes, signal, saved, scope_kind, scope_id}) {
+// serviceGroups 为 null 表示监测分组读取失败，编辑框不提供该范围。
+export function silenceEditor({groups, nodes, serviceGroups = null, signal, saved, scope_kind, scope_id}) {
   if (!session.user || !session.csrf || signal?.aborted) return;
   const now = new Date();
   let reason, starts, ends, scope, scopeID;
@@ -24,7 +25,7 @@ export function silenceEditor({groups, nodes, signal, saved, scope_kind, scope_i
       validateBytes(reason, 1, 255, t('alerts.silences.reason'));
       starts = input({name: 'starts_at', type: 'datetime-local', step: 1, required: true, value: localDateTime(now)});
       ends = input({name: 'ends_at', type: 'datetime-local', step: 1, required: true, value: localDateTime(new Date(now.getTime() + 2 * 3600000))});
-      const selection = alertScope({scope_kind, scope_id}, {groups, nodes});
+      const selection = alertScope({scope_kind, scope_id}, {groups, nodes, serviceGroups});
       ({scope, scopeID} = selection);
       // 常用时长一键设置结束时间（从开始时间起算），也可直接改时间。
       const quick = h('div', {class: 'rule-presets silence-durations', role: 'group', 'aria-label': t('alerts.silences.ends')},
@@ -56,7 +57,7 @@ export function silenceEditor({groups, nodes, signal, saved, scope_kind, scope_i
 }
 
 export function silenceList(silences, context) {
-  const {groups, nodes, signal, saved} = context;
+  const {groups, nodes, serviceGroups, signal, saved} = context;
   const remove = async (silence) => {
     if (!session.user || !session.csrf || signal?.aborted) return;
     if (!(await confirmDialog({title: t('alerts.silences.deleteTitle', {reason: silence.reason}), confirm: t('alerts.silences.delete'), danger: true}))) return;
@@ -70,7 +71,7 @@ export function silenceList(silences, context) {
     silences.length ? dataTable({caption: t('alerts.silences.title'),
       columns: [t('alerts.silences.reason'), t('alerts.column.scope'), t('alerts.silences.starts'), t('alerts.silences.ends'), t('alerts.column.state'), t('alerts.column.actions')],
       body: h('tbody', null, silences.map((silence) => h('tr', null,
-        h('td', null, silence.reason), h('td', null, silence.scope_name || scopeLabel(silence, groups, nodes)),
+        h('td', null, silence.reason), h('td', null, silenceScopeLabel(silence, {groups, nodes, serviceGroups})),
         h('td', null, eventTime(silence.starts_at)), h('td', null, eventTime(silence.ends_at)),
         h('td', null, h('span', {class: `badge ${silence.active ? 'online' : 'pending'}`}, t(silence.active ? 'alerts.silences.active' : 'alerts.silences.scheduled'))),
         h('td', {class: 'actions'}, iconButton('trash', t('alerts.silences.delete'), () => remove(silence))))))})

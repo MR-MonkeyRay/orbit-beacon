@@ -78,12 +78,12 @@ const fixture = () => [
 ];
 const json = (body, status = 200) => new Response(JSON.stringify(body), {status, headers: {'content-type': 'application/json'}});
 
-async function groupedPage({groupsFail = false, storage = new Map(), services = fixture()} = {}) {
+async function groupedPage({groupsFail = false, storage = new Map(), services = fixture(), groups = [groupA, groupB]} = {}) {
   const dom = installDOM(); const originalFetch = globalThis.fetch;
   globalThis.localStorage = {getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => { storage.set(key, String(value)); }};
   const navigation = new AbortController(); setNavigationSignal(navigation.signal); admin(); invalidate('serviceGroups');
   // gates 中按路径挂起的 Promise 让测试控制响应时机。
-  const sent = []; const state = {groups: [groupA, groupB], services, stats: null, batchFails: [], gates: {}};
+  const sent = []; const state = {groups, services, stats: null, batchFails: [], gates: {}};
   globalThis.fetch = async (url, options = {}) => {
     const path = new URL(String(url), 'https://example.com').pathname; const method = options.method || 'GET';
     const body = options.body ? JSON.parse(options.body) : undefined;
@@ -414,6 +414,27 @@ test('the 24-hour strip shows one bar per hour and the detail shows window stati
     assert.equal(tiles.length, 4);
     assert.equal(tiles[1], copy('common.unavailable')); assert.ok(tiles[0].startsWith('99.5')); assert.ok(tiles[3].includes('12.5'));
   } finally { const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs(); env.restore(); }
+});
+
+test('a silenced monitor group shows its silence end in the header, and without groups in the toolbar', async () => {
+  const until = '2030-01-01T02:00:00Z';
+  const {formatTimestamp} = await import('../src/shared/format.js');
+  const text = copy('services.silencedUntil', {time: formatTimestamp(new Date(until))});
+  const services = fixture().map((item) => ({...item, silenced_until: item.group_id === groupA.id ? until : null}));
+  let env = await groupedPage({services});
+  try {
+    const badgeOf = (key) => section(env.page, key).querySelector('.service-group-head').querySelectorAll('.badge').find((badge) => badge.textContent === text);
+    assert.ok(badgeOf(groupA.id)?.classList.contains('disabled'));
+    assert.equal(badgeOf('none'), undefined);
+    assert.equal(badgeOf(groupB.id), undefined);
+    assert.equal(env.page.querySelector('.services-silence').textContent, '');
+  } finally { env.restore(); }
+  // 没有分组时没有组头，范围为全部的静默显示在工具栏。
+  env = await groupedPage({groups: [], services: fixture().map((item) => ({...item, group_id: null, silenced_until: until}))});
+  try {
+    assert.equal(env.page.querySelector('.service-group-head'), null);
+    assert.equal(env.page.querySelector('.services-silence').textContent, text);
+  } finally { env.restore(); }
 });
 
 test('public services strictly validate 30 nullable percentages and reject target/error leakage', () => {

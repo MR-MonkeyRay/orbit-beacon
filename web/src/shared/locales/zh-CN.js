@@ -89,7 +89,7 @@ export default {
   'fields.threshold': '请输入指标允许范围内的有限数值。',
   'fields.comparator': '请选择 > 或 <。',
   'fields.metric': '请选择受支持的指标。',
-  'fields.scope': '请选择现有节点或分组，或选择全部节点。',
+  'fields.scope': '请选择现有的范围。',
   'fields.channels': '请选择最多 20 个不重复的现有通道。',
   'fields.object': '请检查配置值。',
   'fields.chatID': '请输入有效的 Telegram 聊天 ID。',

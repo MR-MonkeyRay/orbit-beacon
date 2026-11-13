@@ -18,6 +18,11 @@ export default {
   'alerts.silences.empty': 'No silences',
   'alerts.silences.invalidEnd': 'End must be after the start time and now.',
   'alerts.silences.tooLong': 'Maximum 30 days',
+  'alerts.silences.scope.all': 'All nodes and checks',
+  'alerts.silences.scope.group': 'Node group',
+  'alerts.silences.scope.serviceGroup': 'Check group',
+  'alerts.silences.scope.groupName': 'Node group: {name}',
+  'alerts.silences.scope.serviceGroupName': 'Check group: {name}',
 
   'alerts.metric.nodeExpiry': 'Days until expiry',
   'alerts.value.expiryDays': '{value} days',

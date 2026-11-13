@@ -1,7 +1,7 @@
 import {h} from '../../shared/dom.js';
 import {t, tParts} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
-import {allNodes, api, groupsList} from '../api.js';
+import {allNodes, api, groupsList, serviceGroupsList} from '../api.js';
 import {toastError} from '../ui/feedback.js';
 import {silenceEditor} from './alert-silences.js';
 import {absoluteWhen, formatDuration, when} from '../format.js';
@@ -74,10 +74,10 @@ export function eventsPanel(state, signal, {getRules = () => []} = {}) {
     onclick: () => { grouping = key; remember(); }}, t(`alerts.events.group.${key}`)));
   const silence = async (event) => {
     try {
-      const [groups, nodes] = await Promise.all([groupsList(), allNodes()]);
+      const [groups, nodes, serviceGroups] = await Promise.all([groupsList(), allNodes(), serviceGroupsList().catch(() => null)]);
       if (stopped || signal?.aborted) return;
       silenceEditor({groups, nodes: nodes.some((node) => node.id === event.node_id) ? nodes : [...nodes, {id: event.node_id, name: event.node_name || event.node_id}],
-        scope_kind: 'node', scope_id: event.node_id, signal, saved: () => { request?.abort(); ++epoch; loading = false; return load(true); }});
+        serviceGroups, scope_kind: 'node', scope_id: event.node_id, signal, saved: () => { request?.abort(); ++epoch; loading = false; return load(true); }});
     } catch (error) { if (!stopped && !signal?.aborted) toastError(error); }
   };
   const render = () => {

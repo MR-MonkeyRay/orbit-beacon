@@ -18,6 +18,11 @@ export default {
   'alerts.silences.empty': '暂无静默',
   'alerts.silences.invalidEnd': '结束时间需晚于开始时间和当前时间。',
   'alerts.silences.tooLong': '最长 30 天',
+  'alerts.silences.scope.all': '全部节点和监测',
+  'alerts.silences.scope.group': '节点分组',
+  'alerts.silences.scope.serviceGroup': '监测分组',
+  'alerts.silences.scope.groupName': '节点分组：{name}',
+  'alerts.silences.scope.serviceGroupName': '监测分组：{name}',
 
   'alerts.metric.nodeExpiry': '距到期天数',
   'alerts.value.expiryDays': '{value} 天',

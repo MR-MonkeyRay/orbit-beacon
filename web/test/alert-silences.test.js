@@ -43,6 +43,7 @@ test('silence editor validates dates and submits browser local time as UTC', asy
     const {fieldErrorText} = await import('../src/shared/errors.js');
     assert.equal(fieldErrorText('must be after starts_at and now'), copy('alerts.silences.invalidEnd'));
     assert.equal(fieldErrorText('must be within 30 days of starts_at'), copy('alerts.silences.tooLong'));
+    assert.equal(fieldErrorText('must be all, group, node or service_group'), fieldErrorText('must be all, group or node'));
     const dialog = silenceEditor(context());
     const root = dom.body, form = elements(root).find((element) => element.tagName === 'form');
     const starts = control(root, 'starts_at'), ends = control(root, 'ends_at'), reason = control(root, 'reason');
@@ -94,4 +95,37 @@ test('silence changes have audit labels', async () => {
   const {describeAction} = await import('../src/console/format.js');
   assert.equal(describeAction('alert_silence.create'), copy('audit.silenceCreate'));
   assert.equal(describeAction('alert_silence.delete'), copy('audit.silenceDelete'));
+});
+
+test('silences cover monitor groups: scope options, labels and payload; rules keep node scopes', async () => {
+  const dom = installDOM(), original = globalThis.fetch;
+  admin();
+  let payload;
+  globalThis.fetch = async (_path, options) => { payload = JSON.parse(options.body); return new Response(JSON.stringify({id})); };
+  const change = (element, value) => { element.value = value; element.dispatchEvent(new Event('change')); };
+  try {
+    const {silenceEditor, silenceList} = await import('../src/console/pages/alert-silences.js');
+    const {alertScope} = await import('../src/console/ui/alert-scope.js');
+    const serviceGroups = [{id: '10000000-0000-4000-8000-00000000000a', name: 'Web'}];
+    const rules = alertScope(null, {groups: [], nodes: []});
+    assert.deepEqual(rules.scope.options.map((option) => option.value), ['all', 'group', 'node']);
+    assert.equal(rules.scope.options[0].textContent, copy('alerts.scope.all'));
+    assert.deepEqual(alertScope(null, {groups: [], nodes: [], serviceGroups: null}).scope.options.map((option) => option.value), ['all', 'group', 'node']);
+    const dialog = silenceEditor({...context(), serviceGroups});
+    const root = dom.body;
+    const scope = control(root, 'scope_kind');
+    assert.deepEqual(scope.options.map((option) => option.value), ['all', 'group', 'node', 'service_group']);
+    assert.equal(scope.options[0].textContent, copy('alerts.silences.scope.all'));
+    change(scope, 'service_group');
+    assert.match(control(root, 'scope_id').textContent, /Web/);
+    change(control(root, 'scope_id'), serviceGroups[0].id);
+    control(root, 'reason').value = 'deploy';
+    elements(root).find((element) => element.tagName === 'form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+    assert.equal(payload.scope_kind, 'service_group'); assert.equal(payload.scope_id, serviceGroups[0].id);
+    await dialog.closed;
+    const base = {id, reason: 'r', starts_at: '2030-01-01T00:00:00Z', ends_at: '2030-01-01T02:00:00Z', active: true};
+    const list = silenceList([{...base, scope_kind: 'all', scope_id: null, scope_name: ''}, {...base, scope_kind: 'service_group', scope_id: serviceGroups[0].id, scope_name: ''},
+      {...base, scope_kind: 'group', scope_id: id, scope_name: 'Edge'}], {...context(), serviceGroups});
+    for (const text of [copy('alerts.silences.scope.all'), copy('alerts.silences.scope.serviceGroupName', {name: 'Web'}), copy('alerts.silences.scope.groupName', {name: 'Edge'})]) assert.ok(list.textContent.includes(text), text);
+  } finally { globalThis.fetch = original; dom.restore(); }
 });

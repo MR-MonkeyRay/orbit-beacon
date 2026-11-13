@@ -89,7 +89,7 @@ export default {
   'fields.threshold': 'Enter a finite value within the metric bounds.',
   'fields.comparator': 'Choose > or <.',
   'fields.metric': 'Choose a supported metric.',
-  'fields.scope': 'Choose an existing node or group, or all nodes.',
+  'fields.scope': 'Choose an existing scope.',
   'fields.channels': 'Choose at most 20 distinct existing channels.',
   'fields.object': 'Check the configuration values.',
   'fields.chatID': 'Enter a valid Telegram chat ID.',
