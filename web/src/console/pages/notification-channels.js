@@ -96,7 +96,7 @@ export function channelEditor(item, {signal, saved}) {
       configGroup.focus = () => (usesURL(kind.value) ? (controls.url.disabled ? replaceURL : controls.url) : kind.value === 'telegram' ? controls.chat_id : controls.host).focus();
       configGroup.addEventListener('input', () => configGroup.showError(''));
       form.append(h('div', {class: 'rule-name-row'}, nameField, field(t('alerts.state.enabled'), enabled)), field(t('alerts.column.kind'), kind),
-        configGroup, item ? h('div', {class: 'saved-credential'}, secretState, replaceSecretField) : null, secretField);
+        configGroup, ...(item ? [h('div', {class: 'saved-credential'}, secretState, replaceSecretField)] : []), secretField);
     },
     action: async () => {
       if (!session.user || !session.csrf || signal?.aborted) throw new DOMException('Cancelled', 'AbortError');

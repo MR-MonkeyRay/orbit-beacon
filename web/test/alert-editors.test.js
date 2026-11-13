@@ -55,6 +55,7 @@ test('rule editor toggles offline fields, scopes and channel routing for every a
     assert.equal(elements(root).filter((element) => element.name === 'channel_ids' && element.checked).length, 1);
     assert.equal(control(root, 'scope_id').value, id);
     assert.equal(control(root, 'enabled').checked, false);
+    assert.equal(root.textContent.includes('null'), false, 'editing a rule must not render the absent preset row as text');
     existing.close('done'); await existing.closed;
     const withoutChannels = ruleEditor(null, {...context, channels: []});
     assert.ok(root.textContent.includes(copy('alerts.channels.add')));
@@ -175,6 +176,7 @@ test('channel editor shows templates for Telegram and email, prefills and saves 
     const context = {signal: new AbortController().signal, saved: async () => { saves += 1; }};
     const dialog = channelEditor(null, context);
     const root = dom.body;
+    assert.equal(root.textContent.includes('null'), false, 'a new channel must not render the absent saved-credential row as text');
     const template = control(root, 'template');
     const wrapper = elements(root).find((element) => element.children.includes(template));
     assert.equal(template.tagName, 'textarea');

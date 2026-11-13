@@ -125,7 +125,8 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved, openCh
         if (!signal?.aborted) openChannels?.();
       }});
       form.classList.add('rule-form');
-      form.append(h('div', {class: 'rule-name-row'}, field(t('alerts.column.name'), name), field(t('alerts.state.enabled'), enabled)), presets,
+      // 原生 append 会把 null 写成文本，编辑已有规则时没有预设行。
+      form.append(h('div', {class: 'rule-name-row'}, field(t('alerts.column.name'), name), field(t('alerts.state.enabled'), enabled)), ...(presets ? [presets] : []),
         field(t('alerts.column.metric'), metric), targetField,
         h('div', {class: 'rule-condition'}, condition, field(t('alerts.column.duration'), duration), field(t('alerts.rules.durationUnit'), unit)),
         h('div', {class: 'rule-scope'}, ...scopeFields, field(t('alerts.column.severity'), severity)),
