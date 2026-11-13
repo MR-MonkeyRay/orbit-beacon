@@ -36,6 +36,14 @@ func TestMySQLStandaloneTypesConstraintsSnapshot(t *testing.T) {
 			_ = tx.Rollback()
 		}
 	}()
+	if _, err = tx.ExecContext(ctx, "INSERT INTO services(id,name,type,target,enabled,public,notify,created_at,updated_at) VALUES('service','HTTP','http','https://example.com',0,0,0,'now','now')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE services SET interval_seconds=30,timeout_seconds=30 WHERE id='service'"); err == nil {
+		t.Fatal("service timeout reached its interval")
+	} else if code, ok := storage.MySQLCode(err); !ok || code != 3819 {
+		t.Fatalf("service timeout CHECK: %v", err)
+	}
 	for _, name := range []string{"Alpha", "alpha", "alpha "} {
 		if _, err = tx.ExecContext(ctx, "INSERT INTO `groups`(id,name) VALUES(?,?)", name, name); err != nil {
 			t.Fatal(err)
@@ -81,6 +89,19 @@ func TestMySQLStandaloneTypesConstraintsSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ht.Rollback()
+	if _, err = ht.ExecContext(ctx, "INSERT INTO service_check_buckets VALUES('service',1,2,1,5,2,3)"); err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{
+		"UPDATE service_check_buckets SET successes=3 WHERE service_id='service'",
+		"UPDATE service_check_buckets SET latency_max_ms=1 WHERE service_id='service'",
+	} {
+		if _, err = ht.ExecContext(ctx, query); err == nil {
+			t.Fatal("invalid service check aggregate accepted")
+		} else if code, ok := storage.MySQLCode(err); !ok || code != 3819 {
+			t.Fatalf("service aggregate CHECK: %v", err)
+		}
+	}
 	metric := "disk_used_percent:" + strings.Repeat("x", 1024)
 	if _, err = ht.ExecContext(ctx, "INSERT INTO buckets VALUES('node',?,60,1,1.25,2.5,1)", metric); err != nil {
 		t.Fatal(err)
