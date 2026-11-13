@@ -30,6 +30,7 @@ export const settingsTabs = [
   {id: 'api-tokens', label: 'settings.apiTokens', icon: 'key'},
   {id: 'groups', label: 'settings.groups', icon: 'folder'},
   {id: 'audit', label: 'settings.audit', icon: 'list'},
-  {id: 'data', label: 'settings.data', icon: 'cloud', hashes: {'data-storage': 'data-storage'}},
+  {id: 'data', label: 'settings.backups', icon: 'cloud'},
+  {id: 'data-storage', label: 'settings.storage', icon: 'database'},
   {id: 'public-page', label: 'settings.publicPage', icon: 'globe'}
 ];

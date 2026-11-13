@@ -36,8 +36,7 @@ test('task and plan pagers retain independent cursors and terminal-button behavi
       assert.equal(category.parentElement.tagName, 'label');
       assert.equal(category.parentElement.className, 'check-row');
       assert.equal(category.parentElement.children[0], category);
-      const hint = category.parentElement.querySelector('small');
-      assert.equal(hint?.textContent ?? null, category.value === 'events' ? copy('data.category.eventsHint') : null);
+      assert.equal(category.parentElement.getAttribute('title'), category.value === 'events' ? copy('data.category.eventsHint') : null);
       category.checked = false;
       category.dispatchEvent(new Event('change'));
     }

@@ -26,9 +26,22 @@
   outline-offset: 3px;
 }
 
+/* 数据类别：勾选片横排，导出与计划弹窗共用。 */
 .data-category-choices {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--sp-inline);
+}
+
+.data-category-choices > .check-row {
+  width: auto;
+  min-height: var(--control-h);
+  padding-block: 0;
+  align-items: center;
+}
+
+.data-category-choices > .check-row input {
+  margin: 0;
 }
 
 .data-stale {
@@ -44,11 +57,53 @@
 
 .data-pagination {
   justify-content: flex-end;
-  padding-top: var(--sp-tight);
 }
 
+.data-pagination[hidden] {
+  display: none;
+}
+
+/* 立即导出：类别与按钮同一行，下方一行提示。 */
+.data-export-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-control) var(--sp-content);
+}
+
+.data-export-row > .field {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.data-operations .data-export-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-inline);
+  color: var(--ink-subtle);
+  font-size: var(--fs-sm);
+}
+
+.data-export-note .icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--warn);
+}
+
+.data-export-status:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-inline);
+}
+
+/* 备份计划：桌面两列卡片。 */
 .data-plan-list {
   display: grid;
+  grid-template-columns: repeat(auto-fill,minmax(min(100%,380px),1fr));
   gap: var(--sp-control);
   min-width: 0;
 }
@@ -57,47 +112,72 @@
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
-  padding: var(--sp-content);
+  padding: var(--sp-control) var(--sp-content) var(--sp-content);
   display: grid;
-  gap: var(--sp-control);
+  align-content: start;
+  gap: var(--sp-inline);
 }
 
 .data-plan-head {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--sp-control);
-}
-
-.data-plan-head>div {
+  align-items: center;
+  gap: var(--sp-inline);
   min-width: 0;
 }
 
 .data-plan-head h3 {
+  min-width: 0;
   font-size: var(--fs-base);
   font-weight: var(--fw-heading);
   overflow-wrap: anywhere;
 }
 
-.data-task-table small,.data-plan-head .muted {
-  display: block;
-  font-size: var(--fs-xs);
-  margin-top: var(--sp-tight);
-  overflow-wrap: anywhere;
+.data-plan-head .badge {
+  flex: none;
+}
+
+.data-plan-actions {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  margin-right: calc(0px - var(--sp-tight));
+}
+
+@media (hover:hover) {
+  .icon-button.icon-danger:hover:not(:disabled) {
+    background: var(--bad-bg, var(--orbit-soft));
+    color: var(--bad);
+  }
 }
 
 .data-location {
-  font-family: var(--mono);
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-inline);
+  min-width: 0;
   font-size: var(--fs-xs);
   color: var(--ink-subtle);
-  overflow-wrap: anywhere;
+}
+
+.data-location > span {
+  flex: none;
+}
+
+.data-location > code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
 }
 
 .data-plan-facts {
   display: grid;
   grid-template-columns: repeat(2,minmax(0,1fr));
   gap: var(--sp-control) var(--sp-group);
-  margin: 0;
+  margin: var(--sp-tight) 0 0;
+  padding-top: var(--sp-control);
+  border-top: 1px solid var(--line);
 }
 
 .data-plan-facts>div {
@@ -116,8 +196,35 @@
   overflow-wrap: anywhere;
 }
 
-.data-plan-facts time,.data-cron-preview time {
+.data-plan-facts code {
+  font-family: var(--mono);
+}
+
+.data-plan-facts time,.data-cron-preview time,.data-task-table td:first-child {
   font-variant-numeric: tabular-nums;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline dotted var(--ink-muted);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+@media (hover:hover) {
+  .link-button:hover {
+    text-decoration-color: currentColor;
+  }
+}
+
+.link-button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .data-state {
@@ -140,15 +247,6 @@
   color: var(--orbit);
 }
 
-/* 计划开关状态不复用任务状态色，避免“已停用”被读成“未知”。 */
-.data-state-enabled {
-  color: var(--ok);
-}
-
-.data-state-disabled {
-  color: var(--idle);
-}
-
 .data-task-table {
   table-layout: fixed;
   min-width: 620px;
@@ -159,43 +257,183 @@
 }
 
 .data-task-table th:last-child {
-  width: 110px;
+  position: relative;
+  width: 84px;
+}
+
+/* 手机：任务记录改为卡片，来源与状态一行，类别和时间在下。 */
+@media (max-width: 767px) {
+  .data-task-table {
+    min-width: 0;
+    table-layout: auto;
+  }
+
+  .data-task-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .data-task-table,.data-task-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .table-wrap:has(> .data-task-table) {
+    max-width: none;
+  }
+
+  /* 表格铺满面板时首尾单元格带面板内边距；卡片改由整行承担。 */
+  .panel .table-wrap:not(.nodes-table-wrap) > .data-task-table > tbody > tr > td:is(:first-child,:last-child) {
+    padding: 0;
+  }
+
+  .data-task-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0,1fr) auto;
+    gap: var(--sp-tight) var(--sp-control);
+    padding: var(--sp-control) var(--panel-padding);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .data-operations .data-task-table tbody td {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .data-task-table td:nth-child(2) { grid-column: 1; grid-row: 1; }
+  .data-task-table td:nth-child(4) { grid-column: 2; grid-row: 1; justify-self: end; text-align: right; }
+  .data-task-table td:nth-child(3) { grid-column: 1; grid-row: 2; }
+  .data-task-table td:nth-child(1) { grid-column: 1; grid-row: 3; }
+  .data-task-table td:nth-child(5) { grid-column: 2; grid-row: 2 / 4; align-self: end; }
+
+  .data-task-table td:nth-child(1),.data-task-table td:nth-child(3) {
+    color: var(--ink-subtle);
+    font-size: var(--fs-xs);
+  }
 }
 
 .data-task-table td {
   overflow-wrap: anywhere;
 }
 
+.data-task-table small {
+  display: block;
+  margin-top: var(--sp-tight);
+  font-size: var(--fs-xs);
+}
+
+/* 计划弹窗：名称与启用同排；时间表、存储位置两个分节。 */
+dialog:has(.data-plan-form) {
+  width: min(640px,calc(100vw - 32px));
+}
+
 .data-plan-form {
   max-width: none;
+}
+
+.plan-name-row {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  align-items: end;
+  gap: var(--sp-control);
+}
+
+.plan-name-row .check-row {
+  min-height: var(--control-h);
+  padding-block: 0;
+  align-items: center;
+}
+
+.plan-name-row .check-row input {
+  margin: 0;
+}
+
+.data-plan-form .data-form-section {
+  margin: var(--sp-inline) 0 0;
+  padding-top: var(--sp-content);
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.data-cron-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-inline);
+}
+
+.data-cron-presets .btn[aria-pressed="true"] {
+  border-color: var(--orbit);
+  background: var(--orbit-soft);
+  color: var(--orbit);
+}
+
+.data-kind {
+  justify-self: start;
 }
 
 .data-plan-form .data-destination {
   display: grid;
   gap: var(--sp-content);
-  padding: var(--sp-content);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.data-plan-form .data-destination[hidden],.data-plan-form .data-destination:disabled {
+  display: none;
+}
+
+.data-local-row {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) 140px;
+  align-items: start;
+  gap: var(--sp-content);
+}
+
+.data-endpoint {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-inline);
   min-width: 0;
 }
 
-.data-plan-form .data-destination[hidden] {
+.data-endpoint > .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.data-endpoint > .btn[hidden] {
   display: none;
 }
 
-.data-plan-form .data-destination legend {
-  padding: 0 var(--sp-tight);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-semibold);
-  color: var(--ink-subtle);
+.data-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-inline) var(--sp-content);
 }
 
-.data-plan-form .data-destination:disabled {
-  display: none;
+.data-checks > .check-row {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  align-items: center;
+}
+
+.data-checks > .check-row input {
+  margin: 0;
 }
 
 .data-plan-form .data-cron-preview {
-  padding: var(--sp-control);
+  padding: var(--sp-inline) var(--sp-control);
   border-radius: var(--r-md);
   background: var(--surface);
   color: var(--ink-subtle);
@@ -204,19 +442,19 @@
 }
 
 .data-cron-preview ol {
-  margin: var(--sp-inline) 0 0;
-  padding-left: var(--sp-group);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-tight) var(--sp-content);
+  margin: var(--sp-tight) 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ink);
 }
 
-.data-cron-preview li+li {
-  margin-top: var(--sp-tight);
-}
-
-.data-endpoint-help {
-  display: grid;
-  gap: var(--sp-inline);
-  justify-items: start;
-  min-width: 0;
+@media (max-width: 560px) {
+  .data-local-row {
+    grid-template-columns: minmax(0,1fr);
+  }
 }
 
 .backup-task-detail {
@@ -269,32 +507,155 @@
   outline-offset: 3px;
 }
 
-.data-management-category {
-  flex-wrap: wrap;
-  padding: var(--sp-control);
+/* 存储：数据库卡片两列；清理类别按表格排版，整行可点。 */
+.data-operations .data-databases {
+  margin-top: 0;
+}
+
+.data-management-database {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-control);
+  min-width: 0;
+  padding: var(--sp-control) var(--sp-content) var(--sp-content);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
-  min-height: 64px;
 }
 
-.data-management-category-name {
-  flex: 1;
-  min-width: 120px;
+.data-database-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-inline);
 }
 
-.data-management-category-name small {
-  display: block;
+.data-database-head h3 {
+  font-size: var(--fs-base);
+  font-weight: var(--fw-heading);
+}
+
+.data-database-stats {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: var(--sp-control);
+  margin: 0;
+}
+
+.data-database-stats dt {
   font-size: var(--fs-xs);
+  color: var(--ink-muted);
 }
 
-.data-management-count {
-  font-size: var(--fs-sm);
-  color: var(--ink-subtle);
+.data-database-stats dd {
+  margin: var(--sp-tight) 0 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
   font-variant-numeric: tabular-nums;
 }
 
+.data-management-database > .btn {
+  justify-self: start;
+}
+
+.data-management-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-inline) var(--sp-content);
+}
+
 .data-management-toolbar .field {
-  max-width: 300px;
+  width: 200px;
+}
+
+.data-operations .data-cutoff {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-tight);
+  min-height: var(--control-h);
+}
+
+.data-cleanup-list {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.data-cleanup-head,.data-management-category {
+  display: grid;
+  grid-template-columns: 18px minmax(0,2fr) minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr);
+  align-items: center;
+  gap: var(--sp-control);
+  padding: var(--sp-inline) var(--sp-content);
+}
+
+.data-cleanup-head {
+  background: var(--surface);
+  color: var(--ink-muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+}
+
+.data-cleanup-head > span:nth-child(n+4),.data-management-count {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-management-category {
+  min-height: 44px;
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.data-management-category input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--orbit);
+  cursor: pointer;
+}
+
+.data-management-category:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.data-management-category:has(input:checked) {
+  background: var(--orbit-soft);
+}
+
+.data-management-category-name {
+  font-weight: var(--fw-medium);
+  overflow-wrap: anywhere;
+}
+
+.data-management-category:has(input:disabled) {
+  color: var(--ink-muted);
+  cursor: default;
+}
+
+.data-management-category:has(input:disabled) .data-management-category-name {
+  font-weight: inherit;
+}
+
+.data-management-category input:disabled {
+  cursor: default;
+}
+
+.data-cleanup-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-inline) var(--sp-content);
+}
+
+.data-management-selection {
+  font-size: var(--fs-sm);
+  color: var(--ink-subtle);
+  font-variant-numeric: tabular-nums;
 }
 
 .data-management code,.data-management-dialog code,.data-management .facts dd {
@@ -306,10 +667,47 @@
     min-height: 44px;
   }
 
-  .data-management-count {
-    flex-basis: 100%;
+  .data-cleanup-head {
+    display: none;
+  }
+
+  .data-cleanup-rows > .data-management-category:first-child {
+    border-top: 0;
+  }
+
+  .data-management-category {
+    grid-template-columns: 18px minmax(0,1fr) auto;
+    row-gap: 2px;
+  }
+
+  .data-management-category > span:nth-child(3) {
+    display: none;
+  }
+
+  .data-management-category > .data-management-count {
+    color: var(--ink-subtle);
+    font-size: var(--fs-xs);
+  }
+
+  .data-management-category > .data-management-count:nth-child(4) {
+    display: none;
+  }
+
+  .data-management-count::before {
+    content: attr(data-label) " ";
   }
 }
 
-.data-management-category:has(input:disabled) {color:var(--ink-muted);background:var(--bg);cursor:default;}
-.data-management-category input:disabled {cursor:default;}
+/* 任务详情：长值（路径、哈希、ID）单列显示，下载按钮紧随提示。 */
+.backup-task-detail .facts.backup-archive {
+  grid-template-columns: minmax(0,1fr);
+}
+
+.backup-task-detail .backup-hash {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+.backup-download {
+  justify-self: start;
+}

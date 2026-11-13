@@ -1,11 +1,11 @@
 export default {
   'settings.apiTokens': 'API 令牌',
-  'settings.backupsExport': '备份与导出',
   'settings.account': '账户',
   'settings.administrators': '管理员',
   'settings.groups': '分组',
   'settings.audit': '审计日志',
-  'settings.data': '数据',
+  'settings.backups': '备份',
+  'settings.storage': '存储',
   'settings.publicPage': '状态页',
   'settings.settingsSections': '设置分类',
   'settings.publicLoading': '正在加载状态页设置…',

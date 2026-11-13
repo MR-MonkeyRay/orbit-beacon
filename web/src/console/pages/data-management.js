@@ -28,25 +28,26 @@ export function dataManagementPage({embedded = false} = {}) {
   let epoch = 0;
   const checkboxes = new Map();
   const compactButtons = [];
-  const usage = h('div', {class: 'grid-2'});
-  const storageNotes = h('div', {class: 'data-management-storage-notes stack'});
-  const choices = h('div', {class: 'data-category-choices'});
+  const usage = h('div', {class: 'grid-2 data-databases'});
+  const choices = h('div', {class: 'data-cleanup-rows'});
   const status = h('p', {class: 'text-note', role: 'status'}, t('controls.loading'));
   const preview = h('p', {class: 'data-management-selection', role: 'status'});
-  const cutoff = h('p', {class: 'text-note'});
+  const cutoff = h('p', {class: 'text-note data-cutoff'});
   const outcome = h('div', {role: 'status', hidden: true});
   const days = select(periods.map((value) => [String(value), t('data.management.days', {count: value})]), '30', {name: 'keep_days'});
-  const refresh = button(t('data.management.refresh'), {icon: 'refresh', onClick: () => load()});
+  const refresh = button(t('data.management.refresh'), {small: true, icon: 'refresh', onClick: () => load()});
   const clean = button(t('data.management.clean'), {variant: 'danger', disabled: true, onClick: () => openCleanup()});
-  const element = h('div', {class: 'data-operations data-management'},
-    embedded ? h('div', {class: 'data-actions'}, refresh) : pageHead(t('data.management.title'), refresh),
+  // 类别列表按表格排版：勾选、名称、所属数据库、总行数、可清理行数；整行可点。
+  const columns = h('div', {class: 'data-cleanup-head', 'aria-hidden': 'true'}, h('span'), h('span', null, t('data.management.category')),
+    h('span', null, t('data.management.database')), h('span', null, t('data.management.rows')), h('span', null, t('data.management.eligible')));
+  const element = h('div', {class: 'data-operations data-management stack'},
+    embedded ? null : pageHead(t('data.management.title')),
     status,
-    panel(t('data.management.usage'), {}, usage, h('p', {class: 'text-note'}, t('data.management.scope')), storageNotes),
+    panel(t('data.management.usage'), {action: refresh}, usage),
     panel(t('data.management.cleanup'), {},
-      h('div', {class: 'data-management-toolbar'}, field(t('data.management.keep'), days)),
-      cutoff, choices, preview,
-      h('p', {class: 'text-note'}, t('data.management.protected')),
-      h('div', {class: 'data-actions'}, clean), outcome));
+      h('div', {class: 'data-management-toolbar'}, field(t('data.management.keep'), days), cutoff),
+      h('div', {class: 'data-cleanup-list'}, columns, choices),
+      h('div', {class: 'data-cleanup-foot'}, preview, clean), outcome));
 
   function updateControls() {
     const available = Boolean(controller && !controller.signal.aborted && fresh && !loading && !dialog);
@@ -72,14 +73,14 @@ export function dataManagementPage({embedded = false} = {}) {
         compact.setAttribute('aria-label', `${t('data.management.compact')}: ${domainLabel(database.domain)}`);
         compactButtons.push(compact);
       }
-      return h('article', {class: 'data-plan data-management-database'},
-        h('div', {class: 'data-plan-head'}, h('h3', null, domainLabel(database.domain)), h('span', {class: 'badge'}, database.driver === 'sqlite' ? 'SQLite' : 'MySQL')),
-        facts([[t('data.management.allocated'), formatBytes(database.size_bytes)],
-          [t('data.management.reusable'), database.reusable_bytes === null ? t('data.management.notReported') : formatBytes(database.reusable_bytes)]]),
-        compact ? h('div', {class: 'data-actions'}, compact) : null);
+      const reusable = database.reusable_bytes === null ? t('data.management.notReported') : formatBytes(database.reusable_bytes);
+      return h('article', {class: 'data-management-database'},
+        h('div', {class: 'data-database-head'}, h('h3', null, domainLabel(database.domain)), h('span', {class: 'badge'}, database.driver === 'sqlite' ? 'SQLite' : 'MySQL')),
+        h('dl', {class: 'data-database-stats'},
+          h('div', null, h('dt', null, t('data.management.allocated')), h('dd', null, formatBytes(database.size_bytes))),
+          h('div', null, h('dt', null, t('data.management.reusable')), h('dd', null, reusable))),
+        compact);
     }));
-    storageNotes.replaceChildren(...[...new Set(snapshot.databases.map((database) => database.driver))]
-      .map((driver) => h('p', {class: 'text-note'}, t(driver === 'mysql' ? 'data.management.mysqlNote' : 'data.management.sqliteNote'))));
     checkboxes.clear();
     choices.replaceChildren(...snapshot.categories.filter((item) => categories.includes(item.id))
       .sort((a, b) => Number(!a.eligible_rows) - Number(!b.eligible_rows)).map((item) => {
@@ -91,9 +92,11 @@ export function dataManagementPage({embedded = false} = {}) {
         updateControls();
       });
       checkboxes.set(item.id, checkbox);
-      return h('label', {class: 'check-row data-management-category'}, checkbox,
-        h('span', {class: 'data-management-category-name'}, h('strong', null, label(item.id)), h('small', {class: 'muted'}, domainLabel(item.domain))),
-        h('span', {class: 'data-management-count'}, t('data.management.counts', {total: number(item.rows), eligible: number(item.eligible_rows)})));
+      return h('label', {class: 'data-management-category'}, checkbox,
+        h('span', {class: 'data-management-category-name'}, label(item.id)),
+        h('span', {class: 'muted', dataset: {label: t('data.management.database')}}, domainLabel(item.domain)),
+        h('span', {class: 'data-management-count', dataset: {label: t('data.management.rows')}}, number(item.rows)),
+        h('span', {class: 'data-management-count', dataset: {label: t('data.management.eligible')}}, number(item.eligible_rows)));
     }));
     for (const id of selected) if (!checkboxes.has(id)) selected.delete(id);
     const cutoffDate = new Date(snapshot.before);

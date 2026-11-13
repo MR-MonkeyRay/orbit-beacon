@@ -132,14 +132,14 @@ test('checkbox fields put the native control before its text in one clickable la
     const {copy} = await import('./console-dom.js');
     const {field, input} = await import('../src/console/ui/forms.js');
     const control = input({type: 'checkbox', name: 'enabled'});
-    const wrapper = field(copy('alerts.state.enabled'), control, {hint: copy('data.plan.enabledHint')});
+    const wrapper = field(copy('alerts.state.enabled'), control, {hint: copy('data.plan.directoryHint')});
     dom.body.append(wrapper);
     const label = wrapper.querySelector('label');
     assert.equal(label.className, 'check-row');
     assert.equal(label.children[0], control);
     assert.ok(label.textContent.includes(copy('alerts.state.enabled')));
     const hint = wrapper.querySelector('.text-note');
-    assert.equal(hint.textContent, copy('data.plan.enabledHint'));
+    assert.equal(hint.textContent, copy('data.plan.directoryHint'));
     assert.ok(control.getAttribute('aria-describedby').split(' ').includes(hint.id));
     control.showError(copy('controls.validation.required'));
     assert.equal(wrapper.querySelector('.field-error').hidden, false);

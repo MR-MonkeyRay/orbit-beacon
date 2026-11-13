@@ -1,11 +1,11 @@
 export default {
   'settings.apiTokens': 'API tokens',
-  'settings.backupsExport': 'Backups & export',
   'settings.account': 'Account',
   'settings.administrators': 'Administrators',
   'settings.groups': 'Groups',
   'settings.audit': 'Audit log',
-  'settings.data': 'Data',
+  'settings.backups': 'Backups',
+  'settings.storage': 'Storage',
   'settings.publicPage': 'Status page',
   'settings.settingsSections': 'Settings sections',
   'settings.publicLoading': 'Loading status page settings…',

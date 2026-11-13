@@ -40,22 +40,13 @@ export async function settingsPage() {
       () => Promise.all([api('/audit?limit=50&offset=0'), allNodes(), usersList(), groupsList()]),
       ([audit, nodes, users, groups]) => auditTab(audit, nameLookup(nodes, users, groups), users)
     ),
-    'data': dataTab,
+    'data': dataOperationsTab,
+    'data-storage': () => dataManagementPage({embedded: true}),
     'public-page': publicPageTab
   };
   return h('div', null,
     pageHead(t('shell.settings')),
     tabSet(settingsTabs.map((tab) => ({...tab, label: t(tab.label), build: builds[tab.id]})), t('settings.settingsSections')));
-}
-
-function dataTab() {
-  const backups = dataOperationsTab();
-  const storage = dataManagementPage({embedded: true});
-  return {element: h('div', {class: 'stack'},
-    h('section', {class: 'stack', 'aria-labelledby': 'data-backups-title'}, h('h2', {id: 'data-backups-title'}, t('settings.backupsExport')), backups.element),
-    h('section', {class: 'stack', 'aria-labelledby': 'data-storage'}, h('h2', {id: 'data-storage', tabindex: '-1'}, t('data.management.title')), storage.element)),
-    attach() { backups.attach(); storage.attach(); },
-    detach() { backups.detach(); storage.detach(); }};
 }
 
 function publicPageTab() {
@@ -321,7 +312,7 @@ function auditTab(page, names, users) {
     service: 'shell.services', node: 'shell.nodes', enrollment: 'audit.category.enrollment', command: 'audit.category.command',
     group: 'settings.groups', user: 'settings.account', session: 'settings.account',
     alert_rule: 'shell.alerts', alert_silence: 'shell.alerts', notification_channel: 'audit.category.notification',
-    backup: 'settings.data', api_token: 'audit.category.token',
+    backup: 'settings.backups', api_token: 'audit.category.token',
     settings: 'audit.category.token', public_page: 'settings.publicPage'
   };
   const categories = [...new Set(Object.keys(ACTIONS).map((action) => resources[action.split('.')[0]]))];

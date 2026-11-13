@@ -21,19 +21,32 @@ export function taskDetails(task, {signal} = {}) {
   if (task.warning_code === 'retention_cleanup_failed') notices.push(h('div', {class: 'callout', role: 'status'}, t('data.task.cleanupFailed')));
   if (task.restored) notices.push(h('div', {class: 'callout', role: 'status'}, t('data.task.restored')));
   const source = task.destination?.plan_name || task.destination?.actor_name || t(task.kind === 'backup_export' ? 'data.task.manual' : 'data.task.deletedPlan');
-  element.append(...notices, facts([
-    [t('data.task.id'), task.id], [t('data.task.source'), source], [t('data.task.kind'), t({backup_export: 'data.task.manual', backup_local: 'data.task.local', backup_remote: 'data.task.remote'}[task.kind] || 'data.task.unknownKind')],
-    [t('data.categories'), categoryNames(task.categories)], [t('data.task.state'), taskState(task)],
-    [t('data.task.phase'), task.state === 'running' ? t(phaseNames[task.phase] || 'data.phase.starting') : null],
-    [t('data.task.queued'), when(task.created_at)], [t('data.task.scheduled'), task.scheduled_at ? when(task.scheduled_at) : null], [t('data.task.started'), task.started_at ? when(task.started_at) : null], [t('data.task.finished'), task.finished_at ? when(task.finished_at) : null],
-    [t('data.task.filename'), task.artifact_name], [t('data.task.size'), task.artifact_bytes == null ? null : t('data.task.bytes', {value: new Intl.NumberFormat(getLocale()).format(task.artifact_bytes)})],
-    [t('data.task.sha256'), task.artifact_sha256 ? h('code', {class: 'backup-hash'}, task.artifact_sha256) : null], [t(task.kind === 'backup_remote' ? 'data.task.objectKey' : 'data.task.location'), task.result_location],
-    [t('data.task.downloadExpires'), task.artifact_expires_at ? when(task.artifact_expires_at) : null], [t('data.task.passwordExpires'), task.password_expires_at ? when(task.password_expires_at) : null]
-  ]));
+  // 只列出有值的字段；路径、哈希和 ID 较长，单独一列显示。
+  const known = (entries) => entries.filter(([, value]) => value != null && value !== '');
+  const location = task.result_location;
+  const fileShown = task.artifact_name && !(location && location.endsWith(task.artifact_name));
+  element.append(...notices);
   if (task.kind === 'backup_export' && task.state === 'succeeded') {
-    if (task.download_available) element.append(h('a', {class: 'btn btn-primary', href: `/api/v1/tasks/${encodeURIComponent(task.id)}/download`}, t('data.task.download')));
+    if (task.download_available) element.append(h('a', {class: 'btn btn-primary backup-download', href: `/api/v1/tasks/${encodeURIComponent(task.id)}/download`}, t('data.task.download')));
     else element.append(h('p', {class: 'text-note'}, t('data.task.downloadUnavailable')));
   }
+  element.append(facts(known([
+    [t('data.task.state'), taskState(task)], [t('data.task.phase'), task.state === 'running' ? t(phaseNames[task.phase] || 'data.phase.starting') : null],
+    [t('data.task.kind'), t({backup_export: 'data.task.manual', backup_local: 'data.task.local', backup_remote: 'data.task.remote'}[task.kind] || 'data.task.unknownKind')],
+    [t('data.task.source'), source], [t('data.categories'), categoryNames(task.categories)],
+    [t('data.task.queued'), task.started_at ? null : when(task.created_at)], [t('data.task.scheduled'), task.scheduled_at ? when(task.scheduled_at) : null],
+    [t('data.task.started'), task.started_at ? when(task.started_at) : null], [t('data.task.finished'), task.finished_at ? when(task.finished_at) : null],
+    [t('data.task.size'), task.artifact_bytes == null ? null : t('data.task.bytes', {value: new Intl.NumberFormat(getLocale()).format(task.artifact_bytes)})],
+    [t('data.task.downloadExpires'), task.artifact_expires_at ? when(task.artifact_expires_at) : null], [t('data.task.passwordExpires'), task.password_expires_at ? when(task.password_expires_at) : null]
+  ])));
+  const archive = facts(known([
+    [t('data.task.filename'), fileShown ? h('code', {class: 'backup-hash'}, task.artifact_name) : null],
+    [t(task.kind === 'backup_remote' ? 'data.task.objectKey' : 'data.task.location'), location ? h('code', {class: 'backup-hash'}, location) : null],
+    [t('data.task.sha256'), task.artifact_sha256 ? h('code', {class: 'backup-hash'}, task.artifact_sha256) : null],
+    [t('data.task.id'), h('code', {class: 'backup-hash'}, task.id)]
+  ]));
+  archive.classList.add('backup-archive');
+  element.append(archive);
   const password = backupPassword(task, {signal});
   element.append(password.element);
   return {element, dispose: password.dispose};
