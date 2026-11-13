@@ -36,6 +36,7 @@ export default {
   'audit.groupCreate': '已创建分组',
   'audit.groupUpdate': '已重命名分组',
   'audit.groupDelete': '已删除分组',
+  'audit.groupReorder': '已调整分组顺序',
   'audit.userCreate': '已添加管理员',
   'audit.userPatch': '已重命名管理员',
   'audit.userDelete': '已删除管理员',

@@ -28,7 +28,6 @@ export const settingsTabs = [
   {id: 'account', label: 'settings.account', icon: 'user'},
   {id: 'administrators', label: 'settings.administrators', icon: 'users'},
   {id: 'api-tokens', label: 'settings.apiTokens', icon: 'key'},
-  {id: 'groups', label: 'settings.groups', icon: 'folder'},
   {id: 'audit', label: 'settings.audit', icon: 'list'},
   {id: 'data', label: 'settings.backups', icon: 'cloud'},
   {id: 'data-storage', label: 'settings.storage', icon: 'database'},

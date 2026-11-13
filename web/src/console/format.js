@@ -18,7 +18,7 @@ export const ACTIONS = {
   'node.traffic_settings.patch': t('audit.nodeTraffic'),
   'public_page.update': t('audit.publicPage'),
   'node.public_settings.patch': t('audit.nodePublic'), 'group.create': t('audit.groupCreate'), 'group.update': t('audit.groupUpdate'),
-  'group.delete': t('audit.groupDelete'), 'user.create': t('audit.userCreate'), 'user.patch': t('audit.userPatch'), 'user.delete': t('audit.userDelete'),
+  'group.delete': t('audit.groupDelete'), 'group.reorder': t('audit.groupReorder'), 'user.create': t('audit.userCreate'), 'user.patch': t('audit.userPatch'), 'user.delete': t('audit.userDelete'),
  'user.totp.enable': t('audit.totpEnable'), 'user.totp.disable': t('audit.totpDisable'), 'user.totp.reset': t('audit.totpReset'), 'user.totp.recovery_codes': t('audit.totpRecoveryCodes'),
   'user.password.change': t('audit.password'), 'enrollment.create': t('audit.enrollmentCreate'),
   'enrollment.claim': t('audit.enrollmentClaim'), 'enrollment.revoke': t('audit.enrollmentRevoke'),

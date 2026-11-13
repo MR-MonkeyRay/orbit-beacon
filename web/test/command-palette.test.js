@@ -207,7 +207,7 @@ test('creation failure never issues a deployment credential', async (t) => {
   globalThis.fetch = async (url, options) => url === '/api/v1/nodes' && options.method === 'POST'
     ? new Response(JSON.stringify({message: 'Create failed'}), {status: 500}) : original(url, options);
   const {createNodeDialog} = await import('../src/console/lib/add-node-dialog.js');
-  createNodeDialog(); const dialog = document.querySelector('dialog'); dialog.querySelector('input').value = 'New Host';
+  await createNodeDialog(); const dialog = document.querySelector('dialog'); dialog.querySelector('input').value = 'New Host';
   dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
   assert.equal(document.querySelector('dialog'), dialog);
   const error = dialog.querySelector('.form-error');
@@ -220,7 +220,7 @@ test('failed issuance preserves the new node and navigates to its enrollment pag
   globalThis.fetch = async (url, options) => url === '/api/v1/enrollments'
     ? new Response(JSON.stringify({message: 'Issue failed'}), {status: 500}) : original(url, options);
   const {createNodeDialog} = await import('../src/console/lib/add-node-dialog.js');
-  createNodeDialog(); const dialog = document.querySelector('dialog'); dialog.querySelector('input').value = 'New Host';
+  await createNodeDialog(); const dialog = document.querySelector('dialog'); dialog.querySelector('input').value = 'New Host';
   dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush(); await flush();
   assert.equal(location.pathname, nodePath); assert.equal(location.hash, '');
   assert.ok(document.querySelector('#toasts').textContent.includes(copy('nodes.enrollment.issueFailedAfterCreate')));
@@ -239,7 +239,7 @@ for (const phase of ['create', 'issue']) for (const boundary of ['close', 'navig
       return original(url, options);
     };
     const {createNodeDialog} = await import('../src/console/lib/add-node-dialog.js');
-    createNodeDialog(); const dialog = document.querySelector('dialog'); dialog.querySelector('input').value = 'New Host';
+    await createNodeDialog(); const dialog = document.querySelector('dialog'); dialog.querySelector('input').value = 'New Host';
     dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
     assert.equal(typeof release, 'function');
     if (boundary === 'close') closeDialogs();
@@ -300,7 +300,7 @@ test('new-node View node link navigates to the overview without the post-dialog 
   };
   t.after(() => { if (previousSocket === undefined) delete globalThis.WebSocket; else globalThis.WebSocket = previousSocket; });
   const {createNodeDialog} = await import('../src/console/lib/add-node-dialog.js');
-  createNodeDialog();
+  await createNodeDialog();
   const create = document.querySelector('dialog'); create.querySelector('input').value = 'New Host';
   create.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
   const deployment = document.querySelector('dialog');

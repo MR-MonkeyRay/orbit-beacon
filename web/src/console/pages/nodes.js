@@ -6,7 +6,7 @@ import {displayStatus, STATUS, STATUS_ORDER} from '../format.js';
 import {connectConsoleLive, readConsoleFleet} from '../live.js';
 import {busy, button, emptyState, iconButton, liveStatus, pageHead} from '../ui/components.js';
 import {toastError} from '../ui/feedback.js';
-import {input, select} from '../ui/forms.js';
+import {input} from '../ui/forms.js';
 import {runNodeBatch} from '../lib/nodes-bulk.js';
 import {NODE_PAGE_SIZE, SORTS, nodeSortDirection, readNodeFilter, scopedNodes, sortedNodes, writeNodeFilter} from '../lib/nodes-filters.js';
 import {patchNodesFromFleet} from '../lib/nodes-live.js';
@@ -14,6 +14,8 @@ import {createNodeRow, fadeNodeRow, patchNodeSortHeaders} from '../lib/nodes-tab
 import {NODE_COLUMNS, nodeViewMenu, patchNodeColumns, readNodeColumns} from '../lib/nodes-columns.js';
 import {pagePlaceholder, placeholderHead, placeholderRows} from '../ui/placeholders.js';
 import {addNodeButton} from '../lib/add-node-dialog.js';
+import {deleteGroup, deployToGroup, editGroup, groupCounts, manageGroupsDialog, nodeGroupBar} from '../lib/node-groups.js';
+import {groupCommandItems} from '../lib/group-commands.js';
 
 // 与节点列表同构：工具栏、状态分段与用户保存的列先出现，表格行以微光条占位。
 export function nodesPlaceholder() {
@@ -23,6 +25,9 @@ export function nodesPlaceholder() {
     {label: t('nodes.cpu'), className: 'num'}, {label: t('nodes.memory'), className: 'num'}, ...optional];
   return pagePlaceholder(
     placeholderHead(t('nodes.listTitle')),
+    // 分组未知，先占住标签行：只有“全部”确定存在。
+    h('div', {class: 'group-filter', 'aria-hidden': 'true'},
+      h('div', {class: 'group-chips'}, h('span', {class: 'group-chip', 'aria-pressed': 'true'}, t('nodes.all')), h('span', {class: 'sk sk-chip'}), h('span', {class: 'sk sk-chip'}))),
     h('div', {class: 'panel'},
       h('div', {class: 'toolbar nodes-toolbar'},
         // 真实分段只列出有节点的状态，加载前只能确定“全部”。
@@ -36,13 +41,18 @@ export function nodesPlaceholder() {
 
 export async function nodesPage() {
   const signal = getNavigationSignal();
-  const [nodes, groups] = await Promise.all([allNodes(), groupsList()]);
+  const [nodes, initialGroups] = await Promise.all([allNodes(), groupsList()]);
+  let groups = initialGroups;
   const tween = createNumberTween({signal});
   const connection = liveStatus();
-  const head = pageHead(t('nodes.listTitle'), connection.element, addNodeButton());
-
   const filter = readNodeFilter();
+  // 正在查看某个分组时，新节点默认进入该分组。
+  const currentGroup = () => groups.some((group) => group.id === filter.group) ? filter.group : '';
+  const addNode = () => addNodeButton({group: currentGroup, onGroupCreated: () => reloadGroups()});
+  const head = pageHead(t('nodes.listTitle'), connection.element, addNode());
+
   const groupNames = new Map(groups.map((group) => [group.id, group.name]));
+  if (filter.group && filter.group !== 'none' && !groupNames.has(filter.group)) filter.group = '';
   const searchText = (node) => [node.name, node.region || node.geo_location, node.provider, node.notes, groupNames.get(node.group_id) || '', ...node.tags].join('\n').toLowerCase();
   const indexed = nodes.map((node) => ({node, text: searchText(node)}));
   const deleted = new Set();
@@ -63,9 +73,56 @@ export async function nodesPage() {
   const statusButtons = new Map(['', ...STATUS_ORDER].map((status) => [status, h('button', {type: 'button',
     onclick: () => { filter.status = status; filter.page = 0; update(); }}, status ? STATUS[status] : t('nodes.all'), h('span', {class: 'count'}))]));
 
-  const groupChoices = [['', t('nodes.allGroups')], ['none', t('nodes.ungrouped')], ...groups.map((group) => [group.id, group.name])];
-  const groupSelect = select(groupChoices, groupChoices.some(([id]) => id === filter.group) ? filter.group : '', {'aria-label': t('nodes.filterGroup')});
-  groupSelect.addEventListener('change', () => { filter.group = groupSelect.value; filter.page = 0; update(); });
+  const activeNodes = () => nodes.filter((node) => !deleted.has(node.id));
+  // 菜单里的重命名和删除同一时间只进行一项，确认框关闭后请求未完成前不能再次提交。
+  let groupBusy = false;
+  const exclusive = (task) => async () => {
+    if (groupBusy) return;
+    groupBusy = true;
+    try { await task(); } finally { groupBusy = false; }
+  };
+  const groupBar = nodeGroupBar({signal,
+    onSelect: (key) => { filter.group = key; filter.page = 0; update(); },
+    onManage: () => manageGroups(),
+    menuItems: (group, controls) => [
+      {label: t('nodes.deployAgent'), onSelect: () => deployToGroup(group, controls()[0])},
+      ...groupCommandItems(group, {signal, controls}),
+      {label: t('nodes.rename'), onSelect: exclusive(async () => { if (await editGroup(group)) await reloadGroups(); })},
+      {label: t('nodes.deleteGroup'), danger: true, onSelect: exclusive(async () => { if (await deleteGroup(group)) await reloadGroups({nodes: true}); })}
+    ]
+  });
+  const paintGroups = () => groupBar.update({groups, nodes: activeNodes(), active: filter.group});
+  // 分组变更后重新读取并同步名称、搜索文本和当前筛选；只采用最后一次读取，较早的慢响应不覆盖较新的状态。
+  // 删除分组会改动节点，被后续读取取代时仍记着需要重新读取节点。
+  let groupsLoad = 0;
+  let nodesStale = false;
+  // 自行提示读取失败，调用方无需处理拒绝。
+  async function reloadGroups({nodes: nodesChanged = false} = {}) {
+    const ticket = ++groupsLoad;
+    nodesStale ||= nodesChanged;
+    invalidate('groups');
+    let fresh;
+    try { fresh = await groupsList(); }
+    catch (error) { if (!signal?.aborted && ticket === groupsLoad) toastError(error); return; }
+    if (signal?.aborted || ticket !== groupsLoad) return;
+    groups = fresh;
+    groupNames.clear();
+    for (const group of fresh) groupNames.set(group.id, group.name);
+    if (filter.group && filter.group !== 'none' && !groupNames.has(filter.group)) { filter.group = ''; filter.page = 0; }
+    try {
+      if (nodesStale) { nodesStale = false; await reloadNodes(); }
+      else for (const entry of indexed) entry.text = searchText(entry.node);
+    } catch (error) {
+      nodesStale = true;
+      if (!signal?.aborted) toastError(error);
+    }
+    if (!signal?.aborted) update();
+  }
+  const manageGroups = () => manageGroupsDialog({
+    groups: () => groups,
+    counts: () => groupCounts(activeNodes()).total,
+    changed: reloadGroups
+  });
 
   const direction = () => nodeSortDirection(filter);
   const sortLabels = {order: t('nodes.field.display_order'), name: t('nodes.column.name'), status: t('nodes.presence'), cpu: t('nodes.cpu'), memory: t('nodes.memory'), agent_version: t('nodes.agentVersion'), created: t('nodes.added')};
@@ -110,7 +167,6 @@ export async function nodesPage() {
   const clear = () => {
     Object.assign(filter, {q: '', status: '', group: '', page: 0});
     search.value = '';
-    groupSelect.value = '';
     update();
     search.focus();
   };
@@ -165,6 +221,7 @@ export async function nodesPage() {
       control.lastElementChild.textContent = counts[status] || 0;
       if (counts[status]) control.hidden = false;
     }
+    paintGroups();
     return counts;
   }
 
@@ -191,7 +248,7 @@ export async function nodesPage() {
     body.replaceChildren(...(visible.length ? visible.map((node) => row(node, query))
       : [h('tr', null, h('td', {colspan: 11}, nodes.length
         ? emptyState(t('nodes.noMatch'), null, button(t('nodes.clearFilters'), {onClick: clear}))
-        : emptyState(t('nodes.empty'), null, addNodeButton())))]));
+        : emptyState(t('nodes.empty'), null, addNode())))]));
     // 搜索和排序会重建表格；只有新进入的行淡入，留在表里的行不闪。
     if (shown.size) for (const [id, refs] of rowRefs) if (!shown.has(id)) fadeNodeRow(refs);
     patchNodeColumns(table, columns);
@@ -247,6 +304,7 @@ export async function nodesPage() {
     try {
       await runNodeBatch({action, selected, nodes, groups, signal, controls, reloadNodes,
         onCompleted: () => { selected.clear(); update(); }});
+      if (action === 'group' && !signal?.aborted) await reloadGroups();
     } finally { batchBusy = false; }
   }
 
@@ -270,11 +328,11 @@ export async function nodesPage() {
     selectionChange.hidden = !selectionRemoved;
     changes.hidden = !statusChanged && !inventoryChanged && !selectionRemoved;
   }
-  // 状态分段在左；搜索、分组与视图菜单成组靠右，空间不足时整组换到下一行。
+  // 状态分段在左；搜索与视图菜单成组靠右，空间不足时整组换到下一行。
   const table = h('div', {class: 'panel'},
     h('div', {class: 'toolbar nodes-toolbar'},
       h('div', {class: 'segmented', role: 'group', 'aria-label': t('nodes.filterPresence')}, [...statusButtons.values()]),
-      h('div', {class: 'toolbar-end'}, h('div', {class: 'search'}, icon('search'), search, h('kbd', null, '/')), groupSelect, viewMenu)),
+      h('div', {class: 'toolbar-end'}, h('div', {class: 'search'}, icon('search'), search, h('kbd', null, '/')), viewMenu)),
     changes,
     h('div', {class: 'table-wrap nodes-table-wrap'}, h('table', {class: 'table nodes-table'}, h('caption', {class: 'sr'}, t('nodes.listTitle')), h('thead', null, h('tr', null, headers)), body)),
     h('div', {class: 'table-foot'}, summary, pager), actionBar);
@@ -291,10 +349,15 @@ export async function nodesPage() {
   }
   const subscribe = () => connectConsoleLive({signal, onState: connection.update, onSnapshot: patchFleet});
   live = subscribe();
+  // 概览等处以 /nodes#groups 直达分组管理。
+  if (location.hash === '#groups') {
+    history.replaceState(history.state, '', location.pathname + location.search);
+    requestAnimationFrame(() => { if (!signal?.aborted) manageGroups(); });
+  }
   signal?.addEventListener('abort', () => {
     cancelAnimationFrame(frame);
     clearTimeout(summaryTimer);
     for (const refs of rowRefs.values()) refs.animation?.cancel();
   }, {once: true});
-  return h('div', null, head, table);
+  return h('div', null, head, groupBar, table);
 }

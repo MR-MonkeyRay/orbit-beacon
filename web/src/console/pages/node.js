@@ -16,6 +16,7 @@ import {availabilityPanel} from './node-availability.js';
 import {trafficPanel} from './node-traffic.js';
 import {trafficSettingsPanel} from './node-traffic-settings.js';
 import {probesPanel} from './node-probes.js';
+import {groupSelect} from '../lib/node-groups.js';
 import {NODE_PATH} from '../routes.js';
 import {pagePlaceholder, placeholderChart, placeholderPanel, skLines, skText, skValue} from '../ui/placeholders.js';
 
@@ -255,9 +256,9 @@ function detailsTab(node, groups, onSaved) {
   const region = input({name: 'region', value: node.region, id: 'node-region',
     placeholder: node.geo_location ? t('nodes.autoLocation', {location: node.geo_location}) : t('nodes.autoDetect')});
   const provider = input({name: 'provider', value: node.provider, id: 'node-provider'});
-  const choices = [['', t('nodes.ungrouped')], ...groups.map((item) => [item.id, item.name])];
-  if (node.group_id && !group) choices.push([node.group_id, t('nodes.unknownID', {id: shortID(node.group_id)})]);
-  const groupID = select(choices, node.group_id || '', {name: 'group_id', id: 'node-group'});
+  const groupID = groupSelect(groups, node.group_id, {name: 'group_id', id: 'node-group'}, {
+    extra: node.group_id && !group ? [[node.group_id, t('nodes.unknownID', {id: shortID(node.group_id)})]] : [],
+    onCreated: (created) => groups.push(created)});
   const tags = tagEditor(node.tags);
   const tagBox = tags.querySelector('[data-tags]');
   const expiresOn = input({name: 'expires_on', type: 'date', value: node.expires_on || '', id: 'node-expires-on'});

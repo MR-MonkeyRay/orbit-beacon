@@ -962,3 +962,147 @@
   height: 16px;
   margin-top: 2px;
 }
+
+/* 节点分组标签：在页头与列表之间，标签换行不滚动，选中分组的操作菜单紧跟其后。 */
+.group-filter {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-inline) var(--sp-control);
+  margin-bottom: var(--sp-control);
+}
+
+.group-chips {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.group-chip-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.group-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  max-width: 240px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-subtle);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast),border-color var(--motion-fast),color var(--motion-fast);
+}
+
+.group-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (hover:hover) {
+  .group-chip:hover {
+    border-color: var(--border);
+    color: var(--ink);
+  }
+}
+
+.group-chip[aria-pressed="true"] {
+  border-color: var(--border);
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--shadow-control);
+}
+
+.group-chip .count {
+  color: var(--ink-muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+span.group-chip[aria-pressed="true"] {
+  cursor: default;
+}
+
+.group-chips .sk-chip {
+  width: 84px;
+  height: 30px;
+  border-radius: 999px;
+}
+
+.group-chip-alert {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bad);
+}
+
+.group-chip-menu .icon-button {
+  border-radius: 50%;
+}
+
+.group-filter > .btn {
+  flex: none;
+}
+
+@media (max-width:767px) {
+  .group-filter {
+    align-items: center;
+    gap: var(--sp-inline);
+  }
+
+  .group-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin-block: -3px;
+    padding: 3px 2px;
+    scroll-padding-inline: 2px;
+    scrollbar-width: none;
+  }
+
+  .group-chips::-webkit-scrollbar {
+    display: none;
+  }
+
+  .group-chip {
+    flex: none;
+    min-height: 44px;
+  }
+
+  .group-filter-menu:empty {
+    display: none;
+  }
+
+  .group-filter-manage {
+    width: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .group-filter-manage .group-filter-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+.group-rows>li {
+  min-height: 52px;
+}
+
+.group-row-actions {
+  display: flex;
+  gap: 2px;
+}

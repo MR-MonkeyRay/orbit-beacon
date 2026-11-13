@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {nodeCommandsPanel} from '../src/console/pages/node-commands.js';
-import {groupCommandActions} from '../src/console/lib/group-commands.js';
+import {groupCommandItems} from '../src/console/lib/group-commands.js';
+import {menuButton} from '../src/console/ui/menu.js';
 import {setNavigationSignal, setSession} from '../src/console/api.js';
 import {copy, copyPattern, flush, installDOM} from './console-dom.js';
 import {errorText} from '../src/shared/errors.js';
@@ -110,13 +111,21 @@ test('pending cancellation, requester and all short status and result labels', a
   }
 });
 
-for (const kind of ['restart', 'stop']) for (const menu of [false, true]) test(`group ${kind} ${menu ? "menu" : "buttons"} requires its name and reports created and skipped`, async (t) => {
+for (const kind of ['restart', 'stop']) test(`group ${kind} menu requires its name and reports created and skipped`, async (t) => {
   const env = await setup(t);
-  const controls = groupCommandActions({id, name: 'Production'}, env.scope.signal, {menu});
-  env.body.append(...controls);
-  if (menu) controls[0].querySelector('button').click();
+  const root = menuButton({label: 'Production actions', icon: 'more', iconOnly: true, signal: env.scope.signal,
+    items: groupCommandItems({id, name: 'Production'}, {signal: env.scope.signal, controls: () => root.querySelectorAll('button')})});
+  env.body.append(root);
+  const trigger = root.querySelector('button');
+  assert.equal(trigger.getAttribute('aria-label'), 'Production actions');
+  assert.equal(trigger.textContent, '');
+  trigger.click();
+  const items = root.querySelectorAll('[role="menuitem"]');
+  assert.deepEqual(items.map((item) => item.textContent), ['upgrade', 'restart', 'stop'].map((name) => copy(`nodes.command.${name}All`)));
+  assert.equal(items[2].classList.contains('menu-danger'), true);
   button(env.body, `nodes.command.${kind}All`).click(); await flush();
-  if (menu) assert.equal(controls[0].querySelector('[role="menu"]').hidden, true);
+  assert.equal(root.querySelector('[role="menu"]').hidden, true);
+  assert.equal(trigger.disabled, true);
   const dialog = env.body.querySelector('dialog');
   assert.equal(dialog.querySelector('h2').textContent, copy(`nodes.command.${kind}All`));
   if (kind === 'restart') assert.equal(dialog.querySelector('p'), null);
@@ -125,6 +134,7 @@ for (const kind of ['restart', 'stop']) for (const menu of [false, true]) test(`
   assert.equal(post.url, `/api/v1/groups/${id}/commands`);
   assert.deepEqual(JSON.parse(post.options.body), {kind, confirm: 'Production'});
   assert.match(env.body.querySelector('#toasts').textContent, copyPattern('nodes.command.bulkResult', {created: 2, skipped: 3}));
+  assert.equal(trigger.disabled, false);
 });
 
 test('command errors and audit actions have localized labels', () => {
@@ -199,11 +209,12 @@ test('cancelling a typed confirmation closes without a discard prompt', async (t
   assert.equal(env.requests.some((item) => item.options.method === 'POST'), false);
 });
 
-for (const menu of [false, true]) test(`group upgrade ${menu ? 'menu' : 'buttons'} requires both target version and group name`, async (t) => {
+test('group upgrade menu requires both target version and group name', async (t) => {
   const env = await setup(t);
-  const controls = groupCommandActions({id, name: 'Production'}, env.scope.signal, {menu});
-  env.body.append(...controls);
-  if (menu) controls[0].querySelector('button').click();
+  const root = menuButton({label: 'Production actions', icon: 'more', iconOnly: true, signal: env.scope.signal,
+    items: groupCommandItems({id, name: 'Production'}, {signal: env.scope.signal, controls: () => root.querySelectorAll('button')})});
+  env.body.append(root);
+  root.querySelector('button').click();
   button(env.body, 'nodes.command.upgradeAll').click(); await flush();
   const dialog = env.body.querySelector('dialog');
   assert.equal(dialog.querySelector('h2').textContent, copy('nodes.command.upgradeAll'));

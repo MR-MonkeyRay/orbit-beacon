@@ -94,10 +94,9 @@ test('settings loads each tab data only when first shown', async () => {
     assert.deepEqual(calls, ['/api/v1/users', '/api/v1/account/totp']);
     calls.splice(1);
 
-    tabs.find((element) => element.id === 'tab-groups').click(); dom.mutations(); await flush();
-    assert.deepEqual(calls.slice(1).sort(), ['/api/v1/groups', '/api/v1/nodes?limit=100&offset=0']);
+    assert.equal(tabs.some((element) => element.id === 'tab-groups'), false);
     tabs.find((element) => element.id === 'tab-audit').click(); dom.mutations(); await flush();
-    assert.deepEqual(calls.slice(3), ['/api/v1/audit?limit=50&offset=0']);
+    assert.deepEqual(calls.slice(1).sort(), ['/api/v1/audit?limit=50&offset=0', '/api/v1/groups', '/api/v1/nodes?limit=100&offset=0']);
   } finally {
     invalidate('nodes', 'groups', 'users');
     setSession({user: null, csrf_token: '', expires_at: ''});
@@ -448,57 +447,6 @@ test('self deletion clears the session without fetching the administrator list a
     invalidate('nodes', 'groups', 'users');
     dom.restore();
     for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
-  }
-});
-
-test('group deployment issues one node credential without a mode field', async () => {
-  const dom = installDOM();
-  const originals = new Map(['fetch', 'window', 'history', 'requestAnimationFrame'].map((key) => [key, globalThis[key]]));
-  Object.assign(globalThis, {window: new EventTarget(), history: {state: null, replaceState() {}}, requestAnimationFrame: () => 0});
-  Object.assign(location, {pathname: '/settings', search: '', hash: '#groups', origin: 'https://example.test'});
-  setNavigationSignal(null); invalidate('nodes', 'groups');
-  setSession({user: {id: 'group-admin', username: 'admin', must_change_password: false}, csrf_token: 'csrf', expires_at: ''});
-  const writes = [];
-  globalThis.fetch = async (path, options) => {
-    if (options.method === 'POST') {
-      writes.push({path, body: JSON.parse(options.body)});
-      return new Response(JSON.stringify({token: 'fake-group-secret', server_version: '1.2.3', expires_at: new Date(Date.now() + 1800000).toISOString()}));
-    }
-    return new Response(JSON.stringify(path === '/api/v1/groups' ? {groups: [{id: 'group-one', name: 'Production'}]} : {nodes: [], has_more: false}));
-  };
-  const {closeDialogs} = await import('../src/console/ui/dialogs.js');
-  try {
-    const {settingsPage} = await import('../src/console/pages/settings.js');
-    const page = await settingsPage(); dom.body.append(page); dom.mutations(); await flush();
-    const deploy = elements(page).find((element) => element.tagName === 'button' && element.textContent === copy('settings.deployAgent'));
-    assert.ok(deploy);
-    const menu = page.querySelector('[role="menu"]');
-    assert.equal(menu.hidden, true);
-    const menuItems = menu.querySelectorAll('[role="menuitem"]');
-    assert.deepEqual(menuItems.map((control) => control.textContent), ['upgrade', 'restart', 'stop'].map((kind) => copy(`nodes.command.${kind}All`)));
-    assert.equal(menuItems[2].classList.contains('menu-danger'), true);
-    page.querySelector('.menu-button').querySelector('button').click();
-    assert.equal(menu.hidden, false);
-    page.querySelector('.menu-button').querySelector('button').click();
-    for (const boundary of ['close', 'navigation', 'session']) {
-      const navigation = new AbortController(); setNavigationSignal(navigation.signal);
-      setSession({user: {id: 'group-admin', username: 'admin', must_change_password: false}, csrf_token: 'csrf', expires_at: ''});
-      deploy.focus(); deploy.click(); document.body.focus(); await flush();
-      assert.deepEqual(writes.at(-1), {path: '/api/v1/enrollments', body: {group_id: 'group-one'}});
-      assert.equal(dom.body.querySelector('dialog').querySelector('h2').textContent, copy('settings.deployAgentFor', {name: 'Production'}));
-      assert.equal(dom.body.querySelector('dialog').querySelectorAll('code').length, 2);
-      assert.equal(dom.body.querySelector('dialog').querySelector('ol').children.length, 2);
-      assert.equal(dom.body.querySelector('dialog').querySelector('.enrollment-progress'), null);
-      if (boundary === 'navigation') { navigation.abort(); setNavigationSignal(new AbortController().signal); }
-      if (boundary === 'session') setSession({user: {id: 'other-admin', username: 'Other', must_change_password: false}, csrf_token: 'changed', expires_at: ''});
-      closeDialogs(); document.body.focus(); await flush();
-      assert.equal(deploy.disabled, false);
-      assert.equal(document.activeElement, boundary === 'close' ? deploy : document.body);
-    }
-  } finally {
-    closeDialogs(); invalidate('nodes', 'groups'); setNavigationSignal(null); setSession({user: null, csrf_token: '', expires_at: ''});
-    for (const [key, value] of originals) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
-    dom.restore();
   }
 });
 

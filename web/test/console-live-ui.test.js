@@ -24,14 +24,15 @@ const edit = (form, name, value) => {
 };
 const sampleFact = (root, label) => root.querySelectorAll('dt').find((item) => item.textContent === label)?.parentElement.querySelector('dd');
 
-async function setup(t, {page = 'nodes', hash = '#monitor', count = 2, search = '', sample = latest(), mutate, commands = []} = {}) {
+async function setup(t, {page = 'nodes', hash = '#monitor', count = 2, search = '', sample = latest(), mutate, commands = [], groups = [{id: id(700), name: 'Production'}], nodes} = {}) {
   const original = new Map(['requestAnimationFrame', 'cancelAnimationFrame', 'history', 'matchMedia'].map((key) => [key, globalThis[key]]));
   let scope;
   t.after(() => {
     scope?.abort(); setNavigationSignal(null); setSession({user: null, csrf_token: '', expires_at: ''});
     for (const [key, value] of original) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
   });
-  let inventory = Array.from({length: count}, (_, index) => node(index + 1));
+  let inventory = nodes || Array.from({length: count}, (_, index) => node(index + 1));
+  let groupList = groups;
   let serverFleet = inventory.map(compact);
   let nextInventory;
   let nextFleet;
@@ -55,7 +56,7 @@ async function setup(t, {page = 'nodes', hash = '#monitor', count = 2, search = 
       const pending = nextInventory; nextInventory = null;
       return new Promise((resolve) => { pending.release = () => resolve(response(data)); });
     }
-    if (path === '/api/v1/groups') return response({groups: [{id: id(700), name: 'Production'}]});
+    if (path === '/api/v1/groups') return response({groups: groupList});
     if (path === '/api/v1/users') return response({users: []});
     if (path === '/api/v1/audit') return response({events: []});
     if (path === '/api/v1/enrollments') return response({enrollments: [{id: id(500), node_id: id(1), expires_at: '2026-10-29T00:00:00Z', uses: 0, max_uses: 1, revoked_at: null}], has_more: false});
@@ -94,6 +95,7 @@ async function setup(t, {page = 'nodes', hash = '#monitor', count = 2, search = 
   };
   return {...env, root, scope, socket, send, fallback, inventory, frames, renderFrame,
     replaceInventory(value) { inventory = value; serverFleet = value.map(compact); },
+    setGroups(value) { groupList = value; },
     setServerFleet(value) { serverFleet = value.map(compact); },
     deferInventory() { nextInventory = {}; return nextInventory; },
     deferFleet() { nextFleet = {}; return nextFleet; }};
@@ -893,7 +895,7 @@ for (const value of ['', id(700)]) test(`bulk group PATCH ${value ? 'sets group'
   selectNodes(env);
   button(env.root, copy('nodes.setGroup')).click(); await flush();
   const dialog = env.body.querySelector('dialog');
-  assert.deepEqual(dialog.querySelector('select').options.map((option) => option.value), ['', id(700)]);
+  assert.deepEqual(dialog.querySelector('select').options.map((option) => option.value), ['', id(700), '__new']);
   await submitMetadata(env, value);
   const patches = env.requests.filter((request) => request.method === 'PATCH');
   assert.deepEqual(patches.map((request) => [request.url, JSON.parse(request.body)]), [1, 2].map((n) => [`/api/v1/nodes/${id(n)}`, {group_id: value || null}]));
@@ -1048,4 +1050,252 @@ test('overview top usage uses live values and preserves rows/meters across reord
   assert.equal(fill.style.width, '35%');
   values[6].cpu_percent = null; env.send({nodes: values}, 20);
   assert.equal(cpu.children.includes(row), false);
+});
+
+const grouped = () => [{...node(1), group_id: id(700)}, {...node(2), group_id: id(701)}, {...node(3)}];
+const twoGroups = () => [{id: id(700), name: 'Production', display_order: 2}, {id: id(701), name: 'Staging', display_order: 1}];
+const chip = (env, key) => env.root.querySelectorAll('.group-chip-wrap').find((wrap) => wrap.dataset.group === key);
+const rowIDs = (env) => env.root.querySelectorAll('input[data-node-id]').map((input) => input.dataset.nodeId);
+const settle = async (dialog) => { await flush(); if (dialog?.classList.contains('closing')) dialog.dispatchEvent(new Event('animationend')); await flush(); };
+
+test('group chips filter the list in server order, count members and keep their elements across live updates', async (t) => {
+  const env = await setup(t, {nodes: grouped(), groups: twoGroups()});
+  assert.equal(env.root.querySelectorAll('select').some((item) => item.getAttribute('aria-label') === copy('nodes.filterGroup')), false);
+  assert.equal(env.root.querySelector('.group-chips').getAttribute('aria-label'), copy('nodes.filterGroup'));
+  assert.deepEqual(env.root.querySelectorAll('.group-chip-wrap').map((wrap) => wrap.dataset.group), ['all', id(700), id(701), 'none']);
+  assert.deepEqual(env.root.querySelectorAll('.group-chip').map((item) => item.querySelector('.count').textContent), ['3', '1', '1', '1']);
+  assert.equal(chip(env, 'all').querySelector('.group-chip').getAttribute('aria-pressed'), 'true');
+  const production = chip(env, id(700));
+  production.querySelector('.group-chip').click(); await flush();
+  assert.deepEqual(rowIDs(env), [id(1)]);
+  assert.match(location.search, new RegExp(`group=${id(700)}`));
+  assert.equal(production.querySelector('.group-chip').getAttribute('aria-pressed'), 'true');
+  const trigger = production.querySelector('.group-chip-menu').querySelector('button');
+  assert.equal(trigger.getAttribute('aria-label'), copy('nodes.groupActions', {name: 'Production'}));
+  assert.deepEqual(production.querySelectorAll('[role="menuitem"]').map((item) => item.textContent),
+    [copy('nodes.deployAgent'), ...['upgrade', 'restart', 'stop'].map((kind) => copy(`nodes.command.${kind}All`)), copy('nodes.rename'), copy('nodes.deleteGroup')]);
+  assert.equal(production.querySelector('.group-chip-alert').hidden, true);
+  env.send({nodes: grouped().map((item, index) => ({...compact(item), presence: index === 0 ? 'offline' : 'online'}))}, 10); await flush();
+  assert.equal(chip(env, id(700)), production);
+  assert.equal(production.querySelector('.group-chip-alert').hidden, false);
+  assert.equal(production.querySelector('.sr').hidden, false);
+  chip(env, 'none').querySelector('.group-chip').click(); await flush();
+  assert.deepEqual(rowIDs(env), [id(3)]);
+  assert.equal(production.querySelector('.group-chip-menu'), null);
+});
+
+test('a stale group in the URL falls back to all nodes', async (t) => {
+  const env = await setup(t, {nodes: grouped(), groups: twoGroups(), search: `?group=${id(799)}`});
+  assert.equal(rowIDs(env).length, 3);
+  assert.equal(chip(env, 'all').querySelector('.group-chip').getAttribute('aria-pressed'), 'true');
+});
+
+test('group menu deploys an Agent to the group and returns focus only inside the same boundary', async (t) => {
+  const writes = [];
+  const env = await setup(t, {nodes: grouped(), groups: twoGroups(), search: `?group=${id(700)}`, mutate: (request) => {
+    writes.push({url: request.url, body: JSON.parse(request.body)});
+    return response({token: 'fake-group-secret', server_version: '1.2.3', expires_at: new Date(Date.now() + 1800000).toISOString()});
+  }});
+  const menu = chip(env, id(700)).querySelector('.group-chip-menu');
+  const trigger = menu.querySelector('button');
+  const {closeDialogs} = await import('../src/console/ui/dialogs.js');
+  for (const boundary of ['close', 'navigation', 'session']) {
+    const navigation = new AbortController(); setNavigationSignal(navigation.signal);
+    setSession({user: {id: id(999), username: 'administrator', must_change_password: false}, csrf_token: 'csrf', expires_at: '2026-10-29T00:00:00Z'});
+    trigger.click();
+    menu.querySelectorAll('[role="menuitem"]')[0].click(); await flush(); await flush();
+    assert.deepEqual(writes.at(-1), {url: '/api/v1/enrollments', body: {group_id: id(700)}});
+    assert.equal(env.body.querySelector('dialog').querySelector('h2').textContent, copy('nodes.deployAgentFor', {name: 'Production'}));
+    if (boundary === 'navigation') { navigation.abort(); setNavigationSignal(new AbortController().signal); }
+    if (boundary === 'session') setSession({user: {id: 'other-admin', username: 'Other', must_change_password: false}, csrf_token: 'changed', expires_at: ''});
+    document.body.focus();
+    closeDialogs(); await flush();
+    assert.equal(trigger.disabled, false);
+    assert.equal(document.activeElement, boundary === 'close' ? trigger : document.body);
+  }
+  setNavigationSignal(env.scope.signal);
+});
+
+const reordered = (ids) => ids.map((value, index) => ({...twoGroups().find((group) => group.id === value), display_order: ids.length - index}));
+
+test('manage dialog reorders with one PUT, redraws in server order and keeps focus on the moved control', async (t) => {
+  const puts = [];
+  const env = await setup(t, {nodes: grouped(), groups: twoGroups(), mutate: (request) => {
+    const ids = JSON.parse(request.body).ids;
+    puts.push({url: request.url, method: request.method, ids});
+    env.setGroups(reordered(ids));
+    return response({groups: reordered(ids)});
+  }});
+  button(env.root, copy('nodes.manageGroups')).click(); await flush();
+  const dialog = env.body.querySelector('dialog');
+  assert.equal(dialog.querySelector('h2').textContent, copy('nodes.manageGroups'));
+  const titles = () => dialog.querySelectorAll('.title').map((item) => item.textContent);
+  assert.deepEqual(titles(), ['Production', 'Staging']);
+  assert.deepEqual(dialog.querySelectorAll('.sub').map((item) => item.textContent), [copy('nodes.nodeCount', {count: 1}), copy('nodes.nodeCount', {count: 1})]);
+  const control = (label) => dialog.querySelectorAll('button').find((item) => item.getAttribute('aria-label') === label);
+  assert.equal(control(copy('nodes.moveUpNamed', {name: 'Production'})).disabled, true);
+  assert.equal(control(copy('nodes.moveDownNamed', {name: 'Staging'})).disabled, true);
+  control(copy('nodes.moveUpNamed', {name: 'Staging'})).click(); await flush(); await flush();
+  assert.deepEqual(puts, [{url: '/api/v1/groups/order', method: 'PUT', ids: [id(701), id(700)]}]);
+  assert.deepEqual(titles(), ['Staging', 'Production']);
+  assert.equal(document.activeElement, control(copy('nodes.moveDownNamed', {name: 'Staging'})));
+  assert.deepEqual(env.root.querySelectorAll('.group-chip-wrap').map((wrap) => wrap.dataset.group), ['all', id(701), id(700), 'none']);
+  assert.equal(env.requests.filter((request) => request.url === '/api/v1/groups').length, 2, 'the list is read again after the PUT');
+});
+
+test('a slow reorder locks the manage dialog and cannot overwrite a newer group list', async (t) => {
+  let release;
+  const env = await setup(t, {nodes: grouped(), groups: twoGroups(), mutate: (request) => {
+    const ids = JSON.parse(request.body).ids;
+    return new Promise((resolve) => { release = () => { env.setGroups(reordered(ids)); resolve(response({groups: reordered(ids)})); }; });
+  }});
+  button(env.root, copy('nodes.manageGroups')).click(); await flush();
+  const dialog = env.body.querySelector('dialog');
+  const control = (label) => dialog.querySelectorAll('button').find((item) => item.getAttribute('aria-label') === label || item.textContent === label);
+  control(copy('nodes.moveUpNamed', {name: 'Staging'})).click(); await flush();
+  assert.equal(typeof release, 'function');
+  assert.equal(control(copy('nodes.addGroup')).disabled, true);
+  assert.equal(control(copy('nodes.renameGroupNamed', {name: 'Production'})).disabled, true);
+  control(copy('nodes.moveDownNamed', {name: 'Production'})).click(); await flush();
+  assert.equal(env.requests.filter((request) => request.method === 'PUT').length, 1);
+  release(); await flush(); await flush();
+  assert.equal(control(copy('nodes.addGroup')).disabled, false);
+  assert.deepEqual(dialog.querySelectorAll('.title').map((item) => item.textContent), ['Staging', 'Production']);
+});
+
+test('a group created from Add node appears in the chips even when adding the node is cancelled', async (t) => {
+  const env = await setup(t, {nodes: grouped(), groups: twoGroups(), mutate: () => {
+    env.setGroups([...twoGroups(), {id: id(702), name: 'Edge', display_order: 0}]);
+    return response({id: id(702), name: 'Edge', display_order: 0});
+  }});
+  button(env.root, copy('nodes.add')).click(); await flush(); await flush();
+  const dialog = env.body.querySelector('dialog');
+  const select = control(dialog, 'group_id');
+  select.value = '__new'; select.dispatchEvent(new Event('change')); await flush();
+  const nested = env.body.querySelectorAll('dialog').at(-1);
+  control(nested, 'name').value = 'Edge';
+  nested.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await settle(nested); await flush(); await flush();
+  assert.equal(select.value, id(702));
+  assert.ok(chip(env, id(702)), 'the nodes page reloads groups right after creation');
+  const {closeDialogs} = await import('../src/console/ui/dialogs.js');
+  closeDialogs(); await flush();
+  assert.ok(chip(env, id(702)));
+});
+
+test('group menu ignores a second delete while the first is in flight and hands focus to the All chip', async (t) => {
+  let release;
+  const deletes = [];
+  const env = await setup(t, {nodes: grouped(), groups: twoGroups(), search: `?group=${id(700)}`, mutate: (request) => {
+    deletes.push(request.url);
+    return new Promise((resolve) => { release = () => { env.setGroups([twoGroups()[1]]); resolve(new Response(null, {status: 204})); }; });
+  }});
+  const menu = chip(env, id(700)).querySelector('.group-chip-menu');
+  const trigger = menu.querySelector('button');
+  // 与浏览器一致：移除含焦点的元素后焦点落到 body（测试 DOM 默认保留在已脱离的元素上）。
+  const wrap = chip(env, id(700));
+  const detach = wrap.remove.bind(wrap);
+  wrap.remove = () => { const inside = wrap.contains(document.activeElement); detach(); if (inside) document.body.focus(); };
+  const remove = () => { trigger.click(); menu.querySelectorAll('[role="menuitem"]').at(-1).click(); };
+  remove(); await flush();
+  let confirm = env.body.querySelector('dialog');
+  button(confirm, copy('nodes.deleteGroup')).click(); await settle(confirm);
+  assert.equal(document.activeElement, trigger);
+  remove(); await flush();
+  assert.equal(env.body.querySelectorAll('dialog').length, 0, 'no second confirmation opens');
+  release(); await flush(); await flush(); await flush();
+  assert.deepEqual(deletes, [`/api/v1/groups/${id(700)}`]);
+  assert.equal(chip(env, id(700)), undefined);
+  assert.equal(document.activeElement, chip(env, 'all').querySelector('.group-chip'));
+});
+
+test('renaming the selected group from its menu moves focus to the rebuilt menu trigger', async (t) => {
+  const env = await setup(t, {nodes: grouped(), groups: twoGroups(), search: `?group=${id(700)}`, mutate: (request) => {
+    const name = JSON.parse(request.body).name;
+    env.setGroups([{...twoGroups()[0], name}, twoGroups()[1]]);
+    return response({...twoGroups()[0], name});
+  }});
+  const menu = chip(env, id(700)).querySelector('.group-chip-menu');
+  menu.querySelector('button').click();
+  menu.querySelectorAll('[role="menuitem"]').at(-2).click(); await flush();
+  const dialog = env.body.querySelector('dialog');
+  control(dialog, 'name').value = 'Live';
+  dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await settle(dialog); await flush(); await flush();
+  const rebuilt = chip(env, id(700)).querySelector('.group-chip-menu').querySelector('button');
+  assert.notEqual(rebuilt, menu.querySelector('button'));
+  assert.equal(rebuilt.getAttribute('aria-label'), copy('nodes.groupActions', {name: 'Live'}));
+  assert.equal(document.activeElement, rebuilt);
+});
+
+test('deleting the viewed group clears the filter, reloads nodes and warns about scoped alerts', async (t) => {
+  let deleted = false;
+  const env = await setup(t, {nodes: grouped(), groups: twoGroups(), search: `?group=${id(700)}`, mutate: (request) => {
+    deleted = request.method === 'DELETE' && request.url === `/api/v1/groups/${id(700)}`;
+    return new Response(null, {status: 204});
+  }});
+  const menu = chip(env, id(700)).querySelector('.group-chip-menu');
+  menu.querySelector('button').click();
+  menu.querySelectorAll('[role="menuitem"]').at(-1).click(); await flush();
+  const confirm = env.body.querySelector('dialog');
+  assert.equal(confirm.querySelector('h2').textContent, copy('nodes.deleteGroupNamed', {name: 'Production'}));
+  assert.equal(confirm.querySelector('p').textContent, copy('nodes.deleteGroupHint'));
+  env.setGroups([twoGroups()[1]]);
+  env.replaceInventory([{...node(1)}, {...node(2), group_id: id(701)}, {...node(3)}]);
+  button(confirm, copy('nodes.deleteGroup')).click(); await settle(confirm); await flush(); await flush();
+  assert.equal(deleted, true);
+  assert.equal(chip(env, id(700)), undefined);
+  assert.equal(chip(env, 'all').querySelector('.group-chip').getAttribute('aria-pressed'), 'true');
+  assert.doesNotMatch(location.search, /group=/);
+  assert.equal(chip(env, 'none').querySelector('.count').textContent, '2');
+});
+
+test('adding a node from a group view preselects that group and sends it with the name', async (t) => {
+  const posts = [];
+  const env = await setup(t, {nodes: grouped(), groups: twoGroups(), search: `?group=${id(701)}`, mutate: (request) => {
+    posts.push({url: request.url, body: JSON.parse(request.body)});
+    return request.url === '/api/v1/nodes' ? response({...node(9), name: 'New Host', group_id: id(701)})
+      : response({token: 'fake-secret', server_version: '1.2.3', expires_at: new Date(Date.now() + 1800000).toISOString()});
+  }});
+  button(env.root, copy('nodes.add')).click(); await flush(); await flush();
+  const dialog = env.body.querySelector('dialog');
+  const group = control(dialog, 'group_id');
+  assert.deepEqual(group.options.map((option) => option.value), ['', id(700), id(701), '__new']);
+  assert.equal(group.value, id(701));
+  control(dialog, 'name').value = 'New Host';
+  dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+  assert.deepEqual(posts[0], {url: '/api/v1/nodes', body: {name: 'New Host', group_id: id(701)}});
+});
+
+test('choosing New group in a group select creates it and selects it, cancelling restores the old value', async (t) => {
+  const posts = [];
+  const env = await setup(t, {nodes: grouped(), groups: twoGroups(), mutate: (request) => {
+    posts.push(JSON.parse(request.body));
+    return response({id: id(702), name: 'Edge', display_order: 0});
+  }});
+  const {groupSelect} = await import('../src/console/lib/node-groups.js');
+  const created = [];
+  const select = groupSelect(twoGroups(), id(700), {name: 'group_id'}, {onCreated: (group) => created.push(group)});
+  env.body.append(select);
+  select.focus(); select.dispatchEvent(new Event('focus'));
+  select.value = '__new'; select.dispatchEvent(new Event('change')); await flush();
+  assert.equal(select.value, id(700));
+  let dialog = env.body.querySelectorAll('dialog').at(-1);
+  assert.equal(dialog.querySelector('h2').textContent, copy('nodes.addGroup'));
+  dialog.querySelectorAll('button').find((item) => item.textContent === copy('controls.cancel')).click(); await settle(dialog);
+  assert.equal(select.value, id(700));
+  assert.equal(created.length, 0);
+  select.value = '__new'; select.dispatchEvent(new Event('change')); await flush();
+  dialog = env.body.querySelectorAll('dialog').at(-1);
+  control(dialog, 'name').value = 'Edge';
+  dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await settle(dialog); await flush();
+  assert.deepEqual(posts, [{name: 'Edge'}]);
+  assert.deepEqual(select.options.map((option) => option.value), ['', id(700), id(701), id(702), '__new']);
+  assert.equal(select.value, id(702));
+  assert.deepEqual(created.map((group) => group.id), [id(702)]);
+});
+
+test('the overview link /nodes#groups opens group management once and drops the hash', async (t) => {
+  const env = await setup(t, {nodes: grouped(), groups: twoGroups(), hash: '#groups'});
+  assert.equal(location.hash, '');
+  env.renderFrame(); await flush();
+  assert.equal(env.body.querySelector('dialog').querySelector('h2').textContent, copy('nodes.manageGroups'));
 });

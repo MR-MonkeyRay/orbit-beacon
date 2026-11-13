@@ -2,10 +2,10 @@ import {settingsTabs} from '../routes.js';
 import {t} from '../i18n.js';
 import {errorText} from '../../shared/errors.js';
 import {h, icon} from '../../shared/dom.js';
-import {allNodes, api, getNavigationSignal, getSessionEpoch, groupsList, invalidate, invalidateSession, nameLookup, session, updateUser, usersList} from '../api.js';
+import {allNodes, api, getNavigationSignal, groupsList, invalidate, invalidateSession, nameLookup, session, updateUser, usersList} from '../api.js';
 import {ACTIONS, when} from '../format.js';
 import {ignoreNavigationCancellation, refresh} from '../router.js';
-import {busy, button, dataTable, emptyState, facts, iconButton, link, pageHead, panel} from '../ui/components.js';
+import {busy, button, dataTable, emptyState, facts, iconButton, pageHead, panel} from '../ui/components.js';
 import {lazyTab} from '../ui/lazy-tab.js';
 import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
@@ -15,11 +15,9 @@ import {totpPanel, totpCredentials} from '../ui/totp.js';
 import {passwordChangeForm} from '../ui/password-form.js';
 import {nextCursor} from '../ui/pager.js';
 import {tabSet} from '../ui/tabs.js';
-import {issueEnrollment} from './enrollments.js';
 import {auditItem} from '../lib/audit-item.js';
 import {dataManagementPage} from './data-management.js';
 import {dataOperationsTab} from './data-operations.js';
-import {groupCommandActions} from '../lib/group-commands.js';
 import {showTask} from './backup-task.js';
 
 export async function settingsPage() {
@@ -32,10 +30,6 @@ export async function settingsPage() {
     'account': accountTab,
     'api-tokens': apiTokensPanel,
     'administrators': lazyTab(usersList, administratorsTab),
-    'groups': lazyTab(
-      () => Promise.all([groupsList(), allNodes()]),
-      ([groups, nodes]) => groupsTab(groups, nodes)
-    ),
     'audit': lazyTab(
       () => Promise.all([api('/audit?limit=50&offset=0'), allNodes(), usersList(), groupsList()]),
       ([audit, nodes, users, groups]) => auditTab(audit, nameLookup(nodes, users, groups), users)
@@ -244,73 +238,13 @@ function administratorsTab(users) {
     lastAdministrator ? h('p', {class: 'text-note'}, t('settings.lastAdministrator')) : null);
 }
 
-function groupsTab(groups, nodes) {
-  const deployAgent = async (item, trigger) => {
-    const navigation = getNavigationSignal();
-    const epoch = getSessionEpoch();
-    busy(trigger, true);
-    try {
-      await issueEnrollment({group_id: item.id}, t('settings.deployAgentFor', {name: item.name}));
-    } catch (error) { toastError(error); }
-    finally {
-      busy(trigger, false);
-      if (trigger.isConnected && !trigger.disabled && !navigation?.aborted && navigation === getNavigationSignal() && epoch === getSessionEpoch()) trigger.focus({preventScroll: true});
-    }
-  };
-  const groupForm = (item) => {
-    let name;
-    formDialog({
-      title: item ? t('settings.renameName', {name: item.name}) : t('settings.addGroup'),
-      submit: item ? t('settings.renameGroup') : t('settings.addGroup'),
-      build: (form) => {
-        name = input({name: 'name', required: true, value: item ? item.name : '', autocomplete: 'off'});
-        validateBytes(name, 1, 255, t('settings.groupName'));
-        form.append(field(t('settings.groupName'), name));
-      },
-      action: async () => {
-        const saved = item
-          ? await api(`/groups/${encodeURIComponent(item.id)}`, {method: 'PATCH', body: {name: name.value}})
-          : await api('/groups', {method: 'POST', body: {name: name.value}});
-        invalidate('groups');
-        await refresh();
-        toast(t(item ? 'settings.renamedName' : 'settings.addedName', {name: saved.name}));
-      }
-    });
-  };
-  const deleteGroup = async (item, size) => {
-    const confirmed = await confirmDialog({
-      title: t('settings.deleteNameQuestion', {name: item.name}),
-      message: size ? t('settings.ungroupNodes', {count: size}) : t('settings.emptyGroup'),
-      confirm: t('settings.deleteGroup'), danger: true
-    });
-    if (!confirmed) return;
-    try {
-      await api(`/groups/${encodeURIComponent(item.id)}`, {method: 'DELETE'});
-      invalidate('groups', 'nodes');
-      await refresh();
-      toast(t('settings.deletedName', {name: item.name}));
-    } catch (error) { toastError(error); }
-  };
-  const addButton = button(t('settings.addGroup'), {icon: 'plus', variant: 'primary', small: !!groups.length, onClick: () => groupForm()});
-  if (!groups.length) return panel(null, {}, emptyState(t('settings.noGroups'), null, addButton));
-  return panel(null, {action: addButton},
-    h('ul', {class: 'rows'}, groups.map((item) => {
-      const size = nodes.filter((node) => node.group_id === item.id).length;
-      const enrollment = button(t('settings.deployAgent'), {small: true});
-      enrollment.addEventListener('click', () => deployAgent(item, enrollment));
-      return h('li', null, icon('folder', 'muted'),
-        h('div', {class: 'grow'}, h('div', {class: 'title'}, item.name), h('div', {class: 'sub'}, link(`/nodes?group=${item.id}`, t('settings.nodeCount', {count: size})))),
-        [enrollment, ...groupCommandActions(item, getNavigationSignal(), {menu: true}), iconButton('edit', t('settings.renameName', {name: item.name}), () => groupForm(item)), iconButton('trash', t('settings.deleteName', {name: item.name}), () => deleteGroup(item, size))]);
-    })));
-}
-
 function auditTab(page, names, users) {
   const {events} = page;
   let cursor = page.next_cursor;
   const eventIDs = new Set(events.map((event) => event.id));
   const resources = {
     service: 'shell.services', node: 'shell.nodes', enrollment: 'audit.category.enrollment', command: 'audit.category.command',
-    group: 'settings.groups', user: 'settings.account', session: 'settings.account',
+    group: 'nodes.groups', user: 'settings.account', session: 'settings.account',
     alert_rule: 'shell.alerts', alert_silence: 'shell.alerts', notification_channel: 'audit.category.notification',
     backup: 'settings.backups', api_token: 'audit.category.token',
     settings: 'audit.category.token', public_page: 'settings.publicPage'

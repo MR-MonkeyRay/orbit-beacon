@@ -149,7 +149,7 @@ export function attentionPanel(nodes) {
 export function groupsPanel(nodes, groups) {
   const grid = h('div', {class: 'group-grid'});
   const tiles = new Map();
-  const element = panel(t('nodes.groups'), {action: link('/settings#groups', t('nodes.manageGroups'))}, grid);
+  const element = panel(t('nodes.groups'), {action: link('/nodes#groups', t('nodes.manageGroups'))}, grid);
   const tile = (href, ungrouped) => {
     if (tiles.has(href)) return tiles.get(href);
     const name = h('span', {class: 'group-name'});

@@ -5,7 +5,8 @@ import {api} from '../api.js';
 import {busy, button} from '../ui/components.js';
 import {confirmDialog, modal} from '../ui/dialogs.js';
 import {typedConfirmation} from '../ui/typed-confirmation.js';
-import {field, input, onSubmit, select} from '../ui/forms.js';
+import {field, input, onSubmit} from '../ui/forms.js';
+import {groupSelect} from './node-groups.js';
 import {toastError} from '../ui/feedback.js';
 
 export const confirmNodeDeletion = (count) => typedConfirmation({
@@ -18,8 +19,7 @@ const actionKey = (action) => ({disable: 'nodes.disable', enable: 'nodes.enable'
 async function batchMetadataInput(action, groups) {
   let value;
   const dialog = modal(t(actionKey(action)), (close) => {
-    const control = action === 'group' ? select([['', t('nodes.ungrouped')], ...groups.map((group) => [group.id, group.name])], '')
-      : input({required: true});
+    const control = action === 'group' ? groupSelect(groups, '') : input({required: true});
     const submit = button(t(actionKey(action)), {type: 'submit', variant: 'primary'});
     const form = h('form', {class: 'form'}, field(t(action === 'group' ? 'nodes.group' : 'nodes.tags'), control),
       h('div', {class: 'dialog-foot'}, button(t('controls.cancel'), {onClick: () => close()}), submit));

@@ -1,11 +1,12 @@
 import {h} from '../../shared/dom.js';
 import {getNavigationSignal} from '../api.js';
-import {button, uid} from './components.js';
+import {button, iconButton, uid} from './components.js';
 import {dismissPopover} from './popover.js';
 
-// 原生按钮负责点击激活；方向键只在菜单内移动焦点。
-export function menuButton({id, label, icon, items, signal = getNavigationSignal()}) {
-  const trigger = button(label, {id, icon});
+// 原生按钮负责点击激活；方向键只在菜单内移动焦点。iconOnly 时 label 只作无障碍名称。
+export function menuButton({id, label, icon, iconOnly = false, items, signal = getNavigationSignal()}) {
+  const trigger = iconOnly ? iconButton(icon, label) : button(label, {id, icon});
+  if (iconOnly && id) trigger.id = id;
   trigger.setAttribute('aria-haspopup', 'menu');
   trigger.setAttribute('aria-expanded', 'false');
   const controls = items.map((item, index) => button(item.label, {id: item.id || (id ? `${id}-item-${index}` : undefined), disabled: item.disabled,

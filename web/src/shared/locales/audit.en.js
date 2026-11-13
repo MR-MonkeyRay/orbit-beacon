@@ -36,6 +36,7 @@ export default {
   'audit.groupCreate': 'Group created',
   'audit.groupUpdate': 'Group renamed',
   'audit.groupDelete': 'Group deleted',
+  'audit.groupReorder': 'Groups reordered',
   'audit.userCreate': 'Administrator added',
   'audit.userPatch': 'Administrator renamed',
   'audit.userDelete': 'Administrator deleted',
