@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: OrbitBeacon 服务端与 Agent API
-  version: 0.5.0
+  version: 0.6.0
   description: |
     定义管理、Agent 与匿名 API 的字段、认证和错误码；各端点说明各自的访问要求。
     info.version 是接口契约版本，独立于程序发布版本，仅随契约变更更新；说明文字修订不升版。
@@ -20,6 +20,137 @@ servers:
 security:
   - session: []
 paths:
+  /api/v1/service-groups:
+    get:
+      x-read-only-token: true
+      security:
+        - session: []
+        - bearerAuth: []
+      operationId: listServiceGroups
+      description: 管理员会话或只读 API 令牌可用。返回完整、不分页的服务分组列表，按 display_order 降序、名称、ID 排序。
+      responses:
+        '429':
+          description: rate_limited; whole seconds until one request is available.
+          headers:
+            Retry-After: {schema: {type: string, pattern: '^[1-9][0-9]*$'}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '200':
+          description: 服务分组集合。
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [service_groups]
+                properties:
+                  service_groups:
+                    type: array
+                    maxItems: 100
+                    items: {$ref: '#/components/schemas/ServiceGroup'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createServiceGroup
+      description: 仅限管理员。最多 100 个，超限返回 409 service_group_capacity_reached。仅接受名称；新服务分组的 display_order 为 0，排在已重排的服务分组之后。名称规则与节点分组一致（非全空白、最多 255 UTF-8 字节，保留首尾空白，名称唯一）；记录 service_group.create，details 含 name。
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        $ref: '#/components/requestBodies/GroupName'
+      responses:
+        '201':
+          description: 服务分组已创建。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ServiceGroup'}
+        '400': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/service-groups/order:
+    put:
+      operationId: reorderServiceGroups
+      security: [{session: []}]
+      description: 仅限管理员会话，不接受只读 API 令牌。ids 必须恰好包含全部现有服务分组一次，首项最先显示；空数组仅在没有服务分组时有效。在同一写事务内校验并重排，首项 display_order 为数组长度，末项为 1；记录一条 service_group.reorder 审计事件。
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  maxItems: 100
+                  uniqueItems: true
+                  items: {type: string, format: uuid}
+      responses:
+        '200':
+          description: 按请求顺序返回全部服务分组；没有服务分组时 service_groups 为空数组。
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [service_groups]
+                properties:
+                  service_groups:
+                    type: array
+                    maxItems: 100
+                    items: {$ref: '#/components/schemas/ServiceGroup'}
+        '400':
+          description: validation_failed（ids 缺失、为 null、遗漏、未知或重复 ID，或超过排序范围）；invalid_json（JSON 格式或字段类型错误）。校验失败不修改服务分组或写入审计。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/service-groups/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceID'
+    get:
+      operationId: getServiceGroup
+      description: 所有已认证管理员均可用。
+      responses:
+        '200':
+          description: 找到服务分组。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ServiceGroup'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: renameServiceGroup
+      description: 仅限管理员。仅更新名称；记录 service_group.update，details 含更新后的 name。
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        $ref: '#/components/requestBodies/GroupName'
+      responses:
+        '200':
+          description: 已重命名的服务分组。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ServiceGroup'}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteServiceGroup
+      description: 仅限管理员。原子地删除服务分组并解绑其服务，将服务的 group_id 置为 null，不删除服务；记录 service_group.delete，details 保留删除前的 name。
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204': {description: 服务分组已删除，服务已解绑。}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/services:
     get:
       operationId: listServices
@@ -40,7 +171,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createService
-      description: 管理员创建服务；最多 100 项。服务端检查，内部地址可用，元数据端点始终拒绝。
+      description: 管理员创建服务；最多 100 项。服务端检查，内部地址可用，元数据端点始终拒绝。group_id 省略、null 或空字符串表示不分组；其他值须为现有服务分组 UUID，在写事务内校验，错误返回 400 validation_failed（group_id 字段）。
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -76,7 +207,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     patch:
       operationId: updateService
-      description: 管理员更新提供的字段。修改目标、类型、启用或延迟策略时重置状态。
+      description: 管理员更新提供的字段。group_id 省略不变，null 或空字符串解绑；其他值须为现有服务分组 UUID，在写事务内校验，错误返回 400 validation_failed（group_id 字段）。修改目标、类型、启用或延迟策略时重置状态。
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -3870,6 +4001,14 @@ components:
         id: {type: string, format: uuid}
         name: {type: string}
         display_order: {type: integer, minimum: -1000000, maximum: 1000000, default: 0}
+    ServiceGroup:
+      type: object
+      additionalProperties: false
+      required: [id, name, display_order]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        display_order: {type: integer, minimum: -1000000, maximum: 1000000, default: 0}
     AuditEvent:
       type: object
       additionalProperties: false
@@ -3887,10 +4026,10 @@ components:
         created_at: {type: string, format: date-time, description: UTC RFC3339.}
         details:
           type: object
-          description: 变更时的少量事实快照；alert_rule.create/update/delete 的 name 为规则名称。历史事件可能缺少这些字段。
+          description: 变更时的少量事实快照；alert_rule.*、service.*、service_group.* 的 create/update/delete 事件包含 name。历史事件可能缺少这些字段。
           additionalProperties: true
           properties:
-            name: {type: string, description: 告警规则名称（alert_rule.*）。}
+            name: {type: string, description: 告警规则、监控或监控分组的名称快照。}
           example: {}
     MetadataPatch:
       type: object
@@ -4246,6 +4385,12 @@ components:
       type: object
       additionalProperties: false
       properties: &serviceConfigProperties
+        group_id:
+          description: 服务分组 UUID。创建时省略表示不分组；更新时省略保持不变；null 或空字符串解绑。
+          anyOf:
+            - {type: string, format: uuid}
+            - {const: ''}
+            - {type: 'null'}
         name: {type: string, minLength: 1, maxLength: 100, description: 按 Unicode 字符计数，不允许控制字符。}
         type: {type: string, enum: [http, tcp, icmp]}
         target: {type: string, maxLength: 2048, description: 'http: 无凭据/片段的绝对 http(s) URL；tcp: host:port（1–65535，IPv6 使用方括号）；icmp: 无端口的主机名或 IP。'}
@@ -4260,8 +4405,9 @@ components:
       allOf:
         - {type: object, properties: *serviceConfigProperties}
         - type: object
-          required: [id, name, type, target, interval_seconds, timeout_seconds, enabled, public, notify, display_order, latency_threshold_ms, created_at, updated_at, latest, availability_24h]
+          required: [id, name, group_id, type, target, interval_seconds, timeout_seconds, enabled, public, notify, display_order, latency_threshold_ms, created_at, updated_at, latest, availability_24h]
           properties:
+            group_id: {type: [string, 'null'], format: uuid}
             id: {type: string, format: uuid}
             created_at: {type: string, format: date-time}
             updated_at: {type: string, format: date-time}

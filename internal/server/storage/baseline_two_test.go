@@ -47,6 +47,12 @@ func TestBaselineTwoSnapshotReplace(t *testing.T) {
 	if _, err = tx.ExecContext(ctx, "INSERT INTO groups(id,name,display_order) VALUES('group','group',321)"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO service_groups(id,name,display_order) VALUES('sg','monitor group',42)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO services(id,name,group_id,type,target,enabled,public,notify,created_at,updated_at) VALUES('s','monitor','sg','tcp','localhost:443',1,0,0,'now','now')"); err != nil {
+		t.Fatal(err)
+	}
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
@@ -95,6 +101,13 @@ func TestBaselineTwoSnapshotReplace(t *testing.T) {
 	var groupOrder int
 	if err = l.QueryRowContext(ctx, "SELECT display_order FROM groups WHERE id='group'").Scan(&groupOrder); err != nil || groupOrder != 321 {
 		t.Fatalf("group order=%d err=%v", groupOrder, err)
+	}
+	var serviceGroup string
+	if err = l.QueryRowContext(ctx, "SELECT group_id FROM services WHERE id='s'").Scan(&serviceGroup); err != nil || serviceGroup != "sg" {
+		t.Fatalf("service group=%s err=%v", serviceGroup, err)
+	}
+	if err = l.QueryRowContext(ctx, "SELECT display_order FROM service_groups WHERE id='sg'").Scan(&groupOrder); err != nil || groupOrder != 42 {
+		t.Fatalf("service group order=%d err=%v", groupOrder, err)
 	}
 	var count int
 	if err = l.QueryRowContext(ctx, "SELECT count(*) FROM node_deletions").Scan(&count); err != nil || count != 1 {

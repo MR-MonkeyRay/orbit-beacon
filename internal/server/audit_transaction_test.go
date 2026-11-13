@@ -6,8 +6,11 @@ import (
 	"net/http"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
+
+	"orbitbeacon/internal/timekey"
 )
 
 // 捕获持久化状态（包括凭据和相关行），而不是假设处理程序的错误
@@ -15,7 +18,7 @@ import (
 func managementState(t *testing.T, f fixture) map[string][]string {
 	t.Helper()
 	state := make(map[string][]string)
-	for _, table := range []string{"users", "sessions", "groups", "nodes", "node_tags", "enrollment_tokens", "enrollment_claims", "audit_events"} {
+	for _, table := range []string{"users", "sessions", "groups", "nodes", "service_groups", "services", "node_tags", "enrollment_tokens", "enrollment_claims", "audit_events"} {
 		state[table] = nil
 		rows, err := f.db.Query("SELECT * FROM " + table)
 		if err != nil {
@@ -58,6 +61,8 @@ func managementState(t *testing.T, f fixture) map[string][]string {
 func TestAdministrativeMutationsAndAuditInsertCommitOrRollbackTogether(t *testing.T) {
 	const nodeID = "00000000-0000-4000-8000-000000000111"
 	const groupID = "00000000-0000-4000-8000-000000000222"
+	const serviceGroupID = "00000000-0000-4000-8000-000000000444"
+	const serviceID = "00000000-0000-4000-8000-000000000555"
 	const userID = "00000000-0000-4000-8000-000000000333"
 	for _, mutation := range []struct {
 		name   string
@@ -75,6 +80,12 @@ func TestAdministrativeMutationsAndAuditInsertCommitOrRollbackTogether(t *testin
 		{"patch traffic settings", http.MethodPatch, "/api/v1/nodes/" + nodeID + "/traffic-settings", `{"billing_day":2}`, nodeID, http.StatusOK, false},
 		{"delete node and revoke identity", http.MethodDelete, "/api/v1/nodes/" + nodeID + "?confirm=true", "", nodeID, http.StatusNoContent, false},
 		{"batch disable node", http.MethodPost, "/api/v1/nodes/batch", `{"node_ids":["` + nodeID + `"],"action":"disable"}`, nodeID, http.StatusOK, true},
+		{"create service group", http.MethodPost, "/api/v1/service-groups", `{"name":"created with audit"}`, "", http.StatusCreated, false},
+		{"patch service group", http.MethodPatch, "/api/v1/service-groups/" + serviceGroupID, `{"name":"renamed with audit"}`, serviceGroupID, http.StatusOK, false},
+		{"delete service group and detach services", http.MethodDelete, "/api/v1/service-groups/" + serviceGroupID, "", serviceGroupID, http.StatusNoContent, false},
+		{"reorder service groups", http.MethodPut, "/api/v1/service-groups/order", `{"ids":["` + serviceGroupID + `"]}`, "", http.StatusOK, false},
+		{"create grouped service", http.MethodPost, "/api/v1/services", `{"name":"created with audit","type":"tcp","target":"localhost:443","group_id":"` + serviceGroupID + `"}`, "", http.StatusCreated, false},
+		{"patch service group membership", http.MethodPatch, "/api/v1/services/" + serviceID, `{"group_id":null}`, serviceID, http.StatusOK, false},
 		{"create group", http.MethodPost, "/api/v1/groups", `{"name":"created with audit"}`, "", http.StatusCreated, false},
 		{"patch group", http.MethodPatch, "/api/v1/groups/" + groupID, `{"name":"renamed with audit"}`, groupID, http.StatusOK, false},
 		{"delete group and detach nodes", http.MethodDelete, "/api/v1/groups/" + groupID, "", groupID, http.StatusNoContent, false},
@@ -103,6 +114,8 @@ func TestAdministrativeMutationsAndAuditInsertCommitOrRollbackTogether(t *testin
 						query string
 						args  []any
 					}{
+						{"INSERT INTO service_groups(id,name) VALUES (?,?)", []any{serviceGroupID, "original service group"}},
+						{"INSERT INTO services(id,name,type,target,enabled,public,notify,group_id,created_at,updated_at) VALUES (?,?,'tcp','localhost:443',1,0,0,?,?,?)", []any{serviceID, "original service", serviceGroupID, timekey.Format(now), timekey.Format(now)}},
 						{"INSERT INTO groups(id,name) VALUES (?,?)", []any{groupID, "original group"}},
 						{"INSERT INTO users(id,username,password_hash,created_at) VALUES (?,?,?,?)", []any{userID, "target-user", hash, now.Format(time.RFC3339Nano)}},
 						{"INSERT INTO nodes(id,name,group_id,notes,created_at) VALUES (?,?,?,?,?)", []any{nodeID, "original node", groupID, "original notes", now.Format(time.RFC3339Nano)}},
@@ -178,6 +191,21 @@ func TestAdministrativeMutationsAndAuditInsertCommitOrRollbackTogether(t *testin
 							t.Fatal(err)
 						}
 						assertNoCredentialDTO(t, decoded)
+						if strings.Contains(mutation.path, "/service-groups") {
+							want := map[string]any{"name": "original service group"}
+							if mutation.method == http.MethodPost {
+								want["name"] = "created with audit"
+							}
+							if mutation.method == http.MethodPatch {
+								want["name"] = "renamed with audit"
+							}
+							if mutation.method == http.MethodPut {
+								want = map[string]any{}
+							}
+							if !reflect.DeepEqual(decoded, want) {
+								t.Fatalf("audit details=%v want=%v", decoded, want)
+							}
+						}
 					}
 					if err := rows.Err(); err != nil {
 						_ = rows.Close()

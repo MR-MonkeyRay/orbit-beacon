@@ -19,6 +19,7 @@ import (
 	"orbitbeacon/internal/server/enrollment"
 	"orbitbeacon/internal/server/ingest"
 	"orbitbeacon/internal/server/nodes"
+	"orbitbeacon/internal/server/services"
 	"orbitbeacon/internal/server/storage"
 	"orbitbeacon/internal/server/traffic"
 	"orbitbeacon/internal/server/validation"
@@ -155,6 +156,8 @@ func TestErrorMappersPreserveContext(t *testing.T) {
 		{"service rate", h.serviceError, errors.Join(ingest.ErrRateLimited, auth.ErrRateLimited), 429, "rate_limited", "1"},
 		{"agent missing", h.agentError, errors.Join(enrollment.ErrNotFound, nodes.ErrNotFound), 404, "enrollment_not_found", ""},
 		{"service missing", h.serviceError, errors.Join(enrollment.ErrNotFound, nodes.ErrNotFound), 404, "node_not_found", ""},
+		{"monitor group capacity", h.serviceError, services.ErrGroupCapacity, 409, "service_group_capacity_reached", ""},
+		{"monitor group invalid", h.serviceError, services.ErrInvalidGroup, 400, "validation_failed", ""},
 		{"backup secret", h.backupError, &backup.Error{Code: "secret_unreadable"}, 409, "secret_unreadable", ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {

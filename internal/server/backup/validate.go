@@ -42,6 +42,7 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 	}
 	users := 0
 	serviceCount := 0
+	serviceGroupIDs := make(map[string]bool)
 	userIDs := make(map[string]bool)
 	var notificationBox, backupBox, accountBox *secretbox.Box
 	if category == Configuration {
@@ -122,7 +123,18 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 				rows.Close()
 				return invalidPayload(table.Name, "")
 			}
+			if table.Name == "service_groups" {
+				serviceGroupIDs[row.text("id")] = true
+				if len(serviceGroupIDs) > 100 {
+					rows.Close()
+					return invalidPayload(table.Name, "")
+				}
+			}
 			if table.Name == "services" {
+				if row["group_id"] != nil && !serviceGroupIDs[row.text("group_id")] {
+					rows.Close()
+					return invalidPayload(table.Name, row.text("id"))
+				}
 				serviceCount++
 				if serviceCount > 100 {
 					rows.Close()
@@ -232,6 +244,8 @@ func nullableColumn(table, column string) bool {
 	switch table {
 	case "users":
 		return oneOf(column, "totp_ciphertext", "totp_pending_ciphertext", "totp_pending_at")
+	case "services":
+		return column == "group_id"
 	case "nodes":
 		return oneOf(column, "expires_on", "group_id", "token_hash", "installation_id", "first_enrolled_at")
 	case "alert_silences":
@@ -332,7 +346,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 			return invalidRow()
 		}
 		return auth.ValidatePasswordHash(r.text("password_hash"))
-	case "groups":
+	case "groups", "service_groups":
 		if !validText(r.text("name"), 255) || r.integer("display_order") < -1000000 || r.integer("display_order") > 1000000 {
 			return invalidRow()
 		}
@@ -425,7 +439,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 		if !uuid.ValidUUID(r.text("id")) || r.integer("enabled") < 0 || r.integer("enabled") > 1 || r.integer("public") < 0 || r.integer("public") > 1 || r.integer("notify") < 0 || r.integer("notify") > 1 {
 			return invalidRow()
 		}
-		return services.Validate(services.Service{Name: r.text("name"), Type: r.text("type"), Target: r.text("target"), IntervalSeconds: int(r.integer("interval_seconds")), TimeoutSeconds: int(r.integer("timeout_seconds")), DisplayOrder: int(r.integer("display_order")), LatencyThresholdMS: r.number("latency_threshold_ms")})
+		return services.Validate(services.Service{GroupID: r.pointer("group_id"), Name: r.text("name"), Type: r.text("type"), Target: r.text("target"), IntervalSeconds: int(r.integer("interval_seconds")), TimeoutSeconds: int(r.integer("timeout_seconds")), DisplayOrder: int(r.integer("display_order")), LatencyThresholdMS: r.number("latency_threshold_ms")})
 	case "service_checks_latest":
 		var result services.Result
 		if !uuid.ValidUUID(r.text("service_id")) || objectJSON(r.text("result_json"), &result) != nil || services.ValidateResult(result) != nil {

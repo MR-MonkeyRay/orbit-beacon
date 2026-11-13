@@ -1,8 +1,11 @@
 package storage
 
 const servicesSchema = `
+CREATE TABLE service_groups (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL UNIQUE,
+ display_order INTEGER NOT NULL DEFAULT 0 CHECK(display_order BETWEEN -1000000 AND 1000000));
 CREATE TABLE services (
  id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 100),
+ group_id TEXT REFERENCES service_groups(id) ON DELETE SET NULL,
  type TEXT NOT NULL CHECK(type IN ('http','tcp','icmp')), target TEXT NOT NULL,
  interval_seconds INTEGER NOT NULL DEFAULT 60 CHECK(interval_seconds BETWEEN 30 AND 3600),
  timeout_seconds INTEGER NOT NULL DEFAULT 10 CHECK(timeout_seconds BETWEEN 1 AND 30 AND timeout_seconds<interval_seconds),
@@ -11,6 +14,7 @@ CREATE TABLE services (
  latency_threshold_ms REAL NOT NULL DEFAULT 0 CHECK(latency_threshold_ms>=0),
  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE INDEX services_group ON services(group_id);
 CREATE TABLE service_checks_latest (
  service_id TEXT PRIMARY KEY NOT NULL REFERENCES services(id) ON DELETE CASCADE,
  result_json TEXT NOT NULL

@@ -62,6 +62,7 @@ func toolTable() []tool {
 		return tool{name, description, inputSchema{"object", props, required, false}, annotations{true, false, true, false}, path}
 	}
 	return []tool{
+		makeTool("list_service_groups", "List monitor groups in display order.", "/api/v1/service-groups", map[string]property{}),
 		makeTool("list_services", "List server-monitored services and latest results.", "/api/v1/services", map[string]property{}),
 		makeTool("get_service", "Get a server-monitored service and its latest result.", "/api/v1/services/{id}", map[string]property{"id": id}, "id"),
 		makeTool("get_service_history", "Get availability and latency history for a service.", "/api/v1/services/{id}/history", map[string]property{"id": id, "range": text("1h", "24h", "7d", "30d")}, "id", "range"),

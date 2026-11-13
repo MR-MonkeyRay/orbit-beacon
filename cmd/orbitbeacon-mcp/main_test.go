@@ -180,7 +180,7 @@ func TestCompleteSessionWithMemoryPipes(t *testing.T) {
 }
 
 func TestToolTableMatchesReadOnlyOpenAPI(t *testing.T) {
-	expected := []string{"list_services", "get_service", "get_service_history", "list_nodes", "get_node", "get_node_latest", "get_node_history", "get_node_availability", "get_node_traffic", "get_node_probes", "list_alerts", "get_alert_summary", "get_alert", "list_groups"}
+	expected := []string{"list_service_groups", "list_services", "get_service", "get_service_history", "list_nodes", "get_node", "get_node_latest", "get_node_history", "get_node_availability", "get_node_traffic", "get_node_probes", "list_alerts", "get_alert_summary", "get_alert", "list_groups"}
 	var names []string
 	actualPaths := map[string]bool{}
 	for _, tool := range toolTable() {

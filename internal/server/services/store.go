@@ -65,14 +65,14 @@ func (m *Manager) signal() {
 	}
 }
 
-const configColumns = "id,name,type,target,interval_seconds,timeout_seconds,enabled,public,display_order,notify,latency_threshold_ms,created_at,updated_at"
+const configColumns = "id,name,group_id,type,target,interval_seconds,timeout_seconds,enabled,public,display_order,notify,latency_threshold_ms,created_at,updated_at"
 
 type scanner interface{ Scan(...any) error }
 
 func scanService(row scanner) (Service, error) {
 	var s Service
 	var created, updated string
-	e := row.Scan(&s.ID, &s.Name, &s.Type, &s.Target, &s.IntervalSeconds, &s.TimeoutSeconds, &s.Enabled, &s.Public, &s.DisplayOrder, &s.Notify, &s.LatencyThresholdMS, &created, &updated)
+	e := row.Scan(&s.ID, &s.Name, &s.GroupID, &s.Type, &s.Target, &s.IntervalSeconds, &s.TimeoutSeconds, &s.Enabled, &s.Public, &s.DisplayOrder, &s.Notify, &s.LatencyThresholdMS, &created, &updated)
 	if errors.Is(e, sql.ErrNoRows) {
 		return s, ErrNotFound
 	}
@@ -86,10 +86,11 @@ func scanService(row scanner) (Service, error) {
 	return s, e
 }
 func configArgs(s Service) []any {
-	return []any{s.ID, s.Name, s.Type, s.Target, s.IntervalSeconds, s.TimeoutSeconds, s.Enabled, s.Public, s.DisplayOrder, s.Notify, s.LatencyThresholdMS, timekey.Format(s.CreatedAt), timekey.Format(s.UpdatedAt)}
+	return []any{s.ID, s.Name, s.GroupID, s.Type, s.Target, s.IntervalSeconds, s.TimeoutSeconds, s.Enabled, s.Public, s.DisplayOrder, s.Notify, s.LatencyThresholdMS, timekey.Format(s.CreatedAt), timekey.Format(s.UpdatedAt)}
 }
 func sameConfig(a, b Service) bool {
-	return a.ID == b.ID && a.Name == b.Name && a.Type == b.Type && a.Target == b.Target && a.IntervalSeconds == b.IntervalSeconds && a.TimeoutSeconds == b.TimeoutSeconds && a.Enabled == b.Enabled && a.Public == b.Public && a.DisplayOrder == b.DisplayOrder && a.Notify == b.Notify && a.LatencyThresholdMS == b.LatencyThresholdMS && a.UpdatedAt.Equal(b.UpdatedAt)
+	equalGroup := a.GroupID == b.GroupID || a.GroupID != nil && b.GroupID != nil && *a.GroupID == *b.GroupID
+	return equalGroup && a.ID == b.ID && a.Name == b.Name && a.Type == b.Type && a.Target == b.Target && a.IntervalSeconds == b.IntervalSeconds && a.TimeoutSeconds == b.TimeoutSeconds && a.Enabled == b.Enabled && a.Public == b.Public && a.DisplayOrder == b.DisplayOrder && a.Notify == b.Notify && a.LatencyThresholdMS == b.LatencyThresholdMS && a.UpdatedAt.Equal(b.UpdatedAt)
 }
 func (m *Manager) Save(ctx context.Context, id string, p Patch) (Service, error) {
 	m.mu.Lock()
@@ -130,15 +131,34 @@ func (m *Manager) Save(ctx context.Context, id string, p Patch) (Service, error)
 		s.CreatedAt = m.now().UTC()
 	}
 	p.apply(&s)
+	if p.GroupID != nil {
+		var groupID *string
+		if e = json.Unmarshal(p.GroupID, &groupID); e != nil {
+			return Service{}, validation.Invalid("group_id", "must be a group UUID or null")
+		}
+		if groupID != nil && *groupID == "" {
+			groupID = nil
+		}
+		s.GroupID = groupID
+	}
 	if e = Validate(s); e != nil {
 		return Service{}, e
 	}
+	if s.GroupID != nil {
+		var exists bool
+		if e = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM service_groups WHERE id=?)", *s.GroupID).Scan(&exists); e != nil {
+			return Service{}, e
+		}
+		if !exists {
+			return Service{}, validation.Invalid("group_id", "group does not exist")
+		}
+	}
 	s.UpdatedAt = m.now().UTC()
 	if id == "" {
-		_, e = tx.ExecContext(ctx, "INSERT INTO services("+configColumns+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", configArgs(s)...)
+		_, e = tx.ExecContext(ctx, "INSERT INTO services("+configColumns+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", configArgs(s)...)
 	} else {
 		args := configArgs(s)
-		_, e = tx.ExecContext(ctx, "UPDATE services SET name=?,type=?,target=?,interval_seconds=?,timeout_seconds=?,enabled=?,public=?,display_order=?,notify=?,latency_threshold_ms=?,created_at=?,updated_at=? WHERE id=?", append(args[1:], s.ID)...)
+		_, e = tx.ExecContext(ctx, "UPDATE services SET name=?,group_id=?,type=?,target=?,interval_seconds=?,timeout_seconds=?,enabled=?,public=?,display_order=?,notify=?,latency_threshold_ms=?,created_at=?,updated_at=? WHERE id=?", append(args[1:], s.ID)...)
 	}
 	if e != nil {
 		return s, e
@@ -233,6 +253,7 @@ func (m *Manager) list(ctx context.Context, now time.Time) ([]Service, error) {
 	}
 	defer lease.Close()
 	ctx = lease.Context()
+	// Read configuration from the DB, including FK-driven group detachment; only results are cached.
 	// Separate query avoids ambiguous config columns and remains bounded at 100 services.
 	rows, e := lease.QueryContext(ctx, "SELECT "+configColumns+" FROM services ORDER BY display_order DESC,name,id")
 	if e != nil {

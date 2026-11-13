@@ -34,6 +34,7 @@ func TestOpenInitializesFreshDatabaseAndPreservesDataOnReopen(t *testing.T) {
 		"users", "sessions", "api_tokens", "nodes", "groups", "node_tags", "enrollment_tokens",
 		"enrollment_claims", "settings", "audit_events", "schema_migrations",
 		"traffic_hourly", "traffic_daily", "probe_latest", "probe_hourly",
+		"service_groups", "services", "service_checks_latest",
 	} {
 		var count int
 		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&count); err != nil {

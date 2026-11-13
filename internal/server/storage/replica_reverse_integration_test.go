@@ -75,7 +75,7 @@ func TestMySQLSQLiteMySQLStrictReverseCascade(t *testing.T) {
 		t.Fatal(err)
 	}
 	haWrite(t, remote, func(tx *storage.Tx) {
-		for _, q := range []string{"INSERT INTO `groups`(id,name) VALUES('g','组')", "INSERT INTO nodes(id,name,group_id,created_at) VALUES('n','节点','g','now')", "INSERT INTO enrollment_tokens(id,token_hash,node_id,group_id,expires_at) VALUES('e',X'01','n','g','later')", "INSERT INTO enrollment_claims VALUES('e','i','n',X'02','now')", "INSERT INTO settings VALUES('same','initial')"} {
+		for _, q := range []string{"INSERT INTO `groups`(id,name) VALUES('g','组')", "INSERT INTO service_groups(id,name,display_order) VALUES('sg','monitor group',123)", "INSERT INTO services(id,name,group_id,type,target,enabled,public,notify,created_at,updated_at) VALUES('s','health','sg','tcp','localhost:443',1,0,0,'now','now')", "INSERT INTO nodes(id,name,group_id,created_at) VALUES('n','节点','g','now')", "INSERT INTO enrollment_tokens(id,token_hash,node_id,group_id,expires_at) VALUES('e',X'01','n','g','later')", "INSERT INTO enrollment_claims VALUES('e','i','n',X'02','now')", "INSERT INTO settings VALUES('same','initial')"} {
 			if _, err := tx.ExecContext(ctx, q); err != nil {
 				t.Fatal(err)
 			}
@@ -88,7 +88,7 @@ func TestMySQLSQLiteMySQLStrictReverseCascade(t *testing.T) {
 		t.Fatal(err)
 	}
 	haWrite(t, local, func(tx *storage.Tx) {
-		for _, q := range []string{"UPDATE settings SET value='first' WHERE `key`='same'", "UPDATE settings SET value='second' WHERE `key`='same'", "UPDATE settings SET value=value WHERE `key`='same'", "DELETE FROM `groups` WHERE id='g'", "DELETE FROM nodes WHERE id='n'"} {
+		for _, q := range []string{"UPDATE settings SET value='first' WHERE `key`='same'", "UPDATE settings SET value='second' WHERE `key`='same'", "UPDATE settings SET value=value WHERE `key`='same'", "DELETE FROM service_groups WHERE id='sg'", "DELETE FROM `groups` WHERE id='g'", "DELETE FROM nodes WHERE id='n'"} {
 			if _, err := tx.ExecContext(ctx, q); err != nil {
 				t.Fatal(err)
 			}
@@ -99,6 +99,10 @@ func TestMySQLSQLiteMySQLStrictReverseCascade(t *testing.T) {
 	}
 	raw := f.RawEndpoint(t, "primary", storage.MainDomain)
 	var count int
+	var ungrouped bool
+	if err = raw.QueryRow("SELECT group_id IS NULL FROM services WHERE id='s'").Scan(&ungrouped); err != nil || !ungrouped {
+		t.Fatal("reverse SET NULL", ungrouped, err)
+	}
 	var value string
 	if err = raw.QueryRow("SELECT count(*) FROM enrollment_claims").Scan(&count); err != nil || count != 0 {
 		t.Fatal("reverse cascade", count, err)

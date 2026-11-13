@@ -435,3 +435,20 @@ func TestGroupOrderRouteContract(t *testing.T) {
 		routingContractResponse(t, response, method, 405, "method_not_allowed", "PUT")
 	}
 }
+
+func TestServiceGroupOrderRouteContract(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/service-groups/order", nil)
+	entry := apiRoutes.match(req)
+	if entry == nil || entry.label != "/api/v1/service-groups/order" || entry.auth != admin {
+		t.Fatalf("group order route=%+v", entry)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/service-groups/"+routingContractID, nil)
+	entry = apiRoutes.match(req)
+	if entry == nil || entry.label != "/api/v1/service-groups/{id}" {
+		t.Fatalf("group detail route=%+v", entry)
+	}
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete} {
+		response := routingContractRequest(routingContractHandler(t), method, "/api/v1/service-groups/order")
+		routingContractResponse(t, response, method, 405, "method_not_allowed", "PUT")
+	}
+}

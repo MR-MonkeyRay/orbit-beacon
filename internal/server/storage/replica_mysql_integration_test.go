@@ -87,7 +87,7 @@ func TestMySQLReplicationTypedTriggersAndRestart(t *testing.T) {
 			}
 			values := []float64{0, math.Copysign(0, -1), math.SmallestNonzeroFloat64, -math.SmallestNonzeroFloat64, math.MaxFloat64, -math.MaxFloat64, math.Nextafter(1, 0), math.Nextafter(1, 2)}
 			haWrite(t, dbs.Main, func(tx *storage.Tx) {
-				for _, q := range []string{"INSERT INTO users(id,username,password_hash,created_at,totp_ciphertext) VALUES('u','用户','hash','now',X'')", "INSERT INTO `groups`(id,name) VALUES('g','组')", "INSERT INTO nodes(id,name,group_id,quota_bytes,created_at) VALUES('n','节点','g','18446744073709551615','now')", "INSERT INTO enrollment_tokens(id,token_hash,node_id,group_id,expires_at,max_uses,uses) VALUES('enroll',X'01','n','g','later',10,0)", "INSERT INTO enrollment_claims VALUES('enroll','install','n',X'02','now')"} {
+				for _, q := range []string{"INSERT INTO users(id,username,password_hash,created_at,totp_ciphertext) VALUES('u','用户','hash','now',X'')", "INSERT INTO `groups`(id,name) VALUES('g','组')", "INSERT INTO service_groups(id,name,display_order) VALUES('sg','monitor group',123)", "INSERT INTO services(id,name,group_id,type,target,enabled,public,notify,created_at,updated_at) VALUES('s','health','sg','tcp','localhost:443',1,0,0,'now','now')", "INSERT INTO nodes(id,name,group_id,quota_bytes,created_at) VALUES('n','节点','g','18446744073709551615','now')", "INSERT INTO enrollment_tokens(id,token_hash,node_id,group_id,expires_at,max_uses,uses) VALUES('enroll',X'01','n','g','later',10,0)", "INSERT INTO enrollment_claims VALUES('enroll','install','n',X'02','now')"} {
 					if _, err := tx.ExecContext(ctx, q); err != nil {
 						t.Fatal(err)
 					}
@@ -176,8 +176,19 @@ func TestMySQLReplicationTypedTriggersAndRestart(t *testing.T) {
 					t.Fatalf("float bits %x != %x", math.Float64bits(a), math.Float64bits(b))
 				}
 			}
+			var serviceGroup string
+			if err = target.QueryRow("SELECT group_id FROM services WHERE id='s'").Scan(&serviceGroup); err != nil || serviceGroup != "sg" {
+				t.Fatal("replica membership", serviceGroup, err)
+			}
+			var serviceGroupOrder int
+			if err = target.QueryRow("SELECT display_order FROM service_groups WHERE id='sg'").Scan(&serviceGroupOrder); err != nil || serviceGroupOrder != 123 {
+				t.Fatal("replica group order", serviceGroupOrder, err)
+			}
 			assertReplicaIncrementalTypes(t, dbs.Main, raw, target, values)
 			haWrite(t, dbs.Main, func(tx *storage.Tx) {
+				if _, err := tx.ExecContext(ctx, "DELETE FROM service_groups WHERE id='sg'"); err != nil {
+					t.Fatal(err)
+				}
 				if _, err := tx.ExecContext(ctx, "DELETE FROM `groups` WHERE id='g'"); err != nil {
 					t.Fatal(err)
 				}
@@ -185,6 +196,9 @@ func TestMySQLReplicationTypedTriggersAndRestart(t *testing.T) {
 			waitReplica(t, raw, target)
 			if err = target.QueryRow("SELECT group_id IS NULL FROM nodes WHERE id='n'").Scan(&null); err != nil || !null {
 				t.Fatalf("SET NULL %v %v", null, err)
+			}
+			if err = target.QueryRow("SELECT group_id IS NULL FROM services WHERE id='s'").Scan(&null); err != nil || !null {
+				t.Fatal("service SET NULL", null, err)
 			}
 			haWrite(t, dbs.Main, func(tx *storage.Tx) {
 				if _, err := tx.ExecContext(ctx, "DELETE FROM nodes WHERE id='n'"); err != nil {

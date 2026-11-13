@@ -42,6 +42,8 @@ type errorMapping struct {
 // Agent 专属响应优先于共享的服务映射。
 var errorMappings = []errorMapping{
 	{serviceErrors, matches(services.ErrNotFound), http.StatusNotFound, "not_found", "Service not found", false},
+	{serviceErrors, matches(services.ErrGroupCapacity), http.StatusConflict, "service_group_capacity_reached", "Maximum of 100 service groups reached", false},
+	{serviceErrors, matches(services.ErrInvalidGroup), http.StatusBadRequest, "validation_failed", "Request values are invalid", false},
 	{serviceErrors, matches(services.ErrCapacity), http.StatusConflict, "service_capacity_reached", "Maximum of 100 services reached", false},
 	{serviceErrors, matches(auth.ErrAPITokenLimit), http.StatusConflict, "api_token_limit", "API token limit reached", false},
 	{serviceErrors, matches(auth.ErrTOTPRequired), http.StatusUnauthorized, "totp_required", "Second factor required", false},

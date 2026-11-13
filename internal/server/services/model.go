@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"orbitbeacon/internal/server/validation"
+	"orbitbeacon/internal/uuid"
 )
 
 var ErrNotFound = errors.New("service not found")
@@ -25,6 +26,7 @@ type Service struct {
 	generation         uint64
 	ID                 string    `json:"id"`
 	Name               string    `json:"name"`
+	GroupID            *string   `json:"group_id"`
 	Type               string    `json:"type"`
 	Target             string    `json:"target"`
 	IntervalSeconds    int       `json:"interval_seconds"`
@@ -41,16 +43,17 @@ type Service struct {
 }
 
 type Patch struct {
-	Name               *string  `json:"name"`
-	Type               *string  `json:"type"`
-	Target             *string  `json:"target"`
-	IntervalSeconds    *int     `json:"interval_seconds"`
-	TimeoutSeconds     *int     `json:"timeout_seconds"`
-	Enabled            *bool    `json:"enabled"`
-	Public             *bool    `json:"public"`
-	DisplayOrder       *int     `json:"display_order"`
-	Notify             *bool    `json:"notify"`
-	LatencyThresholdMS *float64 `json:"latency_threshold_ms"`
+	GroupID            json.RawMessage `json:"group_id"`
+	Name               *string         `json:"name"`
+	Type               *string         `json:"type"`
+	Target             *string         `json:"target"`
+	IntervalSeconds    *int            `json:"interval_seconds"`
+	TimeoutSeconds     *int            `json:"timeout_seconds"`
+	Enabled            *bool           `json:"enabled"`
+	Public             *bool           `json:"public"`
+	DisplayOrder       *int            `json:"display_order"`
+	Notify             *bool           `json:"notify"`
+	LatencyThresholdMS *float64        `json:"latency_threshold_ms"`
 }
 
 func (p Patch) apply(s *Service) {
@@ -107,6 +110,9 @@ func validHost(host string) bool {
 }
 func Validate(s Service) error {
 	fields := map[string]string{}
+	if s.GroupID != nil && !uuid.ValidUUID(*s.GroupID) {
+		fields["group_id"] = "must be a group UUID or null"
+	}
 	if utf8.RuneCountInString(s.Name) < 1 || utf8.RuneCountInString(s.Name) > 100 || !utf8.ValidString(s.Name) || strings.IndexFunc(s.Name, unicode.IsControl) >= 0 {
 		fields["name"] = "must contain 1 to 100 characters without controls"
 	}
@@ -258,7 +264,7 @@ func ValidateResult(r Result) error {
 	return nil
 }
 
-// Explicit null never silently means "leave unchanged" for non-nullable config.
+// Only group_id is nullable; RawMessage distinguishes omission from explicit null.
 func (p *Patch) UnmarshalJSON(raw []byte) error {
 	type plain Patch
 	var fields map[string]json.RawMessage
@@ -266,7 +272,7 @@ func (p *Patch) UnmarshalJSON(raw []byte) error {
 		return e
 	}
 	for name, value := range fields {
-		if string(value) == "null" {
+		if name != "group_id" && string(value) == "null" {
 			return validation.Invalid(name, "must not be null")
 		}
 	}

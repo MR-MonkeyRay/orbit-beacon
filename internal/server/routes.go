@@ -32,6 +32,12 @@ type routeHandler func(h *handler, w http.ResponseWriter, r *http.Request, reque
 
 // 声明顺序保持每个路径 Allow 列表的传输顺序。
 var routes = []route{
+	{"GET /api/v1/service-groups", admin, endpoint((*handler).serviceGroups)},
+	{"POST /api/v1/service-groups", admin, endpoint((*handler).serviceGroups)},
+	{"PUT /api/v1/service-groups/order", admin, endpoint((*handler).serviceGroupOrder)},
+	{"GET /api/v1/service-groups/{id}", admin, endpoint((*handler).serviceGroups)},
+	{"PATCH /api/v1/service-groups/{id}", admin, endpoint((*handler).serviceGroups)},
+	{"DELETE /api/v1/service-groups/{id}", admin, endpoint((*handler).serviceGroups)},
 	{"GET /api/v1/services", admin, endpoint((*handler).servicesRoute)},
 	{"POST /api/v1/services", admin, endpoint((*handler).servicesRoute)},
 	{"GET /api/v1/services/{id}", admin, endpoint((*handler).servicesRoute)},
