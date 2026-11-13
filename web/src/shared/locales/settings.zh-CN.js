@@ -8,7 +8,7 @@ export default {
   'settings.storage': '存储',
   'settings.publicPage': '状态页',
   'settings.settingsSections': '设置分类',
-  'settings.publicLoading': '正在加载状态页设置…',
+  'settings.publicLoading': '加载中…',
   'settings.publicDisableTitle': '关闭状态页？',
   'settings.publicDisableMessage': '匿名访客将需要登录。',
   'settings.publicDisable': '关闭状态页',

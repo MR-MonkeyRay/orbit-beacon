@@ -1,7 +1,7 @@
 .services-page .service-target { max-width: 26rem; overflow-wrap: anywhere; }
 .services-page .service-name { font-weight: 600; text-align: start; padding-inline: 0; background: none; border-color: transparent; }
 .services-page tr { cursor: pointer; }
-.service-editor-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--space-4, 16px); }
+.service-editor-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); align-items: start; gap: var(--space-4, 16px); }
 .service-switches { display: flex; flex-wrap: wrap; gap: 20px; }
 .service-charts { min-width: 0; }
 .service-target { overflow-wrap: anywhere; }

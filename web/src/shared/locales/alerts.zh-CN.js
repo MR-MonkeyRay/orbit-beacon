@@ -115,7 +115,6 @@ export default {
   'alerts.rules.thresholdPercent': '阈值（%）',
   'alerts.rules.thresholdDays': '阈值（天）',
   'alerts.rules.groupOrNode': '分组或节点',
-  'alerts.rules.routingHint': '按住 Ctrl 或 Command 可多选。',
   'alerts.rules.saved': '规则已保存',
   'alerts.rules.deleteHint': '历史事件保留，触发中的告警将在下次评估时恢复。',
   'alerts.rules.delete': '删除规则',
@@ -162,7 +161,6 @@ export default {
   'alerts.channels.testSent': '测试已发送',
   'alerts.channels.testFailed': '测试失败：{error}',
   'alerts.channels.add': '添加通道',
-  'alerts.channels.writeOnlyHint': '凭据与完整 Webhook URL 仅可写入。',
   'alerts.channels.empty': '暂无通知通道',
   'alerts.deliveries.loading': '正在加载投递记录…',
   'alerts.deliveries.caption': '最近的通知投递记录',
@@ -248,5 +246,5 @@ export default {
   'alerts.rules.preset.offline': '离线',
   'alerts.rules.preset.cpu': 'CPU',
   'alerts.rules.preset.memory': '内存',
-  'alerts.rules.preset.disk': '磁盘',
+  'alerts.rules.preset.disk': '磁盘'
 };

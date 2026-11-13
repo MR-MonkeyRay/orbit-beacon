@@ -64,7 +64,7 @@ test('console availability requests once and isolates failure in the existing er
     await flush();
     assert.equal(requests, 1);
     assert.ok(panel.querySelector('.history-error'));
-    assert.ok(panel.textContent.includes(copy('errors.internal_error')));
+    assert.ok(panel.textContent.includes(copy('errors.generic')));
   } finally { navigation.abort(); setNavigationSignal(null); globalThis.fetch = originalFetch; dom.restore(); }
 });
 test('console availability renders thirty detailed days on success', async () => {

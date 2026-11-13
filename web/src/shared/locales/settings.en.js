@@ -8,7 +8,7 @@ export default {
   'settings.storage': 'Storage',
   'settings.publicPage': 'Status page',
   'settings.settingsSections': 'Settings sections',
-  'settings.publicLoading': 'Loading status page settings…',
+  'settings.publicLoading': 'Loading…',
   'settings.publicDisableTitle': 'Disable status page?',
   'settings.publicDisableMessage': 'Anonymous visitors will need to sign in.',
   'settings.publicDisable': 'Disable status page',

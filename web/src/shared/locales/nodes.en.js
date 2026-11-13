@@ -219,7 +219,7 @@ export default {
   'nodes.probes': 'Probes',
   'nodes.agentVersion': 'Agent version',
   'nodes.quotaWhole': 'Enter a whole number.',
-  'nodes.quotaUnitInvalid': 'Enter a whole number and choose a valid unit.',
+  'nodes.quotaUnitInvalid': 'Enter a whole number and choose a unit.',
   'nodes.quotaMax': 'The quota must be at most 18,446,744,073,709,551,615 bytes.',
   'nodes.bytes': 'Bytes',
   'nodes.unitKB': 'KB',

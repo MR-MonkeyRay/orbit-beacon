@@ -28,7 +28,6 @@ test('rule editor toggles offline fields, scopes and channel routing for every a
     assert.equal(control(root, 'duration_unit').value, '60');
     assert.equal(control(root, 'duration_seconds'), undefined);
     assert.equal(control(root, 'channel_ids').type, 'checkbox');
-    assert.ok(!root.textContent.includes(copy('alerts.rules.routingHint')));
     const metric = control(root, 'metric');
     assert.equal(metric.options.find((option) => option.value === 'traffic_quota_percent').textContent, copy('alerts.metric.trafficQuota'));
     change(metric, 'traffic_quota_percent');

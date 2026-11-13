@@ -1,6 +1,6 @@
 export default {
   "errors.api_token_limit": "API 令牌数量已达上限。",
-  "errors.totp_required": "请输入验证码。",
+  "errors.totp_required": "输入验证码",
   "errors.totp_invalid": "验证码或恢复码无效。",
   "errors.totp_already_enabled": "两步验证已启用。",
   "errors.totp_setup_expired": "设置已过期。",
@@ -26,7 +26,7 @@ export default {
   'common.status.disabled': '已禁用',
   'common.unavailable': '不可用',
   'common.none': '无',
-  'errors.generic': '无法完成此操作，请检查网络后重试。',
+  'errors.generic': '操作失败，检查网络后重试。',
   'errors.withRequest': '{message}（请求 {id}）',
   'errors.locale_storage_failed': '无法保存语言设置。'
 };

@@ -115,7 +115,6 @@ export default {
   'alerts.rules.thresholdPercent': 'Threshold (%)',
   'alerts.rules.thresholdDays': 'Threshold (days)',
   'alerts.rules.groupOrNode': 'Group or node',
-  'alerts.rules.routingHint': 'Use Ctrl or Command to select multiple.',
   'alerts.rules.saved': 'Rule saved',
   'alerts.rules.deleteHint': 'Event history is kept; firing alerts resolve on next evaluation.',
   'alerts.rules.delete': 'Delete rule',
@@ -162,7 +161,6 @@ export default {
   'alerts.channels.testSent': 'Test sent',
   'alerts.channels.testFailed': 'Test failed: {error}',
   'alerts.channels.add': 'Add channel',
-  'alerts.channels.writeOnlyHint': 'Credentials and full webhook URLs are write-only.',
   'alerts.channels.empty': 'No notification channels yet',
   'alerts.deliveries.loading': 'Loading deliveries…',
   'alerts.deliveries.caption': 'Recent notification deliveries',
@@ -248,5 +246,5 @@ export default {
   'alerts.rules.preset.offline': 'Offline',
   'alerts.rules.preset.cpu': 'CPU',
   'alerts.rules.preset.memory': 'Memory',
-  'alerts.rules.preset.disk': 'Disk',
+  'alerts.rules.preset.disk': 'Disk'
 };

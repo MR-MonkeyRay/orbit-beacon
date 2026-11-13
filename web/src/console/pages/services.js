@@ -22,7 +22,7 @@ export function serviceEditor(item, {signal, saved}) {
   const controls = {};
   return formDialog({title: t(item ? 'services.edit' : 'services.add'), submit: t('services.save'),
     build(form) {
-      const add = (key, props) => { const control = controls[key] = input({name: key, ...props}); return field(t(`services.${key}`), control); };
+      const add = (key, props, options) => { const control = controls[key] = input({name: key, ...props}); return field(t(`services.${key}`), control, options); };
       const name = add('name', {value: item?.name || '', required: true, maxlength: 100});
       const type = controls.type = select([['http', 'HTTP / HTTPS'], ['tcp', 'TCP'], ['icmp', 'ICMP']], item?.type || 'http', {name: 'type'});
       const target = add('target', {value: item?.target || '', required: true, maxlength: 2048, autocomplete: 'off'});
@@ -31,12 +31,13 @@ export function serviceEditor(item, {signal, saved}) {
       const numberFields = numeric.map((key) => add(key, {type: 'number', required: true,
         value: item?.[key] ?? ({interval_seconds: 60, timeout_seconds: 10, latency_threshold_ms: 0, display_order: 0})[key],
         min: key === 'display_order' ? -1000000 : key === 'interval_seconds' ? 30 : key === 'timeout_seconds' ? 1 : 0,
-        max: ({interval_seconds: 3600, timeout_seconds: 30, latency_threshold_ms: 3600000, display_order: 1000000})[key], step: key === 'latency_threshold_ms' ? 'any' : 1}));
+        max: ({interval_seconds: 3600, timeout_seconds: 30, latency_threshold_ms: 3600000, display_order: 1000000})[key], step: key === 'latency_threshold_ms' ? 'any' : 1},
+        key === 'latency_threshold_ms' ? {hint: t('services.thresholdHint')} : undefined));
       const checkTimeout = () => controls.timeout_seconds.setCustomValidity(Number(controls.timeout_seconds.value) >= Number(controls.interval_seconds.value) ? t('services.timeoutHint') : '');
       controls.interval_seconds.addEventListener('input', checkTimeout); controls.timeout_seconds.addEventListener('input', checkTimeout);
       const toggles = switches.map((key) => { const control = controls[key] = input({name: key, type: 'checkbox', checked: item?.[key] ?? key === 'enabled'}); return toggleSwitch(t(`services.${key}`), control); });
       form.append(name, field(t('services.type'), type), target, h('div', {class: 'service-editor-grid'}, numberFields),
-        h('p', {class: 'text-note'}, t('services.thresholdHint')), h('div', {class: 'service-switches'}, toggles));
+        h('div', {class: 'service-switches'}, toggles));
     },
     async action() {
       if (signal?.aborted || !session.user || !session.csrf) throw new DOMException('Cancelled', 'AbortError');
