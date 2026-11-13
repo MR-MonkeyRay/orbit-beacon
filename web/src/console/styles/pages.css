@@ -491,27 +491,40 @@
   margin-top: var(--sp-tight);
 }
 
-/* 显式选择控件位于节点行全宽链接之上。 */
+/* 批量操作条：选中节点后悬浮在面板底部、贴住视口下缘；删除放在最后。 */
 .bulk-actions {
   position: sticky;
-  bottom: 12px;
+  bottom: 16px;
   z-index: var(--z-sticky);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-inline);
-  margin: var(--sp-control) var(--sp-content);
-  padding: var(--sp-inline) var(--sp-control);
+  width: fit-content;
+  max-width: calc(100% - 2 * var(--sp-content));
+  margin: var(--sp-control) auto;
+  padding: 6px var(--sp-inline) 6px 6px;
   border: 1px solid var(--border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   background: var(--panel);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-lg);
 }
 
 .bulk-actions .selection-count {
-  margin-right: auto;
+  margin-right: var(--sp-inline);
   font-weight: var(--fw-semibold);
   color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.bulk-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-tight);
+}
+
+.bulk-buttons .btn-danger {
+  margin-left: var(--sp-tight);
 }
 
 .selection-cell {

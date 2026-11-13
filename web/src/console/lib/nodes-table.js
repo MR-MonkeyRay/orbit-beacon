@@ -13,6 +13,8 @@ export function highlightNodeMatch(value, query) {
 
 // 离线节点很多时，整列“不可用”比占位符更吵。
 export const metricText = (value) => Number.isFinite(value) ? formatPercent(value) : '—';
+// 空的分组、位置与标签用同一个弱化短横，比整列“无”安静。
+const emptyCell = () => h('span', {class: 'muted'}, '—');
 
 export function patchNodeUsage(cell, percent, tween) {
   const meter = cell.firstElementChild;
@@ -66,9 +68,10 @@ export function createNodeRow({node, query, selected, deleted, groupNames, rowRe
   const version = h('td', {class: 'hide-compact', dataset: {column: 'agent_version'}}, node.agent_version);
   const element = h('tr', null, h('td', {class: 'selection-cell'}, h('label', {class: 'selection-hit'}, checkbox)), h('td', {class: 'name'}, name),
     h('td', {class: 'node-status'}, badge), cpu, memory, version, lastSeen,
-    h('td', {class: 'hide-compact', dataset: {column: 'group'}}, node.group_id ? groupNames.get(node.group_id) || h('span', {class: 'muted'}, t('common.status.unknown')) : h('span', {class: 'muted'}, t('nodes.none'))),
-    h('td', {class: 'hide-compact', dataset: {column: 'location'}}, [node.region || node.geo_location, node.provider].filter(Boolean).join(' · ') || h('span', {class: 'muted'}, t('nodes.none'))),
+    h('td', {class: 'hide-compact', dataset: {column: 'group'}}, node.group_id ? groupNames.get(node.group_id) || h('span', {class: 'muted'}, t('common.status.unknown')) : emptyCell()),
+    h('td', {class: 'hide-compact', dataset: {column: 'location'}}, [node.region || node.geo_location, node.provider].filter(Boolean).join(' · ') || emptyCell()),
     h('td', {class: 'hide-compact', dataset: {column: 'tags'}}, (() => {
+      if (!node.tags.length) return emptyCell();
       const extra = node.tags.slice(2);
       return h('div', {class: 'cell-tags'}, node.tags.slice(0, 2).map((tag) => h('span', {class: 'tag static', title: tag}, tag)),
         extra.length ? h('span', {class: 'muted', title: formatList(extra), 'aria-label': `${t('nodes.tagsMore', {count: extra.length})}: ${formatList(extra)}`}, `+${extra.length}`) : null);

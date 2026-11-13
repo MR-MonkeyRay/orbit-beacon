@@ -734,13 +734,30 @@ small {
   gap: var(--sp-tight);
 }
 
+/* 实时变化提示条位于工具栏与表格之间，不挤占页脚。 */
 .live-changes {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-inline) var(--sp-content);
-  width: 100%;
-  color: var(--ink-subtle);
+  padding: var(--sp-inline) var(--sp-content);
+  border-bottom: 1px solid var(--line);
+  background: var(--orbit-soft);
+  color: var(--ink);
+  font-size: var(--fs-sm);
+}
+
+.live-changes > .icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--orbit);
+}
+
+@media (min-width:768px) {
+  .panel > .live-changes {
+    padding-inline: var(--panel-padding);
+  }
 }
 
 .live-change {
@@ -1214,20 +1231,70 @@ dialog.closing::backdrop {
 .head-actions { order: 2; }
 .head-status { margin-left: auto; }
 .nodes-table .column-hidden { display: none; }
-.nodes-mobile-sort { display: none; }
-.column-picker { position: relative; flex: none; }
-.column-options {
+/* 节点工具栏：状态分段在左，搜索、分组和视图菜单成组靠右；
+   剩余宽度不足 480px 时整组换到第二行并铺满。 */
+.toolbar-end {
+  display: flex;
+  flex: 1 1 480px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-inline);
+  min-width: 0;
+}
+
+.toolbar-end .search {
+  max-width: 360px;
+}
+
+.toolbar-end > select.input {
+  flex: 0 1 auto;
+  max-width: 200px;
+}
+
+.view-menu { position: relative; flex: none; }
+.view-options {
   position: absolute;
   right: 0;
   top: calc(100% + var(--sp-tight));
   z-index: var(--z-sticky);
-  min-width: 180px;
+  display: grid;
+  gap: var(--sp-control);
+  width: 240px;
+  padding: var(--sp-control);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
   background: var(--panel);
+  box-shadow: var(--shadow);
 }
-.column-options .choice-option {
+.view-section {
+  display: grid;
+  gap: var(--sp-tight);
+  min-width: 0;
+}
+.view-section + .view-section {
+  padding-top: var(--sp-control);
+  border-top: 1px solid var(--line);
+}
+.view-heading {
+  padding: 0 0 var(--sp-tight);
+  color: var(--ink-muted);
+  font-size: var(--fs-sm);
+}
+.view-direction { display: grid; grid-template-columns: 1fr 1fr; }
+.view-direction button { justify-content: center; }
+.view-direction button[data-dir="desc"] .icon { transform: rotate(180deg); }
+.view-columns {
+  gap: 0;
+}
+.view-columns .choice-option {
   display: flex;
   align-items: center;
   gap: var(--sp-inline);
+  min-height: 34px;
+  padding: 0 var(--sp-tight);
+  border: 0;
+  background: none;
   cursor: pointer;
 }
 

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {nodeColumnPicker, patchNodeColumns, readNodeColumns} from '../src/console/lib/nodes-columns.js';
+import {nodeViewMenu, patchNodeColumns, readNodeColumns} from '../src/console/lib/nodes-columns.js';
 import {copy, installDOM} from './console-dom.js';
 
-test('column picker persists optional columns, keeps the URL alone, and dismisses on Escape and outside pointer', () => {
+test('view menu persists optional columns, keeps the URL alone, and dismisses on Escape and outside pointer', () => {
   const dom = installDOM();
   const signal = new AbortController();
   try {
@@ -15,13 +15,14 @@ test('column picker persists optional columns, keeps the URL alone, and dismisse
     for (const key of ['agent_version', 'created', 'last_seen']) {
       const cell = document.createElement('td'); cell.dataset.column = key; table.append(cell);
     }
-    const picker = nodeColumnPicker({columns, signal: signal.signal, onChange: () => patchNodeColumns(table, columns)});
+    const picker = nodeViewMenu({columns, signal: signal.signal, onChange: () => patchNodeColumns(table, columns)});
     document.body.append(picker, table);
     patchNodeColumns(table, columns);
     assert.equal(table.children[0].classList.contains('column-hidden'), true);
     assert.equal(table.children[2].classList.contains('column-hidden'), false);
     const trigger = picker.querySelector('button');
-    assert.equal(trigger.textContent, copy('nodes.columns'));
+    assert.equal(trigger.textContent, copy('nodes.view'));
+    assert.equal(picker.querySelector('.view-columns').firstElementChild.textContent, copy('nodes.columns'));
     trigger.click();
     assert.equal(trigger.getAttribute('aria-expanded'), 'true');
     const choices = picker.querySelectorAll('input');
@@ -57,10 +58,34 @@ test('column preferences tolerate malformed, unknown and blocked storage', () =>
     localStorage.getItem = () => { throw Error('blocked'); };
     localStorage.setItem = () => { throw Error('blocked'); };
     const columns = readNodeColumns();
-    const picker = nodeColumnPicker({columns, signal: signal.signal, onChange() {}});
+    const picker = nodeViewMenu({columns, signal: signal.signal, onChange() {}});
     const checkbox = picker.querySelector('input');
     checkbox.checked = true;
     assert.doesNotThrow(() => checkbox.dispatchEvent(new Event('change')));
     assert.ok(columns.has('agent_version'));
+  } finally { signal.abort(); dom.restore(); }
+});
+
+test('view menu sort control writes the key with its default direction and toggles direction', () => {
+  const dom = installDOM();
+  const signal = new AbortController();
+  try {
+    const state = {sort: 'status', dir: 'asc'};
+    const writes = [];
+    const menu = nodeViewMenu({columns: new Set(), signal: signal.signal, onChange() {}, sort: {
+      keys: [['status', 'Status'], ['name', 'Name'], ['created', 'Added']],
+      read: () => state,
+      write: (sort, dir) => { writes.push([sort, dir]); state.sort = sort; state.dir = dir || (sort === 'created' ? 'desc' : 'asc'); menu.syncSort(); }
+    }});
+    const key = menu.querySelector('select');
+    assert.equal(key.value, 'status');
+    const directions = menu.querySelector('.view-direction').querySelectorAll('button');
+    assert.deepEqual(directions.map((control) => control.getAttribute('aria-pressed')), ['true', 'false']);
+    key.value = 'created'; key.dispatchEvent(new Event('change'));
+    assert.deepEqual(writes.at(-1), ['created', '']);
+    assert.deepEqual(directions.map((control) => control.getAttribute('aria-pressed')), ['false', 'true']);
+    directions[0].click();
+    assert.deepEqual(writes.at(-1), ['created', 'asc']);
+    assert.equal(directions[0].getAttribute('aria-pressed'), 'true');
   } finally { signal.abort(); dom.restore(); }
 });

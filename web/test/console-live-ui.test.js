@@ -844,7 +844,7 @@ test('column preferences survive filtering and live updates without showing defa
   const rows = () => env.root.querySelector('tbody').querySelectorAll('tr');
   assert.equal(rows()[0].children[5].classList.contains('column-hidden'), true);
   assert.equal(rows()[0].children[10].classList.contains('column-hidden'), true);
-  const picker = env.root.querySelector('.column-picker');
+  const picker = env.root.querySelector('.view-menu');
   const checkbox = picker.querySelectorAll('input').find((control) => control.dataset.column === 'last_seen');
   checkbox.checked = false; checkbox.dispatchEvent(new Event('change'));
   assert.equal(rows()[0].children[6].classList.contains('column-hidden'), true);
@@ -863,7 +863,7 @@ test('cancel selection clears all pages and restores the visible select-all cont
   const box = env.root.querySelector('input[data-node-id]');
   box.checked = true; box.dispatchEvent(new Event('change'));
   assert.equal(env.root.querySelector('.selection-count').textContent, copy('nodes.selected', {count: 51}));
-  button(env.root, copy('nodes.cancelSelection')).click();
+  env.root.querySelectorAll('button').find((item) => item.getAttribute('aria-label') === copy('nodes.cancelSelection')).click();
   assert.equal(env.root.querySelector('.bulk-actions').hidden, true);
   assert.equal(all.checked, false); assert.equal(all.indeterminate, false);
   assert.equal(document.activeElement, all);
@@ -973,15 +973,17 @@ test('bulk tag keeps frozen targets through selection changes and reports partia
   button(results, copy('nodes.close')).click(); results.dispatchEvent(new Event('animationend')); await flush();
 });
 
-test('mobile sort control uses the same URL-backed order and default status pagination', async (t) => {
+test('view menu sort uses the same URL-backed order and default status pagination', async (t) => {
   const env = await setup(t, {count: 55});
   assert.equal(location.search, '');
   assert.equal(env.root.querySelector('tbody').firstElementChild.querySelector('a').textContent, 'Node 001');
   button(env.root, copy('nodes.next')).click();
   assert.equal(location.search, '?page=1');
   assert.equal(env.root.querySelector('tbody').firstElementChild.querySelector('a').textContent, 'Node 051');
-  const sort = env.root.querySelector('.nodes-mobile-sort');
-  sort.value = 'name:desc'; sort.dispatchEvent(new Event('change'));
+  const sort = env.root.querySelector('.view-sort-key');
+  sort.value = 'name'; sort.dispatchEvent(new Event('change'));
+  assert.equal(location.search, '?sort=name&page=1');
+  env.root.querySelector('.view-direction').querySelectorAll('button').find((control) => control.dataset.dir === 'desc').click();
   assert.equal(location.search, '?sort=name&dir=desc&page=1');
   assert.equal(env.root.querySelector('tbody').firstElementChild.querySelector('a').textContent, 'Node 005');
   const table = env.root.querySelector('table');

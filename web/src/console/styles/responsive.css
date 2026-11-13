@@ -119,9 +119,19 @@
     --panel-padding: var(--sp-content);
   }
 
-  /* 手机卡片固定显示名称、状态、用量与最后上报，列选择不适用。 */
-  .column-picker {
+  /* 手机卡片固定显示名称、状态、用量与最后上报，视图菜单只保留排序。 */
+  .view-columns {
     display: none;
+  }
+
+  .toolbar .toolbar-end > select.input {
+    flex: 1 1 0;
+    width: auto;
+    max-width: none;
+  }
+
+  .bulk-actions {
+    width: auto;
   }
 
   .nodes-table .name {
@@ -362,7 +372,6 @@
     padding: 0;
     border: 0;
   }
-  .nodes-mobile-sort { display: block; }
   .nodes-table .column-hidden[data-column="last_seen"] { display: block; }
   .nodes-table-wrap { overflow-x: visible; }
   .nodes-table { display: block; }
