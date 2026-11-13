@@ -1,6 +1,6 @@
 export default {
   "account.apiTokensEmpty": "No API tokens",
-  "account.apiTokenGlobalRate": "Global limit (requests per minute)",
+  "account.apiTokenGlobalRate": "Default limit",
   "account.apiTokenRate": "Limit (requests per minute)",
   "account.apiTokenDefaultRate": "Default ({limit})",
   "account.apiTokenEditRate": "Edit limit",
@@ -49,5 +49,10 @@ export default {
   'account.sessionExpires': 'Session expires',
   'account.changePassword': 'Change password',
   'account.passwordSignOutHint': 'All sessions will be signed out.',
-  'account.changePasswordTitle': 'Change password'
+  'account.changePasswordTitle': 'Change password',
+  "account.apiTokenCreatedTitle": "Token created",
+  "account.apiTokenOnce": "Shown only once. Copy it before closing.",
+  "account.apiTokenDefaultLimit": "Default limit: {limit} requests/min",
+  "account.apiTokenChangeDefault": "Change",
+  "account.revokeAPITokenMessage": "Requests using this token fail immediately."
 };

@@ -9,7 +9,7 @@ import {closeDialogs} from '../src/console/ui/dialogs.js';
 import {errorText, fieldErrorText} from '../src/shared/errors.js';
 
 const entry = {id: '00000000-0000-4000-8000-000000000001', name: 'scripts', created_by_username: 'operator', created_at: '2026-10-28T00:00:00Z', last_used_at: null, expires_at: null, rate_limit_per_minute: null};
-const label = (root, text) => elements(root).find((element) => element.tagName === 'button' && element.textContent === text);
+const label = (root, text) => elements(root).find((element) => element.tagName === 'button' && (element.textContent === text || element.getAttribute('title') === text));
 const named = (root, name) => elements(root).find((element) => element.name === name);
 const submit = async (form) => { form.dispatchEvent(new Event('submit', {cancelable: true})); await flush(); await flush(); };
 function setup(t, respond, limits = false) {
@@ -53,10 +53,14 @@ test('API token panel lists metadata, creates once, copies, clears and revokes',
   assert.deepEqual(JSON.parse(creation.body), {name: 'monitor', expires_in_days: null, password: 'current-password'});
   assert.equal(password.value, '');
   dialog = document.querySelector('dialog'); const value = dialog.querySelector('pre'); assert.equal(value.textContent, secret);
+  assert.ok(dialog.textContent.includes(copy('account.apiTokenOnce')));
   label(dialog, copy('account.copyAPIToken')).click(); await flush(); assert.equal(copied, secret);
   label(dialog, copy('account.recoverySaved')).click(); await flush(); assert.equal(value.textContent, ''); assert.equal(document.querySelector('dialog'), null);
   assert.equal(panel.textContent.includes(secret), false); assert.equal(env.requests.filter((request) => request.method === 'POST').length, 1);
-  label(panel, copy('account.revokeAPIToken')).click(); await flush(); dialog = document.querySelector('dialog');
+  const revoke = label(panel, copy('account.revokeAPIToken'));
+  assert.equal(revoke.getAttribute('aria-label'), `${copy('account.revokeAPIToken')}: scripts`);
+  revoke.click(); await flush(); dialog = document.querySelector('dialog');
+  assert.ok(dialog.textContent.includes(copy('account.revokeAPITokenMessage')));
   assert.equal(env.requests.some((request) => request.method === 'DELETE'), false);
   label(dialog, copy('account.revokeAPIToken')).click(); await flush(); await flush();
   assert.equal(env.requests.find((request) => request.method === 'DELETE').url, `/api/v1/api-tokens/${entry.id}`);
@@ -105,10 +109,17 @@ test('API token limits save globally, set and clear overrides, and cancel withou
   }, true);
   const panel = apiTokensPanel(); env.body.append(panel); await flush();
   assert.ok(panel.textContent.includes(copy('account.apiTokenDefaultRate', {limit: 600})));
-  named(panel, 'rate_limit_per_minute').value = '12';
-  await submit(panel.querySelector('form'));
+  assert.ok(panel.textContent.includes(copy('account.apiTokenDefaultLimit', {limit: 600})));
+  assert.equal(named(panel, 'rate_limit_per_minute'), undefined);
+  label(panel, copy('account.apiTokenChangeDefault')).click();
+  const globalDialog = document.querySelector('dialog');
+  assert.equal(String(named(globalDialog, 'rate_limit_per_minute').value), '600');
+  named(globalDialog, 'rate_limit_per_minute').value = '12';
+  await submit(globalDialog.querySelector('form'));
   assert.deepEqual(changes, [['global', 12]]);
+  assert.equal(document.querySelector('dialog'), null);
   assert.ok(panel.textContent.includes(copy('account.apiTokenDefaultRate', {limit: 12})));
+  assert.ok(panel.textContent.includes(copy('account.apiTokenDefaultLimit', {limit: 12})));
   const open = () => { label(panel, copy('account.apiTokenEditRate')).focus(); label(panel, copy('account.apiTokenEditRate')).click(); return document.querySelector('dialog'); };
   let dialog = open();
   assert.equal(elements(dialog).some((element) => element.tagName === 'p'), false);
@@ -139,9 +150,12 @@ test('API token limit errors remain visible in the panel and modal', async (t) =
     ? response({code: 'validation_failed', fields: {rate_limit_per_minute: 'must be an integer between 1 and 100000'}}, {status: 400})
     : request.url === '/api/v1/settings/api-tokens' ? response({rate_limit_per_minute: 600}) : response({api_tokens: [entry]}), true);
   const panel = apiTokensPanel(); env.body.append(panel); await flush();
-  named(panel, 'rate_limit_per_minute').value = '0'; await submit(panel.querySelector('form'));
-  assert.ok(panel.textContent.includes(copy('errors.validation_failed')));
-  assert.ok(panel.textContent.includes(copy('fields.apiTokenRate')));
+  label(panel, copy('account.apiTokenChangeDefault')).click();
+  const globalDialog = document.querySelector('dialog');
+  named(globalDialog, 'rate_limit_per_minute').value = '0'; await submit(globalDialog.querySelector('form'));
+  assert.ok(globalDialog.textContent.includes(copy('errors.validation_failed')));
+  assert.ok(globalDialog.textContent.includes(copy('fields.apiTokenRate')));
+  closeDialogs(); await flush();
   label(panel, copy('account.apiTokenEditRate')).click();
   const dialog = document.querySelector('dialog'); named(dialog, 'rate_limit_per_minute').value = '0'; await submit(dialog.querySelector('form'));
   assert.ok(dialog.textContent.includes(copy('errors.validation_failed')));
@@ -159,5 +173,5 @@ test('zero API tokens show the shared empty state without a header-only table', 
   assert.equal(panel.querySelector('.empty').querySelector('h2').textContent, copy('account.apiTokensEmpty'));
   assert.equal(panel.querySelector('.empty').querySelector('p'), null);
   assert.ok(label(panel, copy('account.createAPIToken')));
-  assert.ok(named(panel, 'rate_limit_per_minute'));
+  assert.ok(label(panel, copy('account.apiTokenChangeDefault')));
 });

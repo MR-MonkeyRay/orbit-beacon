@@ -1,6 +1,6 @@
 export default {
   "account.apiTokensEmpty": "暂无 API 令牌",
-  "account.apiTokenGlobalRate": "全局限额（请求/分钟）",
+  "account.apiTokenGlobalRate": "默认限额",
   "account.apiTokenRate": "限额（请求/分钟）",
   "account.apiTokenDefaultRate": "默认（{limit}）",
   "account.apiTokenEditRate": "修改限额",
@@ -49,5 +49,10 @@ export default {
   'account.sessionExpires': '会话到期时间',
   'account.changePassword': '修改密码',
   'account.passwordSignOutHint': '所有会话将退出登录。',
-  'account.changePasswordTitle': '修改密码'
+  'account.changePasswordTitle': '修改密码',
+  "account.apiTokenCreatedTitle": "令牌已创建",
+  "account.apiTokenOnce": "只显示一次，关闭前复制保存。",
+  "account.apiTokenDefaultLimit": "默认限额 {limit} 次/分钟",
+  "account.apiTokenChangeDefault": "修改",
+  "account.revokeAPITokenMessage": "使用此令牌的请求会立即失败。"
 };

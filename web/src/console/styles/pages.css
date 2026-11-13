@@ -857,3 +857,108 @@
 .enrollment-spinner {width:16px;height:16px;border:2px solid var(--ink-muted);border-top-color:transparent;border-radius:50%;animation:spin .7s var(--ease-linear) infinite;}
 .enrollment-success {color:var(--ok);}
 @media (prefers-reduced-motion:reduce) {.enrollment-spinner {animation:none;}}
+
+/* API 令牌：表格在前，行内图标操作；默认限额作为面板底部一行。 */
+.row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.token-table .token-name {
+  font-weight: var(--fw-medium);
+  overflow-wrap: anywhere;
+}
+
+.token-table th:last-child {
+  position: relative;
+  width: 80px;
+}
+
+/* 手机：令牌改为卡片，名称一行，其余四项两列，操作在右。 */
+@media (max-width: 767px) {
+  .token-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .token-table,.token-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .table-wrap:has(> .token-table) {
+    max-width: none;
+  }
+
+  /* 表格铺满面板时首尾单元格带面板内边距；卡片改由整行承担。 */
+  .panel .table-wrap:not(.nodes-table-wrap) > .token-table > tbody > tr > td:is(:first-child,:last-child) {
+    padding: 0;
+  }
+
+  .token-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto;
+    gap: var(--sp-tight) var(--sp-control);
+    padding: var(--sp-control) var(--panel-padding);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .api-tokens .token-table tbody td {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    font-size: var(--fs-xs);
+  }
+
+  .token-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--ink-muted);
+  }
+
+  .token-table .token-name { grid-column: 1 / 3; grid-row: 1; font-size: var(--fs-sm); }
+  .token-table td:nth-child(2) { display: none; }
+  .token-table td:nth-child(3) { grid-column: 1; grid-row: 2; }
+  .token-table td:nth-child(4) { grid-column: 2; grid-row: 2; }
+  .token-table td:nth-child(5) { grid-column: 1; grid-row: 3; }
+  .token-table td:nth-child(6) { grid-column: 2; grid-row: 3; }
+  .token-table td.actions { grid-column: 3; grid-row: 1 / 4; align-self: start; }
+}
+
+.token-default {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-inline) var(--sp-content);
+  padding-top: var(--sp-control);
+  border-top: 1px solid var(--line);
+  color: var(--ink-subtle);
+  font-size: var(--fs-sm);
+}
+
+.recovery-secret.token-secret {
+  font-size: var(--fs-sm);
+  letter-spacing: 0;
+}
+
+.token-once {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-inline);
+  margin: 0;
+  color: var(--warn);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.token-once .icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
