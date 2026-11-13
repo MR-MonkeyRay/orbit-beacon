@@ -6,7 +6,7 @@ import {validResponse, validService} from '../src/public/validate.js';
 
 const id = '00000000-0000-4000-8000-000000000001';
 const service = (extra = {}) => ({id, name: 'Health', type: 'http', target: 'https://internal.example/health', interval_seconds: 60, timeout_seconds: 10,
-  latency_threshold_ms: 0, display_order: 0, public: true, notify: true, enabled: true, latest: {status: 'up', latency_ms: 12}, availability_24h: 99.9, ...extra});
+  failure_threshold: 2, latency_threshold_ms: 0, display_order: 0, public: true, notify: true, enabled: true, latest: {status: 'up', latency_ms: 12}, availability_24h: 99.9, ...extra});
 const admin = () => setSession({csrf_token: 'csrf', user: {id, username: 'admin', must_change_password: false}, expires_at: ''});
 const control = (root, name) => elements(root).find((element) => element.name === name);
 
@@ -24,8 +24,9 @@ test('service editor switches target placeholders and submits typed payloads inc
     type.value = 'icmp'; type.dispatchEvent(new Event('change'));
     assert.equal(control(root, 'target').placeholder, 'example.com');
     control(root, 'name').value = ' Ping '; control(root, 'target').value = ' example.com ';
-    const fields = Object.fromEntries(['name', 'type', 'target', 'interval_seconds', 'timeout_seconds', 'latency_threshold_ms', 'display_order', 'public', 'notify', 'enabled'].map((name) => [name, control(root, name)]));
-    assert.deepEqual(servicePayload(fields), {name: 'Ping', type: 'icmp', target: 'example.com', interval_seconds: 60, timeout_seconds: 10, latency_threshold_ms: 0, display_order: 0, public: false, notify: false, enabled: true});
+    const fields = Object.fromEntries(['name', 'type', 'target', 'interval_seconds', 'timeout_seconds', 'failure_threshold', 'latency_threshold_ms', 'display_order', 'public', 'notify', 'enabled'].map((name) => [name, control(root, name)]));
+    assert.equal(String(control(root, 'failure_threshold').getAttribute('min') ?? control(root, 'failure_threshold').min), '1'); assert.equal(String(control(root, 'failure_threshold').getAttribute('max') ?? control(root, 'failure_threshold').max), '10');
+    assert.deepEqual(servicePayload(fields), {name: 'Ping', type: 'icmp', target: 'example.com', interval_seconds: 60, timeout_seconds: 10, failure_threshold: 2, latency_threshold_ms: 0, display_order: 0, public: false, notify: false, enabled: true});
     for (const name of ['public', 'notify', 'enabled']) assert.equal(control(root, name).getAttribute('role'), 'switch');
     root.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
     assert.equal(sent[0].url, '/api/v1/services'); assert.equal(sent[0].method, 'POST'); assert.equal(saved, 1);
@@ -34,7 +35,8 @@ test('service editor switches target placeholders and submits typed payloads inc
     const edit = serviceEditor(service(), {saved: async () => { saved++; }});
     control(root, 'enabled').checked = false; control(root, 'display_order').value = '-3';
     root.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
-    assert.equal(sent[1].method, 'PATCH'); assert.equal(sent[1].body.enabled, false); assert.equal(sent[1].body.display_order, -3);
+    // 编辑只提交改动的字段。
+    assert.equal(sent[1].method, 'PATCH'); assert.deepEqual(sent[1].body, {enabled: false, display_order: -3});
     edit.close('done');
   } finally { setSession({user: null, csrf_token: '', expires_at: ''}); dom.restore(); globalThis.fetch = originalFetch; }
 });
@@ -80,17 +82,23 @@ async function groupedPage({groupsFail = false, storage = new Map(), services = 
   const dom = installDOM(); const originalFetch = globalThis.fetch;
   globalThis.localStorage = {getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => { storage.set(key, String(value)); }};
   const navigation = new AbortController(); setNavigationSignal(navigation.signal); admin(); invalidate('serviceGroups');
-  const sent = []; const state = {groups: [groupA, groupB], services};
+  // gates 中按路径挂起的 Promise 让测试控制响应时机。
+  const sent = []; const state = {groups: [groupA, groupB], services, stats: null, batchFails: [], gates: {}};
   globalThis.fetch = async (url, options = {}) => {
     const path = new URL(String(url), 'https://example.com').pathname; const method = options.method || 'GET';
     const body = options.body ? JSON.parse(options.body) : undefined;
     sent.push({path, method, body});
+    if (method !== 'GET' && state.gates[path]) await state.gates[path];
     if (path === '/api/v1/service-groups') return groupsFail ? json({error: {code: 'internal', message: 'boom'}}, 500) : json({service_groups: state.groups});
     if (path === '/api/v1/service-groups/order') { state.groups = body.ids.map((id) => state.groups.find((group) => group.id === id)); return json({service_groups: state.groups}); }
+    if (path === '/api/v1/services' && method === 'POST') return json({...body, id: sid(9)}, 201);
     if (path === '/api/v1/services') return json({services: state.services});
+    if (path === '/api/v1/services/batch') return json({results: body.service_ids.map((id) => state.batchFails?.includes(id)
+      ? {service_id: id, status: 'failed', error: {code: 'not_found', message: 'Service not found'}} : {service_id: id, status: 'succeeded'})});
     const target = state.services.find((item) => path.endsWith(item.id));
+    if (method === 'GET') return json({...target, stats: state.stats});
     // PATCH 生效到夹具，保存后的重新读取才能看到分组变化。
-    if (method === 'PATCH' && Object.hasOwn(body, 'group_id')) target.group_id = body.group_id;
+    if (method === 'PATCH') Object.assign(target, body);
     return json(target);
   };
   const {servicesPage} = await import('../src/console/pages/services.js');
@@ -193,7 +201,7 @@ test('the monitor editor moves a monitor between groups and clears it with null'
     control(lastDialog(env.dom), 'name').value = 'CDN edge';
     await submit(env.dom);
     const unchanged = env.sent.filter((call) => call.method === 'PATCH').at(-1);
-    assert.equal(unchanged.body.name, 'CDN edge'); assert.equal(Object.hasOwn(unchanged.body, 'group_id'), false);
+    assert.deepEqual(unchanged.body, {name: 'CDN edge'});
   } finally { const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs(); env.restore(); }
 });
 
@@ -205,8 +213,9 @@ test('a failed group read keeps monitors in one list and leaves the group untouc
     assert.equal(env.page.querySelectorAll('.service-name').length, 4);
     env.page.querySelector(`#service-edit-${sid(1)}`).click(); await flush();
     assert.equal(control(lastDialog(env.dom), 'group_id'), undefined);
+    control(lastDialog(env.dom), 'name').value = 'API v2';
     await submit(env.dom);
-    assert.equal(Object.hasOwn(env.sent.find((call) => call.method === 'PATCH').body, 'group_id'), false);
+    assert.deepEqual(env.sent.find((call) => call.method === 'PATCH').body, {name: 'API v2'});
   } finally { const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs(); env.restore(); }
 });
 
@@ -251,6 +260,160 @@ test('the group manager moves the clicked group even after the list changed unde
     assert.deepEqual(sent[0].body.ids, [groupC.id, groupB.id, groupA.id]);
     dialog.close('done');
   } finally { const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs(); setSession({user: null, csrf_token: '', expires_at: ''}); dom.restore(); globalThis.fetch = originalFetch; }
+});
+
+const checkboxOf = (root, id) => root.querySelector(`#${id}`);
+const tick = (control, checked = true) => { control.checked = checked; control.dispatchEvent(new Event('change')); };
+
+test('selected monitors run batch actions and only failures are reported', async () => {
+  const env = await groupedPage();
+  try {
+    const bar = env.page.querySelector('.bulk-actions');
+    assert.equal(bar.hidden, true);
+    tick(checkboxOf(env.page, `service-select-${sid(1)}`)); tick(checkboxOf(env.page, `service-select-${sid(4)}`));
+    assert.equal(bar.hidden, false);
+    assert.equal(bar.querySelector('.selection-count').textContent, copy('services.selected', {count: 2}));
+    const groupBox = checkboxOf(env.page, `service-group-select-${groupA.id}`);
+    assert.equal(groupBox.indeterminate, true);
+    env.state.batchFails = [sid(4)];
+    textButton(bar, copy('services.batch.pause')).click(); await flush(); await flush(); await flush();
+    const call = env.sent.find((item) => item.path === '/api/v1/services/batch');
+    assert.deepEqual(call.body, {service_ids: [sid(1), sid(4)], action: 'pause'});
+    const report = lastDialog(env.dom);
+    assert.equal(report.querySelector('h2').textContent, copy('services.batch.failed', {count: 1}));
+    assert.ok(report.textContent.includes('Mail')); assert.equal(report.textContent.includes('API'), false);
+    assert.equal(env.page.querySelector('.bulk-actions').hidden, true);
+    assert.equal(checkboxOf(env.page, `service-select-${sid(1)}`).checked, false);
+    // 操作栏隐藏后焦点不能留在被隐藏的按钮上；失败列表关闭后回到“全选”。
+    textButton(report, copy('nodes.close')).click(); report.dispatchEvent(new Event('animationend')); await flush();
+    assert.equal(document.activeElement, checkboxOf(env.page, 'service-select-all'));
+  } finally { const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs(); env.restore(); }
+});
+
+test('group and filtered select-all pick only matching monitors, collapsed groups included', async () => {
+  const storage = new Map([['orbitbeacon-service-groups-collapsed', JSON.stringify([groupA.id])]]);
+  const env = await groupedPage({storage});
+  try {
+    tick(checkboxOf(env.page, `service-group-select-${groupA.id}`));
+    assert.equal(env.page.querySelector('.selection-count').textContent, copy('services.selected', {count: 3}));
+    assert.equal(checkboxOf(env.page, `service-group-select-${groupA.id}`).checked, true);
+    tick(checkboxOf(env.page, `service-group-select-${groupA.id}`), false);
+    textButton(env.page, copy('services.status.down')).click();
+    tick(checkboxOf(env.page, 'service-select-all'));
+    assert.equal(env.page.querySelector('.selection-count').textContent, copy('services.selected', {count: 1}));
+    textButton(env.page, copy('nodes.all')).click();
+    assert.equal(checkboxOf(env.page, 'service-select-all').indeterminate, true);
+    assert.equal(checkboxOf(env.page, `service-group-select-${groupB.id}`).disabled, true);
+  } finally { env.restore(); }
+});
+
+test('batch move asks for a group, sends null for ungrouped, and delete needs confirmation', async () => {
+  const env = await groupedPage();
+  try {
+    tick(checkboxOf(env.page, `service-select-${sid(1)}`));
+    textButton(env.page.querySelector('.bulk-actions'), copy('services.batch.move')).click(); await flush();
+    let dialog = lastDialog(env.dom);
+    const target = control(dialog, 'group_id');
+    assert.deepEqual(target.options.map((option) => option.value), ['', groupA.id, groupB.id, '__new']);
+    dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
+    // 关闭动画结束后才发请求。
+    dialog.dispatchEvent(new Event('animationend')); await flush(); await flush(); await flush();
+    assert.deepEqual(env.sent.find((item) => item.path === '/api/v1/services/batch').body, {service_ids: [sid(1)], action: 'move', group_id: null});
+    tick(checkboxOf(env.page, `service-select-${sid(2)}`));
+    textButton(env.page.querySelector('.bulk-actions'), copy('services.batch.delete')).click(); await flush();
+    dialog = lastDialog(env.dom);
+    assert.equal(dialog.querySelector('h2').textContent, copy('services.batch.deleteTitle', {count: 1}));
+    textButton(dialog, copy('controls.cancel')).click(); dialog.dispatchEvent(new Event('animationend')); await flush(); await flush();
+    assert.equal(env.sent.filter((item) => item.path === '/api/v1/services/batch').length, 1);
+    assert.equal(env.page.querySelector('.bulk-actions').hidden, false);
+  } finally { const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs(); env.restore(); }
+});
+
+test('row menu pauses or resumes a monitor and clones it into a new one', async () => {
+  const env = await groupedPage();
+  try {
+    const menuOf = (id) => env.page.querySelector(`#service-menu-${id}`).parentElement;
+    const items = (id) => menuOf(id).querySelectorAll('.menu-item');
+    assert.deepEqual(items(sid(3)).map((item) => item.textContent), [copy('services.resume'), copy('services.clone'), copy('services.delete')]);
+    items(sid(1))[0].click(); await flush(); await flush();
+    assert.deepEqual(env.sent.find((item) => item.method === 'PATCH').body, {enabled: false});
+    assert.equal(items(sid(1))[0].textContent, copy('services.resume'));
+    items(sid(2))[1].click(); await flush();
+    const dialog = lastDialog(env.dom);
+    assert.equal(control(dialog, 'name').value, `CDN${copy('services.cloneSuffix')}`);
+    assert.equal(control(dialog, 'target').value, 'https://cdn.example');
+    assert.equal(control(dialog, 'group_id').value, groupA.id);
+    await submit(env.dom);
+    const created = env.sent.find((item) => item.method === 'POST' && item.path === '/api/v1/services');
+    assert.equal(created.body.name, `CDN${copy('services.cloneSuffix')}`); assert.equal(created.body.group_id, groupA.id);
+    assert.equal(Object.hasOwn(created.body, 'id'), false);
+    const {cloneName} = await import('../src/console/pages/services.js');
+    assert.equal([...cloneName('名'.repeat(100))].length, 100);
+  } finally { const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs(); env.restore(); }
+});
+
+// 挂起某路径的写请求，返回放行函数。
+const gate = (env, path) => {
+  let open; env.state.gates[path] = new Promise((done) => { open = done; });
+  return () => { delete env.state.gates[path]; open(); };
+};
+
+test('a pending batch keeps selections made meanwhile and row actions on one monitor do not overlap', async () => {
+  const env = await groupedPage();
+  try {
+    const release = gate(env, '/api/v1/services/batch');
+    tick(checkboxOf(env.page, `service-select-${sid(1)}`));
+    textButton(env.page.querySelector('.bulk-actions'), copy('services.batch.pause')).click(); await flush();
+    tick(checkboxOf(env.page, `service-select-${sid(4)}`));
+    release(); await flush(); await flush(); await flush();
+    assert.deepEqual(env.sent.find((item) => item.path === '/api/v1/services/batch').body.service_ids, [sid(1)]);
+    assert.equal(checkboxOf(env.page, `service-select-${sid(1)}`).checked, false);
+    assert.equal(checkboxOf(env.page, `service-select-${sid(4)}`).checked, true);
+    assert.equal(env.page.querySelector('.selection-count').textContent, copy('services.selected', {count: 1}));
+    const open = gate(env, `/api/v1/services/${sid(4)}`);
+    const pause = () => env.page.querySelector(`#service-menu-${sid(4)}`).parentElement.querySelectorAll('.menu-item')[0];
+    pause().click(); await flush(); pause().click(); await flush();
+    open(); await flush(); await flush();
+    assert.equal(env.sent.filter((item) => item.method === 'PATCH').length, 1);
+  } finally { const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs(); env.restore(); }
+});
+
+test('saving an edit refocuses the re-rendered edit button and an unchanged edit sends nothing', async () => {
+  const env = await groupedPage();
+  try {
+    const edit = env.page.querySelector(`#service-edit-${sid(2)}`);
+    edit.focus(); edit.click(); await flush();
+    const dialog = lastDialog(env.dom);
+    control(dialog, 'name').value = 'CDN 2';
+    await submit(env.dom);
+    dialog.dispatchEvent(new Event('animationend')); await flush();
+    const fresh = env.page.querySelector(`#service-edit-${sid(2)}`);
+    assert.notEqual(fresh, edit);
+    assert.equal(document.activeElement, fresh);
+    fresh.click(); await flush();
+    const before = env.sent.length;
+    await submit(env.dom);
+    assert.equal(env.sent.length, before);
+  } finally { const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs(); env.restore(); }
+});
+
+test('the 24-hour strip shows one bar per hour and the detail shows window statistics', async () => {
+  const hours = [...Array(22).fill(null), 100, 50];
+  const env = await groupedPage({services: [service({id: sid(1), name: 'API', recent_hours: hours}), service({id: sid(2), name: 'Old'})]});
+  try {
+    const strip = env.page.querySelector('.service-strip');
+    const bars = strip.querySelectorAll('.availability-day');
+    assert.equal(bars.length, 24);
+    assert.ok(bars[0].classList.contains('availability-neutral'));
+    assert.ok(bars[22].classList.contains('availability-normal')); assert.ok(bars[23].classList.contains('availability-critical'));
+    assert.equal(env.page.querySelectorAll('.service-strip').length, 1);
+    env.state.stats = {availability_24h: 99.5, availability_7d: null, availability_30d: 98, avg_latency_ms_24h: 12.5};
+    const {serviceDetail} = await import('../src/console/pages/services.js');
+    serviceDetail(env.state.services[0], new AbortController().signal); await flush(); await flush();
+    const tiles = lastDialog(env.dom).querySelectorAll('.stat-tile').map((tile) => tile.querySelector('dd').textContent);
+    assert.equal(tiles.length, 4);
+    assert.equal(tiles[1], copy('common.unavailable')); assert.ok(tiles[0].startsWith('99.5')); assert.ok(tiles[3].includes('12.5'));
+  } finally { const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs(); env.restore(); }
 });
 
 test('public services strictly validate 30 nullable percentages and reject target/error leakage', () => {

@@ -1,7 +1,7 @@
 import {t} from './i18n.js';
 
 const errorKeys = new Set([
-  'api_token_limit', 'service_capacity_reached',
+  'api_token_limit', 'service_capacity_reached', 'service_group_capacity_reached', 'service_not_found',
  'totp_required', 'totp_invalid', 'totp_already_enabled', 'totp_setup_expired',
   'command_same_version', 'command_not_allowed', 'command_active', 'node_unavailable',
   'unauthenticated', 'forbidden', 'password_change_required', 'password_unchanged', 'public_page_disabled',
@@ -30,6 +30,7 @@ const fieldReasons = new Map([
   ['must be between 30 and 3600', 'services.validation.interval'],
   ['must be between 1 and 30 and less than interval', 'services.validation.timeout'],
   ['must be between 0 and 3600000', 'services.validation.threshold'],
+  ['must be between 1 and 10', 'services.validation.failureThreshold'], ['must be an integer between 1 and 10', 'services.validation.failureThreshold'],
   ['must be a signed 32-bit integer', 'services.validation.order'],
   ['must be one of http, tcp, icmp', 'services.validation.type'],
   ['must match the service type without credentials', 'services.validation.target'],
