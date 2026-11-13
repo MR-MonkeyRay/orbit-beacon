@@ -2,7 +2,7 @@ import {t} from '../i18n.js';
 import {h} from '../../shared/dom.js';
 import {api, getNavigationSignal, getSessionSignal} from '../api.js';
 import {absoluteWhen} from '../format.js';
-import {button, dataTable, panel} from '../ui/components.js';
+import {button, dataTable, uid} from '../ui/components.js';
 import {confirmDialog} from '../ui/dialogs.js';
 import {typedConfirmation, upgradeConfirmation} from '../ui/typed-confirmation.js';
 import {toastError} from '../ui/feedback.js';
@@ -12,7 +12,7 @@ const kinds = ['upgrade', 'restart', 'stop'];
 const activeCommand = (command) => ['pending', 'delivered'].includes(command.state);
 const resultCodes = ['disabled_locally', 'unsupported', 'interrupted', 'failed', 'download', 'checksum', 'self_check', 'downgrade', 'rolled_back'];
 
-export function nodeCommandsPanel(node, signal = getNavigationSignal(), {heading = 'h2'} = {}) {
+export function nodeCommandsPanel(node, signal = getNavigationSignal()) {
   const path = `/nodes/${encodeURIComponent(node.id)}/commands`;
   const sessionSignal = getSessionSignal();
   let records = [];
@@ -27,7 +27,10 @@ export function nodeCommandsPanel(node, signal = getNavigationSignal(), {heading
   }));
   const body = h('tbody');
   const table = dataTable({columns: [t('nodes.command.kind'), t('nodes.command.status'), t('nodes.command.requestedBy'), t('settings.created'), h('span', {class: 'sr'}, t('settings.actions'))], body, hidden: true});
-  const element = panel(t('nodes.commands'), {heading}, h('div', {class: 'head-actions'}, controls), table);
+  // 管理列表中的一行：标题在左、三个指令在右，指令记录表紧随其下。
+  const headingID = uid('commands');
+  const element = h('section', {class: 'node-action-block', 'aria-labelledby': headingID},
+    h('div', {class: 'node-action-row'}, h('h3', {id: headingID}, t('nodes.commands')), h('div', {class: 'head-actions'}, controls)), table);
   const patch = () => {
     controls.forEach((control) => {
       const unavailable = !active() || !loaded || node.deleted || node.presence !== 'online' || node.status === 'disabled' || node.stopped;

@@ -14,24 +14,25 @@
   margin-bottom: var(--sp-inline);
 }
 
-.traffic-cycle .facts {
+.traffic-period {
+  margin-bottom: var(--sp-control);
+}
+
+.traffic-content .history-metric-head .chart-legend {
+  margin: 0;
+}
+
+/* 配额输入与单位合成一个控件，单位下拉保持窄。 */
+.input-unit {
   display: grid;
-  grid-template-columns: repeat(3,minmax(0,1fr));
-  gap: var(--sp-control);
-  margin-top: var(--sp-control);
+  grid-template-columns: minmax(0,1fr) minmax(84px,auto);
+  gap: var(--sp-tight);
 }
 
-.traffic-cycle .facts>div {
-  display: block;
-  min-width: 0;
-  border: 0;
-  padding: 0;
-}
-
-.traffic-cycle .facts dd {
-  margin-top: var(--sp-tight);
-  overflow-wrap: anywhere;
-  font-variant-numeric: tabular-nums;
+@media (min-width:768px) {
+  .billing-row {
+    grid-template-columns: minmax(0,1.4fr) minmax(0,1fr) minmax(0,1fr);
+  }
 }
 
 .traffic-quota {

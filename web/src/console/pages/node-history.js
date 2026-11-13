@@ -90,19 +90,23 @@ export function historyPanel(id, signal, latest) {
       for (const control of loadControls) control.setAttribute('aria-pressed', String(control.dataset.metric === loadMetric));
       load();
     }}, t('nodes.duration.minutes', {minutes: Number(value.slice(4))})));
-  const loadSelector = h('div', {class: 'segmented', role: 'group', 'aria-label': t('nodes.load')}, loadControls);
+  const loadSelector = h('div', {class: 'segmented segmented-sm', role: 'group', 'aria-label': t('nodes.load')}, loadControls);
   const diskSelect = select([], '', {id: 'history-disk', 'aria-label': t('nodes.disk'), onchange: () => {
     if (disk === diskSelect.value) return;
     disk = diskSelect.value;
     load();
   }});
   const diskSelector = h('div', {class: 'head-actions history-disk', hidden: true}, h('label', {htmlFor: 'history-disk'}, t('nodes.disk')), diskSelect);
+  // 每张图的标题行等高，负载切换靠右，网格里同一行的图框顶边对齐。
   const metricSection = (item, content) => h('section', {class: 'history-metric', 'aria-label': t('nodes.historyAria', {title: item.title})},
-    item.unit === 'load' ? h('div', {class: 'head-actions'}, h('h3', null, item.title), loadSelector) : h('h3', null, item.title), content);
+    h('div', {class: 'history-metric-head'}, h('h3', null, item.title), item.unit === 'load' ? loadSelector : null), content);
 
-  const maximumNote = h('p', {class: 'chart-legend history-legend'}, h('span', {class: 'chart-key'},
-    h('i', {class: 'chart-maximum-key', 'aria-hidden': 'true'}), t('nodes.chart.maximum')));
-  const root = panel(t('nodes.history'), {action: selector}, status, shortSpan, maximumNote, charts, more);
+  // 平均/最大值图例只出现一次，与“数据较少”提示同一行，不再单独占行。
+  const legendKey = (className, label) => h('span', {class: 'chart-key'}, h('i', {class: className, 'aria-hidden': 'true'}), label);
+  const maximumNote = h('p', {class: 'chart-legend history-legend'},
+    legendKey('chart-average-key', t('nodes.chart.average')), legendKey('chart-maximum-key', t('nodes.chart.maximum')));
+  const bar = h('div', {class: 'history-bar'}, maximumNote, shortSpan);
+  const root = panel(t('nodes.history'), {action: selector}, status, bar, charts, more);
   more.insertBefore(diskSelector, extraCharts);
   // Paths follow the current sample, including updates from the node live stream.
   root.snapshot = (sample) => {
@@ -161,7 +165,7 @@ export function historyPanel(id, signal, latest) {
           charts.replaceChildren();
           extraCharts.replaceChildren();
           more.hidden = true;
-          maximumNote.hidden = true;
+          bar.hidden = true;
           charts.setAttribute('aria-busy', 'false');
           status.replaceChildren(...tParts('nodes.nodeMissingPrefix', {link: link('/nodes', t('nodes.goNodes'))}));
         }

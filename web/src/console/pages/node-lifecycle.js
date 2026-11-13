@@ -2,7 +2,7 @@ import {t} from '../i18n.js';
 import {h} from '../../shared/dom.js';
 import {api, getNavigationSignal, getSessionEpoch, invalidate} from '../api.js';
 import {go, refresh} from '../router.js';
-import {busy, button, panel} from '../ui/components.js';
+import {busy, button} from '../ui/components.js';
 import {confirmDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {issueEnrollment} from './enrollments.js';
@@ -69,14 +69,10 @@ export function lifecycleActions(node) {
       title: t('nodes.deleteTitle', {name: node.name}), expected: node.name, confirm: t('nodes.deleteNode'),
       message: t('nodes.deleteNodeIntro')
     }), () => api(`${path}?confirm=true`, {method: 'DELETE'}), async () => { await go('/nodes', {force: true}); toast(t('nodes.deletedDone', {name: node.name})); });
-    const row = (title, description, control) => h('div', {class: 'node-action-row'},
-      h('div', null, h('h3', null, title), description ? h('p', {class: 'text-note'}, description) : null), control);
-    const danger = panel(t('nodes.dangerZone'), {},
-      row(t('nodes.revokeCredential'), t('nodes.revokeIntro'), revoke),
-      row(t('nodes.deleteNode'), t('nodes.deleteNodeIntro'), remove));
-    danger.classList.add('node-danger');
-    management = h('div', {class: 'stack'},
-      panel(t('nodes.install'), {}, row(t('nodes.installCommand'), null, install)), danger);
+    // 每行一个标题和一个按钮；后果说明只放在确认对话框里，危险行整行着色。
+    const row = (title, control, danger = false) => h('div', {class: `node-action-row${danger ? ' danger' : ''}`}, h('h3', null, title), control);
+    management = h('div', {class: 'node-action-list'}, row(t('nodes.installCommand'), install),
+      row(t('nodes.revokeCredential'), revoke, true), row(t('nodes.deleteNode'), remove, true));
     element.snapshot();
     return management;
   };

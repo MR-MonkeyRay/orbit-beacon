@@ -1320,3 +1320,30 @@ dialog.closing::backdrop {
 
 .switch:has(input:disabled) { cursor: default; color: var(--ink-muted); }
 .switch input:disabled+.switch-track { opacity: .5; }
+
+/* 数值块：小标签在上、数值在下，用于流量周期等汇总。 */
+.stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit,minmax(min(100%,150px),1fr));
+  gap: var(--sp-inline);
+  margin: 0;
+}
+.stat-tile {
+  min-width: 0;
+  padding: var(--sp-control) var(--sp-content);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.stat-tile dt {
+  color: var(--ink-muted);
+  font-size: var(--fs-sm);
+}
+.stat-tile dd {
+  margin: var(--sp-tight) 0 0;
+  color: var(--ink);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}

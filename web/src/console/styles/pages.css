@@ -559,34 +559,14 @@
 }
 
 /* 探测目标是不可信文本，可能包含长 URL。 */
-.probe-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.probe-target-cell {
+  min-width: 180px;
+  max-width: 420px;
 }
 
-.probe-row {
-  min-width: 0;
-  padding: var(--sp-content) 0;
-  border-top: 1px solid var(--line);
-}
-
-.probe-row:first-child {
-  padding-top: 0;
-  border-top: 0;
-}
-
-.probe-row:last-child {
-  padding-bottom: 0;
-}
-
-.probe-heading {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--sp-inline) var(--sp-control);
-  margin-bottom: var(--sp-control);
-  min-width: 0;
+/* 单张延迟图横向铺满时过高，限制宽度让高度保持在约 330px 内。 */
+.probes-history .history-chart {
+  max-width: 880px;
 }
 
 .probe-target {
@@ -660,30 +640,41 @@
 .node-public-checks .check-row { align-items: center; gap: var(--sp-inline); font-size: var(--fs-sm); }
 .node-public-checks input { margin: 0; }
 .node-public-checks .check-row:has(input:disabled) { color: var(--ink-muted); }
-.node-settings { --node-label-width: 180px; }
+/* 节点设置：标签在上的紧凑字段。宽屏两列——基本信息在左，位置与备注在右，套餐占满一行。 */
+.node-settings { display: grid; gap: var(--sp-content); align-items: start; }
 .node-settings>.panel { margin: 0; }
 .node-settings-fields { display: grid; gap: var(--sp-content); }
-.node-settings-fields>.field { grid-template-columns: var(--node-label-width) minmax(0,1fr); column-gap: var(--sp-content); align-items: start; }
-.node-settings-fields>.field>.field-label-row,.node-settings-fields>.field>.field-label { padding-top: var(--sp-inline); }
-.node-settings-fields>.field>.text-note,.node-settings-fields>.field>.field-error { grid-column: 2; }
-.node-settings-fields>.field>label { align-self: start; padding-top: var(--sp-inline); }
+@media (min-width:1100px) {
+  .node-settings { grid-template-columns: repeat(2,minmax(0,1fr)); grid-template-areas: "basic location" "basic notes" "plan plan" "save save"; }
+  .node-card-basic { grid-area: basic; align-self: stretch; }
+  .node-card-location { grid-area: location; }
+  .node-card-notes { grid-area: notes; }
+  .node-card-plan { grid-area: plan; }
+  .node-settings>.node-save-bar { grid-area: save; }
+  .node-card-plan .node-settings-fields { grid-template-columns: repeat(2,minmax(0,1fr)); column-gap: var(--sp-group); }
+  .node-card-plan .node-settings-fields>:last-child { grid-column: 1 / -1; }
+}
 .node-price { display: grid; grid-template-columns: minmax(0,2fr) minmax(0,1fr); gap: var(--sp-inline); min-width: 0; }
 .node-price>.field { align-content: start; }
 .node-inline-checks { display: flex; flex-wrap: wrap; gap: var(--sp-content); min-height: var(--control-h); align-items: center; }
 .node-inline-checks label { display: inline-flex; align-items: center; gap: var(--sp-inline); cursor: pointer; }
 .node-inline-checks input { width: 18px; height: 18px; accent-color: var(--orbit); }
-.node-switch-row .switch { display: grid; grid-template-columns: var(--node-label-width) minmax(0,1fr); column-gap: var(--sp-content); align-items: center; }
-.node-switch-row .switch-text { grid-column: 1; grid-row: 1; font-size: var(--fs-sm); font-weight: var(--fw-semibold); }
-.node-switch-row .switch-track { grid-column: 2; grid-row: 1; }
-.node-save-bar { position: sticky; bottom: var(--sp-control); z-index: var(--z-sticky); padding: var(--sp-control) var(--sp-content); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--shadow); }
-.node-action-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-content); }
-.node-action-row>div { min-width: 0; }
-.node-action-row h3 { font-size: var(--fs-base); font-weight: var(--fw-semibold); }
-.node-action-row p { margin-top: var(--sp-tight); }
+.node-switch-row { display: flex; align-items: center; min-height: var(--control-h); }
+.node-switch-row .switch-text { font-size: var(--fs-sm); font-weight: var(--fw-semibold); }
+/* 保存条平时随表单结束；有未保存修改时贴住视口底部浮起。 */
+.node-save-bar { padding: var(--sp-control) var(--sp-content); border: 1px solid transparent; border-radius: var(--r-lg); }
+.node-save-bar:has(.dirty-note.on) { position: sticky; bottom: var(--sp-control); z-index: var(--z-sticky); border-color: var(--line); background: var(--panel); box-shadow: var(--shadow); }
+/* 管理标签页：一张面板内的操作列表，行高一致、按钮靠右；危险行铺满面板宽度着色。 */
+.panel.node-manage > .panel-body { padding: 0; }
+.node-manage .table-wrap { margin-inline: 0; }
+.node-action-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-inline) var(--sp-content); min-height: 64px; padding: var(--sp-control) var(--panel-padding); }
+.node-action-row h3 { min-width: 0; font-size: var(--fs-base); font-weight: var(--fw-medium); }
 .node-action-row>.btn { flex: none; }
-.node-action-row+.node-action-row { margin-top: var(--sp-content); padding-top: var(--sp-content); border-top: 1px solid var(--line); }
-.node-danger { border-color: color-mix(in srgb,var(--bad) 35%,var(--line)); background: color-mix(in srgb,var(--bad-bg) 35%,var(--panel)); }
-.node-danger>.panel-head h2 { color: var(--bad); }
+.node-action-block > .table-wrap { margin-bottom: var(--sp-control); }
+.node-manage .panel-body > * + *,.node-action-list > * + * { border-top: 1px solid var(--line); }
+.node-action-row.danger { background: color-mix(in srgb,var(--bad-bg) 40%,var(--panel)); }
+.node-action-row.danger h3 { color: var(--bad); }
+.node-action-row.danger:last-child { border-end-start-radius: var(--r-lg); border-end-end-radius: var(--r-lg); }
 
 /* 最新样本：主读数、速率与次要信息各占一层。 */
 .sample-primary,.sample-rates,.sample-secondary {

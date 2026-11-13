@@ -125,7 +125,7 @@ test('load selector stays in one chart header and requests each selected metric'
       const start = env.requests.length;
       const button = env.root.querySelector(`#history-load-load${minutes}`);
       assert.equal(button.textContent, copy('nodes.duration.minutes', {minutes}));
-      assert.equal(button.parentElement.className, 'segmented');
+      assert.equal(button.parentElement.className, 'segmented segmented-sm');
       assert.equal(button.parentElement.getAttribute('aria-label'), copy('nodes.load'));
       assert.equal(button.parentElement.parentElement.querySelector('h3').textContent, copy('nodes.load'));
       button.focus();

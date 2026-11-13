@@ -156,7 +156,7 @@ test('probe certificate expiry appears only on probes with a certificate', async
     env.respond(env.requests[0], {probes: [probe({target: 'https://example.com', status: 'down', error: 'http_status', status_code: 302, tls_expires_at: expiry}), probe({target: 'dns://example.com'})]});
     await flush();
     const rows = env.root.querySelectorAll('.probe-row');
-    assert.ok(rows[0].textContent.includes(copy('nodes.probe.tlsExpires')));
+    assert.ok(env.root.querySelector('thead').textContent.includes(copy('nodes.probe.tlsExpires')));
     assert.ok(rows[0].textContent.includes(`${copy('nodes.probe.http')} (302)`));
     assert.equal(rows[0].querySelector('time').getAttribute('datetime'), expiry);
     assert.ok(!rows[1].textContent.includes(copy('nodes.probe.tlsExpires')));
@@ -219,7 +219,7 @@ test('probe latency omits chart sections without points or targets and hides a s
     env.respond(env.requests[2], {probes: []});
     await flush();
     assert.equal(env.requests.length, 3);
-    assert.equal(env.root.querySelector('.segmented').parentElement.hidden, true);
+    assert.equal(env.root.querySelector('.probes-history').hidden, true);
     assert.equal(env.root.querySelectorAll('.history-metric').length, 0);
   } finally { env.cleanup(); }
 });
@@ -259,7 +259,7 @@ test('probe history ignores stale responses, cancels on navigation and keeps the
     env.respond(env.requests[5], history());
     await flush();
     assert.equal(env.root.querySelector('.history-error'), null);
-    assert.equal(env.root.querySelector('.stack').children[2].hidden, true);
+    assert.equal(env.root.querySelector('.probes-history').querySelector('.panel-body').children[0].hidden, true);
     const current2 = env.root.querySelector('#probe-history-chart');
     env.root.querySelector('#probe-history-range-24h').click();
     const pending = env.requests[6];

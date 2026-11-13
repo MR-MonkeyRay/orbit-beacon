@@ -69,6 +69,11 @@
   min-width: 0;
 }
 
+/* 同排字段高度不一（如带提示）时不拉伸行高，输入框保持顶边对齐。 */
+.form-row > .field {
+  align-content: start;
+}
+
 .form.form-compact {
   display: flex;
   flex-wrap: wrap;

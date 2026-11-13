@@ -27,10 +27,29 @@
   min-width: 0;
 }
 
+.history-metric-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-tight) var(--sp-inline);
+  min-height: 32px;
+  margin-bottom: var(--sp-tight);
+}
+
 .history-metric h3 {
   font-size: var(--fs-sm);
   font-weight: var(--fw-heading);
-  margin-bottom: var(--sp-inline);
+}
+
+.segmented-sm {
+  padding: 2px;
+}
+
+.segmented-sm button {
+  min-height: 24px;
+  padding: 0 var(--sp-inline);
+  font-size: var(--fs-xs);
 }
 
 .history-metric>.text-note {
@@ -69,6 +88,10 @@
 
 .chart-key .chart-maximum-key {
   border-top: 1px dotted var(--ink-subtle);
+}
+
+.chart-key .chart-average-key {
+  color: var(--orbit);
 }
 
 .chart-series {
@@ -197,7 +220,40 @@
   gap: var(--sp-inline);
 }
 
-.history-legend { margin-top: var(--sp-content); }
-.history-more { margin-top: var(--sp-content); border-top: 1px solid var(--line); padding-top: var(--sp-content); }
-.history-more>summary { cursor: pointer; font-weight: var(--fw-medium); }
-.history-more>.history-disk { margin-top: var(--sp-content); }
+.history-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-inline) var(--sp-content);
+  min-height: 32px;
+}
+.history-bar .history-legend { margin: 0; }
+.history-short-span { font-size: var(--fs-sm); }
+
+/* “更多指标”是整行可点的展开条：右侧箭头随展开旋转。 */
+.history-more { margin-top: var(--sp-group); border-top: 1px solid var(--line); }
+.history-more>summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-inline);
+  min-height: var(--control-h);
+  color: var(--ink-subtle);
+  font-weight: var(--fw-medium);
+  list-style: none;
+  cursor: pointer;
+}
+.history-more>summary::-webkit-details-marker { display: none; }
+.history-more>summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform var(--motion-fast) var(--ease);
+}
+.history-more[open]>summary::after { transform: translateY(2px) rotate(-135deg); }
+@media (hover:hover) { .history-more>summary:hover { color: var(--ink); } }
+.history-more>.history-disk { justify-content: flex-end; margin-top: var(--sp-tight); }

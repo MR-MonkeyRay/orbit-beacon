@@ -159,8 +159,9 @@ export async function nodePage() {
     {id: 'manage', label: t('nodes.manage'), icon: 'key', build: () => {
       commands ||= nodeCommandsPanel(node, signal);
       commands.snapshot(node);
-      return {element: h('div', {class: 'stack node-manage'}, commands.element, actions.manage()),
-        attach: commands.attach, detach: commands.detach};
+      const element = panel(null, {}, commands.element, actions.manage());
+      element.classList.add('node-manage');
+      return {element, attach: commands.attach, detach: commands.detach};
     }},
     {id: 'settings', label: t('shell.settings'), icon: 'sliders', build: () => detailsTab(node, groups, () => {
       title.textContent = node.name;
@@ -270,24 +271,27 @@ function detailsTab(node, groups, onSaved) {
   });
   const get = (key) => extra.find(([name]) => name === key)[1];
   const row = (key) => field(t(`nodes.field.${key}`), get(key));
-  const price = h('div', {class: 'node-price'}, row('price_amount'), row('price_currency'));
+  // 价格是一个字段：金额与币种并排，币种用占位符示例，不再各带一层小标签。
+  get('price_currency').setAttribute('aria-label', t('nodes.field.price_currency'));
+  get('price_currency').placeholder = 'USD';
+  const price = field(t('nodes.field.price'), get('price_amount'), {inner: h('div', {class: 'node-price'}, get('price_amount'), get('price_currency'))});
   const ip = h('div', {class: 'node-inline-checks'}, ['ipv4', 'ipv6'].map((key) => h('label', null, get(key), t(`nodes.field.${key}`))));
   const controls = saveBar(t('nodes.saveChanges'), 'node-save');
   controls.bar.classList.add('node-save-bar');
-  const card = (label, ...rows) => {
+  const card = (label, area, ...rows) => {
     const result = panel(label, {}, h('div', {class: 'node-settings-fields'}, rows));
-    result.classList.add('node-settings-card');
+    result.classList.add('node-settings-card', `node-card-${area}`);
     return result;
   };
+  // 宽屏两列：基本信息在左，位置与备注在右，套餐占满一行；地区占位符已说明自动检测，不再加提示。
   const form = h('form', {class: 'form form-wide node-settings'},
-    card(t('nodes.basic'), field(t('nodes.name'), name), field(t('nodes.group'), groupID), tags, row('display_order')),
-    card(t('nodes.location'), field(t('nodes.region'), region, {hint: t('nodes.regionHint')}), field(t('nodes.provider'), provider)),
-    card(t('nodes.plan'), field(t('nodes.expiresOn'), expiresOn),
-      h('div', {class: 'field node-price-row'}, h('span', {class: 'field-label'}, t('nodes.field.price')), price), row('billing_cycle'),
-      h('div', {class: 'node-switch-row'}, toggleSwitch(t('nodes.field.auto_renew'), get('auto_renew'))),
-      row('bandwidth'), h('div', {class: 'field node-ip-row'}, h('span', {class: 'field-label'}, t('nodes.field.ip_version')), ip),
-      row('network_route'), row('plan_extra')),
-    card(t('nodes.notes'), field(t('nodes.privateNotes'), notes)), controls.bar);
+    card(t('nodes.basic'), 'basic', field(t('nodes.name'), name), field(t('nodes.group'), groupID), tags, row('display_order')),
+    card(t('nodes.location'), 'location', field(t('nodes.region'), region), field(t('nodes.provider'), provider)),
+    card(t('nodes.plan'), 'plan', field(t('nodes.expiresOn'), expiresOn), row('billing_cycle'),
+      price, row('bandwidth'),
+      row('network_route'), h('div', {class: 'field node-ip-row'}, h('span', {class: 'field-label'}, t('nodes.field.ip_version')), ip),
+      h('div', {class: 'node-switch-row'}, toggleSwitch(t('nodes.field.auto_renew'), get('auto_renew'))), row('plan_extra')),
+    card(t('nodes.notes'), 'notes', field(t('nodes.privateNotes'), notes)), controls.bar);
   editableForm(form, controls, async () => {
     if (!tagBox.commit()) throw new Error(t('nodes.tagInvalid'));
     const result = await api(`/nodes/${encodeURIComponent(node.id)}`, {method: 'PATCH', body: {
@@ -328,8 +332,11 @@ function publicTab(node, settings, onSaved) {
     h('legend', null, t(`nodes.${group}`)),
     h('div', {class: 'node-public-checks'}, keys.map((key) => h('label', {class: 'check-row'},
       checks.find(([name]) => name === key)[1], h('span', null, t(`nodes.field.${key}`)))))));
+  // 标签页已命名“状态页”，面板不再重复标题；查看链接与开关同一行。
+  const view = h('a', {class: 'btn btn-sm', href: '/', target: '_blank', rel: 'noopener'}, t('nodes.viewStatusPage'), icon('external'));
   const form = h('form', {class: 'form form-wide node-public-form'}, warning,
-    toggleSwitch(t('nodes.publish'), enabled), h('div', {class: 'node-public-groups'}, groups), controls.bar);
+    h('div', {class: 'public-page-row'}, toggleSwitch(t('nodes.publish'), enabled), view),
+    h('div', {class: 'node-public-groups'}, groups), controls.bar);
   editableForm(form, controls, async () => {
     const result = await api(`/nodes/${encodeURIComponent(node.id)}/public-settings`, {method: 'PATCH', body: {
       enabled: enabled.checked, fields: checks.filter(([, check]) => check.checked).map(([key]) => key)
@@ -344,6 +351,5 @@ function publicTab(node, settings, onSaved) {
     syncChecks();
     form.markClean();
   });
-  const view = h('a', {href: '/', target: '_blank', rel: 'noopener'}, t('nodes.viewStatusPage'));
-  return {element: panel(t('settings.publicPage'), {action: view}, form), snapshot};
+  return {element: panel(null, {}, form), snapshot};
 }

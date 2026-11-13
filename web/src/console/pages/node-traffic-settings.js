@@ -36,10 +36,11 @@ export function trafficSettingsPanel(id, settings, onSaved, signal, isDeleted = 
   const mode = select(['total', 'max', 'rx', 'tx'].map((value) => [value, t(`nodes.billingMode.${value}`)]),
     settings.billing_mode || 'total', {name: 'billing_mode', id: 'field-billing-mode'});
   const controls = saveBar(t('nodes.saveBilling'), 'billing-save');
+  // 配额、计费日与计费方式同排；单位下拉紧贴配额输入框。
   const form = h('form', {class: 'form form-wide'},
-    field(t('nodes.trafficQuota'), quota, {inner: h('div', {class: 'form-row'}, quota, h('div', null, quotaUnit)),
-      hint: t('nodes.quotaHint')}),
-    h('div', {class: 'form-row'}, field(t('nodes.billingDay'), billing), field(t('nodes.billingMode'), mode)), controls.bar);
+    h('div', {class: 'form-row billing-row'},
+      field(t('nodes.trafficQuota'), quota, {inner: h('div', {class: 'input-unit'}, quota, quotaUnit), hint: t('nodes.quotaHint')}),
+      field(t('nodes.billingDay'), billing), field(t('nodes.billingMode'), mode)), controls.bar);
   const restore = () => {
     billing.value = String(saved.billing_day);
     mode.value = saved.billing_mode || 'total';

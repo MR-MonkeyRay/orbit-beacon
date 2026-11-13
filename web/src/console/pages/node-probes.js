@@ -5,7 +5,7 @@ import {api} from '../api.js';
 import {absoluteWhen, formatMilliseconds, formatPercent, when} from '../format.js';
 import {chart} from '../ui/chart.js';
 import {select} from '../ui/forms.js';
-import {facts, panel} from '../ui/components.js';
+import {panel} from '../ui/components.js';
 import {historyError} from '../ui/history-error.js';
 import {panelLifecycle} from '../ui/polling-panel.js';
 import {skLines} from '../ui/placeholders.js';
@@ -33,23 +33,28 @@ export function formatProbeUptime(uptime, checks) {
   return t('nodes.probe.checks', {percent, count});
 }
 
+// 每个探测一行；“结果”和“证书到期”只在至少一个探测有值时成列。
 function probeContent(probes) {
   if (!probes.length) return h('p', {class: 'text-note'}, t('nodes.probe.empty'));
-  return h('div', {class: 'stack'},
-    h('ul', {class: 'probe-list'}, probes.map((probe) => {
+  const showResult = probes.some((probe) => probeErrorText(probe.error));
+  const showTLS = probes.some((probe) => probe.tls_expires_at);
+  const muted = () => h('span', {class: 'muted'}, '—');
+  const columns = [t('nodes.presence'), t('nodes.audit.target'), t('nodes.probe.latency'),
+    showResult && t('nodes.probe.result'), showTLS && t('nodes.probe.tlsExpires'), t('nodes.probe.checked'), t('nodes.probe.uptime')].filter(Boolean);
+  return h('div', {class: 'table-wrap'}, h('table', {class: 'table probe-table'},
+    h('thead', null, h('tr', null, columns.map((label) => h('th', {scope: 'col'}, label)))),
+    h('tbody', null, probes.map((probe) => {
       const status = {up: ['online', t('nodes.probe.up')], down: ['offline', t('nodes.probe.down')], pending: ['pending', t('common.status.pending')]}[probe.status] || ['pending', t('common.status.pending')];
       const error = probeErrorText(probe.error);
-      return h('li', {class: 'probe-row'},
-        h('div', {class: 'probe-heading'}, h('span', {class: `badge ${status[0]}`}, status[1]),
-          h('code', {class: 'probe-target mono'}, probe.target)),
-        facts([
-          [t('nodes.probe.latency'), formatProbeLatency(probe.latency_ms)],
-          ...(error ? [[t('nodes.probe.result'), probe.status_code ? `${error} (${probe.status_code})` : error]] : []),
-          ...(probe.tls_expires_at ? [[t('nodes.probe.tlsExpires'), absoluteWhen(probe.tls_expires_at)]] : []),
-          [t('nodes.probe.checked'), probe.checked_at ? when(probe.checked_at) : t('nodes.probe.notChecked')],
-          [t('nodes.probe.uptime'), formatProbeUptime(probe.uptime_24h, probe.checks_24h)]
-        ]));
-    })));
+      return h('tr', {class: 'probe-row'},
+        h('td', null, h('span', {class: `badge ${status[0]}`}, status[1])),
+        h('td', {class: 'probe-target-cell'}, h('code', {class: 'probe-target mono'}, probe.target)),
+        h('td', {class: 'num'}, formatProbeLatency(probe.latency_ms)),
+        showResult ? h('td', null, error ? (probe.status_code ? `${error} (${probe.status_code})` : error) : muted()) : null,
+        showTLS ? h('td', null, probe.tls_expires_at ? absoluteWhen(probe.tls_expires_at) : muted()) : null,
+        h('td', null, probe.checked_at ? when(probe.checked_at) : t('nodes.probe.notChecked')),
+        h('td', null, formatProbeUptime(probe.uptime_24h, probe.checks_24h)));
+    }))));
 }
 
 // 切换详情标签页时保留面板，卸载时暂停轮询；
@@ -72,8 +77,7 @@ export function probesPanel(id, signal) {
     target = targetSelect.value;
     loadHistory();
   }});
-  const targetSelector = h('div', {class: 'head-actions history-disk', hidden: true},
-    h('label', {htmlFor: 'probe-history-target'}, t('nodes.audit.target')), targetSelect);
+  const targetSelector = h('div', {class: 'probe-target-select', hidden: true}, targetSelect);
   const controls = HISTORY_RANGES.map((value) => h('button', {type: 'button', id: `probe-history-range-${value}`,
     'aria-pressed': String(value === range), onclick: () => {
       if (range === value) return;
@@ -82,7 +86,7 @@ export function probesPanel(id, signal) {
       loadHistory();
     }}, t(value === '24h' ? 'nodes.range.hours' : 'nodes.range.days', {count: value === '24h' ? 24 : 7})));
   const rangeSelector = h('div', {class: 'segmented', role: 'group', 'aria-label': t('nodes.historyRange')}, controls);
-  const historyControls = h('div', {class: 'head-actions', hidden: true}, targetSelector, rangeSelector);
+  const historyControls = h('div', {class: 'head-actions'}, targetSelector, rangeSelector);
   async function loadHistory() {
     historyController?.abort();
     if (!target || lifecycle?.disposed || signal?.aborted) return;
@@ -98,7 +102,6 @@ export function probesPanel(id, signal) {
       const selectedTime = Number(focused?.dataset?.selectedTime) || undefined;
       const series = [{label: t('nodes.probe.latency'), stepSeconds: data.step_seconds, points}];
       charts.replaceChildren(...(points.length ? [h('section', {class: 'history-metric', 'aria-label': t('nodes.historyAria', {title: t('nodes.probe.latency')})},
-        h('h3', null, t('nodes.probe.latency')),
         chart({title: t('nodes.probe.latency'), unit: 'ms', id: 'probe-history-chart', selectedTime, series}))] : []));
       charts.hidden = !points.length;
       showHistoryStatus();
@@ -113,8 +116,11 @@ export function probesPanel(id, signal) {
     }
   }
   const content = h('div', {class: 'probes-body'});
-  // 标签页按钮已命名该面板，不重复标题。
-  const root = panel(null, {}, h('div', {class: 'stack'}, content, historyControls, historyStatus, charts));
+  // 结果表由标签页命名；延迟历史单独成面板，目标与时间范围放在面板头右侧。
+  const history = panel(t('nodes.historyAria', {title: t('nodes.probe.latency')}), {action: historyControls}, historyStatus, charts);
+  history.classList.add('probes-history');
+  history.hidden = true;
+  const root = h('div', {class: 'stack'}, panel(null, {}, content), history);
   async function load() {
     if (lifecycle?.disposed || signal?.aborted) return;
     controller?.abort();
@@ -134,7 +140,7 @@ export function probesPanel(id, signal) {
           targetSelect.replaceChildren(...targets.map((value) => h('option', {value}, value)));
           targetSelect.value = target;
           targetSelector.hidden = targets.length <= 1;
-          historyControls.hidden = !targets.length;
+          history.hidden = !targets.length;
         }
         if (!target) {
           historyController?.abort();

@@ -1,5 +1,4 @@
 import {reducedMotion} from '../src/shared/dom.js';
-import {formatTimestamp} from '../src/shared/format.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {copy, copyPattern, installDOM, elements} from './console-dom.js';
@@ -64,10 +63,6 @@ test('latest sample expires just after the 45-second boundary without changing n
   assert.equal(ui.row(copy('nodes.cpu')).querySelector('.sample-value'), cpu);
   assert.equal(cpu.textContent, originalCPU);
   assert.equal(uptime.textContent, originalUptime);
-  const last = ui.view.element.querySelector('.last-report');
-  assert.equal(last.hidden, false);
-  assert.equal(last.textContent, copy('nodes.lastReport', {time: formatTimestamp(new Date(received))}));
-  assert.equal(last.querySelector('time').getAttribute('datetime'), received);
   assert.equal(ui.timers.size, 0);
 });
 
@@ -99,7 +94,6 @@ test('latest sample deadline uses original age and interval, not browser wall ti
   ui.advance(1);
   assert.equal(cpu.classList.contains('metric-stale'), true);
   assert.equal(cpu.textContent, '25%');
-  assert.equal(ui.view.element.querySelector('.last-report').querySelector('time').getAttribute('datetime'), received);
   ui.view.clock(received);
   assert.equal(cpu.classList.contains('metric-stale'), true);
   assert.equal(ui.timers.size, 0);
@@ -134,9 +128,9 @@ test('latest freshness stops while hidden and pagehidden, recomputes on restore,
   assert.equal(ui.timers.size, 0);
 });
 
-test('latest sample no-report and missing received time do not invent a last-report timestamp', async (t) => {
+test('latest sample without a received time still renders and leaves the last report to the page header', async (t) => {
   const ui = await setup(t, snapshot({received_at: null}));
-  assert.equal(ui.view.element.querySelector('.last-report').hidden, true);
+  assert.equal(ui.view.element.querySelector('.last-report'), null);
   assert.equal(ui.row(copy('nodes.cpu')).querySelector('.sample-value').textContent, '—');
   ui.view.snapshot(null);
   assert.equal(ui.view.element.querySelectorAll('dl').length, 0);

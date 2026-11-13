@@ -78,8 +78,8 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
   };
   const disksTable = table('nodes.disk', ['nodes.diskPath', 'nodes.usedTotal', 'nodes.usagePercent', 'nodes.inode'], 'sample-disks');
   const networksTable = table('nodes.network', ['nodes.interface', 'nodes.receiveRx', 'nodes.sendTx'], 'sample-networks');
-  const lastReport = h('p', {class: 'last-report', hidden: true});
-  const content = h('div', {class: 'sample-dashboard'}, primary, rates, disksTable.wrapper, networksTable.wrapper, secondary, lastReport);
+  // 最后上报时间已在页头摘要里，样本面板只保留采样时间。
+  const content = h('div', {class: 'sample-dashboard'}, primary, rates, disksTable.wrapper, networksTable.wrapper, secondary);
   const freshness = createFreshnessController({signal, onChange(now) {
     let next = Infinity;
     for (const record of records) {
@@ -89,7 +89,6 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
       setText(record.state, old ? t('nodes.stale') : '');
       if (record.available && !record.originalStale && record.deadline >= now) next = Math.min(next, record.deadline);
     }
-    lastReport.hidden = !lastReport.querySelector('time');
     return Number.isFinite(next) ? next : null;
   }});
   const finish = () => { for (const {value} of slots.values()) tween.finish(value); };
@@ -184,8 +183,6 @@ export function latestSamplePanel(node, initial, {signal} = {}) {
       currentTime.title = sampledTime.title;
       setText(currentTime, sampledTime.textContent);
     } else sampled.replaceChildren(sampledTime || '—');
-    lastReport.replaceChildren(...(Number.isFinite(timestampMillis(latest.received_at))
-      ? tParts('nodes.lastReport', {time: absoluteWhen(latest.received_at)}) : []));
     if (!body.contains(content)) body.replaceChildren(content);
     if (!freshness.clock(serverTime)) freshness.refresh();
   };

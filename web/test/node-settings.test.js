@@ -120,8 +120,10 @@ test('node has six separate tabs and Manage loads commands without runtime or en
     const tabs = elements(env.root).filter((element) => element.getAttribute('role') === 'tab');
     assert.deepEqual(tabs.map((tab) => tab.id), ['tab-monitor', 'tab-traffic', 'tab-probes', 'tab-public', 'tab-manage', 'tab-settings']);
     assert.equal(env.root.querySelector('#tab-manage').getAttribute('aria-selected'), 'true');
-    assert.equal(env.root.querySelectorAll('h2').map((item) => item.textContent).join('|'), [copy('nodes.commands'), copy('nodes.install'), copy('nodes.dangerZone')].join('|'));
-    assert.equal(env.root.querySelector('.node-manage').querySelectorAll('.node-action-row').length, 3);
+    const manage = env.root.querySelector('.node-manage');
+    assert.deepEqual(manage.querySelectorAll('h3').map((item) => item.textContent), [copy('nodes.commands'), copy('nodes.installCommand'), copy('nodes.revokeCredential'), copy('nodes.deleteNode')]);
+    assert.equal(manage.querySelectorAll('.node-action-row').length, 4);
+    assert.equal(manage.querySelectorAll('.text-note').length, 0, 'consequences live in the confirmation dialogs');
     assert.equal(env.root.querySelector('header').querySelectorAll('button').length, 1, 'the sticky header holds enable/disable only');
     assert.equal(env.root.querySelector('.node-summary').querySelectorAll('button').length, 1, 'copy ID sits in the summary');
     assert.equal(env.root.querySelector('[role="menu"]'), null);

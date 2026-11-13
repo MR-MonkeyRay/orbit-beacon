@@ -4,7 +4,7 @@ import {h, svg} from '../../shared/dom.js';
 import {api} from '../api.js';
 import {formatBytes, formatPercent, when} from '../format.js';
 import {fitChartText, niceMax} from '../ui/chart.js';
-import {facts, panel} from '../ui/components.js';
+import {panel} from '../ui/components.js';
 import {historyError} from '../ui/history-error.js';
 import {placeholderChart} from '../ui/placeholders.js';
 
@@ -117,8 +117,8 @@ function dailyChart(days) {
   fitChartText(drawing, width);
   const key = (label, className) => h('span', {class: 'chart-key'}, h('i', {class: className, 'aria-hidden': 'true'}), label);
   return h('section', {class: 'traffic-chart', 'aria-label': t('nodes.dailyTraffic')},
-    h('h3', null, t('nodes.dailyTraffic')),
-    h('div', {class: 'chart-legend', 'aria-label': t('nodes.chartLegend')}, key(t('nodes.receivedLower'), 'traffic-rx-key'), key(t('nodes.sentUpper'), 'traffic-tx-key')),
+    h('div', {class: 'history-metric-head'}, h('h3', null, t('nodes.dailyTraffic')),
+      h('div', {class: 'chart-legend', 'aria-label': t('nodes.chartLegend')}, key(t('nodes.received'), 'traffic-rx-key'), key(t('nodes.sent'), 'traffic-tx-key'))),
     h('div', {class: 'traffic-plot'}, drawing));
 }
 
@@ -130,21 +130,22 @@ function trafficContent(data) {
   const used = parseTrafficBytes(cycle.used_bytes);
   const daily = Array.isArray(data.daily) ? data.daily : [];
   const empty = !data.updated_at && !daily.length && rx === 0n && tx === 0n && total === 0n;
+  const tile = (label, value) => h('div', {class: 'stat-tile'}, h('dt', null, label), h('dd', {class: 'num'}, value));
+  // 周期与更新时间合成一行说明，三项用量用数值块，不再各占一行。
   return h('div', {class: 'traffic-content'},
-    h('section', {class: 'traffic-cycle', 'aria-label': t('nodes.currentCycle')}, h('h3', null, t('nodes.currentCycle')),
-      h('p', {class: 'text-note'}, cycleDateLabel(cycle)),
-      facts([[t('nodes.received'), formatBytes(rx)], [t('nodes.sent'), formatBytes(tx)], [t('nodes.total'), formatBytes(total)]])),
+    h('section', {class: 'traffic-cycle', 'aria-label': t('nodes.currentCycle')},
+      h('p', {class: 'text-note traffic-period'}, cycleDateLabel(cycle),
+        data.updated_at ? [' · ', ...tParts('nodes.updated', {time: when(data.updated_at)})] : null),
+      h('dl', {class: 'stat-tiles'}, tile(t('nodes.received'), formatBytes(rx)), tile(t('nodes.sent'), formatBytes(tx)), tile(t('nodes.total'), formatBytes(total)))),
     // 配额为 0 表示无限制，与流量计费表单一致。
     parseTrafficBytes(data.quota_bytes) > 0n ? quotaMeter(used, parseTrafficBytes(data.quota_bytes)) : null,
-    empty ? h('p', {class: 'text-note', role: 'status'}, t('nodes.trafficEmpty')) : dailyChart(fillTrafficDays(daily)),
-    data.updated_at ? h('p', {class: 'text-note'}, tParts('nodes.updated', {time: when(data.updated_at)})) : null);
+    empty ? h('p', {class: 'text-note', role: 'status'}, t('nodes.trafficEmpty')) : dailyChart(fillTrafficDays(daily)));
 }
 
 // 切换详情标签页时保留面板；流量计费设置变更只刷新此面板。
 export function trafficPanel(id, signal) {
   const content = h('div', {class: 'traffic-body'});
-  // 标签页按钮已命名该面板，不重复标题。
-  const root = panel(null, {}, content);
+  const root = panel(t('nodes.currentCycle'), {}, content);
   let loadVersion = 0;
   let currentPlot;
   let followLatest = true;
