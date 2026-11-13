@@ -3,9 +3,11 @@ package server_test
 import (
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestServicesHTTPCRUDTokensAndPublicProjection(t *testing.T) {
@@ -228,5 +230,38 @@ func TestServicesHTTPBatchAuditFailureRollsBack(t *testing.T) {
 				t.Fatal("audit failure mutated persistent state")
 			}
 		})
+	}
+}
+
+func TestServicesHTTPSilencedUntilForAdminAndToken(t *testing.T) {
+	f := newHTTP(t, 1)
+	_, token, cookie, csrf := createHTTPAPIToken(t, f)
+	group := createHTTPServiceGroup(t, f, cookie, csrf, "monitors")
+	created := request(t, f.handler, "POST", "/api/v1/services", `{"name":"Health","type":"tcp","target":"localhost:443","group_id":"`+group+`"}`, cookie, csrf, publicURL)
+	assertHTTPStatus(t, created, 201)
+	id := objectID(t, decodeObject(t, created))
+	end := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	body, _ := json.Marshal(map[string]any{"reason": "maintenance", "scope_kind": "service_group", "scope_id": group, "ends_at": end})
+	silenced := request(t, f.handler, "POST", "/api/v1/alert-silences", string(body), cookie, csrf, publicURL)
+	assertHTTPStatus(t, silenced, 201)
+	silenceID := objectID(t, decodeObject(t, silenced))
+	for _, path := range []string{"/api/v1/services", "/api/v1/services/" + id} {
+		for _, response := range []*httptest.ResponseRecorder{
+			request(t, f.handler, "GET", path, "", cookie, "", ""),
+			apiTokenRequest(t, f.handler, "GET", path, "Bearer "+token, nil),
+		} {
+			assertHTTPStatus(t, response, 200)
+			if !strings.Contains(response.Body.String(), `"silenced_until":"`+end.Format(time.RFC3339)+`"`) {
+				t.Fatal(response.Body.String())
+			}
+		}
+	}
+	assertHTTPStatus(t, request(t, f.handler, "DELETE", "/api/v1/alert-silences/"+silenceID, "", cookie, csrf, publicURL), 204)
+	if response := request(t, f.handler, "GET", "/api/v1/services/"+id, "", cookie, "", ""); !strings.Contains(response.Body.String(), `"silenced_until":null`) {
+		t.Fatal(response.Body.String())
+	}
+	var audits int
+	if err := f.db.QueryRow("SELECT count(*) FROM audit_events WHERE target_id=? AND action IN ('alert_silence.create','alert_silence.delete')", silenceID).Scan(&audits); err != nil || audits != 2 {
+		t.Fatalf("audits=%d err=%v", audits, err)
 	}
 }

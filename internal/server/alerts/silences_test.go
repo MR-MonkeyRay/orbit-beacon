@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"testing"
 	"time"
@@ -154,7 +155,7 @@ func TestSilenceQueryFailureDoesNotChangeEvent(t *testing.T) {
 func TestSilenceScopeCurrentGroupAndBoundaries(t *testing.T) {
 	const group = "00000000-0000-4000-8000-000000000002"
 	const other = "00000000-0000-4000-8000-000000000003"
-	for _, scenario := range []string{"all", "node", "group", "other-node", "other-group", "move-in", "move-out", "start", "end"} {
+	for _, scenario := range []string{"all", "node", "group", "service-group", "other-node", "other-group", "move-in", "move-out", "start", "end"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newFixture(t, 0)
 			n := &recordingNotifier{}
@@ -162,12 +163,17 @@ func TestSilenceScopeCurrentGroupAndBoundaries(t *testing.T) {
 			f.exec(t, "INSERT INTO groups(id,name) VALUES(?,'g'),(?,'other')", group, other)
 			f.exec(t, "INSERT INTO nodes(id,name,status,created_at) VALUES(?,'other','pending',?)", other, f.now.Format(time.RFC3339Nano))
 			f.exec(t, "UPDATE nodes SET group_id=? WHERE id=?", group, f.node)
+			f.exec(t, "INSERT INTO service_groups(id,name) VALUES(?,'monitors')", group)
 			kind := "all"
 			var id *string
 			start := f.now
 			end := f.now.Add(time.Hour)
 			want := true
 			switch scenario {
+			case "service-group":
+				kind = "service_group"
+				id = ptr(group)
+				want = false
 			case "node":
 				kind = "node"
 				id = &f.node
@@ -359,5 +365,35 @@ func TestReleaseSilenceRechecksInsideTransaction(t *testing.T) {
 	}
 	if len(n.notifications) != 1 || n.notifications[0].State != "firing" || n.wakes != 1 {
 		t.Fatalf("notifications=%+v wakes=%d", n.notifications, n.wakes)
+	}
+}
+
+func TestServiceGroupSilenceNeverCoversNodeSQL(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err = db.Exec(`CREATE TABLE nodes(id TEXT,group_id TEXT); CREATE TABLE alert_silences(scope_kind TEXT,scope_id TEXT,starts_at TEXT,ends_at TEXT); CREATE TABLE alert_events(node_id TEXT,state TEXT,silenced INTEGER); INSERT INTO nodes VALUES('n','g'); INSERT INTO alert_events VALUES('n','firing',1); INSERT INTO alert_silences VALUES('service_group','g','a','z')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		kind    string
+		covered bool
+	}{{"service_group", false}, {"group", true}, {"all", true}, {"node", false}} {
+		if _, err = db.Exec("UPDATE alert_silences SET scope_kind=?", tc.kind); err != nil {
+			t.Fatal(err)
+		}
+		var covered, releasable bool
+		if err = db.QueryRow("SELECT EXISTS("+activeSilenceSQL+") FROM nodes", "b", "b").Scan(&covered); err != nil {
+			t.Fatal(err)
+		}
+		if err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM alert_events WHERE "+releasableEventSQL+")", "b", "b").Scan(&releasable); err != nil {
+			t.Fatal(err)
+		}
+		if covered != tc.covered || releasable == tc.covered {
+			t.Fatalf("scope=%s covered=%t release=%t", tc.kind, covered, releasable)
+		}
 	}
 }

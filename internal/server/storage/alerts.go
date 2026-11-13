@@ -24,19 +24,21 @@ CREATE INDEX alert_rules_node ON alert_rules(scope_node_id);
 CREATE TABLE alert_silences (
  id TEXT PRIMARY KEY NOT NULL,
  reason TEXT NOT NULL,
- scope_kind TEXT NOT NULL CHECK(scope_kind IN ('all','group','node')),
+ scope_kind TEXT NOT NULL CHECK(scope_kind IN ('all','group','node','service_group')),
  scope_id TEXT,
  scope_group_id TEXT GENERATED ALWAYS AS (CASE WHEN scope_kind='group' THEN scope_id END) VIRTUAL REFERENCES groups(id) ON DELETE CASCADE,
  scope_node_id TEXT GENERATED ALWAYS AS (CASE WHEN scope_kind='node' THEN scope_id END) VIRTUAL REFERENCES nodes(id) ON DELETE CASCADE,
+ scope_service_group_id TEXT GENERATED ALWAYS AS (CASE WHEN scope_kind='service_group' THEN scope_id END) VIRTUAL REFERENCES service_groups(id) ON DELETE CASCADE,
  starts_at TEXT NOT NULL,
  ends_at TEXT NOT NULL,
  created_at TEXT NOT NULL,
- CHECK((scope_kind='all' AND scope_id IS NULL) OR (scope_kind IN ('group','node') AND scope_id IS NOT NULL)),
+ CHECK((scope_kind='all' AND scope_id IS NULL) OR (scope_kind IN ('group','node','service_group') AND scope_id IS NOT NULL)),
  CHECK(ends_at > starts_at)
 );
 CREATE INDEX alert_silences_ends ON alert_silences(ends_at);
 CREATE INDEX alert_silences_group ON alert_silences(scope_group_id);
 CREATE INDEX alert_silences_node ON alert_silences(scope_node_id);
+CREATE INDEX alert_silences_service_group ON alert_silences(scope_service_group_id);
 CREATE TABLE alert_events (
  id TEXT PRIMARY KEY NOT NULL, rule_id TEXT NOT NULL, node_id TEXT NOT NULL,
  state TEXT NOT NULL CHECK(state IN ('firing','resolved')), value REAL,

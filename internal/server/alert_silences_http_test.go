@@ -48,10 +48,14 @@ func TestSilenceHTTPValidationAuditAndRetention(t *testing.T) {
 			t.Fatalf("no field error: %s", resp.Body.String())
 		}
 	}
-	for _, kind := range []string{"node", "group"} {
+	for _, kind := range []string{"node", "group", "service_group"} {
 		for _, scope := range []any{nil, "bad", "00000000-0000-4000-8000-000000000099"} {
 			body := map[string]any{"reason": "scope", "scope_kind": kind, "scope_id": scope, "ends_at": end}
-			assertHTTPStatus(t, request(t, f.handler, "POST", "/api/v1/alert-silences", encode(body), admin, csrf, publicURL), 400)
+			response := request(t, f.handler, "POST", "/api/v1/alert-silences", encode(body), admin, csrf, publicURL)
+			assertHTTPStatus(t, response, 400)
+			if !strings.Contains(response.Body.String(), `"scope_id"`) {
+				t.Fatalf("missing scope_id field error: %s", response.Body.String())
+			}
 		}
 	}
 	for _, body := range []map[string]any{
@@ -96,12 +100,15 @@ func TestSilenceHTTPValidationAuditAndRetention(t *testing.T) {
 	}
 }
 func TestSilenceHTTPDefaultStartScopeNamesAndCascade(t *testing.T) {
-	for _, kind := range []string{"node", "group"} {
+	for _, kind := range []string{"node", "group", "service_group"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newHTTP(t, 2)
 			admin, csrf := login(t, f, "admin")
 			var id, path string
-			if kind == "group" {
+			if kind == "service_group" {
+				id = createHTTPServiceGroup(t, f, admin, csrf, "scope")
+				path = "/api/v1/service-groups/" + id
+			} else if kind == "group" {
 				id = createHTTPGroup(t, f, admin, csrf, "scope")
 				path = "/api/v1/groups/" + id
 			} else {
@@ -119,6 +126,15 @@ func TestSilenceHTTPDefaultStartScopeNamesAndCascade(t *testing.T) {
 			silenceID := objectID(t, obj)
 			if obj["active"] != true || obj["scope_name"] != "scope" {
 				t.Fatalf("silence=%+v", obj)
+			}
+			listed := request(t, f.handler, "GET", "/api/v1/alert-silences", "", admin, "", "")
+			assertHTTPStatus(t, listed, 200)
+			if !strings.Contains(listed.Body.String(), `"scope_name":"scope"`) {
+				t.Fatal(listed.Body.String())
+			}
+			var audits int
+			if err := f.db.QueryRow("SELECT count(*) FROM audit_events WHERE action='alert_silence.create' AND target_id=?", silenceID).Scan(&audits); err != nil || audits != 1 {
+				t.Fatalf("audit=%d %v", audits, err)
 			}
 			assertHTTPStatus(t, request(t, f.handler, "DELETE", path, "", admin, csrf, publicURL), 204)
 			var count int

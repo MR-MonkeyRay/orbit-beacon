@@ -55,12 +55,12 @@ func ValidateSilenceSyntax(s Silence) error {
 		if s.ScopeID != nil {
 			return validation.Invalid("scope_id", "must be null for all")
 		}
-	case "group", "node":
+	case "group", "node", "service_group":
 		if s.ScopeID == nil || !uuid.ValidUUID(*s.ScopeID) {
 			return validation.Invalid("scope_id", "must identify an existing scope")
 		}
 	default:
-		return validation.Invalid("scope_kind", "must be all, group or node")
+		return validation.Invalid("scope_kind", "must be all, group, node or service_group")
 	}
 	if s.StartsAt.IsZero() {
 		return validation.Invalid("starts_at", "must be an RFC3339 timestamp")
@@ -131,6 +131,8 @@ func (s *Service) CreateSilence(ctx context.Context, req SilenceRequest) (Silenc
 		table := "nodes"
 		if silence.ScopeKind == "group" {
 			table = "`groups`"
+		} else if silence.ScopeKind == "service_group" {
+			table = "service_groups"
 		}
 		err = tx.QueryRowContext(ctx, "SELECT name FROM "+table+" WHERE id=?", *silence.ScopeID).Scan(&silence.ScopeName)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -160,8 +162,9 @@ func (s *Service) Silences(ctx context.Context) ([]Silence, error) {
 	ctx = lease.Context()
 	now := s.now().UTC()
 	rows, err := lease.QueryContext(ctx, `SELECT s.id,s.reason,s.scope_kind,s.scope_id,s.starts_at,s.ends_at,s.created_at,
- COALESCE(g.name,n.name,'') FROM alert_silences s
+ COALESCE(g.name,n.name,sg.name,'') FROM alert_silences s
 	LEFT JOIN `+"`groups`"+` g ON s.scope_group_id=g.id LEFT JOIN nodes n ON s.scope_node_id=n.id
+ LEFT JOIN service_groups sg ON s.scope_service_group_id=sg.id
  WHERE s.ends_at>? ORDER BY s.starts_at,s.id`, timekey.Format(now))
 	if err != nil {
 		return nil, err

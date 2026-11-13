@@ -1621,7 +1621,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createAlertSilence
-      description: 仅限管理员。与 alert_silence.create 审计原子提交。静默仅在触发事务内判定，不回溯已有事件。结束或提前删除窗口后，下一轮评估补发仍在触发的静默事件。
+      description: 仅限管理员。与 alert_silence.create 审计原子提交。节点静默在触发事务内判定；监控按检查事件时间判定。不回溯已有事件。结束或提前删除窗口后，节点下一轮评估、监控下一次检查补发仍未恢复的静默事件。
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -3914,8 +3914,8 @@ components:
       required: [reason, scope_kind, ends_at]
       properties:
         reason: {type: string, minLength: 1, maxLength: 255, description: 去除首尾空白后为 1–255 UTF-8 字节。}
-        scope_kind: {type: string, enum: [all, group, node]}
-        scope_id: {type: [string, 'null'], format: uuid, description: all 时必须为空；group 或 node 时必须指向现有实体。}
+        scope_kind: {type: string, enum: [all, group, node, service_group], description: all 覆盖节点和监控；group/node 仅覆盖节点；service_group 仅覆盖当前组内监控。}
+        scope_id: {type: [string, 'null'], format: uuid, description: all 时必须为空；group、node 或 service_group 时必须指向现有实体。}
         starts_at: {type: string, format: date-time, description: 缺省为当前时间。}
         ends_at: {type: string, format: date-time, description: 必须晚于开始及当前时间，时长不超过 30 天。}
     AlertSilence:
@@ -3925,7 +3925,7 @@ components:
       properties:
         id: {type: string, format: uuid}
         reason: {type: string}
-        scope_kind: {type: string, enum: [all, group, node]}
+        scope_kind: {type: string, enum: [all, group, node, service_group], description: all 覆盖节点和监控；group/node 仅覆盖节点；service_group 仅覆盖当前组内监控。}
         scope_id: {type: [string, 'null'], format: uuid}
         scope_name: {type: string, description: 当前名称；all 时为空字符串。}
         starts_at: {type: string, format: date-time}
@@ -4430,12 +4430,13 @@ components:
       allOf:
         - {type: object, properties: *serviceConfigProperties}
         - type: object
-          required: [id, name, group_id, type, target, interval_seconds, timeout_seconds, enabled, public, notify, display_order, latency_threshold_ms, failure_threshold, created_at, updated_at, latest, availability_24h, recent_hours]
+          required: [id, name, group_id, type, target, interval_seconds, timeout_seconds, enabled, public, notify, display_order, latency_threshold_ms, failure_threshold, created_at, updated_at, latest, availability_24h, recent_hours, silenced_until]
           properties:
             group_id: {type: [string, 'null'], format: uuid}
             id: {type: string, format: uuid}
             created_at: {type: string, format: date-time}
             updated_at: {type: string, format: date-time}
+            silenced_until: {type: [string, 'null'], format: date-time, description: 当前覆盖此监控的 all 或 service_group 静默的最晚结束时间（UTC）；无则 null。}
             latest:
               oneOf:
                 - {$ref: '#/components/schemas/ServiceResult'}
@@ -4496,7 +4497,7 @@ components:
     ServiceResult:
       type: object
       additionalProperties: false
-      required: [ok, status, latency_ms, error, status_code, packet_loss, tls_expires_at, checked_at, latency_high, consecutive_failures, consecutive_slow, certificate_notified_day]
+      required: [ok, status, latency_ms, error, status_code, packet_loss, tls_expires_at, checked_at, latency_high, consecutive_failures, consecutive_slow, certificate_notified_day, down_silenced, latency_silenced]
       properties:
         ok: {type: boolean}
         status: {type: string, enum: [up, down, unknown], description: 达到 failure_threshold 次连续失败判定故障，一次成功恢复。达到阈值前无成功时为 unknown。}
@@ -4509,6 +4510,8 @@ components:
         latency_high: {type: boolean}
         consecutive_failures: {type: integer, minimum: 0, maximum: 10}
         consecutive_slow: {type: integer, minimum: 0, maximum: 3}
+        down_silenced: {type: boolean, description: 故障事件在静默期间开始且尚未补发。}
+        latency_silenced: {type: boolean, description: 高延迟事件在静默期间开始且尚未补发。}
         certificate_notified_day: {type: string, description: 最近证书通知的 UTC 日期，或空字符串。}
     ServiceEvent:
       type: object

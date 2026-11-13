@@ -39,6 +39,7 @@ type Service struct {
 	LatencyThresholdMS float64      `json:"latency_threshold_ms"`
 	CreatedAt          time.Time    `json:"created_at"`
 	UpdatedAt          time.Time    `json:"updated_at"`
+	SilencedUntil      *time.Time   `json:"silenced_until"`
 	Latest             *Result      `json:"latest"`
 	Availability24H    *float64     `json:"availability_24h"`
 	RecentHours        [24]*float64 `json:"recent_hours"`
@@ -181,6 +182,8 @@ type Result struct {
 	Failures               int    `json:"consecutive_failures"`
 	SlowChecks             int    `json:"consecutive_slow"`
 	CertificateNotifiedDay string `json:"certificate_notified_day"`
+	DownSilenced           bool   `json:"down_silenced"`
+	LatencySilenced        bool   `json:"latency_silenced"`
 }
 
 type Event struct {
@@ -197,13 +200,23 @@ type Event struct {
 
 // Advance counts observations, not elapsed downtime; unknown periods remain unknown.
 func Advance(s Service, previous *Result, result Result) (Result, []Event) {
+	return advanceSilenced(s, previous, result, false)
+}
+
+// Suppression belongs to an incident, not to its recovery timestamp. Resolve
+// before releasing, so a recovery observed after a window never replays a fire.
+func advanceSilenced(s Service, previous *Result, result Result, silenced bool) (Result, []Event) {
 	result.Status = "unknown"
+	result.DownSilenced = false
+	result.LatencySilenced = false
 	if previous != nil {
 		result.Status = previous.Status
 		result.Failures = previous.Failures
 		result.SlowChecks = previous.SlowChecks
 		result.LatencyHigh = previous.LatencyHigh
 		result.CertificateNotifiedDay = previous.CertificateNotifiedDay
+		result.DownSilenced = previous.DownSilenced
+		result.LatencySilenced = previous.LatencySilenced
 	}
 	var events []Event
 	emit := func(transition string) {
@@ -214,20 +227,29 @@ func Advance(s Service, previous *Result, result Result) (Result, []Event) {
 	if result.OK {
 		result.Failures = 0
 		if result.Status == "down" {
-			emit("recovered")
+			if !result.DownSilenced {
+				emit("recovered")
+			}
+			result.DownSilenced = false
 		}
 		result.Status = "up"
 		if s.LatencyThresholdMS > 0 && result.LatencyMS != nil && *result.LatencyMS > s.LatencyThresholdMS {
 			result.SlowChecks = min(3, result.SlowChecks+1)
 			if result.SlowChecks == 3 && !result.LatencyHigh {
 				result.LatencyHigh = true
-				emit("latency_high")
+				result.LatencySilenced = s.Notify && silenced
+				if !silenced {
+					emit("latency_high")
+				}
 			}
 		} else {
 			result.SlowChecks = 0
 			if result.LatencyHigh {
 				result.LatencyHigh = false
-				emit("latency_recovered")
+				if !result.LatencySilenced {
+					emit("latency_recovered")
+				}
+				result.LatencySilenced = false
 			}
 		}
 	} else {
@@ -235,10 +257,23 @@ func Advance(s Service, previous *Result, result Result) (Result, []Event) {
 		result.SlowChecks = 0
 		if result.Failures >= s.FailureThreshold && result.Status != "down" {
 			result.Status = "down"
-			emit("down")
+			result.DownSilenced = s.Notify && silenced
+			if !silenced {
+				emit("down")
+			}
 		}
 	}
-	if s.Notify && result.TLSExpiresAt != nil && result.TLSExpiresAt.Sub(result.CheckedAt) <= 14*24*time.Hour && result.CertificateNotifiedDay != result.CheckedAt.UTC().Format(time.DateOnly) {
+	if s.Notify && !silenced {
+		if result.DownSilenced {
+			emit("down")
+			result.DownSilenced = false
+		}
+		if result.LatencySilenced {
+			emit("latency_high")
+			result.LatencySilenced = false
+		}
+	}
+	if s.Notify && !silenced && result.TLSExpiresAt != nil && result.TLSExpiresAt.Sub(result.CheckedAt) <= 14*24*time.Hour && result.CertificateNotifiedDay != result.CheckedAt.UTC().Format(time.DateOnly) {
 		emit("certificate_expiring")
 		result.CertificateNotifiedDay = result.CheckedAt.UTC().Format(time.DateOnly)
 	}
@@ -248,6 +283,9 @@ func Advance(s Service, previous *Result, result Result) (Result, []Event) {
 func ValidateResult(r Result) error {
 	if r.CheckedAt.IsZero() || r.Status != "up" && r.Status != "down" && r.Status != "unknown" || r.Failures < 0 || r.Failures > 10 || r.SlowChecks < 0 || r.SlowChecks > 3 {
 		return errors.New("invalid service result")
+	}
+	if r.DownSilenced && r.Status != "down" || r.LatencySilenced && !r.LatencyHigh {
+		return errors.New("invalid silenced service incident")
 	}
 	for _, v := range []*float64{r.LatencyMS, r.PacketLoss} {
 		if v != nil && (math.IsNaN(*v) || math.IsInf(*v, 0) || *v < 0) {

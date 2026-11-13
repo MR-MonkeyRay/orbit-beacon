@@ -283,6 +283,30 @@ func (m *Manager) list(ctx context.Context, now time.Time) ([]Service, error) {
 	if e = errors.Join(rows.Err(), rows.Close()); e != nil {
 		return nil, e
 	}
+	// One bounded query covers the entire list, including current FK membership.
+	silences, e := lease.QueryContext(ctx, `SELECT services.id,MAX(s.ends_at) FROM services
+ JOIN alert_silences s ON (s.scope_kind='all' OR (s.scope_kind='service_group' AND s.scope_id=services.group_id))
+ WHERE s.starts_at<=? AND s.ends_at>? GROUP BY services.id`, timekey.Format(now), timekey.Format(now))
+	if e != nil {
+		return nil, e
+	}
+	until := make(map[string]time.Time)
+	for silences.Next() {
+		var id, end string
+		if e = silences.Scan(&id, &end); e != nil {
+			silences.Close()
+			return nil, e
+		}
+		t, err := timekey.Parse(end)
+		if err != nil {
+			silences.Close()
+			return nil, err
+		}
+		until[id] = t.UTC()
+	}
+	if e = errors.Join(silences.Err(), silences.Close()); e != nil {
+		return nil, e
+	}
 	latest, e := lease.QueryContext(ctx, "SELECT service_id,result_json FROM service_checks_latest")
 	if e != nil {
 		return nil, e
@@ -326,6 +350,9 @@ func (m *Manager) list(ctx context.Context, now time.Time) ([]Service, error) {
 	}
 	startHour := now.UTC().Truncate(time.Hour).Add(-23 * time.Hour).Unix()
 	for i := range out {
+		if t, ok := until[out[i].ID]; ok {
+			out[i].SilencedUntil = &t
+		}
 		if r, ok := byID[out[i].ID]; ok {
 			copy := r
 			out[i].Latest = &copy
@@ -392,7 +419,18 @@ func (m *Manager) Accept(ctx context.Context, config Service, result Result) err
 			return e
 		}
 	}
-	result, events := Advance(s, previous, result)
+	// Decide at observation time, before buffering either state or notifications.
+	// Flush commits the resulting incident flags and inbox/outbox together.
+	var silenced bool
+	stamp := timekey.Format(result.CheckedAt)
+	// s was read above in this lease, so its group_id is the current membership.
+	e = lease.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM alert_silences s
+ WHERE s.starts_at<=? AND s.ends_at>? AND (s.scope_kind='all'
+ OR (s.scope_kind='service_group' AND s.scope_id=?)))`, stamp, stamp, s.GroupID).Scan(&silenced)
+	if e != nil {
+		return e
+	}
+	result, events := advanceSilenced(s, previous, result, silenced)
 	for i := range events {
 		events[i].ID, e = uuid.UUID(rand.Reader)
 		if e != nil {

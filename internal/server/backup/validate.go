@@ -130,6 +130,10 @@ func ValidatePayloadData(ctx context.Context, db *sql.DB, category Category, key
 					return invalidPayload(table.Name, "")
 				}
 			}
+			if table.Name == "alert_silences" && row.text("scope_kind") == "service_group" && !serviceGroupIDs[row.text("scope_id")] {
+				rows.Close()
+				return invalidPayload(table.Name, row.text("id"))
+			}
 			if table.Name == "services" {
 				if row["group_id"] != nil && !serviceGroupIDs[row.text("group_id")] {
 					rows.Close()

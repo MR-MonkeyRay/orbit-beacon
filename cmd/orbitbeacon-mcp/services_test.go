@@ -10,7 +10,7 @@ import (
 
 func TestServiceEnhancementsPassThrough(t *testing.T) {
 	hours := strings.TrimSuffix(strings.Repeat("null,", 23), ",") + ",100"
-	service := fmt.Sprintf(`{"id":"00000000-0000-4000-8000-000000000001","failure_threshold":5,"recent_hours":[%s]}`, hours)
+	service := fmt.Sprintf(`{"id":"00000000-0000-4000-8000-000000000001","failure_threshold":5,"silenced_until":"2026-11-11T13:00:00Z","recent_hours":[%s]}`, hours)
 	for _, tc := range []struct {
 		name, path, body string
 		args             map[string]any

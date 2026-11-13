@@ -267,3 +267,68 @@ func TestMySQLStandaloneTypesConstraintsSnapshot(t *testing.T) {
 		t.Fatalf("partial schema accepted: %v", failure)
 	}
 }
+
+func TestMySQLServiceGroupSilencesConstraintsSnapshot(t *testing.T) {
+	f := storagetest.Start(t)
+	ctx := t.Context()
+	db := f.Open(t, storage.MainDomain)
+	l, err := db.Acquire(ctx, storage.Writer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	tx, err := l.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, "INSERT INTO service_groups(id,name) VALUES('sg','monitors')"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		id   any
+		code uint16
+	}{{nil, 3819}, {"missing", 1452}, {"sg", 0}} {
+		_, err = tx.ExecContext(ctx, `INSERT INTO alert_silences(id,reason,scope_kind,scope_id,starts_at,ends_at,created_at) VALUES('s','maintenance','service_group',?,'a','b','a')`, tc.id)
+		if tc.code == 0 {
+			if err != nil {
+				t.Fatal(err)
+			}
+		} else if code, ok := storage.MySQLCode(err); !ok || code != tc.code {
+			t.Fatalf("scope=%v error=%v code=%d", tc.id, err, code)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err = os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	image := filepath.Join(dir, "service-silence.db")
+	if err = l.Snapshot(ctx, image); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = l.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, "DELETE FROM service_groups WHERE id='sg'"); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err = l.QueryRowContext(ctx, "SELECT count(*) FROM alert_silences").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("cascade=%d err=%v", count, err)
+	}
+	if err = storage.ReplaceDomain(ctx, db, image, "service-silence"); err != nil {
+		t.Fatal(err)
+	}
+	var group string
+	if err = l.QueryRowContext(ctx, "SELECT scope_service_group_id FROM alert_silences WHERE id='s'").Scan(&group); err != nil || group != "sg" {
+		t.Fatalf("round trip=%s err=%v", group, err)
+	}
+}
