@@ -6,7 +6,13 @@ export function serviceSection() {
   const rows = h('ul', {class: 'public-service-list'});
   const root = h('section', {class: 'public-services', hidden: true, 'aria-labelledby': 'public-services-heading'}, h('h2', {id: 'public-services-heading'}, t('public.services')), rows);
   let entries = [];
-  root.update = (services, generatedAt) => {
+  const headings = new Map();
+  const heading = (key, label) => {
+    if (!headings.has(key)) headings.set(key, h('li', {class: 'public-service-group'}, h('h3', null, label)));
+    return headings.get(key);
+  };
+  // groups 为名称数组时按分组分段（服务端顺序，未分组在最后）；否则保持原来的单一列表。
+  root.update = (services, generatedAt, groups = null) => {
     root.hidden = services.length === 0;
     while (entries.length > services.length) entries.pop().root.remove();
     while (entries.length < services.length) {
@@ -25,6 +31,19 @@ export function serviceSection() {
       entry.bar.update({start_day: start.toISOString().slice(0, 10), days: service.availability, percent: null});
       entry.bar.setAttribute('aria-label', `${service.name}: ${t('public.servicesDaily')}. ${service.availability.map((v, i) => `${new Date(start.getTime() + i * 86400000).toISOString().slice(0, 10)}: ${v === null ? t('public.availabilityNoData') : `${new Intl.NumberFormat(getLocale(), {maximumFractionDigits: 2}).format(v)}%`}`).join('; ')}`);
     });
+    const ordered = [];
+    // 没有任何监测属于分组时，只有一段“其他”毫无意义，保持单一列表。
+    if (Array.isArray(groups) && services.some((service) => service.group !== null)) {
+      // 下标加名称作键：同名分组仍是两段，改名后换新标题。
+      const sections = [...groups.map((label, index) => [`${index}\u0000${label}`, label, index]), ['\u0001', t('public.ungrouped'), null]];
+      for (const [key, label, index] of sections) {
+        const members = entries.filter((_entry, i) => services[i].group === index);
+        if (members.length) ordered.push(heading(key, label), ...members.map((entry) => entry.root));
+      }
+    } else ordered.push(...entries.map((entry) => entry.root));
+    const retained = new Set(ordered);
+    for (const [key, element] of headings) if (!retained.has(element)) { element.remove(); headings.delete(key); }
+    ordered.forEach((child, index) => { if (rows.children[index] !== child) rows.insertBefore(child, rows.children[index] || null); });
   };
   return root;
 }

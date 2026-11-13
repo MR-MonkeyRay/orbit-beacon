@@ -7,4 +7,7 @@
 .service-latency { margin-inline-start: auto; white-space: nowrap; font-size: .85rem; }
 .public-service-row .availability { margin: 0; }
 .public-service-row .availability-total { display: none; }
+/* 状态页开启分组时，监测列表内的分组小标题。 */
+.public-service-group h3 { margin: 18px 0 2px; font-size: .85rem; font-weight: 600; opacity: .75; }
+.public-service-group:first-child h3 { margin-top: 6px; }
 @media(max-width: 560px) { .public-service-row { grid-template-columns: minmax(0,1fr); } }

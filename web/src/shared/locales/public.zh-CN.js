@@ -15,6 +15,7 @@ export default {
   'public.search': '搜索本页节点',
   'public.searchEmpty': '无匹配节点',
   'public.regionUnknown': '未知地区',
+  'public.ungrouped': '其他',
   'public.availabilityRange': '{count} 天前',
   'public.today': '今天',
 

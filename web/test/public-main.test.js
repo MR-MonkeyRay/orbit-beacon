@@ -451,6 +451,39 @@ test('public search tolerates a fleet without selected region or provider fields
   assert.equal(visible[0].querySelector('h2').textContent, 'edge-12');
 });
 
+test('status page groups order nodes and services by server group order, put the rest last and replace region headings', async (t) => {
+  const ui = await setup(t); const socket = ui.sockets[0]; socket.open();
+  const base = payload().nodes[0];
+  const svc = (name, group) => ({name, type: 'http', status: 'up', latency_ms: 1, availability: Array(30).fill(100), group});
+  const nodes = Array.from({length: 13}, (_, i) => ({...base, name: `n${i}`, region: i % 2 ? 'West' : 'East', group: i === 0 ? 1 : i === 1 ? null : 0}));
+  socket.message(snapshot(payload('', {nodes, node_groups: ['Edge', 'Core', 'Unused'], services: [svc('API', null), svc('Web', 0)], service_groups: ['Sites']})));
+  const headings = () => ui.elements.nodes.children.filter((child) => child.classList.contains('region-heading')).map((child) => child.textContent);
+  assert.deepEqual(headings(), ['Edge', 'Core', copy('public.ungrouped')]);
+  const order = ui.elements.nodes.children.map((child) => child.classList.contains('region-heading') ? `#${child.textContent}` : child.querySelector('h2').textContent);
+  assert.deepEqual(order.slice(-4), ['#Core', 'n0', `#${copy('public.ungrouped')}`, 'n1']);
+  const list = ui.body.querySelector('.public-service-list');
+  const rows = () => list.children.map((child) => child.classList.contains('public-service-group') ? `#${child.textContent}` : child.querySelector('strong').textContent);
+  assert.deepEqual(rows(), ['#Sites', 'Web', `#${copy('public.ungrouped')}`, 'API']);
+  // 没有成员属于分组时不分段：节点回到地区分段，监测回到单一列表。
+  socket.message(snapshot(payload('', {nodes: nodes.map((node) => ({...node, group: null})), node_groups: [], services: [svc('API', null)], service_groups: []})));
+  assert.deepEqual(headings(), ['East', 'West']);
+  assert.deepEqual(rows(), ['API']);
+  const {validResponse} = await import('../src/public/validate.js');
+  const valid = payload('', {nodes: [{...base, group: 0}], node_groups: ['Edge'], services: [svc('Web', null)], service_groups: []});
+  assert.equal(validResponse(valid), true);
+  for (const bad of [{...valid, node_groups: undefined}, {...valid, nodes: [{...base, group: 1}]}, {...valid, nodes: [{...base}]}, {...valid, services: [svc('Web', 0)]},
+    {...valid, node_groups: [''], nodes: [{...base, group: 0}]}, {...valid, services: [{...svc('Web', null), group: '0'}]}]) assert.equal(validResponse(bad), false);
+  // 分组关闭时成员不能带 group。
+  assert.equal(validResponse(payload('', {nodes: [{...base, group: null}]})), false);
+  // 分组名按后端规则：非空白、最多 255 字节；节点分组不限数量，监测分组最多 100 个。
+  const named = (name) => ({...valid, node_groups: [name]});
+  assert.equal(validResponse(named('x'.repeat(255))), true); assert.equal(validResponse(named('x'.repeat(256))), false);
+  assert.equal(validResponse(named('名'.repeat(85))), true); assert.equal(validResponse(named('名'.repeat(86))), false);
+  assert.equal(validResponse(named('  ')), false);
+  assert.equal(validResponse({...valid, node_groups: Array.from({length: 150}, (_, i) => `g${i}`)}), true);
+  assert.equal(validResponse({...valid, service_groups: Array.from({length: 101}, (_, i) => `g${i}`)}), false);
+});
+
 test('public services appear above the no-public-nodes message and live removal hides the section', async (t) => {
   const ui = await setup(t); const socket = ui.sockets[0]; socket.open();
   socket.message(snapshot(payload('none', {nodes: [], services: [{name: 'Health', type: 'http', status: 'up', latency_ms: 2, availability: Array(30).fill(100)}]})));

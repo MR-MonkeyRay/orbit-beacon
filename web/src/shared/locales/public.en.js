@@ -15,6 +15,7 @@ export default {
   'public.search': 'Search this page',
   'public.searchEmpty': 'No matching nodes.',
   'public.regionUnknown': 'Unknown region',
+  'public.ungrouped': 'Other',
   'public.availabilityRange': {one: '{count} day ago', other: '{count} days ago'},
   'public.today': 'Today',
 

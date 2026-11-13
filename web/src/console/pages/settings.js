@@ -46,13 +46,22 @@ export async function settingsPage() {
 function publicPageTab() {
   const navigation = getNavigationSignal();
   const control = h('input', {type: 'checkbox', name: 'public_page_enabled', disabled: true});
+  const groupsControl = h('input', {type: 'checkbox', name: 'public_page_show_groups', disabled: true});
   const note = h('p', {class: 'text-note', role: 'status'}, t('settings.publicLoading'));
   const errorBox = h('div', {class: 'form-error', role: 'alert', hidden: true});
   const retry = button(t('shell.tryAgain'), {onClick: () => { void load(); }});
   retry.hidden = true;
   let controller;
   let enabled;
+  let showGroups;
   let pending = false;
+  // 两个开关共用一个请求锁，结束时按各自的已知状态恢复可用。
+  const settle = () => {
+    control.checked = enabled === true;
+    groupsControl.checked = showGroups === true;
+    control.disabled = !active() || typeof enabled !== 'boolean' || !session.csrf;
+    groupsControl.disabled = !active() || typeof showGroups !== 'boolean' || !session.csrf;
+  };
   const active = () => controller && !controller.signal.aborted && !navigation?.aborted;
   const showError = (error) => {
     errorBox.textContent = errorText(error);
@@ -62,6 +71,7 @@ function publicPageTab() {
     if (!active() || pending) return;
     pending = true;
     control.disabled = true;
+    groupsControl.disabled = true;
     retry.hidden = true;
     errorBox.hidden = true;
     element.dataset.busy = 'true';
@@ -69,14 +79,14 @@ function publicPageTab() {
       const settings = await api('/settings/public-page', {signal: controller.signal});
       if (!active()) return;
       enabled = settings.enabled;
-      control.checked = enabled;
+      showGroups = settings.show_groups;
       note.textContent = '';
     } catch (error) {
       if (active() && error.name !== 'AbortError') { showError(error); retry.hidden = false; }
     } finally {
       pending = false;
       element.dataset.busy = 'false';
-      control.disabled = !active() || typeof enabled !== 'boolean' || !session.csrf;
+      settle();
     }
   };
   control.addEventListener('change', async () => {
@@ -85,6 +95,7 @@ function publicPageTab() {
     if (!active() || pending || requested === enabled || !session.csrf) return;
     pending = true;
     control.disabled = true;
+    groupsControl.disabled = true;
     element.dataset.busy = 'true';
     errorBox.hidden = true;
     note.textContent = '';
@@ -98,14 +109,37 @@ function publicPageTab() {
       const settings = await api('/settings/public-page', {method: 'PATCH', body: {enabled: requested}, signal: controller.signal});
       if (!active()) return;
       enabled = settings.enabled;
+      showGroups = settings.show_groups;
       note.textContent = enabled ? t('settings.publicEnabled') : t('settings.publicDisabled');
     } catch (error) {
       if (active() && error.name !== 'AbortError') showError(error);
     } finally {
       pending = false;
       element.dataset.busy = 'false';
-      control.checked = enabled;
-      control.disabled = !active() || !session.csrf;
+      settle();
+    }
+  });
+  groupsControl.addEventListener('change', async () => {
+    const requested = groupsControl.checked;
+    groupsControl.checked = showGroups === true;
+    if (!active() || pending || requested === showGroups || !session.csrf) return;
+    pending = true;
+    control.disabled = true;
+    groupsControl.disabled = true;
+    element.dataset.busy = 'true';
+    errorBox.hidden = true;
+    note.textContent = '';
+    try {
+      const settings = await api('/settings/public-page', {method: 'PATCH', body: {show_groups: requested}, signal: controller.signal});
+      if (!active()) return;
+      enabled = settings.enabled;
+      showGroups = settings.show_groups;
+    } catch (error) {
+      if (active() && error.name !== 'AbortError') showError(error);
+    } finally {
+      pending = false;
+      element.dataset.busy = 'false';
+      settle();
     }
   });
   // 面板标题与“公开页”标签页同名，省略；打开状态页的入口与开关同行，不再放在概览页头。
@@ -114,6 +148,8 @@ function publicPageTab() {
       h('label', {class: 'switch'}, control, h('span', {class: 'switch-track', 'aria-hidden': 'true'}),
         h('span', {class: 'switch-text'}, h('strong', null, t('settings.publicEnable')))),
       h('a', {class: 'btn btn-sm', href: '/'}, icon('external'), t('nodes.openPublic'))),
+    h('label', {class: 'switch public-page-groups'}, groupsControl, h('span', {class: 'switch-track', 'aria-hidden': 'true'}),
+      h('span', {class: 'switch-text'}, t('settings.publicGroups'))),
     errorBox, note, retry);
   return {element,
     attach() { controller = new AbortController(); void load(); },

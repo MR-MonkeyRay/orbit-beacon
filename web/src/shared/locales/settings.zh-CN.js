@@ -14,6 +14,7 @@ export default {
   'settings.publicEnabled': '状态页已开启。',
   'settings.publicDisabled': '状态页已关闭。',
   'settings.publicEnable': '开启状态页',
+  'settings.publicGroups': '按分组显示节点和监测',
   'settings.renameAdministrator': '重命名管理员',
   'settings.save': '保存',
   'settings.deleteOwn': '删除你的账户',

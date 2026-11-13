@@ -107,7 +107,7 @@ mountPublicPage({createCard, skeletonCards, createConstellation});
 需要替换组件时，函数契约如下：
 
 - `createCard()` 返回一个 `li` DOM 节点，提供 `update(node)` 和 `setStale()` 方法。`update` 接收已校验的公开节点并清除连接过期标记；`setStale` 只表达“数据可能过期”，不能把节点改为离线或清空已有指标。运行时控制该节点的筛选隐藏与入场类。
-- `createRegionHeading(region)`（可选）：返回地区标题的 `li`；默认是 `.region-heading` 包含 `h2`，CSS 应让它跨满网格列。当前页加载超过 12 个节点时，运行时按地区插入标题，并在 `filters` 之后添加搜索框 `.node-search`；搜索仅匹配当前页的名称、地区与提供商，与状态筛选叠加，翻页清空。12 个及以下保持平铺。未提供此钩子的主题沿用默认标题，`example` 无需改入口。
+- `createRegionHeading(region)`（可选）：返回地区标题的 `li`；默认是 `.region-heading` 包含 `h2`，CSS 应让它跨满网格列。当前页加载超过 12 个节点时，运行时按地区插入标题，并在 `filters` 之后添加搜索框 `.node-search`；搜索仅匹配当前页的名称、地区与提供商，与状态筛选叠加，翻页清空。12 个及以下保持平铺。状态页开启“按分组显示”且有节点属于分组时，改为按节点分组插入标题（不论节点数量），同一钩子收到分组名称，未分组的节点归入最后的“其他”。未提供此钩子的主题沿用默认标题，`example` 无需改入口。
 - `skeletonCards(count)` 返回占位 `li` 数组，使用 `.placeholder` 以便加载结束清除；占位内容对辅助技术隐藏。
 - `createConstellation(container)` 返回 `{update(nodes), clear()}`。图形只反映当前页已校验的集合；`clear()` 必须撤下全部节点相关信息。
 

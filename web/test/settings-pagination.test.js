@@ -361,7 +361,7 @@ test('public-page settings confirm disabling, block duplicate writes, and restor
       writes.push(JSON.parse(options.body));
       return new Promise((resolve) => { resolveWrite = resolve; });
     }
-    const body = path.endsWith('/settings/public-page') ? {enabled: true}
+    const body = path.endsWith('/settings/public-page') ? {enabled: true, show_groups: false}
       : path.endsWith('/users') ? {users: []} : path.endsWith('/groups') ? {groups: []}
         : path.includes('/nodes?') ? {nodes: [], has_more: false} : {events: [], has_more: false};
     return new Response(JSON.stringify(body));
@@ -379,6 +379,8 @@ test('public-page settings confirm disabling, block duplicate writes, and restor
     const toggle = () => { control.checked = !control.checked; control.dispatchEvent(new Event('change')); };
     toggle(); await flush();
     assert.equal(writes.length, 0);
+    // 确认框打开期间分组开关也被锁住。
+    assert.equal(elements(page).find((element) => element.name === 'public_page_show_groups').disabled, true);
     const cancel = elements(dom.body.querySelector('dialog')).find((element) => element.textContent === copy('controls.cancel'));
     cancel.click(); await flush();
     assert.equal(control.checked, true); assert.equal(writes.length, 0);
@@ -391,13 +393,25 @@ test('public-page settings confirm disabling, block duplicate writes, and restor
     assert.equal(control.checked, true); assert.equal(control.disabled, false);
     toggle(); await flush();
     elements(dom.body.querySelector('dialog')).find((element) => element.tagName === 'button' && element.textContent === copy('settings.publicDisable')).click();
-    await flush(); resolveWrite(new Response(JSON.stringify({enabled: false}))); await flush();
+    await flush(); resolveWrite(new Response(JSON.stringify({enabled: false, show_groups: false}))); await flush();
     assert.equal(control.checked, false);
     toggle(); await flush();
     assert.deepEqual(writes.at(-1), {enabled: true});
     assert.equal(dom.body.querySelector('dialog'), null);
-    resolveWrite(new Response(JSON.stringify({enabled: true}))); await flush();
+    resolveWrite(new Response(JSON.stringify({enabled: true, show_groups: false}))); await flush();
     assert.equal(control.checked, true); assert.equal(control.disabled, false);
+    // 分组开关不需要确认，请求期间两个开关都不可用。
+    const groups = elements(page).find((element) => element.name === 'public_page_show_groups');
+    assert.equal(groups.checked, false); assert.equal(groups.disabled, false);
+    groups.checked = true; groups.dispatchEvent(new Event('change')); await flush();
+    assert.deepEqual(writes.at(-1), {show_groups: true});
+    assert.equal(groups.checked, false); assert.equal(groups.disabled, true); assert.equal(control.disabled, true);
+    resolveWrite(new Response(JSON.stringify({enabled: true, show_groups: true}))); await flush();
+    assert.equal(groups.checked, true); assert.equal(groups.disabled, false); assert.equal(control.disabled, false);
+    groups.checked = false; groups.dispatchEvent(new Event('change')); await flush();
+    assert.deepEqual(writes.at(-1), {show_groups: false});
+    resolveWrite(new Response(JSON.stringify({code: 'internal_error', message: 'Could not save setting.'}), {status: 500})); await flush();
+    assert.equal(groups.checked, true); assert.equal(groups.disabled, false);
   } finally {
     closeDialogs(); invalidate('nodes', 'groups', 'users'); setSession({user: null, csrf_token: '', expires_at: ''});
     setNavigationSignal(null);

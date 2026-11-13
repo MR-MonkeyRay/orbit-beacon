@@ -84,6 +84,7 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
   let keys = '';
   let filter = '';
   let current = [];
+  let currentGroups = null;
   let hasSnapshot = false;
   let query = '';
   const headings = new Map();
@@ -128,17 +129,26 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
     });
     search.hidden = current.length <= 12;
     const ordered = [];
-    if (current.length > 12) {
-      const regions = new Map();
-      current.forEach((node, index) => {
-        const region = node.region || t('public.regionUnknown');
-        if (!regions.has(region)) regions.set(region, []);
-        regions.get(region).push(cards[index]);
-      });
-      for (const region of headings.keys()) if (!regions.has(region)) headings.delete(region);
-      for (const [region, members] of regions) {
-        if (!headings.has(region)) headings.set(region, createRegionHeading(region));
-        const heading = headings.get(region);
+    // 状态页开启分组且有节点属于分组时按分组分段（服务端顺序，未分组在最后），否则节点多时按地区分段。
+    // 键带前缀和下标：地区名与分组名互不冲突，同名分组仍是两段。
+    const sections = new Map();
+    const add = (key, label, card) => {
+      if (!sections.has(key)) sections.set(key, {label, members: []});
+      sections.get(key).members.push(card);
+    };
+    if (Array.isArray(currentGroups) && current.some((node) => node.group !== null)) {
+      currentGroups.forEach((label, index) => sections.set(`\u0002${index}\u0000${label}`, {label, members: []}));
+      current.forEach((node, index) => node.group === null ? add('\u0002-', t('public.ungrouped'), cards[index])
+        : add(`\u0002${node.group}\u0000${currentGroups[node.group]}`, currentGroups[node.group], cards[index]));
+    } else if (current.length > 12) {
+      current.forEach((node, index) => { const region = node.region || t('public.regionUnknown'); add(`\u0001${region}`, region, cards[index]); });
+    }
+    if (sections.size) {
+      for (const key of headings.keys()) if (!sections.get(key)?.members.length) headings.delete(key);
+      for (const [key, {label, members}] of sections) {
+        if (!members.length) continue;
+        if (!headings.has(key)) headings.set(key, createRegionHeading(label));
+        const heading = headings.get(key);
         heading.hidden = members.every((card) => card.hidden);
         ordered.push(heading, ...members);
       }
@@ -159,7 +169,8 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
 
   function render(result) {
     const nodes = result.nodes;
-    services.update(result.services, result.generated_at);
+    currentGroups = Array.isArray(result.node_groups) ? result.node_groups : null;
+    services.update(result.services, result.generated_at, Array.isArray(result.service_groups) ? result.service_groups : null);
     const nextKeys = nodes.map((node) => `${node.name}\u0000${node.region}\u0000${node.provider}`).join('\u0001');
     if (nextKeys !== keys || cards.length !== nodes.length) {
       cards = nodes.map(() => createCard());
@@ -208,6 +219,7 @@ export function mountPublicPage({createCard, skeletonCards, createConstellation,
     cards = [];
     keys = '';
     current = [];
+    currentGroups = null;
     headings.clear();
     query = ''; search.value = ''; search.hidden = true;
     constellation.clear();

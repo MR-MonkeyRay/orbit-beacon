@@ -14,6 +14,7 @@ export default {
   'settings.publicEnabled': 'Status page enabled.',
   'settings.publicDisabled': 'Status page disabled.',
   'settings.publicEnable': 'Enable status page',
+  'settings.publicGroups': 'Show nodes and checks by group',
   'settings.renameAdministrator': 'Rename administrator',
   'settings.save': 'Save',
   'settings.deleteOwn': 'Delete your account',

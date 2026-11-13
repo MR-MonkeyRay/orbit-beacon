@@ -1,4 +1,5 @@
 import {timestampMillis} from '../shared/freshness.js';
+import {byteLength} from '../shared/dom.js';
 
 const METRICS = ['cpu_percent', 'memory_percent', 'load1', 'uptime_seconds'];
 
@@ -11,20 +12,33 @@ export function validAvailability(value) {
     validPercent(value.percent) && Array.isArray(value.days) && value.days.length === 30 && Array.from(value.days).every(validPercent);
 }
 
-// 无效数据绝不替换最后一次校验通过的公开集合。
-export function validService(service) {
- if (!service || typeof service !== 'object' || Array.isArray(service) || Object.keys(service).length !== 5 || Object.keys(service).some((key) => !['name','type','status','latency_ms','availability'].includes(key))) return false;
- return typeof service.name === 'string' && [...service.name].length >= 1 && [...service.name].length <= 100 && !/[\u0000-\u001f\u007f-\u009f]/.test(service.name) && ['http','tcp','icmp'].includes(service.type) && ['up','down','unknown'].includes(service.status) && (service.latency_ms === null || typeof service.latency_ms === 'number' && Number.isFinite(service.latency_ms) && service.latency_ms >= 0) && Array.isArray(service.availability) && service.availability.length === 30 && Array.from(service.availability).every(validPercent);
+const validName = (name) => typeof name === 'string' && [...name].length >= 1 && [...name].length <= 100 && !/[\u0000-\u001f\u007f-\u009f]/.test(name);
+// 状态页开启分组时，响应带 node_groups / service_groups（只有名称），成员用 group 下标引用，未分组为 null。
+// 分组名与后端规则一致：非空白、最多 255 字节；节点分组没有数量上限，监测分组最多 100 个。
+const validGroupName = (name) => typeof name === 'string' && name.trim() !== '' && byteLength(name) <= 255;
+const validGroups = (groups, max = Infinity) => Array.isArray(groups) && groups.length <= max && groups.every(validGroupName);
+const validGroupIndex = (value, groups) => value === null || Number.isSafeInteger(value) && value >= 0 && value < groups.length;
+
+// 无效数据绝不替换最后一次校验通过的公开集合。groups 为 null 时不允许 group 字段。
+export function validService(service, groups = null) {
+ const keys = ['name','type','status','latency_ms','availability', ...(groups ? ['group'] : [])];
+ if (!service || typeof service !== 'object' || Array.isArray(service) || Object.keys(service).length !== keys.length || Object.keys(service).some((key) => !keys.includes(key))) return false;
+ if (groups && !validGroupIndex(service.group, groups)) return false;
+ return validName(service.name) && ['http','tcp','icmp'].includes(service.type) && ['up','down','unknown'].includes(service.status) && (service.latency_ms === null || typeof service.latency_ms === 'number' && Number.isFinite(service.latency_ms) && service.latency_ms >= 0) && Array.isArray(service.availability) && service.availability.length === 30 && Array.from(service.availability).every(validPercent);
 }
 export function validResponse(result, offset = 0) {
- if (!Array.isArray(result?.services) || result.services.length > 100 || !result.services.every(validService)) return false;
+  const grouped = result && ('node_groups' in result || 'service_groups' in result);
+  if (grouped && (!validGroups(result.node_groups) || !validGroups(result.service_groups, 100))) return false;
+  const serviceGroups = grouped ? result.service_groups : null, nodeGroups = grouped ? result.node_groups : null;
+ if (!Array.isArray(result?.services) || result.services.length > 100 || !result.services.every((service) => validService(service, serviceGroups))) return false;
   if (!result || !Array.isArray(result.nodes) || result.nodes.length > 100 || typeof result.has_more !== 'boolean' || !Number.isFinite(timestampMillis(result.generated_at))) return false;
   if (result.has_more ? !Number.isSafeInteger(result.next_offset) || result.next_offset <= offset : result.next_offset !== null) return false;
   return result.nodes.every((node) => {
     if (!node || typeof node.name !== 'string' || !['online', 'offline', 'unknown'].includes(node.status)) return false;
     if (node.last_seen !== null && !Number.isFinite(timestampMillis(node.last_seen))) return false;
-    const allowed = ['name', 'status', 'last_seen', 'region', 'country', 'provider', ...METRICS, 'metric_status', 'availability', 'traffic', 'expires_on', 'price', 'billing_cycle', 'auto_renew', 'bandwidth', 'ip_version', 'network_route', 'plan_extra'];
+    const allowed = ['name', 'status', 'last_seen', 'region', 'country', 'provider', ...METRICS, 'metric_status', 'availability', 'traffic', 'expires_on', 'price', 'billing_cycle', 'auto_renew', 'bandwidth', 'ip_version', 'network_route', 'plan_extra', ...(nodeGroups ? ['group'] : [])];
     if (Object.keys(node).some((key) => !allowed.includes(key))) return false;
+    if (nodeGroups && !validGroupIndex(node.group, nodeGroups)) return false;
     for (const key of ['region', 'country', 'provider', 'billing_cycle', 'bandwidth', 'network_route', 'plan_extra']) {
       if (key in node && typeof node[key] !== 'string') return false;
     }
