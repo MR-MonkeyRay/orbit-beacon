@@ -153,6 +153,26 @@ func TestPublicPageStartupPersistenceCorruptionAndRootDatabaseFailure(t *testing
 		t.Fatal(err)
 	}
 	assertHTTPStatus(t, request(t, h, http.MethodGet, "/", "", nil, "", ""), 302)
+	assertHTTPStatus(t, request(t, f.handler, http.MethodPatch, publicPageRoute, `{"show_groups":true}`, admin, csrf, publicURL), 200)
+	grouped, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setting := request(t, grouped, http.MethodGet, publicPageRoute, "", admin, "", "")
+	if !strings.Contains(setting.Body.String(), `"show_groups":true`) {
+		t.Fatalf("groups not reloaded: %s", setting.Body)
+	}
+	if _, err := f.db.Exec("UPDATE settings SET value='TRUE' WHERE key='public_page_show_groups'"); err != nil {
+		t.Fatal(err)
+	}
+	for _, recoverUnavailable := range []bool{false, true} {
+		if _, err := server.NewHandler(testHandlerOptions(t, server.Options{Auth: f.auth, Nodes: f.nodes, PublicURL: publicURL, RecoverUnavailableMain: recoverUnavailable})); err == nil {
+			t.Fatal("corrupt groups setting allowed startup")
+		}
+	}
+	if _, err := f.db.Exec("UPDATE settings SET value='true' WHERE key='public_page_show_groups'"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.db.Exec("UPDATE settings SET value='TRUE' WHERE key='public_page_enabled'"); err != nil {
 		t.Fatal(err)
 	}
@@ -193,5 +213,57 @@ func TestPublicPageConcurrentMutationsPublishLastCommittedState(t *testing.T) {
 	root := request(t, f.handler, http.MethodGet, "/", "", nil, "", "")
 	if (root.Code == 200) != (persisted == "true") {
 		t.Fatalf("root=%d persisted=%s", root.Code, persisted)
+	}
+}
+
+func TestPublicPageShowGroupsHTTPSettings(t *testing.T) {
+	f := newHTTP(t, 2)
+	admin, csrf := login(t, f, "admin")
+	get := func() map[string]any {
+		t.Helper()
+		w := request(t, f.handler, http.MethodGet, publicPageRoute, "", admin, "", "")
+		assertHTTPStatus(t, w, 200)
+		return decodeObject(t, w)
+	}
+	if got := get(); got["enabled"] != true || got["show_groups"] != false || len(got) != 2 {
+		t.Fatalf("defaults: %+v", got)
+	}
+	for _, body := range []string{`{"show_groups":null}`, `{"show_groups":"true"}`, `{"show_groups":1}`, `{"enabled":null,"show_groups":true}`} {
+		w := request(t, f.handler, http.MethodPatch, publicPageRoute, body, admin, csrf, publicURL)
+		assertHTTPStatus(t, w, 400)
+		got := decodeObject(t, w)
+		field := "show_groups"
+		if strings.Contains(body, `"enabled"`) {
+			field = "enabled"
+		}
+		fields, ok := got["fields"].(map[string]any)
+		if !ok || fields[field] == nil {
+			t.Fatalf("missing field error: %s", w.Body)
+		}
+	}
+	for _, tc := range []struct {
+		body            string
+		enabled, groups bool
+	}{
+		{`{"show_groups":true}`, true, true}, {`{"enabled":false}`, false, true},
+		{`{"enabled":true,"show_groups":false}`, true, false},
+	} {
+		assertHTTPStatus(t, request(t, f.handler, http.MethodPatch, publicPageRoute, tc.body, admin, csrf, publicURL), 200)
+		got := get()
+		if got["enabled"] != tc.enabled || got["show_groups"] != tc.groups {
+			t.Fatalf("PATCH %s: %+v", tc.body, got)
+		}
+		version := f.nodes.PublicVisibilityVersion()
+		var before, after int
+		if err := f.db.QueryRow("SELECT count(*) FROM audit_events WHERE action='public_page.update'").Scan(&before); err != nil {
+			t.Fatal(err)
+		}
+		assertHTTPStatus(t, request(t, f.handler, http.MethodPatch, publicPageRoute, tc.body, admin, csrf, publicURL), 200)
+		if err := f.db.QueryRow("SELECT count(*) FROM audit_events WHERE action='public_page.update'").Scan(&after); err != nil {
+			t.Fatal(err)
+		}
+		if before != after || f.nodes.PublicVisibilityVersion() != version {
+			t.Fatal("no-op wrote audit or invalidated page")
+		}
 	}
 }

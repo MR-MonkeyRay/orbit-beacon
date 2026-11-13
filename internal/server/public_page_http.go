@@ -1,15 +1,50 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"net/http"
 
 	"orbitbeacon/internal/server/auth"
 	"orbitbeacon/internal/server/management"
 	"orbitbeacon/internal/server/storage"
+	"orbitbeacon/internal/server/validation"
 )
 
 var errPublicPageDisabled = errors.New("public page is disabled")
+
+// publicPageSettingsInput 是 PATCH 请求体：字段可省略，出现时必须是布尔值，且至少给出一个。
+type publicPageSettingsInput management.PublicPageSettingsPatch
+
+func (p *publicPageSettingsInput) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for _, field := range []string{"enabled", "show_groups"} {
+		if value, ok := raw[field]; ok {
+			var boolean bool
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) || json.Unmarshal(value, &boolean) != nil {
+				return validation.Invalid(field, "must be a boolean")
+			}
+		}
+	}
+	var wire struct {
+		Enabled    *bool `json:"enabled"`
+		ShowGroups *bool `json:"show_groups"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil {
+		return err
+	}
+	if wire.Enabled == nil && wire.ShowGroups == nil {
+		return validation.Invalid("enabled", "provide enabled or show_groups")
+	}
+	*p = publicPageSettingsInput{Enabled: wire.Enabled, ShowGroups: wire.ShowGroups}
+	return nil
+}
 
 func (h *handler) publicPageAccess() error {
 	if h.publicPageUnknown.Load() {
@@ -31,29 +66,27 @@ func (h *handler) publicPageError(w http.ResponseWriter, requestID string) {
 
 func (h *handler) publicPageSettings(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, management.PublicPageSettings{Enabled: !h.publicPageDisabled.Load()})
+		h.publicPageMu.Lock()
+		defer h.publicPageMu.Unlock()
+		writeJSON(w, http.StatusOK, management.PublicPageSettings{Enabled: !h.publicPageDisabled.Load(), ShowGroups: h.publicPageShowGroups.Load()})
 		return
 	}
-	var input struct {
-		Enabled *bool `json:"enabled"`
-	}
+	var input publicPageSettingsInput
 	if !decode(w, r, &input, requestID) {
-		return
-	}
-	if input.Enabled == nil {
-		fail(w, http.StatusBadRequest, "validation_failed", "enabled must be a boolean", requestID)
 		return
 	}
 	// 按提交顺序持久化、发布或撤回设置；即使事务已提交而 Store 尚未执行，
 	// 读取也只使用已发布的运行时状态。
 	h.publicPageMu.Lock()
 	defer h.publicPageMu.Unlock()
-	settings, err := h.management.SetPublicPageEnabled(r.Context(), *input.Enabled)
+	settings, err := h.management.PatchPublicPageSettings(r.Context(), management.PublicPageSettingsPatch(input))
 	if err != nil {
 		h.serviceError(w, err, requestID)
 		return
 	}
-	if h.publicPageDisabled.Swap(!settings.Enabled) != !settings.Enabled {
+	enabledChanged := h.publicPageDisabled.Swap(!settings.Enabled) != !settings.Enabled
+	groupsChanged := h.publicPageShowGroups.Swap(settings.ShowGroups) != settings.ShowGroups
+	if enabledChanged || groupsChanged {
 		h.nodes.InvalidatePublicSafety()
 	}
 	writeJSON(w, http.StatusOK, settings)

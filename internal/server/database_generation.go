@@ -44,6 +44,7 @@ func (h *handler) PublishDatabaseGeneration(ctx context.Context, lease *storage.
 		return err
 	}
 	h.publicPageDisabled.Store(!settings.Enabled)
+	h.publicPageShowGroups.Store(settings.ShowGroups)
 	h.nodes.InvalidatePublicSafety()
 	h.publicPageUnknown.Store(false)
 	h.streams.mu.Lock()

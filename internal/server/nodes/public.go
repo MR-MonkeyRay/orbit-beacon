@@ -216,26 +216,34 @@ func (s *Service) PublicVisibilityVersion() uint64 {
 
 // ListPublicRecords 在同一快照中过滤合法候选，再批量读取所选节点的可用性。
 func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int, now time.Time) ([]PublicRecord, bool, error) {
+	records, more, _, err := s.ListPublicRecordsWithGroups(ctx, limit, offset, now, false)
+	return records, more, err
+}
+
+// ListPublicRecordsWithGroups derives group membership from the same validated
+// candidate scan as pagination, over the entire public inventory when requested.
+func (s *Service) ListPublicRecordsWithGroups(ctx context.Context, limit, offset int, now time.Time, showGroups bool) ([]PublicRecord, bool, []string, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
-		return nil, false, ErrInvalidInput
+		return nil, false, nil, ErrInvalidInput
 	}
 	lease, err := s.db.Acquire(ctx, storage.Reader)
 	if err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	}
 	defer lease.Close()
 	ctx = lease.Context()
 	tx, err := lease.BeginRead(ctx)
 	if err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT id,public_settings,last_seen,token_hash,credential_epoch,run_generation,report_session_id,'[]',name,region,provider,geo_country,geo_location,expires_on,price_amount,price_currency,billing_cycle,auto_renew,bandwidth,ipv4,ipv6,network_route,plan_extra,quota_bytes FROM nodes WHERE status='unknown' AND token_hash IS NOT NULL AND first_enrolled_at IS NOT NULL ORDER BY display_order DESC,name,id`)
+	rows, err := tx.QueryContext(ctx, `SELECT id,public_settings,last_seen,token_hash,credential_epoch,run_generation,report_session_id,'[]',name,region,provider,geo_country,geo_location,expires_on,price_amount,price_currency,billing_cycle,auto_renew,bandwidth,ipv4,ipv6,network_route,plan_extra,quota_bytes,group_id FROM nodes WHERE status='unknown' AND token_hash IS NOT NULL AND first_enrolled_at IS NOT NULL ORDER BY display_order DESC,name,id`)
 	if err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	}
 	records := make([]PublicRecord, 0, limit)
 	more := false
+	visibleGroups := map[string]bool{}
 	for rows.Next() {
 		record, scanErr := scanPublicRecord(rows)
 		if errors.Is(scanErr, ErrNotFound) {
@@ -243,7 +251,10 @@ func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int, now 
 		}
 		if scanErr != nil {
 			rows.Close()
-			return nil, false, scanErr
+			return nil, false, nil, scanErr
+		}
+		if showGroups && record.GroupID != nil {
+			visibleGroups[*record.GroupID] = true
 		}
 		if offset > 0 {
 			offset--
@@ -251,12 +262,45 @@ func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int, now 
 		}
 		if len(records) == limit {
 			more = true
+			if showGroups {
+				continue
+			}
 			break
 		}
 		records = append(records, record)
 	}
 	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, false, err
+		return nil, false, nil, err
+	}
+	var groupNames []string
+	if showGroups {
+		groupNames = []string{}
+		indexes := map[string]int{}
+		rows, err = tx.QueryContext(ctx, "SELECT id,name FROM `groups` ORDER BY display_order DESC,name,id")
+		if err != nil {
+			return nil, false, nil, err
+		}
+		for rows.Next() {
+			var id, name string
+			if err = rows.Scan(&id, &name); err != nil {
+				rows.Close()
+				return nil, false, nil, err
+			}
+			if visibleGroups[id] {
+				indexes[id] = len(groupNames)
+				groupNames = append(groupNames, name)
+			}
+		}
+		if err = errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, false, nil, err
+		}
+		for i := range records {
+			if records[i].GroupID != nil {
+				if index, ok := indexes[*records[i].GroupID]; ok {
+					records[i].Group = &index
+				}
+			}
+		}
 	}
 	if len(records) > 0 {
 		args := make([]any, 0, len(records)+2)
@@ -269,7 +313,7 @@ func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int, now 
 		args = append(args, now.AddDate(0, 0, -29).Format(time.DateOnly), now.Format(time.DateOnly))
 		rows, err = tx.QueryContext(ctx, `SELECT node_id,day,online_seconds,offline_seconds FROM node_availability_daily WHERE node_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(records)), ",")+`) AND day>=? AND day<=? ORDER BY node_id,day`, args...)
 		if err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
 		type daily struct {
 			Day     string `json:"day"`
@@ -282,28 +326,28 @@ func (s *Service) ListPublicRecords(ctx context.Context, limit, offset int, now 
 			var day daily
 			if err = rows.Scan(&id, &day.Day, &day.Online, &day.Offline); err != nil {
 				rows.Close()
-				return nil, false, err
+				return nil, false, nil, err
 			}
 			i := byID[id]
 			counts[i] = append(counts[i], day)
 		}
 		if err = errors.Join(rows.Err(), rows.Close()); err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
 		for i, days := range counts {
 			if len(days) > 0 {
 				raw, err := json.Marshal(days)
 				if err != nil {
-					return nil, false, err
+					return nil, false, nil, err
 				}
 				records[i].AvailabilityJSON = string(raw)
 			}
 		}
 	}
 	if err = tx.Commit(); err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	}
-	return records, more, nil
+	return records, more, groupNames, nil
 }
 
 // PublicRecord 是内部身份围栏，绝不作为 HTTP 响应。
@@ -313,6 +357,8 @@ type PublicRecord struct {
 	PriceAmount, PriceCurrency, BillingCycle, Bandwidth, NetworkRoute, PlanExtra, QuotaBytes string
 	AutoRenew, IPv4, IPv6                                                                    bool
 
+	GroupID          *string        `json:"-"`
+	Group            *int           `json:"-"`
 	ID               string         `json:"-"`
 	AvailabilityJSON string         `json:"-"`
 	Settings         PublicSettings `json:"-"`
@@ -337,7 +383,7 @@ func scanPublicRecord(row interface{ Scan(...any) error }) (PublicRecord, error)
 	var raw, generation string
 	var seen sql.NullString
 	var credential []byte
-	err := row.Scan(&p.ID, &raw, &seen, &credential, &p.CredentialEpoch, &generation, &p.Session, &p.AvailabilityJSON, &p.Name, &p.Region, &p.Provider, &p.Country, &p.GeoLocation, &p.ExpiresOn, &p.PriceAmount, &p.PriceCurrency, &p.BillingCycle, &p.AutoRenew, &p.Bandwidth, &p.IPv4, &p.IPv6, &p.NetworkRoute, &p.PlanExtra, &p.QuotaBytes)
+	err := row.Scan(&p.ID, &raw, &seen, &credential, &p.CredentialEpoch, &generation, &p.Session, &p.AvailabilityJSON, &p.Name, &p.Region, &p.Provider, &p.Country, &p.GeoLocation, &p.ExpiresOn, &p.PriceAmount, &p.PriceCurrency, &p.BillingCycle, &p.AutoRenew, &p.Bandwidth, &p.IPv4, &p.IPv6, &p.NetworkRoute, &p.PlanExtra, &p.QuotaBytes, &p.GroupID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}

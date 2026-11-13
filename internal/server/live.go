@@ -239,14 +239,10 @@ func publicPagesEqual(a, b ingest.PublicPage) bool {
 		return false
 	}
 	// Compare the effective projection, including disclosure changes, not private data.
-	left, le := json.Marshal(struct {
-		Nodes    []ingest.PublicNode
-		Services any
-	}{a.Nodes, a.Services})
-	right, re := json.Marshal(struct {
-		Nodes    []ingest.PublicNode
-		Services any
-	}{b.Nodes, b.Services})
+	a.GeneratedAt = time.Time{}
+	b.GeneratedAt = time.Time{}
+	left, le := json.Marshal(a)
+	right, re := json.Marshal(b)
 	return le == nil && re == nil && bytes.Equal(left, right)
 }
 

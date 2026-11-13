@@ -571,7 +571,7 @@ paths:
     patch:
       operationId: setPublicPageEnabled
       description: |
-        仅限不受限管理员。请求体须恰好包含布尔值 enabled；
+        仅限不受限管理员。请求体可提供 enabled、show_groups 或两者（均为非 null 布尔值）；
         空对象、null、错误类型或未知键返回 400 且不变更。
         设置与 public_page.update 审计在同一事务提交，随后更新运行时发布状态、
         使公开可见性缓存失效，再返回成功。值未变时不产生审计事件，也不续接流。
@@ -584,7 +584,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/PublicPageSettings'}
+            schema: {$ref: '#/components/schemas/PublicPageSettingsPatch'}
       responses:
         '200':
           description: 已保存并发布的全局公开访问设置。
@@ -3286,10 +3286,10 @@ components:
       uniqueItems: true
       description: |
         各类别相互独立；不会隐式添加 configuration。响应按 configuration、monitoring、events 排序。
-        configuration 包含密码哈希、持久化的 Agent 身份、凭据、全局 public_page_enabled 与 api_token_rate_limit_per_minute 设置
+        configuration 包含密码哈希、持久化的 Agent 身份、凭据、全局 public_page_enabled、public_page_show_groups 与 api_token_rate_limit_per_minute 设置
         及对应的 secrets.key，但不含部署配置、TLS 证书或可执行文件。
-        仅接受 public_page_enabled 的文本 true/false 与 api_token_rate_limit_per_minute 的 1–100000 整数文本；允许缺少设置。
-        恢复 configuration 会替换设置（缺少时分别表示启用及限额 600）；仅恢复数据时保留原设置。monitoring 包含持久化观测与指标历史，
+        仅接受 public_page_enabled、public_page_show_groups 的文本 true/false 与 api_token_rate_limit_per_minute 的 1–100000 整数文本；允许缺少设置。
+        恢复 configuration 会替换设置（缺少时分别表示启用、隐藏分组及限额 600）；仅恢复数据时保留原设置。monitoring 包含持久化观测与指标历史，
         不含内存上报。events 不含历史备份密码、待投递通知、待执行任务与下载产物。
         仅为已提交的数据生成快照；主库与指标库各自保持一致，不保证跨库为同一时刻的快照。
       items: {type: string, enum: [configuration, monitoring, events]}
@@ -4166,10 +4166,19 @@ components:
     PublicPageSettings:
       type: object
       additionalProperties: false
-      required: [enabled]
-      description: 全局公开访问开关，独立于各节点的发布。缺失的持久化键默认启用。PATCH 须显式提供此布尔值；null 与未知键无效。
+      required: [enabled, show_groups]
+      description: 全局公开访问与分组显示设置，独立于各节点的发布。缺失的持久化键分别默认 true、false。
       properties:
         enabled: {type: boolean, default: true}
+        show_groups: {type: boolean, default: false}
+    PublicPageSettingsPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: 仅更新提供的字段；null、未知键与空对象无效。仅值变化时写入设置与一条 public_page.update 审计，details 包含变化字段的新布尔值。
+      properties:
+        enabled: {type: boolean}
+        show_groups: {type: boolean}
     PublicSettings:
       type: object
       additionalProperties: false
@@ -4234,6 +4243,7 @@ components:
       required: [name, status, last_seen]
       description: Only selected fields appear. Absent means private; null means selected but no data. Name is the node name. Ordered by display_order descending then name then id. Region uses manual region then geo_location; country accompanies selected region. Traffic currently includes quota only. Metric status contains exactly the selected metric keys.
       properties:
+        group: {type: [integer, 'null'], minimum: 0, description: 仅 show_groups=true 时出现；为 node_groups 索引，未分组为 null，绝不包含组 ID。}
         availability: {$ref: '#/components/schemas/PublicAvailability'}
         name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255, description: 节点名称。}
         region: {type: string, x-maxLengthBytes: 255, description: 手动地区优先；否则为 geo_location。}
@@ -4532,6 +4542,7 @@ components:
       additionalProperties: false
       required: [name, type, status, latency_ms, availability]
       properties:
+        group: {type: [integer, 'null'], minimum: 0, description: 仅 show_groups=true 时出现；为 service_groups 索引，未分组为 null。}
         name: {type: string, minLength: 1, maxLength: 100}
         type: {type: string, enum: [http, tcp, icmp]}
         status: {type: string, enum: [up, down, unknown]}
@@ -4543,10 +4554,13 @@ components:
           description: 从 generated_at 的 UTC 日期前 29 天开始；无样本为 null。仅公开且启用的服务，绝不含目标或错误。
           items: {type: [number, 'null'], minimum: 0, maximum: 100}
     PublicNodeList:
+      description: show_groups=true 时 node_groups 与 service_groups 均出现（空为 []），成员均带整数或 null 的 group；false 时所有分组字段省略。仅含至少一个公开成员的组名，按控制台 display_order DESC,name,id 排序；名称不去重，不含 ID 或成员总数。node_groups 基于所有有效公开节点，不受当前分页影响；services 仅含启用且公开的监控。
       type: object
       additionalProperties: false
       required: [nodes, services, has_more, next_offset, generated_at]
       properties:
+        node_groups: {type: array, items: {type: string}}
+        service_groups: {type: array, maxItems: 100, items: {type: string}}
         services: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/PublicService'}}
         nodes:
           type: array

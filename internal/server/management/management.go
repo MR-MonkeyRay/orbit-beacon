@@ -21,7 +21,18 @@ var (
 	ErrInvalidInput = errors.New("invalid management input")
 )
 
-type Service struct{ db *storage.Database }
+type Service struct {
+	db            *storage.Database
+	publicChanged func()
+}
+
+// SetPublicInvalidator configures group-cache invalidation before serving requests.
+func (s *Service) SetPublicInvalidator(changed func()) { s.publicChanged = changed }
+func (s *Service) invalidatePublic() {
+	if s.publicChanged != nil {
+		s.publicChanged()
+	}
+}
 
 func NewService(db *storage.Database) *Service { return &Service{db: db} }
 
@@ -178,6 +189,7 @@ func (s *Service) SaveGroup(ctx context.Context, id, name string) (Group, error)
 	if err := tx.Commit(); err != nil {
 		return Group{}, err
 	}
+	s.invalidatePublic()
 	return group, nil
 }
 
@@ -232,6 +244,7 @@ func (s *Service) ReorderGroups(ctx context.Context, ids []string) ([]Group, err
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	s.invalidatePublic()
 	return groups, nil
 }
 
@@ -272,7 +285,11 @@ func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 	if err := audit.Insert(ctx, tx, "group.delete", id, time.Now()); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.invalidatePublic()
+	return nil
 }
 
 func (s *Service) Events(ctx context.Context, limit, offset int, before string) (EventPage, error) {

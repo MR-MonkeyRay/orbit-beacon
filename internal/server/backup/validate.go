@@ -306,7 +306,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 	switch table {
 	case "settings":
 		switch r.text("key") {
-		case "public_page_enabled":
+		case "public_page_enabled", "public_page_show_groups":
 			if !oneOf(r.text("value"), "true", "false") {
 				return invalidRow()
 			}

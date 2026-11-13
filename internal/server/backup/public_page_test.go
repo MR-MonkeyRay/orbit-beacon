@@ -27,6 +27,13 @@ func TestPublicPageSettingPayloadValidation(t *testing.T) {
 		{"rate null", "api_token_rate_limit_per_minute", nil, false},
 		{"enabled", "public_page_enabled", "true", true},
 		{"disabled", "public_page_enabled", "false", true},
+		{"show groups", "public_page_show_groups", "true", true},
+		{"hide groups", "public_page_show_groups", "false", true},
+		{"groups uppercase", "public_page_show_groups", "TRUE", false},
+		{"groups whitespace", "public_page_show_groups", " false", false},
+		{"groups numeric", "public_page_show_groups", "1", false},
+		{"groups empty", "public_page_show_groups", "", false},
+		{"groups null", "public_page_show_groups", nil, false},
 		{"arbitrary key", "private_setting", "false", false},
 		{"empty key", "", "true", false},
 		{"uppercase", "public_page_enabled", "TRUE", false},
@@ -61,7 +68,7 @@ func TestPublicPageSettingSnapshotWhitelist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec("INSERT INTO settings(key,value) VALUES('public_page_enabled','false'),('api_token_rate_limit_per_minute','37'),('private_setting','never-export')"); err != nil {
+	if _, err = db.Exec("INSERT INTO settings(key,value) VALUES('public_page_enabled','false'),('public_page_show_groups','true'),('api_token_rate_limit_per_minute','37'),('private_setting','never-export')"); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -81,8 +88,11 @@ func TestPublicPageSettingSnapshotWhitelist(t *testing.T) {
 	if err = payload.QueryRow("SELECT value FROM settings WHERE key='api_token_rate_limit_per_minute'").Scan(&value); err != nil || value != "37" {
 		t.Fatal("rate snapshot", value, err)
 	}
+	if err = payload.QueryRow("SELECT value FROM settings WHERE key='public_page_show_groups'").Scan(&value); err != nil || value != "true" {
+		t.Fatal("groups snapshot", value, err)
+	}
 	var count int
-	if err = payload.QueryRow("SELECT count(*) FROM settings").Scan(&count); err != nil || count != 2 {
+	if err = payload.QueryRow("SELECT count(*) FROM settings").Scan(&count); err != nil || count != 3 {
 		t.Fatalf("settings count=%d err=%v", count, err)
 	}
 }
@@ -94,7 +104,7 @@ func TestPublicPageSettingRestoreCategorySemantics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = sourceDB.Exec("INSERT INTO settings(key,value) VALUES('public_page_enabled','false'),('api_token_rate_limit_per_minute','37'),('private_setting','source-only')"); err != nil {
+	if _, err = sourceDB.Exec("INSERT INTO settings(key,value) VALUES('public_page_enabled','false'),('public_page_show_groups','true'),('api_token_rate_limit_per_minute','37'),('private_setting','source-only')"); err != nil {
 		t.Fatal(err)
 	}
 	defer sourceDB.Close()
@@ -106,7 +116,7 @@ func TestPublicPageSettingRestoreCategorySemantics(t *testing.T) {
 				t.Fatal(err)
 			}
 			// 保留的 Configuration 还必须过滤不相关的目标设置。
-			if _, err = db.Exec("INSERT INTO settings(key,value) VALUES('public_page_enabled','true'),('api_token_rate_limit_per_minute','99'),('private_setting','target-only')"); err != nil {
+			if _, err = db.Exec("INSERT INTO settings(key,value) VALUES('public_page_enabled','true'),('public_page_show_groups','false'),('api_token_rate_limit_per_minute','99'),('private_setting','target-only')"); err != nil {
 				t.Fatal(err)
 			}
 			db.Close()
@@ -128,6 +138,13 @@ func TestPublicPageSettingRestoreCategorySemantics(t *testing.T) {
 			var got string
 			if err = restored.QueryRow("SELECT value FROM settings WHERE key='public_page_enabled'").Scan(&got); err != nil || got != want {
 				t.Fatalf("setting=%q want=%q err=%v", got, want, err)
+			}
+			wantGroups := "false"
+			if mask&1 != 0 {
+				wantGroups = "true"
+			}
+			if err = restored.QueryRow("SELECT value FROM settings WHERE key='public_page_show_groups'").Scan(&got); err != nil || got != wantGroups {
+				t.Fatal("groups restore", got, err)
 			}
 			wantRate := "99"
 			if mask&1 != 0 {
@@ -151,7 +168,7 @@ func TestConfigurationRestoreReplacesPublicPageSettingWithDefault(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec("INSERT INTO settings(key,value) VALUES('public_page_enabled','false'),('api_token_rate_limit_per_minute','12')"); err != nil {
+	if _, err = db.Exec("INSERT INTO settings(key,value) VALUES('public_page_enabled','false'),('public_page_show_groups','true'),('api_token_rate_limit_per_minute','12')"); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -162,6 +179,9 @@ func TestConfigurationRestoreReplacesPublicPageSettingWithDefault(t *testing.T) 
 	var value string
 	if err = restoreDB(t, target).QueryRow("SELECT value FROM settings WHERE key='public_page_enabled'").Scan(&value); err != sql.ErrNoRows {
 		t.Fatalf("absent archived setting did not replace current value: %q err=%v", value, err)
+	}
+	if err = restoreDB(t, target).QueryRow("SELECT value FROM settings WHERE key='public_page_show_groups'").Scan(&value); err != sql.ErrNoRows {
+		t.Fatal("absent archived groups did not restore default", value, err)
 	}
 	if err = restoreDB(t, target).QueryRow("SELECT value FROM settings WHERE key='api_token_rate_limit_per_minute'").Scan(&value); err != sql.ErrNoRows {
 		t.Fatal("absent archived rate did not restore default", value, err)
@@ -178,7 +198,7 @@ func TestPublicPageSettingDataOnlyRestoreKeepsDisabled(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = db.Exec("INSERT INTO settings(key,value) VALUES('public_page_enabled','false')"); err != nil {
+			if _, err = db.Exec("INSERT INTO settings(key,value) VALUES('public_page_enabled','false'),('public_page_show_groups','true')"); err != nil {
 				t.Fatal(err)
 			}
 			db.Close()
@@ -189,6 +209,9 @@ func TestPublicPageSettingDataOnlyRestoreKeepsDisabled(t *testing.T) {
 			var value string
 			if err = restoreDB(t, target).QueryRow("SELECT value FROM settings WHERE key='public_page_enabled'").Scan(&value); err != nil || value != "false" {
 				t.Fatalf("disabled setting not retained: %q err=%v", value, err)
+			}
+			if err = restoreDB(t, target).QueryRow("SELECT value FROM settings WHERE key='public_page_show_groups'").Scan(&value); err != nil || value != "true" {
+				t.Fatal("groups setting not retained", value, err)
 			}
 		})
 	}

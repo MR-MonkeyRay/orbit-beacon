@@ -95,6 +95,7 @@ type handler struct {
 	streamLifetime           time.Duration
 	webUpdateIntervalSeconds int
 	publicPageDisabled       atomic.Bool
+	publicPageShowGroups     atomic.Bool
 	publicPageUnknown        atomic.Bool
 	publicPageMu             sync.Mutex
 }
@@ -162,6 +163,7 @@ func NewHandler(opts Options) (*handler, error) {
 	if opts.Notifications != nil {
 		serviceNotifier = opts.Notifications
 	}
+	opts.Management.SetPublicInvalidator(opts.Nodes.InvalidatePublic)
 	h.services = services.New(opts.Nodes.Database(), h.storage.History, opts.Now, opts.Logger, serviceNotifier, opts.Nodes.InvalidatePublicSafety)
 	h.commands = commands.New(opts.Nodes.Database(), opts.Now)
 	h.saturation = opts.SaturationMetrics
@@ -175,6 +177,7 @@ func NewHandler(opts Options) (*handler, error) {
 		}
 	} else {
 		h.publicPageDisabled.Store(!publicPage.Enabled)
+		h.publicPageShowGroups.Store(publicPage.ShowGroups)
 		h.publicPageUnknown.Store(false)
 	}
 	if opts.GeoIPLookup {

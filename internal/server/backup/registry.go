@@ -75,7 +75,7 @@ var categoryTables = map[Category][]tableSpec{
 		table("services", "main", "", "id TEXT,name TEXT,group_id TEXT,type TEXT,target TEXT,interval_seconds INTEGER,timeout_seconds INTEGER,enabled INTEGER,public INTEGER,display_order INTEGER,notify INTEGER,latency_threshold_ms REAL,failure_threshold INTEGER,created_at TEXT,updated_at TEXT", "id"),
 		table("users", "main", "", "id TEXT,username TEXT,password_hash TEXT,created_at TEXT,must_change_password INTEGER,totp_ciphertext BLOB,totp_pending_ciphertext BLOB,totp_pending_at TEXT,totp_last_step INTEGER", "id"),
 		table("recovery_codes", "main", "", "user_id TEXT,code_hash BLOB", "user_id,code_hash"),
-		table("settings", "main", "key IN ('public_page_enabled','api_token_rate_limit_per_minute','storage_notifications')", "key TEXT,value TEXT", "key"),
+		table("settings", "main", "key IN ('public_page_enabled','public_page_show_groups','api_token_rate_limit_per_minute','storage_notifications')", "key TEXT,value TEXT", "key"),
 		table("groups", "main", "", "id TEXT,name TEXT,display_order INTEGER", "id"),
 		table("nodes", "main", "", "id TEXT,name TEXT,status TEXT,group_id TEXT,region TEXT,provider TEXT,notes TEXT,expires_on TEXT,display_order INTEGER,price_amount TEXT,price_currency TEXT,billing_cycle TEXT,auto_renew INTEGER,bandwidth TEXT,ipv4 INTEGER,ipv6 INTEGER,network_route TEXT,plan_extra TEXT,created_at TEXT,public_settings TEXT,billing_day INTEGER,quota_bytes TEXT,billing_mode TEXT,token_hash BLOB,credential_epoch INTEGER,installation_id TEXT,first_enrolled_at TEXT,run_generation TEXT,report_session_id TEXT", "id"),
 		table("node_tags", "main", "", "node_id TEXT,tag TEXT", "node_id,tag"),

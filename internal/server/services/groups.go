@@ -129,6 +129,7 @@ func (m *Manager) SaveGroup(ctx context.Context, id, name string) (Group, error)
 	if err := tx.Commit(); err != nil {
 		return Group{}, err
 	}
+	m.signal()
 	return group, nil
 }
 
@@ -183,6 +184,7 @@ func (m *Manager) ReorderGroups(ctx context.Context, ids []string) ([]Group, err
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	m.signal()
 	return groups, nil
 }
 
