@@ -6,7 +6,7 @@ import {busy, button} from '../ui/components.js';
 import {confirmDialog, modal} from '../ui/dialogs.js';
 import {typedConfirmation} from '../ui/typed-confirmation.js';
 import {field, input, onSubmit} from '../ui/forms.js';
-import {groupSelect} from './node-groups.js';
+import {groupSelect} from './groups.js';
 import {toastError} from '../ui/feedback.js';
 
 export const confirmNodeDeletion = (count) => typedConfirmation({

@@ -6,7 +6,7 @@ import {formDialog} from '../ui/dialogs.js';
 import {toast} from '../ui/feedback.js';
 import {field, input, validateBytes} from '../ui/forms.js';
 import {issueEnrollment} from '../pages/enrollments.js';
-import {groupSelect} from './node-groups.js';
+import {groupSelect} from './groups.js';
 
 let opening = false;
 

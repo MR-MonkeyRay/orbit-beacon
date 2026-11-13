@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {setNavigationSignal, setSession} from '../src/console/api.js';
+import {invalidate, setNavigationSignal, setSession} from '../src/console/api.js';
 import {copy, elements, flush, installDOM} from './console-dom.js';
 import {validResponse, validService} from '../src/public/validate.js';
 
@@ -29,7 +29,8 @@ test('service editor switches target placeholders and submits typed payloads inc
     for (const name of ['public', 'notify', 'enabled']) assert.equal(control(root, name).getAttribute('role'), 'switch');
     root.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
     assert.equal(sent[0].url, '/api/v1/services'); assert.equal(sent[0].method, 'POST'); assert.equal(saved, 1);
-    dialog.close('done'); await flush();
+    // 关闭动画以 260ms 计时器收尾，等它真正移除，否则下面会找到上一个表单。
+    dialog.close('done'); await dialog.closed;
     const edit = serviceEditor(service(), {saved: async () => { saved++; }});
     control(root, 'enabled').checked = false; control(root, 'display_order').value = '-3';
     root.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush();
@@ -62,6 +63,194 @@ test('services table, permission hint, history ranges and empty add action rende
     assert.ok(dom.body.querySelector('form')); next.abort();
     const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs();
   } finally { navigation.abort(); setNavigationSignal(null); setSession({user: null, csrf_token: '', expires_at: ''}); dom.restore(); globalThis.fetch = originalFetch; globalThis.matchMedia = originalMatch; }
+});
+
+const groupA = {id: '10000000-0000-4000-8000-00000000000a', name: 'Edge', display_order: 2};
+const groupB = {id: '10000000-0000-4000-8000-00000000000b', name: 'Spare', display_order: 1};
+const sid = (n) => `20000000-0000-4000-8000-00000000000${n}`;
+const fixture = () => [
+  service({id: sid(1), name: 'API', group_id: groupA.id}),
+  service({id: sid(2), name: 'CDN', group_id: groupA.id, target: 'https://cdn.example', latest: {status: 'down', error: 'timeout', latency_ms: null}}),
+  service({id: sid(3), name: 'Old', group_id: groupA.id, enabled: false, latest: null}),
+  service({id: sid(4), name: 'Mail', group_id: null, type: 'tcp', target: 'mail.example:25', latest: {status: 'up', latency_ms: 3}})
+];
+const json = (body, status = 200) => new Response(JSON.stringify(body), {status, headers: {'content-type': 'application/json'}});
+
+async function groupedPage({groupsFail = false, storage = new Map(), services = fixture()} = {}) {
+  const dom = installDOM(); const originalFetch = globalThis.fetch;
+  globalThis.localStorage = {getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => { storage.set(key, String(value)); }};
+  const navigation = new AbortController(); setNavigationSignal(navigation.signal); admin(); invalidate('serviceGroups');
+  const sent = []; const state = {groups: [groupA, groupB], services};
+  globalThis.fetch = async (url, options = {}) => {
+    const path = new URL(String(url), 'https://example.com').pathname; const method = options.method || 'GET';
+    const body = options.body ? JSON.parse(options.body) : undefined;
+    sent.push({path, method, body});
+    if (path === '/api/v1/service-groups') return groupsFail ? json({error: {code: 'internal', message: 'boom'}}, 500) : json({service_groups: state.groups});
+    if (path === '/api/v1/service-groups/order') { state.groups = body.ids.map((id) => state.groups.find((group) => group.id === id)); return json({service_groups: state.groups}); }
+    if (path === '/api/v1/services') return json({services: state.services});
+    const target = state.services.find((item) => path.endsWith(item.id));
+    // PATCH 生效到夹具，保存后的重新读取才能看到分组变化。
+    if (method === 'PATCH' && Object.hasOwn(body, 'group_id')) target.group_id = body.group_id;
+    return json(target);
+  };
+  const {servicesPage} = await import('../src/console/pages/services.js');
+  const page = await servicesPage(); dom.body.append(page);
+  const restore = () => { navigation.abort(); setNavigationSignal(null); setSession({user: null, csrf_token: '', expires_at: ''}); invalidate('serviceGroups'); dom.restore(); globalThis.fetch = originalFetch; };
+  return {dom, page, sent, state, storage, restore};
+}
+const sections = (page) => page.querySelectorAll('tbody').map((body) => body.dataset.group);
+const section = (page, key) => page.querySelectorAll('tbody').find((body) => body.dataset.group === key);
+const lastDialog = (dom) => dom.body.querySelectorAll('dialog').at(-1);
+const textButton = (root, text) => elements(root).find((e) => e.tagName === 'button' && e.textContent.startsWith(text));
+const submit = async (dom) => { lastDialog(dom).querySelector('form').dispatchEvent(new Event('submit', {cancelable: true})); await flush(); await flush(); };
+
+test('monitor groups follow server order, list ungrouped last and summarise enabled members', async () => {
+  const env = await groupedPage();
+  try {
+    assert.deepEqual(sections(env.page), [groupA.id, groupB.id, 'none']);
+    const edge = section(env.page, groupA.id);
+    assert.equal(edge.querySelector('.service-group-name').textContent, 'Edge');
+    assert.equal(edge.querySelector('.count').textContent, '3');
+    // 有启用的成员故障即为故障；停用的成员不参与汇总。
+    assert.equal(edge.querySelector('.service-group-head').querySelector('.badge').textContent, copy('services.status.down'));
+    const spare = section(env.page, groupB.id);
+    assert.equal(spare.querySelector('.badge'), null);
+    assert.equal(spare.querySelector('.service-group-empty').textContent, copy('services.empty'));
+    assert.equal(section(env.page, 'none').querySelector('.service-group-name').textContent, copy('nodes.ungrouped'));
+    const {groupStatus} = await import('../src/console/pages/services.js');
+    assert.equal(groupStatus([]), null);
+    assert.equal(groupStatus([service({enabled: false})]), 'disabled');
+    assert.equal(groupStatus([service(), service({latest: null})]), 'unknown');
+    assert.equal(groupStatus([service(), service({enabled: false, latest: {status: 'down'}})]), 'up');
+  } finally { env.restore(); }
+});
+
+test('collapsing a monitor group hides its rows, keeps focus and survives a reload', async () => {
+  const storage = new Map();
+  let env = await groupedPage({storage});
+  try {
+    const toggle = env.page.querySelector(`#service-group-${groupA.id}`);
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+    toggle.focus(); toggle.click();
+    const collapsed = env.page.querySelector(`#service-group-${groupA.id}`);
+    assert.equal(collapsed.getAttribute('aria-expanded'), 'false');
+    assert.equal(section(env.page, groupA.id).querySelectorAll('tr').length, 1);
+    assert.equal(document.activeElement, collapsed);
+    assert.deepEqual(JSON.parse(storage.get('orbitbeacon-service-groups-collapsed')), [groupA.id]);
+  } finally { env.restore(); }
+  env = await groupedPage({storage});
+  try {
+    assert.equal(env.page.querySelector(`#service-group-${groupA.id}`).getAttribute('aria-expanded'), 'false');
+    assert.equal(section(env.page, 'none').querySelectorAll('tr').length, 2);
+  } finally { env.restore(); }
+});
+
+test('status filter and search show matching monitors with their groups expanded', async () => {
+  const storage = new Map([['orbitbeacon-service-groups-collapsed', JSON.stringify([groupA.id])]]);
+  const env = await groupedPage({storage});
+  try {
+    const down = textButton(env.page, copy('services.status.down'));
+    assert.equal(down.querySelector('.count').textContent, '1');
+    down.click();
+    assert.deepEqual(sections(env.page), [groupA.id]);
+    const toggle = env.page.querySelector(`#service-group-${groupA.id}`);
+    assert.equal(toggle.disabled, true); assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+    assert.deepEqual(section(env.page, groupA.id).querySelectorAll('.service-name').map((name) => name.textContent), ['CDN']);
+    textButton(env.page, copy('nodes.all')).click();
+    const search = env.page.querySelector('#service-search');
+    search.value = 'MAIL.example'; search.dispatchEvent(new Event('input'));
+    assert.deepEqual(sections(env.page), ['none']);
+    search.value = 'nothing'; search.dispatchEvent(new Event('input'));
+    assert.equal(env.page.querySelector('tbody'), null);
+    assert.ok(env.page.textContent.includes(copy('services.noMatch')));
+    search.value = ''; search.dispatchEvent(new Event('input'));
+    assert.equal(env.page.querySelector(`#service-group-${groupA.id}`).getAttribute('aria-expanded'), 'false');
+  } finally { env.restore(); }
+});
+
+test('the monitor editor moves a monitor between groups and clears it with null', async () => {
+  const env = await groupedPage();
+  try {
+    env.page.querySelector(`#service-edit-${sid(1)}`).click(); await flush();
+    const group = control(lastDialog(env.dom), 'group_id');
+    assert.equal(group.value, groupA.id);
+    assert.deepEqual(group.options.map((option) => option.value), ['', groupA.id, groupB.id, '__new']);
+    group.value = ''; group.dispatchEvent(new Event('change'));
+    await submit(env.dom);
+    const first = env.sent.find((call) => call.method === 'PATCH');
+    assert.equal(first.path, `/api/v1/services/${sid(1)}`); assert.equal(first.body.group_id, null);
+    assert.ok(section(env.page, 'none').querySelectorAll('.service-name').some((name) => name.textContent === 'API'));
+    assert.equal(section(env.page, groupA.id).querySelector('.count').textContent, '2');
+    env.page.querySelector(`#service-edit-${sid(4)}`).click(); await flush();
+    const next = control(lastDialog(env.dom), 'group_id');
+    assert.equal(next.value, '');
+    next.value = groupB.id; next.dispatchEvent(new Event('change'));
+    await submit(env.dom);
+    assert.equal(env.sent.filter((call) => call.method === 'PATCH').at(-1).body.group_id, groupB.id);
+    assert.deepEqual(section(env.page, groupB.id).querySelectorAll('.service-name').map((name) => name.textContent), ['Mail']);
+    // 未改动分组的保存不带 group_id，不会覆盖别处的移动。
+    env.page.querySelector(`#service-edit-${sid(2)}`).click(); await flush();
+    control(lastDialog(env.dom), 'name').value = 'CDN edge';
+    await submit(env.dom);
+    const unchanged = env.sent.filter((call) => call.method === 'PATCH').at(-1);
+    assert.equal(unchanged.body.name, 'CDN edge'); assert.equal(Object.hasOwn(unchanged.body, 'group_id'), false);
+  } finally { const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs(); env.restore(); }
+});
+
+test('a failed group read keeps monitors in one list and leaves the group untouched on save', async () => {
+  const env = await groupedPage({groupsFail: true});
+  try {
+    assert.deepEqual(sections(env.page), [undefined]);
+    assert.equal(env.page.querySelector('.service-group-toggle'), null);
+    assert.equal(env.page.querySelectorAll('.service-name').length, 4);
+    env.page.querySelector(`#service-edit-${sid(1)}`).click(); await flush();
+    assert.equal(control(lastDialog(env.dom), 'group_id'), undefined);
+    await submit(env.dom);
+    assert.equal(Object.hasOwn(env.sent.find((call) => call.method === 'PATCH').body, 'group_id'), false);
+  } finally { const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs(); env.restore(); }
+});
+
+test('managing monitor groups counts members and reorders through the service-groups endpoint', async () => {
+  const env = await groupedPage();
+  try {
+    textButton(env.page, copy('nodes.manageGroups')).click(); await flush();
+    const dialog = lastDialog(env.dom);
+    assert.equal(dialog.querySelector('h2').textContent, copy('nodes.manageGroups'));
+    assert.ok(dialog.textContent.includes(copy('services.count', {count: 3})));
+    assert.ok(dialog.textContent.includes(copy('services.count', {count: 0})));
+    elements(dialog).find((e) => e.getAttribute?.('aria-label') === copy('nodes.moveDownNamed', {name: 'Edge'})).click();
+    await flush(); await flush(); await flush();
+    assert.deepEqual(env.sent.find((call) => call.method === 'PUT'), {path: '/api/v1/service-groups/order', method: 'PUT', body: {ids: [groupB.id, groupA.id]}});
+    assert.deepEqual(sections(env.page), [groupB.id, groupA.id, 'none']);
+  } finally { const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs(); env.restore(); }
+});
+
+test('monitor groups stay visible before any monitor exists', async () => {
+  const env = await groupedPage({services: []});
+  try {
+    assert.deepEqual(sections(env.page), [groupA.id, groupB.id]);
+    assert.equal(env.page.textContent.includes(copy('services.noMatch')), false);
+    assert.equal(section(env.page, groupA.id).querySelector('.service-group-empty').textContent, copy('services.empty'));
+  } finally { env.restore(); }
+});
+
+test('the group manager moves the clicked group even after the list changed underneath it', async () => {
+  const dom = installDOM(); const originalFetch = globalThis.fetch; setNavigationSignal(null); admin();
+  const sent = [];
+  globalThis.fetch = async (url, options = {}) => { sent.push({url: String(url), body: options.body ? JSON.parse(options.body) : undefined}); return json({service_groups: []}); };
+  try {
+    const {SERVICE_GROUPS, manageGroupsDialog} = await import('../src/console/lib/groups.js');
+    let list = [groupA, groupB];
+    const dialog = manageGroupsDialog({kind: SERVICE_GROUPS, groups: () => list, counts: () => new Map(), changed: async () => {}});
+    // 页面轮询在对话框打开期间插入了新分组，排在最前。
+    const groupC = {id: '10000000-0000-4000-8000-00000000000c', name: 'New', display_order: 3};
+    list = [groupC, groupA, groupB];
+    elements(dom.body).find((e) => e.getAttribute?.('aria-label') === copy('nodes.moveDownNamed', {name: 'Edge'})).click();
+    await flush(); await flush();
+    assert.equal(sent[0].url, '/api/v1/service-groups/order');
+    assert.deepEqual(sent[0].body.ids, [groupC.id, groupB.id, groupA.id]);
+    dialog.close('done');
+  } finally { const {closeDialogs} = await import('../src/console/ui/dialogs.js'); closeDialogs(); setSession({user: null, csrf_token: '', expires_at: ''}); dom.restore(); globalThis.fetch = originalFetch; }
 });
 
 test('public services strictly validate 30 nullable percentages and reject target/error leakage', () => {

@@ -14,7 +14,8 @@ import {createNodeRow, fadeNodeRow, patchNodeSortHeaders} from '../lib/nodes-tab
 import {NODE_COLUMNS, nodeViewMenu, patchNodeColumns, readNodeColumns} from '../lib/nodes-columns.js';
 import {pagePlaceholder, placeholderHead, placeholderRows} from '../ui/placeholders.js';
 import {addNodeButton} from '../lib/add-node-dialog.js';
-import {deleteGroup, deployToGroup, editGroup, groupCounts, manageGroupsDialog, nodeGroupBar} from '../lib/node-groups.js';
+import {deployToGroup, groupCounts, nodeGroupBar} from '../lib/node-groups.js';
+import {deleteGroup, editGroup, manageGroupsDialog} from '../lib/groups.js';
 import {groupCommandItems} from '../lib/group-commands.js';
 
 // 与节点列表同构：工具栏、状态分段与用户保存的列先出现，表格行以微光条占位。
@@ -88,7 +89,7 @@ export async function nodesPage() {
       {label: t('nodes.deployAgent'), onSelect: () => deployToGroup(group, controls()[0])},
       ...groupCommandItems(group, {signal, controls}),
       {label: t('nodes.rename'), onSelect: exclusive(async () => { if (await editGroup(group)) await reloadGroups(); })},
-      {label: t('nodes.deleteGroup'), danger: true, onSelect: exclusive(async () => { if (await deleteGroup(group)) await reloadGroups({nodes: true}); })}
+      {label: t('nodes.deleteGroup'), danger: true, onSelect: exclusive(async () => { if (await deleteGroup(group)) await reloadGroups({members: true}); })}
     ]
   });
   const paintGroups = () => groupBar.update({groups, nodes: activeNodes(), active: filter.group});
@@ -97,7 +98,7 @@ export async function nodesPage() {
   let groupsLoad = 0;
   let nodesStale = false;
   // 自行提示读取失败，调用方无需处理拒绝。
-  async function reloadGroups({nodes: nodesChanged = false} = {}) {
+  async function reloadGroups({members: nodesChanged = false} = {}) {
     const ticket = ++groupsLoad;
     nodesStale ||= nodesChanged;
     invalidate('groups');

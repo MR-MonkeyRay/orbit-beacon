@@ -63,4 +63,13 @@ export default {
  "audit.action.service.create": "Created check",
  "audit.action.service.update": "Updated check",
  "audit.action.service.delete": "Deleted check",
+ "services.count": {"one": "{count} check", "other": "{count} checks"},
+ "services.search": "Search checks",
+ "services.filterStatus": "Filter by status",
+ "services.noMatch": "No checks match these filters",
+ "services.deleteGroupHint": "Checks in this group become ungrouped.",
+ "audit.action.service_group.create": "Created check group",
+ "audit.action.service_group.update": "Renamed check group",
+ "audit.action.service_group.delete": "Deleted check group",
+ "audit.action.service_group.reorder": "Reordered check groups",
 };

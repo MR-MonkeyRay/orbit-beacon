@@ -1,8 +1,8 @@
 {
   "asset_base": "",
   "versions": {
-    "_app/assets/console.css": "b04709d2e2c4ea129cde355cee01f2fc",
-    "_app/assets/console.js": "900f988024e52874c9d91029f2a4df40",
+    "_app/assets/console.css": "8d4bd3c97607be2ece6e033a64c14a8b",
+    "_app/assets/console.js": "661a725ec5c9f33a54e283d470e32b38",
     "_app/assets/public.css": "996aa1bc5de22046f4f935a005370ee7",
     "_app/assets/public.js": "7ac70cf54f1d9835c63b125cd175b92f"
   }

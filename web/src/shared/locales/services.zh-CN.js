@@ -63,4 +63,13 @@ export default {
  "audit.action.service.create": "创建监测",
  "audit.action.service.update": "更新监测",
  "audit.action.service.delete": "删除监测",
+ "services.count": {"other": "{count} 个监测"},
+ "services.search": "搜索监测",
+ "services.filterStatus": "按状态筛选",
+ "services.noMatch": "没有符合筛选条件的监测",
+ "services.deleteGroupHint": "分组内的监测会变为未分组。",
+ "audit.action.service_group.create": "创建监测分组",
+ "audit.action.service_group.update": "重命名监测分组",
+ "audit.action.service_group.delete": "删除监测分组",
+ "audit.action.service_group.reorder": "调整监测分组顺序",
 };

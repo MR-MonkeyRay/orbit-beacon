@@ -348,6 +348,10 @@ export async function readNodes(signal = navigationSignal) {
 }
 
 export const groupsList = () => cached('groups', 30000, () => api('/groups').then((result) => result.groups));
+export const serviceGroupsList = () => cached('serviceGroups', 30000, () => api('/service-groups').then((result) => {
+  if (!Array.isArray(result.service_groups)) throw new ApiError(200, {code: 'unreadable_response'});
+  return result.service_groups;
+}));
 export const usersList = () => cached('users', 30000, () => api('/users').then((result) => result.users));
 
 export function nameLookup(nodes, users, groups) {

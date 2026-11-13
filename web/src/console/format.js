@@ -9,6 +9,8 @@ export const STATUS_ORDER = ['online', 'offline', 'never', 'pending', 'disabled'
 
 export const ACTIONS = {
  'service.create': t('audit.action.service.create'), 'service.update': t('audit.action.service.update'), 'service.delete': t('audit.action.service.delete'),
+  'service_group.create': t('audit.action.service_group.create'), 'service_group.update': t('audit.action.service_group.update'),
+  'service_group.delete': t('audit.action.service_group.delete'), 'service_group.reorder': t('audit.action.service_group.reorder'),
   'command.create': t('audit.commandCreate'), 'command.bulk': t('audit.commandBulk'),
   'command.succeeded': t('audit.commandSucceeded'),
   'command.failed': t('audit.commandFailed'), 'command.rejected': t('audit.commandRejected'),

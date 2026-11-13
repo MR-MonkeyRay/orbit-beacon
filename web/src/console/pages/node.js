@@ -16,7 +16,7 @@ import {availabilityPanel} from './node-availability.js';
 import {trafficPanel} from './node-traffic.js';
 import {trafficSettingsPanel} from './node-traffic-settings.js';
 import {probesPanel} from './node-probes.js';
-import {groupSelect} from '../lib/node-groups.js';
+import {groupSelect} from '../lib/groups.js';
 import {NODE_PATH} from '../routes.js';
 import {pagePlaceholder, placeholderChart, placeholderPanel, skLines, skText, skValue} from '../ui/placeholders.js';
 

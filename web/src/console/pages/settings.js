@@ -243,8 +243,8 @@ function auditTab(page, names, users) {
   let cursor = page.next_cursor;
   const eventIDs = new Set(events.map((event) => event.id));
   const resources = {
-    service: 'shell.services', node: 'shell.nodes', enrollment: 'audit.category.enrollment', command: 'audit.category.command',
-    group: 'nodes.groups', user: 'settings.account', session: 'settings.account',
+    service: 'shell.services', service_group: 'shell.services', node: 'shell.nodes', enrollment: 'audit.category.enrollment', command: 'audit.category.command',
+    group: 'shell.nodes', user: 'settings.account', session: 'settings.account',
     alert_rule: 'shell.alerts', alert_silence: 'shell.alerts', notification_channel: 'audit.category.notification',
     backup: 'settings.backups', api_token: 'audit.category.token',
     settings: 'audit.category.token', public_page: 'settings.publicPage'

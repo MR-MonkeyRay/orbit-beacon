@@ -1,51 +1,11 @@
 import {t} from '../i18n.js';
-import {h, icon} from '../../shared/dom.js';
-import {api, getNavigationSignal, getSessionEpoch, invalidate} from '../api.js';
+import {h} from '../../shared/dom.js';
+import {getNavigationSignal, getSessionEpoch} from '../api.js';
 import {displayStatus} from '../format.js';
-import {busy, button, emptyState, iconButton} from '../ui/components.js';
-import {confirmDialog, formDialog, modal} from '../ui/dialogs.js';
-import {toast, toastError} from '../ui/feedback.js';
-import {field, input, select, validateBytes} from '../ui/forms.js';
+import {busy, button} from '../ui/components.js';
+import {toastError} from '../ui/feedback.js';
 import {menuButton} from '../ui/menu.js';
 import {issueEnrollment} from '../pages/enrollments.js';
-import {groupCommandItems} from './group-commands.js';
-
-const NEW_GROUP = '__new';
-
-// 新建（item 为空）或重命名；保存成功返回服务器上的分组，取消返回 null。
-export async function editGroup(item) {
-  let name;
-  let saved = null;
-  const dialog = formDialog({
-    title: item ? t('nodes.renameGroupNamed', {name: item.name}) : t('nodes.addGroup'),
-    submit: item ? t('nodes.rename') : t('nodes.addGroup'),
-    build: (form) => {
-      name = input({name: 'name', required: true, value: item?.name || '', autocomplete: 'off'});
-      validateBytes(name, 1, 255, t('nodes.groupName'));
-      form.append(field(t('nodes.groupName'), name));
-    },
-    action: async () => {
-      saved = item
-        ? await api(`/groups/${encodeURIComponent(item.id)}`, {method: 'PATCH', body: {name: name.value}})
-        : await api('/groups', {method: 'POST', body: {name: name.value}});
-      invalidate('groups');
-      toast(t(item ? 'nodes.groupRenamed' : 'nodes.groupAdded', {name: saved.name}));
-    }
-  });
-  return await dialog.closed === 'done' ? saved : null;
-}
-
-// confirmed() 在确认后、请求前调用，调用方据此锁住其它分组操作。
-export async function deleteGroup(item, {confirmed} = {}) {
-  if (!await confirmDialog({title: t('nodes.deleteGroupNamed', {name: item.name}),
-    message: t('nodes.deleteGroupHint'), confirm: t('nodes.deleteGroup'), danger: true})) return false;
-  confirmed?.();
-  try { await api(`/groups/${encodeURIComponent(item.id)}`, {method: 'DELETE'}); }
-  catch (error) { toastError(error); return false; }
-  invalidate('groups', 'nodes');
-  toast(t('nodes.groupDeleted', {name: item.name}));
-  return true;
-}
 
 // 部署凭据属于当前导航和会话；越过边界后不再把焦点还给触发按钮。
 export async function deployToGroup(item, trigger) {
@@ -58,26 +18,6 @@ export async function deployToGroup(item, trigger) {
     busy(trigger, false);
     if (trigger.isConnected && !trigger.disabled && !navigation?.aborted && navigation === getNavigationSignal() && epoch === getSessionEpoch()) trigger.focus({preventScroll: true});
   }
-}
-
-// 分组下拉：末项“新建分组…”打开新建对话框，成功后选中新分组；取消时回到原值。
-export function groupSelect(groups, value, props = {}, {extra = [], onCreated} = {}) {
-  const control = select([['', t('nodes.ungrouped')], ...groups.map((group) => [group.id, group.name]), ...extra,
-    [NEW_GROUP, t('nodes.newGroup')]], value || '', props);
-  let previous = control.value;
-  // 表单重置会直接改值；获得焦点时重新记下，取消新建时才能回到正确的值。
-  control.addEventListener('focus', () => { if (control.value !== NEW_GROUP) previous = control.value; });
-  control.addEventListener('change', async () => {
-    if (control.value !== NEW_GROUP) { previous = control.value; return; }
-    control.value = previous;
-    const created = await editGroup(null);
-    if (!created || !control.isConnected) return;
-    control.insertBefore(h('option', {value: created.id}, created.name), [...control.options].find((option) => option.value === NEW_GROUP));
-    control.value = previous = created.id;
-    onCreated?.(created);
-    control.dispatchEvent(new Event('change', {bubbles: true}));
-  });
-  return control;
 }
 
 export function groupCounts(nodes) {
@@ -167,75 +107,4 @@ export function nodeGroupBar({onSelect, onManage, menuItems, signal}) {
     }
   };
   return root;
-}
-
-// 管理分组：顺序、重命名、删除、新建。同一时间只进行一项变更；请求和随后的页面刷新期间
-// 全部控件锁定，changed({nodes}) 重新读取分组（nodes 表示节点也已改变），再按新数据重绘。
-export function manageGroupsDialog({groups, counts, changed}) {
-  return modal(t('nodes.manageGroups'), (close, signal) => {
-    const list = h('ul', {class: 'rows group-rows'});
-    const body = h('div', {class: 'dialog-body stack'});
-    let pending = false;
-    const lock = () => {
-      pending = true;
-      for (const control of [...list.querySelectorAll('button'), add]) control.disabled = true;
-    };
-    const settle = async (change, focus) => {
-      try { await changed(change); } catch (error) { if (!signal.aborted) toastError(error); }
-      pending = false;
-      if (!signal.aborted) render(focus);
-    };
-    const move = async (index, delta) => {
-      if (pending) return;
-      const ids = groups().map((group) => group.id);
-      const [id] = ids.splice(index, 1);
-      ids.splice(index + delta, 0, id);
-      lock();
-      try { await api('/groups/order', {method: 'PUT', body: {ids}}); }
-      catch (error) { if (!signal.aborted) toastError(error); }
-      await settle({}, {id, action: delta < 0 ? 'up' : 'down'});
-    };
-    const edit = async (group) => {
-      if (pending) return;
-      const saved = await editGroup(group);
-      if (!saved || signal.aborted) return;
-      lock();
-      await settle({}, {id: saved.id, action: 'edit'});
-    };
-    const remove = async (group, neighbor) => {
-      if (pending) return;
-      let locked = false;
-      const deleted = await deleteGroup(group, {confirmed: () => { locked = true; lock(); }});
-      if (locked) await settle({nodes: deleted}, deleted ? {id: neighbor, action: 'delete'} : {id: group.id, action: 'delete'});
-    };
-    const add = button(t('nodes.addGroup'), {icon: 'plus', small: true, onClick: () => edit(null)});
-    const rows = new Map();
-    function render(focus) {
-      const items = groups();
-      const sizes = counts();
-      rows.clear();
-      list.replaceChildren(...items.map((group, index) => {
-        const controls = {
-          up: iconButton('up', t('nodes.moveUpNamed', {name: group.name}), () => move(index, -1)),
-          down: iconButton('down', t('nodes.moveDownNamed', {name: group.name}), () => move(index, 1)),
-          edit: iconButton('edit', t('nodes.renameGroupNamed', {name: group.name}), () => edit(group)),
-          delete: iconButton('trash', t('nodes.deleteGroupLabel', {name: group.name}), () => remove(group, items[index + 1]?.id || items[index - 1]?.id))
-        };
-        controls.up.disabled = index === 0;
-        controls.down.disabled = index === items.length - 1;
-        rows.set(group.id, controls);
-        return h('li', null, icon('folder', 'muted'),
-          h('div', {class: 'grow'}, h('div', {class: 'title'}, group.name), h('div', {class: 'sub'}, t('nodes.nodeCount', {count: sizes.get(group.id) || 0}))),
-          h('div', {class: 'group-row-actions'}, Object.values(controls)));
-      }));
-      add.disabled = false;
-      body.replaceChildren(items.length ? list : emptyState(t('nodes.noGroups'), null), h('div', null, add));
-      if (!focus) return;
-      const row = rows.get(focus.id);
-      const target = row ? [focus.action, 'up', 'down', 'edit'].map((action) => row[action]).find((control) => control && !control.disabled) : add;
-      target.focus();
-    }
-    render();
-    return h('div', null, body, h('div', {class: 'dialog-foot'}, button(t('nodes.close'), {variant: 'primary', onClick: () => close('done')})));
-  });
 }

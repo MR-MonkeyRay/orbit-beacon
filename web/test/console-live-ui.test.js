@@ -1271,7 +1271,7 @@ test('choosing New group in a group select creates it and selects it, cancelling
     posts.push(JSON.parse(request.body));
     return response({id: id(702), name: 'Edge', display_order: 0});
   }});
-  const {groupSelect} = await import('../src/console/lib/node-groups.js');
+  const {groupSelect} = await import('../src/console/lib/groups.js');
   const created = [];
   const select = groupSelect(twoGroups(), id(700), {name: 'group_id'}, {onCreated: (group) => created.push(group)});
   env.body.append(select);
