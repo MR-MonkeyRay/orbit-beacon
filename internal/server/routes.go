@@ -84,6 +84,7 @@ var routes = []route{
 	{"DELETE /api/v1/users/{id}", admin, endpoint((*handler).users)},
 	{"GET /api/v1/groups", admin, endpoint((*handler).groups)},
 	{"POST /api/v1/groups", admin, endpoint((*handler).groups)},
+	{"PUT /api/v1/groups/order", admin, endpoint((*handler).groupOrder)},
 	{"GET /api/v1/groups/{id}", admin, endpoint((*handler).groups)},
 	{"PATCH /api/v1/groups/{id}", admin, endpoint((*handler).groups)},
 	{"DELETE /api/v1/groups/{id}", admin, endpoint((*handler).groups)},

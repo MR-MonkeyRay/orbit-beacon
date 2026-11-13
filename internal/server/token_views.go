@@ -133,14 +133,15 @@ func tokenTrafficDTO(s traffic.Summary) tokenTrafficView {
 }
 
 type tokenGroupView struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	DisplayOrder int    `json:"display_order"`
 }
 
 func tokenGroupDTOs(groups []management.Group) []tokenGroupView {
 	result := make([]tokenGroupView, 0, len(groups))
 	for _, g := range groups {
-		result = append(result, tokenGroupView{g.ID, g.Name})
+		result = append(result, tokenGroupView{g.ID, g.Name, g.DisplayOrder})
 	}
 	return result
 }

@@ -69,6 +69,7 @@ func TestAdministrativeMutationsAndAuditInsertCommitOrRollbackTogether(t *testin
 		batch  bool
 	}{
 		{"create node", http.MethodPost, "/api/v1/nodes", `{"name":"created with audit"}`, "", http.StatusCreated, false},
+		{"create grouped node", http.MethodPost, "/api/v1/nodes", `{"name":"created with group and audit","group_id":"` + groupID + `"}`, "", http.StatusCreated, false},
 		{"patch public settings", http.MethodPatch, "/api/v1/nodes/" + nodeID + "/public-settings", `{"enabled":true,"fields":["region","provider"]}`, nodeID, http.StatusOK, false},
 		{"patch node metadata and tags", http.MethodPatch, "/api/v1/nodes/" + nodeID, `{"notes":"new note","region":"eu","provider":"cloud","group_id":"` + groupID + `","tags":["new"]}`, nodeID, http.StatusOK, false},
 		{"patch traffic settings", http.MethodPatch, "/api/v1/nodes/" + nodeID + "/traffic-settings", `{"billing_day":2}`, nodeID, http.StatusOK, false},

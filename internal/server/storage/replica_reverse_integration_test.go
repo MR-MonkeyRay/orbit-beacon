@@ -75,7 +75,7 @@ func TestMySQLSQLiteMySQLStrictReverseCascade(t *testing.T) {
 		t.Fatal(err)
 	}
 	haWrite(t, remote, func(tx *storage.Tx) {
-		for _, q := range []string{"INSERT INTO `groups` VALUES('g','组')", "INSERT INTO nodes(id,name,group_id,created_at) VALUES('n','节点','g','now')", "INSERT INTO enrollment_tokens(id,token_hash,node_id,group_id,expires_at) VALUES('e',X'01','n','g','later')", "INSERT INTO enrollment_claims VALUES('e','i','n',X'02','now')", "INSERT INTO settings VALUES('same','initial')"} {
+		for _, q := range []string{"INSERT INTO `groups`(id,name) VALUES('g','组')", "INSERT INTO nodes(id,name,group_id,created_at) VALUES('n','节点','g','now')", "INSERT INTO enrollment_tokens(id,token_hash,node_id,group_id,expires_at) VALUES('e',X'01','n','g','later')", "INSERT INTO enrollment_claims VALUES('e','i','n',X'02','now')", "INSERT INTO settings VALUES('same','initial')"} {
 			if _, err := tx.ExecContext(ctx, q); err != nil {
 				t.Fatal(err)
 			}

@@ -37,7 +37,7 @@ func TestMySQLReplicaTargetConstraintsRevokeWithoutRetry(t *testing.T) {
 				source := f.RawEndpoint(t, "primary", storage.MainDomain)
 				if kind == "foreign_key" {
 					haWrite(t, dbs.Main, func(tx *storage.Tx) {
-						if _, err := tx.ExecContext(ctx, "INSERT INTO `groups` VALUES('parent','parent')"); err != nil {
+						if _, err := tx.ExecContext(ctx, "INSERT INTO `groups`(id,name) VALUES('parent','parent')"); err != nil {
 							t.Fatal(err)
 						}
 					})
@@ -63,9 +63,9 @@ func TestMySQLReplicaTargetConstraintsRevokeWithoutRetry(t *testing.T) {
 				if err = target.QueryRow("SELECT head_seq FROM replica_state WHERE id=1").Scan(&before); err != nil {
 					t.Fatal(err)
 				}
-				mutation, write := "INSERT INTO `groups` VALUES('conflict','foreign')", "INSERT INTO `groups` VALUES('conflict','source')"
+				mutation, write := "INSERT INTO `groups`(id,name) VALUES('conflict','foreign')", "INSERT INTO `groups`(id,name) VALUES('conflict','source')"
 				if kind == "unique" {
-					mutation, write = "INSERT INTO `groups` VALUES('foreign','duplicate')", "INSERT INTO `groups` VALUES('source','duplicate')"
+					mutation, write = "INSERT INTO `groups`(id,name) VALUES('foreign','duplicate')", "INSERT INTO `groups`(id,name) VALUES('source','duplicate')"
 				}
 				if kind == "foreign_key" {
 					mutation, write = "DELETE FROM `groups` WHERE id='parent'", "INSERT INTO nodes(id,name,group_id,created_at) VALUES('source','source','parent','now')"

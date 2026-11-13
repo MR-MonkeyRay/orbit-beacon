@@ -77,7 +77,7 @@ func toolTable() []tool {
 		makeTool("list_alerts", "List alert events.", "/api/v1/alerts", map[string]property{"state": text("firing", "resolved", "all"), "limit": limit, "before": {Type: "string", MinLength: 1, MaxLength: 256}}),
 		makeTool("get_alert_summary", "Get the alert event summary.", "/api/v1/alerts/summary", map[string]property{}),
 		makeTool("get_alert", "Get an alert event.", "/api/v1/alerts/{id}", map[string]property{"id": id}, "id"),
-		makeTool("list_groups", "List node groups.", "/api/v1/groups", map[string]property{}),
+		makeTool("list_groups", "List node groups ordered by display_order descending, then name and id.", "/api/v1/groups", map[string]property{}),
 	}
 }
 

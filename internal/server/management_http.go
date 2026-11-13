@@ -146,3 +146,18 @@ func (h *handler) groups(w http.ResponseWriter, r *http.Request, requestID strin
 	}
 	writeJSON(w, status, group)
 }
+
+func (h *handler) groupOrder(w http.ResponseWriter, r *http.Request, requestID string) {
+	var input struct {
+		IDs []string `json:"ids"`
+	}
+	if !decode(w, r, &input, requestID) {
+		return
+	}
+	groups, err := h.management.ReorderGroups(r.Context(), input.IDs)
+	if err != nil {
+		h.serviceError(w, err, requestID)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
+}

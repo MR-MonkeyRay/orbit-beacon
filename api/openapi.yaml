@@ -1108,7 +1108,7 @@ paths:
         - session: []
         - bearerAuth: []
       operationId: listGroups
-      description: 所有已认证管理员均可用。返回完整、不分页的分组列表。
+      description: 所有已认证管理员均可用。返回完整、不分页的分组列表，按 display_order 降序、名称、ID 排序。
       responses:
         '429':
           description: rate_limited; whole seconds until one request is available.
@@ -1132,7 +1132,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createGroup
-      description: 仅限管理员。分组仅包含名称，不含注册凭据或未来的策略设置。
+      description: 仅限管理员。仅接受名称；新分组的 display_order 为 0，排在已重排的分组之后。
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -1145,6 +1145,49 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Group'}
         '400': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/groups/order:
+    put:
+      operationId: reorderGroups
+      security: [{session: []}]
+      description: 仅限管理员会话，不接受只读 API 令牌。ids 必须恰好包含全部现有分组一次，首项最先显示；空数组仅在没有分组时有效。在同一写事务内校验并重排，首项 display_order 为数组长度，末项为 1；记录一条 group.reorder 审计事件。
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  maxItems: 1000000
+                  uniqueItems: true
+                  items: {type: string, format: uuid}
+      responses:
+        '200':
+          description: 按请求顺序返回全部分组；没有分组时 groups 为空数组。
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [groups]
+                properties:
+                  groups:
+                    type: array
+                    items: {$ref: '#/components/schemas/Group'}
+        '400':
+          description: validation_failed（ids 缺失、为 null、遗漏、未知或重复 ID，或超过排序范围）；invalid_json（JSON 格式或字段类型错误）。校验失败不修改分组或写入审计。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/groups/{id}:
     parameters:
@@ -2095,7 +2138,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createPendingNode
-      description: 仅限管理员。容量计入所有节点（含待注册与已禁用的）。
+      description: 仅限管理员。容量计入所有节点（含待注册与已禁用的）。可选 group_id 在同一事务内校验并关联分组；省略或 null 表示不分组，格式错误或未知 UUID 返回 400 validation_failed，且不创建节点。
       parameters:
         - $ref: '#/components/parameters/Origin'
         - $ref: '#/components/parameters/CSRF'
@@ -2109,12 +2152,14 @@ paths:
               required: [name]
               properties:
                 name: {type: string, x-minLengthBytes: 1, x-maxLengthBytes: 255}
+                group_id: {type: [string, 'null'], format: uuid}
       responses:
         '201':
           description: 已创建持久的待注册身份。
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Node'}
+        '400': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /api/v1/nodes/{id}:
@@ -3820,10 +3865,11 @@ components:
     Group:
       type: object
       additionalProperties: false
-      required: [id, name]
+      required: [id, name, display_order]
       properties:
         id: {type: string, format: uuid}
         name: {type: string}
+        display_order: {type: integer, minimum: -1000000, maximum: 1000000, default: 0}
     AuditEvent:
       type: object
       additionalProperties: false

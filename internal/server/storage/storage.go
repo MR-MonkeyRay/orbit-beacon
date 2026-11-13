@@ -213,7 +213,8 @@ CREATE TABLE api_tokens (
  rate_limit_per_minute INTEGER CHECK (rate_limit_per_minute IS NULL OR rate_limit_per_minute BETWEEN 1 AND 100000)
 );
 CREATE INDEX api_tokens_owner ON api_tokens(created_by);
-CREATE TABLE groups (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL UNIQUE);
+CREATE TABLE groups (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL UNIQUE,
+ display_order INTEGER NOT NULL DEFAULT 0 CHECK(display_order BETWEEN -1000000 AND 1000000));
 CREATE TABLE nodes (
  id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
  group_id TEXT REFERENCES groups(id) ON DELETE SET NULL,

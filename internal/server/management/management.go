@@ -26,8 +26,9 @@ type Service struct{ db *storage.Database }
 func NewService(db *storage.Database) *Service { return &Service{db: db} }
 
 type Group struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	DisplayOrder int    `json:"display_order"`
 }
 
 type Event struct {
@@ -79,7 +80,7 @@ func DecodeEventCursor(cursor string) (string, string, error) {
 
 func scanGroup(row interface{ Scan(...any) error }) (Group, error) {
 	var group Group
-	err := row.Scan(&group.ID, &group.Name)
+	err := row.Scan(&group.ID, &group.Name, &group.DisplayOrder)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -93,10 +94,14 @@ func (s *Service) Groups(ctx context.Context) ([]Group, error) {
 	}
 	defer lease.Close()
 	ctx = lease.Context()
-	rows, err := lease.QueryContext(ctx, "SELECT id, name FROM `groups` ORDER BY name, id")
+	rows, err := lease.QueryContext(ctx, "SELECT id, name, display_order FROM `groups` ORDER BY display_order DESC, name, id")
 	if err != nil {
 		return nil, err
 	}
+	return scanGroups(rows)
+}
+
+func scanGroups(rows *storage.Rows) ([]Group, error) {
 	defer rows.Close()
 	groups := make([]Group, 0)
 	for rows.Next() {
@@ -116,7 +121,7 @@ func (s *Service) Group(ctx context.Context, id string) (Group, error) {
 	}
 	defer lease.Close()
 	ctx = lease.Context()
-	return scanGroup(lease.QueryRowContext(ctx, "SELECT id, name FROM `groups` WHERE id = ?", id))
+	return scanGroup(lease.QueryRowContext(ctx, "SELECT id, name, display_order FROM `groups` WHERE id = ?", id))
 }
 
 func (s *Service) SaveGroup(ctx context.Context, id, name string) (Group, error) {
@@ -163,13 +168,71 @@ func (s *Service) SaveGroup(ctx context.Context, id, name string) (Group, error)
 	if err != nil {
 		return Group{}, err
 	}
+	group, err := scanGroup(tx.QueryRowContext(ctx, "SELECT id, name, display_order FROM `groups` WHERE id = ?", id))
+	if err != nil {
+		return Group{}, err
+	}
 	if err := audit.Insert(ctx, tx, action, id, time.Now()); err != nil {
 		return Group{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Group{}, err
 	}
-	return Group{ID: id, Name: name}, nil
+	return group, nil
+}
+
+func (s *Service) ReorderGroups(ctx context.Context, ids []string) ([]Group, error) {
+	lease, err := s.db.Acquire(ctx, storage.Writer)
+	if err != nil {
+		return nil, err
+	}
+	defer lease.Close()
+	ctx = lease.Context()
+	tx, err := lease.BeginWrite(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if ids == nil || len(ids) > 1000000 {
+		return nil, ErrInvalidInput
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT id, name, display_order FROM `groups`")
+	if err != nil {
+		return nil, err
+	}
+	current, err := scanGroups(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) != len(current) {
+		return nil, ErrInvalidInput
+	}
+	byID := make(map[string]Group, len(current))
+	for _, group := range current {
+		byID[group.ID] = group
+	}
+	groups := make([]Group, 0, len(ids))
+	for i, id := range ids {
+		group, ok := byID[id]
+		if !ok {
+			return nil, ErrInvalidInput
+		}
+		delete(byID, id)
+		group.DisplayOrder = len(ids) - i
+		groups = append(groups, group)
+	}
+	for _, group := range groups {
+		if _, err := tx.ExecContext(ctx, "UPDATE `groups` SET display_order = ? WHERE id = ?", group.DisplayOrder, group.ID); err != nil {
+			return nil, err
+		}
+	}
+	if err := audit.Insert(ctx, tx, "group.reorder", "", time.Now()); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return groups, nil
 }
 
 func requireRow(result sql.Result) error {

@@ -333,7 +333,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 		}
 		return auth.ValidatePasswordHash(r.text("password_hash"))
 	case "groups":
-		if !validText(r.text("name"), 255) {
+		if !validText(r.text("name"), 255) || r.integer("display_order") < -1000000 || r.integer("display_order") > 1000000 {
 			return invalidRow()
 		}
 	case "nodes":

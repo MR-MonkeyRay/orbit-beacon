@@ -41,7 +41,7 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := "22222222-2222-4222-8222-222222222222"
-	if _, err = db.Exec(`INSERT INTO groups(id,name) VALUES('66666666-6666-4666-8666-666666666666','fixture-group')`); err != nil {
+	if _, err = db.Exec(`INSERT INTO groups(id,name,display_order) VALUES('66666666-6666-4666-8666-666666666666','fixture-group',73)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = db.Exec(`INSERT INTO nodes(id,name,status,group_id,token_hash,credential_epoch,installation_id,first_enrolled_at,last_seen,system,billing_day,quota_bytes,billing_mode,run_generation,report_session_id,created_at) VALUES(?,'node','online','66666666-6666-4666-8666-666666666666',?,23,'fixture-installation',?,?,?,2,'18446744073709551615','max','17','33333333-3333-4333-8333-333333333333',?)`, node, bytes.Repeat([]byte{3}, 32), at, at, `{"hostname":"monitoring-canary"}`, at); err != nil {
@@ -142,8 +142,9 @@ func TestSnapshotArchiveSevenIndependentCategoryCombinations(t *testing.T) {
 						t.Fatal("traffic billing or group configuration lost")
 					}
 					var name string
-					if err = reader.QueryRow(`SELECT name FROM groups WHERE id=?`, group).Scan(&name); err != nil || name != "fixture-group" {
-						t.Fatalf("group configuration: name=%q err=%v", name, err)
+					var order int
+					if err = reader.QueryRow(`SELECT name,display_order FROM groups WHERE id=?`, group).Scan(&name, &order); err != nil || name != "fixture-group" || order != 73 {
+						t.Fatalf("group configuration: name=%q order=%d err=%v", name, order, err)
 					}
 					raw, e := os.ReadFile(path)
 					if e != nil {

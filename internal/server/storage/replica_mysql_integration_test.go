@@ -87,7 +87,7 @@ func TestMySQLReplicationTypedTriggersAndRestart(t *testing.T) {
 			}
 			values := []float64{0, math.Copysign(0, -1), math.SmallestNonzeroFloat64, -math.SmallestNonzeroFloat64, math.MaxFloat64, -math.MaxFloat64, math.Nextafter(1, 0), math.Nextafter(1, 2)}
 			haWrite(t, dbs.Main, func(tx *storage.Tx) {
-				for _, q := range []string{"INSERT INTO users(id,username,password_hash,created_at,totp_ciphertext) VALUES('u','用户','hash','now',X'')", "INSERT INTO `groups` VALUES('g','组')", "INSERT INTO nodes(id,name,group_id,quota_bytes,created_at) VALUES('n','节点','g','18446744073709551615','now')", "INSERT INTO enrollment_tokens(id,token_hash,node_id,group_id,expires_at,max_uses,uses) VALUES('enroll',X'01','n','g','later',10,0)", "INSERT INTO enrollment_claims VALUES('enroll','install','n',X'02','now')"} {
+				for _, q := range []string{"INSERT INTO users(id,username,password_hash,created_at,totp_ciphertext) VALUES('u','用户','hash','now',X'')", "INSERT INTO `groups`(id,name) VALUES('g','组')", "INSERT INTO nodes(id,name,group_id,quota_bytes,created_at) VALUES('n','节点','g','18446744073709551615','now')", "INSERT INTO enrollment_tokens(id,token_hash,node_id,group_id,expires_at,max_uses,uses) VALUES('enroll',X'01','n','g','later',10,0)", "INSERT INTO enrollment_claims VALUES('enroll','install','n',X'02','now')"} {
 					if _, err := tx.ExecContext(ctx, q); err != nil {
 						t.Fatal(err)
 					}

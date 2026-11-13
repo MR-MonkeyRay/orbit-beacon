@@ -44,6 +44,9 @@ func TestBaselineTwoSnapshotReplace(t *testing.T) {
 	if _, err = tx.ExecContext(ctx, "UPDATE inbox_sequence SET value=41 WHERE id=1"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO groups(id,name,display_order) VALUES('group','group',321)"); err != nil {
+		t.Fatal(err)
+	}
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
@@ -88,6 +91,10 @@ func TestBaselineTwoSnapshotReplace(t *testing.T) {
 	var value int
 	if err = l.QueryRowContext(ctx, "SELECT value FROM inbox_sequence WHERE id=1").Scan(&value); err != nil || value != 41 {
 		t.Fatalf("counter=%d err=%v", value, err)
+	}
+	var groupOrder int
+	if err = l.QueryRowContext(ctx, "SELECT display_order FROM groups WHERE id='group'").Scan(&groupOrder); err != nil || groupOrder != 321 {
+		t.Fatalf("group order=%d err=%v", groupOrder, err)
 	}
 	var count int
 	if err = l.QueryRowContext(ctx, "SELECT count(*) FROM node_deletions").Scan(&count); err != nil || count != 1 {

@@ -68,7 +68,8 @@ type Node struct {
 }
 
 type CreateRequest struct {
-	Name string `json:"name"`
+	Name    string          `json:"name"`
+	GroupID json.RawMessage `json:"group_id"`
 }
 
 type MetadataPatch struct {
@@ -187,13 +188,19 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 	if strings.TrimSpace(req.Name) == "" || len(req.Name) > 255 {
 		return Node{}, ErrInvalidInput
 	}
+	var groupID *string
+	if req.GroupID != nil {
+		if err := json.Unmarshal(req.GroupID, &groupID); err != nil || (groupID != nil && !uuid.ValidUUID(*groupID)) {
+			return Node{}, validation.Invalid("group_id", "must be a group UUID or null")
+		}
+	}
 	s.randomMu.Lock()
 	id, err := uuid.UUID(s.random)
 	s.randomMu.Unlock()
 	if err != nil {
 		return Node{}, err
 	}
-	node := Node{ID: id, Name: req.Name, Status: "pending", Presence: "pending", Tags: []string{}, CreatedAt: s.now().UTC()}
+	node := Node{ID: id, Name: req.Name, GroupID: groupID, Status: "pending", Presence: "pending", Tags: []string{}, CreatedAt: s.now().UTC()}
 	// BEGIN IMMEDIATE 在检查容量前先占住写锁，
 	// 对使用同一持久化数据库的多个独立服务也生效。
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
@@ -207,6 +214,15 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 		return Node{}, err
 	}
 	defer tx.Rollback()
+	if groupID != nil {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM `groups` WHERE id = ?)", *groupID).Scan(&exists); err != nil {
+			return Node{}, err
+		}
+		if !exists {
+			return Node{}, validation.Invalid("group_id", "group does not exist")
+		}
+	}
 	var count int
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM nodes").Scan(&count); err != nil {
 		return Node{}, err
@@ -214,7 +230,7 @@ func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, e
 	if count >= s.maxNodes {
 		return Node{}, ErrCapacityReached
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO nodes(id, name, status, created_at) VALUES (?, ?, ?, ?)", id, req.Name, node.Status, timekey.Format(node.CreatedAt)); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO nodes(id, name, status, group_id, created_at) VALUES (?, ?, ?, ?, ?)", id, req.Name, node.Status, groupID, timekey.Format(node.CreatedAt)); err != nil {
 		return Node{}, err
 	}
 	if err := audit.Insert(ctx, tx, "node.create", id, s.now()); err != nil {

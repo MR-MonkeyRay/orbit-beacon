@@ -73,7 +73,10 @@ func TestAPITokenViewsHaveLiteralFieldSets(t *testing.T) {
 	assertTokenViewKeys(t, network, "billing_mode", "billing_day", "quota_bytes", "cycle", "daily", "updated_at")
 	assertTokenViewKeys(t, network.Cycle, "used_bytes", "start", "end", "rx_bytes", "tx_bytes", "total_bytes")
 	assertTokenViewKeys(t, network.Daily[0], "day", "rx_bytes", "tx_bytes")
-	assertTokenViewKeys(t, tokenGroupDTOs([]management.Group{{ID: "group", Name: "group-name"}})[0], "id", "name")
+	group := assertTokenViewKeys(t, tokenGroupDTOs([]management.Group{{ID: "group", Name: "group-name", DisplayOrder: 42}})[0], "id", "name", "display_order")
+	if string(group["display_order"]) != "42" {
+		t.Fatal("lost group display order")
+	}
 }
 
 func TestAPITokenResponseSchemasHaveLiteralPropertiesAndValidReferences(t *testing.T) {
@@ -81,6 +84,7 @@ func TestAPITokenResponseSchemasHaveLiteralPropertiesAndValidReferences(t *testi
 	type schema = map[string]any
 	schemas := data["components"].(map[string]any)["schemas"].(map[string]any)
 	for name, keys := range map[string][]string{
+		"Group":             {"id", "name", "display_order"},
 		"APIToken":          {"id", "name", "created_by", "created_by_username", "created_at", "expires_at", "last_used_at", "rate_limit_per_minute"},
 		"TokenNode":         {"stopped", "id", "name", "status", "expires_on", "region", "provider", "group_id", "tags", "created_at", "last_seen", "presence", "agent_version"},
 		"TokenNodePage":     {"nodes", "has_more", "next_offset"},

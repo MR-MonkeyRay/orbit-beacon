@@ -78,7 +78,7 @@ func routingContractResponse(t *testing.T, w *httptest.ResponseRecorder, method 
 func routingContractAllow(t *testing.T, methods []string) string {
 	t.Helper()
 	var ordered []string
-	for _, method := range []string{"GET", "POST", "PATCH", "DELETE"} {
+	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
 		if slices.Contains(methods, method) {
 			ordered = append(ordered, method)
 		}
@@ -95,6 +95,9 @@ func TestRoutingContractMethodsBeforeGates(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			allow := routingContractAllow(t, methods)
 			for _, method := range []string{http.MethodPut, http.MethodHead, http.MethodOptions} {
+				if slices.Contains(methods, method) {
+					continue
+				}
 				for _, origin := range []string{"", "https://untrusted.example.test"} {
 					t.Run(method+"/origin="+origin, func(t *testing.T) {
 						r := httptest.NewRequest(method, concreteOpenAPIPath(path), strings.NewReader(`not json`))
@@ -386,9 +389,9 @@ func TestRoutingContractLabels(t *testing.T) {
 			h := routingContractHandler(t)
 			h.accessLog, h.metrics = true, newHTTPMetrics("test")
 			h.logger = slog.New(slog.NewJSONHandler(&logs, nil))
-			// API 使用 PUT，确保请求在调用服务前结束。健康检查使用 GET，
+			// API 使用没有任何路由接受的 TRACE，确保请求在调用服务前结束。健康检查使用 GET，
 			// 同时验证成功探测不记日志，而就绪探测失败会记日志。
-			method := http.MethodPut
+			method := http.MethodTrace
 			if healthProbe(path) {
 				method = http.MethodGet
 			}
@@ -413,5 +416,22 @@ func TestRoutingContractLabels(t *testing.T) {
 				t.Errorf("metrics missing %q:\n%s", want, got)
 			}
 		})
+	}
+}
+
+func TestGroupOrderRouteContract(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/groups/order", nil)
+	entry := apiRoutes.match(req)
+	if entry == nil || entry.label != "/api/v1/groups/order" || entry.auth != admin {
+		t.Fatalf("group order route=%+v", entry)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/groups/"+routingContractID, nil)
+	entry = apiRoutes.match(req)
+	if entry == nil || entry.label != "/api/v1/groups/{id}" {
+		t.Fatalf("group detail route=%+v", entry)
+	}
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete} {
+		response := routingContractRequest(routingContractHandler(t), method, "/api/v1/groups/order")
+		routingContractResponse(t, response, method, 405, "method_not_allowed", "PUT")
 	}
 }

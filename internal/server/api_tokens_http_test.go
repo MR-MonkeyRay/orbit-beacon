@@ -398,7 +398,7 @@ func TestAPITokenHTTPAlertsGroupsAndLiteralFields(t *testing.T) {
 			assertLiteralKeys(t, got["newest"].([]any)[0], eventKeys...)
 		case "/api/v1/groups":
 			assertLiteralKeys(t, got, "groups")
-			assertLiteralKeys(t, got["groups"].([]any)[0], "id", "name")
+			assertLiteralKeys(t, got["groups"].([]any)[0], "id", "name", "display_order")
 			if got["groups"].([]any)[0].(map[string]any)["id"] != group {
 				t.Fatal("wrong group")
 			}
@@ -433,7 +433,7 @@ func tokenDomainSnapshot(t *testing.T, f fixture) []string {
 	var result []string
 	for _, query := range []string{
 		"SELECT id,username,password_hash,must_change_password FROM users ORDER BY id",
-		"SELECT id,name FROM groups ORDER BY id",
+		"SELECT id,name,display_order FROM groups ORDER BY id",
 		"SELECT id,name,status,notes,group_id FROM nodes ORDER BY id",
 		"SELECT id,name,enabled,metric FROM alert_rules ORDER BY id",
 		"SELECT id,rule_id,node_id,state FROM alert_events ORDER BY id",
