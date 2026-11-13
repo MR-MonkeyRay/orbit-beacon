@@ -2,6 +2,7 @@ package backup
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -24,7 +25,8 @@ func TestServicesBackupRoundTrip(t *testing.T) {
 	now := time.Now().UTC()
 	manager := services.New(db, hist, func() time.Time { return now }, nil, nil, nil)
 	name, kind, target, public := "Health", "tcp", "localhost:443", true
-	config, e := manager.Save(ctx, "", services.Patch{Name: &name, Type: &kind, Target: &target, Public: &public})
+	threshold := 5
+	config, e := manager.Save(ctx, "", services.Patch{Name: &name, Type: &kind, Target: &target, Public: &public, FailureThreshold: &threshold})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -44,7 +46,8 @@ func TestServicesBackupRoundTrip(t *testing.T) {
 	}
 	restored := restoreDB(t, destination)
 	var gotName, raw string
-	if e = restored.QueryRow(`SELECT name FROM services WHERE id=?`, config.ID).Scan(&gotName); e != nil || gotName != name {
+	var gotThreshold int
+	if e = restored.QueryRow(`SELECT name,failure_threshold FROM services WHERE id=?`, config.ID).Scan(&gotName, &gotThreshold); e != nil || gotName != name || gotThreshold != threshold {
 		t.Fatalf("config: %s %v", gotName, e)
 	}
 	if e = restored.QueryRow(`SELECT result_json FROM service_checks_latest WHERE service_id=?`, config.ID).Scan(&raw); e != nil {
@@ -83,6 +86,29 @@ func TestServicesPayloadValidation(t *testing.T) {
 			}
 			if e := ValidatePayloadData(t.Context(), db, Monitoring, nil); (e == nil) != tc.valid {
 				t.Fatalf("valid=%t error=%v", tc.valid, e)
+			}
+		})
+	}
+}
+
+func TestServiceFailureThresholdPayloadValidation(t *testing.T) {
+	for _, tc := range []struct {
+		value any
+		valid bool
+	}{
+		{1, true}, {2, true}, {5, true}, {10, true}, {0, false}, {11, false}, {1.5, false}, {"bad", false}, {nil, false},
+	} {
+		t.Run(fmt.Sprint(tc.value), func(t *testing.T) {
+			db := validationDB(t, Configuration)
+			// Payload schema deliberately lacks production CHECK constraints: validation owns this boundary.
+			if _, err := db.Exec("DROP TABLE services; CREATE TABLE services(id TEXT,name TEXT,group_id TEXT,type TEXT,target TEXT,interval_seconds INTEGER,timeout_seconds INTEGER,enabled INTEGER,public INTEGER,display_order INTEGER,notify INTEGER,latency_threshold_ms REAL,failure_threshold INTEGER,created_at TEXT,updated_at TEXT)"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec("INSERT INTO services VALUES(?,'health',NULL,'tcp','localhost:443',60,10,1,0,0,0,0,?,?,?)", validationID, tc.value, validationTime, validationTime); err != nil {
+				t.Fatal(err)
+			}
+			if err := ValidatePayloadData(t.Context(), db, Configuration, make([]byte, 32)); (err == nil) != tc.valid {
+				t.Fatalf("value=%v valid=%t err=%v", tc.value, tc.valid, err)
 			}
 		})
 	}

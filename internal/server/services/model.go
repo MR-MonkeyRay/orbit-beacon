@@ -24,22 +24,24 @@ var ErrCapacity = errors.New("maximum of 100 services reached")
 type Service struct {
 	// Internal generation fence for scheduled work across database switches.
 	generation         uint64
-	ID                 string    `json:"id"`
-	Name               string    `json:"name"`
-	GroupID            *string   `json:"group_id"`
-	Type               string    `json:"type"`
-	Target             string    `json:"target"`
-	IntervalSeconds    int       `json:"interval_seconds"`
-	TimeoutSeconds     int       `json:"timeout_seconds"`
-	Enabled            bool      `json:"enabled"`
-	Public             bool      `json:"public"`
-	DisplayOrder       int       `json:"display_order"`
-	Notify             bool      `json:"notify"`
-	LatencyThresholdMS float64   `json:"latency_threshold_ms"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
-	Latest             *Result   `json:"latest"`
-	Availability24H    *float64  `json:"availability_24h"`
+	ID                 string       `json:"id"`
+	Name               string       `json:"name"`
+	GroupID            *string      `json:"group_id"`
+	Type               string       `json:"type"`
+	Target             string       `json:"target"`
+	IntervalSeconds    int          `json:"interval_seconds"`
+	FailureThreshold   int          `json:"failure_threshold"`
+	TimeoutSeconds     int          `json:"timeout_seconds"`
+	Enabled            bool         `json:"enabled"`
+	Public             bool         `json:"public"`
+	DisplayOrder       int          `json:"display_order"`
+	Notify             bool         `json:"notify"`
+	LatencyThresholdMS float64      `json:"latency_threshold_ms"`
+	CreatedAt          time.Time    `json:"created_at"`
+	UpdatedAt          time.Time    `json:"updated_at"`
+	Latest             *Result      `json:"latest"`
+	Availability24H    *float64     `json:"availability_24h"`
+	RecentHours        [24]*float64 `json:"recent_hours"`
 }
 
 type Patch struct {
@@ -48,6 +50,7 @@ type Patch struct {
 	Type               *string         `json:"type"`
 	Target             *string         `json:"target"`
 	IntervalSeconds    *int            `json:"interval_seconds"`
+	FailureThreshold   *int            `json:"failure_threshold"`
 	TimeoutSeconds     *int            `json:"timeout_seconds"`
 	Enabled            *bool           `json:"enabled"`
 	Public             *bool           `json:"public"`
@@ -68,6 +71,9 @@ func (p Patch) apply(s *Service) {
 	}
 	if p.IntervalSeconds != nil {
 		s.IntervalSeconds = *p.IntervalSeconds
+	}
+	if p.FailureThreshold != nil {
+		s.FailureThreshold = *p.FailureThreshold
 	}
 	if p.TimeoutSeconds != nil {
 		s.TimeoutSeconds = *p.TimeoutSeconds
@@ -115,6 +121,9 @@ func Validate(s Service) error {
 	}
 	if utf8.RuneCountInString(s.Name) < 1 || utf8.RuneCountInString(s.Name) > 100 || !utf8.ValidString(s.Name) || strings.IndexFunc(s.Name, unicode.IsControl) >= 0 {
 		fields["name"] = "must contain 1 to 100 characters without controls"
+	}
+	if s.FailureThreshold < 1 || s.FailureThreshold > 10 {
+		fields["failure_threshold"] = "must be between 1 and 10"
 	}
 	if s.IntervalSeconds < 30 || s.IntervalSeconds > 3600 {
 		fields["interval_seconds"] = "must be between 30 and 3600"
@@ -222,9 +231,9 @@ func Advance(s Service, previous *Result, result Result) (Result, []Event) {
 			}
 		}
 	} else {
-		result.Failures = min(2, result.Failures+1)
+		result.Failures = min(s.FailureThreshold, result.Failures+1)
 		result.SlowChecks = 0
-		if result.Failures >= 2 && result.Status != "down" {
+		if result.Failures >= s.FailureThreshold && result.Status != "down" {
 			result.Status = "down"
 			emit("down")
 		}
@@ -237,7 +246,7 @@ func Advance(s Service, previous *Result, result Result) (Result, []Event) {
 }
 
 func ValidateResult(r Result) error {
-	if r.CheckedAt.IsZero() || r.Status != "up" && r.Status != "down" && r.Status != "unknown" || r.Failures < 0 || r.Failures > 2 || r.SlowChecks < 0 || r.SlowChecks > 3 {
+	if r.CheckedAt.IsZero() || r.Status != "up" && r.Status != "down" && r.Status != "unknown" || r.Failures < 0 || r.Failures > 10 || r.SlowChecks < 0 || r.SlowChecks > 3 {
 		return errors.New("invalid service result")
 	}
 	for _, v := range []*float64{r.LatencyMS, r.PacketLoss} {
@@ -272,6 +281,12 @@ func (p *Patch) UnmarshalJSON(raw []byte) error {
 		return e
 	}
 	for name, value := range fields {
+		if name == "failure_threshold" {
+			var n int
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) || json.Unmarshal(value, &n) != nil || n < 1 || n > 10 {
+				return validation.Invalid(name, "must be an integer between 1 and 10")
+			}
+		}
 		if name != "group_id" && string(value) == "null" {
 			return validation.Invalid(name, "must not be null")
 		}

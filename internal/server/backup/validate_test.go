@@ -40,6 +40,9 @@ func validationDB(t *testing.T, category Category) *sql.DB {
 			if c.Name == "totp_last_step" {
 				declaration += " NOT NULL DEFAULT 0"
 			}
+			if table.Name == "services" && c.Name == "failure_threshold" {
+				declaration = c.Name + " INTEGER NOT NULL DEFAULT 2"
+			}
 			columns = append(columns, declaration)
 		}
 		if _, err := db.Exec("CREATE TABLE " + table.Name + " (" + strings.Join(columns, ",") + ")"); err != nil {

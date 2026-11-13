@@ -63,8 +63,8 @@ func toolTable() []tool {
 	}
 	return []tool{
 		makeTool("list_service_groups", "List monitor groups in display order.", "/api/v1/service-groups", map[string]property{}),
-		makeTool("list_services", "List server-monitored services and latest results.", "/api/v1/services", map[string]property{}),
-		makeTool("get_service", "Get a server-monitored service and its latest result.", "/api/v1/services/{id}", map[string]property{"id": id}, "id"),
+		makeTool("list_services", "List server-monitored services, failure thresholds, latest results and 24 UTC-hour availability strips.", "/api/v1/services", map[string]property{}),
+		makeTool("get_service", "Get a server-monitored service, its latest result, 24 UTC-hour availability strip and trailing 24h/7d/30d statistics.", "/api/v1/services/{id}", map[string]property{"id": id}, "id"),
 		makeTool("get_service_history", "Get availability and latency history for a service.", "/api/v1/services/{id}/history", map[string]property{"id": id, "range": text("1h", "24h", "7d", "30d")}, "id", "range"),
 		makeTool("list_nodes", "List monitored nodes.", "/api/v1/nodes", map[string]property{"limit": limit, "offset": integer(0, nil)}),
 		makeTool("get_node", "Get a monitored node.", "/api/v1/nodes/{id}", map[string]property{"id": id}, "id"),

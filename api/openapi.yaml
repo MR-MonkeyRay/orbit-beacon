@@ -190,6 +190,30 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Service'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v1/services/batch:
+    post:
+      operationId: batchServices
+      description: Admin session only. Applies each explicit service ID in its own audited transaction, in request order; unknown IDs fail individually. Unchanged actions also write the normal audit row, like nodes/batch. Move validates the destination group once before processing. Signals the scheduler once after processing.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ServiceBatchRequest'}
+      responses:
+        '200':
+          description: One result per requested service, in request order.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [results]
+                properties:
+                  results: {type: array, minItems: 1, maxItems: 100, items: {$ref: '#/components/schemas/ServiceBatchResult'}}
+        default: {$ref: '#/components/responses/Error'}
   /api/v1/services/{id}:
     parameters:
       - $ref: '#/components/parameters/ResourceID'
@@ -203,7 +227,7 @@ paths:
           description: 服务。
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Service'}
+              schema: {$ref: '#/components/schemas/ServiceDetail'}
         default: {$ref: '#/components/responses/Error'}
     patch:
       operationId: updateService
@@ -4400,12 +4424,13 @@ components:
         public: {type: boolean, default: false}
         notify: {type: boolean, default: false, description: 故障/恢复、连续三次高延迟及延迟恢复、14 天内到期证书（每天最多一次）写入站内通知并向所有启用通道投递。}
         display_order: {type: integer, minimum: -1000000, maximum: 1000000, default: 0}
+        failure_threshold: {type: integer, minimum: 1, maximum: 10, default: 2, description: Consecutive failed checks before down; one success recovers. Edits preserve status until a new observation.}
         latency_threshold_ms: {type: number, minimum: 0, maximum: 3600000, default: 0, description: 0 关闭延迟通知。}
     Service:
       allOf:
         - {type: object, properties: *serviceConfigProperties}
         - type: object
-          required: [id, name, group_id, type, target, interval_seconds, timeout_seconds, enabled, public, notify, display_order, latency_threshold_ms, created_at, updated_at, latest, availability_24h]
+          required: [id, name, group_id, type, target, interval_seconds, timeout_seconds, enabled, public, notify, display_order, latency_threshold_ms, failure_threshold, created_at, updated_at, latest, availability_24h, recent_hours]
           properties:
             group_id: {type: [string, 'null'], format: uuid}
             id: {type: string, format: uuid}
@@ -4416,13 +4441,65 @@ components:
                 - {$ref: '#/components/schemas/ServiceResult'}
                 - {type: 'null'}
             availability_24h: {type: [number, 'null'], minimum: 0, maximum: 100}
+            recent_hours:
+              type: array
+              minItems: 24
+              maxItems: 24
+              description: Sample availability percentages rounded to two decimals (incomplete availability capped at 99.99), oldest first. Index 23 is the current partial UTC clock hour; index 0 is 23 hours earlier. Includes pending checks; hours without checks are null.
+              items: {type: [number, 'null'], minimum: 0, maximum: 100}
+    ServiceDetail:
+      allOf:
+        - {$ref: '#/components/schemas/Service'}
+        - type: object
+          required: [stats]
+          properties:
+            stats: {$ref: '#/components/schemas/ServiceStats'}
+    ServiceStats:
+      type: object
+      additionalProperties: false
+      required: [availability_24h, availability_7d, availability_30d, avg_latency_ms_24h]
+      description: Trailing sample-based windows include the five-minute bucket overlapping the start, matching availability_24h. Includes unflushed checks. Availability is null without checks; average latency is latency sum divided by successful checks, null without successes. The 30-day window covers retained data. Stats appear only on detail GET, not the list.
+      properties:
+        availability_24h: {type: [number, 'null'], minimum: 0, maximum: 100}
+        availability_7d: {type: [number, 'null'], minimum: 0, maximum: 100}
+        availability_30d: {type: [number, 'null'], minimum: 0, maximum: 100}
+        avg_latency_ms_24h: {type: [number, 'null'], minimum: 0}
+    ServiceBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [service_ids, action]
+      properties:
+        service_ids: {type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: {type: string, format: uuid}}
+        action: {type: string, enum: [pause, resume, move, delete]}
+        group_id: {type: [string, 'null'], format: uuid, description: Required for move; null means ungrouped. Forbidden for other actions. Must reference an existing service group; otherwise the entire request fails with 400 validation_failed.}
+        confirm: {type: boolean, default: false, description: Must be true for delete.}
+      allOf:
+        - if: {properties: {action: {const: move}}}
+          then: {required: [group_id]}
+          else: {not: {required: [group_id]}}
+        - if: {properties: {action: {const: delete}}}
+          then: {required: [confirm], properties: {confirm: {const: true}}}
+    ServiceBatchResult:
+      type: object
+      additionalProperties: false
+      required: [service_id, status]
+      properties:
+        service_id: {type: string, format: uuid}
+        status: {type: string, enum: [succeeded, failed]}
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code: {type: string, enum: [service_not_found, storage_busy, storage_error]}
+            message: {type: string}
     ServiceResult:
       type: object
       additionalProperties: false
       required: [ok, status, latency_ms, error, status_code, packet_loss, tls_expires_at, checked_at, latency_high, consecutive_failures, consecutive_slow, certificate_notified_day]
       properties:
         ok: {type: boolean}
-        status: {type: string, enum: [up, down, unknown], description: 两次失败判定故障，一次成功恢复。首个失败前无成功时为 unknown。}
+        status: {type: string, enum: [up, down, unknown], description: 达到 failure_threshold 次连续失败判定故障，一次成功恢复。达到阈值前无成功时为 unknown。}
         latency_ms: {type: [number, 'null'], minimum: 0, description: HTTP 到响应头、TCP 连接、ICMP 成功包平均 RTT。}
         error: {type: string, enum: ['', permission_denied, unsupported, timeout, refused, dns, http_status, denied, error]}
         status_code: {type: [integer, 'null'], minimum: 100, maximum: 599}
@@ -4430,7 +4507,7 @@ components:
         tls_expires_at: {type: [string, 'null'], format: date-time}
         checked_at: {type: string, format: date-time}
         latency_high: {type: boolean}
-        consecutive_failures: {type: integer, minimum: 0, maximum: 2}
+        consecutive_failures: {type: integer, minimum: 0, maximum: 10}
         consecutive_slow: {type: integer, minimum: 0, maximum: 3}
         certificate_notified_day: {type: string, description: 最近证书通知的 UTC 日期，或空字符串。}
     ServiceEvent:

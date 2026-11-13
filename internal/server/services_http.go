@@ -10,6 +10,23 @@ import (
 )
 
 func (h *handler) servicesRoute(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.URL.Path == "/api/v1/services/batch" {
+		if r.URL.RawQuery != "" {
+			h.serviceError(w, validation.Invalid("query", "unknown parameter"), requestID)
+			return
+		}
+		var input services.BatchRequest
+		if !decode(w, r, &input, requestID) {
+			return
+		}
+		results, err := h.services.Batch(r.Context(), input)
+		if err != nil {
+			h.serviceError(w, err, requestID)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"results": results})
+		return
+	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/services"), "/")
 	id := ""
 	if len(parts) > 1 {
@@ -43,7 +60,7 @@ func (h *handler) servicesRoute(w http.ResponseWriter, r *http.Request, requestI
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"services": list})
 		} else {
-			s, e := h.services.Get(r.Context(), id)
+			s, e := h.services.Detail(r.Context(), id)
 			if e != nil {
 				h.serviceError(w, e, requestID)
 				return

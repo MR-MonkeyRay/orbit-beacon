@@ -40,6 +40,7 @@ var routes = []route{
 	{"DELETE /api/v1/service-groups/{id}", admin, endpoint((*handler).serviceGroups)},
 	{"GET /api/v1/services", admin, endpoint((*handler).servicesRoute)},
 	{"POST /api/v1/services", admin, endpoint((*handler).servicesRoute)},
+	{"POST /api/v1/services/batch", admin, endpoint((*handler).servicesRoute)},
 	{"GET /api/v1/services/{id}", admin, endpoint((*handler).servicesRoute)},
 	{"PATCH /api/v1/services/{id}", admin, endpoint((*handler).servicesRoute)},
 	{"DELETE /api/v1/services/{id}", admin, endpoint((*handler).servicesRoute)},

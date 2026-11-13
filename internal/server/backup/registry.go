@@ -72,7 +72,7 @@ var intentionallyExcluded = map[string]map[string]string{
 var categoryTables = map[Category][]tableSpec{
 	Configuration: {
 		table("service_groups", "main", "", "id TEXT,name TEXT,display_order INTEGER", "id"),
-		table("services", "main", "", "id TEXT,name TEXT,group_id TEXT,type TEXT,target TEXT,interval_seconds INTEGER,timeout_seconds INTEGER,enabled INTEGER,public INTEGER,display_order INTEGER,notify INTEGER,latency_threshold_ms REAL,created_at TEXT,updated_at TEXT", "id"),
+		table("services", "main", "", "id TEXT,name TEXT,group_id TEXT,type TEXT,target TEXT,interval_seconds INTEGER,timeout_seconds INTEGER,enabled INTEGER,public INTEGER,display_order INTEGER,notify INTEGER,latency_threshold_ms REAL,failure_threshold INTEGER,created_at TEXT,updated_at TEXT", "id"),
 		table("users", "main", "", "id TEXT,username TEXT,password_hash TEXT,created_at TEXT,must_change_password INTEGER,totp_ciphertext BLOB,totp_pending_ciphertext BLOB,totp_pending_at TEXT,totp_last_step INTEGER", "id"),
 		table("recovery_codes", "main", "", "user_id TEXT,code_hash BLOB", "user_id,code_hash"),
 		table("settings", "main", "key IN ('public_page_enabled','api_token_rate_limit_per_minute','storage_notifications')", "key TEXT,value TEXT", "key"),

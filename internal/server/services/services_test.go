@@ -22,7 +22,7 @@ import (
 
 func ptr[T any](v T) *T { return &v }
 func validService() Service {
-	return Service{Name: "Health", Type: "http", Target: "https://example.com/health", IntervalSeconds: 60, TimeoutSeconds: 10, Enabled: true}
+	return Service{Name: "Health", Type: "http", Target: "https://example.com/health", IntervalSeconds: 60, TimeoutSeconds: 10, FailureThreshold: 2, Enabled: true}
 }
 func fixture(t *testing.T, notifier Notifier) (*Manager, *storage.Database, *storage.Database) {
 	t.Helper()

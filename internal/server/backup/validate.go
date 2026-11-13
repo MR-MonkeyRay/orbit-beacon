@@ -439,7 +439,7 @@ func validatePayloadRow(table string, r payloadRow, notificationBox, backupBox, 
 		if !uuid.ValidUUID(r.text("id")) || r.integer("enabled") < 0 || r.integer("enabled") > 1 || r.integer("public") < 0 || r.integer("public") > 1 || r.integer("notify") < 0 || r.integer("notify") > 1 {
 			return invalidRow()
 		}
-		return services.Validate(services.Service{GroupID: r.pointer("group_id"), Name: r.text("name"), Type: r.text("type"), Target: r.text("target"), IntervalSeconds: int(r.integer("interval_seconds")), TimeoutSeconds: int(r.integer("timeout_seconds")), DisplayOrder: int(r.integer("display_order")), LatencyThresholdMS: r.number("latency_threshold_ms")})
+		return services.Validate(services.Service{FailureThreshold: int(r.integer("failure_threshold")), GroupID: r.pointer("group_id"), Name: r.text("name"), Type: r.text("type"), Target: r.text("target"), IntervalSeconds: int(r.integer("interval_seconds")), TimeoutSeconds: int(r.integer("timeout_seconds")), DisplayOrder: int(r.integer("display_order")), LatencyThresholdMS: r.number("latency_threshold_ms")})
 	case "service_checks_latest":
 		var result services.Result
 		if !uuid.ValidUUID(r.text("service_id")) || objectJSON(r.text("result_json"), &result) != nil || services.ValidateResult(result) != nil {

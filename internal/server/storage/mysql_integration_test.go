@@ -44,6 +44,23 @@ func TestMySQLStandaloneTypesConstraintsSnapshot(t *testing.T) {
 	} else if code, ok := storage.MySQLCode(err); !ok || code != 3819 {
 		t.Fatalf("service timeout CHECK: %v", err)
 	}
+
+	var threshold int
+	if err = tx.QueryRowContext(ctx, "SELECT failure_threshold FROM services WHERE id='service'").Scan(&threshold); err != nil || threshold != 2 {
+		t.Fatalf("default threshold=%d err=%v", threshold, err)
+	}
+	for _, n := range []int{1, 2, 5, 10, 0, 11} {
+		_, err = tx.ExecContext(ctx, "UPDATE services SET failure_threshold=? WHERE id='service'", n)
+		valid := n >= 1 && n <= 10
+		if (err == nil) != valid {
+			t.Fatalf("threshold=%d err=%v", n, err)
+		}
+		if !valid {
+			if code, ok := storage.MySQLCode(err); !ok || code != 3819 {
+				t.Fatalf("threshold CHECK: %v", err)
+			}
+		}
+	}
 	for _, name := range []string{"Alpha", "alpha", "alpha "} {
 		if _, err = tx.ExecContext(ctx, "INSERT INTO `groups`(id,name) VALUES(?,?)", name, name); err != nil {
 			t.Fatal(err)

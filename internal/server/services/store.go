@@ -65,14 +65,14 @@ func (m *Manager) signal() {
 	}
 }
 
-const configColumns = "id,name,group_id,type,target,interval_seconds,timeout_seconds,enabled,public,display_order,notify,latency_threshold_ms,created_at,updated_at"
+const configColumns = "id,name,group_id,type,target,interval_seconds,timeout_seconds,enabled,public,display_order,notify,latency_threshold_ms,failure_threshold,created_at,updated_at"
 
 type scanner interface{ Scan(...any) error }
 
 func scanService(row scanner) (Service, error) {
 	var s Service
 	var created, updated string
-	e := row.Scan(&s.ID, &s.Name, &s.GroupID, &s.Type, &s.Target, &s.IntervalSeconds, &s.TimeoutSeconds, &s.Enabled, &s.Public, &s.DisplayOrder, &s.Notify, &s.LatencyThresholdMS, &created, &updated)
+	e := row.Scan(&s.ID, &s.Name, &s.GroupID, &s.Type, &s.Target, &s.IntervalSeconds, &s.TimeoutSeconds, &s.Enabled, &s.Public, &s.DisplayOrder, &s.Notify, &s.LatencyThresholdMS, &s.FailureThreshold, &created, &updated)
 	if errors.Is(e, sql.ErrNoRows) {
 		return s, ErrNotFound
 	}
@@ -86,13 +86,17 @@ func scanService(row scanner) (Service, error) {
 	return s, e
 }
 func configArgs(s Service) []any {
-	return []any{s.ID, s.Name, s.GroupID, s.Type, s.Target, s.IntervalSeconds, s.TimeoutSeconds, s.Enabled, s.Public, s.DisplayOrder, s.Notify, s.LatencyThresholdMS, timekey.Format(s.CreatedAt), timekey.Format(s.UpdatedAt)}
+	return []any{s.ID, s.Name, s.GroupID, s.Type, s.Target, s.IntervalSeconds, s.TimeoutSeconds, s.Enabled, s.Public, s.DisplayOrder, s.Notify, s.LatencyThresholdMS, s.FailureThreshold, timekey.Format(s.CreatedAt), timekey.Format(s.UpdatedAt)}
 }
 func sameConfig(a, b Service) bool {
 	equalGroup := a.GroupID == b.GroupID || a.GroupID != nil && b.GroupID != nil && *a.GroupID == *b.GroupID
-	return equalGroup && a.ID == b.ID && a.Name == b.Name && a.Type == b.Type && a.Target == b.Target && a.IntervalSeconds == b.IntervalSeconds && a.TimeoutSeconds == b.TimeoutSeconds && a.Enabled == b.Enabled && a.Public == b.Public && a.DisplayOrder == b.DisplayOrder && a.Notify == b.Notify && a.LatencyThresholdMS == b.LatencyThresholdMS && a.UpdatedAt.Equal(b.UpdatedAt)
+	return a.FailureThreshold == b.FailureThreshold && equalGroup && a.ID == b.ID && a.Name == b.Name && a.Type == b.Type && a.Target == b.Target && a.IntervalSeconds == b.IntervalSeconds && a.TimeoutSeconds == b.TimeoutSeconds && a.Enabled == b.Enabled && a.Public == b.Public && a.DisplayOrder == b.DisplayOrder && a.Notify == b.Notify && a.LatencyThresholdMS == b.LatencyThresholdMS && a.UpdatedAt.Equal(b.UpdatedAt)
 }
 func (m *Manager) Save(ctx context.Context, id string, p Patch) (Service, error) {
+	return m.save(ctx, id, p, true, false)
+}
+
+func (m *Manager) save(ctx context.Context, id string, p Patch, signal, groupValidated bool) (Service, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	lease, e := m.db.Acquire(ctx, storage.Writer)
@@ -106,7 +110,7 @@ func (m *Manager) Save(ctx context.Context, id string, p Patch) (Service, error)
 		return Service{}, e
 	}
 	defer tx.Rollback()
-	s := Service{IntervalSeconds: 60, TimeoutSeconds: 10, Enabled: true}
+	s := Service{IntervalSeconds: 60, TimeoutSeconds: 10, FailureThreshold: 2, Enabled: true}
 	action := "service.create"
 	var old Service
 	if id != "" {
@@ -144,7 +148,7 @@ func (m *Manager) Save(ctx context.Context, id string, p Patch) (Service, error)
 	if e = Validate(s); e != nil {
 		return Service{}, e
 	}
-	if s.GroupID != nil {
+	if s.GroupID != nil && !groupValidated {
 		var exists bool
 		if e = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM service_groups WHERE id=?)", *s.GroupID).Scan(&exists); e != nil {
 			return Service{}, e
@@ -155,15 +159,15 @@ func (m *Manager) Save(ctx context.Context, id string, p Patch) (Service, error)
 	}
 	s.UpdatedAt = m.now().UTC()
 	if id == "" {
-		_, e = tx.ExecContext(ctx, "INSERT INTO services("+configColumns+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", configArgs(s)...)
+		_, e = tx.ExecContext(ctx, "INSERT INTO services("+configColumns+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", configArgs(s)...)
 	} else {
 		args := configArgs(s)
-		_, e = tx.ExecContext(ctx, "UPDATE services SET name=?,group_id=?,type=?,target=?,interval_seconds=?,timeout_seconds=?,enabled=?,public=?,display_order=?,notify=?,latency_threshold_ms=?,created_at=?,updated_at=? WHERE id=?", append(args[1:], s.ID)...)
+		_, e = tx.ExecContext(ctx, "UPDATE services SET name=?,group_id=?,type=?,target=?,interval_seconds=?,timeout_seconds=?,enabled=?,public=?,display_order=?,notify=?,latency_threshold_ms=?,failure_threshold=?,created_at=?,updated_at=? WHERE id=?", append(args[1:], s.ID)...)
 	}
 	if e != nil {
 		return s, e
 	}
-	// A new endpoint or hysteresis policy starts unknown. Old in-flight results are fenced by config.
+	// A new endpoint or latency policy starts unknown; failure threshold edits retain observations. Old in-flight results are fenced by config.
 	reset := id != "" && (old.Target != s.Target || old.Type != s.Type || old.Enabled != s.Enabled || old.LatencyThresholdMS != s.LatencyThresholdMS)
 	var resetResult *Result
 	if reset {
@@ -211,10 +215,16 @@ func (m *Manager) Save(ctx context.Context, id string, p Patch) (Service, error)
 			m.latest[id] = *resetResult
 		}
 	}
-	m.signal()
+	if signal {
+		m.signal()
+	}
 	return s, nil
 }
 func (m *Manager) Delete(ctx context.Context, id string) error {
+	return m.delete(ctx, id, true)
+}
+
+func (m *Manager) delete(ctx context.Context, id string, signal bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	lease, e := m.db.Acquire(ctx, storage.Writer)
@@ -242,7 +252,9 @@ func (m *Manager) Delete(ctx context.Context, id string) error {
 		return e
 	}
 	delete(m.latest, id)
-	m.signal()
+	if signal {
+		m.signal()
+	}
 	return nil
 }
 func (m *Manager) List(ctx context.Context) ([]Service, error) { return m.list(ctx, m.now()) }
@@ -298,20 +310,31 @@ func (m *Manager) list(ctx context.Context, now time.Time) ([]Service, error) {
 		}
 	}
 	m.mu.Unlock()
-	totals, e := m.totals(ctx, now.Add(-24*time.Hour).Unix()/300*300, 300)
+	totals, e := m.totalsBetween(ctx, now.Add(-24*time.Hour).Unix()/300*300, now.Unix()/300*300, 3600, "")
 	if e != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 		m.logError(ctx, "service_history_read_failed", e)
 	}
+	byService := make(map[string]aggregate, len(out))
+	for k, a := range totals {
+		b := byService[k.ID]
+		b.Checks += a.Checks
+		b.Successes += a.Successes
+		byService[k.ID] = b
+	}
+	startHour := now.UTC().Truncate(time.Hour).Add(-23 * time.Hour).Unix()
 	for i := range out {
 		if r, ok := byID[out[i].ID]; ok {
 			copy := r
 			out[i].Latest = &copy
 		}
-		if a := totals[bucketKey{out[i].ID, 0}]; a.Checks > 0 {
-			out[i].Availability24H = percent(a.Successes, a.Checks)
+		total := byService[out[i].ID]
+		out[i].Availability24H = percent(total.Successes, total.Checks)
+		for j := range out[i].RecentHours {
+			a := totals[bucketKey{out[i].ID, startHour + int64(j)*3600}]
+			out[i].RecentHours[j] = percent(a.Successes, a.Checks)
 		}
 	}
 	return out, nil
@@ -540,11 +563,34 @@ type History struct {
 }
 
 func (m *Manager) totals(ctx context.Context, start int64, step int64) (map[bucketKey]aggregate, error) {
+	return m.totalsBetween(ctx, start, math.MaxInt64, step, "")
+}
+
+func (m *Manager) totalsBetween(ctx context.Context, start, end, step int64, id string) (map[bucketKey]aggregate, error) {
 	// Keep the committed rows and pending overlay in one view of Flush.
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := map[bucketKey]aggregate{}
+	add := func(id string, t int64, a aggregate) {
+		if step == 300 {
+			t = 0
+		} else {
+			t = t / step * step
+		}
+		k := bucketKey{id, t}
+		b := out[k]
+		b.Checks += a.Checks
+		b.Successes += a.Successes
+		b.Sum += a.Sum
+		b.Max = max(b.Max, a.Max)
+		out[k] = b
+	}
 	if m.history == nil {
+		for k, a := range m.buckets {
+			if k.T >= start && k.T <= end && (id == "" || k.ID == id) {
+				add(k.ID, k.T, a)
+			}
+		}
 		return out, nil
 	}
 	lease, e := m.history.Acquire(ctx, storage.Reader)
@@ -563,26 +609,17 @@ func (m *Manager) totals(ctx context.Context, start int64, step int64) (map[buck
 		}
 		args = append(args, step, step)
 	}
-	args = append(args, start)
-	rows, e := lease.QueryContext(ctx, `SELECT service_id,`+group+` AS bucket,SUM(checks),SUM(successes),SUM(latency_sum_ms),MAX(latency_max_ms) FROM service_check_buckets WHERE t>=? GROUP BY service_id,bucket`, args...)
+	args = append(args, start, end)
+	filter := ""
+	if id != "" {
+		filter = " AND service_id=?"
+		args = append(args, id)
+	}
+	rows, e := lease.QueryContext(ctx, `SELECT service_id,`+group+` AS bucket,SUM(checks),SUM(successes),SUM(latency_sum_ms),MAX(latency_max_ms) FROM service_check_buckets WHERE t>=? AND t<=?`+filter+` GROUP BY service_id,bucket`, args...)
 	if e != nil {
 		return nil, e
 	}
 	defer rows.Close()
-	add := func(id string, t int64, a aggregate) {
-		if step == 300 {
-			t = 0
-		} else {
-			t = t / step * step
-		}
-		k := bucketKey{id, t}
-		b := out[k]
-		b.Checks += a.Checks
-		b.Successes += a.Successes
-		b.Sum += a.Sum
-		b.Max = max(b.Max, a.Max)
-		out[k] = b
-	}
 	for rows.Next() {
 		var id string
 		var t int64
@@ -596,7 +633,7 @@ func (m *Manager) totals(ctx context.Context, start int64, step int64) (map[buck
 		return nil, e
 	}
 	for k, a := range m.buckets {
-		if k.T >= start {
+		if k.T >= start && k.T <= end && (id == "" || k.ID == id) {
 			add(k.ID, k.T, a)
 		}
 	}

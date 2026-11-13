@@ -12,6 +12,7 @@ CREATE TABLE services (
  enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), public INTEGER NOT NULL CHECK(public IN (0,1)),
  display_order INTEGER NOT NULL DEFAULT 0, notify INTEGER NOT NULL CHECK(notify IN (0,1)),
  latency_threshold_ms REAL NOT NULL DEFAULT 0 CHECK(latency_threshold_ms>=0),
+ failure_threshold INTEGER NOT NULL DEFAULT 2 CHECK(failure_threshold BETWEEN 1 AND 10),
  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE INDEX services_group ON services(group_id);
