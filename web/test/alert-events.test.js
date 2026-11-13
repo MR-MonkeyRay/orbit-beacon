@@ -135,7 +135,7 @@ test('active table loads all pages, sorts, filters and groups with remembered co
     assert.ok(updated.children[0].getAttribute('datetime'));
     assert.doesNotMatch(updated.textContent, /object Object/);
     const critical = elements(root).find((e) => e.dataset.severity === 'critical');
-    assert.match(critical.textContent, /\(1\)/);
+    assert.equal(critical.lastElementChild.textContent, '1');
     critical.click();
     assert.equal(critical.getAttribute('aria-pressed'), 'true');
     assert.deepEqual(dataRows().map((e) => e.dataset.eventId), ['critical']);

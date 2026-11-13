@@ -25,7 +25,8 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved, openCh
       const thresholdField = field(t('alerts.rules.threshold'), threshold);
       const thresholdLabel = thresholdField.querySelector('label');
       const comparatorField = field(t('alerts.rules.comparator'), comparator);
-      const condition = h('div', {class: 'form-row'}, comparatorField, thresholdField);
+      // 比较方式与阈值在同一网格里，与持续时长、单位共用一行；离线类指标整组隐藏。
+      const condition = h('div', {class: 'rule-condition-pair'}, comparatorField, thresholdField);
       const target = controls.target = input({name: 'target', value: item?.target || '', autocomplete: 'off', class: 'input mono'});
       const targetField = field(t('nodes.audit.target'), target);
       const initialDuration = durationParts(item?.for_seconds ?? 180);
@@ -80,10 +81,9 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved, openCh
       controls.scope_kind = scope;
       controls.scope_id = scopeID;
       const severity = controls.severity = select(SEVERITIES, item?.severity || 'warning', {name: 'severity'});
-      const routing = controls.channel_ids = select(channels.map((entry) => [entry.id, entry.enabled ? entry.name : t('alerts.disabledName', {name: entry.name})]), '', {name: 'channel_ids', multiple: true, size: Math.min(6, Math.max(2, channels.length)), class: 'input alert-multiselect'});
-      for (const option of routing.options) option.selected = Boolean(item?.channel_ids.includes(option.value));
-      // 没有通道时以添加入口替代空列表。
-      routing.hidden = channels.length === 0;
+      // 通知通道是可多选的勾选片，没有通道时以添加入口替代。
+      const routing = controls.channel_ids = channels.map((entry) => h('input', {type: 'checkbox', name: 'channel_ids', value: entry.id,
+        checked: Boolean(item?.channel_ids.includes(entry.id))}));
       const preview = h('p', {class: 'alert-rule-preview', role: 'status'});
       const syncPreview = () => {
         const seconds = durationSeconds(duration.value, unit.value);
@@ -100,7 +100,7 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved, openCh
         control.addEventListener('change', syncPreview);
       }
       unit.addEventListener('change', syncDuration);
-      const presets = !item ? h('div', {class: 'alert-toolbar'}, [
+      const presets = !item ? h('div', {class: 'rule-presets'}, [
         ['offline', 'alerts.rules.preset.offline', 180, 'critical'],
         ['cpu_percent', 'alerts.rules.preset.cpu', 300, 'warning'],
         ['memory_used_percent', 'alerts.rules.preset.memory', 300, 'warning'],
@@ -124,13 +124,15 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved, openCh
         await dialog.closed;
         if (!signal?.aborted) openChannels?.();
       }});
-      form.append(field(t('alerts.column.name'), name), field(t('alerts.state.enabled'), enabled), presets, field(t('alerts.column.metric'), metric), targetField, condition,
-        h('div', {class: 'form-row'}, field(t('alerts.column.duration'), duration), field(t('alerts.rules.durationUnit'), unit)),
-        ...scopeFields, field(t('alerts.column.severity'), severity),
-        channels.length ? field(t('alerts.channels.title'), routing, {hint: t('alerts.rules.routingHint')}) : h('div', {class: 'field', role: 'group', 'aria-labelledby': 'rule-channels-label'}, h('span', {class: 'field-label', id: 'rule-channels-label'}, t('alerts.channels.title')), h('div', null, addChannel)),
+      form.classList.add('rule-form');
+      form.append(h('div', {class: 'rule-name-row'}, field(t('alerts.column.name'), name), field(t('alerts.state.enabled'), enabled)), presets,
+        field(t('alerts.column.metric'), metric), targetField,
+        h('div', {class: 'rule-condition'}, condition, field(t('alerts.column.duration'), duration), field(t('alerts.rules.durationUnit'), unit)),
+        h('div', {class: 'rule-scope'}, ...scopeFields, field(t('alerts.column.severity'), severity)),
+        h('div', {class: 'field', role: 'group', 'aria-labelledby': 'rule-channels-label'}, h('span', {class: 'field-label', id: 'rule-channels-label'}, t('alerts.channels.title')),
+          channels.length ? h('div', {class: 'channel-chips'}, channels.map((entry, index) => h('label', {class: 'check-row'}, routing[index],
+            h('span', null, entry.enabled ? entry.name : t('alerts.disabledName', {name: entry.name}))))) : h('div', null, addChannel)),
         preview);
-      // 空通道仍提交空数组，不展示空列表。
-      if (!channels.length) form.append(routing);
       syncPreview();
     },
     action: async () => {
@@ -142,7 +144,7 @@ export function ruleEditor(item, {groups, nodes, channels, signal, saved, openCh
         comparator: offline ? null : c.metric.value === 'probe_failed' ? '>' : ['node_expiry_days', 'probe_tls_expiry_days'].includes(c.metric.value) ? '<' : c.comparator.value, threshold: offline ? null : c.metric.value === 'probe_failed' ? 0 : c.threshold.value.trim() === '' ? NaN : Number(c.threshold.value),
         for_seconds: durationSeconds(c.duration.value, c.unit.value), scope_kind: c.scope_kind.value,
         scope_id: c.scope_kind.value === 'all' ? null : c.scope_id.value, severity: c.severity.value,
-        channel_ids: [...c.channel_ids.selectedOptions].map((option) => option.value)};
+        channel_ids: c.channel_ids.filter((check) => check.checked).map((check) => check.value)};
       const errors = validateRule(body);
       if (Object.keys(errors).length) throw validationError(errors);
       await api(item ? `/alert-rules/${encodeURIComponent(item.id)}` : '/alert-rules', {method: item ? 'PATCH' : 'POST', body, signal});
@@ -167,11 +169,12 @@ export function rulesPanel({rules, groups, nodes, channels, signal, saved, openC
   };
   return panel(null, {action: h('div', {class: 'alert-toolbar'}, !channels.length ? button(t('alerts.channels.add'), {small: true, onClick: openChannels}) : null, button(t('alerts.rules.add'), {small: true, variant: 'primary', onClick: () => edit(null)}))},
     rules.length ? dataTable({caption: t('alerts.rules.caption'),
-      columns: ['name', 'condition', 'scope', 'severity', 'state', 'channels', 'actions'].map((key) => t(`alerts.column.${key}`)),
-      body: h('tbody', null, rules.map((rule) => h('tr', null,
-        h('td', null, rule.name),
+      columns: ['name', 'condition', 'scope', 'severity', 'channels', 'actions'].map((key) => t(`alerts.column.${key}`)),
+      // 启用状态并入名称：只有停用的规则带一个弱化标记。
+      body: h('tbody', null, rules.map((rule) => h('tr', {class: rule.enabled ? null : 'rule-disabled'},
+        h('td', null, rule.name, rule.enabled ? null : [' ', h('span', {class: 'badge disabled'}, t('alerts.state.disabled'))]),
         h('td', null, t('alerts.rules.conditionDuration', {condition: ['offline', 'probe_failed'].includes(rule.metric) ? metricLabel(rule.metric) : t('alerts.rules.metricCondition', {metric: metricLabel(rule.metric), comparator: rule.comparator, value: formatMetricValue(rule.metric, rule.threshold)}), duration: formatRuleDuration(rule.for_seconds)}), rule.target ? h('div', null, h('code', {class: 'probe-target mono'}, rule.target)) : null),
-        h('td', null, scopeLabel(rule, groups, nodes)), h('td', null, severityPill(rule.severity)), h('td', null, t(rule.enabled ? 'alerts.state.enabled' : 'alerts.state.disabled')),
+        h('td', null, scopeLabel(rule, groups, nodes)), h('td', null, severityPill(rule.severity)),
         h('td', null, formatList(rule.channel_ids.map((id) => channels.find((channel) => channel.id === id)?.name || id)) || t('common.none')),
         h('td', {class: 'actions'}, iconButton('edit', t('alerts.editNamed', {name: rule.name}), () => edit(rule)), iconButton('trash', t('alerts.deleteAction', {name: rule.name}), () => remove(rule))))))})
       : h('p', {class: 'text-note'}, t('alerts.rules.empty')));

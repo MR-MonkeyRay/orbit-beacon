@@ -5,7 +5,7 @@ import {allNodes, api, groupsList} from '../api.js';
 import {toastError} from '../ui/feedback.js';
 import {silenceEditor} from './alert-silences.js';
 import {absoluteWhen, formatDuration, when} from '../format.js';
-import {busy, button, dataTable, link, panel, statusBadge} from '../ui/components.js';
+import {busy, button, dataTable, emptyState, iconButton, link, panel, statusBadge} from '../ui/components.js';
 import {nextCursor} from '../ui/pager.js';
 import {formatMetricValue, severityLabel, sortActiveEvents} from '../lib/alert-utils.js';
 import {panelLifecycle} from '../ui/polling-panel.js';
@@ -67,19 +67,11 @@ export function eventsPanel(state, signal, {getRules = () => []} = {}) {
     try { localStorage.setItem('orbitbeacon-alerts-view', JSON.stringify({severity, grouping})); } catch {}
     render();
   };
-  const severityButtons = ['all', 'critical', 'warning', 'info'].map((key) => {
-    const control = button('', {small: true, onClick: () => { severity = key; remember(); }});
-    control.dataset.severity = key;
-    return control;
-  });
-  const groupButtons = ['none', 'rule', 'node'].map((key) => {
-    const control = button(t(`alerts.events.group.${key}`), {small: true, onClick: () => { grouping = key; remember(); }});
-    control.dataset.grouping = key;
-    return control;
-  });
-  const toolbar = active ? h('div', {class: 'alert-toolbar'},
-    h('div', {class: 'alert-segments', role: 'group', 'aria-label': t('alerts.column.severity')}, severityButtons),
-    h('div', {class: 'alert-segments', role: 'group', 'aria-label': t('alerts.events.grouping')}, groupButtons)) : null;
+  // 与节点列表一致的分段控件：级别带计数，分组方式紧随其后；更新时间与刷新靠右。
+  const severityButtons = ['all', 'critical', 'warning', 'info'].map((key) => h('button', {type: 'button', dataset: {severity: key},
+    onclick: () => { severity = key; remember(); }}, key === 'all' ? t('alerts.events.all') : severityLabel(key), h('span', {class: 'count'})));
+  const groupButtons = ['none', 'rule', 'node'].map((key) => h('button', {type: 'button', dataset: {grouping: key},
+    onclick: () => { grouping = key; remember(); }}, t(`alerts.events.group.${key}`)));
   const silence = async (event) => {
     try {
       const [groups, nodes] = await Promise.all([groupsList(), allNodes()]);
@@ -92,7 +84,7 @@ export function eventsPanel(state, signal, {getRules = () => []} = {}) {
     if (!active) return;
     severityButtons.forEach((control) => {
       const key = control.dataset.severity;
-      control.textContent = `${key === 'all' ? t('alerts.events.all') : severityLabel(key)} (${key === 'all' ? events.length : events.filter((event) => event.severity === key).length})`;
+      control.lastElementChild.textContent = key === 'all' ? events.length : events.filter((event) => event.severity === key).length;
       control.setAttribute('aria-pressed', String(severity === key));
     });
     groupButtons.forEach((control) => control.setAttribute('aria-pressed', String(grouping === control.dataset.grouping)));
@@ -119,7 +111,8 @@ export function eventsPanel(state, signal, {getRules = () => []} = {}) {
       (replacement?.querySelector('button') || reload).focus({preventScroll: true});
     }
     table.hidden = filtered.length === 0;
-    status.textContent = filtered.length ? '' : t('alerts.events.noActive');
+    empty.hidden = filtered.length > 0;
+    status.textContent = '';
   };
   const load = async (reset = active) => {
     if (loading || stopped || signal?.aborted || (active && document.hidden)) return;
@@ -157,7 +150,10 @@ export function eventsPanel(state, signal, {getRules = () => []} = {}) {
       const now = new Date().toISOString();
       updated.replaceChildren(absoluteWhen(now));
     } catch (error) {
-      if (!stopped && !signal?.aborted && current === epoch && error.name !== 'AbortError') status.textContent = t('alerts.events.loadFailed', {error: errorText(error)});
+      if (!stopped && !signal?.aborted && current === epoch && error.name !== 'AbortError') {
+        empty.hidden = true;
+        status.textContent = t('alerts.events.loadFailed', {error: errorText(error)});
+      }
     } finally {
       if (current === epoch) {
         loading = false;
@@ -168,8 +164,15 @@ export function eventsPanel(state, signal, {getRules = () => []} = {}) {
   };
   const more = button(t('common.loadMore'), {onClick: () => load(false), small: true});
   more.hidden = true;
-  const reload = button(t('common.refresh'), {small: true, icon: 'refresh', onClick: () => load(true)});
-  const root = panel(null, {action: h('div', {class: 'alert-toolbar'}, updated, reload)}, toolbar, status, table, more);
+  const reload = iconButton('refresh', t('common.refresh'), () => load(true));
+  const empty = emptyState(t('alerts.events.noActive'));
+  empty.hidden = true;
+  const toolbar = h('div', {class: 'toolbar alert-toolbar'},
+    active ? h('div', {class: 'segmented', role: 'group', 'aria-label': t('alerts.column.severity')}, severityButtons) : null,
+    active ? h('div', {class: 'segmented', role: 'group', 'aria-label': t('alerts.events.grouping')}, groupButtons) : null,
+    h('div', {class: 'alert-refresh'}, updated, reload));
+  const root = panel(null, {}, toolbar, status, active ? empty : null, table, more);
+  root.classList.add('alert-events');
   const visibility = () => {
     if (document.hidden) {
       request?.abort(); ++epoch; loading = false;

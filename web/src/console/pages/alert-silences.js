@@ -26,8 +26,16 @@ export function silenceEditor({groups, nodes, signal, saved, scope_kind, scope_i
       ends = input({name: 'ends_at', type: 'datetime-local', step: 1, required: true, value: localDateTime(new Date(now.getTime() + 2 * 3600000))});
       const selection = alertScope({scope_kind, scope_id}, {groups, nodes});
       ({scope, scopeID} = selection);
-      form.append(field(t('alerts.silences.reason'), reason), ...selection.fields,
-        field(t('alerts.silences.starts'), starts), field(t('alerts.silences.ends'), ends));
+      // 常用时长一键设置结束时间（从开始时间起算），也可直接改时间。
+      const quick = h('div', {class: 'rule-presets silence-durations', role: 'group', 'aria-label': t('alerts.silences.ends')},
+        [[1, 'hours'], [2, 'hours'], [1, 'days'], [7, 'days']].map(([count, unit]) => button(t(`nodes.range.${unit}`, {count}), {small: true, onClick: () => {
+          const start = new Date(starts.value);
+          const base = Number.isFinite(start.getTime()) ? start : new Date();
+          ends.value = localDateTime(new Date(base.getTime() + count * (unit === 'hours' ? 3600000 : 86400000)));
+          ends.dispatchEvent(new Event('input', {bubbles: true}));
+        }})));
+      form.append(field(t('alerts.silences.reason'), reason), h('div', {class: 'rule-scope'}, ...selection.fields),
+        h('div', {class: 'rule-scope'}, field(t('alerts.silences.starts'), starts), field(t('alerts.silences.ends'), ends)), quick);
     },
     action: async () => {
       if (!session.user || !session.csrf || signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
@@ -64,7 +72,7 @@ export function silenceList(silences, context) {
       body: h('tbody', null, silences.map((silence) => h('tr', null,
         h('td', null, silence.reason), h('td', null, silence.scope_name || scopeLabel(silence, groups, nodes)),
         h('td', null, eventTime(silence.starts_at)), h('td', null, eventTime(silence.ends_at)),
-        h('td', null, t(silence.active ? 'alerts.silences.active' : 'alerts.silences.scheduled')),
+        h('td', null, h('span', {class: `badge ${silence.active ? 'online' : 'pending'}`}, t(silence.active ? 'alerts.silences.active' : 'alerts.silences.scheduled'))),
         h('td', {class: 'actions'}, iconButton('trash', t('alerts.silences.delete'), () => remove(silence))))))})
       : h('p', {class: 'text-note'}, t('alerts.silences.empty')));
 }

@@ -27,8 +27,8 @@ test('rule editor toggles offline fields, scopes and channel routing for every a
     assert.equal(control(root, 'for_seconds').max, 1440);
     assert.equal(control(root, 'duration_unit').value, '60');
     assert.equal(control(root, 'duration_seconds'), undefined);
-    assert.equal(control(root, 'channel_ids').getAttribute('multiple'), '');
-    assert.ok(root.textContent.includes(copy('alerts.rules.routingHint')));
+    assert.equal(control(root, 'channel_ids').type, 'checkbox');
+    assert.ok(!root.textContent.includes(copy('alerts.rules.routingHint')));
     const metric = control(root, 'metric');
     assert.equal(metric.options.find((option) => option.value === 'traffic_quota_percent').textContent, copy('alerts.metric.trafficQuota'));
     change(metric, 'traffic_quota_percent');
@@ -53,13 +53,13 @@ test('rule editor toggles offline fields, scopes and channel routing for every a
     elements(root).find((element) => element.tagName === 'button' && element.textContent === copy('controls.cancel')).click();
     await canceled.closed;
     const existing = ruleEditor({id, name: 'Offline', enabled: false, metric: 'offline', comparator: null, threshold: null, for_seconds: 180, scope_kind: 'node', scope_id: id, severity: 'critical', channel_ids: [id]}, context);
-    assert.equal(control(root, 'channel_ids').selectedOptions.length, 1);
+    assert.equal(elements(root).filter((element) => element.name === 'channel_ids' && element.checked).length, 1);
     assert.equal(control(root, 'scope_id').value, id);
     assert.equal(control(root, 'enabled').checked, false);
     existing.close('done'); await existing.closed;
     const withoutChannels = ruleEditor(null, {...context, channels: []});
     assert.ok(root.textContent.includes(copy('alerts.channels.add')));
-    assert.equal(control(root, 'channel_ids').options.length, 0);
+    assert.equal(control(root, 'channel_ids'), undefined);
     withoutChannels.close('done'); await withoutChannels.closed;
     setSession({user: null, csrf_token: '', expires_at: ''});
     assert.equal(ruleEditor(null, context), undefined);
@@ -313,7 +313,7 @@ test('rule presets preserve routing and scope, preview updates, and duration uni
     control(root, 'threshold').value = '70'; control(root, 'threshold').dispatchEvent(new Event('input'));
     assert.match(preview(), /70%/);
     change(control(root, 'scope_kind'), 'group'); change(control(root, 'scope_id'), id);
-    control(root, 'channel_ids').options[0].selected = true;
+    control(root, 'channel_ids').checked = true;
     for (const [label, metric, duration, severity] of [['offline', 'offline', 3, 'critical'], ['cpu', 'cpu_percent', 5, 'warning'], ['memory', 'memory_used_percent', 5, 'warning'], ['disk', 'disk_used_percent', 10, 'critical']]) {
       elements(root).find((e) => e.tagName === 'button' && e.textContent === copy(`alerts.rules.preset.${label}`)).click();
       assert.equal(control(root, 'metric').value, metric);
@@ -323,7 +323,7 @@ test('rule presets preserve routing and scope, preview updates, and duration uni
       assert.equal(control(root, 'threshold').value, '90');
       assert.equal(control(root, 'comparator').value, '>');
       assert.equal(control(root, 'scope_kind').value, 'group'); assert.equal(control(root, 'scope_id').value, id);
-      assert.equal(control(root, 'channel_ids').selectedOptions.length, 1);
+      assert.equal(elements(root).filter((element) => element.name === 'channel_ids' && element.checked).length, 1);
       assert.equal(control(root, 'name').value, copy('alerts.rules.preset.offline'));
       assert.match(preview(), /Production/);
     }

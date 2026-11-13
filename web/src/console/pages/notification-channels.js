@@ -7,7 +7,7 @@ import {confirmDialog, formDialog} from '../ui/dialogs.js';
 import {toast, toastError} from '../ui/feedback.js';
 import {field, input, passwordInput, select, textarea, validateBytes} from '../ui/forms.js';
 import {MESSAGE_TEMPLATE_TOKENS, URL_CHANNELS, usesURL, buildChannelPayload, errorCodeMessage, validateChannel, validationError} from '../lib/alert-utils.js';
-import {eventTime} from './alert-events.js';
+import {absoluteWhen} from '../format.js';
 
 const KINDS = [['webhook', t('alerts.kind.webhook')], ['telegram', 'Telegram'], ['email', t('alerts.kind.email')], ['feishu', t('alerts.kind.feishu')], ['dingtalk', t('alerts.kind.dingtalk')], ['wecom', t('alerts.kind.wecom')], ['bark', 'Bark'], ['ntfy', 'ntfy']];
 
@@ -31,7 +31,8 @@ export function channelEditor(item, {signal, saved}) {
       controls.url.dataset.field = 'config.url';
       const urlState = h('p', {class: 'text-note'}, item?.config?.url_set ? t('alerts.channels.urlSet', {url: item.config.url_redacted}) : t('alerts.channels.urlNotSet'));
       const replaceField = field(t('alerts.channels.replaceURL'), replaceURL);
-      const webhook = h('div', {class: 'stack'}, item ? urlState : null, item ? replaceField : null, urlField);
+      // 已保存的 URL/密钥只显示状态，同一行的“更换”展开输入框。
+      const webhook = h('div', {class: 'stack'}, item ? h('div', {class: 'saved-credential'}, urlState, replaceField) : null, urlField);
       const chat = add(t('alerts.channels.chatID'), 'chat_id', {value: item?.kind === 'telegram' ? item.config.chat_id : ''}, t('alerts.channels.chatHint'));
       controls.chat_id.dataset.field = 'config.chat_id';
       const email = h('div', {class: 'stack'},
@@ -48,6 +49,7 @@ export function channelEditor(item, {signal, saved}) {
       validateBytes(secret, 0, 4096, t('alerts.channels.secret'));
       const secretField = field(t('alerts.channels.signingSecret'), secret, {inner: secret.wrapper, hint: item ? t('alerts.channels.secretHint') : undefined});
       const secretLabel = secretField.querySelector('label');
+      const secretHint = secretField.querySelector('.text-note');
       const replaceSecret = controls.replaceSecret = input({type: 'checkbox', name: 'replace_secret'});
       const replaceSecretField = field(t('alerts.channels.replaceSecret'), replaceSecret);
       const secretState = h('p', {class: 'text-note'}, t(item?.secret_set ? 'alerts.channels.secretSet' : 'alerts.channels.secretNotSet'));
@@ -74,6 +76,7 @@ export function channelEditor(item, {signal, saved}) {
         secret.disabled = k === 'wecom' || Boolean(item && !replaceSecret.checked);
         secretField.hidden = secret.disabled;
         secret.required = !secret.disabled && (k === 'telegram' || k === 'bark' || (k === 'email' && Boolean(controls.username.value)));
+        if (secretHint) secretHint.hidden = secret.required;
       };
       kind.addEventListener('change', () => { secret.value = ''; sync(); });
       replaceURL.addEventListener('change', () => { if (!replaceURL.checked) controls.url.value = ''; sync(); if (replaceURL.checked) controls.url.focus(); });
@@ -92,8 +95,8 @@ export function channelEditor(item, {signal, saved}) {
       configGroup.showError = (message) => { configError.textContent = message; configError.hidden = !message; };
       configGroup.focus = () => (usesURL(kind.value) ? (controls.url.disabled ? replaceURL : controls.url) : kind.value === 'telegram' ? controls.chat_id : controls.host).focus();
       configGroup.addEventListener('input', () => configGroup.showError(''));
-      form.append(nameField, field(t('alerts.column.kind'), kind), field(t('alerts.state.enabled'), enabled),
-        h('p', {class: 'text-note'}, t('alerts.channels.writeOnlyHint')), configGroup, secretState, ...(item ? [replaceSecretField] : []), secretField);
+      form.append(h('div', {class: 'rule-name-row'}, nameField, field(t('alerts.state.enabled'), enabled)), field(t('alerts.column.kind'), kind),
+        configGroup, item ? h('div', {class: 'saved-credential'}, secretState, replaceSecretField) : null, secretField);
     },
     action: async () => {
       if (!session.user || !session.csrf || signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
@@ -126,23 +129,28 @@ export function channelsPanel({channels, signal, saved}) {
     } catch (error) { if (!signal?.aborted) toastError(error); }
   };
   const row = (channel) => {
-    const status = h('p', {class: 'text-note', role: 'status'});
+    // 测试结果以提示条显示，行内只留给读屏的状态，不再撑高表格行。
+    const status = h('span', {class: 'sr', role: 'status'});
+    const report = (message, error) => {
+      status.textContent = message;
+      if (document.getElementById('toasts')) toast(message, {error});
+    };
     const test = button(t('alerts.channels.sendTest'), {small: true, onClick: async () => {
       if (!session.user || !session.csrf || signal?.aborted) return;
       busy(test, true);
       status.textContent = t('alerts.channels.sendingTest');
       try {
         const result = await api(`/notification-channels/${encodeURIComponent(channel.id)}/test`, {method: 'POST', signal});
-        if (!signal?.aborted) status.textContent = result.ok ? t('alerts.channels.testSent') : t('alerts.channels.testFailed', {error: errorCodeMessage(result.error_code)});
+        if (!signal?.aborted) report(result.ok ? t('alerts.channels.testSent') : t('alerts.channels.testFailed', {error: errorCodeMessage(result.error_code)}), !result.ok);
       } catch (error) {
-        if (!signal?.aborted && error.name !== 'AbortError') status.textContent = t('alerts.channels.testFailed', {error: errorText(error)});
+        if (!signal?.aborted && error.name !== 'AbortError') report(t('alerts.channels.testFailed', {error: errorText(error)}), true);
       } finally { busy(test, false); }
     }});
     const destination = usesURL(channel.kind) ? channel.config.url_redacted || t('alerts.channels.urlNotSet')
       : channel.kind === 'telegram' ? channel.config.chat_id : `${channel.config.host}:${channel.config.port} → ${formatList(channel.config.to)}`;
     return h('tr', null, h('td', null, channel.name), h('td', null, KINDS.find(([kind]) => kind === channel.kind)?.[1] || t('alerts.kind.unknown')),
-      h('td', {class: 'alert-destination'}, destination, channel.kind === 'wecom' ? null : h('div', {class: 'text-note'}, t(channel.secret_set ? 'alerts.channels.secretSet' : 'alerts.channels.secretNotSet')), status),
-      h('td', null, t(channel.enabled ? 'alerts.state.enabled' : 'alerts.state.disabled')),
+      h('td', {class: 'alert-destination'}, destination, status),
+      h('td', null, h('span', {class: `badge ${channel.enabled ? 'online' : 'disabled'}`}, t(channel.enabled ? 'alerts.state.enabled' : 'alerts.state.disabled'))),
       h('td', {class: 'actions'}, test, iconButton('edit', t('alerts.editNamed', {name: channel.name}), () => edit(channel)), iconButton('trash', t('alerts.deleteAction', {name: channel.name}), () => remove(channel))));
   };
   return panel(null, {action: button(t('alerts.channels.add'), {small: true, variant: 'primary', onClick: () => edit(null)})},
@@ -164,17 +172,19 @@ export function deliveriesPanel(channels, signal) {
       content.replaceChildren(deliveries.length ? dataTable({caption: t('alerts.deliveries.caption'),
         columns: ['state', 'channel', 'attempts', 'lastErrorCode', 'time'].map((key) => t(`alerts.column.${key}`)),
         body: h('tbody', null, deliveries.map((delivery) => h('tr', null,
-          h('td', null, t(['pending', 'sent', 'failed'].includes(delivery.state) ? `alerts.deliveryState.${delivery.state}` : 'alerts.unknown'), delivery.coalesced_count > 1 ? h('div', {class: 'text-note'}, t('alerts.deliveries.coalesced', {count: delivery.coalesced_count})) : null),
+          h('td', null, h('span', {class: `badge ${({sent: 'online', failed: 'offline', pending: 'pending'})[delivery.state] || 'disabled'}`},
+            t(['pending', 'sent', 'failed'].includes(delivery.state) ? `alerts.deliveryState.${delivery.state}` : 'alerts.unknown')),
+            delivery.coalesced_count > 1 ? h('small', {class: 'muted'}, ' ', t('alerts.deliveries.coalesced', {count: delivery.coalesced_count})) : null),
           h('td', null, channels.find((channel) => channel.id === delivery.channel_id)?.name || delivery.channel_id),
           h('td', null, String(delivery.attempts)),
           // 单元格展示"发生了什么+怎么处理"，机器码保留在 title 供诊断。
           h('td', {title: delivery.last_error_code || ''}, delivery.last_error_code ? errorCodeMessage(delivery.last_error_code) : t('common.none')),
-          h('td', null, eventTime(delivery.updated_at)))))}) : h('p', {class: 'text-note'}, t('alerts.deliveries.empty')));
+          h('td', null, absoluteWhen(delivery.updated_at)))))}) : h('p', {class: 'text-note'}, t('alerts.deliveries.empty')));
       status.textContent = '';
     } catch (error) { if (!signal?.aborted && error.name !== 'AbortError') status.textContent = t('alerts.deliveries.loadFailed', {error: errorText(error)}); }
     finally { busy(retry, false); }
   };
-  const retry = button(t('common.refresh'), {small: true, icon: 'refresh', onClick: reload});
+  const retry = iconButton('refresh', t('common.refresh'), reload);
   const root = panel(t('alerts.deliveries.title'), {action: retry}, status, content);
   reload();
   return root;

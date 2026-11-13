@@ -39,30 +39,81 @@
   overflow-wrap: anywhere;
 }
 
-select.alert-multiselect {
-  appearance: auto;
-  background-image: none;
-  padding: var(--sp-inline) var(--sp-control);
-  min-height: 90px;
+/* 规则编辑器：名称与启用同排，条件四项一行，范围与级别一行，通道为勾选片。 */
+dialog:has(.rule-form) {
+  width: min(640px,calc(100vw - 32px));
 }
 
-.alert-toolbar,
-.alert-segments {
+.rule-name-row {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  align-items: end;
+  gap: var(--sp-control);
+}
+
+.rule-presets,
+.channel-chips {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
   gap: var(--sp-inline);
 }
 
-.panel-body > .alert-toolbar {
-  justify-content: space-between;
+.rule-condition,
+.rule-scope {
+  display: grid;
+  grid-template-columns: repeat(auto-fit,minmax(min(100%,128px),1fr));
+  align-items: start;
   gap: var(--sp-control);
-  margin-bottom: var(--sp-control);
 }
 
-.alert-segments .btn[aria-pressed="true"] {
-  color: var(--orbit);
-  background: var(--orbit-soft);
+.rule-condition-pair {
+  display: contents;
+}
+
+.channel-chips > .check-row {
+  width: auto;
+}
+
+.alert-rule-preview {
+  padding: var(--sp-control) var(--sp-content);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--fs-sm);
+}
+
+.alert-rule-preview:empty {
+  display: none;
+}
+
+.rule-disabled td:not(.actions) {
+  color: var(--ink-muted);
+}
+
+/* 告警列表工具栏铺满面板顶部，与节点列表的工具栏同一形态。 */
+.alert-events > .panel-body {
+  padding-top: 0;
+}
+
+.panel-body > .alert-toolbar {
+  margin-inline: calc(0px - var(--panel-padding));
+  padding-inline: var(--panel-padding);
+}
+
+.alert-refresh {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-tight);
+  margin-left: auto;
+}
+
+.alert-events .table-wrap {
+  margin-top: 0;
+}
+
+.alert-events > .panel-body > .text-note:not(:empty) {
+  padding-top: var(--sp-content);
 }
 
 .alert-group th {
@@ -74,6 +125,41 @@ select.alert-multiselect {
   font-size: var(--fs-sm);
 }
 
-.alert-rule-preview {
+
+/* 已保存的 URL/密钥：状态文字与“更换”勾选同一行，勾选去掉卡片外框。 */
+.saved-credential {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-inline) var(--sp-control);
+  padding: var(--sp-inline) var(--sp-control);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.saved-credential > .text-note {
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.saved-credential .check-row {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  align-items: center;
+}
+
+.saved-credential .check-row > span {
+  color: var(--orbit);
+  font-weight: var(--fw-medium);
+}
+
+.rule-name-row .check-row {
+  min-height: var(--control-h);
+  padding-block: 0;
+  align-items: center;
 }
