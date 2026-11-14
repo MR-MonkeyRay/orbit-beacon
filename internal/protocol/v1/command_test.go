@@ -13,14 +13,14 @@ func TestClosedCommandValidation(t *testing.T) {
 	if err := valid.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, mutate := range []func(*v1.Command){func(c *v1.Command) { c.ID = "x" }, func(c *v1.Command) { c.Kind = "shell" }, func(c *v1.Command) { c.TargetVersion = "x" }, func(c *v1.Command) { c.ExpiresAt = time.Time{} }, func(c *v1.Command) { c.Kind = "upgrade" }} {
+	for _, mutate := range []func(*v1.Command){func(c *v1.Command) { c.ID = "x" }, func(c *v1.Command) { c.Kind = "shell" }, func(c *v1.Command) { c.ExpiresAt = time.Time{} }} {
 		c := valid
 		mutate(&c)
 		if c.Validate() == nil {
 			t.Fatalf("accepted %+v", c)
 		}
 	}
-	valid.Kind, valid.TargetVersion = "upgrade", "1.2.3"
+	valid.Kind = "upgrade"
 	if err := valid.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestStrictVersionsAndComparison(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	command := v1.Command{ID: "00000000-0000-4000-8000-000000000001", Kind: "upgrade", TargetVersion: "1.2.3", ExpiresAt: time.Now()}
+	command := v1.Command{ID: "00000000-0000-4000-8000-000000000001", Kind: "upgrade", ExpiresAt: time.Now()}
 	data, err := json.Marshal(command)
 	if err != nil {
 		t.Fatal(err)
@@ -82,8 +82,27 @@ func TestStrictVersionsAndComparison(t *testing.T) {
 		t.Fatal(err)
 	}
 	for key := range fields {
-		if key != "id" && key != "kind" && key != "target_version" && key != "expires_at" {
+		if key != "id" && key != "kind" && key != "expires_at" {
 			t.Fatalf("unexpected command field %s", key)
+		}
+	}
+}
+
+func TestFixedUpdateCommandsRejectServerParameters(t *testing.T) {
+	for _, kind := range []string{"check_update", "upgrade", "restart", "stop"} {
+		body := `{"id":"00000000-0000-4000-8000-000000000001","kind":"` + kind + `","expires_at":"2030-01-01T00:00:00Z"}`
+		var command v1.Command
+		if err := json.Unmarshal([]byte(body), &command); err != nil {
+			t.Fatal(err)
+		}
+		if err := command.Validate(); err != nil {
+			t.Errorf("fixed %s rejected: %v", kind, err)
+		}
+		for _, parameter := range []string{`"target_version":"1.2.3"`, `"target_version":null`, `"url":"https://attacker.test/agent"`, `"args":"sh"`, `"hash":"abcd"`} {
+			injected := body[:len(body)-1] + "," + parameter + "}"
+			if err := json.Unmarshal([]byte(injected), &command); err == nil {
+				t.Errorf("server parameter accepted: %s", injected)
+			}
 		}
 	}
 }

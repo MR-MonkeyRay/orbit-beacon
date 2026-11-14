@@ -8,7 +8,7 @@
 | --- | --- |
 | 节点指标、历史、探测与可用率 | 节点 / Nodes；节点详情 → 监控 / Monitoring、服务探测 / Service probes |
 | 流量计费与配额告警 | 节点详情 → 流量 / Traffic；告警 / Alerts（配额规则） |
-| Agent 注册、运行设置与远程升级 | 节点详情 → 更多 → 注册 Agent / More → Enroll Agent；节点详情 → 设置 → Agent / Settings → Agent；设置 → 分组 / Groups |
+| Agent 注册、检查更新与升级 | 节点详情 → 管理 / Manage；节点分组操作菜单支持批量指令 |
 | 状态页、公开字段与主题 | 设置 → 状态页 / Status page；节点详情 → 设置 → 状态页展示 / Settings → Status page listing；构建时选择 `web/themes/<name>` |
 | 告警、静默与通知 | 告警 / Alerts；站内通知 / Notifications |
 | 管理员、两步验证与只读 API 令牌 | 设置 → 管理员 / Administrators、账户 / Account、API 令牌 / API tokens |
@@ -19,7 +19,7 @@
 - 控制台支持桌面、平板与手机；手机使用抽屉导航，宽表格横向滚动。状态页支持所有设备。
 - 节点状态、历史、可用率与通知可靠性边界见[状态与历史](docs/architecture.md#状态与历史)、[实时传输](docs/architecture.md#实时传输)、[告警与通知](docs/architecture.md#告警与通知)。
 - 公开字段为匿名可见文本，不自动脱敏；不要填写凭据、IP、主机名或秘密。
-- 当前部署支持 Linux；Agent 支持本地许可控制的远程版本升级，不提供终端或任意命令执行。
+- 当前部署支持 Linux；Agent 按本地许可检查更新、升级、重启或关闭。更新来源仅由本地 `update_base_url` 决定，默认 `https://github.com/mr-monkeyray/orbit-beacon/releases/download`，自动识别 GitHub Release 或其他 HTTPS 源；服务器不指定版本或地址，不提供终端或任意命令执行。
 
 ## 快速开始
 

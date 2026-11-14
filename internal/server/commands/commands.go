@@ -26,7 +26,6 @@ const (
 
 var (
 	ErrNotFound        = errors.New("command or node not found")
-	ErrSameVersion     = errors.New("node already runs target version")
 	ErrInvalid         = errors.New("invalid command request")
 	ErrNotAllowed      = errors.New("command not allowed")
 	ErrActive          = errors.New("command active")
@@ -42,15 +41,18 @@ var (
 const StoppedSQL = `COALESCE((SELECT state='succeeded' AND credential_epoch=nodes.credential_epoch AND delivered_generation=nodes.run_generation FROM agent_commands WHERE node_id=nodes.id AND kind='stop' ORDER BY created_at DESC,id DESC LIMIT 1),0)`
 
 type Record struct {
-	v1.Command
-	NodeID          string     `json:"node_id"`
-	CredentialEpoch int64      `json:"-"`
-	State           string     `json:"state"`
-	ResultCode      string     `json:"result_code"`
-	RequestedBy     string     `json:"requested_by"`
-	CreatedAt       time.Time  `json:"created_at"`
-	DeliveredAt     *time.Time `json:"delivered_at"`
-	FinishedAt      *time.Time `json:"finished_at"`
+	ID              string         `json:"id"`
+	Kind            string         `json:"kind"`
+	ExpiresAt       time.Time      `json:"expires_at"`
+	NodeID          string         `json:"node_id"`
+	CredentialEpoch int64          `json:"-"`
+	State           string         `json:"state"`
+	ResultCode      string         `json:"result_code"`
+	RequestedBy     string         `json:"requested_by"`
+	CreatedAt       time.Time      `json:"created_at"`
+	DeliveredAt     *time.Time     `json:"delivered_at"`
+	FinishedAt      *time.Time     `json:"finished_at"`
+	Update          *v1.UpdateInfo `json:"update,omitempty"`
 }
 
 type Service struct {
@@ -66,38 +68,26 @@ func New(db *storage.Database, now func() time.Time) *Service {
 }
 
 type CreateRequest struct {
-	Kind           string `json:"kind"`
-	TargetVersion  string `json:"target_version"`
-	Confirm        string `json:"confirm"`
-	targetProvided bool
+	Kind    string `json:"kind"`
+	Confirm string `json:"confirm"`
 }
 
-// UnmarshalJSON 保留字段是否出现，restart/stop 不接受空值或 null 的目标版本。
 func (r *CreateRequest) UnmarshalJSON(data []byte) error {
-	var wire struct {
-		Kind          string          `json:"kind"`
-		TargetVersion json.RawMessage `json:"target_version"`
-		Confirm       string          `json:"confirm"`
-	}
+	type request CreateRequest
+	var wire request
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
 		return err
 	}
-	*r = CreateRequest{Kind: wire.Kind, Confirm: wire.Confirm, targetProvided: wire.TargetVersion != nil}
-	if r.targetProvided {
-		return json.Unmarshal(wire.TargetVersion, &r.TargetVersion)
-	}
+	*r = CreateRequest(wire)
 	return nil
 }
 
 func (r CreateRequest) valid() bool {
 	switch r.Kind {
-	case v1.RemoteCommandUpgrade:
-		_, err := v1.ParseVersion(r.TargetVersion)
-		return err == nil
-	case v1.RemoteCommandRestart, v1.RemoteCommandStop:
-		return !r.targetProvided && r.TargetVersion == ""
+	case v1.RemoteCommandCheckUpdate, v1.RemoteCommandUpgrade, v1.RemoteCommandRestart, v1.RemoteCommandStop:
+		return true
 	default:
 		return false
 	}
@@ -118,15 +108,11 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 		return Record{}, err
 	}
 	defer tx.Rollback()
-	var name, status, generation, session, version string
+	var name, status, generation, session string
 	var epoch int64
 	var credential sql.NullBool
 	var stopped bool
-	versionSQL := "CASE WHEN json_valid(`system`) THEN COALESCE(json_extract(`system`,'$.agent_version'),'') ELSE '' END"
-	if tx.Dialect() == storage.MySQL {
-		versionSQL = "CASE WHEN JSON_VALID(`system`) THEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(`system`,'$.agent_version')) COLLATE utf8mb4_0900_bin,'') ELSE '' END"
-	}
-	err = tx.QueryRowContext(ctx, `SELECT name,status,credential_epoch,length(token_hash)>0,run_generation,report_session_id,`+versionSQL+`,`+StoppedSQL+` FROM nodes WHERE id=?`, nodeID).Scan(&name, &status, &epoch, &credential, &generation, &session, &version, &stopped)
+	err = tx.QueryRowContext(ctx, `SELECT name,status,credential_epoch,length(token_hash)>0,run_generation,report_session_id,`+StoppedSQL+` FROM nodes WHERE id=?`, nodeID).Scan(&name, &status, &epoch, &credential, &generation, &session, &stopped)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
@@ -141,9 +127,6 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 	}
 	if generation == "0" || session == "" {
 		return Record{}, ErrNotAllowed
-	}
-	if req.Kind == v1.RemoteCommandUpgrade && version == req.TargetVersion {
-		return Record{}, ErrSameVersion
 	}
 	lifetime := Lifetime
 	if req.Kind == v1.RemoteCommandUpgrade {
@@ -164,12 +147,12 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 	if err != nil {
 		return Record{}, err
 	}
-	record := Record{Command: v1.Command{ID: id, Kind: req.Kind, TargetVersion: req.TargetVersion, ExpiresAt: now.Add(lifetime)}, NodeID: nodeID, CredentialEpoch: epoch, State: "pending", RequestedBy: actor, CreatedAt: now}
-	_, err = tx.ExecContext(ctx, `INSERT INTO agent_commands(id,node_id,credential_epoch,kind,target_version,state,requested_by,created_at,expires_at) VALUES(?,?,?,?,?,'pending',?,?,?)`, id, nodeID, epoch, req.Kind, req.TargetVersion, actor, timekey.Format(now), timekey.Format(record.ExpiresAt))
+	record := Record{ID: id, Kind: req.Kind, ExpiresAt: now.Add(lifetime), NodeID: nodeID, CredentialEpoch: epoch, State: "pending", RequestedBy: actor, CreatedAt: now}
+	_, err = tx.ExecContext(ctx, `INSERT INTO agent_commands(id,node_id,credential_epoch,kind,state,requested_by,created_at,expires_at) VALUES(?,?,?,?,'pending',?,?,?)`, id, nodeID, epoch, req.Kind, actor, timekey.Format(now), timekey.Format(record.ExpiresAt))
 	if err != nil {
 		return Record{}, err
 	}
-	if err := audit.InsertDetails(ctx, tx, "command.create", nodeID, now, audit.Details{"command_id": id, "kind": req.Kind, "target_version": req.TargetVersion}); err != nil {
+	if err := audit.InsertDetails(ctx, tx, "command.create", nodeID, now, audit.Details{"command_id": id, "kind": req.Kind}); err != nil {
 		return Record{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -228,7 +211,7 @@ func (s *Service) CreateGroup(ctx context.Context, groupID, actor string, req Cr
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
-		if _, err := s.Create(ctx, n.id, actor, CreateRequest{Kind: req.Kind, TargetVersion: req.TargetVersion, Confirm: n.name}); err != nil {
+		if _, err := s.Create(ctx, n.id, actor, CreateRequest{Kind: req.Kind, Confirm: n.name}); err != nil {
 			result.Skipped++
 		} else {
 			result.Created++
@@ -240,7 +223,7 @@ func (s *Service) CreateGroup(ctx context.Context, groupID, actor string, req Cr
 	}
 	defer tx.Rollback()
 	if err := audit.InsertDetails(ctx, tx, "command.bulk", groupID, s.now().UTC(), audit.Details{
-		"group_id": groupID, "kind": req.Kind, "target_version": req.TargetVersion, "created": result.Created, "skipped": result.Skipped,
+		"group_id": groupID, "kind": req.Kind, "created": result.Created, "skipped": result.Skipped,
 	}); err != nil {
 		return result, err
 	}
@@ -279,7 +262,7 @@ func (s *Service) Cancel(ctx context.Context, nodeID, id string) error {
 	return tx.Commit()
 }
 
-const columns = `id,kind,target_version,expires_at,node_id,credential_epoch,state,result_code,requested_by,created_at,delivered_at,finished_at`
+const columns = `id,kind,update_info,expires_at,node_id,credential_epoch,state,result_code,requested_by,created_at,delivered_at,finished_at`
 
 func (s *Service) List(ctx context.Context, nodeID string) ([]Record, error) {
 	var exists bool
@@ -304,9 +287,12 @@ func (s *Service) List(ctx context.Context, nodeID string) ([]Record, error) {
 	result := []Record{}
 	for rows.Next() {
 		var r Record
-		var expires, created string
+		var expires, created, update string
 		var delivered, finished *string
-		if err := rows.Scan(&r.ID, &r.Kind, &r.TargetVersion, &expires, &r.NodeID, &r.CredentialEpoch, &r.State, &r.ResultCode, &r.RequestedBy, &created, &delivered, &finished); err != nil {
+		if err := rows.Scan(&r.ID, &r.Kind, &update, &expires, &r.NodeID, &r.CredentialEpoch, &r.State, &r.ResultCode, &r.RequestedBy, &created, &delivered, &finished); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(update), &r.Update); err != nil {
 			return nil, err
 		}
 		for _, p := range []struct {
@@ -403,13 +389,25 @@ func Exchange(ctx context.Context, tx *storage.Tx, nodeID string, epoch int64, g
 		if err := r.Validate(); err != nil {
 			return nil, err
 		}
-		var id string
-		err := tx.QueryRowContext(ctx, `SELECT id FROM agent_commands WHERE id=? AND node_id=? AND credential_epoch=? AND state='delivered'`, r.ID, nodeID, epoch).Scan(&id)
+		var id, kind string
+		err := tx.QueryRowContext(ctx, `SELECT id,kind FROM agent_commands WHERE id=? AND node_id=? AND credential_epoch=? AND state='delivered'`, r.ID, nodeID, epoch).Scan(&id, &kind)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
 		if err != nil {
 			return nil, err
+		}
+		if r.Update != nil {
+			if kind != v1.RemoteCommandCheckUpdate && kind != v1.RemoteCommandUpgrade {
+				return nil, ErrInvalid
+			}
+			update, err := json.Marshal(r.Update)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE agent_commands SET update_info=? WHERE id=?`, string(update), id); err != nil {
+				return nil, err
+			}
 		}
 		if err := transition(ctx, tx, nodeID, id, r.Status, r.Code, now, false); err != nil {
 			return nil, err
@@ -423,7 +421,7 @@ func Exchange(ctx context.Context, tx *storage.Tx, nodeID string, epoch int64, g
 	}
 	var c v1.Command
 	var expiry, state string
-	err := tx.QueryRowContext(ctx, `SELECT id,kind,target_version,expires_at,state FROM agent_commands WHERE node_id=? AND state IN ('pending','delivered')`, nodeID).Scan(&c.ID, &c.Kind, &c.TargetVersion, &expiry, &state)
+	err := tx.QueryRowContext(ctx, `SELECT id,kind,expires_at,state FROM agent_commands WHERE node_id=? AND state IN ('pending','delivered')`, nodeID).Scan(&c.ID, &c.Kind, &expiry, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

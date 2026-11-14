@@ -47,7 +47,6 @@ func upgradeFixture(t *testing.T) (*upgrader, []byte) {
 }
 func upgradeCommand() v1.Command {
 	c := testCommand("upgrade")
-	c.TargetVersion = "1.2.4"
 	c.ExpiresAt = time.Now().Add(20 * time.Minute)
 	return c
 }
@@ -63,6 +62,10 @@ func serveUpgrade(t *testing.T, u *upgrader, candidate []byte, change func(*http
 		}
 		if r.Header.Get("Authorization") != "" {
 			t.Error("download leaked Authorization")
+		}
+		if strings.HasSuffix(r.URL.Path, "/latest.json") {
+			body := `{"version":"1.2.4"}`
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 		}
 		if change != nil {
 			if res, err := change(r); res != nil || err != nil {
@@ -124,7 +127,7 @@ func TestUpgradeFilesAndFailureCodes(t *testing.T) {
 				}
 				return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(text)), ContentLength: length, Request: r}, nil
 			})
-			result := u.run(t.Context(), upgradeCommand())
+			result := runUpgrade(t.Context(), u, upgradeCommand())
 			if scenario == "success" {
 				if result.status != "succeeded" {
 					t.Fatal(result)
@@ -170,6 +173,10 @@ func TestUpgradeTLSDownloads(t *testing.T) {
 		if r.Header.Get("Authorization") != "" {
 			t.Error("credential sent to download host")
 		}
+		if strings.HasSuffix(r.URL.Path, "/latest.json") {
+			fmt.Fprint(w, `{"version":"1.2.4"}`)
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "SHA256SUMS") {
 			fmt.Fprintf(w, "%x *orbitbeacon-agent-linux-%s\n", sum, u.arch)
 		} else {
@@ -184,19 +191,18 @@ func TestUpgradeTLSDownloads(t *testing.T) {
 	transport.TLSClientConfig.MinVersion = tls.VersionTLS12
 	u.client.Transport = transport
 	u.client.CheckRedirect = upgradeRedirect
-	if result := u.run(t.Context(), upgradeCommand()); result.status != "succeeded" {
+	if result := runUpgrade(t.Context(), u, upgradeCommand()); result.status != "succeeded" {
 		t.Fatal(result)
 	}
 }
 
 func TestUpgradePreflightNoNetworkAndRedirectLimit(t *testing.T) {
-	for _, current := range []string{"1.2.3", "1.2.4", "development"} {
+	for _, current := range []string{"development"} {
 		u, candidate := upgradeFixture(t)
 		u.version = current
 		calls := serveUpgrade(t, u, candidate, nil)
 		c := upgradeCommand()
-		c.TargetVersion = "1.2.3"
-		result := u.run(t.Context(), c)
+		result := runUpgrade(t.Context(), u, c)
 		if result.status != "rejected" || result.code != "downgrade" || calls.Load() != 0 {
 			t.Fatal(result, calls.Load())
 		}
@@ -205,7 +211,7 @@ func TestUpgradePreflightNoNetworkAndRedirectLimit(t *testing.T) {
 	u, candidate := upgradeFixture(t)
 	u.arch = "386"
 	calls := serveUpgrade(t, u, candidate, nil)
-	if got := u.run(t.Context(), upgradeCommand()); got.code != "unsupported" || calls.Load() != 0 {
+	if got := runUpgrade(t.Context(), u, upgradeCommand()); got.code != "unsupported" || calls.Load() != 0 {
 		t.Fatal(got)
 	}
 	req, _ := http.NewRequest("GET", "https://release.example.test", nil)
@@ -222,15 +228,15 @@ func TestUpgradeRecoveryExpiryAndReplay(t *testing.T) {
 			if s.handle(c, time.Now(), config.DefaultRuntimeSettings()) != "upgrade" {
 				t.Fatal("no action")
 			}
-			if s.state.Processed[0].TargetVersion != c.TargetVersion {
-				t.Fatal("target not persisted")
+			if !s.prepareUpgrade(c.ID, fixtureUpdateInfo()) || s.state.Processed[0].TargetVersion != "1.2.4" {
+				t.Fatal("local target not persisted")
 			}
 			if s.handle(c, time.Now(), config.DefaultRuntimeSettings()) != "" {
 				t.Fatal("replayed")
 			}
 			version := "1.2.3"
 			if scenario == "success" {
-				version = c.TargetVersion
+				version = "1.2.4"
 			}
 			if scenario == "rollback" {
 				if err := os.WriteFile(filepath.Join(filepath.Dir(s.path), "upgrade-rolled-back"), []byte("4"), 0600); err != nil {
@@ -300,7 +306,7 @@ func TestUpgradeCanceledDownloadCleansFiles(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan upgradeOutcome, 1)
-	go func() { done <- u.run(ctx, upgradeCommand()) }()
+	go func() { done <- runUpgrade(ctx, u, upgradeCommand()) }()
 	<-started
 	cancel()
 	if got := <-done; got.code != "download" {
@@ -486,7 +492,7 @@ func TestUpgradeSchedulerCancellationAndConcurrentCommand(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("shutdown did not wait for download cleanup")
 	}
-	if calls.Load() != 2 || len(store.state.Processed) != 1 {
+	if calls.Load() != 3 || len(store.state.Processed) != 1 {
 		t.Fatal("additional upgrade was not ignored", calls.Load(), store.state)
 	}
 	assertUnswitched(t, u)
@@ -517,7 +523,7 @@ func TestUpgradeManifestAndExecutableValidation(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if result := u.run(t.Context(), upgradeCommand()); result.status != "rejected" || result.code != "unsupported" || calls.Load() != 0 {
+			if result := runUpgrade(t.Context(), u, upgradeCommand()); result.status != "rejected" || result.code != "unsupported" || calls.Load() != 0 {
 				t.Fatal(result, calls.Load())
 			}
 		})
@@ -552,6 +558,10 @@ func TestUpgradeTLSFailureIsolation(t *testing.T) {
 				if r.Header.Get("Authorization") != "" {
 					t.Error("authorization reached release host")
 				}
+				if strings.HasSuffix(r.URL.Path, "/latest.json") {
+					fmt.Fprint(w, `{"version":"1.2.4"}`)
+					return
+				}
 				if scenario == "http_redirect" {
 					http.Redirect(w, r, insecure.URL, http.StatusFound)
 					return
@@ -578,7 +588,7 @@ func TestUpgradeTLSFailureIsolation(t *testing.T) {
 			u.base = server.URL
 			u.client = server.Client()
 			u.client.CheckRedirect = upgradeRedirect
-			result := u.run(t.Context(), upgradeCommand())
+			result := runUpgrade(t.Context(), u, upgradeCommand())
 			want := map[string]string{"checksum": "checksum", "missing_line": "checksum", "oversize": "download", "self_check": "self_check", "http_redirect": "download"}[scenario]
 			if result.status != "failed" || result.code != want || insecureRequests.Load() != 0 {
 				t.Fatal(result, insecureRequests.Load())
@@ -618,9 +628,12 @@ func TestUpgradeRollbackNeverInheritsSuccess(t *testing.T) {
 	if s.handle(c, time.Now(), config.DefaultRuntimeSettings()) != "upgrade" {
 		t.Fatal("no action")
 	}
+	if !s.prepareUpgrade(c.ID, fixtureUpdateInfo()) {
+		t.Fatal("local target not persisted")
+	}
 	marker := writeUpgradeMarker(t, s, "upgrade-pending")
 	for range 3 {
-		started := openCommandStore(s.path, s.logger, c.TargetVersion)
+		started := openCommandStore(s.path, s.logger, "1.2.4")
 		if started.blocked || len(started.results()) != 0 || started.state.Processed[0].State != "executing" {
 			t.Fatal("start recorded a result", started.state)
 		}
@@ -640,8 +653,11 @@ func TestUpgradeSucceedsOnlyAfterAcceptedReport(t *testing.T) {
 	if s.handle(c, time.Now(), config.DefaultRuntimeSettings()) != "upgrade" {
 		t.Fatal("no action")
 	}
+	if !s.prepareUpgrade(c.ID, fixtureUpdateInfo()) {
+		t.Fatal("local target not persisted")
+	}
 	marker := writeUpgradeMarker(t, s, "upgrade-pending")
-	store := openCommandStore(s.path, s.logger, c.TargetVersion)
+	store := openCommandStore(s.path, s.logger, "1.2.4")
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	scheduler := NewScheduler(SchedulerOptions{Commands: store})
@@ -723,8 +739,11 @@ func TestUpgradeCrashAfterConfirmationCannotRollBackOntoSuccess(t *testing.T) {
 	if s.handle(c, time.Now(), config.DefaultRuntimeSettings()) != "upgrade" {
 		t.Fatal("no action")
 	}
+	if !s.prepareUpgrade(c.ID, fixtureUpdateInfo()) {
+		t.Fatal("local target not persisted")
+	}
 	marker := writeUpgradeMarker(t, s, "upgrade-pending")
-	store := openCommandStore(s.path, s.logger, c.TargetVersion)
+	store := openCommandStore(s.path, s.logger, "1.2.4")
 	saved := false
 	store.persist = func(commandState) error {
 		saved = true
@@ -736,7 +755,7 @@ func TestUpgradeCrashAfterConfirmationCannotRollBackOntoSuccess(t *testing.T) {
 	if !store.confirmUpgrade() || !saved {
 		t.Fatal("confirmation did not reach save")
 	}
-	restarted := openCommandStore(s.path, s.logger, c.TargetVersion)
+	restarted := openCommandStore(s.path, s.logger, "1.2.4")
 	if got := restarted.results(); len(got) != 1 || got[0].Status != "succeeded" {
 		t.Fatal(got)
 	}
@@ -751,8 +770,11 @@ func TestUpgradeUnremovableMarkerStaysUnconfirmed(t *testing.T) {
 	if s.handle(c, time.Now(), config.DefaultRuntimeSettings()) != "upgrade" {
 		t.Fatal("no action")
 	}
+	if !s.prepareUpgrade(c.ID, fixtureUpdateInfo()) {
+		t.Fatal("local target not persisted")
+	}
 	writeUpgradeMarker(t, s, "upgrade-pending")
-	store := openCommandStore(s.path, s.logger, c.TargetVersion)
+	store := openCommandStore(s.path, s.logger, "1.2.4")
 	dir := filepath.Dir(s.path)
 	if err := os.Chmod(dir, 0500); err != nil {
 		t.Fatal(err)

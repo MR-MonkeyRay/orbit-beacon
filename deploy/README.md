@@ -29,6 +29,8 @@ MySQL 整理需具备所整理表的 `SELECT`、`INSERT` 权限。
 
 **CLI > `ORBITBEACON_` 环境变量 > YAML > 默认值**。YAML 由 `--config` 指定，使用单个映射文档；重复键、未知键、null、错误类型或无效值会报错。环境变量用大写键名，CLI 用连字符，例如 `ORBITBEACON_MAX_NODES=100`、`--max-nodes 100`。Agent 本地参数也使用此优先级，固定安装策略另行校验。
 
+Agent 更新源只由 root 管理的 `install-policy.yaml` 中的 `update_base_url` 决定，默认显式写入 `https://github.com/mr-monkeyray/orbit-beacon/releases/download`。GitHub Release 根地址自动匹配对应仓库 API，其他 HTTPS 根地址使用 `latest.json`。关闭更新须从本地 `agent.yaml` 的 `remote_commands` 移除 `check_update`、`upgrade`。Server 仅发送四种无参数指令，不指定版本或发布源；源修改须重启，不能通过运行配置、环境变量、reload 或 Server 改写，也不上传。详见 [Agent 更新指南](../docs/agent.md#更新检查与远程升级)。
+
 | YAML 键 | 默认值 | 含义 |
 | --- | --- | --- |
 | `listen_addr` | `127.0.0.1:8080` | HTTP 业务监听地址 |
@@ -357,13 +359,15 @@ sudo -u orbitbeacon /usr/local/bin/orbitbeacon-server restore --config /etc/orbi
 
 ## 升级
 
-原生 Agent 可在控制台按版本远程升级。发布源、回滚和信任边界见[远程升级](../docs/agent.md#远程升级)；安装器默认用 GitHub Releases，重装不传 `--update-base-url` 时保留已有地址，传 URL 可换 HTTPS 镜像；只有策略值为空才关闭升级。
+Agent 更新源仅由本机安装策略的 `update_base_url` 决定。检查适用于全部安装模式，远程升级仅限 native，均须本地 `remote_commands` 许可。重装保留源地址和运行配置；安装器迁移旧禁用或显式空源时，先持久化移除两项更新权限，再改写策略，后续重装不会重新启用。复杂手工 YAML 会在改动前拒绝，须先备份并整理。详见 [Agent 更新与回滚](../docs/agent.md#更新检查与远程升级)。
 
-启动配置已统一为 YAML。升级前备份旧配置，复制 `server.json` 为 `server.yaml`（JSON 是 YAML 子集，可暂保留内容），同步 systemd 的 `--config` 和 Docker 挂载目标后再启动；不要用示例覆盖现有数据库、目录或访问源设置。Agent 的两份配置迁移见 [Agent 升级](../docs/agent.md#升级与卸载)。JSON API、命令 `--json` 输出与身份/状态文件格式不变。
+启动配置已统一为 YAML。升级前备份旧配置，复制 `server.json` 为 `server.yaml`（JSON 是 YAML 子集，可暂保留内容），同步 systemd 的 `--config` 和 Docker 挂载目标后再启动；不要用示例覆盖现有数据库、目录或访问源设置。Agent 的两份配置迁移见 [Agent 升级](../docs/agent.md#升级与卸载)。身份和状态文件不因配置格式转换而重建。远程指令已移除目标版本参数；先升级 Server，再用安装器在 Agent 主机完成首次升级，不能用新控制台升级旧 Agent。
 
-当前主库、历史库及归档要求 schema baseline **2**。旧 baseline 1 数据库和归档明确拒绝，不提供自动迁移或清空。使用新数据目录与空的专用 MySQL schema；升级前保留旧数据库、key、归档密码和原二进制。结构调整直接更新可信原生建表 SQL。
+当前主库 schema 为 **3**，历史库为 **2**。独立部署的主库 schema 2 在启动时迁移为 3；已有复制元数据的 schema 2 拒绝自动迁移，须停服规划离线迁移与重新播种（reseed），不能直接滚动升级或删除复制状态绕过校验。baseline 1 仍不支持。
 
-以下步骤仅适用于 schema 相同的版本更新；跨 baseline 不直接复用旧数据目录或旧归档。
+新版本归档要求主库 3 / 历史库 2，旧主库 schema 2 归档不能直接恢复到新版本。升级前保留完整旧数据库、数据目录、key、归档密码和原二进制；迁移后重新备份。不要用旧二进制打开已迁移数据库，回退须恢复匹配的整套旧数据与程序。
+
+确认 schema 兼容或已安排上述迁移后：
 
 1. 完成所需类别备份，另存密码、部署配置和证书，停止服务器。
 2. systemd 替换二进制；Compose 设置目标镜像标签，执行 `pull orbitbeacon`、`up -d orbitbeacon`。

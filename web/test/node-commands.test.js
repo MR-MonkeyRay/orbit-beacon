@@ -50,14 +50,14 @@ function confirmTyped(env, expected) {
 
 test('remote controls gate online state, active commands, disabled and stopped nodes', async (t) => {
   for (const [label, options, disabled] of [
-    ['allowed', {}, [false, false]], ['offline', {current: {...node(), presence: 'offline'}}, [true, true]],
-    ['pending', {records: [record()]}, [true, true]], ['delivered', {records: [record('delivered')]}, [true, true]],
-    ['disabled', {current: {...node(), status: 'disabled'}}, [true, true]],
-    ['stopped', {current: {...node(), stopped: true}}, [true, true]],
-    ['deleted', {current: {...node(), deleted: true}}, [true, true]]
+    ['allowed', {}, false], ['offline', {current: {...node(), presence: 'offline'}}, true],
+    ['pending', {records: [record()]}, true], ['delivered', {records: [record('delivered')]}, true],
+    ['disabled', {current: {...node(), status: 'disabled'}}, true],
+    ['stopped', {current: {...node(), stopped: true}}, true],
+    ['deleted', {current: {...node(), deleted: true}}, true]
   ]) await t.test(label, async (t) => {
     const env = await setup(t, options);
-    assert.deepEqual(['restart', 'stop'].map((kind) => button(env.panel.element, `nodes.command.${kind}`).disabled), disabled);
+    for (const kind of ['check_update', 'upgrade', 'restart', 'stop']) assert.equal(button(env.panel.element, `nodes.command.${kind}`).disabled, disabled);
     if (!options.records?.length) assert.equal(env.panel.element.querySelector('.table-wrap').hidden, true);
   });
 });
@@ -111,7 +111,7 @@ test('pending cancellation, requester and all short status and result labels', a
   }
 });
 
-for (const kind of ['restart', 'stop']) test(`group ${kind} menu requires its name and reports created and skipped`, async (t) => {
+for (const kind of ['check_update', 'upgrade', 'restart', 'stop']) test(`group ${kind} menu requires its name and reports created and skipped`, async (t) => {
   const env = await setup(t);
   const root = menuButton({label: 'Production actions', icon: 'more', iconOnly: true, signal: env.scope.signal,
     items: groupCommandItems({id, name: 'Production'}, {signal: env.scope.signal, controls: () => root.querySelectorAll('button')})});
@@ -121,14 +121,16 @@ for (const kind of ['restart', 'stop']) test(`group ${kind} menu requires its na
   assert.equal(trigger.textContent, '');
   trigger.click();
   const items = root.querySelectorAll('[role="menuitem"]');
-  assert.deepEqual(items.map((item) => item.textContent), ['upgrade', 'restart', 'stop'].map((name) => copy(`nodes.command.${name}All`)));
-  assert.equal(items[2].classList.contains('menu-danger'), true);
+  assert.deepEqual(items.map((item) => item.textContent), ['check_update', 'upgrade', 'restart', 'stop'].map((name) => copy(`nodes.command.${name}All`)));
+  assert.equal(items[3].classList.contains('menu-danger'), true);
   button(env.body, `nodes.command.${kind}All`).click(); await flush();
   assert.equal(root.querySelector('[role="menu"]').hidden, true);
   assert.equal(trigger.disabled, true);
   const dialog = env.body.querySelector('dialog');
   assert.equal(dialog.querySelector('h2').textContent, copy(`nodes.command.${kind}All`));
   if (kind === 'restart') assert.equal(dialog.querySelector('p'), null);
+  if (kind === 'upgrade') assert.equal(dialog.querySelector('p').textContent, copy('nodes.command.upgradeConsequence'));
+  assert.equal(dialog.querySelectorAll('input').length, 1);
   confirmTyped(env, 'Production'); await flush();
   const post = env.requests.find((item) => item.url.includes('/groups/'));
   assert.equal(post.url, `/api/v1/groups/${id}/commands`);
@@ -177,74 +179,92 @@ test('a pending poll response cannot overwrite a newer command mutation refresh'
   assert.equal(button(env.panel.element, 'controls.cancel'), undefined);
 });
 
-test('upgrade dialog requires a strict target version and submits it', async (t) => {
+for (const kind of ['check_update', 'upgrade']) test(`${kind} uses a fixed command without version or address input`, async (t) => {
   const env = await setup(t);
-  button(env.panel.element, 'nodes.command.upgrade').click(); await flush();
+  button(env.panel.element, `nodes.command.${kind}`).click(); await flush();
   const dialog = env.body.querySelector('dialog');
-  assert.equal(dialog.querySelector('h2').textContent, copy('nodes.command.upgrade'));
-  assert.equal(dialog.querySelector('p'), null);
-  assert.equal(dialog.querySelector('label').textContent, copy('nodes.command.targetVersion'));
-  const entry = dialog.querySelector('input');
-  const submit = dialog.querySelectorAll('button').find((item) => item.type === 'submit');
-  for (const version of ['', '1.2', 'v1.2.3', '01.2.3', '1.02.3', '1.2.03', '1.2.3-rc1', '../1.2.3', '1.2.3\n']) {
-    entry.value = version; entry.dispatchEvent(new Event('input'));
-    assert.equal(submit.disabled, true);
-  }
-  entry.value = '1.2.3'; entry.dispatchEvent(new Event('input')); assert.equal(submit.disabled, false);
-  dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true}));
+  assert.equal(dialog.querySelector('h2').textContent, copy(`nodes.command.${kind}`));
+  assert.equal(dialog.querySelectorAll('input').length, 0);
+  assert.equal(dialog.querySelector('p')?.textContent, kind === 'upgrade' ? copy('nodes.command.upgradeConsequence') : undefined);
+  assert.equal(env.requests.some((item) => item.options.method === 'POST'), false);
+  button(dialog, `nodes.command.${kind}`).click();
   dialog.dispatchEvent(new Event('animationend')); await flush();
   const post = env.requests.find((item) => item.options.method === 'POST');
-  assert.deepEqual(JSON.parse(post.options.body), {kind: 'upgrade', target_version: '1.2.3'});
+  assert.deepEqual(JSON.parse(post.options.body), {kind});
+});
+
+for (const kind of ['check_update', 'upgrade']) test(`canceling ${kind} does not issue a command`, async (t) => {
+  const env = await setup(t);
+  button(env.panel.element, `nodes.command.${kind}`).click(); await flush();
+  const dialog = env.body.querySelector('dialog');
+  button(dialog, 'controls.cancel').click();
+  dialog.dispatchEvent(new Event('animationend')); await flush();
+  assert.equal(env.body.querySelectorAll('dialog').length, 0);
+  assert.equal(env.requests.some((item) => item.options.method === 'POST'), false);
+  assert.equal(button(env.panel.element, `nodes.command.${kind}`).disabled, false);
 });
 
 test('cancelling a typed confirmation closes without a discard prompt', async (t) => {
   const env = await setup(t);
-  button(env.panel.element, 'nodes.command.upgrade').click(); await flush();
+  button(env.panel.element, 'nodes.command.stop').click(); await flush();
   const dialog = env.body.querySelector('dialog');
   const entry = dialog.querySelector('input');
-  entry.value = '1.2'; entry.dispatchEvent(new Event('input'));
+  entry.value = 'wrong'; entry.dispatchEvent(new Event('input'));
   dialog.querySelectorAll('button').find((item) => item.textContent === copy('controls.cancel')).click(); await flush();
   dialog.dispatchEvent(new Event('animationend')); await flush();
   assert.equal(env.body.querySelectorAll('dialog').length, 0);
   assert.equal(env.requests.some((item) => item.options.method === 'POST'), false);
 });
 
-test('group upgrade menu requires both target version and group name', async (t) => {
+for (const kind of ['check_update', 'upgrade', 'restart', 'stop']) test(`canceling group ${kind} sends nothing and restores controls`, async (t) => {
   const env = await setup(t);
   const root = menuButton({label: 'Production actions', icon: 'more', iconOnly: true, signal: env.scope.signal,
     items: groupCommandItems({id, name: 'Production'}, {signal: env.scope.signal, controls: () => root.querySelectorAll('button')})});
   env.body.append(root);
   root.querySelector('button').click();
-  button(env.body, 'nodes.command.upgradeAll').click(); await flush();
+  button(env.body, `nodes.command.${kind}All`).click(); await flush();
   const dialog = env.body.querySelector('dialog');
-  assert.equal(dialog.querySelector('h2').textContent, copy('nodes.command.upgradeAll'));
-  assert.equal(dialog.querySelector('p'), null);
-  const [version, confirmation] = dialog.querySelectorAll('input');
-  const submit = dialog.querySelectorAll('button').find((item) => item.type === 'submit');
-  confirmation.value = 'Production'; confirmation.dispatchEvent(new Event('input')); assert.equal(submit.disabled, true);
-  version.value = '1.2.3'; version.dispatchEvent(new Event('input')); assert.equal(submit.disabled, false);
-  confirmation.value = 'wrong'; confirmation.dispatchEvent(new Event('input')); assert.equal(submit.disabled, true);
-  confirmation.value = 'Production'; confirmation.dispatchEvent(new Event('input'));
-  dialog.querySelector('form').dispatchEvent(new Event('submit', {cancelable: true}));
+  const entry = dialog.querySelector('input');
+  entry.value = 'Production'; entry.dispatchEvent(new Event('input'));
+  button(dialog, 'controls.cancel').click();
   dialog.dispatchEvent(new Event('animationend')); await flush();
-  const post = env.requests.find((item) => item.url.includes('/groups/'));
-  assert.deepEqual(JSON.parse(post.options.body), {kind: 'upgrade', target_version: '1.2.3', confirm: 'Production'});
-  assert.match(env.body.querySelector('#toasts').textContent, copyPattern('nodes.command.bulkResult', {created: 2, skipped: 3}));
+  assert.equal(env.requests.some((item) => item.options.method === 'POST'), false);
+  assert.equal(root.querySelector('button').disabled, false);
 });
 
-test('upgrade availability gates and result labels include the target', async (t) => {
+test('update failure labels remain visible without update discovery data', async (t) => {
   const env = await setup(t);
-  assert.equal(button(env.panel.element, 'nodes.command.upgrade').disabled, false);
   for (const code of ['download', 'checksum', 'self_check', 'downgrade', 'rolled_back']) {
-    env.setRecords([{...record('failed', code), kind: 'upgrade', target_version: '1.2.3'}]);
+    env.setRecords([{...record('failed', code), kind: 'upgrade'}]);
     env.panel.detach(); env.panel.attach(); await flush();
-    assert.match(env.panel.element.querySelector('tbody').textContent, /1\.2\.3/);
     assert.match(env.panel.element.querySelector('tbody').textContent, copyPattern(`nodes.command.result.${code}`));
   }
-  for (const current of [{...node(), status: 'disabled'}, {...node(), stopped: true}]) {
-    env.panel.snapshot(current);
-    assert.equal(button(env.panel.element, 'nodes.command.upgrade').disabled, true);
-  }
-  env.panel.snapshot({...node(), presence: 'offline'}); assert.equal(button(env.panel.element, 'nodes.command.upgrade').disabled, true);
-  assert.equal(errorText({code: 'command_same_version'}), copy('errors.command_same_version'));
+});
+
+for (const kind of ['check_update', 'upgrade']) for (const channel of ['github', 'custom']) test(`${kind} history shows local ${channel} discovery without links`, async (t) => {
+  const update = {channel, current_version: '1.2.3', latest_version: '1.2.4', checked_at: '2026-11-13T10:00:00Z'};
+  const env = await setup(t, {records: [{...record('succeeded', 'ok'), kind, update}]});
+  const row = env.panel.element.querySelector('tbody').querySelector('tr');
+  assert.equal(row.children[0].textContent, copy(`nodes.command.${kind}`));
+  assert.match(row.textContent, copyPattern('nodes.command.updateInfo', {channel: copy(`nodes.command.channel.${channel}`), current: '1.2.3', latest: '1.2.4'}));
+  assert.match(row.textContent, copyPattern('nodes.command.checkedAt'));
+  assert.ok(row.querySelectorAll('time').some((time) => time.getAttribute('datetime') === update.checked_at));
+  assert.equal(row.querySelectorAll('a').length, 0);
+});
+
+test('a successful no-update check shows equal current and latest versions', async (t) => {
+  const update = {channel: 'github', current_version: '1.2.3', latest_version: '1.2.3', checked_at: '2026-11-13T10:00:00Z'};
+  const env = await setup(t, {records: [{...record('succeeded', 'ok'), kind: 'check_update', update}]});
+  const row = env.panel.element.querySelector('tbody').querySelector('tr');
+  assert.match(row.textContent, copyPattern('nodes.command.state.succeeded'));
+  assert.match(row.textContent, copyPattern('nodes.command.updateInfo', {channel: copy('nodes.command.channel.github'), current: '1.2.3', latest: '1.2.3'}));
+});
+
+test('migrated historical targets do not claim a local channel or discovery time', async (t) => {
+  const update = {channel: '', current_version: '', latest_version: '1.2.4', checked_at: '0001-01-01T00:00:00Z'};
+  const env = await setup(t, {records: [{...record('canceled'), kind: 'upgrade', update}]});
+  const row = env.panel.element.querySelector('tbody').querySelector('tr');
+  assert.match(row.textContent, copyPattern('nodes.command.historicalTarget', {version: '1.2.4'}));
+  assert.equal(row.querySelectorAll('time').some((time) => time.getAttribute('datetime') === update.checked_at), false);
+  assert.doesNotMatch(row.textContent, /0001|undefined|\[object Object\]/);
 });

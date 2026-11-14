@@ -1,7 +1,7 @@
 # 修改后重启 Agent；归 root 所有，Agent 组只读（0640）。
 # Server 根地址，不含路径、查询或凭据。
 server_url: "https://beacon.example.com"
-# 可信 HTTPS 发布根地址；空为关闭远程升级。
+# 本地可信 HTTPS 发布根地址；GitHub Release 根地址自动识别，重启生效。
 update_base_url: "https://github.com/mr-monkeyray/orbit-beacon/releases/download"
 # CA PEM 路径；空用系统证书，HTTP 时必须留空。
 ca_file: ""

@@ -108,6 +108,18 @@ func TestReadInstallPolicyRejectsInvalidYAMLAndUnknownFields(t *testing.T) {
 	cases["floating UID"] = "expected_uid: 1000.0\n"
 	cases["unknown field"] = "unexpected: private-value\n"
 	cases["wrong scalar type"] = "server_url: true\n"
+	cases["unknown update channel"] = "update_channel: private-value\n"
+	cases["legacy github channel"] = "update_channel: github\n"
+	cases["legacy custom channel"] = "update_channel: custom\nupdate_base_url: https://private-value\n"
+	cases["legacy disabled channel"] = "update_channel: disabled\n"
+	cases["empty update source"] = "update_base_url: \"\"\n"
+	cases["null update source"] = "update_base_url: null\n"
+	cases["missing update source value"] = "update_base_url:\n"
+	cases["wrong update source type"] = "update_base_url: true\n"
+	cases["unsafe update source"] = "update_base_url: http://private-value\n"
+	cases["credentialed update source"] = "update_base_url: https://private-value@release.example.test\n"
+	cases["queried update source"] = "update_base_url: https://release.example.test?private-value\n"
+	cases["fragmented update source"] = "update_base_url: https://release.example.test#private-value\n"
 	cases["oversized"] = "#" + strings.Repeat("x", 64<<10) + "\n"
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {

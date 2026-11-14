@@ -2647,8 +2647,8 @@ paths:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
     post:
-      summary: 为分组节点创建 upgrade、restart 或 stop 指令
-      description: confirm 必须等于分组名。每节点独立事务；已运行目标版本、不允许、已有活动指令或不可用的节点计入 skipped，单节点失败不影响其他节点。upgrade 有效期十五分钟，restart/stop 五分钟。节点数不设接口上限。
+      summary: 为分组节点创建 check_update、upgrade、restart 或 stop 指令
+      description: confirm 必须等于分组名。每节点独立事务；不允许、已有活动指令或不可用的节点计入 skipped，单节点失败不影响其他节点。upgrade 有效期十五分钟，其余指令五分钟。更新通道与最新版本由 Agent 本地发现；服务器不接收版本、地址或校验和。节点数不设接口上限。
       security: [{session: []}]
       parameters:
         - {$ref: '#/components/parameters/CSRF'}
@@ -2661,10 +2661,8 @@ paths:
               type: object
               additionalProperties: false
               required: [kind, confirm]
-              allOf: [{$ref: '#/components/schemas/CommandTargetConstraint'}]
               properties:
-                kind: {type: string, enum: [upgrade, restart, stop]}
-                target_version: {$ref: '#/components/schemas/Command/properties/target_version'}
+                kind: {$ref: '#/components/schemas/Command/properties/kind'}
                 confirm: {type: string}
       responses:
         '200':
@@ -2701,8 +2699,8 @@ paths:
                   commands: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/CommandRecord'}}
         default: {$ref: '#/components/responses/Error'}
     post:
-      summary: 创建 upgrade、restart 或 stop 指令
-      description: upgrade 有效期十五分钟，restart/stop 五分钟；目标版本必须是无前导零的 MAJOR.MINOR.PATCH。stop 的 confirm 必须等于节点名。尚无已接受的运行身份返回 409 command_not_allowed；本地不允许由 Agent 返回 disabled_locally；已有活动指令返回 409 command_active；禁用、已关闭或未注册返回 409 node_unavailable。upgrade 已是目标版本返回 409 command_same_version。
+      summary: 创建 check_update、upgrade、restart 或 stop 指令
+      description: upgrade 有效期十五分钟，其余指令五分钟；stop 的 confirm 必须等于节点名。Agent 按本地许可和更新通道发现最新版本；upgrade 仅在有新版本时升级，已是最新版本返回 succeeded/ok。服务器不接收版本、地址或校验和。尚无已接受的运行身份返回 409 command_not_allowed；本地不允许由 Agent 返回 disabled_locally；已有活动指令返回 409 command_active；禁用、已关闭或未注册返回 409 node_unavailable。
       security: [{session: []}]
       parameters:
         - {$ref: '#/components/parameters/CSRF'}
@@ -2715,10 +2713,10 @@ paths:
               type: object
               additionalProperties: false
               required: [kind]
-              allOf: [{$ref: '#/components/schemas/CommandTargetConstraint'}]
+              if: {properties: {kind: {const: stop}}}
+              then: {required: [confirm]}
               properties:
-                kind: {type: string, enum: [upgrade, restart, stop]}
-                target_version: {$ref: '#/components/schemas/Command/properties/target_version'}
+                kind: {$ref: '#/components/schemas/Command/properties/kind'}
                 confirm: {type: string}
       responses:
         '201':
@@ -4847,20 +4845,24 @@ components:
         metrics: {$ref: '#/components/schemas/Metrics'}
         traffic: {type: array, maxItems: 24, description: 唯一的 epoch/period_start 对，含每进程按小时累计的字节计数器。, items: {$ref: '#/components/schemas/Traffic'}}
         probe_results: {type: array, maxItems: 5, description: 每个当前配置目标的最新结果；首次检查完成前为 pending，目标值唯一。, items: {$ref: '#/components/schemas/ProbeResult'}}
-    CommandTargetConstraint:
-      if: {properties: {kind: {const: upgrade}}}
-      then: {required: [target_version]}
-      else: {not: {required: [target_version]}}
     Command:
       type: object
       additionalProperties: false
       required: [id, kind, expires_at]
-      allOf: [{$ref: '#/components/schemas/CommandTargetConstraint'}]
       properties:
         id: {type: string, format: uuid}
-        kind: {type: string, enum: [upgrade, restart, stop]}
-        target_version: {type: string, minLength: 1, maxLength: 64, pattern: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$', description: 仅 upgrade 必填；其他指令禁止。}
+        kind: {type: string, enum: [check_update, upgrade, restart, stop]}
         expires_at: {type: string, format: date-time}
+    UpdateInfo:
+      type: object
+      additionalProperties: false
+      required: [channel, current_version, latest_version, checked_at]
+      description: Agent 本地发现的信息，不含更新地址；仅 check_update 或 upgrade 结果可携带。
+      properties:
+        channel: {type: string, enum: [github, custom]}
+        current_version: {type: string, minLength: 1, maxLength: 64, pattern: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'}
+        latest_version: {type: string, minLength: 1, maxLength: 64, pattern: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'}
+        checked_at: {type: string, format: date-time, description: 非零检查时间。}
     CommandResult:
       type: object
       additionalProperties: false
@@ -4869,6 +4871,7 @@ components:
         id: {type: string, format: uuid}
         status: {type: string, enum: [succeeded, failed, rejected]}
         code: {type: string, maxLength: 16, enum: [ok, disabled_locally, unsupported, expired, interrupted, failed, download, checksum, self_check, downgrade, rolled_back]}
+        update: {$ref: '#/components/schemas/UpdateInfo'}
     CommandRecord:
       type: object
       additionalProperties: false
@@ -4876,7 +4879,18 @@ components:
       properties:
         id: {$ref: '#/components/schemas/Command/properties/id'}
         kind: {$ref: '#/components/schemas/Command/properties/kind'}
-        target_version: {$ref: '#/components/schemas/Command/properties/target_version'}
+        update:
+          oneOf:
+            - {$ref: '#/components/schemas/UpdateInfo'}
+            - type: object
+              additionalProperties: false
+              required: [channel, current_version, latest_version, checked_at]
+              description: schema 2 迁移保留的历史目标，不代表 Agent 发现结果；未知通道、当前版本为空，检查时间为零值。
+              properties:
+                channel: {const: ''}
+                current_version: {const: ''}
+                latest_version: {$ref: '#/components/schemas/UpdateInfo/properties/latest_version'}
+                checked_at: {const: '0001-01-01T00:00:00Z'}
         expires_at: {$ref: '#/components/schemas/Command/properties/expires_at'}
         node_id: {type: string, format: uuid}
         state: {type: string, enum: [pending, delivered, succeeded, failed, rejected, expired, canceled]}

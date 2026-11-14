@@ -74,7 +74,7 @@ func TestNotificationSchemaIMKinds(t *testing.T) {
 			t.Fatalf("kind %s: %v", kind, err)
 		}
 	}
-	if CurrentSchemaVersion != 2 {
+	if CurrentSchemaVersion != 3 {
 		t.Fatal("schema version changed")
 	}
 }

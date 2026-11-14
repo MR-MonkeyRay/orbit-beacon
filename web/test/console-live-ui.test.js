@@ -1073,7 +1073,7 @@ test('group chips filter the list in server order, count members and keep their 
   const trigger = production.querySelector('.group-chip-menu').querySelector('button');
   assert.equal(trigger.getAttribute('aria-label'), copy('nodes.groupActions', {name: 'Production'}));
   assert.deepEqual(production.querySelectorAll('[role="menuitem"]').map((item) => item.textContent),
-    [copy('nodes.deployAgent'), ...['upgrade', 'restart', 'stop'].map((kind) => copy(`nodes.command.${kind}All`)), copy('nodes.rename'), copy('nodes.deleteGroup')]);
+    [copy('nodes.deployAgent'), ...['check_update', 'upgrade', 'restart', 'stop'].map((kind) => copy(`nodes.command.${kind}All`)), copy('nodes.rename'), copy('nodes.deleteGroup')]);
   assert.equal(production.querySelector('.group-chip-alert').hidden, true);
   env.send({nodes: grouped().map((item, index) => ({...compact(item), presence: index === 0 ? 'offline' : 'online'}))}, 10); await flush();
   assert.equal(chip(env, id(700)), production);

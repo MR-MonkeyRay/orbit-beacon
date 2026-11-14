@@ -487,19 +487,15 @@ func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	if policy.InstallMode != "native" && policy.InstallMode != "docker" && policy.InstallMode != "foreground" {
 		return Agent{}, errors.New("install_mode 必须是 native、docker 或 foreground")
 	}
-	effectivePolicy := *policy
-	if policy.UpdateBaseURL != "" {
-		normalized, err := NormalizeUpdateBaseURL(policy.UpdateBaseURL)
-		if err != nil {
-			return Agent{}, fmt.Errorf("update_base_url: %w", err)
-		}
-		effectivePolicy.UpdateBaseURL = normalized
+	effectivePolicy, err := NormalizeUpdatePolicy(*policy)
+	if err != nil {
+		return Agent{}, err
 	}
 	commands := []string{}
 	for _, command := range v1.RemoteCommandOrder() {
 		supported := policy.InstallMode == "native" || policy.InstallMode == "docker" && command == v1.RemoteCommandRestart || policy.InstallMode == "foreground" && command == v1.RemoteCommandStop
-		if command == v1.RemoteCommandUpgrade && effectivePolicy.UpdateBaseURL == "" {
-			supported = false
+		if command == v1.RemoteCommandCheckUpdate || command == v1.RemoteCommandUpgrade {
+			supported = command == v1.RemoteCommandCheckUpdate || policy.InstallMode == "native"
 		}
 		if supported && settings.AllowsCommand(command) {
 			commands = append(commands, command)

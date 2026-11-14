@@ -22,7 +22,8 @@ usage() {
   --ca-file FILE            Server 的私有 CA PEM；HTTP 不可使用
   --key KEY                 会出现在进程列表和 shell 历史中，适用于一次性密钥
   --token-file FILE         从文件读取密钥，也支持 stdin 或终端隐藏输入
-  --update-base-url URL     HTTPS 发布镜像根地址；重装默认保留，'' 关闭远程升级
+  --update-base-url URL     HTTPS 发布根地址；默认官方 GitHub，重装默认保留
+                            默认 https://github.com/mr-monkeyray/orbit-beacon/releases/download
 
 账户与服务：
   --uid N / --gid N         专用账户的非零 UID/GID；默认自动分配，已有账户须匹配
@@ -58,7 +59,7 @@ while [ "$#" -gt 0 ]; do
             [ "$#" -ge 2 ] || die "缺少 $1 的参数值"
             # base64url 密钥可能以 -- 开头，按字面量接收。
             case $2 in --*) [ "$1" = --key ] || die "缺少 $1 的参数值" ;; esac
-            [ -n "$2" ] || [ "$1" = --update-base-url ] || die "缺少 $1 的参数值"
+            [ -n "$2" ] || die "缺少 $1 的参数值"
             case $1 in
                 --update-base-url) update_base_url=$2; update_base_set=1 ;;
                 --server) server=$2 ;;
@@ -223,7 +224,7 @@ if { [ "$service" != systemd ] && [ -e "$unit" ]; } || { [ "$service" != openrc 
 fi
 install_mode=native
 [ "$service" != none ] || install_mode=foreground
-for tool in awk stat mkdir mktemp chmod chown cp install cat mv rm sed; do
+for tool in awk stat mkdir mktemp chmod chown cp install cat mv rm sed sync; do
     command -v "$tool" >/dev/null 2>&1 || die "缺少 $tool。依赖安装参考：$packages"
 done
 if [ -z "$local_binary" ]; then
@@ -246,7 +247,8 @@ done
 # 允许单个末尾斜杠并规范化去除。禁止用户信息、路径、查询参数、
 # 片段、空白、引号、反斜杠、IPv6 区域标识或百分号编码主机。
 server=${server%/}
-if ! printf '%s\n' "$server" | awk '
+valid_origin() {
+    printf '%s\n' "$1" | awk '
     function valid6(s, a, b, i, n, c) {
         if (s !~ /^[0-9A-Fa-f:]+$/ || s ~ /:::/) return 0
         if (s ~ /::/) {
@@ -262,54 +264,67 @@ if ! printf '%s\n' "$server" | awk '
         return 1
     }
     NR != 1 || $0 !~ /^https?:\/\/([A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(:[0-9]+)?$/ { exit 1 }
-    { host=$0; sub(/^https?:\/\//, "", host); sub(/:[0-9]+$/, "", host)
+    { host=$0; sub(/^https?:\/\//, "", host)
+      if (host ~ /:[0-9]+$/) {
+          port=host; sub(/^.*:/, "", port)
+          if (length(port) > 5 || port+0 < 1 || port+0 > 65535) exit 1
+          sub(/:[0-9]+$/, "", host)
+      }
       if (host ~ /^\[/) { sub(/^\[/, "", host); sub(/\]$/, "", host); if (valid6(host)) exit 0; exit 1 }
       c=split(host, labels, ".")
       for (i=1; i<=c; i++) if (labels[i] !~ /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/) exit 1
       exit 0 }
-'; then
+    '
+}
+if ! valid_origin "$server"; then
     die '--server 必须是 http:// 或 https:// Origin，不含路径、查询参数、片段或用户信息。'
 fi
 case $server in
     http://*) [ -z "$ca_source" ] || die '--ca-file 仅适用于 HTTPS 服务器。' ;;
 esac
-authority=${server#*://}
-case $authority in
-    *]:*) port=${authority##*:} ;;
-    \[*\]) port= ;;
-    *:*) port=${authority##*:} ;;
-    *) port= ;;
-esac
-if [ -n "$port" ]; then
-    if [ "${#port}" -gt 5 ] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then die '无效的服务器端口。'; fi
-fi
-# shortcut: 只读取安装器生成的扁平 YAML；需自动保留任意策略写法时改由二进制解析。
-if [ "$update_base_set" = 0 ] && [ -f "$policy" ]; then
-    update_base_url=$(awk '
+# shortcut: 只迁移安装器生成的扁平 YAML；其他写法须管理员先备份并整理。
+tighten_updates=0
+if [ -f "$policy" ]; then
+    source_choice=$(awk -v official="$default_update_base" '
         /^[[:space:]]*(#.*)?$/ { next }
         /^[a-z_]+: ("[^"\\]*"|[0-9]+)$/ {
             key=$0; sub(/:.*/, "", key)
-            if (key !~ /^(server_url|update_base_url|ca_file|state_dir|expected_uid|expected_gid|expected_account|install_mode)$/ || seen[key]++) bad=1
+            if (key !~ /^(server_url|update_channel|update_base_url|ca_file|state_dir|expected_uid|expected_gid|expected_account|install_mode)$/ || seen[key]++) bad=1
+            if (key ~ /^expected_[ug]id$/) {
+                if ($0 !~ /^[a-z_]+: [0-9]+$/) bad=1
+            } else if ($0 !~ /^[a-z_]+: "[^"\\]*"$/) bad=1
             count++
-            if (key == "update_base_url") {
-                if ($0 !~ /^update_base_url: "[^"\\]*"$/) bad=1
-                source=$0; sub(/^update_base_url: "/, "", source); sub(/"$/, "", source)
-            }
+            value=$0; sub(/^[a-z_]+: "/, "", value); sub(/"$/, "", value)
+            if (key == "update_base_url") source=value
+            if (key == "update_channel") channel=value
             next
         }
         { bad=1 }
-        END { if (bad || count != 8 || !seen["update_base_url"]) exit 1; print source }
-    ' "$policy") || die "无法安全读取 $policy 的发布源；请显式指定 --update-base-url HTTPS地址，或恢复安装器生成的 YAML 格式（update_base_url: \"\" 表示关闭远程升级）。"
+        END {
+            if (bad || count != 7 + seen["update_base_url"] + seen["update_channel"]) exit 1
+            if (seen["update_channel"] && channel !~ /^(github|custom|disabled)$/) exit 1
+            disabled=(channel == "disabled" || (!seen["update_channel"] && seen["update_base_url"] && source == ""))
+            if (source == "" || channel == "disabled") {
+                if (channel == "custom") exit 1
+                source=official
+            }
+            print disabled ":" source
+        }
+    ' "$policy") || die "无法安全迁移 $policy；请先备份并整理为安装器生成的 YAML，保留原发布源及本地远程指令权限。"
+    tighten_updates=${source_choice%%:*}
+    [ "$update_base_set" = 1 ] || update_base_url=${source_choice#*:}
 fi
-# HTTPS 根地址同时用于安装下载和后续远程升级；限制字符以安全写入 YAML。
+# 本地 HTTPS 根地址同时用于安装下载和后续更新；限制字符以安全写入 YAML。
 update_base_url=$(printf '%s' "$update_base_url" | sed 's:/*$::')
-if [ -n "$update_base_url" ]; then
-    # 用变量传正则：BusyBox awk 不接受字面量里字符类中的 /。
-    printf '%s\n' "$update_base_url" | awk -v re='^https://([A-Za-z0-9.-]+|[[][0-9A-Fa-f:]+])(:[0-9]+)?(/[A-Za-z0-9._~!$&()*+,;=:@%/-]*)?$' '
-        NR != 1 || $0 !~ re { bad=1 }
-        END { exit bad }
-    ' || die '--update-base-url 必须是 HTTPS 地址，且不含用户信息、查询或片段。'
-fi
+# 用变量传正则：BusyBox awk 不接受字面量里字符类中的 /。
+printf '%s\n' "$update_base_url" | awk -v re='^https://([A-Za-z0-9.-]+|[[][0-9A-Fa-f:]+])(:[0-9]+)?(/[A-Za-z0-9._~!$&()*+,;=:@%/-]*)?$' '
+    NR != 1 || $0 !~ re { bad=1 }
+    { escaped=$0; gsub(/%[0-9A-Fa-f][0-9A-Fa-f]/, "", escaped); if (escaped ~ /%/) bad=1 }
+    END { exit bad }
+' || die '--update-base-url 必须是非空 HTTPS 地址，且不含用户信息、查询或片段。'
+source_origin=${update_base_url#https://}
+source_origin=https://${source_origin%%/*}
+valid_origin "$source_origin" || die '--update-base-url 包含无效的主机或端口。'
 if [ -n "$version" ]; then
     printf '%s\n' "$version" | awk '
         NR != 1 || $0 !~ /^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$/ { bad=1 }
@@ -336,13 +351,58 @@ mkdir -p "$temp_parent"
 tmp=$(mktemp -d "$temp_parent/orbitbeacon-install.XXXXXXXX")
 chmod 0700 "$tmp"
 
+if [ "$tighten_updates" = 1 ]; then
+    # shortcut: 仅接受生成的单行设置及远程指令列表，复杂 YAML 须先人工整理。
+    if [ -f "$runtime_config" ]; then
+        awk '
+            function command(value) {
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+                if (value ~ /^"[a-z_]+"$/ || value ~ /^\047[a-z_]+\047$/) value=substr(value, 2, length(value)-2)
+                if (value !~ /^(check_update|upgrade|restart|stop)$/ || commands[value]++) { bad=1; return }
+                if (value != "check_update" && value != "upgrade") kept=kept (kept == "" ? "" : ", ") "\"" value "\""
+            }
+            /^[[:space:]]*(#.*)?$/ { print; next }
+            /^remote_commands:/ {
+                if (seen["remote_commands"]++) bad=1
+                value=$0; sub(/^remote_commands:[[:space:]]*/, "", value)
+                if (value == "") { block=1; next }
+                if (value !~ /^\[.*\]$/) { bad=1; next }
+                value=substr(value, 2, length(value)-2)
+                if (value !~ /^[[:space:]]*$/) { n=split(value, items, ","); for (i=1; i<=n; i++) command(items[i]) }
+                next
+            }
+            block && /^  - / { value=$0; sub(/^  - /, "", value); command(value); block_items++; next }
+            {
+                if (block && !block_items) bad=1
+                block=0
+                key=$0; sub(/:.*/, "", key)
+                if (key !~ /^(report_interval_seconds|disk_interval_seconds|interfaces|disk_paths|probe_targets|probe_expected_status|disabled_features)$/ || seen[key]++) bad=1
+                if (key ~ /_seconds$/) {
+                    if ($0 !~ /^[a-z_]+: [0-9]+$/) bad=1
+                } else if (key == "probe_expected_status") {
+                    if ($0 != "probe_expected_status: {}") bad=1
+                } else if ($0 !~ /^[a-z_]+: \[ *("[^"\\]*" *(, *"[^"\\]*" *)*)?\]$/) bad=1
+                print
+            }
+            END {
+                if (block && !block_items) bad=1
+                if (bad) exit 1
+                if (!seen["remote_commands"]) kept="\"restart\", \"stop\""
+                print "remote_commands: [" kept "]"
+            }
+        ' "$runtime_config" >"$tmp/agent.yaml" || die "无法安全收紧 $runtime_config 的更新权限；请先备份并将 remote_commands 整理为简单列表，移除 check_update、upgrade 后重试。"
+    else
+        printf '%s\n' 'remote_commands: ["restart", "stop"]' >"$tmp/agent.yaml"
+    fi
+fi
+
 if [ -n "$local_binary" ]; then
     say '使用提供的本地二进制（安装前请自行验证来源）。'
     cp -- "$local_binary" "$tmp/agent"
 else
     say "正在下载 v$version 的 $arch 发布包..."
     agent_asset=orbitbeacon-agent-linux-$arch
-    release=${update_base_url:-$default_update_base}/v$version
+    release=$update_base_url/v$version
     for asset in "$agent_asset" SHA256SUMS; do
         curl --fail --silent --show-error --location --proto '=https' \
             --proto-redir '=https' --max-redirs 5 --tlsv1.2 --connect-timeout 15 \
@@ -432,13 +492,15 @@ chmod 0750 "$config_dir"
 chown -h "$agent_uid:$agent_gid" "$bin_dir" "$state"
 chmod 0750 "$bin_dir"
 chmod 0700 "$state"
-# 暂存于同一文件系统内、Agent 不可写的父目录，避免 bin 内临时文件被调包。
-# chown 后不再读写暂存文件；-T 原子替换叶子链接，绝不跟随目标目录链接。
-binary_tmp=$(mktemp "$install_root/.orbitbeacon-agent.XXXXXXXX")
-install -m 0750 "$tmp/agent" "$binary_tmp"
-chown -h "$agent_uid:$agent_gid" "$binary_tmp"
-mv -fT -- "$binary_tmp" "$binary"
-binary_tmp=
+if [ "$tighten_updates" = 1 ]; then
+    # 先持久化关闭更新的权限，再移除旧策略中的禁用语义；中途失败仍保持禁用。
+    policy_tmp=$(mktemp "$config_dir/.agent.XXXXXXXX")
+    install -m 0640 "$tmp/agent.yaml" "$policy_tmp"
+    chown -h "root:$agent_gid" "$policy_tmp"
+    mv -fT -- "$policy_tmp" "$runtime_config"
+    policy_tmp=
+    sync
+fi
 ca_file=
 if [ -n "$ca_source" ]; then
     # 将 CA 暂存到 root 所有的配置目录，重复安装同一文件也适用。
@@ -485,7 +547,7 @@ cat > "$policy_tmp" <<EOF
 # 修改后重启 Agent；归 root 所有，Agent 组只读（0640）。
 # Server 根地址，不含路径、查询或凭据。
 server_url: "$server"
-# 可信 HTTPS 发布根地址；空为关闭远程升级。
+# 本地可信 HTTPS 发布根地址；GitHub Release 根地址自动识别，重启生效。
 update_base_url: "$update_base_url"
 # CA PEM 路径；空用系统证书，HTTP 时必须留空。
 ca_file: "$ca_file"
@@ -503,6 +565,15 @@ chown -h "root:$agent_gid" "$policy_tmp"
 chmod 0640 "$policy_tmp"
 mv -fT -- "$policy_tmp" "$policy"
 policy_tmp=
+# 策略先持久化；新二进制启动前必须已能读取迁移后的配置。
+sync
+# 暂存于同一文件系统内、Agent 不可写的父目录，避免 bin 内临时文件被调包。
+# chown 后不再读写暂存文件；-T 原子替换叶子链接，绝不跟随目标目录链接。
+binary_tmp=$(mktemp "$install_root/.orbitbeacon-agent.XXXXXXXX")
+install -m 0750 "$tmp/agent" "$binary_tmp"
+chown -h "$agent_uid:$agent_gid" "$binary_tmp"
+mv -fT -- "$binary_tmp" "$binary"
+binary_tmp=
 # 重装时保留管理员修改；root 所有的目录阻止 Agent 替换此文件或植入符号链接。
 safe_path "$runtime_config"
 if [ ! -e "$runtime_config" ]; then
@@ -521,8 +592,8 @@ disk_paths: []
 probe_targets: []
 # HTTP(S) 预期状态码（100–599）；键须在 probe_targets 中。
 probe_expected_status: {}
-# [] 禁止全部远程指令；upgrade 还需安装策略配置可信发布源。
-remote_commands: ["upgrade", "restart", "stop"]
+# [] 禁止全部远程指令；移除 check_update、upgrade 可仅关闭更新。
+remote_commands: ["check_update", "upgrade", "restart", "stop"]
 # 可选：disk、network、traffic、probes、disk_io、pressure、temperature。
 # 关闭 network 同时关闭 traffic；关闭 disk 同时关闭 disk_io。
 disabled_features: []

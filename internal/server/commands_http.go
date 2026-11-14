@@ -48,7 +48,6 @@ func (h *handler) commandError(w http.ResponseWriter, err error, requestID strin
 		status int
 		code   string
 	}{
-		{commands.ErrSameVersion, http.StatusConflict, "command_same_version"},
 		{commands.ErrInvalid, http.StatusBadRequest, "validation_failed"}, {commands.ErrNotFound, http.StatusNotFound, "command_not_found"},
 		{commands.ErrNotAllowed, http.StatusConflict, "command_not_allowed"}, {commands.ErrActive, http.StatusConflict, "command_active"},
 		{commands.ErrNodeUnavailable, http.StatusConflict, "node_unavailable"}, {commands.ErrNotPending, http.StatusConflict, "command_not_pending"},

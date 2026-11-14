@@ -185,6 +185,8 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 	parent := ctx
 	upgradeCtx, cancelUpgrade := context.WithCancel(ctx)
 	var upgradeDone chan upgradeOutcome
+	var updateCommand v1.Command
+	var updateDeadline time.Time
 	defer func() {
 		cancelUpgrade()
 		if upgradeDone != nil {
@@ -209,8 +211,23 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 		return &ExitError{Code: 75}
 	}
 	completeUpgrade := func(result upgradeOutcome) error {
+		if result.ready {
+			if !s.options.Commands.prepareUpgrade(result.id, result.update) {
+				upgradeDone = nil
+				return nil
+			}
+			done := make(chan upgradeOutcome, 1)
+			upgradeDone = done
+			command := updateCommand
+			go func() {
+				downloadCtx, cancel := context.WithDeadline(upgradeCtx, updateDeadline)
+				defer cancel()
+				done <- s.options.Upgrade.install(downloadCtx, command, result.update)
+			}()
+			return nil
+		}
 		upgradeDone = nil
-		if result.status == "succeeded" {
+		if result.restart {
 			return &ExitError{Code: 75}
 		}
 		if result.err != nil {
@@ -308,27 +325,32 @@ func (s *Scheduler) reportLoop(ctx context.Context, notify <-chan struct{}) erro
 							}
 						}
 					}
-					if !stopping && response.Command != nil && !(response.Command.Kind == v1.RemoteCommandUpgrade && upgradeDone != nil) {
+					if !stopping && response.Command != nil && !((response.Command.Kind == v1.RemoteCommandUpgrade || response.Command.Kind == v1.RemoteCommandCheckUpdate) && upgradeDone != nil) {
 						s.mu.Lock()
 						// 服务器时间生成于响应之前，计入请求耗时才不会执行已过期的指令。
 						serverTime := response.ServerTime
 						if !serverTime.IsZero() {
 							serverTime = serverTime.Add(time.Since(requested))
 						}
-						upgradeDeadline := time.Now().Add(min(upgradeDownloadTimeout, response.Command.ExpiresAt.Sub(serverTime)-upgradeReserve))
+						budget := response.Command.ExpiresAt.Sub(serverTime)
+						if response.Command.Kind == v1.RemoteCommandUpgrade {
+							budget -= upgradeReserve
+						}
+						upgradeDeadline := time.Now().Add(min(upgradeDownloadTimeout, budget))
 						action := s.options.Commands.handle(*response.Command, serverTime, s.commandSettings)
 						s.mu.Unlock()
-						if action == v1.RemoteCommandUpgrade {
+						if action == v1.RemoteCommandUpgrade || action == v1.RemoteCommandCheckUpdate {
 							if s.options.Upgrade == nil {
 								s.options.Commands.finishUpgrade(upgradeOutcome{id: strings.ToLower(response.Command.ID), status: "rejected", code: "unsupported"})
 							} else {
 								command := *response.Command
+								updateCommand, updateDeadline = command, upgradeDeadline
 								done := make(chan upgradeOutcome, 1)
 								upgradeDone = done
 								go func() {
 									downloadCtx, cancel := context.WithDeadline(upgradeCtx, upgradeDeadline)
 									defer cancel()
-									done <- s.options.Upgrade.run(downloadCtx, command)
+									done <- s.options.Upgrade.check(downloadCtx, command)
 								}()
 							}
 						}

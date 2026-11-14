@@ -34,6 +34,8 @@ const maxUpgradeManifest = 64 << 10
 
 type upgradeOutcome struct {
 	id, status, code string
+	update           *v1.UpdateInfo
+	ready, restart   bool
 	err              error
 }
 
@@ -43,10 +45,7 @@ type upgrader struct {
 }
 
 func newUpgrader(policy config.InstallPolicy, version string) (*upgrader, error) {
-	if policy.InstallMode != "native" || policy.UpdateBaseURL == "" {
-		return nil, nil
-	}
-	base, err := config.NormalizeUpdateBaseURL(policy.UpdateBaseURL)
+	policy, err := config.NormalizeUpdatePolicy(policy)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +70,7 @@ func newUpgrader(policy config.InstallPolicy, version string) (*upgrader, error)
 	if err != nil {
 		return nil, err
 	}
-	u := &upgrader{base: base, stateDir: policy.StateDir, executable: executable, version: version, arch: runtime.GOARCH, client: &http.Client{Transport: transport}}
+	u := &upgrader{base: policy.UpdateBaseURL, stateDir: policy.StateDir, executable: executable, version: version, arch: runtime.GOARCH, client: &http.Client{Transport: transport}}
 	u.client.CheckRedirect = upgradeRedirect
 	return u, nil
 }
@@ -84,12 +83,7 @@ func upgradeRedirect(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
-func (u *upgrader) preflight(target string) string {
-	next, err := v1.ParseVersion(target)
-	current, currentErr := v1.ParseVersion(u.version)
-	if err != nil || currentErr != nil || next.Compare(current) <= 0 {
-		return "downgrade"
-	}
+func (u *upgrader) preflight() string {
 	if runtime.GOOS != "linux" || (u.arch != "amd64" && u.arch != "arm64") {
 		return "unsupported"
 	}
@@ -233,16 +227,66 @@ func durableFile(path string, src io.Reader, mode os.FileMode) error {
 	return syncDirectory(filepath.Dir(path))
 }
 
-func (u *upgrader) run(ctx context.Context, c v1.Command) upgradeOutcome {
+func (u *upgrader) check(ctx context.Context, c v1.Command) upgradeOutcome {
+	result := upgradeOutcome{id: strings.ToLower(c.ID), status: "succeeded", code: "ok"}
+	current, err := v1.ParseVersion(u.version)
+	if err != nil {
+		result.status, result.code = "rejected", "downgrade"
+		return result
+	}
+	if c.Kind == v1.RemoteCommandUpgrade {
+		if code := u.preflight(); code != "" {
+			result.status, result.code = "rejected", code
+			return result
+		}
+	}
+	base := strings.TrimRight(u.base, "/")
+	repository, github := strings.CutPrefix(base, "https://github.com/")
+	repository, releaseRoot := strings.CutSuffix(repository, "/releases/download")
+	owner, name, hasRepository := strings.Cut(repository, "/")
+	var endpoint, channel string
+	if github && releaseRoot && hasRepository && owner != "" && name != "" && !strings.Contains(name, "/") {
+		endpoint = "https://api.github.com/repos/" + owner + "/" + name + "/releases/latest"
+		channel = "github"
+	} else {
+		endpoint, channel = base+"/latest.json", "custom"
+	}
+	var body bytes.Buffer
+	if err := u.download(ctx, endpoint, &body, maxUpgradeManifest); err != nil {
+		result.status, result.code, result.err = "failed", "download", err
+		return result
+	}
+	var release struct {
+		Version    string `json:"version"`
+		TagName    string `json:"tag_name"`
+		Draft      bool   `json:"draft"`
+		Prerelease bool   `json:"prerelease"`
+	}
+	err = json.Unmarshal(body.Bytes(), &release)
+	target := release.Version
+	if channel == "github" {
+		target = strings.TrimPrefix(release.TagName, "v")
+	}
+	next, versionErr := v1.ParseVersion(target)
+	if err != nil || versionErr != nil || release.Draft || release.Prerelease {
+		result.status, result.code, result.err = "failed", "download", errors.New("invalid latest release")
+		return result
+	}
+	result.update = &v1.UpdateInfo{Channel: channel, CurrentVersion: u.version, LatestVersion: target, CheckedAt: time.Now().UTC()}
+	if next.Compare(current) < 0 && c.Kind == v1.RemoteCommandUpgrade {
+		result.status, result.code = "rejected", "downgrade"
+	}
+	result.ready = c.Kind == v1.RemoteCommandUpgrade && next.Compare(current) > 0
+	return result
+}
+
+func (u *upgrader) install(ctx context.Context, c v1.Command, info *v1.UpdateInfo) upgradeOutcome {
 	id := strings.ToLower(c.ID)
 	failed := func(code string, err error) upgradeOutcome {
-		return upgradeOutcome{id: id, status: "failed", code: code, err: err}
-	}
-	if code := u.preflight(c.TargetVersion); code != "" {
-		return upgradeOutcome{id: id, status: "rejected", code: code}
+		return upgradeOutcome{id: id, status: "failed", code: code, update: info, err: err}
 	}
 	asset := "orbitbeacon-agent-linux-" + u.arch
-	base := u.base + "/v" + c.TargetVersion + "/"
+	base := u.base + "/v" + info.LatestVersion + "/"
 	var manifest bytes.Buffer
 	if err := u.download(ctx, base+"SHA256SUMS", &manifest, maxUpgradeManifest); err != nil {
 		return failed("download", err)
@@ -267,7 +311,7 @@ func (u *upgrader) run(ctx context.Context, c v1.Command) upgradeOutcome {
 	if err := errors.Join(candidate.Chmod(0750), candidate.Sync(), candidate.Close()); err != nil {
 		return failed("self_check", err)
 	}
-	if err := u.selfCheck(ctx, candidate.Name(), c.TargetVersion); err != nil {
+	if err := u.selfCheck(ctx, candidate.Name(), info.LatestVersion); err != nil {
 		return failed("self_check", err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -300,5 +344,5 @@ func (u *upgrader) run(ctx context.Context, c v1.Command) upgradeOutcome {
 	}
 	// After the switch, restart even if directory syncing fails: recovery owns the marker.
 	_ = syncDirectory(filepath.Dir(u.executable))
-	return upgradeOutcome{id: id, status: "succeeded", code: "ok"}
+	return upgradeOutcome{id: id, status: "succeeded", code: "ok", update: info, restart: true}
 }

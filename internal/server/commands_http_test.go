@@ -30,7 +30,7 @@ func TestCommandAPIValidationAuthenticationCSRFAndLifecycle(t *testing.T) {
 		want   int
 	}{
 		{`{"kind":"restart"}`, false, csrf, 401}, {`{"kind":"restart"}`, true, "", 403},
-		{`{"kind":"shell"}`, true, csrf, 400}, {`{"kind":"upgrade"}`, true, csrf, 400},
+		{`{"kind":"shell"}`, true, csrf, 400},
 		{`{"kind":"stop","confirm":"wrong"}`, true, csrf, 400}, {`{"kind":"restart","args":"whoami"}`, true, csrf, 400},
 	} {
 		var c *http.Cookie
@@ -111,7 +111,7 @@ func TestGroupCommandsConfirmationIsolationAndAudit(t *testing.T) {
 		}
 	}
 	path := "/api/v1/groups/" + group.ID + "/commands"
-	for _, kind := range []string{"restart", "stop"} {
+	for _, kind := range []string{"check_update", "upgrade", "restart", "stop"} {
 		response := request(t, f.handler, "POST", path, fmt.Sprintf(`{"kind":%q,"confirm":"wrong"}`, kind), cookie, csrf, publicURL)
 		if response.Code != 400 {
 			t.Fatal(response.Code, response.Body)
@@ -125,7 +125,7 @@ func TestGroupCommandsConfirmationIsolationAndAudit(t *testing.T) {
 	}{
 		{`{"kind":"restart","confirm":"Production"}`, nil, csrf, 401},
 		{`{"kind":"restart","confirm":"Production"}`, cookie, "", 403},
-		{`{"kind":"upgrade","confirm":"Production"}`, cookie, csrf, 400},
+		{`{"kind":"upgrade","target_version":null,"confirm":"Production"}`, cookie, csrf, 400},
 		{`{"kind":"stop","confirm":"Production","args":[]}`, cookie, csrf, 400},
 	} {
 		response := request(t, f.handler, "POST", path, check.body, check.cookie, check.csrf, publicURL)
@@ -170,8 +170,8 @@ func TestGroupCommandsConfirmationIsolationAndAudit(t *testing.T) {
 	}
 }
 
-func TestUpgradeAPIHasOnlyVersionAndSameVersionConflict(t *testing.T) {
-	f := newHTTP(t, 2)
+func TestUpdateAPIRejectsArgumentsAndAcceptsFixedCommands(t *testing.T) {
+	f := newHTTP(t, 100)
 	n, err := f.nodes.CreatePending(t.Context(), nodes.CreateRequest{Name: "host"})
 	if err != nil {
 		t.Fatal(err)
@@ -182,28 +182,50 @@ func TestUpgradeAPIHasOnlyVersionAndSameVersionConflict(t *testing.T) {
 	}
 	cookie, csrf := login(t, f, "admin")
 	path := "/api/v1/nodes/" + n.ID + "/commands"
-	for _, body := range []string{`{"kind":"upgrade","target_version":"01.2.3"}`, `{"kind":"upgrade","target_version":"1.2"}`, `{"kind":"restart","target_version":"1.2.4"}`, `{"kind":"restart","target_version":""}`, `{"kind":"stop","target_version":null,"confirm":"host"}`, `{"kind":"stop","target_version":"1.2.4","confirm":"host"}`, `{"kind":"upgrade","target_version":"1.2.4","url":"https://attacker.example"}`, `{"kind":"upgrade","target_version":"1.2.4","hash":"abcd"}`} {
+	for _, body := range []string{`{"kind":"upgrade","target_version":"1.2.3"}`, `{"kind":"upgrade","target_version":""}`, `{"kind":"upgrade","target_version":null}`, `{"kind":"restart","target_version":""}`, `{"kind":"stop","target_version":null,"confirm":"host"}`, `{"kind":"check_update","url":"https://attacker.example"}`, `{"kind":"upgrade","hash":"abcd"}`, `{"kind":"upgrade","args":[]}`} {
 		response := request(t, f.handler, "POST", path, body, cookie, csrf, publicURL)
 		if response.Code != 400 {
 			t.Fatalf("%s: %d %s", body, response.Code, response.Body)
 		}
 	}
-	same := request(t, f.handler, "POST", path, `{"kind":"upgrade","target_version":"1.2.3"}`, cookie, csrf, publicURL)
-	if same.Code != 409 {
-		t.Fatal(same.Code, same.Body)
-	}
-	var failure struct {
-		Code string `json:"code"`
-	}
-	if err := json.Unmarshal(same.Body.Bytes(), &failure); err != nil || failure.Code != "command_same_version" {
-		t.Fatal(failure, err)
-	}
-	created := request(t, f.handler, "POST", path, `{"kind":"upgrade","target_version":"1.2.4"}`, cookie, csrf, publicURL)
-	if created.Code != 201 {
-		t.Fatal(created.Code, created.Body)
-	}
-	var record commands.Record
-	if err := json.Unmarshal(created.Body.Bytes(), &record); err != nil || record.TargetVersion != "1.2.4" || record.ExpiresAt.Sub(record.CreatedAt) != commands.UpgradeLifetime {
-		t.Fatal(record, err)
+	for _, kind := range []string{"check_update", "upgrade"} {
+		created := request(t, f.handler, "POST", path, fmt.Sprintf(`{"kind":%q}`, kind), cookie, csrf, publicURL)
+		if created.Code != 201 {
+			t.Fatal(created.Code, created.Body)
+		}
+		var record commands.Record
+		var fields map[string]any
+		if err := json.Unmarshal(created.Body.Bytes(), &record); err != nil || record.Kind != kind {
+			t.Fatal(record, err)
+		}
+		if err := json.Unmarshal(created.Body.Bytes(), &fields); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := fields["target_version"]; ok {
+			t.Fatal(fields)
+		}
+		response := request(t, f.handler, "POST", path+"/"+record.ID+"/cancel", "", cookie, csrf, publicURL)
+		if response.Code != 204 {
+			t.Fatal(response.Code, response.Body)
+		}
+		if _, err := f.db.Exec(`UPDATE agent_commands SET state='succeeded',result_code='ok',update_info='{"channel":"custom","current_version":"1.2.3","latest_version":"1.2.4","checked_at":"2026-03-04T05:06:07Z"}' WHERE id=?`, record.ID); err != nil {
+			t.Fatal(err)
+		}
+		listed := request(t, f.handler, "GET", path, "", cookie, "", "")
+		var result struct {
+			Commands []commands.Record `json:"commands"`
+		}
+		if err := json.Unmarshal(listed.Body.Bytes(), &result); err != nil || listed.Code != 200 || len(result.Commands) == 0 {
+			t.Fatal(listed.Code, listed.Body, err)
+		}
+		found := false
+		for _, item := range result.Commands {
+			if item.ID == record.ID {
+				found = item.Update != nil && item.Update.LatestVersion == "1.2.4" && item.Update.Channel == "custom"
+			}
+		}
+		if !found {
+			t.Fatal(result.Commands)
+		}
 	}
 }

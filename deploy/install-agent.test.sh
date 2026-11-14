@@ -440,6 +440,8 @@ assert_log_has "systemctl enable orbitbeacon-agent"
 assert_log_has "--config $TEST_ROOT/opt/orbit-beacon/etc/agent.yaml"
 assert_log_lacks "$secret"
 if grep -F -- "$secret" "$CASE_DIR/output" >/dev/null 2>&1; then fail "token leaked to installer output"; fi
+assert_log_has 'https://github.com/mr-monkeyray/orbit-beacon/releases/download/v0.1.0/'
+"$YAML_DECODER" "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" | python3 -c 'import json, sys; assert json.load(sys.stdin)["remote_commands"] == ["check_update", "upgrade", "restart", "stop"]'
 pass "download install creates valid policy, secure files, synced unit, and does not leak token"
 
 printf '%s\n' '{"node_id":"identity-must-survive"}' >"$TEST_ROOT/opt/orbit-beacon/state/identity.json"
@@ -576,7 +578,7 @@ pass "non-systemd instructions use the installed local configuration"
 setup_case su_fallback
 rm "$CASE_DIR/bin/runuser"
 # 限定 PATH，避免找到宿主 runuser；其余命令仍使用普通工具或现有桩。
-for tool in dash awk stat mkdir mktemp chmod cp install cat sha256sum stty rm cut sed; do
+for tool in dash awk stat mkdir mktemp chmod cp install cat sha256sum stty rm cut sed sync; do
 	ln -s "$(command -v "$tool")" "$CASE_DIR/bin/$tool"
 done
 TEST_PATH=$CASE_DIR/bin
@@ -747,57 +749,184 @@ for scenario in below above missing garbage newline; do
     pass "rollback $scenario preserves startup and executes nothing in bin"
 done
 setup_case update_base
-for invalid_base in http://release.example.com https://user@release.example.com https://release.example.com/?q=x https://release.example.com/#x; do
+for invalid_base in '' http://release.example.com https://user@release.example.com https://release.example.com/?q=x https://release.example.com/#x https://a..b https://release.example.com:0 https://release.example.com:65536 'https://[:::]' https://release.example.com/bad%escape; do
     if run_installer "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 --update-base-url "$invalid_base" </dev/null; then fail 'invalid upgrade source accepted'; fi
 done
+if run_installer "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 --update-channel github </dev/null; then fail 'removed channel flag accepted'; fi
+assert_not_exists "$TEST_ROOT/opt/orbit-beacon"
 run_with_token update-token "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 --update-base-url https://release.example.com/download/
-"$YAML_DECODER" "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" | python3 -c 'import json, sys; assert json.load(sys.stdin)["update_base_url"] == "https://release.example.com/download"'
+"$YAML_DECODER" "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" | python3 -c 'import json, sys; p=json.load(sys.stdin); assert "update_channel" not in p and p["update_base_url"] == "https://release.example.com/download"'
 assert_log_has 'https://release.example.com/download/v0.1.0/'
-pass 'custom update source is HTTPS only and normalized'
-run_with_token update-token "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0
+cp "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" "$CASE_DIR/runtime-before.yaml"
+run_installer "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 </dev/null
 "$YAML_DECODER" "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" | python3 -c 'import json, sys; assert json.load(sys.stdin)["update_base_url"] == "https://release.example.com/download"'
-assert_log_has 'https://release.example.com/download/v0.1.0/'
-pass 'reinstall keeps the pinned update source'
-reinstall_policy=$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml
-for update_source in 'https://release.example.com/download' ''; do
-    python3 - "$reinstall_policy" "$update_source" <<'EDIT'
+cmp -s "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" "$CASE_DIR/runtime-before.yaml" || fail 'source reinstall changed runtime'
+pass 'source-only flags reject empty/insecure values and preserve custom sources on reinstall'
+
+# Only these generated legacy shapes are eligible for automatic migration.
+write_legacy_policy() {
+    python3 - "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" "$1" "$2" <<'EDIT'
 import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
-lines = path.read_text().splitlines()
-path.write_text('\n'.join('update_base_url: ' + json.dumps(sys.argv[2]) if line.startswith('update_base_url:') else line for line in lines) + '\n')
-EDIT
-    run_with_token update-token "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0
-    "$YAML_DECODER" "$reinstall_policy" | python3 -c 'import json, sys; assert json.load(sys.stdin)["update_base_url"] == sys.argv[1]' "$update_source"
-done
-pass 'reinstall keeps the generated YAML update source, including explicitly disabled upgrades'
-
-for unsupported in missing duplicate complex; do
-    cp "$reinstall_policy" "$CASE_DIR/policy-before.yaml"
-    python3 - "$reinstall_policy" "$unsupported" <<'EDIT'
-import pathlib, sys
-path = pathlib.Path(sys.argv[1])
-lines = [line for line in path.read_text().splitlines() if not line.startswith('update_base_url:')]
-if sys.argv[2] == 'duplicate':
-    lines += ['update_base_url: ""', 'update_base_url: "https://release.example.com/download"']
-elif sys.argv[2] == 'complex':
-    lines += ['update_base_url: >-', '  https://release.example.com/download']
+lines = [line for line in path.read_text().splitlines() if not line.startswith(('update_channel:', 'update_base_url:'))]
+if sys.argv[2] != 'absent':
+    lines.append('update_channel: ' + json.dumps(sys.argv[2]))
+if sys.argv[3] != 'omitted':
+    lines.append('update_base_url: ' + json.dumps(sys.argv[3]))
 path.write_text('\n'.join(lines) + '\n')
 EDIT
-    cp "$reinstall_policy" "$CASE_DIR/policy-edited.yaml"
+}
+
+for legacy_case in custom github github-empty official eight-official omitted eight-custom eight-empty disabled disabled-custom; do
+    setup_case "source_$legacy_case"
+    run_with_token migration-token "$CASE_DIR/install-output" --server https://monitor.example.com --binary "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64" --no-start
+    channel=absent source=https://github.com/mr-monkeyray/orbit-beacon/releases/download disabled=0
+    case $legacy_case in
+        official) channel=github ;;
+        custom) channel=custom; source=https://releases.example.com/custom ;;
+        github) channel=github; source=https://github.com/Other/Repository/releases/download/// ;;
+        github-empty) channel=github; source= ;;
+        omitted) source=omitted ;;
+        eight-custom) source=https://releases.example.com/custom ;;
+        eight-empty) source=; disabled=1 ;;
+        disabled) channel=disabled; source=; disabled=1 ;;
+        disabled-custom) channel=disabled; source=https://releases.example.com/custom; disabled=1 ;;
+    esac
+    write_legacy_policy "$channel" "$source"
+    printf '%s\n' 'report_interval_seconds: 5' 'disk_paths: ["/srv/a,b"]' 'remote_commands: ["check_update", "restart", "upgrade", "stop"]' >"$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml"
+    printf '%s\n' '{"node_id":"migration-identity"}' >"$TEST_ROOT/opt/orbit-beacon/state/identity.json"
+    cp "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" "$CASE_DIR/runtime-before.yaml"
     : >"$TEST_LOG"
-    if run_installer "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 </dev/null; then fail "ambiguous update source accepted: $unsupported"; fi
-    cmp -s "$reinstall_policy" "$CASE_DIR/policy-edited.yaml" || fail 'failed source extraction modified policy'
-    assert_log_lacks 'curl'
-    assert_log_lacks 'chown'
-    grep -F -- '--update-base-url' "$CASE_DIR/output" >/dev/null || fail 'source extraction error omitted recovery instructions'
+    run_installer "$CASE_DIR/output" --server https://monitor.example.com --binary "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64" --no-start </dev/null
+    "$YAML_DECODER" "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" | python3 -c 'import json, sys; p=json.load(sys.stdin); source=sys.argv[1].rstrip("/"); source="https://github.com/mr-monkeyray/orbit-beacon/releases/download" if source in ("", "omitted") or sys.argv[2] == "disabled" else source; assert "update_channel" not in p and p["update_base_url"] == source' "$source" "$channel"
+    "$YAML_DECODER" "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" | python3 -c 'import json, sys; p=json.load(sys.stdin); assert p["remote_commands"] == (["restart", "stop"] if sys.argv[1] == "1" else ["check_update", "restart", "upgrade", "stop"]); assert p["report_interval_seconds"] == 5 and p["disk_paths"] == ["/srv/a,b"]' "$disabled"
+    [ "$(cat "$TEST_ROOT/opt/orbit-beacon/state/identity.json")" = '{"node_id":"migration-identity"}' ] || fail 'migration replaced identity'
+    assert_mode "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" 640
+    assert_log_lacks curl
+    assert_log_lacks 'systemctl restart'
+    assert_log_lacks 'systemctl enable'
+    if [ "$disabled" = 0 ]; then cmp -s "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" "$CASE_DIR/runtime-before.yaml" || fail 'enabled migration changed runtime'; fi
+    cp "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" "$CASE_DIR/migrated-runtime.yaml"
+    run_installer "$CASE_DIR/reinstall-output" --server https://monitor.example.com --binary "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64" --no-start </dev/null
+    cmp -s "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" "$CASE_DIR/migrated-runtime.yaml" || fail 'reinstall changed migrated permissions'
+    pass "legacy $legacy_case migrates source and permissions without losing local state"
+done
+
+for command_form in block empty missing absent; do
+    setup_case "commands_$command_form"
+    run_with_token migration-token "$CASE_DIR/install-output" --server https://monitor.example.com --binary "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64"
+    write_legacy_policy disabled ''
+    printf '%s\n' '# preserve settings' 'report_interval_seconds: 5' 'disk_paths: ["/srv/data"]' >"$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml"
+    case $command_form in
+        block) printf '%s\n' 'remote_commands:' '  - check_update' '  - restart' '  - "upgrade"' "  - 'stop'" >>"$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" ;;
+        empty) printf '%s\n' 'remote_commands: []' >>"$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" ;;
+        absent) rm "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" ;;
+    esac
+    run_installer "$CASE_DIR/output" --server https://monitor.example.com --binary "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64" </dev/null
+    "$YAML_DECODER" "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" | python3 -c 'import json, sys; p=json.load(sys.stdin); assert p["remote_commands"] == ([] if sys.argv[1] == "empty" else ["restart", "stop"]); assert sys.argv[1] == "absent" or p["report_interval_seconds"] == 5' "$command_form"
+    pass "disabled migration safely handles $command_form remote permissions"
+done
+
+setup_case durable_permissions
+run_with_token migration-token "$CASE_DIR/install-output" --server https://monitor.example.com --binary "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64"
+write_legacy_policy disabled ''
+cp "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" "$CASE_DIR/policy-before.yaml"
+cp "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent" "$CASE_DIR/binary-before"
+write_stub sync 'exit 1'
+if run_installer "$CASE_DIR/output" --server https://monitor.example.com --binary "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64" --update-base-url https://override.example.com/download </dev/null; then fail 'failed permission sync ignored'; fi
+cmp -s "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" "$CASE_DIR/policy-before.yaml" || fail 'policy enabled before permissions were durable'
+cmp -s "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent" "$CASE_DIR/binary-before" || fail 'binary replaced before permissions were durable'
+"$YAML_DECODER" "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" | python3 -c 'import json, sys; assert json.load(sys.stdin)["remote_commands"] == ["restart", "stop"]'
+write_stub sync 'exit 0'
+run_installer "$CASE_DIR/retry-output" --server https://monitor.example.com --binary "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64" --update-base-url https://override.example.com/download </dev/null
+"$YAML_DECODER" "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" | python3 -c 'import json, sys; assert json.load(sys.stdin)["remote_commands"] == ["restart", "stop"]'
+"$YAML_DECODER" "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" | python3 -c 'import json, sys; p=json.load(sys.stdin); assert "update_channel" not in p and p["update_base_url"] == "https://override.example.com/download"'
+pass 'permissions are durable before disabled policy removal, including source override and retry'
+
+for cutover_failure in policy permissions-sync policy-sync binary; do
+    setup_case "cutover_$cutover_failure"
+    run_with_token cutover-token "$CASE_DIR/install-output" --server https://monitor.example.com --binary "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64"
+    write_legacy_policy disabled ''
+    cp "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent" "$CASE_DIR/binary-before"
+    printf '%s\n' '# replacement candidate' >>"$TEST_FIXTURES/orbitbeacon-agent-linux-amd64"
+    if [ "$cutover_failure" = policy ] || [ "$cutover_failure" = binary ]; then
+        TEST_FAIL_CUTOVER=$cutover_failure
+        export TEST_FAIL_CUTOVER
+        write_stub mv '
+destination=
+for argument do destination=$argument; done
+if [ "$TEST_FAIL_CUTOVER" = policy ] && [ "$destination" = "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" ]; then exit 1; fi
+if [ "$TEST_FAIL_CUTOVER" = binary ] && [ "$destination" = "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent" ]; then exit 1; fi
+exec /bin/mv "$@"'
+    else
+        TEST_FAIL_SYNC=$cutover_failure
+        export TEST_FAIL_SYNC
+        write_stub sync '
+policy=$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml
+if [ "$TEST_FAIL_SYNC" = permissions-sync ] || ! grep -q "^update_channel:" "$policy"; then exit 1; fi
+exit 0'
+    fi
+    if run_installer "$CASE_DIR/output" --server https://monitor.example.com --binary "$TEST_FIXTURES/orbitbeacon-agent-linux-amd64" </dev/null; then fail "cutover fault ignored: $cutover_failure"; fi
+    cmp -s "$CASE_DIR/binary-before" "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent" || fail "new binary committed before a durable policy: $cutover_failure"
+    "$YAML_DECODER" "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" | python3 -c 'import json, sys; assert json.load(sys.stdin)["remote_commands"] == ["restart", "stop"]'
+    if [ "$cutover_failure" = policy ] || [ "$cutover_failure" = permissions-sync ]; then
+        grep -q '^update_channel:' "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" || fail 'old policy lost before cutover'
+    else
+        "$YAML_DECODER" "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" | python3 -c 'import json, sys; p=json.load(sys.stdin); assert "update_channel" not in p and p["update_base_url"] == "https://github.com/mr-monkeyray/orbit-beacon/releases/download"'
+    fi
+    unset TEST_FAIL_CUTOVER TEST_FAIL_SYNC
+    pass "failed $cutover_failure cutover retains the old binary and disabled update permissions"
+done
+
+setup_case source_syntax
+run_with_token syntax-token "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0
+reinstall_policy=$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml
+for unsupported in duplicate complex unknown legacy-unknown; do
+    cp "$reinstall_policy" "$CASE_DIR/policy-before.yaml"
+    case $unsupported in
+        duplicate) printf '%s\n' 'update_base_url: ""' >>"$reinstall_policy" ;;
+        complex) printf '%s\n' 'update_base_url: >-' '  https://release.example.com/download' >"$reinstall_policy" ;;
+        unknown) printf '%s\n' 'other: "value"' >>"$reinstall_policy" ;;
+        legacy-unknown) write_legacy_policy unknown '' ;;
+    esac
+    cp "$reinstall_policy" "$CASE_DIR/policy-edited.yaml"
+    cp "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" "$CASE_DIR/runtime-before.yaml"
+    cp "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent" "$CASE_DIR/binary-before"
+    : >"$TEST_LOG"
+    if run_installer "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 --update-base-url https://override.example.com/download </dev/null; then fail "ambiguous policy accepted: $unsupported"; fi
+    cmp -s "$reinstall_policy" "$CASE_DIR/policy-edited.yaml" || fail 'failed migration modified policy'
+    cmp -s "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" "$CASE_DIR/runtime-before.yaml" || fail 'failed migration modified runtime'
+    cmp -s "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent" "$CASE_DIR/binary-before" || fail 'failed migration modified binary'
+    assert_log_lacks curl
+    assert_log_lacks chown
     cp "$CASE_DIR/policy-before.yaml" "$reinstall_policy"
 done
-pass 'unsupported YAML update source fails before mutation with explicit override instructions'
+pass 'unsupported policies fail closed even with an explicit source override'
 
-printf '%s\n' 'update_base_url: >-' '  https://release.example.com/download' >"$reinstall_policy"
-run_installer "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 --update-base-url https://override.example.com/download </dev/null
-"$YAML_DECODER" "$reinstall_policy" | python3 -c 'import json, sys; assert json.load(sys.stdin)["update_base_url"] == "https://override.example.com/download"'
-pass 'explicit update source safely replaces unsupported existing policy syntax'
+for unsupported in alias duplicate folded unknown json null; do
+    setup_case "runtime_$unsupported"
+    run_with_token syntax-token "$CASE_DIR/install-output" --server https://monitor.example.com --version 0.1.0
+    write_legacy_policy disabled ''
+    case $unsupported in
+        alias) printf '%s\n' 'remote_commands: *permissions' ;;
+        duplicate) printf '%s\n' 'remote_commands: []' 'remote_commands: ["upgrade"]' ;;
+        folded) printf '%s\n' 'remote_commands: >-' '  ["upgrade"]' ;;
+        unknown) printf '%s\n' 'unknown: true' ;;
+        json) printf '%s\n' '{"remote_commands":["upgrade"]}' ;;
+        null) printf '%s\n' 'remote_commands:' ;;
+    esac >"$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml"
+    cp "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" "$CASE_DIR/policy-before.yaml"
+    cp "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" "$CASE_DIR/runtime-before.yaml"
+    cp "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent" "$CASE_DIR/binary-before"
+    : >"$TEST_LOG"
+    if run_installer "$CASE_DIR/output" --server https://monitor.example.com --version 0.1.0 </dev/null; then fail "unsupported runtime accepted: $unsupported"; fi
+    cmp -s "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" "$CASE_DIR/policy-before.yaml" || fail 'failed migration stripped disabling policy'
+    cmp -s "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" "$CASE_DIR/runtime-before.yaml" || fail 'failed migration changed runtime'
+    cmp -s "$TEST_ROOT/opt/orbit-beacon/bin/orbitbeacon-agent" "$CASE_DIR/binary-before" || fail 'failed migration changed binary'
+    assert_log_lacks curl
+    assert_log_lacks chown
+done
+pass 'unsupported runtime migration fails before replacing persistent files'
 
 for legacy_name in agent install-policy; do
     setup_case "legacy_$legacy_name"
@@ -832,11 +961,11 @@ cmp -s "$TEST_ROOT/opt/orbit-beacon/etc/agent.json" "$TEST_ROOT/opt/orbit-beacon
 pass 'copied JSON runtime content remains usable as YAML without losing identity or settings'
 "$YAML_DECODER" "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" >"$TEST_ROOT/opt/orbit-beacon/etc/install-policy.json"
 cp "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.json" "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml"
-run_installer "$CASE_DIR/policy-output" --server https://monitor.example.com --version 0.1.0 --update-base-url https://legacy.example.com/download </dev/null
+cp "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" "$CASE_DIR/policy-before.yaml"
+if run_installer "$CASE_DIR/policy-output" --server https://monitor.example.com --version 0.1.0 --update-base-url https://legacy.example.com/download </dev/null; then fail 'manual JSON policy automatically replaced'; fi
+cmp -s "$CASE_DIR/policy-before.yaml" "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" || fail 'unsupported JSON policy changed'
 cmp -s "$TEST_ROOT/opt/orbit-beacon/etc/agent.json" "$TEST_ROOT/opt/orbit-beacon/etc/agent.yaml" || fail 'policy migration replaced runtime settings'
-[ "$(cat "$TEST_ROOT/opt/orbit-beacon/state/identity.json")" = '{"node_id":"copied-identity"}' ] || fail 'policy migration replaced identity'
-"$YAML_DECODER" "$TEST_ROOT/opt/orbit-beacon/etc/install-policy.yaml" | python3 -c 'import json, sys; assert json.load(sys.stdin)["update_base_url"] == "https://legacy.example.com/download"'
-pass 'copied JSON policy supports reinstall with an explicit update source'
+pass 'manual JSON policy requires explicit conversion before installer migration'
 
 setup_case policy_symlink
 mkdir -p "$TEST_ROOT/opt/orbit-beacon/etc"

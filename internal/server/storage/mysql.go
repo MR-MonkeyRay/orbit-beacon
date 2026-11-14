@@ -265,6 +265,12 @@ func initializeMySQLSchema(ctx context.Context, db *sql.DB, domain Domain) error
 	if version.Valid && version.Int64 > int64(expected) {
 		return ErrSchemaTooNew
 	}
+	if domain == MainDomain && count == 1 && version.Valid && version.Int64 == 2 {
+		if err := migrateMySQLCommands(ctx, db); err != nil {
+			return err
+		}
+		version.Int64 = int64(expected)
+	}
 	if count != 1 || !version.Valid || version.Int64 != int64(expected) {
 		return ErrSchemaIncompatible
 	}
@@ -289,6 +295,14 @@ func initializeMySQLSchema(ctx context.Context, db *sql.DB, domain Domain) error
 	for _, table := range Tables(domain) {
 		if !found[table.Name] {
 			return ErrSchemaIncompatible
+		}
+	}
+	if domain == MainDomain {
+		if err := validateMainColumns(ctx, db, false); err != nil {
+			return err
+		}
+		if err := validateMySQLCommandSchema(ctx, db); err != nil {
+			return err
 		}
 	}
 	var guard int

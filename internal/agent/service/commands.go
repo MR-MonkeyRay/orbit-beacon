@@ -29,12 +29,13 @@ const commandHistoryLimit = 32
 const pendingCommandResultLimit = 3 * commandHistoryLimit
 
 type processedCommand struct {
-	ID            string    `json:"id"`
-	TargetVersion string    `json:"target_version,omitempty"`
-	Kind          string    `json:"kind"`
-	State         string    `json:"state"`
-	Code          string    `json:"code"`
-	ExpiresAt     time.Time `json:"expires_at"`
+	ID            string         `json:"id"`
+	TargetVersion string         `json:"target_version,omitempty"`
+	Update        *v1.UpdateInfo `json:"update,omitempty"`
+	Kind          string         `json:"kind"`
+	State         string         `json:"state"`
+	Code          string         `json:"code"`
+	ExpiresAt     time.Time      `json:"expires_at"`
 }
 type commandState struct {
 	Processed []processedCommand `json:"processed"`
@@ -111,15 +112,25 @@ func (s *commandStore) load() error {
 	for i := range state.Processed {
 		c := &state.Processed[i]
 		c.ID = strings.ToLower(c.ID)
-		command := v1.Command{ID: c.ID, Kind: c.Kind, TargetVersion: c.TargetVersion, ExpiresAt: c.ExpiresAt}
+		command := v1.Command{ID: c.ID, Kind: c.Kind, ExpiresAt: c.ExpiresAt}
 		if err := command.Validate(); err != nil {
 			return err
+		}
+		if c.TargetVersion != "" {
+			if _, err := v1.ParseVersion(c.TargetVersion); err != nil || c.Kind != v1.RemoteCommandUpgrade {
+				return errors.New("invalid local upgrade target")
+			}
+		}
+		if c.Update != nil {
+			if err := c.Update.Validate(); err != nil {
+				return err
+			}
 		}
 		if _, exists := seen[c.ID]; exists {
 			return errors.New("duplicate command state")
 		}
 		if c.State == "executing" {
-			if c.Kind != v1.RemoteCommandRestart && c.Kind != v1.RemoteCommandStop && c.Kind != v1.RemoteCommandUpgrade {
+			if c.Kind != v1.RemoteCommandRestart && c.Kind != v1.RemoteCommandStop && c.Kind != v1.RemoteCommandUpgrade && c.Kind != v1.RemoteCommandCheckUpdate {
 				return errors.New("invalid executing command")
 			}
 		} else if err := (v1.CommandResult{ID: c.ID, Status: c.State, Code: c.Code}).Validate(); err != nil {
@@ -160,7 +171,7 @@ func (s *commandStore) load() error {
 				c.Code = "rolled_back"
 			}
 		}
-		state.Pending = append(state.Pending, v1.CommandResult{ID: c.ID, Status: c.State, Code: c.Code})
+		state.Pending = append(state.Pending, v1.CommandResult{ID: c.ID, Status: c.State, Code: c.Code, Update: c.Update})
 	}
 	if len(state.Pending) > pendingCommandResultLimit {
 		return errors.New("command recovery results exceed bounds")
@@ -305,7 +316,7 @@ func (s *commandStore) handle(c v1.Command, serverTime time.Time, settings confi
 	case !settings.AllowsCommand(c.Kind):
 		status, code = "rejected", "disabled_locally"
 	}
-	state.Processed = append(state.Processed, processedCommand{ID: c.ID, Kind: c.Kind, TargetVersion: c.TargetVersion, State: status, Code: code, ExpiresAt: c.ExpiresAt})
+	state.Processed = append(state.Processed, processedCommand{ID: c.ID, Kind: c.Kind, State: status, Code: code, ExpiresAt: c.ExpiresAt})
 	if status != "executing" {
 		state.Pending = append(state.Pending, v1.CommandResult{ID: c.ID, Status: status, Code: code})
 	}
@@ -329,6 +340,26 @@ func (s *commandStore) handle(c v1.Command, serverTime time.Time, settings confi
 	return c.Kind
 }
 
+// prepareUpgrade persists the locally discovered target before any binary switch.
+func (s *commandStore) prepareUpgrade(id string, info *v1.UpdateInfo) bool {
+	if s.blocked || info == nil || info.Validate() != nil {
+		return false
+	}
+	state := s.copyState()
+	for i := range state.Processed {
+		c := &state.Processed[i]
+		if c.ID == strings.ToLower(id) && c.Kind == v1.RemoteCommandUpgrade && c.State == "executing" {
+			c.TargetVersion, c.Update = info.LatestVersion, info
+			if err := s.save(state); err != nil {
+				s.block(err)
+				return false
+			}
+			return true
+		}
+	}
+	return false
+}
+
 func (s *commandStore) finishUpgrade(result upgradeOutcome) {
 	if s.blocked {
 		return
@@ -337,8 +368,8 @@ func (s *commandStore) finishUpgrade(result upgradeOutcome) {
 	for i := range state.Processed {
 		c := &state.Processed[i]
 		if c.ID == result.id && c.State == "executing" {
-			c.State, c.Code = result.status, result.code
-			state.Pending = append(state.Pending, v1.CommandResult{ID: c.ID, Status: c.State, Code: c.Code})
+			c.State, c.Code, c.Update = result.status, result.code, result.update
+			state.Pending = append(state.Pending, v1.CommandResult{ID: c.ID, Status: c.State, Code: c.Code, Update: c.Update})
 			if err := s.save(state); err != nil {
 				s.block(err)
 			}
@@ -375,7 +406,7 @@ func (s *commandStore) confirmUpgrade() bool {
 		c := &state.Processed[i]
 		if c.Kind == v1.RemoteCommandUpgrade && c.State == "executing" && c.TargetVersion == s.version {
 			c.State, c.Code = "succeeded", "ok"
-			state.Pending = append(state.Pending, v1.CommandResult{ID: c.ID, Status: c.State, Code: c.Code})
+			state.Pending = append(state.Pending, v1.CommandResult{ID: c.ID, Status: c.State, Code: c.Code, Update: c.Update})
 			changed = true
 		}
 	}

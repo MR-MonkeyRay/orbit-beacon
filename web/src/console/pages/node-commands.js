@@ -4,11 +4,11 @@ import {api, getNavigationSignal, getSessionSignal} from '../api.js';
 import {absoluteWhen} from '../format.js';
 import {button, dataTable, uid} from '../ui/components.js';
 import {confirmDialog} from '../ui/dialogs.js';
-import {typedConfirmation, upgradeConfirmation} from '../ui/typed-confirmation.js';
+import {typedConfirmation} from '../ui/typed-confirmation.js';
 import {toastError} from '../ui/feedback.js';
 import {panelLifecycle} from '../ui/polling-panel.js';
 
-const kinds = ['upgrade', 'restart', 'stop'];
+const kinds = ['check_update', 'upgrade', 'restart', 'stop'];
 const activeCommand = (command) => ['pending', 'delivered'].includes(command.state);
 const resultCodes = ['disabled_locally', 'unsupported', 'interrupted', 'failed', 'download', 'checksum', 'self_check', 'downgrade', 'rolled_back'];
 
@@ -26,8 +26,8 @@ export function nodeCommandsPanel(node, signal = getNavigationSignal()) {
     variant: kind === 'stop' ? 'danger' : undefined, disabled: true, onClick: () => create(kind)
   }));
   const body = h('tbody');
-  const table = dataTable({columns: [t('nodes.command.kind'), t('nodes.command.status'), t('nodes.command.requestedBy'), t('settings.created'), h('span', {class: 'sr'}, t('settings.actions'))], body, hidden: true});
-  // 管理列表中的一行：标题在左、三个指令在右，指令记录表紧随其下。
+  const table = dataTable({columns: [t('nodes.command.kind'), t('nodes.command.status'), t('nodes.command.requestedBy'), t('settings.created'), h('span', {class: 'sr'}, t('settings.actions'))], body, className: 'node-commands-table', hidden: true});
+  // 管理列表中的一行：标题在左、指令在右，指令记录表紧随其下。
   const headingID = uid('commands');
   const element = h('section', {class: 'node-action-block', 'aria-labelledby': headingID},
     h('div', {class: 'node-action-row'}, h('h3', {id: headingID}, t('nodes.commands')), h('div', {class: 'head-actions'}, controls)), table);
@@ -49,8 +49,13 @@ export function nodeCommandsPanel(node, signal = getNavigationSignal()) {
     body.replaceChildren(...records.map((command) => {
       const code = resultCodes.includes(command.result_code) ? ` · ${t(`nodes.command.result.${command.result_code}`)}` : '';
       return h('tr', null,
-        h('td', null, [t(`nodes.command.${command.kind}`), command.target_version].filter(Boolean).join(' ')),
-        h('td', null, `${t(`nodes.command.state.${command.state}`)}${code}`),
+        h('td', null, t(`nodes.command.${command.kind}`)),
+        h('td', null, `${t(`nodes.command.state.${command.state}`)}${code}`,
+          command.update ? h('div', {class: 'text-note'}, command.update.channel ? [t('nodes.command.updateInfo', {
+            channel: t(`nodes.command.channel.${command.update.channel}`), current: command.update.current_version,
+            latest: command.update.latest_version
+          }), ` · ${t('nodes.command.checkedAt')} `, absoluteWhen(command.update.checked_at)]
+            : t('nodes.command.historicalTarget', {version: command.update.latest_version})) : null),
         h('td', null, command.requested_by), h('td', null, absoluteWhen(command.created_at)),
         h('td', null, command.state === 'pending' ? button(t('controls.cancel'), {small: true, disabled: running || node.deleted,
           onClick: () => mutate(() => api(`${path}/${encodeURIComponent(command.id)}/cancel`, {method: 'POST', signal: controller.signal}))}) : null));
@@ -85,12 +90,12 @@ export function nodeCommandsPanel(node, signal = getNavigationSignal()) {
     const current = controller;
     const expected = node.name;
     await mutate(async () => {
-      const targetVersion = kind === 'upgrade' ? await upgradeConfirmation({title: t('nodes.command.upgrade')}) : undefined;
-      const approved = kind === 'upgrade' ? Boolean(targetVersion) : kind === 'stop'
+      const approved = kind === 'stop'
         ? await typedConfirmation({title: t('nodes.command.stopTitle'), message: t('nodes.command.stopConsequence'), expected, confirm: t('nodes.command.stop')})
-        : await confirmDialog({title: t('nodes.command.restartTitle'), confirm: t('nodes.command.restart')});
+        : await confirmDialog({title: t(kind === 'restart' ? 'nodes.command.restartTitle' : `nodes.command.${kind}`),
+          message: kind === 'upgrade' ? t('nodes.command.upgradeConsequence') : undefined, confirm: t(`nodes.command.${kind}`)});
       if (!approved || !active() || current !== controller || node.deleted || node.stopped || node.status === 'disabled' || node.presence !== 'online' || records.some(activeCommand)) return;
-      await api(path, {method: 'POST', body: {kind, ...(kind === 'upgrade' ? {target_version: targetVersion} : {}), ...(kind === 'stop' ? {confirm: expected} : {})}, signal: current.signal});
+      await api(path, {method: 'POST', body: {kind, ...(kind === 'stop' ? {confirm: expected} : {})}, signal: current.signal});
     });
   }
   const detach = () => {

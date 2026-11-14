@@ -671,6 +671,8 @@
 .node-action-row h3 { min-width: 0; font-size: var(--fs-base); font-weight: var(--fw-medium); }
 .node-action-row>.btn { flex: none; }
 .node-action-block > .table-wrap { margin-bottom: var(--sp-control); }
+.node-commands-table { min-width: 560px; }
+.node-commands-table td:first-child { white-space: nowrap; }
 .node-manage .panel-body > * + *,.node-action-list > * + * { border-top: 1px solid var(--line); }
 .node-action-row.danger { background: color-mix(in srgb,var(--bad-bg) 40%,var(--panel)); }
 .node-action-row.danger h3 { color: var(--bad); }

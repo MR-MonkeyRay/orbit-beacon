@@ -3,7 +3,7 @@ import {t} from './i18n.js';
 const errorKeys = new Set([
   'api_token_limit', 'service_capacity_reached', 'service_group_capacity_reached', 'service_not_found',
  'totp_required', 'totp_invalid', 'totp_already_enabled', 'totp_setup_expired',
-  'command_same_version', 'command_not_allowed', 'command_active', 'node_unavailable',
+  'command_not_allowed', 'command_active', 'node_unavailable',
   'unauthenticated', 'forbidden', 'password_change_required', 'password_unchanged', 'public_page_disabled',
   'invalid_old_password', 'rate_limited', 'validation_failed', 'invalid_json', 'network', 'timeout',
   'unreadable_response', 'not_found', 'node_not_found', 'node_disabled',

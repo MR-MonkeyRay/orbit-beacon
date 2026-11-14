@@ -1,9 +1,9 @@
 {
   "asset_base": "",
   "versions": {
-    "_app/assets/console.css": "9bd6bd02bfa218460445bd0b6fe4b45a",
-    "_app/assets/console.js": "6df9f20874f8edf8041bdb46f36685fd",
+    "_app/assets/console.css": "535056e4e5b27b65093dba24efcb8aa2",
+    "_app/assets/console.js": "fdac6c92eafc04eab973b73dc99b8b6a",
     "_app/assets/public.css": "f024f9db3ab79254836817067f58e742",
-    "_app/assets/public.js": "53a2ccec9abf46946b0204ae742c1e2a"
+    "_app/assets/public.js": "57d641e489333ea48857e4579f1e6e76"
   }
 }

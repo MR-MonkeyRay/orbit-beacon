@@ -46,9 +46,6 @@ func TestCommandsRejectAndDeduplicate(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			s := commandTestStore(t)
 			c := testCommand(test.kind)
-			if c.Kind == "upgrade" {
-				c.TargetVersion = "1.2.3"
-			}
 			now := c.ExpiresAt.Add(-time.Minute)
 			if test.expired {
 				now = c.ExpiresAt

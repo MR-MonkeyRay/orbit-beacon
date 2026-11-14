@@ -11,8 +11,8 @@ disk_paths: []
 probe_targets: []
 # HTTP(S) 预期状态码（100–599）；键须在 probe_targets 中。
 probe_expected_status: {}
-# [] 禁止全部远程指令；upgrade 还需安装策略配置可信发布源。
-remote_commands: ["upgrade", "restart", "stop"]
+# [] 禁止全部远程指令；移除 check_update、upgrade 可仅关闭更新。
+remote_commands: ["check_update", "upgrade", "restart", "stop"]
 # 可选：disk、network、traffic、probes、disk_io、pressure、temperature。
 # 关闭 network 同时关闭 traffic；关闭 disk 同时关闭 disk_io。
 disabled_features: []

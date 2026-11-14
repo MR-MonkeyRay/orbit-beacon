@@ -101,13 +101,13 @@ func TestAgentCapabilitiesNormalizeOnceForInstallMode(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			policy := config.InstallPolicy{ServerURL: "https://beacon.example.test", StateDir: t.TempDir(), InstallMode: mode, UpdateBaseURL: "https://releases.example.test/download"}
 			opts := config.LoadOptions{LookupEnv: lookup(nil), File: configFile(t, map[string]any{
-				"remote_commands": []string{"stop", "restart", "upgrade"}, "disabled_features": []string{"probes", "network", "disk"}, "probe_targets": []string{"tcp://example.test:80"},
+				"remote_commands": []string{"stop", "restart", "upgrade", "check_update"}, "disabled_features": []string{"probes", "network", "disk"}, "probe_targets": []string{"tcp://example.test:80"},
 			})}
 			got, err := config.LoadAgent(opts, &policy)
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := map[string][]string{"native": {"upgrade", "restart", "stop"}, "docker": {"restart"}, "foreground": {"stop"}}[mode]
+			want := map[string][]string{"native": {"check_update", "upgrade", "restart", "stop"}, "docker": {"check_update", "restart"}, "foreground": {"check_update", "stop"}}[mode]
 			if !reflect.DeepEqual(got.RemoteCommands, want) || !reflect.DeepEqual(got.DisabledFeatures, []string{"disk", "network", "traffic", "probes", "disk_io"}) || got.ProbeTargets == nil || len(got.ProbeTargets) != 0 {
 				t.Fatalf("normalized=%+v", got)
 			}

@@ -62,7 +62,7 @@ unset TOKEN
 | `--key KEY` | 一次性密钥；会出现在进程列表和 shell 历史中，与 `--token-file` 互斥 |
 | `--token-file FILE` | 密钥文件；未指定来源时从 stdin 或终端隐藏提示输入 |
 | `--ca-file FILE` | HTTPS Server 的私有 CA；HTTP 不可使用 |
-| `--update-base-url URL` | HTTPS 发布镜像根地址，重装默认保留；`''` 关闭远程升级 |
+| `--update-base-url URL` | 非空 HTTPS 发布根地址；默认 `https://github.com/mr-monkeyray/orbit-beacon/releases/download`，重装省略时保留原地址 |
 | `--uid N`、`--gid N` | 专用账户的非零数字 UID/GID；不传则自动分配。已有账户/组不匹配时拒绝，不迁移身份、不重编号 |
 | `--service MODE` | `auto`：运行中的 systemd → 已安装的 OpenRC → 前台；可明确指定 `systemd`、`openrc`、`none` |
 | `--no-start` | 完成注册及服务文件安装，但不启用、不启动、不重启服务；已运行的旧进程不会停止 |
@@ -174,7 +174,7 @@ disabled_features:
   - temperature
 ```
 
-状态目录 `state_dir`、CA 路径 `ca_file`、服务器 `server_url` 和升级源 `update_base_url` 在 root 管理的 [`install-policy.yaml`](../deploy/systemd/install-policy.yaml) 中配置，不放入运行配置。修改安装策略需重启；变更状态目录须停服、迁移完整原状态并同步目录权限和 unit 的 `ReadWritePaths=`，不能创建空目录代替原身份。安装脚本仍使用固定安装布局；自定义策略路径时自行维护 unit，重跑安装脚本会重建安装策略。
+状态目录 `state_dir`、CA 路径 `ca_file`、服务器 `server_url` 和更新源 `update_base_url` 在 root 管理的 [`install-policy.yaml`](../deploy/systemd/install-policy.yaml) 中配置，不放入运行配置。修改安装策略需重启；变更状态目录须停服、迁移完整原状态并同步目录权限和 unit 的 `ReadWritePaths=`，不能创建空目录代替原身份。安装脚本仍使用固定安装布局；自定义策略路径时自行维护 unit，重跑安装脚本会重建安装策略。
 
 | 参数 | 默认值 | 范围 / 选择 |
 | --- | --- | --- |
@@ -184,7 +184,7 @@ disabled_features:
 | `disk_paths` | `[]` | 最多 8 个绝对路径；空数组使用默认根路径 |
 | `probe_targets` | `[]` | 最多 5 项；空数组不探测 |
 | `probe_expected_status` | `{}` | HTTP(S) 目标到预期状态码（100–599 整数）的本地映射 |
-| `remote_commands` | `["upgrade","restart","stop"]` | 允许的远程指令；native 仅在安装策略配置了升级地址时支持 upgrade，docker 仅 restart，foreground 仅 stop，取交集生效，`[]` 全部关闭 |
+| `remote_commands` | `["check_update","upgrade","restart","stop"]` | 唯一本地执行许可，与安装模式取交集：check_update 支持全部模式，upgrade 仅 native；native 支持 restart/stop，docker 仅 restart，foreground 仅 stop；`[]` 全部关闭 |
 | `disabled_features` | `[]` | 关闭 disk、network、traffic、probes、disk_io、pressure、temperature 中的指定功能，默认全部启用；disk 同时关闭 disk_io，network 同时关闭 traffic，probes 清空探测目标 |
 
 选择还受 JSON 转义后 64 KiB 报告预算约束。
@@ -193,21 +193,30 @@ disabled_features:
 
 修改后执行 `sudo systemctl reload orbitbeacon-agent`，OpenRC 用 `sudo rc-service orbitbeacon-agent reload`，前台进程用 `kill -HUP <PID>`。reload 重读原 YAML，沿用启动时环境和显式 flags，不重读 policy；有效变更在采样边界完整应用并重采，不重置身份或累计流量，坏配置保留旧值。检查日志 `configuration_reloaded` / `configuration_unchanged` / `configuration_reload_rejected` 和下一报告的指标；本地设置不随报告发送；服务 reload 命令成功只代表信号送达。
 
-## 远程升级
+## 更新检查与远程升级
 
-控制台的节点“升级”或分组“升级全部”只指定版本号。分组会要求输入组名；已运行目标版本、已关闭或本地不允许的节点跳过。当前版本也必须是正式三段版本，目标必须严格更新；开发版、相同版本和降级返回 `rejected/downgrade`。
+控制台可对节点或分组执行“检查更新”“升级”。Server 只发送固定的无参数指令，不发送版本、下载地址或校验和；分组操作仍需输入组名确认。Agent 从本地可信源发现最新版本、校验下载并执行；结果只回传自动识别的来源类型（`github` / `custom`）、当前版本、最新版本和检查时间，不上传源 URL。当前和最新版本均须为正式三段数字版本；没有更新时成功返回，不替换二进制，禁止降级。所有模式均可检查，只有 native 可升级，且都须本地 `remote_commands` 许可。
 
-安装器把 `update_base_url` 写进 root 所有的安装策略，默认 `https://github.com/mr-monkeyray/orbit-beacon/releases/download`；可用 `--update-base-url URL` 指定 HTTPS 镜像，重装保留已有地址，空值关闭升级能力。安装器只自动读取自己生成的扁平 YAML 策略；若手工改用其他 YAML 写法，重装须显式传入 `--update-base-url URL`（关闭时传 `--update-base-url ''`）。这个值不能通过 `agent.yaml`、reload 或服务器修改，也不随报告上传。docker/foreground 不支持远程升级。
+唯一源配置是 root 所有的 `install-policy.yaml` 中的 `update_base_url`，默认显式写入 `https://github.com/mr-monkeyray/orbit-beacon/releases/download`。地址必须为非空 HTTPS 根地址，不含凭据、查询或片段；省略时默认官方源，显式空值报错。修改后重启，不能通过 `agent.yaml`、环境变量、reload 或 Server 改写。
+
+| 地址形式 | 版本发现 |
+| --- | --- |
+| `https://github.com/{owner}/{repo}/releases/download` | 自动查询对应仓库的 `https://api.github.com/repos/{owner}/{repo}/releases/latest` |
+| 其他 HTTPS 根地址 | 查询 `{base}/latest.json`，内容为 `{"version":"X.Y.Z"}` |
+
+下载均使用 `{base}/vX.Y.Z/SHA256SUMS` 和对应 Agent 二进制附件。自定义源在安装器加 `--update-base-url https://releases.example.com/orbit-beacon`；关闭更新则从本地 `agent.yaml` 的 `remote_commands` 移除 `check_update`、`upgrade`，保留其他所需指令。仍可固定版本或使用离线 `--binary` 手动安装，重装保留源地址与运行配置。
+
+旧策略须先用新安装器迁移，不能直接交给新 Agent：安装器去除旧 `update_channel`，保留有效非空源地址；省略源、旧 GitHub 空源或旧禁用渠道写入官方默认地址。旧禁用渠道或无渠道且显式空源会先持久化移除本地两项更新权限，再更新策略，后续重装不重新启用；策略落盘后才替换二进制，切换失败可用原参数重跑。自动迁移只接受安装器生成的扁平策略及简单运行配置（远程指令支持单行数组或块列表）；不支持的手工 YAML 会在替换持久文件前拒绝。请先备份、保留原源地址及权限并整理格式，不要用示例覆盖身份或本地设置。
 
 下载和自检在后台执行，期间继续上报；只支持 Linux amd64/arm64。下载使用系统证书及策略中的 `ca_file`，只允许 HTTPS（最多五次重定向）。二进制上限 64 MiB，清单上限 64 KiB。候选版本通过 SHA256 和 `version --json` 自检后，保留 `bin/orbitbeacon-agent.prev`，写入 `state/upgrade-pending`，再原子替换并以 75 退出。下载最多十分钟，并预留 7 分钟给重启、启动确认和结果上报；指令剩余不足 7 分钟就拒绝执行。
 
 新版本第一次被服务器接受的上报才算升级成功，然后删除待确认标记。新版本崩溃，或运行 2 分钟仍没上报成功而自行退出，都算一次启动；第四次启动时，root 所有的回滚脚本以 Agent 用户运行，恢复 `.prev`，结果为 `rolled_back`。升级期间服务器长时间不可用也会触发回滚。`.prev` 在成功升级后保留，供人工恢复；意外中断返回 `interrupted`。回滚脚本绝不执行 `bin/` 里的文件；`etc/` 始终归 root，Agent 只读。
 
-发布源信任边界和安装相同：`SHA256SUMS` 只防传输损坏，不防源被入侵。不接受时从本地 `remote_commands` 移除 `upgrade`。手工恢复先停服务，再以 Agent 用户检查二进制。
+发布源信任边界和安装相同：`SHA256SUMS` 只防传输损坏，不防源被入侵。不接受时从本地 `remote_commands` 移除两项更新指令。手工恢复先停服务，再以 Agent 用户检查二进制。
 
 ## 升级与卸载
 
-从 JSON 配置升级时，先停止 Agent、备份配置，再将 `etc/agent.json` 和 `etc/install-policy.json` 分别复制为 `etc/agent.yaml` 和 `etc/install-policy.yaml`，保留 root 属主、Agent 组及 `0640` 权限。JSON 是 YAML 子集，原内容可直接加载，之后再整理为 YAML 块格式。安装器发现旧文件未迁移会在更改前中止；重装时显式传入原升级源 `--update-base-url URL`（原为空则传 `''`），保留整个 `state/`，**不要修改或删除 `identity.json`**。重跑新安装器会更新 unit 的配置路径；手工部署则同步修改 `--config`、`--install-policy` 并 `daemon-reload`。
+从 JSON 配置升级时，先停止 Agent、备份配置，再将 `etc/agent.json` 和 `etc/install-policy.json` 分别复制为 `etc/agent.yaml` 和 `etc/install-policy.yaml`，保留 root 属主、Agent 组及 `0640` 权限。运行配置的 JSON 内容可保留；策略须整理为安装器生成的扁平 YAML，再按上述规则迁移旧源字段；若旧源禁用，先从运行配置移除两项更新权限。安装器发现旧文件未迁移或策略格式不支持会在改动前中止。保留整个 `state/`，**不要修改或删除 `identity.json`**。重跑新安装器会更新 unit 的配置路径；手工部署则同步修改 `--config`、`--install-policy` 并 `daemon-reload`。
 
 按[升级顺序](../deploy/README.md#升级)检查服务器后，下载并检查目标版本的脚本，更新 `VERSION`，再执行：
 
@@ -249,7 +258,7 @@ sudo install -o "$AGENT_UID" -g "$AGENT_GID" -m 0750 build/orbitbeacon-agent "$A
 sudo mv -fT -- "$AGENT_TMP" /opt/orbit-beacon/bin/orbitbeacon-agent
 sudo tee /opt/orbit-beacon/etc/install-policy.yaml > /dev/null <<EOF
 server_url: "https://beacon.your-domain.com"
-update_base_url: ""
+update_base_url: "https://github.com/mr-monkeyray/orbit-beacon/releases/download"
 ca_file: ""
 state_dir: /opt/orbit-beacon/state
 expected_uid: $AGENT_UID
@@ -328,9 +337,10 @@ HTTP 探测不使用 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`，不能依赖�
 
 ## 远程指令
 
-远程指令只有 `upgrade`、`restart`、`stop`，都受本机 `remote_commands` 限制；本地禁用由 Agent 返回 `disabled_locally`，服务器不保存或修改 Agent 设置。
+远程指令只有 `check_update`、`upgrade`、`restart`、`stop`，均无参数，都受本机 `remote_commands` 限制；本地禁用由 Agent 返回 `disabled_locally`，服务器不保存或修改 Agent 设置。
 
-- `upgrade`：只接受严格 `MAJOR.MINOR.PATCH`（无前导零），有效期 20 分钟；下发时剩余不足 7 分钟按过期拒绝。
+- `check_update`：从本地可信源查询最新正式版本并回传结果，不替换二进制。
+- `upgrade`：从本地可信源选择最新正式版本；有效期 20 分钟，下发时剩余不足 7 分钟按过期拒绝。
 - `restart`：持久化执行标记后以 75 退出，由 systemd `Restart=on-failure` 拉起；同一 ID 不会再次重启。有效期 5 分钟。
 - `stop`：持久化成功结果并立即采集、上报，确认成功或最多等 15 秒，再以 0 退出；恢复要人工 `systemctl start orbitbeacon-agent`。已启用服务在主机重启后也会恢复，正常 SIGTERM 行为不变。有效期 5 分钟。
 - 指令状态在 `state/commands.json`（0600）；文件损坏或写入失败时继续监控，但停止执行指令，需人工修复，不能随意删除，否则丢失去重记录。

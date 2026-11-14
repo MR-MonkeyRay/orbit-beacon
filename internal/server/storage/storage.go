@@ -22,7 +22,7 @@ var ErrSchemaTooNew = errors.New("database schema is newer than this binary")
 var ErrSchemaIncompatible = errors.New("database schema is incompatible; initialize a new data directory")
 
 // CurrentSchemaVersion 是本二进制使用的主库 schema 基线版本。
-const CurrentSchemaVersion = 2
+const CurrentSchemaVersion = 3
 
 // Open 打开持久化本地数据库。驱动对池中每个连接应用连接级 pragma，
 // 而不仅是迁移连接。
@@ -109,6 +109,12 @@ func initializeSQLiteSchema(ctx context.Context, db *sql.DB, schema string, expe
 	if version.Valid && version.Int64 > int64(expected) {
 		return ErrSchemaTooNew
 	}
+	if schema == mainSchema && count == 1 && version.Valid && version.Int64 == 2 {
+		if err := migrateSQLiteCommands(ctx, tx); err != nil {
+			return err
+		}
+		version.Int64 = int64(expected)
+	}
 	if count != 1 || !version.Valid || version.Int64 != int64(expected) {
 		return ErrSchemaIncompatible
 	}
@@ -122,6 +128,11 @@ func initializeSQLiteSchema(ctx context.Context, db *sql.DB, schema string, expe
 			return ErrSchemaIncompatible
 		}
 		if err = rows.Close(); err != nil {
+			return err
+		}
+	}
+	if domain == MainDomain {
+		if err := validateSQLiteCommandSchema(ctx, tx); err != nil {
 			return err
 		}
 	}
@@ -242,17 +253,7 @@ CREATE TABLE nodes (
 );
 CREATE UNIQUE INDEX nodes_installation_identity ON nodes(installation_id) WHERE installation_id IS NOT NULL;
 CREATE INDEX nodes_group ON nodes(group_id);
-CREATE TABLE agent_commands (
- id TEXT PRIMARY KEY NOT NULL, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
- credential_epoch INTEGER NOT NULL,
- kind TEXT NOT NULL CHECK(kind IN ('upgrade','restart','stop')),
- target_version TEXT NOT NULL DEFAULT '',
- state TEXT NOT NULL CHECK(state IN ('pending','delivered','succeeded','failed','rejected','expired','canceled')),
- result_code TEXT NOT NULL DEFAULT '' CHECK(result_code IN ('','ok','disabled_locally','unsupported','expired','interrupted','failed','download','checksum','self_check','downgrade','rolled_back')),
- requested_by TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
- delivered_at TEXT, delivered_generation TEXT NOT NULL DEFAULT '', finished_at TEXT,
- CHECK ((kind='upgrade' AND length(target_version) BETWEEN 1 AND 64) OR (kind IN ('restart','stop') AND target_version=''))
-);
+` + agentCommandsSchema + `
 CREATE UNIQUE INDEX agent_commands_active ON agent_commands(node_id) WHERE state IN ('pending','delivered');
 CREATE INDEX agent_commands_recent ON agent_commands(node_id,created_at DESC,id DESC);
 CREATE INDEX agent_commands_finished ON agent_commands(finished_at) WHERE state NOT IN ('pending','delivered');
