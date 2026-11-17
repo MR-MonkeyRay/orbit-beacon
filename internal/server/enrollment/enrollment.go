@@ -1,3 +1,4 @@
+// Package enrollment 管理一次性 Agent 注册票据的签发、限流准入、认领激活与凭据恢复校验。
 package enrollment
 
 import (
@@ -25,8 +26,10 @@ import (
 
 type serviceError string
 
+// Error 实现 error 接口，返回标准领域错误标识。
 func (err serviceError) Error() string { return string(err) }
 
+// 注册与凭据认领返回的领域错误常量。
 const (
 	ErrUnauthenticated serviceError = "enrollment authentication required"
 	ErrConflict        serviceError = "enrollment identity conflict"
@@ -36,12 +39,14 @@ const (
 	ErrRateLimited     serviceError = "enrollment rate limited"
 )
 
+// Options 配置注册服务的最大节点容量限制、时钟及随机数源。
 type Options struct {
 	MaxNodes int
 	Now      func() time.Time
 	Random   io.Reader
 }
 
+// Service 负责注册票据生命周期、失效票据防爆破限流及节点身份绑定事务。
 type Service struct {
 	db            *storage.Database
 	maxNodes      int
@@ -55,6 +60,7 @@ type Service struct {
 	invalidGlobal invalidBucket
 }
 
+// NewService 构造注册服务；MaxNodes 非正时默认 500。
 func NewService(db *storage.Database, opts Options) *Service {
 	if opts.MaxNodes <= 0 {
 		opts.MaxNodes = 500
@@ -90,12 +96,13 @@ type Ticket struct {
 	RevokedAt *time.Time `json:"revoked_at"`
 }
 
-// 只有创建结果会一次性暴露明文票据。
+// CreatedTicket 包含新建的注册票据元数据及一次性暴露的明文 Token。
 type CreatedTicket struct {
 	Ticket
 	Token string `json:"token"`
 }
 
+// CreateSingle 为指定节点签发有效期 30 分钟、限一次成功的单节点注册票据。
 func (s *Service) CreateSingle(ctx context.Context, nodeID string) (CreatedTicket, error) {
 	if !uuid.ValidUUID(nodeID) {
 		return CreatedTicket{}, ErrInvalidInput
@@ -103,6 +110,7 @@ func (s *Service) CreateSingle(ctx context.Context, nodeID string) (CreatedTicke
 	return s.create(ctx, &nodeID, nil)
 }
 
+// CreateGroup 为指定分组签发可自动创建并纳管新节点的分组注册票据。
 func (s *Service) CreateGroup(ctx context.Context, groupID string) (CreatedTicket, error) {
 	if strings.TrimSpace(groupID) == "" || len(groupID) > 255 {
 		return CreatedTicket{}, ErrInvalidInput
@@ -189,6 +197,7 @@ func scanTicket(row scanner) (Ticket, error) {
 	return ticket, nil
 }
 
+// Get 读取单条注册票据的脱敏元数据（不含明文或哈希）。
 func (s *Service) Get(ctx context.Context, id string) (Ticket, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -199,6 +208,7 @@ func (s *Service) Get(ctx context.Context, id string) (Ticket, error) {
 	return scanTicket(lease.QueryRowContext(ctx, "SELECT "+ticketColumns+" FROM enrollment_tokens WHERE id = ?", id))
 }
 
+// List 按过期时间倒序分页列出注册票据元数据。
 func (s *Service) List(ctx context.Context, limit, offset int) ([]Ticket, error) {
 	// HTTP 页大小上限为 100；多取一行用于前瞻。
 	if limit < 1 || limit > 101 || offset < 0 {
@@ -250,6 +260,7 @@ func (s *Service) CleanupExpiredTickets(ctx context.Context, before time.Time, l
 	return count, tx.Commit()
 }
 
+// Revoke 幂等吊销尚未使用的注册票据并写入审计记录。
 func (s *Service) Revoke(ctx context.Context, id string) error {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {

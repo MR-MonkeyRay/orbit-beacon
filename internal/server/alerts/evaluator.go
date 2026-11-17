@@ -21,6 +21,7 @@ import (
 	"orbitbeacon/internal/uuid"
 )
 
+// Notification 描述一次告警触发或恢复时同事务入队的通知事件载荷。
 type Notification struct {
 	EventID    string
 	Rule       Rule
@@ -38,14 +39,22 @@ type Notifier interface {
 	Enqueue(context.Context, *storage.Tx, Notification) error
 	Wake()
 }
+
+// NoopNotifier 是忽略外发通知的空实现，供无通知配置或测试使用。
 type NoopNotifier struct{}
 
+// Enqueue 实现 Notifier，不执行任何入队操作。
 func (NoopNotifier) Enqueue(context.Context, *storage.Tx, Notification) error { return nil }
-func (NoopNotifier) Wake()                                                    {}
 
+// Wake 实现 Notifier，不执行任何唤醒操作。
+func (NoopNotifier) Wake() {}
+
+// LatestReader 读取指定节点的最新内存上报快照。
 type LatestReader interface {
 	Latest(context.Context, string) (ingest.LatestReport, error)
 }
+
+// EvaluatorOptions 配置告警评估周期、流量配额读取器、通知器与日志器。
 type EvaluatorOptions struct {
 	Quota    func(context.Context, time.Time) (map[string]float64, error)
 	Interval time.Duration
@@ -80,6 +89,7 @@ type evaluationNode struct {
 	stopped            bool
 }
 
+// Evaluator 周期性评估全部启用规则，维护内存持续等待状态机并持久化告警事件。
 type Evaluator struct {
 	service           *Service
 	latest            LatestReader
@@ -90,6 +100,7 @@ type Evaluator struct {
 	storageGeneration uint64
 }
 
+// NewEvaluator 构造告警评估器；未指定 Interval 时默认每 30 秒评估一次。
 func NewEvaluator(service *Service, latest LatestReader, opts EvaluatorOptions) *Evaluator {
 	if opts.Interval <= 0 {
 		opts.Interval = 30 * time.Second

@@ -1,5 +1,6 @@
 package v1
 
+// 协议内置的标量指标字段名与采集源族名称常量。
 const (
 	MetricCPUPercent           = "cpu_percent"
 	MetricLoad1                = "load1"
@@ -25,12 +26,16 @@ var metricStatusFields = [...]string{
 
 var sourceFamilies = [...]string{SourceCPU, SourceLoad, SourceMemory, SourceSwap, SourceUptime}
 
-// MetricStatusFields 和 SourceFamilies 是只读的传输协议字段清单。
-// 两者都按值返回数组，调用方无法改动包级契约。
+// MetricStatusFields 返回内置标量指标状态键的只读副本。
 func MetricStatusFields() [9]string { return metricStatusFields }
-func SourceFamilies() [5]string     { return sourceFamilies }
 
-func DiskMetricKey(path string) string    { return "disk:" + path }
+// SourceFamilies 返回内置基础采集源族名称的只读副本。
+func SourceFamilies() [5]string { return sourceFamilies }
+
+// DiskMetricKey 返回指定挂载路径在 metric_status 与 sources 中使用的标准键名。
+func DiskMetricKey(path string) string { return "disk:" + path }
+
+// NetworkMetricKey 返回指定网卡名称在 metric_status 与 sources 中使用的标准键名。
 func NetworkMetricKey(name string) string { return "network:" + name }
 
 // DisabledStatusFields are optional report signals for locally disabled collectors.

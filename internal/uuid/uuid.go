@@ -1,3 +1,4 @@
+// Package uuid 提供无外部依赖的 UUID v4 生成与格式校验。
 package uuid
 
 import (
@@ -5,6 +6,7 @@ import (
 	"io"
 )
 
+// UUID 从 random 读取 16 字节随机熵，生成标准带连字符的 RFC 4122 v4 字符串。
 func UUID(random io.Reader) (string, error) {
 	var bytes [16]byte
 	if _, err := io.ReadFull(random, bytes[:]); err != nil {
@@ -25,6 +27,7 @@ func UUID(random io.Reader) (string, error) {
 	return string(encoded[:]), nil
 }
 
+// ValidUUID 校验 value 是否为标准 36 字符且包含有效版本与变体位的 UUID。
 func ValidUUID(value string) bool {
 	if len(value) != 36 {
 		return false

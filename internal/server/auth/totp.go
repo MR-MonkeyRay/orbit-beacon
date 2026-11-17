@@ -172,11 +172,13 @@ func (s *Service) consumeSecondFactor(ctx context.Context, tx *storage.Tx, id st
 	return nil
 }
 
+// TOTPStatus 描述用户当前两步验证开启状态及剩余可用恢复码数量。
 type TOTPStatus struct {
 	Enabled                bool `json:"enabled"`
 	RecoveryCodesRemaining int  `json:"recovery_codes_remaining"`
 }
 
+// TOTPStatus 查询用户当前的两步验证开关状态与剩余恢复码计数。
 func (s *Service) TOTPStatus(ctx context.Context, id string) (TOTPStatus, error) {
 	var status TOTPStatus
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
@@ -189,6 +191,7 @@ func (s *Service) TOTPStatus(ctx context.Context, id string) (TOTPStatus, error)
 	return status, err
 }
 
+// TOTPSetup 返回两步验证绑定阶段的 Base32 密钥、otpauth URI 与二维码位图。
 type TOTPSetup struct {
 	Secret string `json:"secret"`
 	URI    string `json:"uri"`
@@ -234,6 +237,8 @@ func requireChanged(result sql.Result, err error, conflict error) error {
 	}
 	return nil
 }
+
+// SetupTOTP 在校验密码后生成新的待确认 TOTP 密钥（有效期 10 分钟），尚未激活两步验证。
 func (s *Service) SetupTOTP(ctx context.Context, id, password string) (TOTPSetup, error) {
 	var setup TOTPSetup
 	if s.box == nil {
@@ -349,6 +354,8 @@ func keepSession(ctx context.Context, tx *storage.Tx, id, token string) error {
 	_, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=? AND token_hash<>?`, id, digest[:])
 	return err
 }
+
+// ConfirmTOTP 验证首枚动态验证码后正式启用 TOTP，生成 10 个一次性恢复码并撤销其他旧会话。
 func (s *Service) ConfirmTOTP(ctx context.Context, id, token, code string) ([]string, error) {
 	if s.box == nil {
 		return nil, ErrTOTPUnavailable
@@ -509,10 +516,14 @@ func (s *Service) changeTOTP(ctx context.Context, id, token, password, otp strin
 	}
 	return codes, nil
 }
+
+// DisableTOTP 在验证当前密码与两步验证码后停用 TOTP、清理恢复码并撤销其他会话。
 func (s *Service) DisableTOTP(ctx context.Context, id, token, password, otp string) error {
 	_, err := s.changeTOTP(ctx, id, token, password, otp, true)
 	return err
 }
+
+// RegenerateRecoveryCodes 在验证密码与两步验证码后作废旧恢复码并签发 10 个新恢复码。
 func (s *Service) RegenerateRecoveryCodes(ctx context.Context, id, token, password, otp string) ([]string, error) {
 	return s.changeTOTP(ctx, id, token, password, otp, false)
 }
@@ -533,6 +544,8 @@ func resetTOTP(ctx context.Context, tx *storage.Tx, id string, now time.Time) er
 	}
 	return audit.Insert(ctx, tx, "user.totp.reset", id, now)
 }
+
+// ResetTOTP 供停服 CLI 清除指定用户的两步验证，并原子撤销其全部会话与 API 令牌。
 func ResetTOTP(ctx context.Context, db *storage.Database, username string, now time.Time) error {
 	lease, leaseErr := db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -556,6 +569,8 @@ func ResetTOTP(ctx context.Context, db *storage.Database, username string, now t
 	}
 	return tx.Commit()
 }
+
+// ResetUserTOTP 允许已认证管理员在校验自身密码后在线重置另一位管理员的两步验证。
 func (s *Service) ResetUserTOTP(ctx context.Context, actorID, token, targetID, password string) error {
 	if s.box == nil {
 		return ErrTOTPUnavailable

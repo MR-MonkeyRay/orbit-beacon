@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// Stats holds aggregated uptime availability percentages and recent average latency for a service.
 type Stats struct {
 	Availability24H *float64 `json:"availability_24h"`
 	Availability7D  *float64 `json:"availability_7d"`
@@ -12,11 +13,13 @@ type Stats struct {
 	AvgLatencyMS24H *float64 `json:"avg_latency_ms_24h"`
 }
 
+// Detail combines a service definition and latest status with its computed availability Stats.
 type Detail struct {
 	Service
 	Stats Stats `json:"stats"`
 }
 
+// Detail loads the service identified by id together with its availability and latency statistics.
 func (m *Manager) Detail(ctx context.Context, id string) (Detail, error) {
 	now := m.now().UTC()
 	list, err := m.list(ctx, now)

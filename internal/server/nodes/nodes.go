@@ -1,3 +1,4 @@
+// Package nodes 管理节点资产、元数据、状态判定、实时身份围栏、探测历史及公开白名单设置。
 package nodes
 
 import (
@@ -25,8 +26,10 @@ import (
 
 type serviceError string
 
+// Error 实现 error 接口，返回节点管理领域的稳定错误标识。
 func (err serviceError) Error() string { return string(err) }
 
+// 节点管理操作返回的领域错误常量。
 const (
 	ErrCapacityReached serviceError = "node capacity reached"
 	ErrNotFound        serviceError = "node not found"
@@ -36,6 +39,7 @@ const (
 	ErrDisabled serviceError = "node is disabled"
 )
 
+// Node 表示管理控制台中的受控节点资产、套餐信息、地理观测与运行状态。
 type Node struct {
 	DisplayOrder  int    `json:"display_order"`
 	PriceAmount   string `json:"price_amount"`
@@ -67,11 +71,13 @@ type Node struct {
 	AgentVersion string     `json:"agent_version"`
 }
 
+// CreateRequest 指定待创建节点的名称与可选所属分组 ID。
 type CreateRequest struct {
 	Name    string          `json:"name"`
 	GroupID json.RawMessage `json:"group_id"`
 }
 
+// MetadataPatch 表示节点资产、套餐及分组的增量修改字段；nil 表示不修改对应属性。
 type MetadataPatch struct {
 	DisplayOrder  *int    `json:"display_order"`
 	PriceAmount   *string `json:"price_amount"`
@@ -94,24 +100,28 @@ type MetadataPatch struct {
 	Tags      *[]string       `json:"tags"`
 }
 
+// BatchRequest 描述对一组节点批量执行禁用、启用或删除操作的请求。
 type BatchRequest struct {
 	NodeIDs []string `json:"node_ids"`
 	Action  string   `json:"action"`
 	Confirm bool     `json:"confirm"`
 }
 
+// BatchResult 返回批量操作中单个节点的执行状态与可选错误码。
 type BatchResult struct {
 	NodeID    string `json:"node_id"`
 	Status    string `json:"status"`
 	ErrorCode string `json:"error_code,omitempty"`
 }
 
+// TrafficSettings 保存节点的月度流量账期起始日、配额上限（字节字符串）与计费模式。
 type TrafficSettings struct {
 	BillingMode string `json:"billing_mode"`
 	BillingDay  int    `json:"billing_day"`
 	QuotaBytes  string `json:"quota_bytes"`
 }
 
+// TrafficSettingsPatch 表示节点流量计费配置的增量补丁。
 type TrafficSettingsPatch struct {
 	BillingMode   *string `json:"billing_mode,omitempty"`
 	BillingDay    *int    `json:"billing_day,omitempty"`
@@ -119,12 +129,14 @@ type TrafficSettingsPatch struct {
 	invalidFields map[string]string
 }
 
+// Options 配置节点服务的容量上限、时钟与随机数源。
 type Options struct {
 	MaxNodes int
 	Now      func() time.Time
 	Random   io.Reader
 }
 
+// Service 管理节点生命周期、凭据认证、公开可见性版本号及探测/流量配置。
 type Service struct {
 	publicMu            sync.RWMutex
 	publicVersion       uint64
@@ -136,6 +148,7 @@ type Service struct {
 	randomMu            sync.Mutex
 }
 
+// NewService 构造节点服务；MaxNodes 非正时默认 500。
 func NewService(db *storage.Database, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
@@ -152,6 +165,7 @@ func NewService(db *storage.Database, opts Options) *Service {
 // Database 和 Capacity 让默认 HTTP 服务共用同一存储策略。
 func (s *Service) Database() *storage.Database { return s.db }
 
+// Capacity 返回当前服务配置的节点数量上限。
 func (s *Service) Capacity() int { return s.maxNodes }
 
 // InvalidatePublic 在普通数据变更提交后使投影过期。
@@ -171,12 +185,14 @@ func (s *Service) InvalidatePublicSafety() {
 	s.publicMu.Unlock()
 }
 
+// PublicSafetyChanges 返回需要立即重建公开实时流的安全版本号及通知 channel。
 func (s *Service) PublicSafetyChanges() (uint64, <-chan struct{}) {
 	s.publicMu.RLock()
 	defer s.publicMu.RUnlock()
 	return s.publicSafetyChanges.Snapshot()
 }
 
+// PublicSafetyVersion 返回当前公开安全可见性版本号。
 func (s *Service) PublicSafetyVersion() uint64 {
 	s.publicMu.RLock()
 	defer s.publicMu.RUnlock()
@@ -184,6 +200,7 @@ func (s *Service) PublicSafetyVersion() uint64 {
 	return version
 }
 
+// CreatePending 在容量允许的前提下创建处于待注册状态的节点资产并写入审计。
 func (s *Service) CreatePending(ctx context.Context, req CreateRequest) (Node, error) {
 	if strings.TrimSpace(req.Name) == "" || len(req.Name) > 255 {
 		return Node{}, ErrInvalidInput
@@ -292,6 +309,7 @@ func scanNode(row scanner, now time.Time) (Node, error) {
 	return node, nil
 }
 
+// Get 按节点 ID 读取完整节点视图；不存在时返回 ErrNotFound。
 func (s *Service) Get(ctx context.Context, id string) (Node, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -433,6 +451,7 @@ func (s *Service) PatchMetadata(ctx context.Context, id string, patch MetadataPa
 	return node, nil
 }
 
+// SetDisabled 切换节点禁用状态；禁用时取消活动指令并立即触发安全流重建。
 func (s *Service) SetDisabled(ctx context.Context, id string, disabled bool) error {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -535,6 +554,7 @@ type Authentication struct {
 	CredentialEpoch int64  `json:"-"`
 }
 
+// AuthenticateToken 根据节点 Bearer 凭据摘要验证节点身份；已禁用节点返回 ErrDisabled。
 func (s *Service) AuthenticateToken(ctx context.Context, token string) (Authentication, error) {
 	if len(token) < 32 || len(token) > 256 {
 		return Authentication{}, ErrUnauthenticated
@@ -608,6 +628,7 @@ func (s *Service) Delete(ctx context.Context, id string, confirm bool) error {
 	return nil
 }
 
+// Batch 对不超过 500 个节点逐个独立事务执行禁用、启用或删除，并返回每项结果。
 func (s *Service) Batch(ctx context.Context, req BatchRequest) ([]BatchResult, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -666,6 +687,7 @@ func readTrafficSettings(ctx context.Context, q interface {
 	return settings, err
 }
 
+// GetTrafficSettings 读取指定节点的流量计费配置。
 func (s *Service) GetTrafficSettings(ctx context.Context, id string) (TrafficSettings, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -676,6 +698,7 @@ func (s *Service) GetTrafficSettings(ctx context.Context, id string) (TrafficSet
 	return readTrafficSettings(ctx, lease, id)
 }
 
+// PatchTrafficSettings 校验并增量更新指定节点的流量计费日、配额与计费模式。
 func (s *Service) PatchTrafficSettings(ctx context.Context, id string, patch TrafficSettingsPatch) (TrafficSettings, error) {
 	fields := make(map[string]string)
 	for field, reason := range patch.invalidFields {

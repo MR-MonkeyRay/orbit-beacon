@@ -13,17 +13,24 @@ import (
 )
 
 var (
+	// ErrConfirmationStale 表示人工恢复预检令牌因状态修订、实例变更或过期而失效。
 	ErrConfirmationStale = errors.New("storage_confirmation_stale")
-	ErrManualRequired    = errors.New("storage_manual_required")
-	ErrRecoveryNotFound  = errors.New("storage_operation_not_found")
-	ErrRecoveryBusy      = errors.New("storage_busy")
+	// ErrManualRequired 表示当前域必须经过人工确认或拒绝空参数操作。
+	ErrManualRequired = errors.New("storage_manual_required")
+	// ErrRecoveryNotFound 表示恢复操作 ID 不存在、越权或已超出保留窗口。
+	ErrRecoveryNotFound = errors.New("storage_operation_not_found")
+	// ErrRecoveryBusy 表示当前已有互斥的恢复或切主操作正在执行。
+	ErrRecoveryBusy = errors.New("storage_busy")
 )
 
+// RecoveryRequest 指定人工存储恢复预检的目标域、动作（promote/sync 等）及目标角色。
 type RecoveryRequest struct {
 	Domain Domain `json:"domain"`
 	Action string `json:"action"`
 	Target string `json:"target"`
 }
+
+// RecoveryEndpoint 描述主备存储拓扑中单个成员的驱动、身份及健康状态。
 type RecoveryEndpoint struct {
 	Role       string `json:"role"`
 	Driver     string `json:"driver"`
@@ -32,10 +39,14 @@ type RecoveryEndpoint struct {
 	Reachable  bool   `json:"reachable"`
 	Ready      bool   `json:"ready"`
 }
+
+// RecoveryAction 表示某个域在当前状态下允许执行的一条恢复动作及目标角色。
 type RecoveryAction struct {
 	Action string `json:"action"`
 	Target string `json:"target"`
 }
+
+// RecoveryOperation 表示一次人工存储恢复或重新初始化同步任务的执行状态与进度。
 type RecoveryOperation struct {
 	ID         string  `json:"id"`
 	Action     string  `json:"action"`
@@ -45,6 +56,8 @@ type RecoveryOperation struct {
 	RowsCopied int64   `json:"rows_copied"`
 	ErrorCode  string  `json:"error_code"`
 }
+
+// RecoveryPreview 返回人工恢复预检生成的一次性确认码、源/目标成员信息与数据丢失确认要求。
 type RecoveryPreview struct {
 	OperationID                string            `json:"operation_id"`
 	ExpiresAt                  time.Time         `json:"expires_at"`
@@ -54,6 +67,8 @@ type RecoveryPreview struct {
 	Confirmation               string            `json:"confirmation"`
 	RequiresDataLossAcceptance bool              `json:"requires_data_loss_acceptance"`
 }
+
+// RecoveryDomain 汇总单个逻辑域的主备连接状态、复制滞后/数据丢失窗口、操作进度与可用操作列表。
 type RecoveryDomain struct {
 	Domain            Domain             `json:"domain"`
 	State             string             `json:"state"`
@@ -70,6 +85,8 @@ type RecoveryDomain struct {
 	Operation         *RecoveryOperation `json:"operation"`
 	AvailableActions  []RecoveryAction   `json:"available_actions"`
 }
+
+// RecoveryStatus 汇总整个服务端存储子系统的高可用拓扑状态、通知偏好与各域详情。
 type RecoveryStatus struct {
 	Enabled              bool                        `json:"enabled"`
 	Revision             uint64                      `json:"revision"`
@@ -282,6 +299,8 @@ func standaloneStatus(cfg config.DatabaseConfig, dbs *Databases) RecoveryStatus 
 	}
 	return s
 }
+
+// RecoveryStatus 返回主备存储复制拓扑、各域健康状态与当前可执行恢复操作的实时快照。
 func (dbs *Databases) RecoveryStatus(ctx context.Context) (RecoveryStatus, error) {
 	if err := ctx.Err(); err != nil {
 		return RecoveryStatus{}, err
@@ -378,6 +397,8 @@ func OpenRecoveryDatabases(ctx context.Context, cfg config.DatabaseConfig, dataD
 	}
 	return dbs, nil
 }
+
+// PreviewRecovery 为操作者生成并暂存一次人工存储恢复预检，返回确认短语与风险评估。
 func (dbs *Databases) PreviewRecovery(ctx context.Context, actor string, req RecoveryRequest) (RecoveryPreview, error) {
 	r := dbs.replication
 	if r == nil || actor == "" {
@@ -448,6 +469,8 @@ func cloneRecoveryOperations(ops map[string]*recoveryOperationRecord) map[string
 	}
 	return result
 }
+
+// AcceptRecovery 校验确认码与状态快照未被篡改后，将恢复操作入队交由后台执行。
 func (dbs *Databases) AcceptRecovery(ctx context.Context, actor, id, confirmation string, acceptDataLoss bool) (RecoveryOperation, error) {
 	r := dbs.replication
 	if r == nil {
@@ -500,6 +523,8 @@ func (dbs *Databases) AcceptRecovery(ctx context.Context, actor, id, confirmatio
 	}
 	return op.RecoveryOperation, nil
 }
+
+// RecoveryOperation 查询指定操作者名下人工恢复任务 id 的当前执行进度。
 func (dbs *Databases) RecoveryOperation(ctx context.Context, actor, id string) (RecoveryOperation, error) {
 	r := dbs.replication
 	if r == nil {

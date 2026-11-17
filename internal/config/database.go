@@ -14,12 +14,14 @@ import (
 	"time"
 )
 
+// DatabaseConfig 描述单库（SQLite/MySQL）或 MySQL 异步主备拓扑及故障切换阈值。
 type DatabaseConfig struct {
 	Primary  DatabaseEndpoint  `json:"primary"`
 	Standby  *DatabaseEndpoint `json:"standby,omitempty"`
 	Failover FailoverConfig    `json:"failover"`
 }
 
+// MarshalJSON 实现 json.Marshaler，仅在配置了 standby 时序列化 failover 配置。
 func (d DatabaseConfig) MarshalJSON() ([]byte, error) {
 	var failover *FailoverConfig
 	if d.Standby != nil {
@@ -32,6 +34,7 @@ func (d DatabaseConfig) MarshalJSON() ([]byte, error) {
 	}{d.Primary, d.Standby, failover})
 }
 
+// DatabaseEndpoint 定义单个 SQLite 或 MySQL 连接端点的地址、凭据文件与库名。
 type DatabaseEndpoint struct {
 	Driver          string       `json:"driver,omitempty"`
 	Network         string       `json:"network,omitempty"`
@@ -43,6 +46,7 @@ type DatabaseEndpoint struct {
 	TLS             *DatabaseTLS `json:"tls,omitempty"`
 }
 
+// UnmarshalJSON 实现 json.Unmarshaler，严格拒绝未知字段、null 及 SQLite 下的 MySQL 参数。
 func (endpoint *DatabaseEndpoint) UnmarshalJSON(data []byte) error {
 	type plain DatabaseEndpoint
 	var raw plain
@@ -72,11 +76,13 @@ func (endpoint *DatabaseEndpoint) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// DatabaseTLS 配置 MySQL TCP 连接的可选 TLS 服务器名称与私有 CA 证书路径。
 type DatabaseTLS struct {
 	ServerName string `json:"server_name,omitempty"`
 	CAFile     string `json:"ca_file,omitempty"`
 }
 
+// UnmarshalJSON 实现 json.Unmarshaler，拒绝未知字段与 null 值。
 func (tls *DatabaseTLS) UnmarshalJSON(data []byte) error {
 	type plain DatabaseTLS
 	var raw plain
@@ -96,6 +102,7 @@ func (tls *DatabaseTLS) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// FailoverConfig 定义异步备库的自动故障判定、可接受丢失窗口与回切稳定阈值。
 type FailoverConfig struct {
 	FailureTimeout time.Duration `json:"-"`
 	MaxLossWindow  time.Duration `json:"-"`
@@ -103,10 +110,12 @@ type FailoverConfig struct {
 	ManualAfter    time.Duration `json:"-"`
 }
 
+// MarshalJSON 实现 json.Marshaler，将时长编码为 Go duration 字符串。
 func (f FailoverConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]string{"failure_timeout": f.FailureTimeout.String(), "max_loss_window": f.MaxLossWindow.String(), "recovery_stable": f.RecoveryStable.String(), "manual_after": f.ManualAfter.String()})
 }
 
+// UnmarshalJSON 实现 json.Unmarshaler，基于默认值合并解析故障切换时长参数。
 func (f *FailoverConfig) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return errors.New("database.failover 必须是对象")
@@ -165,6 +174,7 @@ func decodeDatabaseJSON(data []byte, target any) error {
 	return nil
 }
 
+// UnmarshalJSON 实现 json.Unmarshaler，解码并规范化 primary、standby 及 failover 配置。
 func (d *DatabaseConfig) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return errors.New("database 必须是对象")
@@ -291,6 +301,7 @@ func validateFailover(f FailoverConfig) error {
 	return nil
 }
 
+// Validate 规范化并校验主备数据库端点与故障切换参数约束。
 func (d DatabaseConfig) Validate() error {
 	if err := normalizeEndpoint(&d.Primary); err != nil {
 		return err

@@ -1,3 +1,4 @@
+// orbitbeacon-server 运行 OrbitBeacon 监控服务端，并提供离线恢复、TOTP 重置、存储维护及健康检查子命令。
 package main
 
 import (

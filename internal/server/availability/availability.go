@@ -19,6 +19,7 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
+// Service 周期性累计节点在线与离线观测时长，并提供按 UTC 日的可用率查询与清理能力。
 type Service struct {
 	db                *storage.Database
 	now               func() time.Time
@@ -28,6 +29,7 @@ type Service struct {
 	storageGeneration uint64
 }
 
+// NewService 创建可用率统计服务；clock 或 logger 为空时回退到系统时间与默认 logger。
 func NewService(db *storage.Database, clock func() time.Time, logger *slog.Logger, receivedAt func(string, *nodes.LiveIdentity) (time.Time, bool)) *Service {
 	if clock == nil {
 		clock = time.Now
@@ -134,6 +136,8 @@ func (s *Service) Tick(ctx context.Context) error {
 	}
 	return tx.Commit()
 }
+
+// Run 每分钟触发一次 Tick 累计在线时长，直至上下文取消。
 func (s *Service) Run(ctx context.Context) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
@@ -150,6 +154,8 @@ func (s *Service) Run(ctx context.Context) {
 		}
 	}
 }
+
+// Cleanup 分批删除超出 90 个 UTC 日保留窗口的旧可用率记录。
 func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -172,6 +178,7 @@ func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64,
 	return count, nil
 }
 
+// Daily 表示单个 UTC 日内的在线/离线/未知秒数及计算出的可用率百分比。
 type Daily struct {
 	Day     string   `json:"day"`
 	Online  int64    `json:"online_seconds"`
@@ -179,16 +186,21 @@ type Daily struct {
 	Unknown int64    `json:"unknown_seconds"`
 	Percent *float64 `json:"percent"`
 }
+
+// Summary 包含连续多日的可用率序列及汇总百分比。
 type Summary struct {
 	Days    []Daily  `json:"days"`
 	Percent *float64 `json:"percent"`
 }
+
+// Public 是用于匿名状态页展示的精简 30 日可用率投影。
 type Public struct {
 	StartDay string     `json:"start_day"`
 	Percent  *float64   `json:"percent"`
 	Days     []*float64 `json:"days"`
 }
 
+// Percent 根据已观测在线与离线秒数计算保留两位小数的可用率；无样本返回 nil，有离线时长则封顶 99.99。
 func Percent(online, offline int64) *float64 {
 	if online+offline == 0 {
 		return nil
@@ -199,6 +211,8 @@ func Percent(online, offline int64) *float64 {
 	}
 	return &value
 }
+
+// Fill 将稀疏的日统计行补全为连续 days 天的完整可用率窗口，未观测时长记入 Unknown。
 func Fill(rows []Daily, days int, now time.Time) Summary {
 	now = now.UTC()
 	today := now.Truncate(24 * time.Hour)
@@ -225,6 +239,8 @@ func Fill(rows []Daily, days int, now time.Time) Summary {
 	out.Percent = Percent(online, offline)
 	return out
 }
+
+// Project 将查询缓存中的 JSON 可用率行投影为状态页所需的最近 30 日序列。
 func Project(raw string, now time.Time) (Public, error) {
 	var rows []Daily
 	if raw != "" {
@@ -239,6 +255,8 @@ func Project(raw string, now time.Time) (Public, error) {
 	}
 	return out, nil
 }
+
+// Read 查询指定节点最近 30 或 90 个 UTC 日的可用率统计。
 func (s *Service) Read(ctx context.Context, id string, days int, now time.Time) (Summary, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {

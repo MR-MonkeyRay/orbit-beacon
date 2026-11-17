@@ -23,10 +23,15 @@ import (
 	"sync/atomic"
 )
 
+// Uploader 抽象将本地加密备份归档上传至外部对象存储的能力。
 type Uploader interface {
 	Upload(ctx context.Context, destination ObjectDestination, credentials ObjectCredentials, path, key, sha256 string) (UploadResult, error)
 }
+
+// UploadResult 表示对象存储上传的返回状态；OutcomeUnknown 为 true 时代表远端结果未明。
 type UploadResult struct{ OutcomeUnknown bool }
+
+// Options 配置备份服务的目录、凭证密钥、上传器与运行时回调依赖。
 type Options struct {
 	DataDir       string
 	History       *storage.Database
@@ -42,6 +47,8 @@ type Options struct {
 	beforeTerminal      func(*storage.Tx) error
 	afterTerminalCommit func() error
 }
+
+// Service 管理导出/定时备份任务、计划调度、密码分发、产物清理与远程恢复编排。
 type Service struct {
 	db             *storage.Database
 	box            *secretbox.Box
@@ -57,6 +64,7 @@ type Service struct {
 	localTempAfter string
 }
 
+// New 初始化备份服务并校验运行目录、密钥及可选依赖配置。
 func New(db *storage.Database, opts Options) (*Service, error) {
 	if db == nil || opts.SecretBox == nil || !filepath.IsAbs(opts.DataDir) {
 		return nil, &Error{Code: "secret_unreadable"}
@@ -102,6 +110,7 @@ func (s *Service) signal() {
 	}
 }
 
+// CreateExport 为指定操作者创建一条按需导出任务并立即触发后台执行。
 func (s *Service) CreateExport(ctx context.Context, actorID string, categories []Category) (Task, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {

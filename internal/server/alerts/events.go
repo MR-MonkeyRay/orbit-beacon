@@ -12,6 +12,7 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
+// Event 表示已持久化的一条告警触发及恢复记录（携带规则触发时的快照属性）。
 type Event struct {
 	Target         *string    `json:"target"`
 	Silenced       bool       `json:"silenced"`
@@ -28,12 +29,15 @@ type Event struct {
 	ResolvedAt     *time.Time `json:"resolved_at"`
 	LastNotifiedAt *time.Time `json:"last_notified_at"`
 }
+
+// EventPage 表示告警事件的游标分页列表。
 type EventPage struct {
 	Events     []Event `json:"events"`
 	HasMore    bool    `json:"has_more"`
 	NextCursor string  `json:"next_cursor,omitempty"`
 }
 
+// FiringCounts 汇总当前仍在触发中的各类严重级别告警数量。
 type FiringCounts struct {
 	Total    int64 `json:"total"`
 	Info     int64 `json:"info"`
@@ -42,6 +46,7 @@ type FiringCounts struct {
 	Unknown  int64 `json:"unknown"`
 }
 
+// AlertSummary 返回当前活动告警分类计数及最新数条告警事件。
 type AlertSummary struct {
 	Firing FiringCounts `json:"firing"`
 	Newest []Event      `json:"newest"`
@@ -162,6 +167,7 @@ func (s *Service) Summary(ctx context.Context) (AlertSummary, error) {
 	return summary, nil
 }
 
+// Events 按触发时间倒序及状态过滤返回游标分页的告警事件。
 func (s *Service) Events(ctx context.Context, state string, limit int, before string) (EventPage, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -219,6 +225,8 @@ func (s *Service) Events(ctx context.Context, state string, limit int, before st
 	}
 	return page, nil
 }
+
+// Cleanup 分批清理恢复时间早于 before 的历史告警事件。
 func (s *Service) Cleanup(ctx context.Context, before time.Time, limit int) (int64, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {

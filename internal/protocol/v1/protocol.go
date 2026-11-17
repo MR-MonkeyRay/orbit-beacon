@@ -1,3 +1,4 @@
+// Package v1 定义 Agent 与 Server 间使用的 v1 HTTP JSON 通信契约、校验逻辑及报文预算。
 package v1
 
 import (
@@ -17,16 +18,20 @@ import (
 	"unicode"
 )
 
+// ProtocolVersion 是当前注册、恢复与上报协议版本号。
 const ProtocolVersion = 1
 
+// MaxTrafficEntries 限定单次上报携带的未结算流量桶上限。
 const MaxTrafficEntries = 24
 
+// ErrProtocolUnsupported 表示请求的协议版本不被当前服务端或客户端支持。
 var ErrProtocolUnsupported = errors.New("protocol unsupported")
 
 // DecimalUint64 保证累计字节计数在各 JSON 消费方之间保持精确。
 // JSON 中始终编码为带引号、无多余前导零的无符号十进制字符串。
 type DecimalUint64 string
 
+// Validate 校验无符号十进制字符串是否符合规范且在 uint64 范围内。
 func (n DecimalUint64) Validate() error {
 	value := string(n)
 	if value == "" || (len(value) > 1 && value[0] == '0') {
@@ -43,6 +48,7 @@ func (n DecimalUint64) Validate() error {
 	return nil
 }
 
+// MarshalJSON 实现 json.Marshaler，在序列化前校验十进制字节计数格式。
 func (n DecimalUint64) MarshalJSON() ([]byte, error) {
 	if err := n.Validate(); err != nil {
 		return nil, err
@@ -50,6 +56,7 @@ func (n DecimalUint64) MarshalJSON() ([]byte, error) {
 	return json.Marshal(string(n))
 }
 
+// UnmarshalJSON 实现 json.Unmarshaler，要求 JSON 值为十进制字符串并校验合法性。
 func (n *DecimalUint64) UnmarshalJSON(data []byte) error {
 	data = bytes.TrimSpace(data)
 	if len(data) < 2 || data[0] != '"' {
@@ -67,6 +74,7 @@ func (n *DecimalUint64) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// System 描述受控节点的主机名、操作系统、架构与 Agent 版本。
 type System struct {
 	Hostname     string `json:"hostname"`
 	OS           string `json:"os"`
@@ -74,6 +82,7 @@ type System struct {
 	AgentVersion string `json:"agent_version,omitempty"`
 }
 
+// EnrollmentRequest 是 Agent 使用一次性激活票据注册节点凭据的请求载荷。
 type EnrollmentRequest struct {
 	ProtocolVersion   int    `json:"protocol_version"`
 	InstallationID    string `json:"installation_id"`
@@ -82,6 +91,7 @@ type EnrollmentRequest struct {
 	System            System `json:"system"`
 }
 
+// Validate 检查注册请求的协议版本、安装标识、256-bit 节点凭据及主机信息。
 func (r EnrollmentRequest) Validate() error {
 	if r.ProtocolVersion != ProtocolVersion {
 		return ErrProtocolUnsupported
@@ -95,6 +105,7 @@ func (r EnrollmentRequest) Validate() error {
 	return r.System.Validate()
 }
 
+// Validate 检查系统标识字段的长度上限及 Agent 版本号允许字符集。
 func (s System) Validate() error {
 	if len(s.Hostname) > 255 || len(s.OS) > 64 || len(s.Arch) > 64 {
 		return errors.New("system identity exceeds field limits")
@@ -118,12 +129,14 @@ func (s System) Validate() error {
 // v2 区分活跃凭据与未绑定的初始身份。
 const EnrollmentCheckVersion = 2
 
+// EnrollmentCheckRequest 用于确认本地已保存节点凭据是否在服务端仍有效。
 type EnrollmentCheckRequest struct {
 	ProtocolVersion int    `json:"protocol_version"`
 	InstallationID  string `json:"installation_id"`
 	NodeToken       string `json:"node_token"`
 }
 
+// Validate 校验核对请求的协议版本与节点凭据格式。
 func (r EnrollmentCheckRequest) Validate() error {
 	if r.ProtocolVersion != EnrollmentCheckVersion {
 		return ErrProtocolUnsupported
@@ -131,6 +144,7 @@ func (r EnrollmentCheckRequest) Validate() error {
 	return validateEnrollmentCredential(r.InstallationID, r.NodeToken)
 }
 
+// EnrollmentCheckResponse 返回节点凭据当前在服务端的激活绑定状态。
 type EnrollmentCheckResponse struct {
 	Claimed         bool      `json:"claimed"`
 	CredentialState string    `json:"credential_state"`
@@ -152,6 +166,7 @@ func validateEnrollmentCredential(installation, token string) error {
 	return nil
 }
 
+// EnrollmentResponse 是节点注册或凭据恢复成功后服务端返回的节点身份确认。
 type EnrollmentResponse struct {
 	NodeID     string    `json:"node_id"`
 	ServerTime time.Time `json:"server_time"`
@@ -163,6 +178,7 @@ type RecoveryRequest struct {
 	InstallationID string `json:"installation_id"`
 }
 
+// Validate 校验恢复请求中的安装标识非空且长度合法。
 func (r RecoveryRequest) Validate() error {
 	if strings.TrimSpace(r.InstallationID) == "" || len(r.InstallationID) > 255 {
 		return errors.New("invalid installation identity")
@@ -170,6 +186,7 @@ func (r RecoveryRequest) Validate() error {
 	return nil
 }
 
+// SourceMetadata 记录单类采集源的样本编号、龄期、采集间隔及差分窗口（单位毫秒）。
 type SourceMetadata struct {
 	SampleID            string `json:"sample_id"`
 	AgeMS               int64  `json:"age_ms"`
@@ -177,6 +194,7 @@ type SourceMetadata struct {
 	MeasurementWindowMS *int64 `json:"measurement_window_ms,omitempty"`
 }
 
+// Validate 校验采样来源元数据的字段边界与非负龄期约束。
 func (s SourceMetadata) Validate() error {
 	if s.SampleID == "" || len(s.SampleID) > 255 || s.AgeMS < 0 || s.SourceIntervalMS <= 0 {
 		return errors.New("invalid metric source")
@@ -187,6 +205,7 @@ func (s SourceMetadata) Validate() error {
 	return nil
 }
 
+// Fresh 判断采样来源在零额外延迟时是否满足新鲜度要求。
 func (s SourceMetadata) Fresh() bool {
 	if s.Validate() != nil {
 		return false
@@ -207,6 +226,7 @@ func (s SourceMetadata) FreshAfter(elapsedMS int64) bool {
 	return s.AgeMS <= limit && elapsedMS <= limit-s.AgeMS
 }
 
+// DiskMetrics 表示单个挂载路径的容量与可选 inode 使用率快照。
 type DiskMetrics struct {
 	Path        string    `json:"path"`
 	TotalBytes  *uint64   `json:"total_bytes"`
@@ -216,24 +236,28 @@ type DiskMetrics struct {
 	SampledAt   time.Time `json:"sampled_at"`
 }
 
+// NetworkMetrics 表示单个网卡的收发速率（字节/秒）。
 type NetworkMetrics struct {
 	Name          string   `json:"name"`
 	RxBytesPerSec *float64 `json:"rx_bytes_per_sec"`
 	TxBytesPerSec *float64 `json:"tx_bytes_per_sec"`
 }
 
+// DiskIOMetrics 表示物理整盘聚合的读写吞吐率（字节/秒）与最高忙碌率百分比。
 type DiskIOMetrics struct {
 	ReadBytesPerSec  float64 `json:"read_bytes_per_sec"`
 	WriteBytesPerSec float64 `json:"write_bytes_per_sec"`
 	BusyPercent      float64 `json:"busy_percent"`
 }
 
+// PressureMetrics 表示 Linux PSI some avg60 的 CPU、内存与 IO 压力百分比。
 type PressureMetrics struct {
 	CPU    *float64 `json:"cpu"`
 	Memory *float64 `json:"memory"`
 	IO     *float64 `json:"io"`
 }
 
+// Metrics 承载节点一次上报的全部标量指标、磁盘与网卡序列以及来源/状态元数据。
 type Metrics struct {
 	DiskIO               *DiskIOMetrics            `json:"disk_io"`
 	Pressure             *PressureMetrics          `json:"pressure"`
@@ -262,6 +286,7 @@ func validStatus(status string) bool {
 	}
 }
 
+// Validate 校验全部指标数值范围、物理关系（如已用不超总量）及状态/来源字典完整性。
 func (m Metrics) Validate() error {
 	bounded := func(value float64, limit float64) bool {
 		return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= limit
@@ -399,6 +424,7 @@ func (m Metrics) Validate() error {
 	return nil
 }
 
+// Traffic 表示单个进程代次（epoch）在某 UTC 小时桶内累计的收发字节计数。
 type Traffic struct {
 	Epoch       string        `json:"epoch"`
 	PeriodStart time.Time     `json:"period_start"`
@@ -406,6 +432,7 @@ type Traffic struct {
 	TxBytes     DecimalUint64 `json:"tx_bytes"`
 }
 
+// Validate 校验流量桶的十六进制 epoch、UTC 整点时间及 int64 封顶限制。
 func (t Traffic) Validate() error {
 	if len(t.Epoch) < 1 || len(t.Epoch) > 64 {
 		return errors.New("invalid traffic identity")
@@ -434,6 +461,7 @@ func (t Traffic) Validate() error {
 	return nil
 }
 
+// ProbeResult 表示 Agent 对单个探测目标的最新检测结果或初始 pending 状态。
 type ProbeResult struct {
 	TLSExpiresAt *time.Time `json:"tls_expires_at"`
 	Target       string     `json:"target"`
@@ -444,6 +472,7 @@ type ProbeResult struct {
 	CheckedAt    time.Time  `json:"checked_at"`
 }
 
+// Validate 校验探测目标格式、成功/失败/pending 状态一致性、延迟区间与可入库时间。
 func (p ProbeResult) Validate() error {
 	if err := ValidateProbeTarget(p.Target); err != nil {
 		return err

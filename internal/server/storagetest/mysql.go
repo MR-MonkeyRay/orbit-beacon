@@ -23,6 +23,7 @@ import (
 	"orbitbeacon/internal/server/storage"
 )
 
+// Fixture 管理单次集成测试动态创建的远程独立 MySQL 临时库、应用账号与清理生命周期。
 type Fixture struct {
 	runtime         string
 	cfg             config.DatabaseConfig
@@ -70,6 +71,7 @@ func fixtureDatabases(endpoint config.DatabaseEndpoint) config.DatabaseConfig {
 	return config.DatabaseConfig{Primary: primary, Standby: &standby}
 }
 
+// Start 读取远程 MySQL 配置并在未显式设置 ORBITBEACON_TEST_MYSQL=1 时跳过测试；启用后创建独立测试库与受限账号。
 func Start(t testing.TB) *Fixture {
 	t.Helper()
 	if os.Getenv("ORBITBEACON_TEST_MYSQL") != "1" {
@@ -152,6 +154,7 @@ func Start(t testing.TB) *Fixture {
 	return f
 }
 
+// Endpoint 返回夹具中指定角色（primary 或 standby）的数据库连接配置。
 func (f *Fixture) Endpoint(role string) config.DatabaseEndpoint {
 	if role == "standby" && f.cfg.Standby != nil {
 		return *f.cfg.Standby
@@ -159,6 +162,7 @@ func (f *Fixture) Endpoint(role string) config.DatabaseEndpoint {
 	return f.cfg.Primary
 }
 
+// Open 在测试主库端点上初始化并打开指定逻辑域的 *storage.Database 句柄。
 func (f *Fixture) Open(t testing.TB, domain storage.Domain) *storage.Database {
 	t.Helper()
 	if f.dbs == nil {
@@ -215,6 +219,7 @@ func fixtureMySQLConfig(endpoint config.DatabaseEndpoint, database string) (*mys
 	return cfg, nil
 }
 
+// Raw 在确保主库 schema 初始化完成后返回直连主端点的底层 *sql.DB。
 func (f *Fixture) Raw(t testing.TB, domain storage.Domain) *sql.DB {
 	t.Helper()
 	_ = f.Open(t, domain)

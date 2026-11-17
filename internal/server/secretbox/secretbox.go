@@ -10,8 +10,10 @@ import (
 	"errors"
 )
 
+// ErrCiphertext 表示密文版本不支持、长度不足或 GCM 认证失败。
 var ErrCiphertext = errors.New("invalid secret ciphertext")
 
+// Box 封装按特定用途派生的 AES-256-GCM AEAD 加解密实例。
 type Box struct{ aead cipher.AEAD }
 
 // New 派生按用途隔离的加密密钥。解密已有密文须使用封装时相同的 purpose 和 AAD。
@@ -35,7 +37,8 @@ func New(master []byte, purpose string) (*Box, error) {
 	return &Box{aead: aead}, nil
 }
 
-// 格式：版本字节（1）、随机 12 字节 nonce、密文与 GCM 标签。
+// Seal 使用随机 12 字节 nonce 和指定 AAD 加密明文。
+// 密文格式：版本字节（1）、12 字节 nonce、密文与 GCM 标签。
 func (b *Box) Seal(aad string, plaintext []byte) ([]byte, error) {
 	nonce := make([]byte, b.aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
@@ -44,6 +47,8 @@ func (b *Box) Seal(aad string, plaintext []byte) ([]byte, error) {
 	prefix := append([]byte{1}, nonce...)
 	return b.aead.Seal(prefix, nonce, plaintext, []byte(aad)), nil
 }
+
+// Open 校验版本字节并解密 Seal 生成的密文；AAD 须与加密时一致。
 func (b *Box) Open(aad string, ciphertext []byte) ([]byte, error) {
 	n := b.aead.NonceSize()
 	if len(ciphertext) < 1+n+b.aead.Overhead() || ciphertext[0] != 1 {

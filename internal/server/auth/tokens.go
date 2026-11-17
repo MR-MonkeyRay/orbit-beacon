@@ -18,6 +18,7 @@ import (
 	"orbitbeacon/internal/uuid"
 )
 
+// ErrAPITokenLimit 表示已达到只读 API 令牌总数量上限（20 个）。
 const ErrAPITokenLimit serviceError = "API token limit reached"
 
 // APIToken 仅含可重复读取的元数据。明文只由创建方法单独返回。
@@ -32,6 +33,7 @@ type APIToken struct {
 	RateLimitPerMinute *int    `json:"rate_limit_per_minute"`
 }
 
+// ListAPITokens 返回所有只读 API 令牌元数据（不含明文或哈希）。
 func (s *Service) ListAPITokens(ctx context.Context) ([]APIToken, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -55,6 +57,7 @@ func (s *Service) ListAPITokens(ctx context.Context) ([]APIToken, error) {
 	return tokens, rows.Err()
 }
 
+// CreateAPIToken 在校验管理员会话与当前密码后签发新的 obt_ 令牌，仅本次返回明文。
 func (s *Service) CreateAPIToken(ctx context.Context, userID, sessionToken, name string, days *int, password string) (APIToken, string, error) {
 	if !utf8.ValidString(name) || strings.TrimSpace(name) == "" || len(name) > 100 || (days != nil && *days != 30 && *days != 90 && *days != 365) {
 		return APIToken{}, "", ErrInvalidInput
@@ -128,6 +131,7 @@ func (s *Service) CreateAPIToken(ctx context.Context, userID, sessionToken, name
 	return token, plaintext, nil
 }
 
+// RevokeAPIToken 删除指定只读 API 令牌、清除内存限流桶并写入审计日志。
 func (s *Service) RevokeAPIToken(ctx context.Context, id string) error {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -239,6 +243,7 @@ func (s *Service) recordAPITokenUse(ctx context.Context, id string, now time.Tim
 	}()
 }
 
+// 只读 API 令牌的默认每分钟限额及最大签发总量。
 const (
 	DefaultAPITokenRateLimit = 600
 	maxAPITokens             = 20
@@ -252,6 +257,7 @@ func effectiveAPITokenLimit(value string) int {
 	return limit
 }
 
+// APITokenRateLimit 读取全局只读 API 令牌每分钟限额（无效时回退到默认值 600）。
 func (s *Service) APITokenRateLimit(ctx context.Context) (int, error) {
 	var value string
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
@@ -264,6 +270,7 @@ func (s *Service) APITokenRateLimit(ctx context.Context) (int, error) {
 	return effectiveAPITokenLimit(value), err
 }
 
+// SetAPITokenRateLimit 为单个 API 令牌设置独立每分钟限额；传 nil 时恢复遵循全局限额。
 func (s *Service) SetAPITokenRateLimit(ctx context.Context, id string, limit *int) error {
 	if limit != nil && (*limit < 1 || *limit > 100000) {
 		return ErrInvalidInput
@@ -296,6 +303,7 @@ func (s *Service) SetAPITokenRateLimit(ctx context.Context, id string, limit *in
 	return tx.Commit()
 }
 
+// SetGlobalAPITokenRateLimit 更新全局只读 API 令牌每分钟默认限额（1–100000）并记录审计。
 func (s *Service) SetGlobalAPITokenRateLimit(ctx context.Context, limit int) error {
 	if limit < 1 || limit > 100000 {
 		return ErrInvalidInput

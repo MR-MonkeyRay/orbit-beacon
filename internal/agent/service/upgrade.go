@@ -163,6 +163,7 @@ type boundedOutput struct {
 	exceeded bool
 }
 
+// Write caps child process stdout/stderr capture at 4 KiB during self-checks.
 func (b *boundedOutput) Write(p []byte) (int, error) {
 	n := len(p)
 	if b.Len()+n > 4096 {

@@ -20,6 +20,7 @@ import (
 	"orbitbeacon/internal/uuid"
 )
 
+// MaxPendingPerChannel 限定单个通知通道在队列合并发生前允许堆积的待发记录上限。
 const MaxPendingPerChannel = 100
 
 var backoffs = []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute, time.Hour}
@@ -154,6 +155,7 @@ func (s *Service) Wake() {
 	}
 }
 
+// Delivery 表示持久化的通知投递任务状态、尝试次数及洪泛合并计数。
 type Delivery struct {
 	ID             string    `json:"id"`
 	ChannelID      string    `json:"channel_id"`
@@ -443,6 +445,8 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Test 在记录审计和扣减速率额度后向指定渠道发送一条测试通知。
 func (s *Service) Test(ctx context.Context, id string) (Result, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -486,6 +490,8 @@ func (s *Service) Test(ctx context.Context, id string) (Result, error) {
 	p.Node.Name = "OrbitBeacon"
 	return s.sender.Send(ctx, c, secret, p), nil
 }
+
+// Cleanup 分批清理已终态（sent/failed）且超过 30 天的历史投递记录；pending 记录不受此清理影响。
 func (s *Service) Cleanup(ctx context.Context, now time.Time, limit int) (int64, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {

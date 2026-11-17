@@ -458,6 +458,8 @@ func openConfigured(ctx context.Context, cfg config.DatabaseConfig, dataDir stri
 	}
 	return result, nil
 }
+
+// OpenActiveDomain 仅打开并检验 cfg 中当前处于活跃角色的单一逻辑域数据库连接。
 func OpenActiveDomain(ctx context.Context, cfg config.DatabaseConfig, domain Domain, dataDir string) (*Database, error) {
 	dbs, err := openConfigured(ctx, cfg, dataDir, true, domain)
 	if err != nil {
@@ -469,6 +471,8 @@ func OpenActiveDomain(ctx context.Context, cfg config.DatabaseConfig, domain Dom
 	}
 	return db, nil
 }
+
+// OpenOfflineDatabases 以离线工具模式同时打开主库和历史库及其控制记录，不开启自动切换准入。
 func OpenOfflineDatabases(ctx context.Context, cfg config.DatabaseConfig, dataDir string) (*Databases, error) {
 	return openConfigured(ctx, cfg, dataDir, true, "")
 }
@@ -532,6 +536,7 @@ func openReplicaTarget(ctx context.Context, e config.DatabaseEndpoint, domain Do
 	return target, nil
 }
 
+// CaptureRestoreMetadata 在开始破坏性恢复前序列化复制控制面的当前元数据快照，供失败回滚使用。
 func (dbs *Databases) CaptureRestoreMetadata(ctx context.Context) (json.RawMessage, error) {
 	if dbs.replication == nil {
 		return nil, nil
@@ -544,6 +549,8 @@ func (dbs *Databases) CaptureRestoreMetadata(ctx context.Context) (json.RawMessa
 	}
 	return json.Marshal(r.record)
 }
+
+// BeginRestore 停止后台复制并在受影响域写入恢复操作屏障标识，防止恢复中途出现并发写入分叉。
 func (dbs *Databases) BeginRestore(ctx context.Context, operationID string, domains []Domain) error {
 	if dbs.replication == nil {
 		return nil
@@ -622,6 +629,8 @@ func (dbs *Databases) BeginRestore(ctx context.Context, operationID string, doma
 	}
 	return nil
 }
+
+// FinishRestore 原子完成或回滚备份恢复操作：提交新纪元或依据 old 快照恢复原控制面绑定。
 func (dbs *Databases) FinishRestore(ctx context.Context, operationID string, old json.RawMessage, rollback bool) error {
 	if dbs.replication == nil {
 		return nil

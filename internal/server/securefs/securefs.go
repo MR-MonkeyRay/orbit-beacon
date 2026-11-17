@@ -1,3 +1,4 @@
+// Package securefs 拒绝符号链接并严格校验文件属主与私有权限，保护本地凭据与数据库文件。
 package securefs
 
 import (

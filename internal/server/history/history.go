@@ -20,8 +20,11 @@ import (
 )
 
 const (
-	CurrentSchemaVersion  = storage.HistorySchemaVersion
-	SampleBufferSize      = 4096
+	// CurrentSchemaVersion 是历史指标库的当前 schema 版本号。
+	CurrentSchemaVersion = storage.HistorySchemaVersion
+	// SampleBufferSize 定义历史写入缓冲队列的最大采样批量容量。
+	SampleBufferSize = 4096
+	// FlushInterval 定义历史聚合桶定期刷盘的时间间隔。
 	FlushInterval         = time.Minute
 	maxPendingBuckets     = 8192
 	maxDiskPaths          = 16
@@ -38,6 +41,7 @@ const (
 
 var errHistoryBatchInvalid = errors.New("history_batch_invalid")
 
+// Options 配置指标历史服务的时钟、日志器与刷盘监控回调。
 type Options struct {
 	Now    func() time.Time
 	Logger *slog.Logger
@@ -63,6 +67,7 @@ type retentionResult struct {
 	err     error
 }
 
+// Service 在独立 goroutine 中聚合 1m/5m/1h 指标桶、周期刷入历史库并响应保留清理。
 type Service struct {
 	store             Store
 	nodes             *storage.Database
@@ -118,10 +123,13 @@ func newService(store Store, nodes *storage.Database, opts Options) *Service {
 	return s
 }
 
-// Samples 永不关闭，因此即使迟到的生产者也不会在关闭时 panic。
-// 生产者必须使用非阻塞发送，并自己维护丢弃计数。
+// Samples 返回非阻塞发送使用的有界样本通道，队列永不关闭。
 func (s *Service) Samples() chan<- Sample { return s.samples }
+
+// DroppedBuckets 返回因内存缓冲或通道满而被丢弃的历史样本数。
 func (s *Service) DroppedBuckets() uint64 { return s.dropped.Load() }
+
+// SeriesRejected 返回因超过每节点 16 个分盘路径配额而被拒绝的历史序列样本数。
 func (s *Service) SeriesRejected() uint64 { return s.seriesRejected.Load() }
 
 // DatabaseStats 仅在抓取指标时读取两个连接池的快照。
@@ -548,6 +556,7 @@ func (s *Service) cleanup(ctx context.Context, now time.Time) (int64, error) {
 
 // Shutdown 排空样本队列，写入包括当前未结束分钟在内的全部数据。
 // 调用方提供总时限；到期时也会中断正在进行的写入。
+// Shutdown 请求历史写入循环执行最后刷盘并等待退出；超时时取消上下文。
 func (s *Service) Shutdown(ctx context.Context) error {
 	s.once.Do(func() { s.stop <- ctx })
 	select {
@@ -559,6 +568,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	}
 }
 
+// Close 使用默认 5 秒时限停止写入循环并关闭历史存储。
 func (s *Service) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

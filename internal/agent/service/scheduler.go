@@ -16,6 +16,7 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
+// TrafficReporter 提供周期上报的未结算流量小时桶，并处理服务端返回确认。
 type TrafficReporter interface {
 	Entries() []v1.Traffic
 	Acknowledge([]v1.Traffic)
@@ -26,6 +27,7 @@ type ProbeReporter interface {
 	Results([]string) []v1.ProbeResult
 }
 
+// SchedulerOptions 注入采集/上报调度器所需的命令存储、升级器、回调及测试钩子。
 type SchedulerOptions struct {
 	Commands *commandStore
 	Upgrade  *upgrader
@@ -49,6 +51,7 @@ type SchedulerOptions struct {
 	System       *v1.System
 }
 
+// Scheduler 协调单采集循环、单上报循环、配置热重载及封闭远程指令执行。
 type Scheduler struct {
 	options            SchedulerOptions
 	running            atomic.Bool
@@ -61,6 +64,7 @@ type Scheduler struct {
 	stopping           atomic.Bool
 }
 
+// NewScheduler 使用给定依赖项构造 Agent 主调度器。
 func NewScheduler(options SchedulerOptions) *Scheduler {
 	if options.Logger == nil {
 		options.Logger = slog.New(slog.DiscardHandler)

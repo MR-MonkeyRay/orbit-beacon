@@ -1,21 +1,30 @@
 package storage
 
-// 固定表清单同时定义镜像传输的逻辑类型；生成列由目标引擎计算。
+// ValueType 定义固定表清单中用于跨引擎镜像传输的逻辑列类型；生成列由目标引擎计算。
 type ValueType uint8
 
 const (
+	// Text 表示 UTF-8 字符串列。
 	Text ValueType = iota
+	// Integer 表示有符号 64 位整数或布尔标志列。
 	Integer
+	// Float 表示双精度浮点数列。
 	Float
+	// Blob 表示原始二进制字节切片列。
 	Blob
 )
 
+// ColumnSpec 描述复制表清单中的单个列名、逻辑类型与生成列标记。
 type ColumnSpec struct {
 	Name      string
 	Type      ValueType
 	Generated bool
 }
+
+// ForeignKeySpec 描述表间外键约束关系及级联动作。
 type ForeignKeySpec struct{ Column, Table, ReferencedColumn, OnDelete string }
+
+// TableSpec 定义单张受控业务表的传输编号、列集合、主键及外键依赖顺序。
 type TableSpec struct {
 	ID             uint16
 	Name           string
@@ -66,6 +75,7 @@ var historyTables = []TableSpec{
 	{ID: 35, Name: "service_check_buckets", Columns: []ColumnSpec{{"service_id", Text, false}, {"t", Integer, false}, {"checks", Integer, false}, {"successes", Integer, false}, {"latency_sum_ms", Float, false}, {"latency_min_ms", Float, false}, {"latency_max_ms", Float, false}}, PK: []string{"service_id", "t"}, FK: []ForeignKeySpec{}},
 }
 
+// Tables 按外键依赖顺序返回指定逻辑域受复制控制的全部表定义清单。
 func Tables(domain Domain) []TableSpec {
 	if domain == HistoryDomain {
 		return historyTables

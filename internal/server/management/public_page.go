@@ -12,6 +12,7 @@ import (
 	"orbitbeacon/internal/server/storage"
 )
 
+// PublicPageSettings 保存匿名状态页的全局开启开关与按分组展示开关。
 type PublicPageSettings struct {
 	Enabled    bool `json:"enabled"`
 	ShowGroups bool `json:"show_groups"`
@@ -54,6 +55,7 @@ func readPublicPageSettings(ctx context.Context, reader interface {
 	return settings, nil
 }
 
+// PublicPageSettings 读取当前持久化的状态页全局设置（缺省默认开启、不分组）。
 func (s *Service) PublicPageSettings(ctx context.Context) (PublicPageSettings, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -64,10 +66,12 @@ func (s *Service) PublicPageSettings(ctx context.Context) (PublicPageSettings, e
 	return readPublicPageSettings(ctx, lease)
 }
 
+// SetPublicPageEnabled 仅更新状态页的全局启用开关。
 func (s *Service) SetPublicPageEnabled(ctx context.Context, enabled bool) (PublicPageSettings, error) {
 	return s.PatchPublicPageSettings(ctx, PublicPageSettingsPatch{Enabled: &enabled})
 }
 
+// PatchPublicPageSettings 在同一写事务内增量更新状态页设置，仅在发生实际变化时写入审计。
 func (s *Service) PatchPublicPageSettings(ctx context.Context, patch PublicPageSettingsPatch) (PublicPageSettings, error) {
 	if patch.Enabled == nil && patch.ShowGroups == nil {
 		return PublicPageSettings{}, ErrInvalidInput

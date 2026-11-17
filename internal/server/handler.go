@@ -1,3 +1,4 @@
+// Package server 组装 OrbitBeacon 控制面 HTTP 处理器、路由鉴权、实时通道、存储生命周期与后台工作协程。
 package server
 
 import (
@@ -32,6 +33,7 @@ import (
 
 const sessionCookie = "orbitbeacon_session"
 
+// Options 配置控制面服务端处理器所需的存储实例、安全密钥、监听与运行时依赖。
 type Options struct {
 	GeoIPLookup              bool
 	GeoIPToken               string
@@ -100,6 +102,7 @@ type handler struct {
 	publicPageMu             sync.Mutex
 }
 
+// NewHandler 初始化并装配全部业务子系统、路由端点及后台工作协程，返回 HTTP 服务处理器。
 func NewHandler(opts Options) (*handler, error) {
 	for _, required := range []struct {
 		name    string
@@ -195,6 +198,7 @@ func (h *handler) MarkNotReady() {
 	h.lifecycleMu.Unlock()
 }
 
+// Shutdown 按依赖顺序优雅停止后台刷写协程、备份工作者并关闭实时连接。
 func (h *handler) Shutdown(ctx context.Context) error {
 	h.CloseLiveStreams()
 	h.lifecycleMu.Lock()

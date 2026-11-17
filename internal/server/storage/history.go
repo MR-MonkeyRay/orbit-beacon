@@ -5,6 +5,7 @@ import (
 	"database/sql"
 )
 
+// HistorySchemaVersion 定义历史指标库（metrics.db）的当前表结构版本号。
 const HistorySchemaVersion = 2
 const historySchema = `CREATE TABLE buckets (
  node_id TEXT NOT NULL, metric TEXT NOT NULL, step INTEGER NOT NULL,
@@ -26,6 +27,7 @@ func OpenHistorySQLite(ctx context.Context, path string) (*sql.DB, error) {
 	return db, nil
 }
 
+// OpenHistory 打开并初始化历史指标库（HistoryDomain）的读写分离连接池。
 func OpenHistory(ctx context.Context, path string) (*Database, error) {
 	writer, err := OpenHistorySQLite(ctx, path)
 	if err != nil {

@@ -29,7 +29,10 @@ import (
 
 type tickets []string
 
+// String 实现 flag.Value，隐藏命令行票据列表以避免意外输出敏感值。
 func (t *tickets) String() string { return "<票据已隐藏>" }
+
+// Set 实现 flag.Value，追加并校验非空的一次性注册票据。
 func (t *tickets) Set(value string) error {
 	if value = strings.TrimSpace(value); value == "" {
 		return errors.New("票据不能为空")

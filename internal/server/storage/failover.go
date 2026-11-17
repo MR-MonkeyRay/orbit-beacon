@@ -16,6 +16,7 @@ type SwitchHooks struct {
 	Publish func(context.Context, *Lease) error
 }
 
+// SetMainSwitchHooks 注册主库逻辑域切换前的准备钩子与切换后的发布钩子。
 func (dbs *Databases) SetMainSwitchHooks(hooks SwitchHooks) {
 	if dbs == nil || dbs.Main == nil {
 		return
@@ -1146,6 +1147,8 @@ func (dbs *Databases) BootstrapRequired() bool {
 	defer r.mu.Unlock()
 	return r.record.BootstrapPending && !r.record.Bootstrapped
 }
+
+// CompleteBootstrap 将控制记录中的冷启动引导状态持久化标记为已完成。
 func (dbs *Databases) CompleteBootstrap(ctx context.Context) error {
 	if dbs.replication == nil {
 		return nil

@@ -32,6 +32,7 @@ func scanUser(row interface{ Scan(...any) error }) (User, error) {
 	return user, nil
 }
 
+// ListUsers 返回按用户名及 ID 排序的全部管理员账户列表。
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -58,6 +59,7 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	return users, nil
 }
 
+// GetUser 按 ID 查询单个管理员账户元数据；不存在返回 ErrNotFound。
 func (s *Service) GetUser(ctx context.Context, id string) (User, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -68,6 +70,7 @@ func (s *Service) GetUser(ctx context.Context, id string) (User, error) {
 	return scanUser(lease.QueryRowContext(ctx, "SELECT id, username, created_at, must_change_password, totp_ciphertext IS NOT NULL FROM users WHERE id = ?", id))
 }
 
+// PatchUser 更新指定管理员用户名并记录审计；已登录会话随账户保留。
 func (s *Service) PatchUser(ctx context.Context, id string, patch UserPatch) (User, error) {
 	if patch.Username != nil && !validUsername(*patch.Username) {
 		return User{}, ErrInvalidInput
@@ -107,6 +110,7 @@ func (s *Service) PatchUser(ctx context.Context, id string, patch UserPatch) (Us
 	return user, nil
 }
 
+// DeleteUser 删除管理员账户并级联清理其会话与 API 令牌，同时禁止删除最后一名管理员。
 func (s *Service) DeleteUser(ctx context.Context, id string) error {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {

@@ -1,3 +1,4 @@
+// Package service 协调 Agent 的身份持久化、主机采集、本地探测、远程指令执行与 HTTPS 上报循环。
 package service
 
 import (
@@ -35,6 +36,7 @@ type Runtime struct {
 	upgrade        *upgrader
 }
 
+// OpenRuntime 加载持久身份、校验本地运行配置与安装策略，并组装采集器与上报客户端。
 func OpenRuntime(ctx context.Context, cfg config.Agent, logger *slog.Logger) (*Runtime, error) {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
@@ -72,6 +74,7 @@ func OpenRuntime(ctx context.Context, cfg config.Agent, logger *slog.Logger) (*R
 	return &Runtime{upgrade: upgrade, logger: logger, identity: state, settings: initial, expectedStatus: maps.Clone(cfg.ProbeExpectedStatus), collector: collector, client: client, system: system, installMode: cfg.InstallMode, commandPath: filepath.Join(cfg.StateDir, "commands.json")}, nil
 }
 
+// Close 释放上报与升级 HTTP 客户端持有的空闲连接。
 func (r *Runtime) Close() {
 	r.client.Close()
 	if r.upgrade != nil {
@@ -79,6 +82,7 @@ func (r *Runtime) Close() {
 	}
 }
 
+// Enroll 使用一次性注册票据激活节点凭据；token 为空时仅向服务端确认已有凭据。
 func (r *Runtime) Enroll(ctx context.Context, token string) (v1.EnrollmentResponse, error) {
 	return r.client.Enroll(ctx, token)
 }
@@ -113,6 +117,7 @@ func cloneRuntimeSettings(next, current config.RuntimeSettings) config.RuntimeSe
 	return next
 }
 
+// Run 启动本地探测协程并运行主采集/上报调度器，同时响应 reload 信号热重载配置。
 func (r *Runtime) Run(ctx context.Context, reload <-chan struct{}, loadSettings func() (config.Agent, error)) error {
 	if r.installMode == "native" {
 		if executable, err := os.Executable(); err == nil {
@@ -172,6 +177,7 @@ func (r *Runtime) reloadSettings(ctx context.Context, probes *probe.Runner, load
 	return nil
 }
 
+// Diagnostics 记录 orbitbeacon-agent doctor 输出的配置、身份、连通性与采集自检结果。
 type Diagnostics struct {
 	Configuration  string `json:"configuration"`
 	Identity       string `json:"identity"`

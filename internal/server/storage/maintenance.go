@@ -9,6 +9,7 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
+// ErrCompactionUnsupported 表示当前活跃存储方言不支持手动离线/在线压缩操作（如 MySQL）。
 var ErrCompactionUnsupported = errors.New("storage_compaction_unsupported")
 
 var errCompactionFailed = errors.New("storage_compaction_failed")

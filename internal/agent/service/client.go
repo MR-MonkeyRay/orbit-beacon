@@ -19,6 +19,7 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
+// ClientOptions 配置 Agent HTTP(S) 上报与注册客户端的端点、私有 CA 与身份存储。
 type ClientOptions struct {
 	ServerURL  string
 	CAFile     string
@@ -27,6 +28,7 @@ type ClientOptions struct {
 	System     v1.System
 }
 
+// Client 封装 Agent 与 Server 间的注册、预检、恢复与指标上报 HTTP 调用。
 type Client struct {
 	baseURL  string
 	http     *http.Client
@@ -41,6 +43,7 @@ type HTTPError struct {
 	Code       string
 }
 
+// Error 实现 error 接口，只暴露脱敏后的失败分类而不泄露响应原文。
 func (e *HTTPError) Error() string {
 	if e.StatusCode == http.StatusUnauthorized {
 		return "credentials_invalid"
@@ -56,6 +59,7 @@ var (
 	errAgentTimeout          = errors.New("agent request timed out")
 )
 
+// NewClient 校验服务器 URL 与可选私有 CA，并构造禁止自动重定向的 HTTP 客户端。
 func NewClient(options ClientOptions) (*Client, error) {
 	if options.Identity == nil {
 		return nil, errors.New("agent identity is required")
@@ -112,8 +116,10 @@ func NewClient(options ClientOptions) (*Client, error) {
 	return &Client{baseURL: origin, http: &copy, identity: options.Identity, system: options.System}, nil
 }
 
+// Close 关闭底层 HTTP 传输持有的空闲连接。
 func (c *Client) Close() { c.http.CloseIdleConnections() }
 
+// Enroll 执行一次性注册票据激活、幂等流水续传或无票据的已有凭据恢复校验。
 func (c *Client) Enroll(ctx context.Context, token string) (v1.EnrollmentResponse, error) {
 	state, err := c.identity.Reload(ctx)
 	if err != nil {

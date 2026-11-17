@@ -1,3 +1,4 @@
+// Package identity 管理 Agent 本地持久化的节点凭据、安装标识及运行代次状态。
 package identity
 
 import (
@@ -17,6 +18,7 @@ import (
 	"orbitbeacon/internal/agent/filelock"
 )
 
+// Identity 保存 Agent 与服务端校验所需的节点凭据、会话与运行代次信息。
 type Identity struct {
 	InstallationID   string `json:"installation_id"`
 	NodeToken        string `json:"node_token"`
@@ -26,11 +28,13 @@ type Identity struct {
 	SessionID        string `json:"session_id,omitempty"`
 }
 
+// Options 配置身份存储的可注入随机数源与测试期目录同步回调。
 type Options struct {
 	Random        io.Reader
 	syncDirectory func(string) error
 }
 
+// Store 串行化并持久化管理 Agent 身份文件及关联的注册流水记录。
 type Store struct {
 	mu                sync.Mutex
 	path              string
@@ -141,6 +145,7 @@ func newDirectoryParents(path string) []string {
 	return parents
 }
 
+// Current 返回内存中缓存的当前节点身份副本。
 func (s *Store) Current() Identity {
 	s.mu.Lock()
 	defer s.mu.Unlock()

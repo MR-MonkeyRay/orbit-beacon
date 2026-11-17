@@ -1,3 +1,4 @@
+// Package probe 并发执行并缓存 Agent 本地的 TCP、HTTP(S)、DNS 与 ICMP 服务探测结果。
 package probe
 
 import (
@@ -10,6 +11,7 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
+// 探测器的默认检测周期、单次超时与最大并发任务数。
 const (
 	DefaultInterval = 60 * time.Second
 	DefaultTimeout  = 5 * time.Second
@@ -43,6 +45,7 @@ type Runner struct {
 	running atomic.Bool
 }
 
+// NewRunner 创建带默认检测周期与超时的本地探测调度器。
 func NewRunner(options Options) *Runner {
 	if options.Interval <= 0 {
 		options.Interval = DefaultInterval
@@ -141,6 +144,7 @@ func (r *Runner) signal() {
 	}
 }
 
+// Run 启动探测调度循环并持续运行至上下文取消；同一实例不可重复并发启动。
 func (r *Runner) Run(ctx context.Context) error {
 	if !r.running.CompareAndSwap(false, true) {
 		return errors.New("probe runner already running")

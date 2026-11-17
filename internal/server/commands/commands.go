@@ -18,12 +18,14 @@ import (
 	"orbitbeacon/internal/uuid"
 )
 
+// Default command lifetimes and terminal record retention bounds.
 const (
 	Lifetime        = 5 * time.Minute
 	UpgradeLifetime = 20 * time.Minute
 	Retention       = 90 * 24 * time.Hour
 )
 
+// Domain errors returned by remote command management operations.
 var (
 	ErrNotFound        = errors.New("command or node not found")
 	ErrInvalid         = errors.New("invalid command request")
@@ -40,6 +42,7 @@ var (
 // too. The latest stop must itself have succeeded.
 const StoppedSQL = `COALESCE((SELECT state='succeeded' AND credential_epoch=nodes.credential_epoch AND delivered_generation=nodes.run_generation FROM agent_commands WHERE node_id=nodes.id AND kind='stop' ORDER BY created_at DESC,id DESC LIMIT 1),0)`
 
+// Record represents a persisted remote command and its delivery/result state.
 type Record struct {
 	ID              string         `json:"id"`
 	Kind            string         `json:"kind"`
@@ -55,11 +58,13 @@ type Record struct {
 	Update          *v1.UpdateInfo `json:"update,omitempty"`
 }
 
+// Service manages queuing, canceling, exchanging, and cleaning up remote agent commands.
 type Service struct {
 	db  *storage.Database
 	now func() time.Time
 }
 
+// New constructs a command Service backed by db using now as its clock (defaulting to time.Now).
 func New(db *storage.Database, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
@@ -67,11 +72,13 @@ func New(db *storage.Database, now func() time.Time) *Service {
 	return &Service{db, now}
 }
 
+// CreateRequest carries a closed remote command kind and the required confirmation string.
 type CreateRequest struct {
 	Kind    string `json:"kind"`
 	Confirm string `json:"confirm"`
 }
 
+// UnmarshalJSON implements json.Unmarshaler and rejects unknown fields.
 func (r *CreateRequest) UnmarshalJSON(data []byte) error {
 	type request CreateRequest
 	var wire request
@@ -93,6 +100,7 @@ func (r CreateRequest) valid() bool {
 	}
 }
 
+// Create validates node availability and enqueues one active remote command for nodeID.
 func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRequest) (Record, error) {
 	if !uuid.ValidUUID(nodeID) || !req.valid() {
 		return Record{}, ErrInvalid
@@ -161,6 +169,7 @@ func (s *Service) Create(ctx context.Context, nodeID, actor string, req CreateRe
 	return record, nil
 }
 
+// BulkResult summarizes how many node commands were created or skipped in a group dispatch.
 type BulkResult struct {
 	Created int `json:"created"`
 	Skipped int `json:"skipped"`
@@ -230,6 +239,7 @@ func (s *Service) CreateGroup(ctx context.Context, groupID, actor string, req Cr
 	return result, tx.Commit()
 }
 
+// Cancel transitions a still-pending command for nodeID to canceled.
 func (s *Service) Cancel(ctx context.Context, nodeID, id string) error {
 	if !uuid.ValidUUID(id) {
 		return ErrInvalid
@@ -264,6 +274,7 @@ func (s *Service) Cancel(ctx context.Context, nodeID, id string) error {
 
 const columns = `id,kind,update_info,expires_at,node_id,credential_epoch,state,result_code,requested_by,created_at,delivered_at,finished_at`
 
+// List returns the 20 most recent commands for nodeID, projecting expired in-flight states.
 func (s *Service) List(ctx context.Context, nodeID string) ([]Record, error) {
 	var exists bool
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)

@@ -1,5 +1,6 @@
 package v1
 
+// 受协议约束的封闭远程指令名与可关闭采集功能名常量。
 const (
 	RemoteCommandCheckUpdate = "check_update"
 	RemoteCommandUpgrade     = "upgrade"

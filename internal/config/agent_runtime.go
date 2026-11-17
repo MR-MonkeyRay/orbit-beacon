@@ -21,6 +21,7 @@ type RuntimeSettings struct {
 	DisabledFeatures      []string `json:"disabled_features"`
 }
 
+// DefaultRuntimeSettings 返回新部署 Agent 使用的默认采集、探测及指令权限配置。
 func DefaultRuntimeSettings() RuntimeSettings {
 	return RuntimeSettings{ReportIntervalSeconds: 10, DiskIntervalSeconds: 60,
 		Interfaces: []string{}, DiskPaths: []string{}, ProbeTargets: []string{}, RemoteCommands: v1.RemoteCommandOrder(), DisabledFeatures: []string{}}
@@ -54,16 +55,21 @@ func (c RuntimeSettings) FeatureDisabled(name string) bool {
 	return slices.Contains(c.DisabledFeatures, name) || name == v1.FeatureTraffic && slices.Contains(c.DisabledFeatures, v1.FeatureNetwork) || name == v1.FeatureDiskIO && slices.Contains(c.DisabledFeatures, v1.FeatureDisk)
 }
 
+// ValidationError 携带按配置键索引的详细校验错误；reportBudget 标记是否为 64 KiB 报告超限。
 type ValidationError struct {
 	Fields       map[string]string
 	reportBudget bool
 }
 
+// Error 实现 error 接口，返回固定的运行时校验失败摘要。
 func (err *ValidationError) Error() string { return "runtime settings validation failed" }
+
+// Is 支持通过 errors.Is(err, ErrReportBudget) 识别报告编码预算超限错误。
 func (err *ValidationError) Is(target error) bool {
 	return target == ErrReportBudget && err.reportBudget
 }
 
+// Validate 校验采样周期、远程指令白名单、关闭功能列表、设备选择与探测目标。
 func (c RuntimeSettings) Validate() error {
 	fields := make(map[string]string)
 	if c.ReportIntervalSeconds < 5 || c.ReportIntervalSeconds > 60 {

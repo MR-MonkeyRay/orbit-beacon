@@ -16,6 +16,7 @@ type PublicService struct {
 	Availability []*float64 `json:"availability"`
 }
 
+// Public returns public-facing projections for all visible services at the current time.
 func (m *Manager) Public(ctx context.Context) ([]PublicService, error) {
 	return m.PublicAt(ctx, m.now())
 }
@@ -26,6 +27,7 @@ func (m *Manager) PublicAt(ctx context.Context, now time.Time) ([]PublicService,
 	return out, err
 }
 
+// PublicAtWithGroups projects public services at now and optionally includes ordered group names.
 func (m *Manager) PublicAtWithGroups(ctx context.Context, now time.Time, showGroups bool) ([]PublicService, []string, error) {
 	now = now.UTC()
 	list, e := m.list(ctx, now)

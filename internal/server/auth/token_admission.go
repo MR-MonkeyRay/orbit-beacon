@@ -5,9 +5,13 @@ import (
 	"time"
 )
 
+// APITokenRateLimitError 表示只读 API 令牌触发速率限制，RetryAfter 为向上取整的等待秒数。
 type APITokenRateLimitError struct{ RetryAfter int }
 
+// Error 实现 error 接口，复用 ErrRateLimited 描述。
 func (e *APITokenRateLimitError) Error() string { return string(ErrRateLimited) }
+
+// Unwrap 返回 ErrRateLimited 以兼容 errors.Is 判断。
 func (e *APITokenRateLimitError) Unwrap() error { return ErrRateLimited }
 
 type apiTokenBucket struct {

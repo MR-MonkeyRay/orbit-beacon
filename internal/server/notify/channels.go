@@ -30,12 +30,18 @@ import (
 )
 
 var (
-	ErrNotFound         = errors.New("notification channel not found")
-	ErrCapacity         = errors.New("maximum of 20 notification channels reached")
-	ErrUnavailable      = errors.New("notification secrets unavailable")
+	// ErrNotFound 表示请求的外部通知通道不存在。
+	ErrNotFound = errors.New("notification channel not found")
+	// ErrCapacity 表示已达到最多 20 个外部通知通道的容量上限。
+	ErrCapacity = errors.New("maximum of 20 notification channels reached")
+	// ErrUnavailable 表示通知密钥盒尚未配置或不可用，无法解密/保存通道秘密。
+	ErrUnavailable = errors.New("notification secrets unavailable")
+	// ErrSecretUnreadable 表示已存储的通知通道密文无法被当前密钥解密。
 	ErrSecretUnreadable = errors.New("notification secret unreadable")
 )
 
+// Config 保存不同通知渠道（Webhook、Telegram、Email、飞书/钉钉/企微/Bark/ntfy）的配置字段；
+// 完整 Webhook URL 等只写秘密不向读取接口返回，改用 URLRedacted 与 URLSet 表示。
 type Config struct {
 	URL         string   `json:"url,omitempty"` // 只写字段；仅在内部填充，用于校验和发送。
 	URLRedacted string   `json:"url_redacted,omitempty"`
@@ -48,6 +54,8 @@ type Config struct {
 	To          []string `json:"to,omitempty"`
 	Template    string   `json:"template,omitempty"`
 }
+
+// Channel 表示已配置的外部通知通道元数据与脱敏后的目标配置。
 type Channel struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
@@ -66,8 +74,8 @@ func (c Channel) MarshalJSON() ([]byte, error) {
 	return json.Marshal(channel(c))
 }
 
-// Secret 只写：按通道类型分别是签名密钥、机器人令牌或 SMTP 密码。
-// 省略则保留原值，空字符串则清除；kind 创建后不可变。
+// Patch 描述通知通道创建或更新载荷；Secret 只写（按通道类型分别是签名密钥、
+// 机器人令牌或 SMTP 密码），省略则保留原值，空字符串则清除；kind 创建后不可变。
 type Patch struct {
 	Name    *string         `json:"name,omitempty"`
 	Kind    *string         `json:"kind,omitempty"`
@@ -75,6 +83,8 @@ type Patch struct {
 	Config  json.RawMessage `json:"config,omitempty"`
 	Secret  json.RawMessage `json:"secret,omitempty"`
 }
+
+// Options 配置通知服务的出站网络策略、时钟、日志器及可选 HA 控制存储。
 type Options struct {
 	AllowInsecureWebhooks bool
 	AllowPrivateNetworks  bool
@@ -83,6 +93,8 @@ type Options struct {
 	Storage               *storage.Databases
 	StorageBox            *secretbox.Box
 }
+
+// Service 管理加密通知渠道配置、持久化投递 Outbox 及存储故障控制通知同步。
 type Service struct {
 	db             *storage.Database
 	box            *secretbox.Box
@@ -101,6 +113,7 @@ type Service struct {
 	storageDone    chan struct{}
 }
 
+// New 构造通知服务并绑定 AEAD 凭据加密盒与出站网络策略。
 func New(db *storage.Database, box *secretbox.Box, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
@@ -222,6 +235,8 @@ func scanChannel(row scanner) (Channel, []byte, []byte, error) {
 	c.UpdatedAt, err = timekey.Parse(updated)
 	return c, cipher, urlCipher, err
 }
+
+// Get 读取指定通知渠道的脱敏元数据；不存在时返回 ErrNotFound。
 func (s *Service) Get(ctx context.Context, id string) (Channel, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -232,6 +247,8 @@ func (s *Service) Get(ctx context.Context, id string) (Channel, error) {
 	c, _, _, e := scanChannel(lease.QueryRowContext(ctx, "SELECT "+channelColumns+" FROM notification_channels WHERE id=?", id))
 	return c, e
 }
+
+// List 按创建时间及 ID 顺序返回全部已配置通知渠道。
 func (s *Service) List(ctx context.Context) ([]Channel, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -254,6 +271,8 @@ func (s *Service) List(ctx context.Context) ([]Channel, error) {
 	}
 	return out, rows.Err()
 }
+
+// Save 创建（id 为空）或修改通知渠道，加密存储敏感凭据并在有主备配置时同步暂停/重校准控制快照。
 func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -431,6 +450,8 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Channel, error)
 	e = tx.Commit()
 	return c, e
 }
+
+// Delete 删除指定通知渠道并级联清理存储故障通知订阅引用及控制快照。
 func (s *Service) Delete(ctx context.Context, id string) error {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -515,7 +536,7 @@ func (s *Service) load(ctx context.Context, id string) (Channel, string, error) 
 	return c, secret, nil
 }
 
-// 对标量 patch 字段，拒绝显式 null，同时保留省略语义。
+// UnmarshalJSON 解码通知通道 Patch，对标量字段拒绝显式 null 同时保留省略语义。
 func (p *Patch) UnmarshalJSON(data []byte) error {
 	type patch Patch
 	var fields map[string]json.RawMessage

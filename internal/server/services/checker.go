@@ -14,14 +14,18 @@ import (
 	"orbitbeacon/internal/server/egress"
 )
 
+// Checker probes a single configured service endpoint and returns the check result.
 type Checker interface {
 	Check(context.Context, Service) Result
 }
+
+// NetworkChecker executes HTTP, TCP, and ICMP service probes over outbound network connections.
 type NetworkChecker struct {
 	dialer *egress.Dialer
 	client *http.Client
 }
 
+// NewChecker constructs a NetworkChecker configured for outbound service probing.
 func NewChecker() *NetworkChecker {
 	d := &egress.Dialer{Resolver: net.DefaultResolver, AllowPrivate: true, Dial: (&net.Dialer{}).DialContext}
 	transport := &http.Transport{DialContext: d.DialContext, DisableKeepAlives: true, Proxy: nil, ResponseHeaderTimeout: 30 * time.Second, MaxResponseHeaderBytes: 64 << 10}
@@ -62,6 +66,7 @@ func errorCode(e error) string {
 var errUnsupported = errors.New("ICMP unsupported")
 var errPermission = errors.New("ping socket permission denied")
 
+// Check executes a probe against s according to its configured protocol and returns the result.
 func (c *NetworkChecker) Check(parent context.Context, s Service) Result {
 	ctx, cancel := context.WithTimeout(parent, time.Duration(s.TimeoutSeconds)*time.Second)
 	defer cancel()

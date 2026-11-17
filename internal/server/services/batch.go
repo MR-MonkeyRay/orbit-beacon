@@ -10,16 +10,21 @@ import (
 	"orbitbeacon/internal/uuid"
 )
 
+// BatchRequest describes a bulk operation applied to a set of services.
 type BatchRequest struct {
 	ServiceIDs []string        `json:"service_ids"`
 	Action     string          `json:"action"`
 	GroupID    json.RawMessage `json:"group_id"`
 	Confirm    bool            `json:"confirm"`
 }
+
+// BatchError describes the failure reason for a single service in a batch operation.
 type BatchError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
+
+// BatchResult reports the outcome of a batch operation for one service.
 type BatchResult struct {
 	ServiceID string      `json:"service_id"`
 	Status    string      `json:"status"`
@@ -61,6 +66,7 @@ func (r BatchRequest) validate() (Patch, error) {
 	return patch, nil
 }
 
+// Batch executes the requested batch action across req.ServiceIDs and returns per-service outcomes.
 func (m *Manager) Batch(ctx context.Context, req BatchRequest) ([]BatchResult, error) {
 	patch, err := req.validate()
 	if err != nil {

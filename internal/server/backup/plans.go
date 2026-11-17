@@ -30,9 +30,13 @@ type PlanPatch struct {
 	RetainCount *int               `json:"retain_count,omitempty"`
 	Credentials *ObjectCredentials `json:"credentials,omitempty"`
 }
+
+// LocalDestination 描述本地磁盘备份目标路径配置。
 type LocalDestination struct {
 	Path string `json:"path"`
 }
+
+// PlanTaskSummary 概括定时备份计划最近一次关联任务的状态与结果信息。
 type PlanTaskSummary struct {
 	ID          string     `json:"id"`
 	State       string     `json:"state"`
@@ -41,6 +45,8 @@ type PlanTaskSummary struct {
 	ErrorCode   string     `json:"error_code"`
 	WarningCode string     `json:"warning_code"`
 }
+
+// Plan 表示经投影脱敏后的定时备份计划及其下次调度预览。
 type Plan struct {
 	ID              string           `json:"id"`
 	Name            string           `json:"name"`
@@ -58,6 +64,8 @@ type Plan struct {
 	NextRuns        []NextRun        `json:"next_runs"`
 	LastTask        *PlanTaskSummary `json:"last_task"`
 }
+
+// PlanPage 表示分页查询定时备份计划的结果集与服务端时区上下文。
 type PlanPage struct {
 	Plans      []Plan  `json:"plans"`
 	HasMore    bool    `json:"has_more"`
@@ -156,6 +164,8 @@ func (s *Service) projectPlan(ctx context.Context, p planRecord, now time.Time) 
 	}
 	return p.Plan, nil
 }
+
+// Plan 按 id 查询单个定时备份计划详情。
 func (s *Service) Plan(ctx context.Context, id string) (Plan, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -172,6 +182,8 @@ func (s *Service) Plan(ctx context.Context, id string) (Plan, error) {
 	}
 	return s.projectPlan(ctx, p, s.opts.Now())
 }
+
+// Plans 分页列出定时备份计划及未来调度时间预览。
 func (s *Service) Plans(ctx context.Context, limit int, before string) (PlanPage, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -319,6 +331,8 @@ func validatePlanDirectory(raw json.RawMessage) error {
 	}
 	return nil
 }
+
+// SavePlan 创建或更新指定 id 的定时备份计划，并在保存后触发调度重算。
 func (s *Service) SavePlan(ctx context.Context, id string, patch PlanPatch) (Plan, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -476,6 +490,8 @@ func (s *Service) SavePlan(ctx context.Context, id string, patch PlanPatch) (Pla
 	return s.projectPlan(ctx, p, now)
 }
 func maskedCredential(value string) bool { return strings.Trim(value, "*• ") == "" }
+
+// DeletePlan 按 id 删除指定的定时备份计划。
 func (s *Service) DeletePlan(ctx context.Context, id string) error {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {

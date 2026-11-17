@@ -25,6 +25,7 @@ const activeSilenceSQL = `SELECT 1 FROM alert_silences s WHERE s.starts_at<=? AN
 const releasableEventSQL = `state='firing' AND silenced=1
  AND NOT EXISTS(SELECT 1 FROM nodes WHERE nodes.id=alert_events.node_id AND EXISTS(` + activeSilenceSQL + `))`
 
+// Silence 表示在指定起止时间与作用域内屏蔽外发告警通知的静默窗口。
 type Silence struct {
 	ID        string    `json:"id"`
 	Reason    string    `json:"reason"`
@@ -37,6 +38,7 @@ type Silence struct {
 	Active    bool      `json:"active"`
 }
 
+// SilenceRequest 承载创建告警静默窗口的原始 JSON 请求参数。
 type SilenceRequest struct {
 	Reason    json.RawMessage `json:"reason"`
 	ScopeKind json.RawMessage `json:"scope_kind"`
@@ -74,6 +76,7 @@ func ValidateSilenceSyntax(s Silence) error {
 	return nil
 }
 
+// CreateSilence 校验静默作用域存在性与时间边界后创建窗口并记录审计。
 func (s *Service) CreateSilence(ctx context.Context, req SilenceRequest) (Silence, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -153,6 +156,7 @@ func (s *Service) CreateSilence(ctx context.Context, req SilenceRequest) (Silenc
 	return silence, tx.Commit()
 }
 
+// Silences 返回所有尚未结束的静默窗口（包含生效中与待生效）。
 func (s *Service) Silences(ctx context.Context) ([]Silence, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -192,6 +196,7 @@ func (s *Service) Silences(ctx context.Context) ([]Silence, error) {
 	return result, rows.Err()
 }
 
+// DeleteSilence 删除指定静默窗口并记录审计日志。
 func (s *Service) DeleteSilence(ctx context.Context, id string) error {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -221,6 +226,7 @@ func (s *Service) DeleteSilence(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
+// CleanupSilences 分批删除结束时间早于 before 的历史静默窗口。
 func (s *Service) CleanupSilences(ctx context.Context, before time.Time, limit int) (int64, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {

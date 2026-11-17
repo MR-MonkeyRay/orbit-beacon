@@ -29,6 +29,7 @@ import (
 
 const collectionTimeout = 3 * time.Second
 
+// Options 配置采集器运行参数以及可替换的磁盘 IO、PSI 与传感器数据源。
 type Options struct {
 	Config            config.RuntimeSettings
 	DiskIOReader      func(context.Context) (map[string]disk.IOCountersStat, error)
@@ -86,6 +87,7 @@ type Collector struct {
 	sourceAt           map[string]time.Time
 }
 
+// New 校验配置并初始化主机指标采集器及内置流量累计器。
 func New(options Options) (*Collector, error) {
 	now := time.Now()
 	c := &Collector{traffic: NewTrafficAccumulator(nil), started: now, epoch: strconv.FormatInt(now.UnixNano(), 36), diskUsage: disk.UsageWithContext, sourceAt: make(map[string]time.Time, 21)}

@@ -3,14 +3,19 @@ package backup
 
 import "errors"
 
+// Category 表示可独立导出、加密备份与恢复的数据类别标识。
 type Category string
 
 const (
+	// Configuration 包含节点、分组、告警规则、系统设置等控制面配置数据。
 	Configuration Category = "configuration"
-	Monitoring    Category = "monitoring"
-	Events        Category = "events"
+	// Monitoring 包含时序指标历史、探测历史与流量聚合统计数据。
+	Monitoring Category = "monitoring"
+	// Events 包含审计日志、告警事件与通知历史等事件记录数据。
+	Events Category = "events"
 )
 
+// ErrInvalidCategories 表示请求的备份类别为空、重复或包含不受支持的值。
 var ErrInvalidCategories = errors.New("invalid backup categories")
 
 // ValidateCategories 校验互相独立且不重复的类别，并按归档顺序返回。

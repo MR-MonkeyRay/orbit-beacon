@@ -13,6 +13,7 @@ type headResponseWriter struct{ http.ResponseWriter }
 func (w headResponseWriter) Write(p []byte) (int, error) { return len(p), nil }
 func (w headResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
+// ServeHTTP 实现 http.Handler 接口，对请求应用访问日志、安全头与方法分发后路由到对应端点。
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.observeRequest(w, r, h.serveHTTP)
 }

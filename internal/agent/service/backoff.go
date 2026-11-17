@@ -8,11 +8,13 @@ import (
 	"time"
 )
 
+// Backoff 为上报失败计算带抖动的指数退避时长，并尊重服务端的 Retry-After 指示。
 type Backoff struct {
 	random  func() float64
 	attempt uint
 }
 
+// NewBackoff 创建指数退避器；random 为空时使用 math/rand/v2.Float64。
 func NewBackoff(random func() float64) *Backoff {
 	if random == nil {
 		random = rand.Float64
@@ -20,8 +22,10 @@ func NewBackoff(random func() float64) *Backoff {
 	return &Backoff{random: random}
 }
 
+// Reset 在一次成功上报后将退避阶数重置为零。
 func (b *Backoff) Reset() { b.attempt = 0 }
 
+// Next 根据 HTTP 状态码与 Retry-After 响应头返回下一次重试等待时间（限 1–300 秒）。
 func (b *Backoff) Next(status int, retryAfter string, now time.Time) time.Duration {
 	if status == http.StatusUnauthorized {
 		return 60 * time.Second

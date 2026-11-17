@@ -20,10 +20,13 @@ import (
 	"orbitbeacon/internal/uuid"
 )
 
+// Notifier enqueues service status-change events into the durable notification outbox.
 type Notifier interface {
 	EnqueueService(context.Context, *storage.Tx, Event) error
 	Wake()
 }
+
+// Manager coordinates service configuration CRUD, probe scheduling, batch persistence, and history queries.
 type Manager struct {
 	db, history *storage.Database
 	now         func() time.Time
@@ -46,6 +49,7 @@ type aggregate struct {
 	Sum, Min, Max     float64
 }
 
+// New constructs a Manager backed by state and history databases.
 func New(db, history *storage.Database, now func() time.Time, logger *slog.Logger, notifier Notifier, changed func()) *Manager {
 	if now == nil {
 		now = time.Now
@@ -92,6 +96,8 @@ func sameConfig(a, b Service) bool {
 	equalGroup := a.GroupID == b.GroupID || a.GroupID != nil && b.GroupID != nil && *a.GroupID == *b.GroupID
 	return a.FailureThreshold == b.FailureThreshold && equalGroup && a.ID == b.ID && a.Name == b.Name && a.Type == b.Type && a.Target == b.Target && a.IntervalSeconds == b.IntervalSeconds && a.TimeoutSeconds == b.TimeoutSeconds && a.Enabled == b.Enabled && a.Public == b.Public && a.DisplayOrder == b.DisplayOrder && a.Notify == b.Notify && a.LatencyThresholdMS == b.LatencyThresholdMS && a.UpdatedAt.Equal(b.UpdatedAt)
 }
+
+// Save creates or updates the service identified by id by applying p and validating the resulting config.
 func (m *Manager) Save(ctx context.Context, id string, p Patch) (Service, error) {
 	return m.save(ctx, id, p, true, false)
 }
@@ -220,6 +226,8 @@ func (m *Manager) save(ctx context.Context, id string, p Patch, signal, groupVal
 	}
 	return s, nil
 }
+
+// Delete removes the service identified by id and cleans up its state.
 func (m *Manager) Delete(ctx context.Context, id string) error {
 	return m.delete(ctx, id, true)
 }
@@ -257,6 +265,8 @@ func (m *Manager) delete(ctx context.Context, id string, signal bool) error {
 	}
 	return nil
 }
+
+// List returns all configured services evaluated with current freshness status.
 func (m *Manager) List(ctx context.Context) ([]Service, error) { return m.list(ctx, m.now()) }
 func (m *Manager) list(ctx context.Context, now time.Time) ([]Service, error) {
 	lease, e := m.db.Acquire(ctx, storage.Reader)
@@ -366,6 +376,8 @@ func (m *Manager) list(ctx context.Context, now time.Time) ([]Service, error) {
 	}
 	return out, nil
 }
+
+// Get returns the service identified by id with current freshness evaluated.
 func (m *Manager) Get(ctx context.Context, id string) (Service, error) {
 	list, e := m.List(ctx)
 	if e != nil {
@@ -456,6 +468,8 @@ func (m *Manager) Accept(ctx context.Context, config Service, result Result) err
 	m.buckets[k] = a
 	return nil
 }
+
+// Flush drains any buffered probe results into persistent state and history storage.
 func (m *Manager) Flush(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -588,12 +602,15 @@ func percent(successes, checks int64) *float64 {
 	return &v
 }
 
+// Point represents a single sampled probe observation in a service history series.
 type Point struct {
 	Time         time.Time `json:"time"`
 	Availability *float64  `json:"availability"`
 	AvgLatencyMS *float64  `json:"avg_latency_ms"`
 	MaxLatencyMS *float64  `json:"max_latency_ms"`
 }
+
+// History holds time-series probe points and summary uptime metrics for a service over a requested range.
 type History struct {
 	Range       string  `json:"range"`
 	StepSeconds int     `json:"step_seconds"`
@@ -677,6 +694,8 @@ func (m *Manager) totalsBetween(ctx context.Context, start, end, step int64, id 
 	}
 	return out, nil
 }
+
+// History queries probe history points and availability metrics for service id over range r.
 func (m *Manager) History(ctx context.Context, id, r string) (History, error) {
 	h := History{Range: r, StepSeconds: 300, Buckets: []Point{}}
 	duration := time.Hour
@@ -752,6 +771,8 @@ func (m *Manager) History(ctx context.Context, id, r string) (History, error) {
 	}
 	return h, nil
 }
+
+// Cleanup deletes expired service check history rows older than the retention cutoff in bounded batches.
 func (m *Manager) Cleanup(ctx context.Context, now time.Time, limit int) (int64, error) {
 	if m.history == nil {
 		return 0, nil

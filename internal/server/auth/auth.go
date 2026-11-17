@@ -1,3 +1,4 @@
+// Package auth 管理管理员账户、会话 Cookie、CSRF 校验、TOTP 两步验证与只读 API 令牌。
 package auth
 
 import (
@@ -30,8 +31,10 @@ import (
 
 type serviceError string
 
+// Error 实现 error 接口，返回稳定的认证与权限错误标识。
 func (err serviceError) Error() string { return string(err) }
 
+// 认证、会话、用户管理与两步验证返回的领域错误及会话有效期常量。
 const (
 	ErrTOTPRequired           serviceError = "second factor required"
 	ErrTOTPInvalid            serviceError = "invalid second factor"
@@ -59,6 +62,7 @@ const (
 
 var csrfEncoding = base64.RawURLEncoding.Strict()
 
+// User 表示不包含密码哈希及 TOTP 密钥的管理员账户元数据。
 type User struct {
 	ID                 string    `json:"id"`
 	Username           string    `json:"username"`
@@ -67,6 +71,7 @@ type User struct {
 	TOTPEnabled        bool      `json:"totp_enabled"`
 }
 
+// Session 表示已签发的管理员登录会话（含绑定的 CSRF Token；Cookie 明文标记为 json:"-"）。
 type Session struct {
 	Token     string    `json:"-"`
 	CSRFToken string    `json:"csrf_token"`
@@ -74,12 +79,14 @@ type Session struct {
 	User      User      `json:"user"`
 }
 
+// Options 配置认证服务的时钟、随机数源及 TOTP 加密盒。
 type Options struct {
 	Now       func() time.Time
 	Random    io.Reader
 	SecretBox *secretbox.Box
 }
 
+// Service 管理管理员账户认证、Argon2id 密码散列、TOTP、API 令牌及登录防爆破限流。
 type Service struct {
 	db           *storage.Database
 	now          func() time.Time
@@ -106,6 +113,7 @@ type Service struct {
 	totpFailureOverflow    loginBucket
 }
 
+// NewService 构造认证服务并初始化登录、改密与 API 令牌内存限流桶。
 func NewService(db *storage.Database, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
@@ -130,10 +138,12 @@ func NewService(db *storage.Database, opts Options) *Service {
 	}
 }
 
+// Management 返回共用同一底层数据库连接的分组与审计管理服务。
 func (s *Service) Management() *management.Service {
 	return management.NewService(s.db)
 }
 
+// HashPassword 使用随机盐值与 Argon2id 参数计算密码哈希字符串。
 func HashPassword(password string, random io.Reader) (string, error) {
 	if random == nil {
 		random = rand.Reader
@@ -146,6 +156,7 @@ func HashPassword(password string, random io.Reader) (string, error) {
 	return fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s", passwordMemory, passwordIterations, passwordParallelism, base64.RawStdEncoding.EncodeToString(salt[:]), base64.RawStdEncoding.EncodeToString(digest)), nil
 }
 
+// VerifyPassword 按编码参数常量时间比对明文密码与存储的 Argon2id 哈希。
 func VerifyPassword(password, encoded string) (bool, error) {
 	matches, _, err := verifyPassword(password, encoded)
 	return matches, err
@@ -247,6 +258,7 @@ func validUser(username, password string) bool {
 	return validUsername(username) && len(password) >= 8 && len(password) <= 1024
 }
 
+// BootstrapAdministrator 仅在用户表为空时创建首个须首次改密的管理员账户；已存在用户返回 ErrAdminExists。
 func (s *Service) BootstrapAdministrator(ctx context.Context, username, password string) (User, error) {
 	if err := s.acquire(ctx); err != nil {
 		return User{}, err
@@ -286,6 +298,7 @@ func (s *Service) BootstrapAdministrator(ctx context.Context, username, password
 	return user, nil
 }
 
+// CreateUser 创建新等权管理员账户并在同一写事务记录审计事件。
 func (s *Service) CreateUser(ctx context.Context, username, password string, mustChangePassword bool) (User, error) {
 	if !validUser(username, password) {
 		return User{}, ErrInvalidInput
@@ -341,6 +354,7 @@ func (s *Service) insertUser(ctx context.Context, tx *storage.Tx, user User, has
 	return err
 }
 
+// Login 校验用户名、密码及可选两步验证代码（TOTP 或恢复码），通过后签发 12 小时会话。
 func (s *Service) Login(ctx context.Context, username, password, otp string) (Session, error) {
 	if !validUsername(username) || len(password) < 8 || len(password) > 1024 || len(otp) > 64 {
 		return Session{}, ErrUnauthenticated
@@ -483,6 +497,7 @@ func (s *Service) token() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(bytes[:]), nil
 }
 
+// Authenticate 校验会话 Cookie 并拒绝待首次改密的受限会话。
 func (s *Service) Authenticate(ctx context.Context, token string) (User, error) {
 	user, _, err := s.lookupSession(ctx, token)
 	if err != nil {
@@ -558,6 +573,7 @@ func cleanupSessions(ctx context.Context, tx *storage.Tx, before int64) (int64, 
 	return storage.DeleteBatch(ctx, tx, `SELECT token_hash FROM sessions WHERE expires_at<=? ORDER BY expires_at LIMIT 128`, `DELETE FROM sessions WHERE token_hash=?`, before)
 }
 
+// VerifyCSRF 确认会话尚未过期并常量时间校验与会话绑定的 HMAC CSRF Token。
 func (s *Service) VerifyCSRF(ctx context.Context, token, csrf string) (bool, error) {
 	if len(token) != 43 || len(csrf) != 43 {
 		return false, nil
@@ -598,6 +614,7 @@ func sessionCSRF(token string) string {
 	return base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
+// Logout 删除当前会话记录并写入登出审计事件；会话不存在时幂等成功。
 func (s *Service) Logout(ctx context.Context, token string) error {
 	digest := sha256.Sum256([]byte(token))
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
@@ -628,6 +645,7 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	return tx.Commit()
 }
 
+// ChangePassword 验证旧密码、拒绝相同新密码，并在同一事务中更新密码、清除改密标记及撤销全部会话与 API 令牌。
 func (s *Service) ChangePassword(ctx context.Context, userID, oldPassword, newPassword string) error {
 	if len(newPassword) < 8 || len(newPassword) > 1024 || len(oldPassword) > 1024 {
 		return ErrInvalidInput

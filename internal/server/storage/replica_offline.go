@@ -28,6 +28,7 @@ func ReplicationClusterID(ctx context.Context, dataDir string) (string, error) {
 	return r.Cluster, nil
 }
 
+// DisableReplication 在离线验证集群 ID 确认串后停用当前配置中的主备复制关系。
 func DisableReplication(ctx context.Context, cfg config.DatabaseConfig, dataDir, confirmation string) error {
 	if cfg.Standby == nil {
 		return ErrIdentityMismatch

@@ -22,11 +22,13 @@ var metricUnits = map[string]string{
 	"net_rx_bytes_per_second": "bytes_per_second", "net_tx_bytes_per_second": "bytes_per_second",
 }
 
+// Selection 表示历史时间范围映射出的查询跨度与聚合步长（秒）。
 type Selection struct {
 	Duration    time.Duration
 	StepSeconds int
 }
 
+// SelectRange 将范围字符串（1h/6h/24h/7d/30d/90d）解析为对应的查询窗口与聚合步长。
 func SelectRange(value string) (Selection, error) {
 	switch value {
 	case "1h":
@@ -46,14 +48,17 @@ func SelectRange(value string) (Selection, error) {
 	}
 }
 
+// ValidMetric 判断指标名是否为受支持的历史查询序列。
 func ValidMetric(metric string) bool { _, ok := metricUnits[metric]; return ok }
 
+// Point 表示历史查询返回的单个时间桶平均值与峰值。
 type Point struct {
 	T   time.Time `json:"t"`
 	Avg float64   `json:"avg"`
 	Max float64   `json:"max"`
 }
 
+// Response 表示节点指标历史接口返回的序列元数据与时间点集合。
 type Response struct {
 	Metric      string  `json:"metric"`
 	Unit        string  `json:"unit"`
@@ -75,6 +80,7 @@ func Empty(metric, requestedRange string) (Response, error) {
 	return Response{Metric: metric, Unit: unit, Range: requestedRange, StepSeconds: selection.StepSeconds, Points: []Point{}}, nil
 }
 
+// Query 按节点、指标、时间范围及可选分盘路径从历史库读取聚合序列点。
 func (s *Service) Query(ctx context.Context, nodeID, metric, requestedRange string, now time.Time, disk string) (Response, error) {
 	response, err := Empty(metric, requestedRange)
 	if err != nil {

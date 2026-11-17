@@ -9,30 +9,43 @@ import (
 	"github.com/google/uuid"
 )
 
+// StorageNotificationPreferences 控制存储故障期间控制面通知的收件箱与外发渠道投递偏好。
 type StorageNotificationPreferences struct {
 	Inbox      bool     `json:"inbox"`
 	ChannelIDs []string `json:"channel_ids"`
 }
+
+// StorageNotificationSettings 包含故障通知偏好及本地控制面快照是否已就绪的状态标记。
 type StorageNotificationSettings struct {
 	StorageNotificationPreferences
 	SnapshotReady bool `json:"snapshot_ready"`
 }
+
+// OutageSnapshotToken 唯一标识故障通知快照所绑定的主库世代与控制面修订号。
 type OutageSnapshotToken struct{ Generation, Revision uint64 }
+
+// OutageChannel 保存加密缓存在本地控制库中的故障告警外发渠道配置。
 type OutageChannel struct {
 	ID         string
 	Ciphertext []byte
 }
+
+// OutageSnapshot 是主库不可用期间保存在本地控制库内的通知偏好与可用渠道快照。
 type OutageSnapshot struct {
 	Ready       bool
 	Preferences StorageNotificationPreferences
 	Channels    []OutageChannel
 }
+
+// OutageEvent 描述复制控制面记录的一次存储域状态切换或故障事件。
 type OutageEvent struct {
 	ID, IncidentID                     string
 	Domain                             Domain
 	Transition, ActiveRole, ReasonCode string
 	OccurredAt                         time.Time
 }
+
+// OutageDelivery 表示已被通知工作协程认领、待通过指定加密渠道发送的故障投递任务。
 type OutageDelivery struct {
 	ID      string
 	Event   OutageEvent
@@ -40,6 +53,8 @@ type OutageDelivery struct {
 	Attempt int
 	Token   OutageSnapshotToken
 }
+
+// OutageResult 记录单次故障通知投递尝试的结果与重试退避策略。
 type OutageResult struct {
 	OK         bool
 	ErrorCode  string
@@ -100,6 +115,8 @@ func cloneSnapshot(v OutageSnapshot) OutageSnapshot {
 	v.Channels = channels
 	return v
 }
+
+// OutageSnapshot 返回当前缓存在本地控制库中的存储故障通知偏好与加密渠道快照。
 func (dbs *Databases) OutageSnapshot(ctx context.Context) (OutageSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return OutageSnapshot{}, err
@@ -116,6 +133,8 @@ func (dbs *Databases) OutageSnapshot(ctx context.Context) (OutageSnapshot, error
 	snapshot.Ready = snapshot.Ready && !r.record.Disabled && m != nil && r.record.Outage.Token.Generation == m.Generation
 	return snapshot, nil
 }
+
+// PauseOutageSnapshot 在更新故障通知渠道快照前锁定控制面修订并返回用于 CAS 发布的新令牌。
 func (dbs *Databases) PauseOutageSnapshot(ctx context.Context, generation uint64) (OutageSnapshotToken, error) {
 	if dbs == nil || dbs.replication == nil {
 		return OutageSnapshotToken{}, nil
@@ -194,6 +213,8 @@ func (dbs *Databases) PublishOutagePreferences(ctx context.Context, token Outage
 	}
 	return true, nil
 }
+
+// PublishOutageSnapshot 校验 token 匹配后将最新故障通知偏好与加密渠道集合写入控制记录。
 func (dbs *Databases) PublishOutageSnapshot(ctx context.Context, token OutageSnapshotToken, prefs StorageNotificationPreferences, channels []OutageChannel) (bool, error) {
 	if dbs == nil || dbs.replication == nil {
 		return false, nil
@@ -301,6 +322,8 @@ func outageEvent(events []outageEventRecord, id string) (OutageEvent, bool) {
 	}
 	return OutageEvent{}, false
 }
+
+// ClaimOutageDeliveries 认领不超过 limit 条到期且尚未完成的存储故障外发投递任务并授予执行租约。
 func (dbs *Databases) ClaimOutageDeliveries(ctx context.Context, now time.Time, limit int) ([]OutageDelivery, error) {
 	result := []OutageDelivery{}
 	if dbs == nil || dbs.replication == nil || limit <= 0 {
@@ -372,6 +395,8 @@ func (dbs *Databases) ClaimOutageDeliveries(ctx context.Context, now time.Time, 
 	}
 	return result, nil
 }
+
+// OutageDeliveryCurrent 校验指定投递租约 id 在当前快照 token 与控制面世代下是否依然有效。
 func (dbs *Databases) OutageDeliveryCurrent(ctx context.Context, id string, token OutageSnapshotToken) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -399,6 +424,8 @@ func (dbs *Databases) OutageDeliveryCurrent(ctx context.Context, id string, toke
 	}
 	return false, nil
 }
+
+// FinishOutageDelivery 根据投递结果更新故障通知记录为成功、失败终态或带退避时间的重试状态。
 func (dbs *Databases) FinishOutageDelivery(ctx context.Context, id string, result OutageResult, now time.Time) error {
 	if dbs == nil || dbs.replication == nil {
 		return nil
@@ -448,6 +475,8 @@ func stableOutageError(code string) string {
 	}
 	return code
 }
+
+// OutageProjection 查询控制库中尚待投影到主库收件箱（generation）的故障切换事件。
 func (dbs *Databases) OutageProjection(ctx context.Context, generation uint64, limit int) ([]OutageEvent, error) {
 	result := []OutageEvent{}
 	if err := ctx.Err(); err != nil {
@@ -478,6 +507,8 @@ func (dbs *Databases) OutageProjection(ctx context.Context, generation uint64, l
 	}
 	return result, nil
 }
+
+// MarkOutageProjected 将已写入主库收件箱的故障事件 id 标记为在指定 generation 已投影。
 func (dbs *Databases) MarkOutageProjected(ctx context.Context, id string, generation uint64) error {
 	if dbs == nil || dbs.replication == nil {
 		return nil

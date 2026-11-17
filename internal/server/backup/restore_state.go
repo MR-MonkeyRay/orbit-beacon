@@ -80,6 +80,7 @@ type DependencyConflict struct {
 	ID   string
 }
 
+// Error 返回冲突依赖的资源类型与安全校验后的标识符摘要。
 func (e *DependencyConflict) Error() string {
 	if e.ID == "" {
 		return e.Type

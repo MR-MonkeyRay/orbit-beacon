@@ -1,3 +1,4 @@
+// Package datadir 管理服务器数据目录的文件锁与秘密主密钥初始化校验。
 package datadir
 
 import (

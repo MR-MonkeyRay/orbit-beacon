@@ -16,6 +16,7 @@ import (
 	"orbitbeacon/internal/server/storage"
 )
 
+// RestoreResult 返回离线恢复成功后的归档标识与前序数据回滚目录路径。
 type RestoreResult struct {
 	ArchiveID    string
 	RollbackPath string

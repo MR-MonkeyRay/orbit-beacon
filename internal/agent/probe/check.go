@@ -139,11 +139,15 @@ type httpStatusError struct{}
 type tlsProbeError struct{ error }
 type dnsProbeError struct{ error }
 
+// Error 实现 error 接口，屏蔽底层解析详情。
 func (err dnsProbeError) Error() string { return "DNS lookup failure" }
+
+// Unwrap 返回被包装的原始 DNS 错误供错误归类判断。
 func (err dnsProbeError) Unwrap() error { return err.error }
 
 type errorHolder struct{ error }
 
+// Unwrap 返回握手失败时捕获的原始 TLS 错误。
 func (err tlsProbeError) Unwrap() error { return err.error }
 
 func (c *Checker) checkHTTP(ctx context.Context, target string, expected int) (time.Duration, int, *time.Time, error) {
@@ -185,6 +189,7 @@ func (c *Checker) checkHTTP(ctx context.Context, target string, expected int) (t
 	return latency, response.StatusCode, expiry, nil
 }
 
+// Error 实现 error 接口，表示 HTTP 响应状态码不符合预期。
 func (httpStatusError) Error() string { return "HTTP status failure" }
 
 func classifyError(err error) string {

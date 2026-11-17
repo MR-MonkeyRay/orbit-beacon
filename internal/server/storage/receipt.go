@@ -10,6 +10,7 @@ import (
 const sqliteGuardSchema = `CREATE TABLE storage_write_guard(id INTEGER PRIMARY KEY CHECK(id=1),last_tx_uuid TEXT NOT NULL,restore_operation TEXT NOT NULL); INSERT INTO storage_write_guard VALUES(1,'','');`
 const mysqlGuardSchema = `CREATE TABLE storage_write_guard(id BIGINT PRIMARY KEY CHECK(id=1),last_tx_uuid VARBINARY(64) NOT NULL,restore_operation VARBINARY(64) NOT NULL) ENGINE=InnoDB`
 
+// ErrCommitUnknown 表示事务 COMMIT 结果未明（如连接断开），需经写门控探查后才能确定是否已落盘。
 var ErrCommitUnknown = errors.New("storage_commit_unknown")
 
 type commitReceipt struct {
@@ -21,7 +22,10 @@ type commitReceipt struct {
 	journalBytes     int64
 }
 
+// Dialect 返回当前事务绑定租约的 SQL 方言。
 func (tx *Tx) Dialect() Dialect { return tx.lease.Dialect() }
+
+// ID 返回当前写事务分配的写门控回执 UUID，只读事务返回空字符串。
 func (tx *Tx) ID() string {
 	if tx.receipt == nil {
 		return ""
@@ -124,6 +128,7 @@ func (db *Database) resolvePending(ctx context.Context) error {
 	return nil
 }
 
+// InstanceID 查询当前数据库实例的持久化 UUID 标识（复制实例读 replica_identity，MySQL 读 @@server_uuid）。
 func (db *Database) InstanceID(ctx context.Context) (string, error) {
 	l, err := db.Acquire(ctx, Reader)
 	if err != nil {
@@ -142,6 +147,8 @@ func (db *Database) InstanceID(ctx context.Context) (string, error) {
 	err = l.QueryRowContext(ctx, "SELECT @@server_uuid").Scan(&id)
 	return id, safeFailure(err)
 }
+
+// IsEmpty 检查当前逻辑域的全部业务表（排除 inbox_sequence 种子行）是否均无数据记录。
 func (db *Database) IsEmpty(ctx context.Context) (bool, error) {
 	l, err := db.Acquire(ctx, Reader)
 	if err != nil {

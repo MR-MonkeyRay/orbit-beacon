@@ -18,6 +18,7 @@ import (
 // ExitError lets the caller unwind all deferred cleanup before main exits.
 type ExitError struct{ Code int }
 
+// Error implements the error interface for planned remote restart or stop exits.
 func (e *ExitError) Error() string {
 	if e.Code == 75 {
 		return "remote restart requested"

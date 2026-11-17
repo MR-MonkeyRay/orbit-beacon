@@ -44,21 +44,26 @@ type PublicNode struct {
 	MetricStatus  PublicMetricStatus  `json:"metric_status"`
 }
 
+// PublicPrice 表示状态页公开的节点套餐价格金额与币种。
 type PublicPrice struct {
 	Amount   string `json:"amount"`
 	Currency string `json:"currency"`
 }
+
+// PublicIPVersion 表示状态页公开的节点 IPv4/IPv6 网络能力开关。
 type PublicIPVersion struct {
 	IPv4 bool `json:"ipv4"`
 	IPv6 bool `json:"ipv6"`
 }
 
-// Usage is deliberately omitted: public pages read quota with their existing node query.
+// PublicTraffic carries the node's configured monthly quota for public pages;
+// current usage is deliberately omitted because public pages read quota with their existing node query.
 type PublicTraffic struct {
 	QuotaBytes string `json:"quota_bytes"`
 }
 
-// Absent means private; a selected metric or price without data is explicitly null.
+// MarshalJSON serializes only public-visible node fields and selected metrics;
+// absent metrics are omitted as private, whereas selected metrics or prices without data are explicit null.
 func (p PublicNode) MarshalJSON() ([]byte, error) {
 	out := map[string]any{"name": p.Name, "status": p.Status, "last_seen": p.LastSeen}
 	if p.Group != nil {
@@ -111,6 +116,7 @@ func (p PublicNode) MarshalJSON() ([]byte, error) {
 	return json.Marshal(out)
 }
 
+// PublicMetricStatus 表示状态页公开的四大核心指标各自的状态标签（ok/stale/unavailable）。
 type PublicMetricStatus struct {
 	CPUPercent    string `json:"cpu_percent"`
 	MemoryPercent string `json:"memory_percent"`

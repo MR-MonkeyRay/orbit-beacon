@@ -13,15 +13,20 @@ import (
 	"orbitbeacon/internal/uuid"
 )
 
+// TimezoneInfo 描述服务端用于计算定时任务触发时间的时区名称、UTC 偏移及当前时间。
 type TimezoneInfo struct {
 	TimezoneName     string    `json:"timezone_name"`
 	UTCOffsetSeconds int       `json:"utc_offset_seconds"`
 	ServerTime       time.Time `json:"server_time"`
 }
+
+// NextRun 表示 cron 计划的某次未来预期触发时刻及其服务端本地格式化时间。
 type NextRun struct {
 	At    time.Time `json:"at"`
 	Local string    `json:"local"`
 }
+
+// CronPreview 包含 cron 表达式解析后的后续触发时刻列表及服务端时区信息。
 type CronPreview struct {
 	NextRuns []NextRun `json:"next_runs"`
 	TimezoneInfo
@@ -68,6 +73,8 @@ func (s *Service) nextRuns(raw string, now time.Time, include bool) ([]NextRun, 
 	}
 	return runs, nil
 }
+
+// PreviewCron 解析并校验 raw cron 表达式，返回基于 now 计算的后续执行预览。
 func (s *Service) PreviewCron(raw string, now time.Time) (CronPreview, error) {
 	result := CronPreview{TimezoneInfo: s.timezoneInfo(now)}
 	var err error

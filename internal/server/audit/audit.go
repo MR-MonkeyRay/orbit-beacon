@@ -1,3 +1,4 @@
+// Package audit 在业务变更事务内同事务写入防敏感字段泄露的审计事件。
 package audit
 
 import (

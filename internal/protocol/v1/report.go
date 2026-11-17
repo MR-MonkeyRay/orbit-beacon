@@ -6,8 +6,10 @@ import (
 	"time"
 )
 
+// MaxProbeTargets 限定单个 Agent 每次上报允许携带的服务探测目标数量上限。
 const MaxProbeTargets = 5
 
+// Report 是 Agent 每次周期上报发送给 Server 的完整遥测、流量与指令回执载荷。
 type Report struct {
 	CommandResults  []CommandResult `json:"command_results,omitzero"`
 	ProtocolVersion int             `json:"protocol_version"`
@@ -21,6 +23,7 @@ type Report struct {
 	ProbeResults    []ProbeResult   `json:"probe_results,omitzero"`
 }
 
+// Validate 校验上报身份、指标完整度、去重后的流量桶与探测结果数量及结构。
 func (r Report) Validate() error {
 	if r.ProtocolVersion != ProtocolVersion {
 		return ErrProtocolUnsupported
@@ -80,6 +83,7 @@ func (r Report) Validate() error {
 	return nil
 }
 
+// ReportResponse 是服务端接受上报后返回的序列确认、流量 ACK 与待执行指令。
 type ReportResponse struct {
 	Command     *Command  `json:"command,omitempty"`
 	NodeID      string    `json:"node_id,omitempty"`

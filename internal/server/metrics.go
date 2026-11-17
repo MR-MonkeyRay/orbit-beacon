@@ -232,6 +232,7 @@ type historyFlushMetric struct {
 	entryBuckets [len(flushEntryBuckets)]uint64
 }
 
+// NewSaturationMetrics 创建关联主库连接池与数据目录磁盘统计的饱和度指标采集器。
 func NewSaturationMetrics(database *storage.Database, dataDir string) *SaturationMetrics {
 	return &SaturationMetrics{database: database, dataDir: dataDir}
 }

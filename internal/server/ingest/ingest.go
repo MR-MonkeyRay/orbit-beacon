@@ -1,3 +1,4 @@
+// Package ingest 接收并校验 Agent 周期上报，维护内存最新快照、写入门控、流量确认、探测去重与公开白名单投影。
 package ingest
 
 import (
@@ -22,6 +23,7 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
+// 上报准入、协议校验与写入队列返回的领域错误。
 var (
 	ErrProtocolUnsupported = errors.New("protocol version unsupported")
 	ErrInvalidReport       = errors.New("invalid report")
@@ -33,6 +35,7 @@ var (
 
 const writerQueueCapacity = 8
 
+// Options 配置上报接收服务的历史样本通道、时钟及 last_seen 节流落库周期。
 type Options struct {
 	// Samples 通过非阻塞发送接收独立的已接受样本副本；缓冲区满时丢弃历史样本，
 	// 不延迟上报处理。
@@ -116,6 +119,7 @@ func (state *nodeState) invalidateIdentity(credential []byte, credentialEpoch in
 	state.public = publicMetrics{}
 }
 
+// Service 管理节点上报的身份准入、内存最新快照缓存、流量与探测缓冲提交及公开快照生成。
 type Service struct {
 	samples              chan<- history.Sample
 	samplesDropped       atomic.Uint64
@@ -142,6 +146,7 @@ type stateCandidate struct {
 	touch uint64
 }
 
+// NewService 构造上报接收服务；PersistInterval 非正时默认使用 30 秒节流周期。
 func NewService(db *storage.Database, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
@@ -228,6 +233,7 @@ func (s *Service) queueWrite(ctx context.Context, finish func()) (func(), error)
 	}
 }
 
+// Shutdown 停止接受新上报并等待在途处理与缓冲流量排空落库。
 func (s *Service) Shutdown(ctx context.Context) error {
 	s.lifecycleMu.Lock()
 	s.closing = true
@@ -245,6 +251,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	}
 }
 
+// Admission 表示通过节点凭据校验与速率限制后颁发的一次性上报准入凭证。
 type Admission struct {
 	service           *Service
 	nodeID            string
@@ -255,6 +262,7 @@ type Admission struct {
 	used              bool
 }
 
+// AdmitToken 在读取完整上报载荷前校验 Bearer 节点凭据并扣减单节点限流额度。
 func (s *Service) AdmitToken(ctx context.Context, token string) (*Admission, error) {
 	if len(token) < 32 || len(token) > 256 {
 		return nil, nodes.ErrUnauthenticated
@@ -296,6 +304,7 @@ func (s *Service) AdmitToken(ctx context.Context, token string) (*Admission, err
 	return &Admission{service: s, nodeID: nodeID, credential: digest, credentialEpoch: credentialEpoch, storageGeneration: lease.Generation()}, nil
 }
 
+// AcceptAdmitted 消费一次性准入凭证，验证代次与序列号后接受报告并推送历史样本与公开/实时状态。
 func (s *Service) AcceptAdmitted(ctx context.Context, admission *Admission, report v1.Report) (v1.ReportResponse, error) {
 	if admission == nil || admission.service != s {
 		return v1.ReportResponse{}, nodes.ErrUnauthenticated
@@ -816,6 +825,7 @@ type LatestReport struct {
 	ReceivedAt time.Time `json:"received_at"`
 }
 
+// Latest 读取指定节点通过当前身份围栏校验的最新内存完整上报快照。
 func (s *Service) Latest(ctx context.Context, nodeID string) (LatestReport, error) {
 	// 在获取快照互斥锁之前读取，与公开投影的围栏保持一致。
 	// 这是普通 SELECT，从不等待写入准入。

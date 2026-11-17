@@ -16,6 +16,7 @@ const (
 	auditRetentionPeriod = 90 * 24 * time.Hour
 	// 票据过期后额外保留 24 小时的票据与认领记录；保留不延长授权。
 	enrollmentRetentionPeriod = 24 * time.Hour
+	// RetentionInterval 定义后台周期性触发数据保留清理任务的默认时间间隔。
 	RetentionInterval         = time.Hour
 	retentionBatchSize        = 128
 	retentionSessionBatches   = 16
@@ -23,6 +24,7 @@ const (
 	retentionCatchupBudget    = 2 * time.Second
 )
 
+// RetentionResult 汇总单次数据保留清理周期中各类表与临时产物被删除或处理的条目数。
 type RetentionResult struct {
 	NotificationDeliveries int64
 	InboxNotifications     int64
@@ -96,6 +98,7 @@ func retentionAttrs(result RetentionResult) []slog.Attr {
 	}
 }
 
+// CleanupRetention 执行单轮有界数据保留与过期产物清理，并尽量在部分失败时继续完成其余类别。
 func (h *handler) CleanupRetention(ctx context.Context, now time.Time) (result RetentionResult, resultErr error) {
 	defer func() {
 		if h.services != nil {

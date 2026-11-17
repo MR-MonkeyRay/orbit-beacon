@@ -33,6 +33,7 @@ type TrafficAccumulator struct {
 	newestPeriod time.Time
 }
 
+// NewTrafficAccumulator 创建按当前进程新随机 epoch 初始化的流量累计器。
 func NewTrafficAccumulator(now func() time.Time) *TrafficAccumulator {
 	if now == nil {
 		now = time.Now

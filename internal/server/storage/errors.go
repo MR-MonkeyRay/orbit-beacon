@@ -41,6 +41,7 @@ func SQLiteCode(err error) (int, bool) {
 	return failure.Code(), true
 }
 
+// MySQLCode 从错误链中提取 MySQL 驱动返回的数值错误码。
 func MySQLCode(err error) (uint16, bool) {
 	var failure *mysql.MySQLError
 	if !errors.As(err, &failure) || failure == nil {
@@ -48,6 +49,8 @@ func MySQLCode(err error) (uint16, bool) {
 	}
 	return failure.Number, true
 }
+
+// IsUnique 判断 err 是否表示 SQLite 或 MySQL 的唯一键/主键冲突约束错误。
 func IsUnique(err error) bool {
 	if code, ok := MySQLCode(err); ok {
 		return code == 1062
@@ -55,6 +58,8 @@ func IsUnique(err error) bool {
 	code, ok := SQLiteCode(err)
 	return ok && (code == sqlite3.SQLITE_CONSTRAINT_UNIQUE || code == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY)
 }
+
+// IsConnectionFailure 判断 err 是否属于连接中断、只读切换或底层 I/O 损坏等存储可用性故障。
 func IsConnectionFailure(err error) bool {
 	if err == nil {
 		return false

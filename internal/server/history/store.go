@@ -14,6 +14,7 @@ type Bucket struct {
 	Samples      int64
 }
 
+// Store 抽象历史指标聚合桶的持久化读写与分批清理后端。
 type Store interface {
 	// Write 在同一源事务持久化三档聚合；失败时也返回计划写入的存储行数。
 	// ErrCommitUnknown 后仅允许原批次重入，先解析原事务，确定回滚后才重做。

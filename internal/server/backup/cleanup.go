@@ -361,6 +361,7 @@ func archiveEntryID(name string) string {
 	return stem[len(stem)-36:]
 }
 
+// PruneLocal 清理指定本地目录与计划下的旧备份归档，仅保留最新 retain 份。
 func (s *Service) PruneLocal(ctx context.Context, path, planID string, retain int) error {
 	if !filepath.IsAbs(path) || !uuid.ValidUUID(planID) || retain < 1 || retain > 1000 {
 		return &Error{Code: "retention_cleanup_failed"}

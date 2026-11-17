@@ -1,3 +1,4 @@
+// Package config 加载并校验 Server 与 Agent 配置，按 CLI Flags > 环境变量 > YAML > 默认值合并。
 package config
 
 import (
@@ -18,12 +19,14 @@ import (
 	v1 "orbitbeacon/internal/protocol/v1"
 )
 
+// LoadOptions 指定配置来源及覆盖层。LookupEnv 为空时回退到 os.LookupEnv。
 type LoadOptions struct {
 	File      string
 	LookupEnv func(string) (string, bool)
 	Flags     map[string]string
 }
 
+// Server 保存 OrbitBeacon 服务端的运行配置。
 type Server struct {
 	GeoIPLookup                      bool           `json:"geoip_lookup"`
 	GeoIPTokenFile                   string         `json:"geoip_token_file"`
@@ -54,6 +57,7 @@ type InstallPolicy struct {
 	InstallMode     string `json:"install_mode"`
 }
 
+// Agent 组合受保护的安装策略与本地可重载的采集配置。
 type Agent struct {
 	ProbeExpectedStatus map[string]int `json:"probe_expected_status,omitempty"`
 	InstallPolicy
@@ -162,6 +166,7 @@ func encodeValue(key, value string) (json.RawMessage, error) {
 	}
 }
 
+// LoadServer 按优先级合并 YAML、环境变量和 CLI 参数，并完成 Server 配置校验。
 func LoadServer(opts LoadOptions) (Server, error) {
 	cfg := Server{GeoIPLookup: true, ListenAddr: "127.0.0.1:8080", DataDir: "./data", PublicURL: "http://localhost:8080", MaxNodes: 500, WebUpdateIntervalSeconds: 10}
 	layers, err := sources(opts, []string{"geoip_lookup", "geoip_token", "geoip_token_file", "allow_insecure_webhooks", "notification_allow_private_networks", "listen_addr", "metrics_listen", "access_log", "data_dir", "public_url", "max_nodes", "web_update_interval_seconds", "trusted_proxies", "database"})
@@ -334,6 +339,7 @@ func ValidatePath(path string) error {
 	return nil
 }
 
+// Validate 检查 Server 各项端点、路径、容量与互斥开关是否合法。
 func (cfg Server) Validate() error {
 	if cfg.GeoIPToken != "" && cfg.GeoIPTokenFile != "" {
 		return errors.New("geoip_token and geoip_token_file are mutually exclusive")
@@ -374,6 +380,7 @@ func (cfg Server) Validate() error {
 	return nil
 }
 
+// LoadAgent 在强制校验且禁止篡改 InstallPolicy 的前提下，合并加载 Agent 运行配置。
 func LoadAgent(opts LoadOptions, policy *InstallPolicy) (Agent, error) {
 	if policy == nil {
 		return Agent{}, errors.New("必须提供归管理员所有的安装策略")

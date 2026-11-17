@@ -1,46 +1,63 @@
-# Web 开发
+# Web 前端开发指南
 
-前端用原生 JavaScript/CSS 和 esbuild，没有运行时依赖或外部字体；默认资源同源，也支持自托管静态 CDN。术语和文案见[约定](../docs/conventions.md)，功能入口见[主文档](../README.md#功能)。
+OrbitBeacon 前端采用 **原生 JS / CSS + esbuild**，零运行时第三方依赖或外链字体；构建产物提交于仓库并通过 Go `go:embed` 打入单一服务端二进制。
 
-## 开发流程
+- 状态页自定义主题开发：[themes/README.md](themes/README.md)
+- 术语、文案与无障碍规范：[docs/conventions.md](../docs/conventions.md)
+- HTTP / WS / SSE 接口契约：[api/openapi.yaml](../api/openapi.yaml)
 
-需要 Node.js 22+，CI 使用的当前 LTS 版本见 [.nvmrc](.nvmrc)（26.13.0）。从仓库根目录执行：
+---
+
+## 1. 双入口构建流水线
+
+```text
+web/src/console/  (管理控制台源码) ──┐
+web/src/public/   (公开页运行时)     ├──▶ [esbuild (web/build.mjs)] ──▶ internal/server/webui/dist/
+web/src/shared/   (公共组件/传输/i18n)│        (受 build.config.json 控制)    ├── 200.html / public.html
+web/themes/<name>/(状态页主题)       ──┘                                    ├── _app/assets/*.{js,css}?v=<hash>
+                                                                           └── asset-manifest.json
+                                                                                      │
+                                                                           go:embed 打包进 orbitbeacon-server
+```
+
+- **版本一致性**：`internal/server/webui/dist` 受 Git 跟踪，提交源码修改须同步提交构建产物（勿手改 `dist`）。
+- **缓存模型**：HTML 与 API 永不缓存；服务器启动校验 `asset-manifest.json`，仅版本查询串 `?v=...` 完全匹配的资源返回一年 `immutable` 缓存，错误版本返回不可缓存的 404。
+
+---
+
+## 2. 开发与测试命令
+
+需要 Node.js 22+（CI 版本见 [.nvmrc](.nvmrc)）。在仓库根目录或 `web/` 下执行：
 
 ```sh
 cd web
 npm ci
-npm run build
-# 也可用 npm run watch 在源码变更时自动重新构建。
-npm run check
-npm test
+npm run build   # 构建产物至 internal/server/webui/dist
+npm run watch   # 监听源码与主题变化自动重构建 (需重启 Go 进程才生效)
+npm run check   # 临时构建并比对已提交 dist 是否一致 (CI 必检)
+npm test        # 运行前端单测与 DOM 回归
 ```
 
-- 无独立开发服务器；构建后重新编译并重启服务器，见[快速开始](../README.md#快速开始)。
-- 产物在 [`internal/server/webui/dist`](../internal/server/webui/dist)，由 Go `embed` 打包；提交时同步源码与产物，不直接编辑产物。文件名固定，构建器自动更新 URL 的内容版本与 HTML 引用，不要手动改文件名。`check` 临时构建并比较，不修改已提交文件。
-- CI 检查产物一致性与 Node.js 测试。构建目标为 Chrome 111、Firefox 115、Safari 16.4，仍需真实浏览器验收。
-- DOM 异步测试用 `test/console-dom.js` 的 `flush()`，模拟计时器另行推进。
+---
 
-## 目录
+## 3. 目录职责
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/console/main.js` | 声明路由表，初始化 shell 与 router |
-| `src/console/router.js` | History API 导航、页面加载、会话门禁与草稿确认 |
-| `src/console/pages/` | 页面及分区 |
-| `src/console/ui/` | 表单、对话框、图表等复用组件 |
-| `src/console/lib/` | 节点列表、批量操作、告警与注册等辅助逻辑 |
-| `src/console/api.js`、`live.js`、`notifications.js` | 会话/CSRF、私有实时订阅、站内通知与告警摘要 controller |
-| `src/shared/` | 实时传输、SSE 解析、新鲜度、DOM、明暗模式与设计 token |
-| `src/shared/locales/` | `zh-CN` / `en` 语言目录，控制台与状态页共用 |
-| `src/public/` | 公开数据校验、状态页生命周期与实时更新 |
-| `themes/default/`、`themes/example/` | 仅状态页使用的 HTML、CSS 与展示组件 |
-| `themes/README.md` | 自定义首页主题开发指南 |
-| `build.config.json` | 首页主题和静态资源 CDN 地址 |
-| `test/`、`build.mjs` | 回归工具与双入口构建 |
+| `src/console/main.js` / `router.js` | 控制台路由声明、History 导航、会话门禁与草稿离开确认 |
+| `src/console/pages/` | 各业务页面（概览、节点、服务、告警、审计、设置等） |
+| `src/console/ui/` & `lib/` | Modal、图表、分页、表单、批处理与注册交互辅助组件 |
+| `src/console/api.js` / `live.js` / `notifications.js` | 会话/CSRF 请求封装、私有实时流与 15s 通知摘要 controller |
+| `src/shared/` | WS→SSE→HTTP 自动回退、新鲜度判定、DOM `h()`、明暗主题与 `tokens.css` |
+| `src/shared/locales/` | `zh-CN` / `en` 多语言词条（控制台与状态页按需共享） |
+| `src/public/` | 公开快照校验、只读页面生命周期与状态渲染 |
+| `themes/{default,example}/` | 状态页专属 HTML/CSS/组件（只影响 `/` 与 `/public.html`） |
 
-## 构建与缓存
+---
 
-编辑 [`build.config.json`](build.config.json)，然后执行 `npm run build`：
+## 4. 构建配置与核心开发约定
+
+### 4.1 主题与 CDN 配置（`web/build.config.json`）
 
 ```json
 {
@@ -49,26 +66,12 @@ npm test
 }
 ```
 
-- `publicTheme` 指定 `themes/` 下的目录名。切换为 `example` 可查看示例；复制与开发步骤见[主题指南](themes/README.md)。主题只影响 `/` 和 `/public.html`，不改变控制台。
-- `assetBase` 为空时使用同源资源；独立 CDN 可设为 `https://static.example.com/orbitbeacon/release-2026-11`。只允许 ASCII HTTPS 源与可选路径前缀，不接受凭据、查询、片段、百分号编码、需自动转义的字符或 `..`。
-- 构建器生成固定的 `_app/assets/{console,public}.{js,css}`，并为 HTML 引用自动添加 `?v=<内容版本>`。图片、字体应从 JS 或 CSS 导入；构建器保留稳定路径并为引用添加版本。不要直接引用未版本化的图片路径，也不要在 HTML 中手写产物文件名。
-- `asset-manifest.json` 把每个资源路径与版本绑定。服务器启动时校验清单，只有匹配版本的资源才缓存一年；未带版本的资源重新验证，错误版本返回不可缓存的 404。HTML 与 API 不缓存。不要分开部署清单、HTML 与资源。
-- `watch` 监听源码、主题与构建配置。产物先完整写入暂存目录，再替换 `dist`；写入失败不影响旧产物，切换失败回滚，切换中断后的下一次构建会恢复 `dist.previous`。Go 仍内嵌构建时的文件，重新构建网页不会热更新已运行的二进制。
+- `publicTheme`：指定 `themes/` 下的目录名（可切换 `example` 预览示例）。
+- `assetBase`：留空使用同源静态资源；启用独立静态 CDN 时填 ASCII HTTPS 根地址（如 `https://static.example.com/orbitbeacon/release-2026-11`，不含凭据/查询/百分号编码）。静态资源必须**先于**新版二进制上线。
 
-CDN 上传 `internal/server/webui/dist/_app/assets/`，保持目录层级，并把 `v` 纳入缓存键。API、WS、SSE、导航和认证仍访问网站本身，不能把 `public_url` 改成静态 CDN。部署顺序、旧版本保留及缓存规则见[CDN 部署](../deploy/README.md#cdn)。
+### 4.2 代码与交互红线
 
-## 开发约定
-
-- 复用现有组件与原生 modal，保留 Escape、Tab、焦点恢复及草稿保护；动画遵守 `prefers-reduced-motion`。字号、控件及断点使用 `shared/tokens.css`。
-- 控制台在 `max-width:767px` 使用顶部栏与抽屉导航，节点表使用同一 DOM 显示为卡片列表，其他宽表格横向滚动；公开页覆盖所有设备。响应式规则见 `console/styles/responsive.css`。
-- 可见文案、校验、日期与数字使用应用语言，不依赖浏览器原生校验文本。语言选择按浏览器偏好，其他语言回退英文；同源 `orbitbeacon-locale` 保存“跟随系统 / 中文 / English”，不写入账户。
-- 切换语言确认草稿后整页重载并保留 URL；取消、保存失败或操作进行中不切换。其他标签页修改偏好不自动重载当前页。主题使用 `orbitbeacon-theme`。
-- 页面复用 `shared/live.js`，私有订阅通过 `console/live.js`；实时回退、状态和会话边界见[实时传输](../docs/architecture.md#实时传输)、[安全](../docs/architecture.md#安全)，不在页面各自实现。
-- 取消导航、隐藏或退出时停止请求与计时器；阻止迟到响应回写。通知与告警摘要共用单个 15 秒 controller，失败保留旧数并标记已过期。
-- 节点详情设置页签的分段直达为 `#settings-details`、`#settings-public`、`#settings-agent`、`#settings-enrollment`，旧哈希 `#details`、`#public`、`#agent`、`#enrollment` 仍然有效。
-- 侧栏分监控、管理和底部工具；搜索保留 Ctrl/⌘K。用户菜单收纳语言、主题和退出登录。
-- 设置“数据”分“备份与导出”“存储与清理”；`/data` 替换跳转到 `/settings#data-storage`，路由清单仍保留 `/data`。API 令牌与全局限额位于 `/settings#api-tokens`。
-- 通知列表仅合并已加载列表中连续、同一 `details.rule_id` 与 `transition`、首尾不超过 10 分钟的告警通知；展开或标为已读会逐项持久化组内已读状态。节点数按 `details.node_id` 去重，详情保留每条通知。
-- 保留页签哈希与详情直达：任务 `/settings?task=<uuid>#data`，告警 `/alerts?event=<uuid>#history`；详情不依赖列表当前页。
-- 下载用普通同源附件链接。恢复密码仅主动请求，30 秒无交互遮罩，关闭或导航时清除，不放入列表、日志或初始 HTML；归档操作见[部署指南](../deploy/README.md#导出与备份)。
-- 字段、认证、错误码与实时帧格式见[接口契约（OpenAPI）](../api/openapi.yaml)，此处不重复。
+- **复用意图**：复用 `src/console/ui/` 与原生 modal，保留 `Escape` / `Tab` / 焦点恢复及 `prefers-reduced-motion`；响应式断点与字号使用 `shared/tokens.css` 与 `console/styles/responsive.css`（`<=767px` 切为抽屉导航与卡片列表）。
+- **实时与生命周期**：复用 `shared/live.js` / `console/live.js`；取消导航、页面隐藏或登出时须中止在途请求与计时器，禁止迟到响应回写 DOM。
+- **路由与直达**：保留 `/settings#data-storage`（兼容 `/data` 跳转）、`/settings#api-tokens`、`/settings?task=<uuid>#data`、`/alerts?event=<uuid>#history` 及节点设置分段哈希（`#settings-{details,public,agent,enrollment}`）。
+- **隐私与归档**：恢复密码仅主动点击时展示，30s 无操作自动遮罩，关闭或切换路由立即清除内存副本，绝不写入列表或日志。

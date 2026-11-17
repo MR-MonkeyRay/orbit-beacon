@@ -21,14 +21,19 @@ const (
 )
 
 var (
-	ErrNotFound     = errors.New("traffic node not found")
+	// ErrNotFound 表示请求的节点在流量统计域中不存在。
+	ErrNotFound = errors.New("traffic node not found")
+	// ErrInvalidInput 表示流量查询的时间范围或参数不合法。
 	ErrInvalidInput = errors.New("invalid traffic request")
 )
 
+// Service 提供节点流量账期用量查询、配额快照读取及小时转日表汇总清理。
 type Service struct{ db *storage.Database }
 
+// NewService 构造绑定主业务库的流量统计服务。
 func NewService(db *storage.Database) *Service { return &Service{db: db} }
 
+// Summary 包含节点计费规则、当前账期累计用量与近期按天明细。
 type Summary struct {
 	BillingMode string     `json:"billing_mode"`
 	BillingDay  *int       `json:"billing_day"`
@@ -38,6 +43,7 @@ type Summary struct {
 	UpdatedAt   *time.Time `json:"updated_at"`
 }
 
+// Cycle 表示节点在当前 UTC 月账期起止边界内的计费流量及收发明细。
 type Cycle struct {
 	UsedBytes  string    `json:"used_bytes"`
 	Start      time.Time `json:"start"`
@@ -47,6 +53,7 @@ type Cycle struct {
 	TotalBytes string    `json:"total_bytes"`
 }
 
+// Daily 表示单个 UTC 日期累计的入站和出站字节字符串。
 type Daily struct {
 	Day     string `json:"day"`
 	RxBytes string `json:"rx_bytes"`

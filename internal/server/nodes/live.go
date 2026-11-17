@@ -34,11 +34,13 @@ type LiveNode struct {
 	AgentVersion      string     `json:"agent_version"`
 }
 
+// LiveRecord 将紧凑的实时节点视图与内部身份围栏打包返回，供实时叠加层校验匹配。
 type LiveRecord struct {
 	LiveNode
 	Identity LiveIdentity `json:"-"`
 }
 
+// LiveDetailRecord 将完整的节点详情与内部身份围栏打包返回。
 type LiveDetailRecord struct {
 	Node     Node
 	Identity LiveIdentity `json:"-"`
@@ -123,10 +125,12 @@ type liveDetailScanner struct {
 	session    *string
 }
 
+// Scan 将附加的私有身份字段拼接到基础节点列之后一起扫描。
 func (s liveDetailScanner) Scan(dest ...any) error {
 	return s.scanner.Scan(append(dest, s.credential, s.epoch, s.generation, s.session)...)
 }
 
+// LiveDetail 在单条只读查询内同时读取节点完整信息及其运行身份围栏。
 func (s *Service) LiveDetail(ctx context.Context, id string) (LiveDetailRecord, error) {
 	var record LiveDetailRecord
 	var credential []byte

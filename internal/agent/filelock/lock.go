@@ -1,3 +1,4 @@
+// Package filelock 为 Agent 的状态文件与运行互斥提供跨进程文件锁。
 package filelock
 
 import (
@@ -6,6 +7,7 @@ import (
 	"time"
 )
 
+// ErrLocked 表示已有另一个 Agent run 进程正在占用同一状态目录的运行锁。
 var ErrLocked = errors.New("another agent run is already using this state directory")
 
 // TryAcquire 不等待锁，释放时也不删除独立锁文件，以保持 inode 不变。

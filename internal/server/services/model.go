@@ -18,9 +18,13 @@ import (
 	"orbitbeacon/internal/uuid"
 )
 
+// ErrNotFound reports that the requested service does not exist.
 var ErrNotFound = errors.New("service not found")
+
+// ErrCapacity reports that the maximum limit of 100 services has been reached.
 var ErrCapacity = errors.New("maximum of 100 services reached")
 
+// Service defines a monitored endpoint configuration and its current observed probe state.
 type Service struct {
 	// Internal generation fence for scheduled work across database switches.
 	generation         uint64
@@ -45,6 +49,7 @@ type Service struct {
 	RecentHours        [24]*float64 `json:"recent_hours"`
 }
 
+// Patch holds partial updates to a Service configuration.
 type Patch struct {
 	GroupID            json.RawMessage `json:"group_id"`
 	Name               *string         `json:"name"`
@@ -115,6 +120,8 @@ func validHost(host string) bool {
 	}
 	return true
 }
+
+// Validate verifies that s has a valid identifier, target, probe configuration, and intervals.
 func Validate(s Service) error {
 	fields := map[string]string{}
 	if s.GroupID != nil && !uuid.ValidUUID(*s.GroupID) {
@@ -168,6 +175,7 @@ func Validate(s Service) error {
 	return nil
 }
 
+// Result records the outcome and timing of a single service probe execution.
 type Result struct {
 	OK           bool       `json:"ok"`
 	Status       string     `json:"status"`
@@ -186,6 +194,7 @@ type Result struct {
 	LatencySilenced        bool   `json:"latency_silenced"`
 }
 
+// Event represents a persisted state-change notification emitted for a service check.
 type Event struct {
 	ID           string     `json:"id"`
 	ServiceID    string     `json:"service_id"`
@@ -280,6 +289,7 @@ func advanceSilenced(s Service, previous *Result, result Result, silenced bool) 
 	return result, events
 }
 
+// ValidateResult ensures r contains valid status, timestamps, and latency bounds before persistence.
 func ValidateResult(r Result) error {
 	if r.CheckedAt.IsZero() || r.Status != "up" && r.Status != "down" && r.Status != "unknown" || r.Failures < 0 || r.Failures > 10 || r.SlowChecks < 0 || r.SlowChecks > 3 {
 		return errors.New("invalid service result")
@@ -311,7 +321,7 @@ func ValidateResult(r Result) error {
 	return nil
 }
 
-// Only group_id is nullable; RawMessage distinguishes omission from explicit null.
+// UnmarshalJSON decodes a partial Service Patch; only group_id is nullable, using RawMessage to distinguish omission from explicit null.
 func (p *Patch) UnmarshalJSON(raw []byte) error {
 	type plain Patch
 	var fields map[string]json.RawMessage

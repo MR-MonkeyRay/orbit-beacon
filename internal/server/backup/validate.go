@@ -765,6 +765,8 @@ type PlanDefinition struct {
 	Destination json.RawMessage
 	RetainCount *int
 }
+
+// ObjectDestination 描述对象存储备份目标的提供商、端点、桶及路径安全选项。
 type ObjectDestination struct {
 	Provider             string `json:"provider"`
 	Endpoint             string `json:"endpoint"`
@@ -774,12 +776,15 @@ type ObjectDestination struct {
 	PathStyle            bool   `json:"path_style"`
 	AllowPrivateNetworks bool   `json:"allow_private_networks"`
 }
+
+// ObjectCredentials 保存访问对象存储所需的密钥对及可选临时会话令牌。
 type ObjectCredentials struct {
 	AccessKeyID     string `json:"access_key_id"`
 	SecretAccessKey string `json:"secret_access_key"`
 	SessionToken    string `json:"session_token,omitempty"`
 }
 
+// Validate 校验对象存储访问凭证非空且不含危险控制字符。
 func (c ObjectCredentials) Validate() error {
 	if strings.TrimSpace(c.AccessKeyID) == "" || strings.TrimSpace(c.SecretAccessKey) == "" || strings.ContainsAny(c.AccessKeyID+c.SecretAccessKey+c.SessionToken, "\r\n\x00") {
 		return invalidRow()
@@ -802,6 +807,7 @@ func decodeStrictObject(raw []byte, dst any) error {
 	return nil
 }
 
+// ValidatePlan 校验备份计划名称、类别、cron 调度及对应本地或对象存储目标配置。
 func ValidatePlan(p PlanDefinition) error {
 	if !validText(p.Name, 100) {
 		return invalidRow()
@@ -834,6 +840,8 @@ func ValidatePlan(p PlanDefinition) error {
 	}
 	return nil
 }
+
+// Validate 校验对象存储提供商、Region、Bucket 命名及 HTTPS Endpoint URL 合法性。
 func (d ObjectDestination) Validate() error {
 	if !oneOf(d.Provider, "cos", "oss", "r2", "s3", "s3_compatible") || strings.TrimSpace(d.Region) == "" || strings.TrimSpace(d.Bucket) == "" || strings.ContainsAny(d.Bucket, "/\\\r\n\x00") {
 		return invalidRow()

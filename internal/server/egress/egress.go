@@ -9,8 +9,10 @@ import (
 	"strings"
 )
 
+// ErrDenied 表示目标主机或解析结果被出站网络安全策略拦截。
 var ErrDenied = errors.New("destination denied by egress policy")
 
+// Resolver 抽象主机名到 IP 地址切片的解析能力，便于测试注入。
 type Resolver interface {
 	LookupIPAddr(context.Context, string) ([]net.IPAddr, error)
 }
@@ -131,6 +133,7 @@ func (d *Dialer) denied(ip net.IP) bool {
 	return false
 }
 
+// DialContext 先解析并逐一校验全部返回 IP，全部通过后再按字面量 IP 拨号以防止 DNS 重绑定。
 func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	host, port, e := net.SplitHostPort(address)
 	if e != nil {

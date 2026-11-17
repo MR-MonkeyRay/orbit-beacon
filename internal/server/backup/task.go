@@ -42,6 +42,7 @@ type Task struct {
 	artifactCleanupAfter       *time.Time
 }
 
+// TaskDestination 记录备份任务执行时的计划名称、触发操作者与脱敏目标元数据。
 type TaskDestination struct {
 	PlanName  string          `json:"plan_name"`
 	ActorName string          `json:"actor_name"`

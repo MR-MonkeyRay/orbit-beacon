@@ -32,6 +32,7 @@ type ObjectUploader struct {
 	client func(ObjectDestination) *http.Client
 }
 
+// NewObjectUploader 创建默认的对象存储上传器实例。
 func NewObjectUploader() *ObjectUploader { return &ObjectUploader{} }
 
 func newObjectTransport(d ObjectDestination, resolver egress.Resolver, dial func(context.Context, string, string) (net.Conn, error)) *http.Transport {
@@ -147,6 +148,7 @@ func objectPartSize(size int64) int64 {
 	return part
 }
 
+// Upload 校验目标与凭证并将本地归档文件安全上传至 S3 兼容对象存储。
 func (u *ObjectUploader) Upload(ctx context.Context, destination ObjectDestination, input ObjectCredentials, path, key, sha256 string) (UploadResult, error) {
 	if destination.Validate() != nil || input.Validate() != nil {
 		return UploadResult{}, &Error{Code: "storage_upload_failed"}

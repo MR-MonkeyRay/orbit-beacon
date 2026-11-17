@@ -68,6 +68,7 @@ type App struct {
 	listener, metricsListener net.Listener
 }
 
+// Build 校验数据目录与密钥、初始化主库和历史库、装配领域服务与后台工作器并返回一次性 App 实例。
 func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App, err error) {
 	if logger == nil {
 		return nil, errors.New("logger is required")
@@ -260,6 +261,7 @@ func Build(cfg config.Server, logger *slog.Logger, ctx context.Context) (_ *App,
 	return a, nil
 }
 
+// Run 启动复制任务、后台协程及 HTTP/指标服务，直至上下文取消并执行优雅关闭。
 func (a *App) Run(ctx context.Context) error {
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -421,6 +423,7 @@ func newHTTPServer(address string, handler http.Handler, logger *slog.Logger) *h
 // 将其与应用错误一样，限制在仅记录元数据的边界内。
 type httpErrorWriter struct{ logger *slog.Logger }
 
+// Write 实现 io.Writer，将 net/http 内部传输日志收敛为仅含元数据的结构化警告。
 func (w httpErrorWriter) Write(p []byte) (int, error) {
 	w.logger.Warn("http_transport_error", "component", "http_server", "error_kind", "http", "error_code", "transport_error")
 	return len(p), nil

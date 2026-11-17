@@ -1,3 +1,4 @@
+// Package management 管理节点分组、审计事件分页查询与全局公开状态页配置。
 package management
 
 import (
@@ -16,11 +17,13 @@ import (
 	"orbitbeacon/internal/uuid"
 )
 
+// 分组与系统设置管理返回的标准领域错误。
 var (
 	ErrNotFound     = errors.New("management resource not found")
 	ErrInvalidInput = errors.New("invalid management input")
 )
 
+// Service 提供节点分组维护、审计日志浏览与状态页全局设置读写能力。
 type Service struct {
 	db            *storage.Database
 	publicChanged func()
@@ -34,14 +37,17 @@ func (s *Service) invalidatePublic() {
 	}
 }
 
+// NewService 构造管理服务实例。
 func NewService(db *storage.Database) *Service { return &Service{db: db} }
 
+// Group 表示用于组织受控节点及控制台排序的节点分组。
 type Group struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
 	DisplayOrder int    `json:"display_order"`
 }
 
+// Event 表示持久化在 audit_events 表中的单条管理或系统审计记录。
 type Event struct {
 	ID        string          `json:"id"`
 	ActorID   *string         `json:"actor_id"`
@@ -51,6 +57,7 @@ type Event struct {
 	Details   json.RawMessage `json:"details"`
 }
 
+// EventPage 表示审计事件分页结果（同时支持游标与偏移量分页语义）。
 type EventPage struct {
 	Events     []Event `json:"events"`
 	HasMore    bool    `json:"has_more"`
@@ -98,6 +105,7 @@ func scanGroup(row interface{ Scan(...any) error }) (Group, error) {
 	return group, err
 }
 
+// Groups 返回按 display_order 降序、名称及 ID 排序的全部节点分组。
 func (s *Service) Groups(ctx context.Context) ([]Group, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -125,6 +133,7 @@ func scanGroups(rows *storage.Rows) ([]Group, error) {
 	return groups, rows.Err()
 }
 
+// Group 按 ID 查询单个节点分组；不存在时返回 ErrNotFound。
 func (s *Service) Group(ctx context.Context, id string) (Group, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -135,6 +144,7 @@ func (s *Service) Group(ctx context.Context, id string) (Group, error) {
 	return scanGroup(lease.QueryRowContext(ctx, "SELECT id, name, display_order FROM `groups` WHERE id = ?", id))
 }
 
+// SaveGroup 创建（id 为空）或重命名节点分组，并同步写入审计与触发公开缓存失效。
 func (s *Service) SaveGroup(ctx context.Context, id, name string) (Group, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -193,6 +203,7 @@ func (s *Service) SaveGroup(ctx context.Context, id, name string) (Group, error)
 	return group, nil
 }
 
+// ReorderGroups 在单事务内按给定 ID 序列重新分配节点分组 display_order 并记录审计。
 func (s *Service) ReorderGroups(ctx context.Context, ids []string) ([]Group, error) {
 	lease, err := s.db.Acquire(ctx, storage.Writer)
 	if err != nil {
@@ -259,6 +270,7 @@ func requireRow(result sql.Result) error {
 	return nil
 }
 
+// DeleteGroup 删除指定节点分组，记录关联作用域告警规则的级联删除审计并刷新公开缓存。
 func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -292,6 +304,7 @@ func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 	return nil
 }
 
+// Events 按创建时间倒序返回审计事件分页数据。
 func (s *Service) Events(ctx context.Context, limit, offset int, before string) (EventPage, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {

@@ -12,6 +12,7 @@ var (
 
 type icmpUnsupportedError struct{ error }
 
+// Unwrap 统一归类为 errICMPUnsupported 供探测结果分类。
 func (icmpUnsupportedError) Unwrap() error { return errICMPUnsupported }
 
 func buildICMPEchoRequest(ipv6 bool, sequence uint16) []byte {

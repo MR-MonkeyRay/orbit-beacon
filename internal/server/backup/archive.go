@@ -38,9 +38,13 @@ type Error struct {
 	Err  error
 }
 
+// Error 返回安全错误码，不暴露底层路径或加解密诊断细节。
 func (e *Error) Error() string { return e.Code }
+
+// Unwrap 返回包装的底层原因错误，供内部错误分类匹配。
 func (e *Error) Unwrap() error { return e.Err }
 
+// Manifest 描述加密备份归档内的元信息、快照时间点与文件校验清单。
 type Manifest struct {
 	Format               string         `json:"format"`
 	Version              int            `json:"version"`
@@ -54,21 +58,26 @@ type Manifest struct {
 	Files                []ManifestFile `json:"files"`
 }
 
+// Snapshots 记录主库与历史指标库快照一致性的抓取时间戳。
 type Snapshots struct {
 	MainAt    time.Time  `json:"main_at"`
 	MetricsAt *time.Time `json:"metrics_at"`
 }
 
+// ManifestFile 记录备份归档中单个载荷文件的路径、大小与 SHA-256 摘要。
 type ManifestFile struct {
 	Path   string `json:"path"`
 	Bytes  int64  `json:"bytes"`
 	SHA256 string `json:"sha256"`
 }
 
+// ArchiveInput 指定写入备份归档时的内部成员名称及源文件绝对路径。
 type ArchiveInput struct {
 	Name string
 	Path string
 }
+
+// ArchiveInfo 返回封装并加密完成后的备份归档字节大小与 SHA-256 摘要。
 type ArchiveInfo struct {
 	Bytes  int64
 	SHA256 string

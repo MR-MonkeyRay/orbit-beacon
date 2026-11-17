@@ -129,6 +129,7 @@ func (tx *Tx) finishCapture() error {
 	return safeFailure(err)
 }
 
+// StartReplication 为各复制域启动后台异步行日志捕获与备库重放工作协程。
 func (dbs *Databases) StartReplication(ctx context.Context) error {
 	if dbs == nil || dbs.replication == nil {
 		return nil
@@ -154,6 +155,8 @@ func (dbs *Databases) StartReplication(ctx context.Context) error {
 	go func() { wg.Wait(); close(r.done) }()
 	return nil
 }
+
+// StopReplication 取消并等待全部后台复制协程安全退出。
 func (dbs *Databases) StopReplication() error {
 	if dbs == nil || dbs.replication == nil {
 		return nil

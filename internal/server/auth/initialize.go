@@ -6,6 +6,7 @@ import (
 	"orbitbeacon/internal/server/storage"
 )
 
+// InitializeAdministrator 在用户库为空时根据环境变量（或默认值 orbitbeacon/orbitbeacon）创建首个管理员；已有用户时直接返回。
 func (s *Service) InitializeAdministrator(ctx context.Context, lookupEnv func(string) (string, bool)) error {
 	var exists bool
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)

@@ -16,10 +16,13 @@ import (
 )
 
 var (
-	ErrNotFound     = errors.New("notification not found")
+	// ErrNotFound 表示请求的站内通知记录不存在。
+	ErrNotFound = errors.New("notification not found")
+	// ErrInvalidInput 表示站内通知查询或已读标记参数不合法。
 	ErrInvalidInput = errors.New("invalid notification input")
 )
 
+// Event 表示待写入站内收件箱的不可变事件输入。
 type Event struct {
 	ID         string
 	Kind       string
@@ -30,6 +33,7 @@ type Event struct {
 	Details    json.RawMessage
 }
 
+// Notification 表示投影到具体管理员视图后的站内通知记录及个人已读标记。
 type Notification struct {
 	ID         string          `json:"id"`
 	Kind       string          `json:"kind"`
@@ -41,26 +45,36 @@ type Notification struct {
 	Read       bool            `json:"read"`
 }
 
+// Identity 指定查询或标记站内通知已读状态的管理员身份。
 type Identity struct {
 	UserID string
 }
+
+// Filter 指定站内通知列表的分页大小、游标位置与仅未读过滤条件。
 type Filter struct {
 	Limit  int
 	Before string
 	Unread bool
 }
+
+// Page 表示站内通知的键集分页结果，ReadThrough 标记快照读取时的最新通知 ID。
 type Page struct {
 	Notifications []Notification `json:"notifications"`
 	HasMore       bool           `json:"has_more"`
 	NextCursor    string         `json:"next_cursor,omitempty"`
 	ReadThrough   *string        `json:"read_through"`
 }
+
+// Summary 返回指定管理员当前未读通知总数及最新一条通知 ID。
 type Summary struct {
 	UnreadCount int64   `json:"unread_count"`
 	LatestID    *string `json:"latest_id"`
 }
+
+// Service 管理站内共享通知的查询、未读统计与每用户独立已读状态持久化。
 type Service struct{ db *storage.Database }
 
+// New 构造站内通知收件箱服务。
 func New(db *storage.Database) *Service { return &Service{db: db} }
 
 // Insert 在来源操作的事务内插入通知。同一来源的状态转换重复处理时保持幂等；
@@ -135,6 +149,7 @@ func latest(ctx context.Context, tx *storage.Tx) (*string, error) {
 	return &id, nil
 }
 
+// List 按创建时间倒序游标分页返回给定管理员可见的站内通知及当前最高序列边界。
 func (s *Service) List(ctx context.Context, who Identity, filter Filter) (Page, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -201,6 +216,7 @@ func (s *Service) List(ctx context.Context, who Identity, filter Filter) (Page, 
 	return page, nil
 }
 
+// Summary 在同一只读事务内返回当前未读计数与最新通知 ID。
 func (s *Service) Summary(ctx context.Context, who Identity) (Summary, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -231,6 +247,7 @@ func (s *Service) Summary(ctx context.Context, who Identity) (Summary, error) {
 	return sum, nil
 }
 
+// Detail 查询单条站内通知详情及其对当前管理员的已读状态。
 func (s *Service) Detail(ctx context.Context, who Identity, id string) (Notification, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -244,6 +261,7 @@ func (s *Service) Detail(ctx context.Context, who Identity, id string) (Notifica
 	return scan(lease.QueryRowContext(ctx, selectNotification+` WHERE n.id=?`, who.UserID, id))
 }
 
+// MarkRead 幂等记录指定管理员对单条通知的已读状态。
 func (s *Service) MarkRead(ctx context.Context, who Identity, id string, now time.Time) error {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -275,6 +293,7 @@ func (s *Service) MarkRead(ctx context.Context, who Identity, id string, now tim
 	return tx.Commit()
 }
 
+// MarkAllRead 将不晚于 through 序列号的全部未读通知标记为指定管理员已读。
 func (s *Service) MarkAllRead(ctx context.Context, who Identity, through string, now time.Time) error {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {

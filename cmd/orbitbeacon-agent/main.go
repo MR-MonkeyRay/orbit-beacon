@@ -1,3 +1,4 @@
+// orbitbeacon-agent 在非 root 专用账户下采集主机指标、执行本地探测并向服务端上报。
 package main
 
 import (

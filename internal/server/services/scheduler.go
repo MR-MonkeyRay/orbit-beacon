@@ -10,11 +10,13 @@ import (
 	"orbitbeacon/internal/server/storage"
 )
 
-// Clock/Timer make scheduling and jitter testable without sleeping.
+// Timer abstracts time.Timer so scheduling and jitter remain testable without sleeping.
 type Timer interface {
 	C() <-chan time.Time
 	Stop() bool
 }
+
+// Clock abstracts wall-clock time and timer creation for deterministic scheduler testing.
 type Clock interface {
 	Now() time.Time
 	NewTimer(time.Duration) Timer
@@ -58,7 +60,11 @@ func (m *Manager) configs(ctx context.Context) ([]Service, error) {
 	}
 	return out, rows.Err()
 }
+
+// Run starts the background service probe scheduler using the system clock and NetworkChecker.
 func (m *Manager) Run(ctx context.Context) { m.RunWith(ctx, realClock{}, NewChecker(), rand.Float64) }
+
+// RunWith starts the probe scheduler loop with injected clock, checker, and jitter PRNG dependencies.
 func (m *Manager) RunWith(ctx context.Context, clock Clock, checker Checker, random func() float64) {
 	jobs := make(chan Service)
 	done := make(chan completed, 8)

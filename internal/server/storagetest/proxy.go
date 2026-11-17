@@ -20,6 +20,7 @@ type EndpointProxy struct {
 	wg               sync.WaitGroup
 }
 
+// ProxyEndpoint 为目标数据库端点启动本地环回 TCP 代理，返回代理控制器及重写端口后的新端点配置。
 func ProxyEndpoint(t testing.TB, endpoint config.DatabaseEndpoint) (*EndpointProxy, config.DatabaseEndpoint) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -94,6 +95,8 @@ func (p *EndpointProxy) relay(client net.Conn) {
 	delete(p.links, client)
 	p.mu.Unlock()
 }
+
+// Pause 暂停接受新连接并立即关闭当前所有活跃 TCP 转发链路，以模拟网络中断。
 func (p *EndpointProxy) Pause() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -103,7 +106,11 @@ func (p *EndpointProxy) Pause() {
 		server.Close()
 	}
 }
+
+// Resume 恢复接受并转发指向目标数据库的新入站连接。
 func (p *EndpointProxy) Resume() { p.mu.Lock(); p.paused = false; p.mu.Unlock() }
+
+// Close 停止本地监听端口并关闭所有现存转发连接，等待相关协程退出。
 func (p *EndpointProxy) Close() {
 	p.mu.Lock()
 	if p.closed {

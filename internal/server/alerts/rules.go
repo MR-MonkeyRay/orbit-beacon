@@ -21,12 +21,16 @@ import (
 )
 
 var (
+	// ErrNotFound 表示请求的告警规则不存在。
 	ErrNotFound = errors.New("alert rule not found")
+	// ErrCapacity 表示已达到单实例最多 MaxRules 条告警规则的上限。
 	ErrCapacity = errors.New("maximum of 200 alert rules reached")
 )
 
+// MaxRules 限制系统允许创建的告警规则上限。
 const MaxRules = 200
 
+// Rule 定义一条节点指标、探测或流量配额告警规则及其绑定通知通道。
 type Rule struct {
 	ChannelIDs []string  `json:"channel_ids"`
 	ID         string    `json:"id"`
@@ -44,8 +48,8 @@ type Rule struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-// json.RawMessage 区分字段省略和显式 null；仅 scope_id、target、comparator 和 threshold 接受 null。
-// POST 必须提供不接受 null 的字段。
+// Patch 描述告警规则的创建或局部更新输入：json.RawMessage 用于区分字段省略和显式 null；
+// 仅 scope_id、target、comparator 和 threshold 接受 null，POST 创建时必须提供不接受 null 的字段。
 type Patch struct {
 	ChannelIDs json.RawMessage `json:"channel_ids"`
 	Name       json.RawMessage `json:"name"`
@@ -60,11 +64,13 @@ type Patch struct {
 	Severity   json.RawMessage `json:"severity"`
 }
 
+// Service 管理告警规则、事件历史查询、静默窗口与到期清理。
 type Service struct {
 	db  *storage.Database
 	now func() time.Time
 }
 
+// NewService 构造告警规则与事件管理服务。
 func NewService(db *storage.Database, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
@@ -240,6 +246,8 @@ func scanRule(row scanner) (Rule, error) {
 	r.UpdatedAt, err = timekey.Parse(updated)
 	return r, err
 }
+
+// List 返回全部告警规则及各自绑定的通知通道列表。
 func (s *Service) List(ctx context.Context) ([]Rule, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -272,6 +280,8 @@ func (s *Service) List(ctx context.Context) ([]Rule, error) {
 	}
 	return result, nil
 }
+
+// Get 读取单条告警规则及绑定通道；不存在时返回 ErrNotFound。
 func (s *Service) Get(ctx context.Context, id string) (Rule, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -285,6 +295,8 @@ func (s *Service) Get(ctx context.Context, id string) (Rule, error) {
 	}
 	return r, err
 }
+
+// Save 创建（id 为空）或更新告警规则及通道绑定，同事务校验并记录审计。
 func (s *Service) Save(ctx context.Context, id string, p Patch) (Rule, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -375,6 +387,8 @@ func (s *Service) Save(ctx context.Context, id string, p Patch) (Rule, error) {
 	}
 	return r, tx.Commit()
 }
+
+// Delete 删除指定告警规则并记录审计事件。
 func (s *Service) Delete(ctx context.Context, id string) error {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {

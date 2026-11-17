@@ -24,13 +24,17 @@ const OnlineWindow = 180 * time.Second
 
 // PublicFields defines the storage and wire order for explicit disclosure.
 var PublicFields = []string{"region", "provider", "cpu", "memory", "load", "uptime", "availability", "traffic", "expires_on", "price", "billing_cycle", "bandwidth", "ip_version", "network_route", "plan_extra"}
+
+// DefaultPublicFields 是新建节点默认开放给匿名状态页展示的白名单字段集合。
 var DefaultPublicFields = []string{"cpu", "memory", "load", "uptime", "availability"}
 
+// PublicSettings 控制单个节点是否发布到状态页及允许暴露的字段白名单。
 type PublicSettings struct {
 	Enabled bool     `json:"enabled"`
 	Fields  []string `json:"fields"`
 }
 
+// UnmarshalJSON 实现 json.Unmarshaler，默认填充初始公开字段并严格拒绝未知字段与非法值。
 func (p *PublicSettings) UnmarshalJSON(data []byte) error {
 	type wire PublicSettings
 	value := wire{Fields: append([]string{}, DefaultPublicFields...)}
@@ -49,11 +53,13 @@ func (p *PublicSettings) UnmarshalJSON(data []byte) error {
 	return p.Validate()
 }
 
+// PublicSettingsPatch 表示节点状态页公开设置的增量补丁。
 type PublicSettingsPatch struct {
 	Enabled *bool     `json:"enabled"`
 	Fields  *[]string `json:"fields"`
 }
 
+// UnmarshalJSON 实现 json.Unmarshaler，禁止显式传入 null 字段。
 func (p *PublicSettingsPatch) UnmarshalJSON(data []byte) error {
 	if !utf8.Valid(data) {
 		return validation.Invalid("fields", "must be valid UTF-8")
@@ -77,6 +83,8 @@ func (p *PublicSettingsPatch) UnmarshalJSON(data []byte) error {
 	*p = PublicSettingsPatch(w)
 	return nil
 }
+
+// Validate 校验公开字段列表是否全部属于 PublicFields 且无重复项。
 func (p PublicSettings) Validate() error {
 	seen := map[string]bool{}
 	for _, field := range p.Fields {
@@ -119,6 +127,7 @@ func decodePublic(raw string) (PublicSettings, error) {
 	return p, nil
 }
 
+// GetPublicSettings 读取并规范化指定节点的公开状态页配置。
 func (s *Service) GetPublicSettings(ctx context.Context, id string) (PublicSettings, error) {
 	var raw string
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
@@ -136,6 +145,7 @@ func (s *Service) GetPublicSettings(ctx context.Context, id string) (PublicSetti
 	return decodePublic(raw)
 }
 
+// PatchPublicSettings 增量更新节点状态页公开设置，并在撤回公开时触发安全流重建。
 func (s *Service) PatchPublicSettings(ctx context.Context, id string, patch PublicSettingsPatch) (PublicSettings, error) {
 	if !uuid.ValidUUID(id) {
 		return PublicSettings{}, ErrInvalidInput

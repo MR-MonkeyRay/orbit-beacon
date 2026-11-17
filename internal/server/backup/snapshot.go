@@ -66,10 +66,12 @@ type SnapshotPayloads struct {
 	Snapshots Snapshots
 }
 
+// SnapshotSources 指定生成备份快照载荷所需的主库与历史库连接。
 type SnapshotSources struct {
 	Main, History *storage.Database
 }
 
+// CreateSnapshotPayloads 为选定的备份类别在 work 目录下生成一致性快照及导出文件列表。
 func CreateSnapshotPayloads(ctx context.Context, sources SnapshotSources, dataDir, work string, categories []Category, now func() time.Time) (SnapshotPayloads, error) {
 	selected, err := ValidateCategories(categories)
 	if err != nil {

@@ -19,9 +19,16 @@ const maxJournalBytes int64 = 256 << 20
 const transactionOverhead int64 = 256
 const journalRetentionHours = 24
 
+// ErrReplicaDiverged 表示主备复制纪元或位置序列发生分叉，无法继续增量追赶。
 var ErrReplicaDiverged = errors.New("storage_replica_diverged")
+
+// ErrIdentityMismatch 表示数据库实例 UUID 与控制记录或集群绑定身份不一致。
 var ErrIdentityMismatch = errors.New("storage_identity_mismatch")
+
+// ErrTransactionTooLarge 表示单笔写事务记录的行变更载荷超出复制上限（64 MiB）。
 var ErrTransactionTooLarge = errors.New("storage_transaction_too_large")
+
+// ErrRestorePending 表示控制面仍存在未提交的离线/在线恢复屏障，当前禁止常规写入或复制。
 var ErrRestorePending = errors.New("storage_restore_pending")
 
 type replicaPosition struct {

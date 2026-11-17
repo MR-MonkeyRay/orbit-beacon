@@ -20,7 +20,10 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
+// ErrDeployment 表示 MySQL 节点未满足可写 InnoDB 事务、持久化提交或 binlog/触发器部署前提。
 var ErrDeployment = errors.New("storage_mysql_deployment_invalid: require writable MySQL, transactional InnoDB, durable commits and binlog trigger prerequisites")
+
+// ErrUnsupportedTopology 表示当前数据库配置未启用高可用主备复制拓扑。
 var ErrUnsupportedTopology = errors.New("storage_replication_not_available")
 
 // OpenDatabases 在任一 MySQL 域失败时关闭全部连接；SQLite 保留可用 main。
@@ -45,6 +48,8 @@ func OpenDomain(ctx context.Context, endpoint config.DatabaseEndpoint, domain Do
 		return nil, ErrUnavailable
 	}
 }
+
+// Close 停止复制协程并关闭主域、历史域、备库目标端以及本地复制控制库连接。
 func (dbs *Databases) Close() error {
 	if dbs == nil {
 		return nil
@@ -70,7 +75,11 @@ func (dbs *Databases) Close() error {
 	}
 	return errors.Join(a, b, replicaErr)
 }
+
+// Domain 返回当前数据库句柄所属的逻辑域（MainDomain 或 HistoryDomain）。
 func (db *Database) Domain() Domain { return db.domain }
+
+// Dialect 返回当前活跃连接世代使用的 SQL 方言以及句柄是否仍处于打开状态。
 func (db *Database) Dialect() (Dialect, bool) {
 	db.mu.Lock()
 	defer db.mu.Unlock()

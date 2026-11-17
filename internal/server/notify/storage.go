@@ -67,6 +67,7 @@ func (s *Service) storageWarning(ctx context.Context, code string, err error) {
 	}
 }
 
+// StorageNotificationSettings 读取存储故障通知当前订阅的启用渠道及控制库快照状态。
 func (s *Service) StorageNotificationSettings(ctx context.Context) (storage.StorageNotificationSettings, error) {
 	lease, err := s.db.Acquire(ctx, storage.Reader)
 	if err != nil {
@@ -196,6 +197,7 @@ func writeStoragePreferences(ctx context.Context, tx *storage.Tx, p storage.Stor
 	return err
 }
 
+// UpdateStorageNotificationSettings 校验所选渠道并先暂停控制快照，提交业务库后再校准发布新快照。
 func (s *Service) UpdateStorageNotificationSettings(ctx context.Context, p storage.StorageNotificationPreferences) (storage.StorageNotificationSettings, error) {
 	if err := validateStoragePreferences(p); err != nil {
 		return storage.StorageNotificationSettings{}, err
@@ -246,6 +248,7 @@ func (s *Service) UpdateStorageNotificationSettings(ctx context.Context, p stora
 	return s.StorageNotificationSettings(ctx)
 }
 
+// SyncStorageSnapshot 在主备世代切换或启动发布时重新对齐并加密存储故障通知快照。
 func (s *Service) SyncStorageSnapshot(ctx context.Context) error {
 	if s.opts.Storage == nil {
 		return nil

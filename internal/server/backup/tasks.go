@@ -15,12 +15,14 @@ import (
 
 const taskLifetime = 90 * 24 * time.Hour
 
+// TaskPage 表示按时间游标分页查询备份任务列表的结果。
 type TaskPage struct {
 	Tasks      []Task  `json:"tasks"`
 	HasMore    bool    `json:"has_more"`
 	NextCursor *string `json:"next_cursor"`
 }
 
+// PasswordResult 包含备份归档的一次性解密口令、归档文件名与哈希校验信息。
 type PasswordResult struct {
 	Password          string    `json:"password"`
 	ArchiveName       string    `json:"archive_name"`
@@ -56,6 +58,7 @@ func (s *Service) projectTask(task Task, now time.Time) Task {
 	return task
 }
 
+// Task 按 id 查询可见备份任务并实时计算口令与下载可用状态。
 func (s *Service) Task(ctx context.Context, id string) (Task, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -80,6 +83,7 @@ func (s *Service) Task(ctx context.Context, id string) (Task, error) {
 	return s.projectTask(task, now), nil
 }
 
+// Tasks 分页列出保留期内的备份任务。
 func (s *Service) Tasks(ctx context.Context, limit int, before string) (TaskPage, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {

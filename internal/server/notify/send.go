@@ -22,8 +22,10 @@ import (
 	"orbitbeacon/internal/server/services"
 )
 
+// SendTimeout 限制单次 HTTP 或 SMTP 通知外发请求的最长阻塞时间。
 const SendTimeout = 10 * time.Second
 
+// Payload 是持久化的自包含通知投递快照（兼容节点告警与服务端服务监控事件）。
 type Payload struct {
 	Service *services.Event `json:"service,omitempty"`
 
@@ -57,6 +59,7 @@ func ParsePayload(raw []byte) (Payload, error) {
 	return p, err
 }
 
+// Result 表示单次通道发送或测试投递的结果及安全错误码。
 type Result struct {
 	OK         bool   `json:"ok"`
 	ErrorCode  string `json:"error_code"`

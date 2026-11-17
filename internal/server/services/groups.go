@@ -13,9 +13,14 @@ import (
 )
 
 // Group errors mirror node-group validation and the service capacity contract.
+
+// ErrInvalidGroup indicates an invalid service group identifier, name, or reorder request.
 var ErrInvalidGroup = errors.New("invalid service group input")
+
+// ErrGroupCapacity indicates the configured maximum number of service groups has been reached.
 var ErrGroupCapacity = errors.New("maximum of 100 service groups reached")
 
+// Group represents a logical display group used to organize services.
 type Group struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -31,6 +36,7 @@ func scanGroup(row interface{ Scan(...any) error }) (Group, error) {
 	return group, err
 }
 
+// Groups returns all service groups ordered for display.
 func (m *Manager) Groups(ctx context.Context) ([]Group, error) {
 	lease, leaseErr := m.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -58,6 +64,7 @@ func scanGroups(rows *storage.Rows) ([]Group, error) {
 	return groups, rows.Err()
 }
 
+// Group returns the service group identified by id.
 func (m *Manager) Group(ctx context.Context, id string) (Group, error) {
 	lease, leaseErr := m.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {
@@ -68,6 +75,7 @@ func (m *Manager) Group(ctx context.Context, id string) (Group, error) {
 	return scanGroup(lease.QueryRowContext(ctx, "SELECT id, name, display_order FROM service_groups WHERE id = ?", id))
 }
 
+// SaveGroup creates or updates a service group by id with the given name.
 func (m *Manager) SaveGroup(ctx context.Context, id, name string) (Group, error) {
 	lease, leaseErr := m.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {
@@ -133,6 +141,7 @@ func (m *Manager) SaveGroup(ctx context.Context, id, name string) (Group, error)
 	return group, nil
 }
 
+// ReorderGroups updates the display order of all service groups to match ids.
 func (m *Manager) ReorderGroups(ctx context.Context, ids []string) ([]Group, error) {
 	lease, err := m.db.Acquire(ctx, storage.Writer)
 	if err != nil {
@@ -199,6 +208,7 @@ func requireRow(result sql.Result) error {
 	return nil
 }
 
+// DeleteGroup deletes the service group identified by id.
 func (m *Manager) DeleteGroup(ctx context.Context, id string) error {
 	lease, leaseErr := m.db.Acquire(ctx, storage.Writer)
 	if leaseErr != nil {

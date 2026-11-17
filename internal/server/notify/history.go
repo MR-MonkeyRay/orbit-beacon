@@ -9,12 +9,14 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
+// DeliveryPage 表示通知外发投递记录的游标分页列表。
 type DeliveryPage struct {
 	Deliveries []Delivery `json:"deliveries"`
 	HasMore    bool       `json:"has_more"`
 	NextCursor string     `json:"next_cursor,omitempty"`
 }
 
+// Deliveries 按创建时间倒序游标分页查询通知投递历史与重试状态。
 func (s *Service) Deliveries(ctx context.Context, limit int, before string) (DeliveryPage, error) {
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
 	if leaseErr != nil {

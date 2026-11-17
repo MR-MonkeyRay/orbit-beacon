@@ -90,4 +90,6 @@ func (h *handler) servicesRoute(w http.ResponseWriter, r *http.Request, requestI
 		writeJSON(w, status, s)
 	}
 }
+
+// RunServices 启动服务端自有服务拨测调度器，直至 ctx 取消。
 func (h *handler) RunServices(ctx context.Context) { h.services.Run(ctx) }

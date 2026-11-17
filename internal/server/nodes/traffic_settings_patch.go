@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-// 原始字段在保留类型化服务 API 的同时保存显式 null。
+// UnmarshalJSON 解码节点流量设置补丁：原始字段在保留类型化服务 API 的同时保存显式 null。
 // 使用与 HTTP 边界相同的未知字段策略解码；不要把外层对象交给默认宽松的
 // json.Unmarshal 来绕过该策略。
 func (p *TrafficSettingsPatch) UnmarshalJSON(data []byte) error {

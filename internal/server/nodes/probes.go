@@ -13,6 +13,7 @@ import (
 	"orbitbeacon/internal/timekey"
 )
 
+// ObservedProbe 汇总单个探测目标在节点上的最新状态以及最近 24 小时可用率。
 type ObservedProbe struct {
 	Target       string
 	Status       string
@@ -25,6 +26,7 @@ type ObservedProbe struct {
 	Checks24H    int64
 }
 
+// ProbeHistoryPoint 表示单个 UTC 小时桶内的探测成功/失败次数及延迟统计（毫秒）。
 type ProbeHistoryPoint struct {
 	Time     time.Time `json:"t"`
 	Avg      *float64  `json:"avg"`
@@ -33,6 +35,7 @@ type ProbeHistoryPoint struct {
 	Failures int64     `json:"failures"`
 }
 
+// ProbeHistory 按 UTC 小时返回节点指定目标自 window 起的探测聚合历史。
 func (s *Service) ProbeHistory(ctx context.Context, id, target string, window time.Time) ([]ProbeHistoryPoint, error) {
 	// 一次读取快照把节点是否存在、当前身份与保留的目标历史绑定在一起。
 	lease, leaseErr := s.db.Acquire(ctx, storage.Reader)
@@ -87,6 +90,7 @@ func (s *Service) ProbeHistory(ctx context.Context, id, target string, window ti
 	return points, nil
 }
 
+// ObservedProbes 在单次读事务内联合查询节点当前身份下的最新探测结果与 24 小时可用率。
 func (s *Service) ObservedProbes(ctx context.Context, id string, window time.Time, targets ...string) ([]ObservedProbe, error) {
 	// 一次读取快照把目标列表和观测结果绑定到同一凭据。
 	// 轮换不会把旧目标变成新身份的探测项。
@@ -179,6 +183,7 @@ func (s *Service) ObservedProbes(ctx context.Context, id string, window time.Tim
 	return probes, nil
 }
 
+// CleanupProbeHistory 分批清理早于 cutoff 的小时探测统计与过期最新探测缓存。
 func (s *Service) CleanupProbeHistory(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
 	if s == nil || s.db == nil || limit < 1 {
 		return 0, errors.New("probe retention is unavailable")
@@ -208,6 +213,7 @@ func (s *Service) CleanupProbeHistory(ctx context.Context, cutoff time.Time, lim
 	return count, tx.Commit()
 }
 
+// Ping 对节点所属业务库执行轻量级读探针，用于就绪检查。
 func (s *Service) Ping(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return errors.New("node database is unavailable")
