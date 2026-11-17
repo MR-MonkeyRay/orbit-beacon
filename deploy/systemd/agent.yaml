@@ -1,18 +1,18 @@
-# 修改后通过服务 reload 或 SIGHUP 重新加载；重装保留本文件。
-# 采集与上报间隔（秒，5–60）。
+# 修改后执行服务 reload（或向进程发 SIGHUP）即可生效；重装保留本文件。
+# 主机指标采集与上报间隔（5–60 秒）。
 report_interval_seconds: 10
-# 磁盘容量采集间隔（秒，60–3600）。
+# 磁盘容量采集间隔（60–3600 秒）。
 disk_interval_seconds: 60
-# [] 使用默认路由网卡；最多 8 项，例如 ["eth0"]。
+# 监控网卡：[] 自动选用默认路由网卡；最多 8 项，如 ["eth0"]。
 interfaces: []
-# [] 使用根路径；最多 8 个绝对路径，例如 ["/", "/srv/data"]。
+# 监控挂载点：[] 默认监控 "/"；最多 8 个绝对路径，如 ["/", "/data"]。
 disk_paths: []
-# [] 不探测；最多 5 个 TCP、HTTP(S)、DNS 或 ICMP 目标。
+# 本地探测目标（最多 5 项，[] 关闭）：支持 tcp://、http(s)://、dns://、icmp://。
 probe_targets: []
-# HTTP(S) 预期状态码（100–599）；键须在 probe_targets 中。
+# 指定 HTTP(S) 探测的预期状态码（100–599），键须在 probe_targets 中；未填默认 <400 为正常。
 probe_expected_status: {}
-# [] 禁止全部远程指令；移除 check_update、upgrade 可仅关闭更新。
+# 允许的远程指令（[] 全禁；删去 check_update、upgrade 可关闭远程更新）。
 remote_commands: ["check_update", "upgrade", "restart", "stop"]
-# 可选：disk、network、traffic、probes、disk_io、pressure、temperature。
-# 关闭 network 同时关闭 traffic；关闭 disk 同时关闭 disk_io。
+# 按需关闭采集项：disk、network、traffic、probes、disk_io、pressure、temperature。
+# 关闭 network 会连带关闭 traffic；关闭 disk 会连带关闭 disk_io。
 disabled_features: []

@@ -86,11 +86,11 @@ func runServe(args []string, logger *slog.Logger) error {
 	fs.String("geoip-token", "", "ipinfo token")
 	fs.String("geoip-token-file", "", "ipinfo token 文件")
 	fs.Bool("access-log", false, "每个请求写一条结构化访问日志")
-	fs.Bool("allow-insecure-webhooks", false, "仅允许使用回环 IP 地址的 HTTP webhook URL")
+	fs.Bool("allow-insecure-webhooks", false, "允许向本机回环 IP 发送 HTTP Webhook（需同时开启内网通知）")
 	fs.Bool("notification-allow-private-networks", false, "允许通知访问私有网络")
-	fs.String("public-url", "http://localhost:8080", "用于浏览器 Origin 校验的公开 HTTP 或 HTTPS URL")
-	fs.Int("max-nodes", 500, "节点容量，须为正数，包含待处理和已禁用节点")
-	fs.Int("web-update-interval-seconds", 10, "浏览器更新间隔（秒，2-60，重启后生效）")
+	fs.String("public-url", "http://localhost:8080", "浏览器访问的 HTTP(S) 根地址（用于 Origin 校验，不含路径）")
+	fs.Int("max-nodes", 500, "节点容量上限（含待注册和已禁用节点）")
+	fs.Int("web-update-interval-seconds", 10, "网页状态推送与轮询间隔（2–60 秒，重启生效）")
 	fs.String("trusted-proxies", "", "逗号分隔的可信代理 IP 地址或 CIDR 前缀")
 	if ok, err := parseCommand(fs, args); !ok {
 		return err

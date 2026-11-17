@@ -26,30 +26,30 @@
 
 ### 数据目录（`data_dir`）权限要求
 
-- 须位于支持文件锁的本地可写文件系统，每个目录仅运行一个服务端实例（否则触发 `data_dir_in_use`；**切勿强行删除 `server.lock`、SQLite sidecar 或恢复 journal**）。
-- 目录归运行用户所有且为 **`0700`**；内部数据库、sidecar 与 `secrets.key` 为同用户 **`0600`** 普通文件。
-- 路径及所有祖先目录不得经过符号链接；祖先须归 `root` 或运行用户所有（若组/他人可写须有 sticky 位保护）。
+- 须位于支持文件锁的本地可写文件系统，每个目录仅运行一个服务端实例（**切勿强行删除 `server.lock`、`-wal`/`-shm` 或恢复文件**）。
+- 目录须归运行用户所有且权限为 **`0700`**；内部数据库文件与 `secrets.key` 为同用户 **`0600`** 普通文件。
+- 路径及所有上级目录不得经过符号链接，上级目录须归 `root` 或运行用户所有（如在 `/tmp` 等公共目录需有 sticky 位）。
 
 ---
 
 ## 2. 配置优先级与参数参考
 
-优先级：**CLI Flags > `ORBITBEACON_*` 环境变量 > YAML 文件 > 默认值**（单映射 YAML，拒绝重复键、未知键与 `null`；环境变量用大写下划线，CLI 用连字符）。
+配置优先级：**命令行参数 > `ORBITBEACON_*` 环境变量 > YAML 文件 > 默认值**（YAML 禁止重复键、未知键与 `null`；环境变量名使用大写下划线，如 `ORBITBEACON_PUBLIC_URL`）。
 
 | YAML 键 | 默认值 | 说明 |
 | --- | --- | --- |
-| `listen_addr` | `127.0.0.1:8080` | HTTP 监听地址（公网请接 HTTPS 反代） |
-| `data_dir` | `./data` | 持久化目录（须符合 `0700` 与锁要求） |
-| `public_url` | `http://localhost:8080` | 浏览器访问 Origin（见下方校验规则） |
-| `max_nodes` | `500` | 节点容量上限（含待注册与禁用；非性能承诺） |
-| `trusted_proxies` | `[]` | 可信代理 IP / CIDR 列表（禁止 `/0`） |
+| `listen_addr` | `127.0.0.1:8080` | HTTP 监听地址（公网请接 HTTPS 反向代理） |
+| `data_dir` | `./data` | 数据持久化目录（须满足 `0700` 与锁要求） |
+| `public_url` | `http://localhost:8080` | 浏览器访问地址（见下方校验规则） |
+| `max_nodes` | `500` | 节点数量上限（含待注册与已禁用节点） |
+| `trusted_proxies` | `[]` | 反向代理 IP / CIDR 列表（禁止填 `/0`） |
 | `geoip_lookup` | `true` | 是否向 `ipinfo.io` 查询未手填地区的 Agent 公网 IP |
-| `geoip_token` / `geoip_token_file` | `""` | 可选 ipinfo token（互斥；文件须 `0600` 普通文件） |
-| `web_update_interval_seconds` | `10` | 网页推送合并与轮询周期（`2–60` 秒，重启生效） |
-| `metrics_listen` | `""` | 独立 Prometheus `/metrics` 与 `/metrics/nodes` 监听（无认证，勿暴露公网） |
+| `geoip_token` / `geoip_token_file` | `""` | 可选 ipinfo token（互斥；密钥文件须为 `0600` 普通文件） |
+| `web_update_interval_seconds` | `10` | 网页状态推送与轮询周期（`2–60` 秒，重启生效） |
+| `metrics_listen` | `""` | 独立 Prometheus `/metrics` 与 `/metrics/nodes` 监听（无鉴权，勿暴露公网） |
 | `access_log` | `false` | 请求访问日志（健康检查仅记 5xx，不记 Query/Cookie/密钥） |
-| `allow_insecure_webhooks` | `false` | 允许字面回环地址的 HTTP Webhook（须同时启用下项） |
-| `notification_allow_private_networks` | `false` | 允许通知访问私网（云元数据端点始终禁止） |
+| `allow_insecure_webhooks` | `false` | 允许向本机回环 IP 发送 HTTP Webhook（须同时开启下一项） |
+| `notification_allow_private_networks` | `false` | 允许通知访问内网地址（云元数据地址始终拦截） |
 | `database` | `{}` | 默认本地 SQLite；MySQL 与主备配置见第 5 节 |
 
 ### `public_url` 与 `trusted_proxies` 关键规则
@@ -59,13 +59,13 @@
                                          └─ 是 ──▶ 从右向左跳过可信代理, 取首个不可信 IP
 ```
 
-- **Origin 匹配**：`public_url` 须为不含路径、查询与凭据的绝对 HTTP(S) URL；浏览器 `Origin` 须精确匹配其规范化协议、主机与端口（不从 `Host` 或 `X-Forwarded-Proto` 自动推断；不支持子路径部署）。
-- **会话 Cookie（`orbitbeacon_session`）**：`HttpOnly`、`SameSite=Lax`、`Path=/`、无 `Domain`；仅当 `public_url` 为 `https://` 时设置 `Secure`。
+- **Origin 校验**：`public_url` 须填浏览器实际访问的根地址（仅协议 + 域名 + 可选端口，不支持子路径，如 `https://beacon.example.com`）。浏览器访问地址须与之完全一致，否则登录与写操作会被拒绝。
+- **会话 Cookie（`orbitbeacon_session`）**：`HttpOnly`、`SameSite=Lax`、`Path=/`；仅当 `public_url` 为 `https://` 时启用 `Secure`。
 
 ### 初始化凭据
 
-首次空库启动自动创建管理员 `orbitbeacon` / `orbitbeacon`（首次登录强制改密）。如需自定义初始账户，可在首次 `serve` 前设置环境变量：
-- `ORBITBEACON_ADMIN_USERNAME`、`ORBITBEACON_ADMIN_PASSWORD`（密码 8–1024 UTF-8 字节，不裁剪首尾空格；已有用户时自动忽略，不入 YAML 或备份）。
+首次空库启动会自动创建管理员 `orbitbeacon` / `orbitbeacon`（首次登录强制改密）。如需预设初始账号，可在首次启动前设置环境变量：
+- `ORBITBEACON_ADMIN_USERNAME`、`ORBITBEACON_ADMIN_PASSWORD`（密码 `8–1024` 字节，保留首尾空格；已有用户时自动忽略，不可写入 YAML）。
 
 ---
 
@@ -167,7 +167,7 @@ database:
 
 ## 6. 通知网络策略与 Webhook 签名校验
 
-- **出站安全**：拨号前解析并固定 IP，默认拒绝内网、回环及云元数据 IP（不使用代理或 HTTP 重定向）；HTTPS 与 SMTP 校验 TLS（非 465 端口强制 STARTTLS）。允许内网通知需开启 `notification_allow_private_networks`，字面回环 HTTP Webhook 另需开启 `allow_insecure_webhooks`。
+- **出站安全**：默认拦截内网、回环及云元数据 IP（不使用代理或重定向）；HTTPS 与 SMTP 强制校验 TLS（非 465 端口强制 STARTTLS）。允许内网通知须开启 `notification_allow_private_networks`；向本机回环 IP 发送 HTTP Webhook 另须开启 `allow_insecure_webhooks`。
 - **HMAC-SHA256 验签流程**（配置 secret 后附带 `X-OrbitBeacon-Timestamp` 与 `X-OrbitBeacon-Signature`）：
 
 ```text

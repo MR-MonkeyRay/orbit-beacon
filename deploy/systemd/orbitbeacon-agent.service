@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# 该账户须与安装策略中的 expected_uid/expected_gid 一致。
+# 运行账户须与 install-policy.yaml 中的 expected_uid/expected_gid 一致。
 User=orbitbeacon-agent
 Group=orbitbeacon-agent
 ExecStartPre=-/opt/orbit-beacon/libexec/orbitbeacon-agent-rollback
@@ -13,14 +13,14 @@ ExecStart=/opt/orbit-beacon/bin/orbitbeacon-agent run --install-policy /opt/orbi
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10s
-# 克隆主机须单独注册，不得复用同一身份。
+# 退出码 3 表示身份冲突，禁止自动重启（克隆主机须清空 state 后重注册）。
 RestartPreventExitStatus=3
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ReadWritePaths=/opt/orbit-beacon/bin /opt/orbit-beacon/state
-# 保留 home 挂载可见，使磁盘统计反映真实主机。
+# 仅只读挂载 /home，保证磁盘容量统计反映真实主机。
 ProtectHome=read-only
 ProtectKernelTunables=true
 ProtectKernelModules=true
@@ -36,7 +36,7 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
-# 网卡查询需要 netlink；主机 CPU 统计还需要完整的 /proc。
+# 网卡查询需要 AF_NETLINK。
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 UMask=0077
 MemoryMax=128M

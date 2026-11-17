@@ -1,14 +1,19 @@
 services:
   orbitbeacon:
+    # 版本标签建议与仓库 VERSION 一致，可通过 ORBITBEACON_IMAGE_TAG 指定
     image: ghcr.io/mr-monkeyray/orbit-beacon:${ORBITBEACON_IMAGE_TAG:-0.1.0}
     environment:
       ORBITBEACON_LISTEN_ADDR: "${ORBITBEACON_LISTEN_ADDR:-0.0.0.0:8080}"
+      # 须改为浏览器实际访问的地址（不含路径），反代后填 https:// 域名，否则登录会被拒绝
       ORBITBEACON_PUBLIC_URL: "${ORBITBEACON_PUBLIC_URL:-http://localhost:8080}"
+      # 仅首次空库初始化生效（首次登录须改密）；已有库自动忽略
       ORBITBEACON_ADMIN_USERNAME: "${ORBITBEACON_ADMIN_USERNAME-orbitbeacon}"
       ORBITBEACON_ADMIN_PASSWORD: "${ORBITBEACON_ADMIN_PASSWORD-orbitbeacon}"
     ports:
+      # 默认仅监听本机供反代转发；局域网直连调试可去掉 127.0.0.1:
       - "127.0.0.1:8080:8080"
     volumes:
+      # 持久化数据卷；日常重启或升级切勿执行 down -v
       - orbitbeacon-data:/var/lib/orbitbeacon
     read_only: true
     tmpfs:

@@ -1,4 +1,5 @@
-# request_body 需要 Caddy 2.10.0 或更高版本。
+# 请替换为实际域名，并确保 server.yaml 的 public_url 为 https://<你的域名>。
+# 注意：request_body 指令需要 Caddy 2.10.0 或更高版本。
 beacon.example.com {
 	request_body {
 		max_size 1048576
@@ -6,6 +7,7 @@ beacon.example.com {
 
 	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
 
+	# 数据库空间整理可能耗时较久，单独放宽响应超时至 31 分钟
 	@compaction path /api/v1/data-management/compact
 	reverse_proxy @compaction 127.0.0.1:8080 {
 		header_up Host {http.request.hostport}

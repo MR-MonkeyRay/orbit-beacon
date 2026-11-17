@@ -22,6 +22,7 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 ProtectClock=true
 ProtectHostname=true
+# 若在 server.yaml 中修改了 data_dir，须同步更新此路径
 ReadWritePaths=/var/lib/orbitbeacon
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=true

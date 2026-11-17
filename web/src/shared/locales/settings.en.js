@@ -9,7 +9,7 @@ export default {
   'settings.settingsSections': 'Settings sections',
   'settings.publicLoading': 'Loading…',
   'settings.publicDisableTitle': 'Disable status page?',
-  'settings.publicDisableMessage': 'Anonymous visitors will need to sign in.',
+  'settings.publicDisableMessage': 'Public access will close and visitors will be redirected to sign in.',
   'settings.publicDisable': 'Disable status page',
   'settings.publicEnabled': 'Status page enabled.',
   'settings.publicDisabled': 'Status page disabled.',
@@ -34,7 +34,7 @@ export default {
   'settings.savedName': 'Saved {name}.',
   'settings.deletedName': 'Deleted {name}.',
   'settings.addedName': 'Added {name}.',
-  'settings.deleteAdministratorMessage': 'Permanently deletes "{name}" and ends their sessions immediately.',
+  'settings.deleteAdministratorMessage': 'Permanently deletes "{name}" and ends their sessions.',
   'settings.deleteAdministratorLabel': 'Delete administrator "{name}"',
   'settings.renameAdministratorLabel': 'Rename administrator "{name}"',
 };

@@ -109,7 +109,7 @@ type runtimeCommand struct {
 func prepareRuntimeCommand(name string, args []string, configure func(*flag.FlagSet) error) (*runtimeCommand, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	file := fs.String("config", "", "Agent 的 YAML 配置文件")
-	policyPath := fs.String("install-policy", "", "归管理员所有、运行时不可修改的安装策略 YAML 文件")
+	policyPath := fs.String("install-policy", "", "安装策略 YAML 文件路径（由安装脚本生成，仅 root 可写）")
 	runtimeFlags := map[string]*string{
 		"report_interval_seconds": fs.String("report-interval-seconds", "", "覆盖指标上报间隔（秒）"),
 		"disk_interval_seconds":   fs.String("disk-interval-seconds", "", "覆盖磁盘采集间隔（秒）"),

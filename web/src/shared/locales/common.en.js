@@ -1,9 +1,9 @@
 export default {
   "errors.api_token_limit": "API token limit reached.",
-  "errors.totp_required": "Enter verification code",
+  "errors.totp_required": "Enter verification code.",
   "errors.totp_invalid": "Invalid verification or recovery code.",
-  "errors.totp_already_enabled": "Two-step verification already enabled.",
-  "errors.totp_setup_expired": "Setup expired.",
+  "errors.totp_already_enabled": "Two-step verification is already enabled.",
+  "errors.totp_setup_expired": "Setup expired. Start again.",
   'common.status.stopped': 'Stopped',
 
   'common.refresh': 'Refresh',
@@ -24,7 +24,7 @@ export default {
   'common.none': 'None',
   'errors.generic': 'Operation failed. Check your connection and try again.',
   'errors.withRequest': '{message} (request {id})',
-  'errors.locale_storage_failed': 'Could not save language preference.',
+  'errors.locale_storage_failed': 'Could not save language preference. Check browser storage settings.',
   'common.status.never': 'Never seen',
   'common.status.unknown': 'Unknown',
   'common.status.pending': 'Pending',

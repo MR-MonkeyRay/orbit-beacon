@@ -16,26 +16,25 @@ usage() {
       sh install-agent.sh --help
 
 安装与信任：
-  --server URL              Server 的 HTTP(S) 根地址，不含路径或凭据
-  --version VERSION         固定发布版本，如 0.1.0（不带 v）
-  --binary FILE             使用本地二进制，跳过下载；此时版本可省略
-  --ca-file FILE            Server 的私有 CA PEM；HTTP 不可使用
-  --key KEY                 会出现在进程列表和 shell 历史中，适用于一次性密钥
-  --token-file FILE         从文件读取密钥，也支持 stdin 或终端隐藏输入
-  --update-base-url URL     HTTPS 发布根地址；默认官方 GitHub，重装默认保留
-                            默认 https://github.com/mr-monkeyray/orbit-beacon/releases/download
+  --server URL              Server 的 HTTP(S) 根地址（不含路径或凭据）
+  --version VERSION         发布版本号，如 0.1.0（不带 v）
+  --binary FILE             使用本地二进制文件，跳过下载（可省略 --version）
+  --ca-file FILE            私有 CA 证书路径（PEM）；HTTP 不可使用
+  --key KEY                 直接传入注册密钥（注意：会留在进程列表和 shell 历史中）
+  --token-file FILE         从文件读取密钥（默认支持 stdin 或终端隐藏输入）
+  --update-base-url URL     HTTPS 更新源地址（重装时默认保留原配置）
 
 账户与服务：
-  --uid N / --gid N         专用账户的非零 UID/GID；默认自动分配，已有账户须匹配
-  --service MODE            auto（默认）、systemd、openrc 或 none（前台）
-  --no-start                安装服务但不启用、不启动、不重启已有服务
+  --uid N / --gid N         运行账户的非零 UID / GID（默认自动分配，已有账户须匹配）
+  --service MODE            服务管理器：auto（默认）、systemd、openrc 或 none（前台）
+  --no-start                仅安装和注册，不启用或重启服务
 
 下载与维护：
-  --download-timeout N      每个文件下载超时秒数（默认 300，1–3600）
-  --download-retries N      下载失败重试次数（默认 3，0–10）
-  --uninstall              确认后删除本地安装及全部身份状态；保留账户
-  --yes                    仅用于卸载时跳过确认
-  -h, --help               显示帮助，无需 root
+  --download-timeout N      单文件下载超时秒数（默认 300，范围 1–3600）
+  --download-retries N      下载失败重试次数（默认 3，范围 0–10）
+  --uninstall               确认后卸载本地程序、配置和身份状态（保留系统账户）
+  --yes                     卸载时跳过确认提示
+  -h, --help                显示帮助（无需 root）
 
 Linux：识别 CentOS/RHEL、Debian、Ubuntu、Alpine 及其衍生系统。
 架构：x86_64/amd64、aarch64/arm64；不提供 32 位发布包。
@@ -237,7 +236,7 @@ for name in install-policy agent; do
     legacy=$config_dir/$name.json
     current=$config_dir/$name.yaml
     if { [ -e "$legacy" ] || [ -L "$legacy" ]; } && [ ! -e "$current" ]; then
-        die "发现旧配置 $legacy。请先备份，再将该普通文件的原有内容安全复制到 $current（JSON 是 YAML 子集，可直接加载），设置 root 属主和 0640 权限；保留 $state/identity.json，然后重试。"
+        die "发现旧配置 $legacy。请先备份后将内容迁移至 $current（YAML 兼容 JSON），设为 root 属主和 0640 权限，并保留 $state/identity.json 后重试。"
     fi
 done
 [ ! -e "$runtime_config" ] || [ -f "$runtime_config" ] || die '本地 Agent 配置必须是普通文件。'
@@ -544,21 +543,21 @@ mv -fT -- "$policy_tmp" "$libexec/orbitbeacon-agent-rollback"
 policy_tmp=
 policy_tmp=$(mktemp "$config_dir/.install-policy.XXXXXXXX")
 cat > "$policy_tmp" <<EOF
-# 修改后重启 Agent；归 root 所有，Agent 组只读（0640）。
-# Server 根地址，不含路径、查询或凭据。
+# 信任策略（root 所有，Agent 组只读 0640）；修改后须重启 Agent 生效。
+# 服务端根地址（不含路径、参数或凭据）。
 server_url: "$server"
-# 本地可信 HTTPS 发布根地址；GitHub Release 根地址自动识别，重启生效。
+# 远程更新源（HTTPS 根地址）；自动识别 GitHub Release，重启生效。
 update_base_url: "$update_base_url"
-# CA PEM 路径；空用系统证书，HTTP 时必须留空。
+# 私有 CA 证书路径（PEM）；留空使用系统证书，HTTP 协议须留空。
 ca_file: "$ca_file"
-# 身份与运行状态目录；变更须停服并迁移原目录。
+# 节点身份与状态目录；修改须先停服并迁移原目录。
 state_dir: "$state"
-# 必须匹配实际非 root UID/GID；安装器自动填写。
+# 运行用户的非零 UID / GID（由安装脚本自动写入）。
 expected_uid: $agent_uid
 expected_gid: $agent_gid
-# 运行账户名；空则只校验 UID/GID。
+# 运行账户名；留空则仅校验 UID / GID。
 expected_account: "$account"
-# native：系统服务；docker：容器；foreground：前台。此项不安装服务。
+# 运行模式（仅控制远程指令权限，不负责安装服务）：native / docker / foreground。
 install_mode: "$install_mode"
 EOF
 chown -h "root:$agent_gid" "$policy_tmp"
@@ -579,23 +578,23 @@ safe_path "$runtime_config"
 if [ ! -e "$runtime_config" ]; then
     policy_tmp=$(mktemp "$config_dir/.agent.XXXXXXXX")
     cat > "$policy_tmp" <<'RUNTIME'
-# 修改后通过服务 reload 或 SIGHUP 重新加载；重装保留本文件。
-# 采集与上报间隔（秒，5–60）。
+# 修改后执行服务 reload（或向进程发 SIGHUP）即可生效；重装保留本文件。
+# 主机指标采集与上报间隔（5–60 秒）。
 report_interval_seconds: 10
-# 磁盘容量采集间隔（秒，60–3600）。
+# 磁盘容量采集间隔（60–3600 秒）。
 disk_interval_seconds: 60
-# [] 使用默认路由网卡；最多 8 项，例如 ["eth0"]。
+# 监控网卡：[] 自动选用默认路由网卡；最多 8 项，如 ["eth0"]。
 interfaces: []
-# [] 使用根路径；最多 8 个绝对路径，例如 ["/", "/srv/data"]。
+# 监控挂载点：[] 默认监控 "/"；最多 8 个绝对路径，如 ["/", "/data"]。
 disk_paths: []
-# [] 不探测；最多 5 个 TCP、HTTP(S)、DNS 或 ICMP 目标。
+# 本地探测目标（最多 5 项，[] 关闭）：支持 tcp://、http(s)://、dns://、icmp://。
 probe_targets: []
-# HTTP(S) 预期状态码（100–599）；键须在 probe_targets 中。
+# 指定 HTTP(S) 探测的预期状态码（100–599），键须在 probe_targets 中；未填默认 <400 为正常。
 probe_expected_status: {}
-# [] 禁止全部远程指令；移除 check_update、upgrade 可仅关闭更新。
+# 允许的远程指令（[] 全禁；删去 check_update、upgrade 可关闭远程更新）。
 remote_commands: ["check_update", "upgrade", "restart", "stop"]
-# 可选：disk、network、traffic、probes、disk_io、pressure、temperature。
-# 关闭 network 同时关闭 traffic；关闭 disk 同时关闭 disk_io。
+# 按需关闭采集项：disk、network、traffic、probes、disk_io、pressure、temperature。
+# 关闭 network 会连带关闭 traffic；关闭 disk 会连带关闭 disk_io。
 disabled_features: []
 RUNTIME
     mv -fT -- "$policy_tmp" "$runtime_config"
@@ -653,13 +652,12 @@ if [ -s "$tmp/token" ]; then
         fi
     fi
     if [ "$enrolled" != 1 ]; then
-        say "注册失败。请保留 $token_file；服务未启用。"
-        say "尚未提交且密钥仍有效时，以 $account 身份重试：$binary enroll --install-policy $policy --config $runtime_config --token-file $token_file"
-        say "可能已提交但响应丢失时，以 $account 身份确认已有凭据：$binary enroll --install-policy $policy --config $runtime_config"
-        say '确认成功后，不再传入字符串或密钥文件，使用原安装参数加 < /dev/null 重新运行安装器以补装并启动服务。恢复不会删除残留密钥。'
-        die '请检查服务器 URL、CA、网络；密钥只能在 30 分钟内首次成功激活，重复使用返回 403。'
+        say "注册失败（已保留 $token_file，服务未启动）。请检查 --server、CA 与网络；密钥 30 分钟内有效且仅能激活一次。"
+        say "重试注册：runuser -u $account -- $binary enroll --install-policy $policy --config $runtime_config --token-file $token_file"
+        say "若可能已激活但超时，先查凭据：runuser -u $account -- $binary enroll --install-policy $policy --config $runtime_config"
+        die '确认凭据生效后，移除 --key/--token-file 重跑本安装命令（加 < /dev/null）即可启动服务。'
     fi
-    say '注册成功（Agent 在成功后自行删除密钥）。'
+    say '注册成功（密钥已自动清除）。'
 elif has_identity; then
     say '已有身份；保留并跳过注册。'
 else
@@ -681,7 +679,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# 该账户须与安装策略中的 expected_uid/expected_gid 一致。
+# 运行账户须与 install-policy.yaml 中的 expected_uid/expected_gid 一致。
 User=orbitbeacon-agent
 Group=orbitbeacon-agent
 ExecStartPre=-/opt/orbit-beacon/libexec/orbitbeacon-agent-rollback
@@ -689,14 +687,14 @@ ExecStart=/opt/orbit-beacon/bin/orbitbeacon-agent run --install-policy /opt/orbi
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10s
-# 克隆主机须单独注册，不得复用同一身份。
+# 退出码 3 表示身份冲突，禁止自动重启（克隆主机须清空 state 后重注册）。
 RestartPreventExitStatus=3
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ReadWritePaths=/opt/orbit-beacon/bin /opt/orbit-beacon/state
-# 保留 home 挂载可见，使磁盘统计反映真实主机。
+# 仅只读挂载 /home，保证磁盘容量统计反映真实主机。
 ProtectHome=read-only
 ProtectKernelTunables=true
 ProtectKernelModules=true
@@ -712,7 +710,7 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
-# 网卡查询需要 netlink；主机 CPU 统计还需要完整的 /proc。
+# 网卡查询需要 AF_NETLINK。
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 UMask=0077
 MemoryMax=128M
